@@ -212,7 +212,7 @@ mod tests {
     use crate::action_id;
     use kobo_ui::{
         mono_cell, render_with, terminal_grid, Caret, Chrome, ControlState, DisplayMetrics,
-        FontSize, LayoutIssueKind, LayoutKind, Surface, TextScale,
+        FontSize, LayoutIssueKind, LayoutKind, Orientation, Surface, TextScale,
     };
     use unicode_width::UnicodeWidthStr;
 
@@ -422,6 +422,67 @@ mod tests {
                     }
                 }
             }
+        }
+    }
+
+    #[test]
+    fn paperterm_landscape_hidden_and_open_grids_match_rich_terminal_layout() {
+        let metrics = kobo_ui::CLARA_BW_METRICS.oriented(Orientation::Landscape);
+        let keys = TerminalKeys::new();
+        let compose = |rows: Vec<String>, cursor: Option<Caret>, open: bool| {
+            let screen = crate::ScreenBuilder::new("paperterm")
+                .top_bar("Paperterm")
+                .top_bar_action("pairing", "Pairing")
+                .top_bar_action(
+                    "toggle-keyboard",
+                    if open { "Close keys" } else { "Keyboard" },
+                )
+                .terminal(rows, cursor);
+            if open {
+                screen.terminal_keys(&keys)
+            } else {
+                screen
+            }
+            .build()
+        };
+        let hidden = kobo_ui::terminal_grid_for(&compose(Vec::new(), None, false), &metrics);
+        let open = kobo_ui::terminal_grid_for(&compose(Vec::new(), None, true), &metrics);
+        assert_eq!(hidden.0, open.0);
+        assert!(hidden.1 > open.1);
+
+        for (name, grid, keyboard_open) in [("hidden", hidden, false), ("open", open, true)] {
+            let (rows, wide_column) = claude_code_tui(usize::from(grid.0), usize::from(grid.1));
+            let screen = compose(
+                rows,
+                Some(Caret::new(
+                    5,
+                    u16::try_from(wide_column).expect("wide cursor column"),
+                )),
+                keyboard_open,
+            );
+            let layout = screen.layout_with(&metrics, &Chrome::measuring(true));
+            let terminal = layout
+                .nodes
+                .iter()
+                .find(|node| node.kind == LayoutKind::TerminalGrid)
+                .expect("terminal");
+            assert_eq!(
+                terminal_grid(terminal.rect.width, terminal.rect.height),
+                grid,
+                "{name}"
+            );
+            assert!(layout
+                .rect_of_action(action_id("toggle-keyboard"))
+                .is_some());
+            assert_eq!(
+                layout.rect_of_action(action_id("kb.r0c0")).is_some(),
+                keyboard_open,
+                "{name}"
+            );
+            assert!(layout
+                .nodes
+                .iter()
+                .any(|node| node.kind == LayoutKind::TerminalCursor));
         }
     }
 

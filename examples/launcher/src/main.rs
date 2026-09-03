@@ -842,6 +842,30 @@ mod tests {
             assert_eq!(sections, 2, "{name}: a Folio section was dropped");
             assert_eq!(tiles, ENTRIES.len(), "{name}: a Folio card was dropped");
             assert_eq!(destinations, 4, "{name}: launcher navigation changed");
+            for label in ["Details", "View all ↗"] {
+                let sources = layout
+                    .nodes
+                    .iter()
+                    .flat_map(|node| &node.text_lines)
+                    .filter(|line| line.as_str() == label)
+                    .count();
+                assert_eq!(sources, 1, "{name}: {label:?} has {sources} render sources");
+            }
+            for link in layout
+                .nodes
+                .iter()
+                .filter(|node| matches!(node.kind, LayoutKind::SectionLink(_)))
+            {
+                assert!(
+                    link.rect.x >= layout.content.x
+                        && link.rect.y >= layout.content.y
+                        && link.rect.x + link.rect.width <= layout.content.x + layout.content.width
+                        && link.rect.y + link.rect.height
+                            <= layout.content.y + layout.content.height,
+                    "{name}: {:?} is outside the content bounds",
+                    link.kind
+                );
+            }
         }
     }
 
