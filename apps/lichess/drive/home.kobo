@@ -1,6 +1,7 @@
 expect Ready
 expect Account/Games
 expect Puzzles
+expect Computer
 expect 10+0
 expect 10+5
 expect 15+10

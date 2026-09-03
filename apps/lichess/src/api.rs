@@ -90,6 +90,14 @@ impl SeekPreset {
         )
     }
 
+    pub fn challenge_body(self, color: &str) -> String {
+        format!(
+            "rated=false&clock.limit={}&clock.increment={}&variant=standard&color={color}",
+            u32::from(self.minutes()).saturating_mul(60),
+            self.increment()
+        )
+    }
+
     pub fn matches_summary(self, game: &GameSummary) -> bool {
         let initial = u32::from(self.minutes()).saturating_mul(60);
         game.supported()
@@ -205,6 +213,17 @@ pub fn challenge(challenge_id: &str, accept: bool) -> Option<Task> {
     })
 }
 
+pub fn challenge_player(username: &str, preset: SeekPreset, color: &str) -> Option<Task> {
+    valid_username(username).then(|| Task::Post {
+        url: format!("https://lichess.org/api/challenge/{username}"),
+        body: preset.challenge_body(color),
+        content_type: FORM.to_owned(),
+        credential: Some(Credential::bearer(SECRET)),
+        headers: vec![Header::new(RATE_HEADER, "1")],
+        max_bytes: MAX_RECORD,
+    })
+}
+
 fn fetch(url: &str, max_bytes: u32) -> Task {
     Task::Fetch {
         url: url.to_owned(),
@@ -238,6 +257,13 @@ fn post(url: String) -> Task {
         headers: vec![Header::new(RATE_HEADER, "1")],
         max_bytes: 16 * 1024,
     }
+}
+
+fn valid_username(value: &str) -> bool {
+    (2..=30).contains(&value.len())
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -547,9 +573,9 @@ fn valid_move(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        abort, board_stream, event_stream, move_piece, parse_account, parse_board, parse_event,
-        parse_playing, rate_limit, seek, BoardRecord, Color, Event, FullGame, GameSummary, Player,
-        RateLimit, SeekPreset, ServerState,
+        abort, board_stream, challenge_player, event_stream, move_piece, parse_account,
+        parse_board, parse_event, parse_playing, rate_limit, seek, BoardRecord, Color, Event,
+        FullGame, GameSummary, Player, RateLimit, SeekPreset, ServerState,
     };
     use kobo_sdk::Task;
 
@@ -613,6 +639,28 @@ mod tests {
                 )
             );
         }
+    }
+
+    #[test]
+    fn player_challenges_are_casual_standard_and_validate_the_username() {
+        let Task::Post {
+            url,
+            body,
+            credential,
+            ..
+        } = challenge_player("Reader-Two", SeekPreset::Rapid10_5, "white")
+            .expect("valid challenge")
+        else {
+            panic!("challenge is a post")
+        };
+        assert_eq!(url, "https://lichess.org/api/challenge/Reader-Two");
+        assert_eq!(
+            body,
+            "rated=false&clock.limit=600&clock.increment=5&variant=standard&color=white"
+        );
+        assert_eq!(credential.expect("credential").secret, "lichess");
+        assert!(challenge_player("a", SeekPreset::Rapid10_0, "random").is_none());
+        assert!(challenge_player("../other", SeekPreset::Rapid10_0, "random").is_none());
     }
 
     #[test]

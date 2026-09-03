@@ -10,19 +10,21 @@ mod model;
 
 use api::{BoardRecord, Event, SeekPreset};
 use kobo_json::{ObjectBuilder, Value};
+use kobo_sdk::keyboard::{Keyboard, Pressed};
 use kobo_sdk::{
     action_id, ActionId, BandAlign, BannerLevel, Context, ControlState, Failure, Glyph, Heartbeat,
     KoboApp, Orientation, Screen, ScreenBuilder, SlotWidth, StoreResult, Task, TaskError, TaskId,
     TaskOutcome, Tile, TileShape, TileState,
 };
-use model::{
-    Account, ApplyState, Challenge, ChallengeDirection, Color, FullGame, Game, GameSummary, Session,
-};
 #[cfg(any(test, debug_assertions))]
-use model::{ChallengeTime, Player, ServerState};
+use model::ChallengeTime;
+use model::{
+    Account, ApplyState, Challenge, ChallengeDirection, Color, FullGame, Game, GameSummary, Player,
+    ServerState, Session,
+};
 use std::collections::{BTreeMap, BTreeSet};
 use std::process::ExitCode;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 const SESSION_KEY: &str = "lichess.session.v1";
 const PUZZLE_KEY: &str = "lichess.puzzles.v1";
@@ -31,7 +33,7 @@ const EVENT_RATE_KEY: &str = "lichess.event-rate.v1";
 const SEEK_RATE_KEY: &str = "lichess.seek-rate.v1";
 const MAX_STORED_PUZZLES: usize = 32;
 const ACCOUNT_RETRY_SECONDS: u32 = 15;
-const HOME_TILE_COUNT: usize = SeekPreset::ALL.len() + 2;
+const HOME_TILE_COUNT: usize = SeekPreset::ALL.len() + 3;
 
 struct HomeTile {
     action: String,
@@ -52,6 +54,8 @@ enum Route {
     PuzzleResult,
     Play,
     Pairing,
+    ChallengePlayer,
+    ChallengeSetup,
     Challenge,
     Game,
 }
@@ -101,6 +105,9 @@ enum Pending {
         remaining: u32,
     },
     BoardClose(String),
+    CreateChallenge {
+        username: String,
+    },
     Action {
         action: GameAction,
         scope: ActionScope,
@@ -161,6 +168,42 @@ struct Promotion {
 enum Confirmation {
     Resign,
     Abort,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum ChallengeSide {
+    Black,
+    #[default]
+    Random,
+    White,
+}
+
+impl ChallengeSide {
+    const ALL: [Self; 3] = [Self::Black, Self::Random, Self::White];
+
+    const fn action(self) -> &'static str {
+        match self {
+            Self::Black => "challenge-side-black",
+            Self::Random => "challenge-side-random",
+            Self::White => "challenge-side-white",
+        }
+    }
+
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Black => "Black",
+            Self::Random => "Random",
+            Self::White => "White",
+        }
+    }
+
+    const fn api_value(self) -> &'static str {
+        match self {
+            Self::Black => "black",
+            Self::Random => "random",
+            Self::White => "white",
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -253,6 +296,11 @@ struct Lichess {
     summaries: Vec<GameSummary>,
     game: Option<Game>,
     challenge: Option<Challenge>,
+    challenge_keyboard: Keyboard,
+    challenge_username: String,
+    challenge_preset: SeekPreset,
+    challenge_side: ChallengeSide,
+    local_game: bool,
     tasks: BTreeMap<TaskId, Pending>,
     retired_tasks: BTreeMap<TaskId, Pending>,
     event_open: bool,
@@ -287,6 +335,7 @@ struct Lichess {
     promotion: Option<Promotion>,
     confirmation: Option<Confirmation>,
     menu_open: bool,
+    result_dismissed: bool,
     notice: Option<String>,
     clock: Heartbeat,
     total_ticks: u64,
@@ -315,6 +364,11 @@ impl Default for Lichess {
             summaries: Vec::new(),
             game: None,
             challenge: None,
+            challenge_keyboard: Keyboard::new(),
+            challenge_username: String::new(),
+            challenge_preset: SeekPreset::Rapid10_0,
+            challenge_side: ChallengeSide::Random,
+            local_game: false,
             tasks: BTreeMap::new(),
             retired_tasks: BTreeMap::new(),
             event_open: false,
@@ -349,6 +403,7 @@ impl Default for Lichess {
             promotion: None,
             confirmation: None,
             menu_open: false,
+            result_dismissed: false,
             notice: None,
             clock: Heartbeat::every(1),
             total_ticks: 0,
@@ -372,6 +427,8 @@ impl Lichess {
             Route::PuzzleResult => self.puzzle_result(),
             Route::Play => self.play_screen(),
             Route::Pairing => self.pairing_screen(),
+            Route::ChallengePlayer => self.challenge_player_screen(),
+            Route::ChallengeSetup => self.challenge_setup_screen(),
             Route::Challenge => self.challenge_screen(),
             Route::Game => self.game_screen(),
         };
@@ -472,8 +529,16 @@ impl Lichess {
                 subtitle: "Offline training".to_owned(),
                 enabled: true,
             }
+        } else if index == 2 {
+            HomeTile {
+                action: "play-computer".to_owned(),
+                label: "Computer".to_owned(),
+                glyph: Glyph::ChessBlackKnight,
+                subtitle: "Offline".to_owned(),
+                enabled: true,
+            }
         } else {
-            let preset = SeekPreset::ALL[index - 2];
+            let preset = SeekPreset::ALL[index - 3];
             HomeTile {
                 action: preset.action().to_owned(),
                 label: preset.label(),
@@ -604,11 +669,12 @@ impl Lichess {
             screen = screen.banner(BannerLevel::Attention, notice);
         }
         screen
-            .board(
+            .board_with_selection(
                 8,
                 board_cells(
                     &puzzle.fen,
                     orientation,
+                    self.selected.as_deref(),
                     self.invalid_square
                         .as_deref()
                         .filter(|_| self.total_ticks < self.invalid_until_tick),
@@ -705,11 +771,67 @@ impl Lichess {
         }
         screen
             .button_with_state(
+                "challenge-player",
+                "Challenge player",
+                if matches!(self.account, AccountState::Ready(_)) {
+                    ControlState::Enabled
+                } else {
+                    ControlState::Disabled
+                },
+            )
+            .button_with_state(
                 "refresh-play",
                 "Refresh",
                 if self
                     .has_pending(|pending| matches!(pending, Pending::Account | Pending::Playing))
                 {
+                    ControlState::Disabled
+                } else {
+                    ControlState::Enabled
+                },
+            )
+            .build()
+    }
+
+    fn challenge_player_screen(&self) -> Screen {
+        let mut screen = ScreenBuilder::new("lichess-challenge-player")
+            .top_bar("Challenge player")
+            .typed(&self.challenge_keyboard, "Lichess username");
+        if let Some(notice) = &self.notice {
+            screen = screen.banner(BannerLevel::Attention, notice);
+        }
+        screen.keyboard(&self.challenge_keyboard, "Next").build()
+    }
+
+    fn challenge_setup_screen(&self) -> Screen {
+        let pending =
+            self.has_pending(|pending| matches!(pending, Pending::CreateChallenge { .. }));
+        let mut screen = ScreenBuilder::new("lichess-challenge-setup")
+            .top_bar("Challenge player")
+            .heading(self.challenge_username.clone())
+            .secondary("Casual")
+            .section("Time")
+            .chips(SeekPreset::ALL.into_iter().map(|preset| {
+                (
+                    format!("challenge-time-{}", preset.action()),
+                    preset.label(),
+                    preset == self.challenge_preset,
+                )
+            }))
+            .section("Side")
+            .chips(
+                ChallengeSide::ALL
+                    .into_iter()
+                    .map(|side| (side.action(), side.label(), side == self.challenge_side)),
+            );
+        if let Some(notice) = &self.notice {
+            screen = screen.banner(BannerLevel::Attention, notice);
+        }
+        screen
+            .button_with_state(
+                "send-player-challenge",
+                if pending { "Sending" } else { "Challenge" },
+                if pending {
                     ControlState::Disabled
                 } else {
                     ControlState::Enabled
@@ -869,8 +991,8 @@ impl Lichess {
                 Box::new(move |slot| slot.heading(opponent_name).secondary(opponent_color)),
             ),
             (
-                SlotWidth::Natural,
-                Box::new(move |slot| slot.heading(opponent_clock)),
+                SlotWidth::Fixed(220),
+                Box::new(move |slot| slot.chips([("opponent-clock", opponent_clock, true)])),
             ),
         ];
         let mut screen = ScreenBuilder::new("lichess-game")
@@ -901,15 +1023,19 @@ impl Lichess {
                 ),
             );
         }
-        screen = screen.board(
-            8,
-            board_cells(
-                &game.fen,
-                game.my_color,
-                self.invalid_square
-                    .as_deref()
-                    .filter(|_| self.total_ticks < self.invalid_until_tick),
-            ),
+        let board = board_cells(
+            &game.fen,
+            game.my_color,
+            self.selected.as_deref(),
+            self.invalid_square
+                .as_deref()
+                .filter(|_| self.total_ticks < self.invalid_until_tick),
+        );
+        screen = screen.band(
+            BandAlign::Top,
+            [(SlotWidth::Fixed(820), move |slot: ScreenBuilder| {
+                slot.board_with_selection(8, board)
+            })],
         );
         let you_slots: Vec<BuilderSlot> = vec![
             (
@@ -921,35 +1047,47 @@ impl Lichess {
                 }),
             ),
             (
-                SlotWidth::Natural,
-                Box::new(move |slot| slot.heading(you_clock)),
+                SlotWidth::Fixed(220),
+                Box::new(move |slot| slot.chips([("your-clock", you_clock, true)])),
             ),
         ];
         screen = screen.band(BandAlign::Top, you_slots);
-        if !game.active() {
+        if !game.active() && !self.result_dismissed {
             let result = game.result();
             return screen
                 .modal("", move |builder| {
-                    builder.primary_button("back-to-play", result)
+                    builder.primary_button("dismiss-result", result)
                 })
                 .build();
         }
         if let Some(promotion) = &self.promotion {
-            screen = screen.modal("Choose promotion", |builder| {
-                let mut builder = builder.text(format!("{} to {}", promotion.from, promotion.to));
-                for choice in &promotion.choices {
-                    builder = builder.button(
+            let white = chess::piece_at(&game.fen, &promotion.from)
+                .is_some_and(|piece| piece.is_ascii_uppercase());
+            let cells = promotion
+                .choices
+                .iter()
+                .filter_map(|choice| {
+                    let piece = if white {
+                        choice.to_ascii_uppercase()
+                    } else {
+                        *choice
+                    };
+                    Some((
                         format!("promote-{choice}"),
                         match choice {
                             'q' => "Queen",
                             'r' => "Rook",
                             'b' => "Bishop",
                             'n' => "Knight",
-                            _ => "Piece",
+                            _ => return None,
                         },
-                    );
-                }
-                builder.button("cancel-promotion", "Cancel")
+                        piece_glyph(piece),
+                    ))
+                })
+                .collect::<Vec<_>>();
+            let movement = format!("{} → {}", promotion.from, promotion.to);
+            screen = screen.modal("Choose promotion", move |builder| {
+                builder.secondary(movement).board(4, cells)
             });
         } else if let Some(confirmation) = self.confirmation {
             screen = match confirmation {
@@ -1280,6 +1418,7 @@ impl Lichess {
                 Some("Wait for the current game action before switching boards.".to_owned());
             return;
         }
+        self.local_game = false;
         self.route = Route::Game;
         let previous = self
             .session
@@ -1438,6 +1577,7 @@ impl Lichess {
         self.promotion = None;
         self.confirmation = None;
         self.menu_open = false;
+        self.result_dismissed = false;
         self.board_ready = false;
         self.deferred_board_next = None;
         if self
@@ -1833,6 +1973,119 @@ impl Lichess {
         );
     }
 
+    fn start_computer_game(&mut self, context: &mut Context) {
+        let owner = match &self.account {
+            AccountState::Ready(account) => account.username.clone(),
+            _ => "You".to_owned(),
+        };
+        let state = ServerState {
+            moves: Vec::new(),
+            white_ms: 600_000,
+            black_ms: 600_000,
+            white_increment_ms: 0,
+            black_increment_ms: 0,
+            status: "started".to_owned(),
+            winner: None,
+            white_draw: false,
+            black_draw: false,
+            white_takeback: false,
+            black_takeback: false,
+        };
+        self.game = Game::from_full(
+            FullGame {
+                id: "computer".to_owned(),
+                initial_fen: "startpos".to_owned(),
+                rated: false,
+                speed: "offline".to_owned(),
+                white: Player {
+                    id: None,
+                    name: owner,
+                    rating: None,
+                },
+                black: Player {
+                    id: None,
+                    name: "Kobo".to_owned(),
+                    rating: None,
+                },
+                state,
+            },
+            Color::White,
+        );
+        self.session = Some(Session {
+            game_id: "computer".to_owned(),
+            color: Color::White,
+            opponent: "Kobo".to_owned(),
+            rated: false,
+        });
+        self.local_game = true;
+        self.board_open = Some("computer".to_owned());
+        self.board_ready = true;
+        self.selected = None;
+        self.result_dismissed = false;
+        self.notice = None;
+        self.route = Route::Game;
+        self.reset_clock(context, true);
+    }
+
+    fn finish_local_position(game: &mut Game) {
+        let Some((status, winner)) = chess::terminal(&game.fen) else {
+            return;
+        };
+        game.state.status = status.to_owned();
+        game.state.winner = winner.and_then(|color| match color {
+            'w' => Some(Color::White),
+            'b' => Some(Color::Black),
+            _ => None,
+        });
+    }
+
+    fn apply_local_move(&mut self, context: &mut Context, movement: String) {
+        let elapsed_ms = u64::try_from(self.clock.waited().as_millis()).unwrap_or(u64::MAX);
+        let active = {
+            let Some(game) = self.game.as_mut().filter(|game| game.active()) else {
+                return;
+            };
+            if game.commit_turn_time(elapsed_ms) {
+                false
+            } else {
+                let mut state = game.state.clone();
+                state.moves.push(movement);
+                if game.apply(state).is_none() {
+                    self.notice = Some("Move failed".to_owned());
+                    return;
+                }
+                Self::finish_local_position(game);
+                if game.active() {
+                    let started = Instant::now();
+                    if let Some(reply) = chess::tiny_move(&game.fen) {
+                        let elapsed_ms =
+                            u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+                        if !game.commit_turn_time(elapsed_ms) {
+                            let mut state = game.state.clone();
+                            state.moves.push(reply);
+                            if game.apply(state).is_none() {
+                                self.notice = Some("Computer move failed".to_owned());
+                                return;
+                            }
+                            Self::finish_local_position(game);
+                        }
+                    } else {
+                        Self::finish_local_position(game);
+                    }
+                }
+                game.active()
+            }
+        };
+        self.selected = None;
+        self.promotion = None;
+        self.pending_move = None;
+        self.notice = None;
+        if !active {
+            self.result_dismissed = false;
+        }
+        self.reset_clock(context, active);
+    }
+
     fn send_action(&mut self, context: &mut Context, action: GameAction, work: Option<Task>) {
         if self.pending_action.is_some() || work.is_none() {
             return;
@@ -1962,6 +2215,12 @@ impl Lichess {
             self.notice = None;
             return;
         }
+        if chess::piece_belongs_to(&game.fen, &square, game.my_color.fen()) {
+            self.selected = Some(square);
+            self.invalid_square = None;
+            self.notice = None;
+            return;
+        }
         let promotions = chess::promotion_choices(&game.fen, &from, &square);
         if !promotions.is_empty() {
             self.promotion = Some(Promotion {
@@ -1980,6 +2239,10 @@ impl Lichess {
         }
         self.invalid_square = None;
         self.notice = None;
+        if self.local_game {
+            self.apply_local_move(context, movement);
+            return;
+        }
         self.send_action(
             context,
             GameAction::Move(movement.clone()),
@@ -2010,6 +2273,12 @@ impl Lichess {
         };
         if from == square {
             self.invalid_square = None;
+            return;
+        }
+        if solver.is_some_and(|color| chess::piece_belongs_to(&puzzle.fen, &square, color)) {
+            self.selected = Some(square);
+            self.invalid_square = None;
+            self.notice = None;
             return;
         }
         let expected = puzzle.solution.get(puzzle.cursor).cloned();
@@ -2294,6 +2563,11 @@ impl Lichess {
                 self.account = AccountState::Failed(Failure::of(other).naming(api::SECRET));
             }
         }
+        if self.local_game {
+            self.close_network_reads_preserving_local_game(context, true);
+            self.schedule_account_retry(context);
+            return;
+        }
         if let Some(task) = self.seek_task {
             context.cancel(task);
         }
@@ -2376,7 +2650,7 @@ impl Lichess {
                         Some("The game finished while its board stream was paused.".to_owned());
                     self.discard_game(context, &id);
                 } else if self.game.as_ref().is_some_and(|game| game.id == id) {
-                    self.notice = Some("Lichess reports that the game finished.".to_owned());
+                    self.notice = None;
                     if self.board_is_live(&id) {
                         self.next_board(context, &id);
                     }
@@ -2460,6 +2734,7 @@ impl Lichess {
                     return;
                 };
                 self.game = Some(game);
+                self.result_dismissed = false;
                 self.board_ready = true;
                 self.board_backoff = 1;
                 self.reconcile_pending_move();
@@ -2809,7 +3084,7 @@ impl Lichess {
                         self.open_seek_candidate(context);
                     }
                     let recovered = self.reconcile_accepted_challenge_from_playing(context);
-                    if !recovered {
+                    if !recovered && !self.local_game {
                         if let Some(session) = self.session.clone() {
                             if let Some(summary) = self
                                 .summaries
@@ -2819,10 +3094,7 @@ impl Lichess {
                             {
                                 self.open_board(context, summary.session());
                             } else {
-                                self.notice = Some(
-                                    "The saved game is no longer active; stale reconnect state was cleared."
-                                        .to_owned(),
-                                );
+                                self.notice = None;
                                 self.discard_game(context, &session.game_id);
                             }
                         }
@@ -2978,6 +3250,14 @@ impl Lichess {
                 {
                     self.schedule_board_reconnect(context, &id);
                 }
+            }
+            Pending::CreateChallenge { username } => {
+                self.challenge_keyboard.clear();
+                self.challenge_username.clear();
+                if self.route == Route::ChallengeSetup {
+                    self.route = Route::Play;
+                }
+                self.notice = Some(format!("Challenge sent to {username}"));
             }
             Pending::Action {
                 action,
@@ -3135,6 +3415,9 @@ impl Lichess {
                 self.notice = Some(Failure::of(error).naming(api::SECRET));
                 self.open_event_stream(context);
             }
+            Pending::CreateChallenge { .. } => {
+                self.notice = Some(Failure::of(error).naming(api::SECRET));
+            }
             Pending::EventRetry
             | Pending::EventRateWait { .. }
             | Pending::EventClose
@@ -3213,6 +3496,25 @@ impl Lichess {
         }
     }
 
+    fn finish_expired_clock(&mut self, context: &mut Context, elapsed_ms: u64) -> bool {
+        let expired = self
+            .game
+            .as_mut()
+            .is_some_and(|game| game.expire_clock(elapsed_ms));
+        if !expired {
+            return false;
+        }
+        self.clear_pending_action();
+        self.pending_move = None;
+        self.selected = None;
+        self.promotion = None;
+        self.notice = None;
+        self.result_dismissed = false;
+        self.menu_open = false;
+        self.clock.stop(context);
+        true
+    }
+
     fn keep_live(context: &mut Context) {
         context.device().hold_wifi(Duration::from_secs(10 * 60));
         context.device().keep_awake(Duration::from_secs(60 * 60));
@@ -3285,6 +3587,31 @@ impl Lichess {
         self.deferred_board_next = None;
         self.clock.stop(context);
         self.flush_deferred_stream_closes(context);
+    }
+
+    fn close_network_reads_preserving_local_game(
+        &mut self,
+        context: &mut Context,
+        restart_clock: bool,
+    ) {
+        let elapsed_ms = u64::try_from(self.clock.waited().as_millis()).unwrap_or(u64::MAX);
+        if self
+            .game
+            .as_mut()
+            .is_some_and(|game| game.commit_turn_time(elapsed_ms))
+        {
+            self.result_dismissed = false;
+        }
+        let board = self
+            .board_open
+            .take()
+            .or_else(|| self.game.as_ref().map(|game| game.id.clone()));
+        self.close_live_reads(context);
+        self.board_open = board;
+        self.board_ready = self.game.is_some();
+        if restart_clock {
+            self.reset_clock(context, self.game.as_ref().is_some_and(Game::active));
+        }
     }
 
     #[cfg(debug_assertions)]
@@ -3365,6 +3692,63 @@ impl Lichess {
                     game.state.winner = Some(Color::White);
                 }
             }
+            "timeout" => {
+                if !self.install_demo("game") {
+                    return false;
+                }
+                if let Some(game) = self.game.as_mut() {
+                    "outoftime".clone_into(&mut game.state.status);
+                    game.state.winner = Some(Color::White);
+                    game.state.black_ms = 0;
+                }
+            }
+            "promotion" => {
+                self.account = AccountState::Ready(Account {
+                    id: "demo-owner".to_owned(),
+                    username: "DemoOwner".to_owned(),
+                });
+                self.session = Some(Session {
+                    game_id: "demoPromo".to_owned(),
+                    color: Color::White,
+                    opponent: "KnightReader".to_owned(),
+                    rated: false,
+                });
+                self.game = Game::from_full(
+                    FullGame {
+                        id: "demoPromo".to_owned(),
+                        initial_fen: "7k/P7/8/8/8/8/8/7K w - - 0 1".to_owned(),
+                        rated: false,
+                        speed: "rapid".to_owned(),
+                        white: Player {
+                            id: Some("demo-owner".to_owned()),
+                            name: "DemoOwner".to_owned(),
+                            rating: Some(1510),
+                        },
+                        black: Player {
+                            id: Some("other".to_owned()),
+                            name: "KnightReader".to_owned(),
+                            rating: Some(1542),
+                        },
+                        state: ServerState {
+                            moves: Vec::new(),
+                            white_ms: 600_000,
+                            black_ms: 600_000,
+                            white_increment_ms: 0,
+                            black_increment_ms: 0,
+                            status: "started".to_owned(),
+                            winner: None,
+                            white_draw: false,
+                            black_draw: false,
+                            white_takeback: false,
+                            black_takeback: false,
+                        },
+                    },
+                    Color::White,
+                );
+                self.board_open = Some("demoPromo".to_owned());
+                self.board_ready = true;
+                self.route = Route::Game;
+            }
             "pairing" => {
                 self.account = AccountState::Ready(Account {
                     id: "demo-owner".to_owned(),
@@ -3436,6 +3820,24 @@ impl Lichess {
                     },
                 });
                 self.route = Route::Challenge;
+            }
+            "challenge-player" => {
+                self.account = AccountState::Ready(Account {
+                    id: "demo-owner".to_owned(),
+                    username: "DemoOwner".to_owned(),
+                });
+                self.challenge_keyboard = Keyboard::with_text("KnightReader");
+                self.route = Route::ChallengePlayer;
+            }
+            "challenge-setup" => {
+                self.account = AccountState::Ready(Account {
+                    id: "demo-owner".to_owned(),
+                    username: "DemoOwner".to_owned(),
+                });
+                "KnightReader".clone_into(&mut self.challenge_username);
+                self.challenge_preset = SeekPreset::Rapid10_5;
+                self.challenge_side = ChallengeSide::Random;
+                self.route = Route::ChallengeSetup;
             }
             "missing" => {
                 self.account = AccountState::Missing;
@@ -3541,14 +3943,22 @@ impl KoboApp for Lichess {
     )]
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
         if action == ActionId::BACK {
-            if self.promotion.take().is_some()
-                || self.confirmation.take().is_some()
-                || self.menu_open
+            if self.route == Route::ChallengePlayer {
+                self.challenge_keyboard.clear();
+            }
+            if self.route == Route::Game
+                && self.game.as_ref().is_some_and(|game| !game.active())
+                && !self.result_dismissed
             {
+                self.result_dismissed = true;
+            } else if self.promotion.take().is_some() {
+                self.selected = None;
+            } else if self.confirmation.take().is_some() || self.menu_open {
                 self.menu_open = false;
             } else if self.pending_action.is_some()
                 || self.pending_move.is_some()
                 || self.accepted_challenge.is_some()
+                || self.has_pending(|pending| matches!(pending, Pending::CreateChallenge { .. }))
             {
                 self.notice = Some(
                     "Wait for the current server action before leaving this screen.".to_owned(),
@@ -3561,9 +3971,36 @@ impl KoboApp for Lichess {
                 self.selected = None;
                 self.route = match self.route {
                     Route::Solve | Route::PuzzleResult => Route::Puzzles,
-                    Route::Game | Route::Pairing | Route::Challenge => Route::Play,
+                    Route::Game
+                    | Route::Pairing
+                    | Route::ChallengePlayer
+                    | Route::ChallengeSetup
+                    | Route::Challenge => Route::Play,
                     _ => Route::Home,
                 };
+            }
+        } else if self.route == Route::ChallengePlayer {
+            match self.challenge_keyboard.press(action) {
+                Some(Pressed::Submitted) => {
+                    let username = self.challenge_keyboard.text().trim().to_owned();
+                    if api::challenge_player(
+                        &username,
+                        self.challenge_preset,
+                        self.challenge_side.api_value(),
+                    )
+                    .is_some()
+                    {
+                        self.challenge_username = username;
+                        self.notice = None;
+                        self.route = Route::ChallengeSetup;
+                    } else {
+                        self.notice = Some("Enter a valid Lichess username".to_owned());
+                    }
+                }
+                Some(Pressed::Edited | Pressed::Shifted) => {
+                    self.notice = None;
+                }
+                None => {}
             }
         } else if action == action_id("puzzles") {
             self.home_page = 0;
@@ -3572,6 +4009,8 @@ impl KoboApp for Lichess {
             self.home_page = 0;
             self.route = Route::Play;
             self.validate_account(context);
+        } else if action == action_id("play-computer") {
+            self.start_computer_game(context);
         } else if action == action_id("home-next") || action == action_id("home-previous") {
             let pages = self.home_pages(context).len();
             self.home_page = if action == action_id("home-next") {
@@ -3581,6 +4020,29 @@ impl KoboApp for Lichess {
             };
         } else if action == action_id("refresh-play") {
             self.validate_account(context);
+        } else if action == action_id("challenge-player") {
+            self.challenge_keyboard.clear();
+            self.challenge_username.clear();
+            self.challenge_preset = SeekPreset::Rapid10_0;
+            self.challenge_side = ChallengeSide::Random;
+            self.notice = None;
+            self.route = Route::ChallengePlayer;
+        } else if let Some(preset) = challenge_preset_action(action) {
+            self.challenge_preset = preset;
+        } else if let Some(side) = challenge_side_action(action) {
+            self.challenge_side = side;
+        } else if action == action_id("send-player-challenge") {
+            let username = self.challenge_username.clone();
+            if !self.has_pending(|pending| matches!(pending, Pending::CreateChallenge { .. })) {
+                if let Some(work) = api::challenge_player(
+                    &username,
+                    self.challenge_preset,
+                    self.challenge_side.api_value(),
+                ) {
+                    let _ = self.spawn(context, Pending::CreateChallenge { username }, work, false);
+                }
+            }
+        } else if action == action_id("opponent-clock") || action == action_id("your-clock") {
         } else if action == action_id("quick-pair") {
             self.start_seek(context, SeekPreset::Rapid10_0);
         } else if let Some(preset) = seek_preset_action(action) {
@@ -3612,7 +4074,12 @@ impl KoboApp for Lichess {
             }
         } else if action == action_id("resume-current") {
             if let Some(session) = self.session.clone() {
-                if self
+                if self.local_game {
+                    self.board_open = Some(session.game_id);
+                    self.board_ready = self.game.is_some();
+                    self.route = Route::Game;
+                    self.reset_clock(context, self.game.as_ref().is_some_and(Game::active));
+                } else if self
                     .game
                     .as_ref()
                     .is_some_and(|game| !self.board_is_live(&game.id))
@@ -3644,16 +4111,33 @@ impl KoboApp for Lichess {
             self.confirmation = None;
         } else if action == action_id("resign") {
             self.confirmation = None;
-            if let Some(game) = &self.game {
+            if self.local_game {
+                if let Some(game) = self.game.as_mut().filter(|game| game.active()) {
+                    "resign".clone_into(&mut game.state.status);
+                    game.state.winner = Some(game.my_color.opposite());
+                }
+                self.reset_clock(context, false);
+            } else if let Some(game) = &self.game {
                 self.send_action(context, GameAction::Resign, api::resign(&game.id));
             }
         } else if action == action_id("abort") {
             self.confirmation = None;
-            if let Some(game) = &self.game {
+            if self.local_game {
+                if let Some(game) = self.game.as_mut().filter(|game| game.active()) {
+                    "aborted".clone_into(&mut game.state.status);
+                }
+                self.reset_clock(context, false);
+            } else if let Some(game) = &self.game {
                 self.send_action(context, GameAction::Abort, api::abort(&game.id));
             }
         } else if action == action_id("offer-draw") {
-            if let Some(game) = &self.game {
+            if self.local_game {
+                if let Some(game) = self.game.as_mut().filter(|game| game.active()) {
+                    "draw".clone_into(&mut game.state.status);
+                    game.state.winner = None;
+                }
+                self.reset_clock(context, false);
+            } else if let Some(game) = &self.game {
                 self.send_action(context, GameAction::OfferDraw, api::draw(&game.id, true));
             }
         } else if action == action_id("accept-draw") {
@@ -3674,20 +4158,24 @@ impl KoboApp for Lichess {
             }
         } else if action == action_id("cancel-promotion") {
             self.promotion = None;
+            self.selected = None;
         } else if let Some(choice) = promotion_action(action) {
-            if let (Some(promotion), Some(game)) = (self.promotion.take(), self.game.as_ref()) {
+            if let Some(promotion) = self.promotion.take() {
                 if promotion.choices.contains(&choice) {
                     let movement = format!("{}{}{}", promotion.from, promotion.to, choice);
-                    self.send_action(
-                        context,
-                        GameAction::Move(movement.clone()),
-                        api::move_piece(&game.id, &movement),
-                    );
+                    if self.local_game {
+                        self.apply_local_move(context, movement);
+                    } else if let Some(game) = self.game.as_ref() {
+                        self.send_action(
+                            context,
+                            GameAction::Move(movement.clone()),
+                            api::move_piece(&game.id, &movement),
+                        );
+                    }
                 }
             }
-        } else if action == action_id("back-to-play") {
-            self.route = Route::Play;
-            let _ = self.refresh_playing(context);
+        } else if action == action_id("dismiss-result") {
+            self.result_dismissed = true;
         } else if action == action_id("new-puzzles") {
             if !self.has_pending(|pending| matches!(pending, Pending::Puzzle)) {
                 let _ = self.spawn(context, Pending::Puzzle, api::puzzle(false), true);
@@ -3726,6 +4214,8 @@ impl KoboApp for Lichess {
         if self.clock.on_task(context, task, &outcome) {
             if !matches!(outcome, TaskOutcome::Cancelled) {
                 self.total_ticks = self.total_ticks.saturating_add(1);
+                let elapsed_ms = u64::try_from(self.clock.waited().as_millis()).unwrap_or(u64::MAX);
+                self.finish_expired_clock(context, elapsed_ms);
                 if self.total_ticks % (8 * 60) == 0
                     && (self.game.as_ref().is_some_and(Game::active) || self.seek_task.is_some())
                 {
@@ -3763,11 +4253,22 @@ impl KoboApp for Lichess {
 
     fn on_suspend(&mut self, context: &mut Context) {
         self.suspended = true;
-        self.close_live_reads(context);
+        if self.local_game {
+            self.close_network_reads_preserving_local_game(context, false);
+        } else {
+            self.close_live_reads(context);
+        }
     }
 
     fn on_resume(&mut self, context: &mut Context) {
         self.suspended = false;
+        if self.local_game {
+            if let Some(game) = &self.game {
+                self.board_open = Some(game.id.clone());
+                self.board_ready = true;
+            }
+            self.reset_clock(context, self.game.as_ref().is_some_and(Game::active));
+        }
         self.validate_account(context);
         self.show(context);
     }
@@ -3794,8 +4295,9 @@ fn clock(milliseconds: u64) -> String {
 fn board_cells(
     fen: &str,
     orientation: Color,
+    selected_square: Option<&str>,
     invalid_square: Option<&str>,
-) -> Vec<(String, String, Option<Glyph>)> {
+) -> Vec<(String, String, Option<Glyph>, bool)> {
     let ranks: Vec<u8> = match orientation {
         Color::White => (1..=8).rev().collect(),
         Color::Black => (1..=8).collect(),
@@ -3814,7 +4316,12 @@ fn board_cells(
             } else {
                 (" ".to_owned(), piece.and_then(piece_glyph))
             };
-            cells.push((format!("square-{square}"), label, glyph));
+            cells.push((
+                format!("square-{square}"),
+                label,
+                glyph,
+                selected_square == Some(square.as_str()),
+            ));
         }
     }
     cells
@@ -3858,6 +4365,18 @@ fn seek_preset_action(action: ActionId) -> Option<SeekPreset> {
     SeekPreset::ALL
         .into_iter()
         .find(|preset| action == action_id(preset.action()))
+}
+
+fn challenge_preset_action(action: ActionId) -> Option<SeekPreset> {
+    SeekPreset::ALL
+        .into_iter()
+        .find(|preset| action == action_id(&format!("challenge-time-{}", preset.action())))
+}
+
+fn challenge_side_action(action: ActionId) -> Option<ChallengeSide> {
+    ChallengeSide::ALL
+        .into_iter()
+        .find(|side| action == action_id(side.action()))
 }
 
 fn promotion_action(action: ActionId) -> Option<char> {
@@ -3937,11 +4456,11 @@ mod tests {
     use super::{
         api, board_cells, clock, AccountState, ActionScope, BoardRecord, Challenge,
         ChallengeDirection, ChallengeTime, Color, Event, FullGame, Game, GameAction, Lichess,
-        Orientation, Pending, Player, Puzzle, Route, ServerState, Session, ACCOUNT_RETRY_SECONDS,
-        BOARD_RATE_KEY, EVENT_RATE_KEY, HOME_TILE_COUNT, SEEK_RATE_KEY,
+        Orientation, Pending, Player, Promotion, Puzzle, Route, ServerState, Session,
+        ACCOUNT_RETRY_SECONDS, BOARD_RATE_KEY, EVENT_RATE_KEY, HOME_TILE_COUNT, SEEK_RATE_KEY,
     };
     use kobo_sdk::{
-        action_id, ActionId, AppRunner, Command, Context, KoboApp, Screen, StoreRequest,
+        action_id, ActionId, AppRunner, Command, Context, KoboApp, Screen, StoreRequest, TaskError,
         TaskOutcome,
     };
     use kobo_ui::{
@@ -4198,7 +4717,12 @@ mod tests {
                 .rect_of_action(action_id(&format!("square-{square}")))
                 .is_some());
         }
-        let cells = board_cells(&app.game.as_ref().expect("game").fen, Color::Black, None);
+        let cells = board_cells(
+            &app.game.as_ref().expect("game").fen,
+            Color::Black,
+            None,
+            None,
+        );
         assert_eq!(cells.first().expect("first").0, "square-h1");
         assert_eq!(cells.last().expect("last").0, "square-a8");
         assert_eq!(cells.first().expect("first").2, Some(Glyph::ChessWhiteRook));
@@ -4217,6 +4741,7 @@ mod tests {
     #[test]
     fn folio_home_pages_every_preset_without_overflow() {
         let expected = std::iter::once(action_id("puzzles"))
+            .chain(std::iter::once(action_id("play-computer")))
             .chain(
                 api::SeekPreset::ALL
                     .into_iter()
@@ -4274,7 +4799,12 @@ mod tests {
         assert!(format!("{screen:?}").contains("Offline"));
         let tiles = declared_tiles(&screen.nodes);
         assert!(tiles.iter().all(|(action, _, state, badge_empty)| {
-            let utility = *action == action_id("play") || *action == action_id("puzzles");
+            let utility = matches!(
+                *action,
+                action if action == action_id("play")
+                    || action == action_id("puzzles")
+                    || action == action_id("play-computer")
+            );
             *badge_empty
                 && if utility {
                     *state == TileState::Normal
@@ -4370,6 +4900,9 @@ mod tests {
                 } else if action == action_id("puzzles") {
                     assert_eq!(label, "Puzzles");
                     assert_eq!(subtitle, "Offline training");
+                } else if action == action_id("play-computer") {
+                    assert_eq!(label, "Computer");
+                    assert_eq!(subtitle, "Offline");
                 } else {
                     let preset = api::SeekPreset::ALL
                         .into_iter()
@@ -4528,6 +5061,319 @@ mod tests {
     }
 
     #[test]
+    fn account_games_opens_a_casual_player_challenge_flow() {
+        let mut app = ready_app();
+        app.route = Route::Play;
+        let play = app.play_screen();
+        assert!(format!("{play:?}").contains("Challenge player"));
+
+        let mut context = Context::default();
+        app.on_action(&mut context, action_id("challenge-player"));
+        assert_eq!(app.route, Route::ChallengePlayer);
+        app.challenge_keyboard = kobo_sdk::keyboard::Keyboard::with_text("Reader-Two");
+        app.on_action(&mut context, action_id("kb.enter"));
+        assert_eq!(app.route, Route::ChallengeSetup);
+        assert_eq!(app.challenge_username, "Reader-Two");
+
+        app.on_action(&mut context, action_id("challenge-time-seek-10-5"));
+        app.on_action(&mut context, action_id("challenge-side-white"));
+        app.on_action(&mut context, action_id("send-player-challenge"));
+        let task = context.commands().iter().find_map(|command| match command {
+            Command::Spawn {
+                task,
+                work: kobo_sdk::Task::Post { url, body, .. },
+            } if url == "https://lichess.org/api/challenge/Reader-Two" => {
+                assert_eq!(
+                    body,
+                    "rated=false&clock.limit=600&clock.increment=5&variant=standard&color=white"
+                );
+                Some(*task)
+            }
+            _ => None,
+        });
+        assert!(task.is_some());
+        assert!(app.has_pending(|pending| matches!(
+            pending,
+            Pending::CreateChallenge { username } if username == "Reader-Two"
+        )));
+    }
+
+    #[test]
+    fn computer_game_plays_locally_without_network_tasks() {
+        let mut app = ready_app();
+        let mut context = Context::default();
+        app.on_action(&mut context, action_id("play-computer"));
+        assert_eq!(app.route, Route::Game);
+        assert!(app.local_game);
+        assert_eq!(app.game.as_ref().expect("game").opponent().name, "Kobo");
+        assert!(!context.commands().iter().any(|command| matches!(
+            command,
+            Command::Spawn {
+                work: kobo_sdk::Task::Fetch { .. } | kobo_sdk::Task::Post { .. },
+                ..
+            }
+        )));
+
+        app.on_action(&mut context, action_id("square-e2"));
+        app.on_action(&mut context, action_id("square-e4"));
+        let game = app.game.as_ref().expect("game");
+        assert_eq!(game.state.moves.first().map(String::as_str), Some("e2e4"));
+        assert_eq!(game.state.moves.len(), 2);
+        assert!(game.my_turn());
+        assert!(!context.commands().iter().any(|command| matches!(
+            command,
+            Command::Spawn {
+                work: kobo_sdk::Task::Fetch { .. } | kobo_sdk::Task::Post { .. },
+                ..
+            }
+        )));
+    }
+
+    #[test]
+    fn computer_game_uses_you_without_a_lichess_account() {
+        let mut app = Lichess {
+            account: AccountState::Missing,
+            ..Lichess::default()
+        };
+        let mut context = Context::default();
+        app.start_computer_game(&mut context);
+        let game = app.game.as_ref().expect("game");
+        assert_eq!(game.white.name, "You");
+        assert_eq!(game.opponent().name, "Kobo");
+    }
+
+    #[test]
+    fn opening_a_live_board_leaves_offline_mode() {
+        let mut app = ready_app();
+        let mut context = Context::default();
+        app.start_computer_game(&mut context);
+        assert!(app.local_game);
+
+        app.open_board(
+            &mut context,
+            Session {
+                game_id: "abcdEF12".to_owned(),
+                color: Color::White,
+                opponent: "Other".to_owned(),
+                rated: true,
+            },
+        );
+
+        assert!(!app.local_game);
+    }
+
+    #[test]
+    fn offline_promotion_is_applied_without_a_network_task() {
+        let mut app = Lichess::default();
+        assert!(app.install_demo("promotion"));
+        app.local_game = true;
+        app.promotion = Some(Promotion {
+            from: "a7".to_owned(),
+            to: "a8".to_owned(),
+            choices: vec!['q', 'r', 'b', 'n'],
+        });
+        let mut context = Context::default();
+
+        app.on_action(&mut context, action_id("promote-q"));
+
+        assert_eq!(
+            app.game
+                .as_ref()
+                .expect("game")
+                .state
+                .moves
+                .first()
+                .map(String::as_str),
+            Some("a7a8q")
+        );
+        assert!(!context.commands().iter().any(|command| matches!(
+            command,
+            Command::Spawn {
+                work: kobo_sdk::Task::Post { .. },
+                ..
+            }
+        )));
+    }
+
+    #[test]
+    fn offline_game_remains_live_across_suspend_and_resume() {
+        let mut app = ready_app();
+        let mut context = Context::default();
+        app.start_computer_game(&mut context);
+
+        app.on_suspend(&mut context);
+        assert_eq!(app.board_open.as_deref(), Some("computer"));
+        assert!(app.board_ready);
+        assert!(!app.clock.is_running());
+
+        app.on_resume(&mut context);
+        assert_eq!(app.board_open.as_deref(), Some("computer"));
+        assert!(app.board_ready);
+        assert!(app.clock.is_running());
+    }
+
+    #[test]
+    fn account_failure_does_not_interrupt_an_offline_game() {
+        let mut app = ready_app();
+        let mut context = Context::default();
+        app.start_computer_game(&mut context);
+
+        app.account_failure(&mut context, TaskError::NoCredential);
+
+        assert!(matches!(app.account, AccountState::Missing));
+        assert_eq!(app.route, Route::Game);
+        assert!(app.local_game);
+        assert_eq!(app.board_open.as_deref(), Some("computer"));
+        assert!(app.board_ready);
+        assert!(app.clock.is_running());
+    }
+
+    #[test]
+    fn resume_current_restores_an_offline_board_without_network() {
+        let mut app = ready_app();
+        let mut context = Context::default();
+        app.start_computer_game(&mut context);
+        app.board_open = None;
+        app.board_ready = false;
+        let _ = context.take_commands();
+
+        app.on_action(&mut context, action_id("resume-current"));
+
+        assert!(app.local_game);
+        assert_eq!(app.route, Route::Game);
+        assert_eq!(app.board_open.as_deref(), Some("computer"));
+        assert!(app.board_ready);
+        assert!(!context.commands().iter().any(|command| matches!(
+            command,
+            Command::Spawn {
+                work: kobo_sdk::Task::Fetch { .. } | kobo_sdk::Task::Post { .. },
+                ..
+            }
+        )));
+    }
+
+    #[test]
+    fn completed_player_challenge_does_not_replace_a_newer_screen() {
+        let mut app = ready_app();
+        app.route = Route::Puzzles;
+        let mut context = Context::default();
+
+        app.handle_completed(
+            &mut context,
+            Pending::CreateChallenge {
+                username: "ReaderTwo".to_owned(),
+            },
+            b"",
+        );
+
+        assert_eq!(app.route, Route::Puzzles);
+        assert_eq!(app.notice.as_deref(), Some("Challenge sent to ReaderTwo"));
+    }
+
+    #[test]
+    fn closing_promotion_discards_the_pending_move() {
+        let mut app = app_with_game(&[], Color::White);
+        app.selected = Some("a7".to_owned());
+        app.promotion = Some(Promotion {
+            from: "a7".to_owned(),
+            to: "a8".to_owned(),
+            choices: vec!['q', 'r', 'b', 'n'],
+        });
+        let mut context = Context::default();
+        app.on_action(&mut context, ActionId::BACK);
+        assert!(app.promotion.is_none());
+        assert!(app.selected.is_none());
+        assert!(app.game.as_ref().expect("game").state.moves.is_empty());
+    }
+
+    #[test]
+    fn computer_game_cancel_keeps_playing_and_draw_finishes_locally() {
+        let mut app = ready_app();
+        let mut context = Context::default();
+        app.on_action(&mut context, action_id("play-computer"));
+        app.on_action(&mut context, action_id("confirm-resign"));
+        app.on_action(&mut context, action_id("cancel-confirm"));
+        assert!(app.game.as_ref().expect("game").active());
+        app.on_action(&mut context, action_id("offer-draw"));
+        assert_eq!(app.game.as_ref().expect("game").result(), "Draw agreed");
+        assert!(!context.commands().iter().any(|command| matches!(
+            command,
+            Command::Spawn {
+                work: kobo_sdk::Task::Fetch { .. } | kobo_sdk::Task::Post { .. },
+                ..
+            }
+        )));
+    }
+
+    #[test]
+    fn closing_a_result_keeps_the_final_board_open() {
+        let mut app = ready_app();
+        let mut context = Context::default();
+        app.start_computer_game(&mut context);
+        app.on_action(&mut context, action_id("offer-draw"));
+        assert!(app.game_screen().overlay.is_some());
+        app.on_action(&mut context, action_id("dismiss-result"));
+        assert_eq!(app.route, Route::Game);
+        assert!(app.game.is_some());
+        assert!(app.game_screen().overlay.is_none());
+    }
+
+    #[test]
+    fn invalid_challenge_username_stays_in_the_keyboard() {
+        let mut app = ready_app();
+        app.route = Route::ChallengePlayer;
+        app.challenge_keyboard = kobo_sdk::keyboard::Keyboard::with_text("../other");
+        let mut context = Context::default();
+        app.on_action(&mut context, action_id("kb.enter"));
+        assert_eq!(app.route, Route::ChallengePlayer);
+        assert_eq!(
+            app.notice.as_deref(),
+            Some("Enter a valid Lichess username")
+        );
+    }
+
+    #[test]
+    fn game_clocks_use_selected_dark_chips() {
+        fn selected(nodes: &[Node], action: ActionId) -> bool {
+            nodes.iter().any(|node| match node {
+                Node::Chips { chips, .. } => chips
+                    .iter()
+                    .any(|chip| chip.action == action && chip.selected),
+                Node::Band { slots, .. } => slots.iter().any(|slot| selected(&slot.nodes, action)),
+                _ => false,
+            })
+        }
+
+        let app = app_with_game(&["e2e4"], Color::Black);
+        let screen = app.game_screen();
+        assert!(selected(&screen.nodes, action_id("opponent-clock")));
+        assert!(selected(&screen.nodes, action_id("your-clock")));
+    }
+
+    #[test]
+    fn both_game_clocks_fit_the_physical_app_viewport() {
+        let metrics = DisplayMetrics {
+            height: CLARA_BW_METRICS.height - 58,
+            ..CLARA_BW_METRICS
+        };
+        let app = app_with_game(&["e2e4"], Color::Black);
+        let layout = app
+            .game_screen()
+            .layout_with(&metrics, &Chrome::with_back(true));
+        for action in [action_id("opponent-clock"), action_id("your-clock")] {
+            let clock = layout
+                .nodes
+                .iter()
+                .find(|node| node.kind == LayoutKind::Chip(action, true))
+                .expect("dark clock");
+            assert!(
+                clock.rect.y + clock.rect.height <= metrics.height,
+                "clock was clipped below the physical app viewport"
+            );
+        }
+    }
+
+    #[test]
     fn every_folio_preset_tile_launches_its_exact_seek() {
         for preset in api::SeekPreset::ALL {
             let mut runner = AppRunner::new(ready_app());
@@ -4584,6 +5430,18 @@ mod tests {
     }
 
     #[test]
+    fn tapping_an_owned_piece_switches_the_selection() {
+        let mut app = app_with_game(&[], Color::White);
+        let mut context = Context::default();
+        app.on_action(&mut context, action_id("square-e2"));
+        app.on_action(&mut context, action_id("square-d2"));
+        assert_eq!(app.selected.as_deref(), Some("d2"));
+        assert!(app.notice.is_none());
+        app.on_action(&mut context, action_id("square-d2"));
+        assert!(app.selected.is_none());
+    }
+
+    #[test]
     fn illegal_destination_flashes_and_keeps_the_piece_selected() {
         let mut app = app_with_game(&[], Color::White);
         let mut context = Context::default();
@@ -4601,20 +5459,26 @@ mod tests {
         let cells = board_cells(
             &app.game.as_ref().expect("game").fen,
             Color::White,
+            app.selected.as_deref(),
             app.invalid_square.as_deref(),
         );
         assert_eq!(
             cells
                 .iter()
-                .find(|(action, _, _)| action == "square-e5")
-                .map(|(_, label, _)| label.as_str()),
+                .find(|(action, _, _, _)| action == "square-e5")
+                .map(|(_, label, _, _)| label.as_str()),
             Some("×")
         );
+        assert!(cells
+            .iter()
+            .find(|(action, _, _, _)| action == "square-e2")
+            .is_some_and(|(_, _, _, selected)| *selected));
 
         app.total_ticks = app.invalid_until_tick;
         let cells = board_cells(
             &app.game.as_ref().expect("game").fen,
             Color::White,
+            app.selected.as_deref(),
             app.invalid_square
                 .as_deref()
                 .filter(|_| app.total_ticks < app.invalid_until_tick),
@@ -4622,8 +5486,8 @@ mod tests {
         assert_eq!(
             cells
                 .iter()
-                .find(|(action, _, _)| action == "square-e5")
-                .map(|(_, label, _)| label.as_str()),
+                .find(|(action, _, _, _)| action == "square-e5")
+                .map(|(_, label, _, _)| label.as_str()),
             Some(" ")
         );
     }
@@ -5999,6 +6863,18 @@ mod tests {
     }
 
     #[test]
+    fn playing_snapshot_does_not_close_an_offline_game() {
+        let mut app = ready_app();
+        let mut context = Context::default();
+        app.start_computer_game(&mut context);
+        app.handle_completed(&mut context, Pending::Playing, br#"{"nowPlaying":[]}"#);
+        assert_eq!(app.route, Route::Game);
+        assert!(app.local_game);
+        assert_eq!(app.game.as_ref().expect("game").id, "computer");
+        assert_eq!(app.session.as_ref().expect("session").game_id, "computer");
+    }
+
+    #[test]
     fn board_rate_limit_disables_actions_and_waits_retry_after() {
         let mut app = app_with_game(&[], Color::White);
         let mut context = Context::default();
@@ -6140,6 +7016,16 @@ mod tests {
         assert!(app.game.is_none());
         assert_eq!(app.route, Route::Play);
         assert!(!format!("{:?}", app.play_screen()).contains("Current board"));
+    }
+
+    #[test]
+    fn game_finish_on_live_board_does_not_duplicate_the_result() {
+        let mut app = app_with_game(&[], Color::White);
+        app.notice = Some("Move sent".to_owned());
+        let mut context = Context::default();
+        app.handle_event(&mut context, api::Event::GameFinish("abcdEF12".to_owned()));
+        assert!(app.notice.is_none());
+        assert!(app.has_pending(|pending| matches!(pending, Pending::BoardNext(_))));
     }
 
     #[test]
@@ -6518,5 +7404,27 @@ mod tests {
     fn clocks_are_large_stable_minute_second_strings() {
         assert_eq!(clock(600_000), "10:00");
         assert_eq!(clock(9_000), "00:09");
+    }
+
+    #[test]
+    fn flag_fall_ends_online_and_computer_games_with_a_result_dialog() {
+        for local in [false, true] {
+            let mut app = app_with_game(&[], Color::White);
+            app.local_game = local;
+            app.game.as_mut().expect("game").state.white_ms = 1_000;
+            app.selected = Some("e2".to_owned());
+            app.result_dismissed = true;
+            let mut context = Context::default();
+
+            assert!(app.finish_expired_clock(&mut context, 1_000));
+
+            let game = app.game.as_ref().expect("finished game");
+            assert_eq!(game.state.status, "outoftime");
+            assert_eq!(game.state.winner, Some(Color::Black));
+            assert!(!game.active());
+            assert_eq!(app.selected, None);
+            assert!(!app.result_dismissed);
+            assert!(format!("{:?}", app.game_screen()).contains("Black won by time"));
+        }
     }
 }

@@ -29,6 +29,13 @@ impl Color {
             Self::Black => 'b',
         }
     }
+
+    pub const fn opposite(self) -> Self {
+        match self {
+            Self::White => Self::Black,
+            Self::Black => Self::White,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -365,15 +372,58 @@ impl Game {
     }
 
     pub fn clock_ms(&self, color: Color, elapsed_seconds: u64) -> u64 {
+        self.clock_ms_elapsed(color, elapsed_seconds.saturating_mul(1000))
+    }
+
+    pub fn expire_clock(&mut self, elapsed_ms: u64) -> bool {
+        let Some(turn) = self.turn().filter(|_| self.active()) else {
+            return false;
+        };
+        if self.clock_ms_elapsed(turn, elapsed_ms) > 0 {
+            return false;
+        }
+        self.set_clock_ms(turn, 0);
+        "outoftime".clone_into(&mut self.state.status);
+        self.state.winner = self.timeout_winner(turn);
+        true
+    }
+
+    pub fn commit_turn_time(&mut self, elapsed_ms: u64) -> bool {
+        let Some(turn) = self.turn().filter(|_| self.active()) else {
+            return false;
+        };
+        let remaining = self.clock_ms_elapsed(turn, elapsed_ms);
+        self.set_clock_ms(turn, remaining);
+        if remaining > 0 {
+            return false;
+        }
+        "outoftime".clone_into(&mut self.state.status);
+        self.state.winner = self.timeout_winner(turn);
+        true
+    }
+
+    fn clock_ms_elapsed(&self, color: Color, elapsed_ms: u64) -> u64 {
         let server = match color {
             Color::White => self.state.white_ms,
             Color::Black => self.state.black_ms,
         };
         if self.active() && self.turn() == Some(color) {
-            server.saturating_sub(elapsed_seconds.saturating_mul(1000))
+            server.saturating_sub(elapsed_ms)
         } else {
             server
         }
+    }
+
+    fn set_clock_ms(&mut self, color: Color, milliseconds: u64) {
+        match color {
+            Color::White => self.state.white_ms = milliseconds,
+            Color::Black => self.state.black_ms = milliseconds,
+        }
+    }
+
+    fn timeout_winner(&self, loser: Color) -> Option<Color> {
+        let winner = loser.opposite();
+        chess::has_mating_material(&self.fen, winner.fen()).then_some(winner)
     }
 
     pub fn result(&self) -> String {
@@ -381,7 +431,10 @@ impl Game {
             "created" | "started" => "Game in progress".to_owned(),
             "mate" => winner_sentence(self.state.winner, "checkmate"),
             "resign" => winner_sentence(self.state.winner, "resignation"),
-            "outoftime" | "timeout" => winner_sentence(self.state.winner, "time"),
+            "outoftime" | "timeout" => self.state.winner.map_or_else(
+                || "Draw by timeout".to_owned(),
+                |winner| format!("{} won by time", winner.name()),
+            ),
             "stalemate" => "Draw by stalemate".to_owned(),
             "draw" => "Draw agreed".to_owned(),
             "aborted" | "nostart" => "Game aborted".to_owned(),
@@ -505,6 +558,65 @@ mod tests {
         let game = game("e2e4");
         assert_eq!(game.clock_ms(Color::White, 12), 600_000);
         assert_eq!(game.clock_ms(Color::Black, 12), 588_000);
+    }
+
+    #[test]
+    fn flag_fall_finishes_the_game_for_the_side_not_on_move() {
+        let mut game = game("e2e4");
+        game.state.black_ms = 1_000;
+
+        assert!(!game.expire_clock(999));
+        assert!(game.expire_clock(1_000));
+        assert_eq!(game.state.status, "outoftime");
+        assert_eq!(game.state.winner, Some(Color::White));
+        assert_eq!(game.state.black_ms, 0);
+        assert!(!game.active());
+        assert_eq!(game.result(), "White won by time");
+    }
+
+    #[test]
+    fn committed_thinking_time_survives_the_next_turn() {
+        let mut game = game("");
+        assert!(!game.commit_turn_time(1_250));
+        assert_eq!(game.state.white_ms, 598_750);
+
+        let mut moved = game.state.clone();
+        moved.moves.push("e2e4".to_owned());
+        game.apply(moved).expect("legal move");
+        assert_eq!(game.clock_ms(Color::White, 20), 598_750);
+        assert_eq!(game.clock_ms(Color::Black, 20), 580_000);
+    }
+
+    #[test]
+    fn flag_fall_is_a_draw_without_opposing_mating_material() {
+        let mut game = Game::from_full(
+            FullGame {
+                id: "abcdEF12".to_owned(),
+                initial_fen: "7k/8/8/8/8/8/8/K7 w - - 0 1".to_owned(),
+                rated: false,
+                speed: "offline".to_owned(),
+                white: Player {
+                    id: None,
+                    name: "White".to_owned(),
+                    rating: None,
+                },
+                black: Player {
+                    id: None,
+                    name: "Black".to_owned(),
+                    rating: None,
+                },
+                state: ServerState {
+                    white_ms: 1,
+                    ..state("")
+                },
+            },
+            Color::White,
+        )
+        .expect("game");
+
+        assert!(game.expire_clock(1));
+        assert_eq!(game.state.winner, None);
+        assert_eq!(game.result(), "Draw by timeout");
     }
 
     #[test]

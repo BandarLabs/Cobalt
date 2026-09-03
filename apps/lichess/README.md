@@ -2,9 +2,9 @@
 
 An unofficial, touch-first Lichess Board API client for Cobalt. It supports
 responsive Folio time-control presets, incoming standard-clock challenges,
-live games, two-tap legal move entry, vector pieces, promotion, clocks,
-reconnect, draw actions, resign, conservative abort, and opponent-gone
-victory claims.
+outgoing casual player challenges, live games, and an offline computer game.
+Boards use two-tap moves, vector pieces, promotion, dark clocks, draw actions,
+resign, and conservative abort.
 
 | Responsive presets | Live board | Pairing |
 | --- | --- | --- |
@@ -36,14 +36,16 @@ broadening credential authority.
 
 - Account validation and live detection of CLI-installed token changes
 - Rated random-color 10+0, 10+5, 15+10, 30+0, and 30+20 seeks
+- Casual challenges by Lichess username, time control, and side
+- Offline play against a bounded safe-Rust engine
 - One selected seek at a time, opened only after the event stream and
   current-game snapshot are ready
 - A uniquely matching new game opens immediately
 - Ended seeks reconcile once and are never replayed automatically
 - `gameStart`, `gameFinish`, and incoming challenge events
 - Board stream reconstruction from server-acknowledged UCI moves
-- White/black vector pieces, player clocks above and below the board, and a
-  portrait board that follows the player's side
+- White/black vector pieces, dark player clocks above and below the board,
+  and a portrait board that follows the player's side
 - Two-tap source/destination moves with a brief invalid-square mark
 - Castling, en passant, and four promotion choices
 - Last move, check, result, turn, server clocks, and opponent-gone countdown
@@ -59,6 +61,9 @@ broadening credential authority.
 - Takeback controls are not offered. A takeback made elsewhere causes an
   authoritative stream reopen instead of guessing at local history.
 - Only standard chess clock challenges are accepted.
+- Outgoing challenges are casual.
+- The offline engine uses deterministic alpha-beta search capped at depth four
+  and 5,000 nodes.
 - Abort is shown only before both players have moved; Lichess still makes the
   final API decision.
 - Draw acceptance and decline remain pending until the authoritative board

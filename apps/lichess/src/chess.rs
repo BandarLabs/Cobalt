@@ -8,7 +8,7 @@ use shakmaty::{
     fen::Fen,
     san::{San, SanPlus},
     uci::UciMove,
-    CastlingMode, Chess, EnPassantMode, Position,
+    CastlingMode, Chess, Color as ChessColor, EnPassantMode, Position,
 };
 
 pub const START: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
@@ -106,10 +106,82 @@ pub fn piece_belongs_to(fen: &str, square: &str, color: char) -> bool {
 }
 
 pub fn promotion_choices(fen: &str, from: &str, to: &str) -> Vec<char> {
+    let promotes = matches!(
+        (piece_at(fen, from), to.as_bytes().get(1)),
+        (Some('P'), Some(b'8')) | (Some('p'), Some(b'1'))
+    );
+    if !promotes {
+        return Vec::new();
+    }
     ['q', 'r', 'b', 'n']
         .into_iter()
         .filter(|promotion| legal(fen, &format!("{from}{to}{promotion}")))
         .collect()
+}
+
+pub fn tiny_move(fen: &str) -> Option<String> {
+    const MAX_DEPTH: u8 = 4;
+    const MAX_NODES: u32 = 5_000;
+    let position = position(fen)?;
+    let moves = ordered_moves(&position);
+    let mut chosen = moves.first().map(|(uci, _)| uci.clone())?;
+    for depth in 1..=MAX_DEPTH {
+        let mut nodes = 0;
+        let mut best: Option<(i32, String)> = None;
+        let mut complete = true;
+        for (uci, movement) in &moves {
+            let next = position.clone().play(movement).ok()?;
+            let Some(score) = tiny_search(
+                &next,
+                depth.saturating_sub(1),
+                -100_000,
+                100_000,
+                &mut nodes,
+                MAX_NODES,
+            )
+            .map(|score| -score) else {
+                complete = false;
+                break;
+            };
+            if best.as_ref().is_none_or(|(best_score, best_uci)| {
+                score > *best_score || score == *best_score && uci < best_uci
+            }) {
+                best = Some((score, uci.clone()));
+            }
+        }
+        if !complete {
+            break;
+        }
+        if let Some((_, movement)) = best {
+            chosen = movement;
+        }
+    }
+    Some(chosen)
+}
+
+pub fn terminal(fen: &str) -> Option<(&'static str, Option<char>)> {
+    let position = position(fen)?;
+    if position.is_checkmate() {
+        let winner = match side_to_move(fen)? {
+            'w' => 'b',
+            'b' => 'w',
+            _ => return None,
+        };
+        Some(("mate", Some(winner)))
+    } else if position.is_stalemate() || position.is_insufficient_material() {
+        Some(("stalemate", None))
+    } else {
+        None
+    }
+}
+
+pub fn has_mating_material(fen: &str, color: char) -> bool {
+    let color = match color {
+        'w' => ChessColor::White,
+        'b' => ChessColor::Black,
+        _ => return false,
+    };
+    position(fen).is_some_and(|position| !position.has_insufficient_material(color))
 }
 
 /// Replays normal PGN movetext through the move that creates a puzzle position.
@@ -160,10 +232,107 @@ fn move_for(fen: &str, uci: &str) -> Option<shakmaty::Move> {
         .ok()
 }
 
+fn tiny_search(
+    position: &Chess,
+    depth: u8,
+    mut alpha: i32,
+    beta: i32,
+    nodes: &mut u32,
+    max_nodes: u32,
+) -> Option<i32> {
+    if *nodes >= max_nodes {
+        return None;
+    }
+    *nodes = nodes.saturating_add(1);
+    if depth == 0 {
+        return Some(evaluate(position));
+    }
+    let moves = position.legal_moves();
+    if moves.is_empty() {
+        return Some(if position.is_check() {
+            -100_000 - i32::from(depth)
+        } else {
+            0
+        });
+    }
+    let mut best = i32::MIN + 1;
+    for (_, movement) in ordered_moves(position) {
+        let Ok(next) = position.clone().play(&movement) else {
+            continue;
+        };
+        let score = -tiny_search(&next, depth - 1, -beta, -alpha, nodes, max_nodes)?;
+        best = best.max(score);
+        alpha = alpha.max(score);
+        if alpha >= beta {
+            break;
+        }
+    }
+    Some(best)
+}
+
+fn ordered_moves(position: &Chess) -> Vec<(String, shakmaty::Move)> {
+    let mut moves = position
+        .legal_moves()
+        .into_iter()
+        .filter_map(|movement| {
+            let uci = movement.to_uci(CastlingMode::Standard).to_string();
+            let next = position.clone().play(&movement).ok()?;
+            Some((uci, movement, -evaluate(&next)))
+        })
+        .collect::<Vec<_>>();
+    moves.sort_by(|left, right| right.2.cmp(&left.2).then_with(|| left.0.cmp(&right.0)));
+    moves
+        .into_iter()
+        .map(|(uci, movement, _)| (uci, movement))
+        .collect()
+}
+
+fn evaluate(position: &Chess) -> i32 {
+    let fen = Fen::from_position(position.clone(), EnPassantMode::Legal).to_string();
+    let mut score = 0;
+    let mut rank = 0_i32;
+    let mut file = 0_i32;
+    for character in fen.split_whitespace().next().unwrap_or_default().chars() {
+        if character == '/' {
+            rank += 1;
+            file = 0;
+            continue;
+        }
+        if let Some(empty) = character.to_digit(10) {
+            file += i32::try_from(empty).unwrap_or_default();
+            continue;
+        }
+        let center = 14 - ((file * 2 - 7).abs() + (rank * 2 - 7).abs());
+        let white = character.is_ascii_uppercase();
+        let advancement = if white { 6 - rank } else { rank - 1 }.max(0);
+        let value = match character.to_ascii_lowercase() {
+            'p' => 100 + advancement * 8 + center * 2,
+            'n' => 320 + center * 8,
+            'b' => 330 + center * 4,
+            'r' => 500 + center,
+            'q' => 900 + center,
+            'k' => {
+                let castled = (white && rank == 7 || !white && rank == 0) && matches!(file, 2 | 6);
+                i32::from(castled) * 35
+            }
+            _ => 0,
+        };
+        score += if white { value } else { -value };
+        file += 1;
+    }
+    let mobility = i32::try_from(position.legal_moves().len()).unwrap_or_default() * 2;
+    match side_to_move(&fen) {
+        Some('w') => score + mobility,
+        Some('b') => -score + mobility,
+        _ => 0,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        legal, piece_at, piece_belongs_to, play, promotion_choices, puzzle_position, replay, START,
+        legal, piece_at, piece_belongs_to, play, promotion_choices, puzzle_position, replay,
+        terminal, tiny_move, START,
     };
     use shakmaty::{fen::Fen, perft, CastlingMode, Chess};
 
@@ -190,6 +359,8 @@ mod tests {
             promotion_choices(promotion, "a7", "a8"),
             ['q', 'r', 'b', 'n']
         );
+        let ordinary_capture = "4k3/8/5n2/4P3/8/8/8/4K3 w - - 0 1";
+        assert!(promotion_choices(ordinary_capture, "e5", "f6").is_empty());
         let pinned = "4r2k/8/8/8/8/8/4N3/4K3 w - - 0 1";
         assert!(!legal(pinned, "e2c1"));
     }
@@ -214,5 +385,17 @@ mod tests {
     fn pgn_replay_includes_the_move_that_creates_the_puzzle() {
         let fen = puzzle_position("1. e4 e5 2. Nf3 Nc6", 2).expect("position");
         assert!(legal(&fen, "b8c6"));
+    }
+
+    #[test]
+    fn tiny_engine_is_deterministic_and_terminal_positions_are_recognized() {
+        let (after_e4, _) = play(START, "e2e4").expect("opening");
+        let first = tiny_move(&after_e4).expect("move");
+        assert_eq!(first, "g8f6");
+        assert_eq!(tiny_move(&after_e4).as_deref(), Some(first.as_str()));
+        assert_eq!(
+            terminal("7k/6Q1/6K1/8/8/8/8/8 b - - 0 1"),
+            Some(("mate", Some('w')))
+        );
     }
 }

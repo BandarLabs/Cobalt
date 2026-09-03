@@ -2,4 +2,5 @@ expect KnightReader
 expect White won by checkmate
 shot result
 tap White won by checkmate
-wait-for Account/Games
+wait-for KnightReader
+shot final-board
