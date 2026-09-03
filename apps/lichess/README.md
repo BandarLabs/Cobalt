@@ -40,8 +40,10 @@ broadening credential authority.
 ## Supported
 
 - Account validation and clear missing/invalid/expired-token guidance
-- Rated, random-color 3+0, 3+2, 5+0, 5+3, 10+0, 10+5, 15+10, 30+0, and
-  30+20 standard seeks; bullet presets are intentionally omitted for e-ink
+- Lichess Board API rated, random-color 3+0, 3+2, 5+0, and 5+3 Blitz seeks,
+  plus 10+0, 10+5, 15+10, 30+0, and 30+20. Blitz is supported by the Board
+  API; Bullet 1+0 and 2+1 are omitted only because e-ink latency makes them
+  unsuitable
 - One selected seek at a time, opened only after the event stream and
   current-game snapshot are ready
 - Account-global game starts require on-device confirmation before the seek is
