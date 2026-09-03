@@ -7,6 +7,7 @@ members = [
     "crates/kobo-doc",
     "crates/kobo-doctor",
     "crates/kobo-dict",
+    "crates/kobo-frame-host",
     "crates/kobo-hal",
     "crates/kobo-html",
     "crates/kobo-image",
@@ -21,6 +22,7 @@ members = [
     "crates/kobo-protocol",
     "crates/kobo-sdk",
     "crates/kobo-shell",
+    "crates/kobo-stream",
     "crates/kobo-sidekickd",
     "crates/kobo-sim",
     "crates/kobo-smoke",
@@ -83,7 +85,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.3.1"
+version = "0.3.2"
 edition = "2021"
 rust-version = "1.85.1"
 license = "AGPL-3.0-only"

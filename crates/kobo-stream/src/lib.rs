@@ -1,0 +1,936 @@
+//! The host half of Paperterm: a bounded terminal model and authenticated TLS
+//! transport.  Terminal bytes never cross a disk boundary.
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::missing_errors_doc,
+    clippy::needless_pass_by_value,
+    clippy::too_many_arguments,
+    clippy::too_many_lines
+)]
+use std::io::{Read, Write};
+use std::net::TcpListener;
+use std::path::PathBuf;
+use std::process::Command;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Condvar, Mutex};
+use std::time::{Duration, Instant};
+
+/// TCP port reserved for Paperterm's TLS listener.
+pub const DEFAULT_PORT: u16 = 9332;
+/// The maximum time one `/screen` request may wait for a changed row.
+pub const LONGEST_POLL: Duration = Duration::from_secs(25);
+/// The maximum number of decoded input bytes accepted in one request.
+pub const MAX_KEY_BYTES: usize = 64;
+/// Snapshot cadence: two settled views per second.
+pub const SNAPSHOT_INTERVAL: Duration = Duration::from_millis(500);
+const MAX_REQUEST: usize = 64 * 1024;
+const MAX_READERS: usize = 16;
+const FINAL_SCREEN_FOR: Duration = Duration::from_secs(60);
+
+/// The negotiated immutable terminal geometry.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Grid {
+    pub columns: u16,
+    pub rows: u16,
+}
+
+impl Grid {
+    #[must_use]
+    pub const fn fallback() -> Self {
+        Self {
+            columns: 100,
+            rows: 35,
+        }
+    }
+
+    /// Parses `COLSxROWS`, with sensible non-zero terminal bounds.
+    pub fn parse(text: &str) -> Result<Self, String> {
+        let (columns, rows) = text.split_once('x').ok_or("grid must be COLSxROWS")?;
+        let columns = columns
+            .parse::<u16>()
+            .map_err(|_| "grid columns must be a number")?;
+        let rows = rows
+            .parse::<u16>()
+            .map_err(|_| "grid rows must be a number")?;
+        if columns == 0 || rows == 0 || columns > 300 || rows > 120 {
+            return Err("grid is outside 1x1 through 300x120".to_owned());
+        }
+        Ok(Self { columns, rows })
+    }
+
+    #[must_use]
+    pub fn words(self) -> String {
+        format!("{}x{}", self.columns, self.rows)
+    }
+}
+
+/// Device input policy advertised during `/hello`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum InputMode {
+    None,
+    Controls,
+    Full,
+}
+
+impl InputMode {
+    #[must_use]
+    pub const fn wire(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Controls => "controls",
+            Self::Full => "full",
+        }
+    }
+}
+
+/// A terminal row and its one supported attribute: the cursor.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Row {
+    pub y: u16,
+    pub cells: String,
+    pub cursor: Option<u16>,
+}
+
+/// A bounded screen reply. `rows` is full only for sequence zero.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Screen {
+    pub seq: u64,
+    pub rows: Vec<Row>,
+    pub ended: bool,
+    pub exit: Option<i32>,
+}
+
+/// Control-strip bytes. This is deliberately shared by request validation and
+/// the device documentation; controls mode accepts no other terminal input.
+pub const CONTROL_BYTES: [&[u8]; 9] = [
+    b"\x1b[A", b"\x1b[B", b"\x1b[D", b"\x1b[C", b"\r", b"\x1b", b"y", b"n", b"\x03",
+];
+
+/// Whether this exact input is permitted by the advertised mode.
+#[must_use]
+pub fn permits_input(mode: InputMode, bytes: &[u8]) -> bool {
+    bytes.len() <= MAX_KEY_BYTES
+        && match mode {
+            InputMode::None => false,
+            InputMode::Controls => CONTROL_BYTES.contains(&bytes),
+            InputMode::Full => true,
+        }
+}
+
+struct Terminal {
+    parser: vt100::Parser,
+    grid: Grid,
+    previous: Vec<String>,
+    seq: u64,
+    ended: Option<i32>,
+    last_snapshot: Instant,
+    dirty: bool,
+}
+
+impl Terminal {
+    fn new(grid: Grid) -> Self {
+        Self {
+            parser: vt100::Parser::new(grid.rows, grid.columns, 0),
+            grid,
+            previous: Vec::new(),
+            seq: 0,
+            ended: None,
+            last_snapshot: Instant::now()
+                .checked_sub(SNAPSHOT_INTERVAL)
+                .unwrap_or_else(Instant::now),
+            dirty: true,
+        }
+    }
+
+    fn feed(&mut self, bytes: &[u8]) {
+        self.parser.process(bytes);
+        self.dirty = true;
+    }
+
+    fn finish(&mut self, status: i32) {
+        self.ended = Some(status);
+        self.dirty = true;
+    }
+
+    fn screen(&mut self, since: u64) -> Screen {
+        if since != 0 && (!self.dirty || self.last_snapshot.elapsed() < SNAPSHOT_INTERVAL) {
+            return Screen {
+                seq: self.seq,
+                rows: Vec::new(),
+                ended: self.ended.is_some(),
+                exit: self.ended,
+            };
+        }
+        let visible: Vec<String> = self
+            .parser
+            .screen()
+            .rows(0, self.grid.columns)
+            .take(self.grid.rows as usize)
+            .map(substitute)
+            .collect();
+        let (cursor_y, cursor_x) = self.parser.screen().cursor_position();
+        let cursor_visible = !self.parser.screen().hide_cursor()
+            && cursor_y < self.grid.rows
+            && cursor_x < self.grid.columns;
+        let changed = visible != self.previous;
+        if changed {
+            self.seq = self.seq.saturating_add(1);
+        }
+        let full = since == 0;
+        let rows = visible
+            .iter()
+            .enumerate()
+            .filter(|(index, row)| full || self.previous.get(*index) != Some(*row))
+            .map(|(index, cells)| Row {
+                y: index as u16,
+                cells: cells.clone(),
+                cursor: (cursor_visible && cursor_y as usize == index).then_some(cursor_x),
+            })
+            .collect();
+        self.previous = visible;
+        self.dirty = false;
+        self.last_snapshot = Instant::now();
+        Screen {
+            seq: self.seq,
+            rows,
+            ended: self.ended.is_some(),
+            exit: self.ended,
+        }
+    }
+}
+
+/// Host-owned live screen. It is synchronised so a long poll never races a
+/// terminal reader or sees half an escape sequence.
+pub struct Session {
+    terminal: Mutex<Terminal>,
+    changed: Condvar,
+}
+
+impl Session {
+    #[must_use]
+    pub fn new(grid: Grid) -> Self {
+        Self {
+            terminal: Mutex::new(Terminal::new(grid)),
+            changed: Condvar::new(),
+        }
+    }
+
+    pub fn feed(&self, bytes: &[u8]) {
+        if let Ok(mut terminal) = self.terminal.lock() {
+            terminal.feed(bytes);
+            self.changed.notify_all();
+        }
+    }
+
+    pub fn finish(&self, status: i32) {
+        if let Ok(mut terminal) = self.terminal.lock() {
+            terminal.finish(status);
+            self.changed.notify_all();
+        }
+    }
+
+    #[must_use]
+    pub fn screen(&self, since: u64) -> Screen {
+        self.terminal.lock().map_or_else(
+            |_| Screen {
+                seq: 0,
+                rows: Vec::new(),
+                ended: true,
+                exit: Some(1),
+            },
+            |mut terminal| terminal.screen(since),
+        )
+    }
+}
+
+/// Arguments for one non-interactive `kobo stream` invocation.
+#[derive(Clone, Debug)]
+pub struct Options {
+    pub grid: Grid,
+    pub controls: bool,
+    pub interactive: bool,
+    pub port: u16,
+    pub command: Vec<String>,
+}
+
+impl Options {
+    #[must_use]
+    pub const fn input_mode(&self) -> InputMode {
+        if self.interactive {
+            InputMode::Full
+        } else if self.controls {
+            InputMode::Controls
+        } else {
+            InputMode::None
+        }
+    }
+}
+
+/// Runs the command and serves the current terminal screen over TLS.
+///
+/// The host and reader both attach to the one PTY, so full-screen programs
+/// receive a real controlling terminal, grid, job control, and input bytes.
+pub fn run(options: Options) -> Result<i32, String> {
+    if options.command.is_empty() {
+        return Err("kobo stream needs a command after --".to_owned());
+    }
+    let identity = Identity::load()?;
+    let tls = kobo_net::serve::TlsServer::from_pem(&identity.certificate, &identity.key)?;
+    let listener = TcpListener::bind(("0.0.0.0", options.port))
+        .map_err(|error| format!("bind 0.0.0.0:{}: {error}", options.port))?;
+    listener
+        .set_nonblocking(true)
+        .map_err(|error| format!("configure listener: {error}"))?;
+    let arguments: Vec<&str> = options.command[1..].iter().map(String::as_str).collect();
+    let pty = kobo_abi::pty::Pty::spawn(
+        &options.command[0],
+        &arguments,
+        &[("TERM", "xterm-256color")],
+        options.grid.columns,
+        options.grid.rows,
+    )
+    .map_err(|error| format!("start {} in a terminal: {error}", options.command[0]))?;
+    let input = Arc::new(Mutex::new(pty));
+    let session = Arc::new(Session::new(options.grid));
+    let mut raw_stdin = RawStdin::enable();
+    forward_stdin(Arc::clone(&input));
+    let session_id = random_session()?;
+    let title = options.command[0].clone();
+    let mode = options.input_mode();
+    let grid = options.grid;
+    let mut ended_at = None;
+    let readers = Arc::new(AtomicUsize::new(0));
+    loop {
+        if ended_at.is_none() {
+            drain_pty(&input, &session);
+            if let Some(code) = input
+                .lock()
+                .map_err(|_| "terminal lock failed")?
+                .finished()
+                .map_err(|error| format!("wait for command: {error}"))?
+            {
+                drop(raw_stdin.take());
+                session.finish(code);
+                ended_at = Some(Instant::now());
+            }
+        }
+        if ended_at.is_some_and(|when| when.elapsed() >= FINAL_SCREEN_FOR) {
+            break;
+        }
+        match listener.accept() {
+            Ok((socket, _)) => {
+                if readers
+                    .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+                        (count < MAX_READERS).then_some(count + 1)
+                    })
+                    .is_err()
+                {
+                    continue;
+                }
+                let slot = ReaderSlot(Arc::clone(&readers));
+                let session = Arc::clone(&session);
+                let code = identity.pairing.clone();
+                let input = Arc::clone(&input);
+                let title = title.clone();
+                socket
+                    .set_nonblocking(false)
+                    .map_err(|error| format!("configure Paperterm reader: {error}"))?;
+                let _ = socket.set_read_timeout(Some(Duration::from_secs(10)));
+                let _ = socket.set_write_timeout(Some(Duration::from_secs(30)));
+                let tls = tls.accept(socket)?;
+                std::thread::spawn(move || {
+                    let _slot = slot;
+                    let mut stream = tls;
+                    if let Err(error) = route(
+                        &mut stream,
+                        &code,
+                        session_id,
+                        &title,
+                        grid,
+                        mode,
+                        &input,
+                        &session,
+                    ) {
+                        eprintln!("Paperterm connection ended: {error}");
+                    }
+                });
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            Err(error) => return Err(format!("accept Paperterm reader: {error}")),
+        }
+    }
+    Ok(session.screen(0).exit.unwrap_or(0))
+}
+
+struct ReaderSlot(Arc<AtomicUsize>);
+
+impl Drop for ReaderSlot {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+/// Restores the caller's terminal even when the child exits unexpectedly.
+struct RawStdin(String);
+
+impl RawStdin {
+    fn enable() -> Option<Self> {
+        let saved = Command::new("stty").arg("-g").output().ok()?;
+        if !saved.status.success() {
+            return None;
+        }
+        let state = String::from_utf8(saved.stdout).ok()?.trim().to_owned();
+        (!state.is_empty()
+            && Command::new("stty")
+                .args(["raw", "-echo"])
+                .status()
+                .is_ok_and(|status| status.success()))
+        .then_some(Self(state))
+    }
+}
+
+impl Drop for RawStdin {
+    fn drop(&mut self) {
+        let _ignored = Command::new("stty").arg(&self.0).status();
+    }
+}
+
+fn forward_stdin(pty: Arc<Mutex<kobo_abi::pty::Pty>>) {
+    std::thread::spawn(move || {
+        let mut stdin = std::io::stdin().lock();
+        let mut bytes = [0_u8; 1024];
+        while let Ok(read) = stdin.read(&mut bytes) {
+            if read == 0 {
+                break;
+            }
+            if pty
+                .lock()
+                .is_ok_and(|mut terminal| terminal.write(&bytes[..read]).is_ok())
+            {
+                continue;
+            }
+            break;
+        }
+    });
+}
+
+/// Drains whatever the PTY reader has already delivered without holding the
+/// input lock while waiting. Device key writes therefore never wait behind
+/// output from a noisy full-screen application.
+fn drain_pty(pty: &Mutex<kobo_abi::pty::Pty>, session: &Session) {
+    let Ok(terminal) = pty.lock() else { return };
+    while let Ok(bytes) = terminal.output().try_recv() {
+        let _ = std::io::stdout().write_all(&bytes);
+        session.feed(&bytes);
+    }
+}
+
+/// A stream identity, intentionally separate from Sidekick's identity.
+pub struct Identity {
+    certificate: String,
+    key: String,
+    pairing: String,
+}
+impl Identity {
+    pub fn load() -> Result<Self, String> {
+        let directory = identity_dir()?;
+        let read = |name| {
+            std::fs::read_to_string(directory.join(name))
+                .map_err(|_| format!("no {name} in {}; run kobo stream init", directory.display()))
+        };
+        Ok(Self {
+            certificate: read("cert.pem")?,
+            key: read("key.pem")?,
+            pairing: read("pairing")?.trim().to_owned(),
+        })
+    }
+}
+
+/// Initialises a CA, leaf certificate, and pairing code for the stream host.
+pub fn init(hosts: &[String]) -> Result<(), String> {
+    let mut requested_hosts = Vec::new();
+    let mut arguments = hosts.iter();
+    while let Some(argument) = arguments.next() {
+        if argument != "--host" {
+            return Err(format!(
+                "unknown argument '{argument}'; expected --host ADDRESS"
+            ));
+        }
+        requested_hosts.push(
+            arguments
+                .next()
+                .ok_or("--host needs an address")?
+                .to_owned(),
+        );
+    }
+    let directory = identity_dir()?;
+    std::fs::create_dir_all(&directory)
+        .map_err(|error| format!("create {}: {error}", directory.display()))?;
+    let ca = directory.join("ca-cert.pem");
+    let key = directory.join("ca-key.pem");
+    if !ca.exists() || !key.exists() {
+        let output = Command::new("openssl")
+            .args([
+                "req", "-x509", "-newkey", "rsa:2048", "-sha256", "-days", "3650", "-nodes",
+                "-keyout",
+            ])
+            .arg(&key)
+            .arg("-out")
+            .arg(&ca)
+            .args([
+                "-subj",
+                "/CN=kobo-stream authority",
+                "-addext",
+                "basicConstraints=critical,CA:TRUE",
+            ])
+            .output()
+            .map_err(|error| format!("run openssl: {error}"))?;
+        if !output.status.success() {
+            return Err(format!(
+                "openssl refused the stream authority: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+    }
+    let leaf = directory.join("cert.pem");
+    let leaf_key = directory.join("key.pem");
+    if !leaf.exists() || !leaf_key.exists() || !requested_hosts.is_empty() {
+        let request = directory.join("leaf.csr");
+        let extensions = directory.join("leaf.ext");
+        let mut names = vec!["IP:127.0.0.1".to_owned()];
+        names.extend(requested_hosts.iter().map(|host| {
+            if host.parse::<std::net::IpAddr>().is_ok() {
+                format!("IP:{host}")
+            } else {
+                format!("DNS:{host}")
+            }
+        }));
+        std::fs::write(
+            &extensions,
+            format!(
+                "subjectAltName={}\nbasicConstraints=CA:FALSE\nkeyUsage=digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\n",
+                names.join(",")
+            ),
+        )
+        .map_err(|error| format!("write leaf extensions: {error}"))?;
+        let request_output = Command::new("openssl")
+            .args(["req", "-newkey", "rsa:2048", "-nodes", "-keyout"])
+            .arg(&leaf_key)
+            .arg("-out")
+            .arg(&request)
+            .args(["-subj", "/CN=kobo-stream"])
+            .output()
+            .map_err(|error| format!("run openssl: {error}"))?;
+        if !request_output.status.success() {
+            return Err(format!(
+                "openssl refused the stream leaf: {}",
+                String::from_utf8_lossy(&request_output.stderr)
+            ));
+        }
+        let signed = Command::new("openssl")
+            .args([
+                "x509",
+                "-req",
+                "-sha256",
+                "-days",
+                "3650",
+                "-CAcreateserial",
+            ])
+            .arg("-in")
+            .arg(&request)
+            .arg("-CA")
+            .arg(&ca)
+            .arg("-CAkey")
+            .arg(&key)
+            .arg("-extfile")
+            .arg(&extensions)
+            .arg("-out")
+            .arg(&leaf)
+            .output()
+            .map_err(|error| format!("run openssl: {error}"))?;
+        let _ = std::fs::remove_file(request);
+        let _ = std::fs::remove_file(extensions);
+        if !signed.status.success() {
+            return Err(format!(
+                "openssl refused to sign the stream leaf: {}",
+                String::from_utf8_lossy(&signed.stderr)
+            ));
+        }
+        let authority =
+            std::fs::read_to_string(&ca).map_err(|error| format!("read authority: {error}"))?;
+        let certificate =
+            std::fs::read_to_string(&leaf).map_err(|error| format!("read stream leaf: {error}"))?;
+        std::fs::write(&leaf, format!("{certificate}{authority}"))
+            .map_err(|error| format!("write stream chain: {error}"))?;
+    }
+    let pairing_path = directory.join("pairing");
+    let pairing = std::fs::read_to_string(&pairing_path)
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+        .unwrap_or(pairing_code()?);
+    std::fs::write(&pairing_path, &pairing).map_err(|error| format!("write pairing: {error}"))?;
+    let trust = config_dir()?.join("trust");
+    std::fs::create_dir_all(&trust)
+        .map_err(|error| format!("create {}: {error}", trust.display()))?;
+    std::fs::copy(&ca, trust.join("stream.pem"))
+        .map_err(|error| format!("install stream trust root: {error}"))?;
+    let address = requested_hosts
+        .first()
+        .cloned()
+        .unwrap_or_else(|| "your-computer".to_owned());
+    println!("Paperterm is initialised.\n\n  address       {address}:{DEFAULT_PORT}\n  pairing code  {}\n\nNext: kobo trust set stream --device READER_IP", std::fs::read_to_string(pairing_path).unwrap_or_default().trim());
+    Ok(())
+}
+
+fn config_dir() -> Result<PathBuf, String> {
+    let home = std::env::var_os("HOME").ok_or("no HOME in the environment")?;
+    Ok(PathBuf::from(home).join(".config").join("kobo"))
+}
+fn identity_dir() -> Result<PathBuf, String> {
+    Ok(config_dir()?.join("stream"))
+}
+fn pairing_code() -> Result<String, String> {
+    const ALPHABET: &[u8] = b"abcdefghjkmnpqrstuvwxyz23456789";
+    let mut bytes = [0_u8; 6];
+    std::fs::File::open("/dev/urandom")
+        .and_then(|mut file| file.read_exact(&mut bytes))
+        .map_err(|error| format!("read randomness: {error}"))?;
+    Ok(bytes
+        .iter()
+        .map(|byte| ALPHABET[usize::from(*byte) % ALPHABET.len()] as char)
+        .collect())
+}
+fn route(
+    stream: &mut kobo_net::serve::TlsStream,
+    pairing: &str,
+    session_id: u64,
+    title: &str,
+    grid: Grid,
+    mode: InputMode,
+    input: &Mutex<kobo_abi::pty::Pty>,
+    session: &Session,
+) -> Result<(), String> {
+    let request = read_request(stream)?;
+    let token = query(&request.target, "token");
+    if token.as_deref() != Some(pairing) {
+        return respond(stream, 403, "{}");
+    }
+    match (request.method.as_str(), request.path()) {
+        ("GET", "/hello") => respond(
+            stream,
+            200,
+            &format!(
+                r#"{{"session":{session_id},"grid":"{}","title":{},"input":"{}"}}"#,
+                grid.words(),
+                json(title),
+                mode.wire()
+            ),
+        ),
+        ("GET", "/screen") => {
+            let received = query(&request.target, "session").and_then(|value| value.parse().ok());
+            if received != Some(session_id) {
+                return respond(stream, 409, r#"{"restart":true}"#);
+            }
+            let since = query(&request.target, "seq")
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(0);
+            let started = Instant::now();
+            let mut screen = session.screen(since);
+            while screen.rows.is_empty() && !screen.ended && started.elapsed() < LONGEST_POLL {
+                std::thread::sleep(Duration::from_millis(100));
+                screen = session.screen(since);
+            }
+            respond(stream, 200, &screen_json(&screen))
+        }
+        ("POST", "/keys") => {
+            let body = String::from_utf8_lossy(&request.body);
+            let parsed = kobo_json::parse(&body).map_err(|_| "invalid keys JSON")?;
+            if parsed.get("session").and_then(kobo_json::Value::as_i64) != Some(session_id as i64) {
+                return respond(stream, 409, "{}");
+            }
+            let bytes = parsed
+                .get("bytes_b64")
+                .and_then(kobo_json::Value::as_str)
+                .and_then(decode_base64)
+                .ok_or("invalid key bytes")?;
+            if !permits_input(mode, &bytes) {
+                return respond(stream, 403, r#"{"accepted":false}"#);
+            }
+            let mut terminal = input.lock().map_err(|_| "terminal input lock failed")?;
+            terminal
+                .write(&bytes)
+                .map_err(|error| format!("write terminal input: {error}"))?;
+            respond(stream, 200, r#"{"accepted":true}"#)
+        }
+        _ => respond(stream, 404, "{}"),
+    }
+}
+
+struct Request {
+    method: String,
+    target: String,
+    body: Vec<u8>,
+}
+impl Request {
+    fn path(&self) -> &str {
+        self.target
+            .split_once('?')
+            .map_or(&self.target, |(path, _)| path)
+    }
+}
+fn read_request(stream: &mut impl Read) -> Result<Request, String> {
+    let mut bytes = Vec::new();
+    let mut chunk = [0_u8; 1024];
+    let end = loop {
+        if let Some(index) = bytes.windows(4).position(|window| window == b"\r\n\r\n") {
+            break index;
+        }
+        if bytes.len() > MAX_REQUEST {
+            return Err("request too large".to_owned());
+        }
+        let count = stream.read(&mut chunk).map_err(|error| error.to_string())?;
+        if count == 0 {
+            return Err("closed request".to_owned());
+        }
+        bytes.extend_from_slice(&chunk[..count]);
+    };
+    let head = String::from_utf8_lossy(&bytes[..end]);
+    let mut lines = head.lines();
+    let mut words = lines.next().ok_or("empty request")?.split_whitespace();
+    let method = words.next().ok_or("no method")?.to_owned();
+    let target = words.next().ok_or("no target")?.to_owned();
+    let length = lines
+        .filter_map(|line| line.split_once(':'))
+        .find(|(name, _)| name.eq_ignore_ascii_case("content-length"))
+        .and_then(|(_, value)| value.trim().parse::<usize>().ok())
+        .unwrap_or(0);
+    if length > MAX_REQUEST {
+        return Err("request body too large".to_owned());
+    }
+    let mut body = bytes[end + 4..].to_vec();
+    while body.len() < length {
+        let count = stream.read(&mut chunk).map_err(|error| error.to_string())?;
+        if count == 0 {
+            return Err("closed request body".to_owned());
+        }
+        body.extend_from_slice(&chunk[..count]);
+    }
+    body.truncate(length);
+    Ok(Request {
+        method,
+        target,
+        body,
+    })
+}
+fn query(target: &str, wanted: &str) -> Option<String> {
+    target
+        .split_once('?')?
+        .1
+        .split('&')
+        .filter_map(|pair| pair.split_once('='))
+        .find(|(name, _)| *name == wanted)
+        .map(|(_, value)| value.to_owned())
+}
+fn respond(stream: &mut impl Write, status: u16, body: &str) -> Result<(), String> {
+    write!(stream, "HTTP/1.1 {status} OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).map_err(|error| error.to_string())?;
+    stream.flush().map_err(|error| error.to_string())
+}
+fn json(text: &str) -> String {
+    format!("{text:?}")
+}
+fn screen_json(screen: &Screen) -> String {
+    let rows = screen
+        .rows
+        .iter()
+        .map(|row| {
+            format!(
+                r#"{{"y":{},"cells":{},"cursor":{}}}"#,
+                row.y,
+                json(&row.cells),
+                row.cursor
+                    .map_or_else(|| "null".to_owned(), |column| column.to_string())
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    format!(
+        r#"{{"seq":{},"rows":[{rows}],"ended":{},"exit":{}}}"#,
+        screen.seq,
+        screen.ended,
+        screen
+            .exit
+            .map_or_else(|| "null".to_owned(), |exit| exit.to_string())
+    )
+}
+fn substitute(text: String) -> String {
+    text.chars()
+        .map(|character| match character {
+            '\u{2580}'..='\u{259f}' => '#',
+            '\u{2800}'..='\u{28ff}' => '·',
+            character
+                if character > '\u{7f}' && !('\u{2500}'..='\u{257f}').contains(&character) =>
+            {
+                '·'
+            }
+            character => character,
+        })
+        .collect()
+}
+fn random_session() -> Result<u64, String> {
+    let mut bytes = [0_u8; 8];
+    std::fs::File::open("/dev/urandom")
+        .and_then(|mut file| file.read_exact(&mut bytes))
+        .map_err(|error| format!("read randomness: {error}"))?;
+    Ok(u64::from_le_bytes(bytes) & i64::MAX as u64)
+}
+fn decode_base64(text: &str) -> Option<Vec<u8>> {
+    const A: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    if text.len() % 4 != 0 {
+        return None;
+    }
+    let mut out = Vec::new();
+    for group in text.as_bytes().chunks(4) {
+        let value = |byte| {
+            A.bytes()
+                .position(|candidate| candidate == byte)
+                .map(|value| value as u32)
+        };
+        let a = value(group[0])?;
+        let b = value(group[1])?;
+        let c = if group[2] == b'=' {
+            0
+        } else {
+            value(group[2])?
+        };
+        let d = if group[3] == b'=' {
+            0
+        } else {
+            value(group[3])?
+        };
+        out.push((a << 2 | b >> 4) as u8);
+        if group[2] != b'=' {
+            out.push((b << 4 | c >> 2) as u8);
+        }
+        if group[3] != b'=' {
+            out.push((c << 6 | d) as u8);
+        }
+    }
+    Some(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reader_slot_is_released_when_a_connection_thread_ends() {
+        let readers = Arc::new(AtomicUsize::new(1));
+        {
+            let _slot = ReaderSlot(Arc::clone(&readers));
+            assert_eq!(readers.load(Ordering::Acquire), 1);
+        }
+        assert_eq!(readers.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
+    fn controls_are_a_closed_whitelist() {
+        assert!(permits_input(InputMode::Controls, b"\x1b[A"));
+        assert!(permits_input(InputMode::Controls, b"\x03"));
+        assert!(!permits_input(InputMode::Controls, b"rm -rf /"));
+        assert!(!permits_input(InputMode::None, b"y"));
+    }
+    #[test]
+    fn rows_diff_after_terminal_bytes_and_substitute_braille() {
+        let session = Session::new(Grid {
+            columns: 12,
+            rows: 2,
+        });
+        assert_eq!(session.screen(0).rows.len(), 2);
+        session.feed(b"ok \xe2\xa0\x80");
+        assert!(
+            session.screen(1).rows.is_empty(),
+            "a new frame cannot arrive before the 2 Hz snapshot"
+        );
+        std::thread::sleep(SNAPSHOT_INTERVAL);
+        let changed = session.screen(1);
+        assert_eq!(changed.rows.len(), 1);
+        assert_eq!(changed.rows[0].cells.trim(), "ok ·");
+        assert!(session.screen(changed.seq).rows.is_empty());
+    }
+    #[test]
+    fn multiple_terminal_updates_share_one_snapshot() {
+        let session = Session::new(Grid {
+            columns: 12,
+            rows: 2,
+        });
+        let first = session.screen(0).seq;
+        session.feed(b"first");
+        session.feed(b"\rsecond");
+        std::thread::sleep(SNAPSHOT_INTERVAL);
+        let frame = session.screen(first);
+        assert_eq!(frame.rows.len(), 1);
+        assert_eq!(frame.rows[0].cells.trim(), "second");
+    }
+    #[test]
+    fn pty_output_keeps_terminal_escape_sequences_for_the_screen_model() {
+        let mut pty = kobo_abi::pty::Pty::spawn(
+            "/bin/sh",
+            &["-c", "printf '\\033[2Jready'"],
+            &[("TERM", "xterm-256color")],
+            12,
+            2,
+        )
+        .expect("start a PTY command");
+        let bytes = pty
+            .output()
+            .recv_timeout(Duration::from_secs(2))
+            .expect("PTY output");
+        let session = Session::new(Grid {
+            columns: 12,
+            rows: 2,
+        });
+        session.feed(&bytes);
+        std::thread::sleep(SNAPSHOT_INTERVAL);
+        assert_eq!(session.screen(0).rows[0].cells.trim(), "ready");
+        let _ = pty.finished().expect("reap PTY command");
+    }
+    #[test]
+    fn pty_accepts_control_input_without_waiting_for_a_snapshot() {
+        let mut pty = kobo_abi::pty::Pty::spawn(
+            "/bin/sh",
+            &["-c", "read answer; printf 'answer:%s' \"$answer\""],
+            &[("TERM", "xterm-256color")],
+            24,
+            2,
+        )
+        .expect("start PTY command");
+        pty.write(b"yes\r").expect("write terminal input");
+        let output = pty
+            .output()
+            .recv_timeout(Duration::from_secs(2))
+            .expect("PTY echoed the answer");
+        assert!(String::from_utf8_lossy(&output).contains("yes"));
+        let _ = pty.finished().expect("reap PTY command");
+    }
+    #[test]
+    fn grid_rejects_ambiguous_or_unusable_values() {
+        assert_eq!(
+            Grid::parse("100x35"),
+            Ok(Grid {
+                columns: 100,
+                rows: 35
+            })
+        );
+        assert!(Grid::parse("100").is_err());
+        assert!(Grid::parse("0x35").is_err());
+    }
+    #[test]
+    fn base64_is_bounded_before_input_is_accepted() {
+        assert_eq!(decode_base64("Gw=="), Some(vec![27]));
+        assert_eq!(decode_base64("bad"), None);
+    }
+}
