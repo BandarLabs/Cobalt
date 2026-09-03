@@ -43,12 +43,11 @@ struct Entry {
     glyph: Glyph,
 }
 
-/// Where Settings and the store sit in [`ENTRIES`].
+/// Where Settings sits in [`ENTRIES`].
 ///
-/// Named because two navigation destinations start these by position, and a
-/// bare index in that code says nothing about which application it will run.
+/// Named because a navigation destination starts it by position, and a bare
+/// index in that code says nothing about which application it will run.
 const SETTINGS: usize = 0;
-const STORE: usize = 1;
 
 const ENTRIES: &[Entry] = &[
     Entry {
@@ -207,8 +206,8 @@ impl Launcher {
             .nav_bar_marked(
                 0,
                 [
-                    ("home", "Home", Glyph::App),
-                    ("apps", "Apps", Glyph::App),
+                    ("home", "Apps", Glyph::App),
+                    ("books", "Books", Glyph::Book),
                     ("settings", "Settings", Glyph::Settings),
                     ("reader", "Kobo reader", Glyph::Reader),
                 ],
@@ -335,18 +334,6 @@ impl KoboApp for Launcher {
             self.show(context);
             return;
         }
-        if action == action_id("apps") {
-            // The drawer this used to open was Home's grid under a different
-            // title, and it stopped being a second thing worth showing once
-            // Home carried every application. What a reader wants from a tab
-            // called Apps is where apps come from, so it opens the store --
-            // the same application the Home tile opens, started the same way,
-            // so the two cannot drift into showing different catalogues.
-            self.view = View::Starting(STORE);
-            self.show(context);
-            context.launch(ENTRIES[STORE].name);
-            return;
-        }
         if action == action_id("settings") {
             self.view = View::Starting(SETTINGS);
             self.show(context);
@@ -433,7 +420,7 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::{opening, Launcher, View, ENTRIES, STORE};
+    use super::{opening, Launcher, View, ENTRIES};
     use kobo_sdk::{
         action_id, AppInfo, AppRunner, Command, DeviceRequest, DeviceResult, Glyph, Lifecycle,
     };
@@ -1005,7 +992,7 @@ mod tests {
     }
 
     #[test]
-    fn the_apps_tab_starts_the_store_and_keeps_the_reader_exit_visible() {
+    fn the_grid_is_the_selected_tab_and_the_reader_exit_stays_visible() {
         let mut runner = AppRunner::new(Launcher::default());
         let home = painted(runner.start());
         assert!(home.nodes.iter().any(|node| matches!(
@@ -1016,21 +1003,19 @@ mod tests {
             }
         )));
         let layout = home.layout_with(&CLARA_BW_METRICS, &Chrome::with_back(false));
+        // The grid is what the Apps tab shows, so that tab is the marked one.
         assert!(layout.nodes.iter().any(|node| {
-            matches!(node.kind, LayoutKind::NavDestination(action, _)
-                if action == action_id("apps"))
+            matches!(node.kind, LayoutKind::NavDestinationSelected(action, _)
+                if action == action_id("home"))
         }));
-        assert!(layout.nodes.iter().any(|node| {
-            matches!(node.kind, LayoutKind::NavDestination(action, _)
-                if action == action_id("reader"))
-        }));
-
-        // Apps starts the store rather than drawing a drawer of its own, so
-        // that the tab and the Home tile cannot show different catalogues.
-        let commands = runner.action(action_id("apps"));
-        assert!(matches!(runner.app().view, View::Starting(STORE)));
-        assert!(commands.iter().any(
-            |command| matches!(command, Command::Launch(name) if name == ENTRIES[STORE].name)
-        ));
+        for tab in ["books", "settings", "reader"] {
+            assert!(
+                layout.nodes.iter().any(|node| {
+                    matches!(node.kind, LayoutKind::NavDestination(action, _)
+                        if action == action_id(tab))
+                }),
+                "the {tab} tab was not drawn"
+            );
+        }
     }
 }
