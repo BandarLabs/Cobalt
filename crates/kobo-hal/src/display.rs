@@ -693,6 +693,7 @@ fn smoke_wait_timing(session: &DisplaySession) -> Result<String, DisplayError> {
                             crate::refresh::RefreshIntent::QualityContent => "GC16",
                             crate::refresh::RefreshIntent::TextContent => "GL16",
                             crate::refresh::RefreshIntent::FastFeedback => "DU",
+                            crate::refresh::RefreshIntent::ColorContent => "GCC16",
                         },
                         timing.submitted_waveform,
                         timing.translated_waveform,

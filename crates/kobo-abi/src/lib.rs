@@ -533,6 +533,10 @@ pub mod hwtcon {
     pub const WAVEFORM_GL16: u32 = 3;
     pub const WAVEFORM_GLR16: u32 = 4;
     pub const WAVEFORM_A2: u32 = 6;
+    /// Full color image update on `MediaTek` Kaleido controllers.
+    pub const WAVEFORM_GCC16: u32 = 10;
+    /// Color-aware reduced-flash update on `MediaTek` Kaleido controllers.
+    pub const WAVEFORM_GLRC16: u32 = 11;
     pub const WAVEFORM_AUTO: u32 = 257;
 
     #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]

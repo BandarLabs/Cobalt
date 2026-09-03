@@ -72,11 +72,12 @@ impl Backend {
                 RefreshIntent::FastFeedback => hwtcon::WAVEFORM_DU,
                 RefreshIntent::TextContent => hwtcon::WAVEFORM_GL16,
                 RefreshIntent::QualityContent => hwtcon::WAVEFORM_GC16,
+                RefreshIntent::ColorContent => hwtcon::WAVEFORM_GCC16,
             },
             Self::Mxcfb => match intent {
                 RefreshIntent::FastFeedback => mxcfb::WAVEFORM_DU,
                 RefreshIntent::TextContent => mxcfb::WAVEFORM_GL16,
-                RefreshIntent::QualityContent => mxcfb::WAVEFORM_GC16,
+                RefreshIntent::QualityContent | RefreshIntent::ColorContent => mxcfb::WAVEFORM_GC16,
             },
         }
     }
@@ -136,6 +137,8 @@ pub enum RefreshIntent {
     TextContent,
     /// A complete replacement that also clears accumulated ghosting.
     QualityContent,
+    /// A color image on a panel with a color filter array.
+    ColorContent,
 }
 
 /// A clipped region and what is to be done to it.
@@ -304,6 +307,25 @@ mod tests {
             plan.waveform(Backend::Hwtcon),
             plan.waveform(Backend::Mxcfb)
         );
+    }
+
+    #[test]
+    fn color_intent_uses_kaleido_waveform_only_on_hwtcon() {
+        let plan = RefreshPlan::new(
+            Rect {
+                x: 0,
+                y: 0,
+                width: 1264,
+                height: 1680,
+            },
+            RefreshIntent::ColorContent,
+            true,
+            1264,
+            1680,
+        )
+        .expect("whole panel");
+        assert_eq!(plan.waveform(Backend::Hwtcon), hwtcon::WAVEFORM_GCC16);
+        assert_eq!(plan.waveform(Backend::Mxcfb), mxcfb::WAVEFORM_GC16);
     }
 
     #[test]

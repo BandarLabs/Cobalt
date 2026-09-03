@@ -248,6 +248,34 @@ impl RegionSnapshot {
         }
         Ok(Self { placement, pixels })
     }
+
+    /// Builds a writable region from opaque RGB bytes.
+    ///
+    /// This path is used only by the verified Kobo Colour profiles, whose
+    /// 32-bit framebuffer stores red, green, blue, then alpha bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the region is outside the surface, the framebuffer
+    /// geometry is unsupported, or the RGB byte count does not match the region.
+    pub fn from_rgb(
+        geometry: SurfaceGeometry,
+        region: Rect,
+        rgb: &[u8],
+    ) -> Result<Self, SurfaceError> {
+        let placement = RegionPlacement::new(geometry, region)?;
+        let expected = (region.width as usize)
+            .saturating_mul(region.height as usize)
+            .saturating_mul(3);
+        if rgb.len() != expected {
+            return Err(SurfaceError::RegionMismatch);
+        }
+        let pixels = rgb
+            .chunks_exact(3)
+            .flat_map(|pixel| [pixel[0], pixel[1], pixel[2], u8::MAX])
+            .collect();
+        Ok(Self { placement, pixels })
+    }
 }
 
 /// Reads the exact bytes of `region`.
@@ -461,6 +489,22 @@ mod tests {
         }
         assert!(inverted.inverted_rgb().matches(&snapshot));
         assert!(!inverted.matches(&snapshot));
+    }
+
+    #[test]
+    fn rgb_regions_are_packed_for_the_verified_colour_framebuffer() {
+        let snapshot = RegionSnapshot::from_rgb(
+            CLARA,
+            Rect {
+                x: 4,
+                y: 5,
+                width: 2,
+                height: 1,
+            },
+            &[255, 0, 0, 0, 128, 255],
+        )
+        .expect("rgb region");
+        assert_eq!(snapshot.pixels(), &[255, 0, 0, 255, 0, 128, 255, 255]);
     }
 
     #[test]

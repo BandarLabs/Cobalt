@@ -969,6 +969,12 @@ pub struct ValidationReport {
 }
 
 impl DeviceProfile {
+    /// Whether the panel has a color filter array and accepts color updates.
+    #[must_use]
+    pub const fn supports_color(&self) -> bool {
+        matches!(self.device_code, 390 | 393)
+    }
+
     #[must_use]
     pub fn validate(&self, snapshot: &DeviceSnapshot) -> ValidationReport {
         let mut mismatches = Vec::new();
@@ -1643,6 +1649,14 @@ mod tests {
         IdentitySnapshot, Readiness, TouchSnapshot, CLARA_BW_391, CLARA_BW_395, CLARA_COLOUR_393,
         CLARA_HD_376, ELIPSA_2E_389, LIBRA_2_388, LIBRA_COLOUR_390, WRITE_EVIDENCE_PENDING,
     };
+
+    #[test]
+    fn only_verified_colour_profiles_advertise_color() {
+        assert!(CLARA_COLOUR_393.supports_color());
+        assert!(LIBRA_COLOUR_390.supports_color());
+        assert!(!CLARA_BW_391.supports_color());
+        assert!(!LIBRA_2_388.supports_color());
+    }
 
     /// The Libra 2 as `kobo doctor` read it from a cold boot into Nickel, in
     /// portrait. `rotation` picks the orientation: 1 as measured in portrait,
