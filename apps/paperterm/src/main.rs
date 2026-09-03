@@ -5,6 +5,7 @@ use kobo_sdk::{
     action_id, ActionId, BannerLevel, Caret, Context, DisplayMetrics, KoboApp, Orientation, Screen,
     ScreenBuilder, Space, StoreResult, Task, TaskId, TaskOutcome,
 };
+use std::collections::VecDeque;
 use std::process::ExitCode;
 
 /// One host request may wait this long before returning an unchanged screen.
@@ -13,6 +14,7 @@ const LONGEST_POLL_SECONDS: u32 = 25;
 const FAILURE_SLEEP_SECONDS: u32 = 5;
 /// Bounded enough that a malformed host cannot fill the app task channel.
 const MAX_REPLY_BYTES: u32 = 64 * 1024;
+const MAX_KEY_BYTES: usize = 64;
 const PAIRING: &str = "pairing";
 const REPAIR: &str = "repair";
 const TOGGLE_KEYBOARD: &str = "toggle-keyboard";
@@ -73,12 +75,20 @@ struct Paperterm {
     viewport: (u16, u16),
     session: Option<u64>,
     sequence: u64,
+    pairing_generation: u64,
+    grid_generation: u64,
     hello: Option<TaskId>,
     hello_grid: Option<(u16, u16)>,
+    hello_pairing_generation: u64,
+    hello_grid_generation: u64,
     poll: Option<TaskId>,
-    renegotiate: bool,
+    poll_pairing_generation: u64,
+    poll_grid_generation: u64,
     nap: Option<TaskId>,
+    nap_pairing_generation: u64,
     send: Option<TaskId>,
+    send_pairing_generation: u64,
+    send_queue: VecDeque<u8>,
     keys: TerminalKeys,
     failure: Option<String>,
 }
@@ -97,12 +107,20 @@ impl Default for Paperterm {
             viewport: (0, 0),
             session: None,
             sequence: 0,
+            pairing_generation: 0,
+            grid_generation: 0,
             hello: None,
             hello_grid: None,
+            hello_pairing_generation: 0,
+            hello_grid_generation: 0,
             poll: None,
-            renegotiate: false,
+            poll_pairing_generation: 0,
+            poll_grid_generation: 0,
             nap: None,
+            nap_pairing_generation: 0,
             send: None,
+            send_pairing_generation: 0,
+            send_queue: VecDeque::new(),
             keys: TerminalKeys::new(),
             failure: None,
         }
@@ -231,8 +249,8 @@ impl Paperterm {
         let (columns, rows) = self.grid(context);
         self.retain_grid((columns, rows));
         let url = format!(
-            "https://{}/hello?token={}&grid={}x{}",
-            self.address, self.code, columns, rows
+            "https://{}/hello?token={}&grid={}x{}&generation={}",
+            self.address, self.code, columns, rows, self.grid_generation
         );
         self.hello = context.spawn_retrying(Task::Fetch {
             url,
@@ -243,32 +261,33 @@ impl Paperterm {
         });
         if self.hello.is_some() {
             self.hello_grid = Some((columns, rows));
+            self.hello_pairing_generation = self.pairing_generation;
+            self.hello_grid_generation = self.grid_generation;
         }
     }
     fn renegotiate(&mut self, context: &mut Context) {
+        self.grid_generation = self.grid_generation.saturating_add(1);
         self.retain_grid(self.grid(context));
-        if self.hello.is_some() {
-            return;
+        if let Some(task) = self.hello.take() {
+            context.cancel(task);
         }
-        if let Some(poll) = self.poll {
-            if !self.renegotiate {
-                context.cancel(poll);
-            }
-            self.renegotiate = true;
-        } else {
-            self.hello(context);
+        self.hello_grid = None;
+        if let Some(task) = self.poll.take() {
+            context.cancel(task);
         }
+        self.hello(context);
     }
     fn poll(&mut self, context: &mut Context) {
         if self.poll.is_some() || self.hello.is_some() || self.session.is_none() {
             return;
         }
         let url = format!(
-            "https://{}/screen?token={}&session={}&seq={}&wait={LONGEST_POLL_SECONDS}",
+            "https://{}/screen?token={}&session={}&seq={}&wait={LONGEST_POLL_SECONDS}&generation={}",
             self.address,
             self.code,
             self.session.unwrap_or(0),
-            self.sequence
+            self.sequence,
+            self.grid_generation
         );
         self.poll = context.spawn_retrying(Task::Fetch {
             url,
@@ -277,11 +296,21 @@ impl Paperterm {
             credential: None,
             headers: Vec::new(),
         });
+        if self.poll.is_some() {
+            self.poll_pairing_generation = self.pairing_generation;
+            self.poll_grid_generation = self.grid_generation;
+        }
     }
     fn retry(&mut self, context: &mut Context) {
+        if self.nap.is_some() {
+            return;
+        }
         self.nap = context.spawn(Task::Sleep {
             seconds: FAILURE_SLEEP_SECONDS,
         });
+        if self.nap.is_some() {
+            self.nap_pairing_generation = self.pairing_generation;
+        }
     }
     fn set_failure(&mut self, message: &str) -> bool {
         if self.failure.as_deref() == Some(message) {
@@ -299,11 +328,23 @@ impl Paperterm {
             .save(PAIRING, format!("{}\n{}", self.address, self.code));
     }
     fn send(&mut self, context: &mut Context, bytes: &[u8]) {
-        let Some(session) = self.session else { return };
-        if self.send.is_some() {
+        if self.session.is_none() {
             return;
         }
-        let body = format!(r#"{{"session":{session},"bytes_b64":"{}"}}"#, base64(bytes));
+        self.send_queue.extend(bytes);
+        self.flush_send(context);
+    }
+    fn flush_send(&mut self, context: &mut Context) {
+        let Some(session) = self.session else { return };
+        if self.send.is_some() || self.send_queue.is_empty() {
+            return;
+        }
+        let count = self.send_queue.len().min(MAX_KEY_BYTES);
+        let bytes = self.send_queue.drain(..count).collect::<Vec<_>>();
+        let body = format!(
+            r#"{{"session":{session},"bytes_b64":"{}"}}"#,
+            base64(&bytes)
+        );
         self.send = context.spawn(Task::Post {
             url: format!("https://{}/keys?token={}", self.address, self.code),
             body,
@@ -312,6 +353,16 @@ impl Paperterm {
             headers: Vec::new(),
             max_bytes: MAX_REPLY_BYTES,
         });
+        if self.send.is_some() {
+            self.send_pairing_generation = self.pairing_generation;
+        } else {
+            for byte in bytes.into_iter().rev() {
+                self.send_queue.push_front(byte);
+            }
+            if self.set_failure(INPUT_REFUSED) {
+                self.show(context);
+            }
+        }
     }
     fn typed(&mut self, context: &mut Context, action: ActionId) -> bool {
         let Some(pressed) = self.keyboard.press(action) else {
@@ -517,14 +568,22 @@ impl KoboApp for Paperterm {
             return;
         }
         if action == action_id(REPAIR) {
+            self.pairing_generation = self.pairing_generation.saturating_add(1);
+            self.grid_generation = 0;
             if let Some(task) = self.hello.take() {
                 context.cancel(task);
             }
             if let Some(task) = self.poll.take() {
                 context.cancel(task);
             }
+            if let Some(task) = self.nap.take() {
+                context.cancel(task);
+            }
+            if let Some(task) = self.send.take() {
+                context.cancel(task);
+            }
             self.hello_grid = None;
-            self.renegotiate = false;
+            self.send_queue.clear();
             self.keyboard = Keyboard::with_text(&self.address);
             self.keyboard_open = false;
             self.input = Input::None;
@@ -559,8 +618,13 @@ impl KoboApp for Paperterm {
     }
     fn on_task(&mut self, context: &mut Context, task: TaskId, outcome: TaskOutcome) {
         if self.hello == Some(task) {
+            let current = self.hello_pairing_generation == self.pairing_generation
+                && self.hello_grid_generation == self.grid_generation;
             self.hello = None;
             let requested_grid = self.hello_grid.take();
+            if !current {
+                return;
+            }
             match outcome {
                 TaskOutcome::Completed(bytes) => {
                     let previous_input = self.input;
@@ -577,6 +641,7 @@ impl KoboApp for Paperterm {
                                 self.poll(context);
                             }
                         } else {
+                            self.grid_generation = self.grid_generation.saturating_add(1);
                             self.hello(context);
                         }
                     } else {
@@ -597,8 +662,12 @@ impl KoboApp for Paperterm {
                 TaskOutcome::Cancelled => {}
             }
         } else if self.poll == Some(task) {
+            let current = self.poll_pairing_generation == self.pairing_generation
+                && self.poll_grid_generation == self.grid_generation;
             self.poll = None;
-            let renegotiate = std::mem::take(&mut self.renegotiate);
+            if !current {
+                return;
+            }
             match outcome {
                 TaskOutcome::Completed(bytes) => {
                     if let Some(content_changed) = self.parse_screen(&bytes) {
@@ -607,14 +676,8 @@ impl KoboApp for Paperterm {
                             self.show(context);
                         }
                         if self.view != View::Ended {
-                            if renegotiate {
-                                self.hello(context);
-                            } else {
-                                self.poll(context);
-                            }
+                            self.poll(context);
                         }
-                    } else if renegotiate {
-                        self.hello(context);
                     } else {
                         self.poll(context);
                     }
@@ -626,22 +689,28 @@ impl KoboApp for Paperterm {
                     }
                     self.retry(context);
                 }
-                TaskOutcome::Cancelled => {
-                    if renegotiate && self.session.is_some() && self.view == View::Watching {
-                        self.hello(context);
-                    }
-                }
+                TaskOutcome::Cancelled => {}
             }
         } else if self.nap == Some(task) {
+            let current = self.nap_pairing_generation == self.pairing_generation;
             self.nap = None;
+            if !current {
+                return;
+            }
             if self.session.is_some() {
                 self.poll(context);
             } else {
                 self.hello(context);
             }
         } else if self.send == Some(task) {
+            let current = self.send_pairing_generation == self.pairing_generation;
             self.send = None;
-            if !matches!(outcome, TaskOutcome::Completed(_)) && self.set_failure(INPUT_REFUSED) {
+            if !current {
+                return;
+            }
+            if matches!(outcome, TaskOutcome::Completed(_)) {
+                self.flush_send(context);
+            } else if self.set_failure(INPUT_REFUSED) {
                 self.show(context);
             }
         }
@@ -757,6 +826,25 @@ mod tests {
         assert!(actual.len() >= expected.len());
         assert_eq!(&actual[..expected.len()], expected);
         assert!(actual[expected.len()..].iter().all(String::is_empty));
+    }
+
+    fn posted_key_payloads(context: &Context) -> Vec<String> {
+        context
+            .commands()
+            .iter()
+            .filter_map(|command| match command {
+                Command::Spawn {
+                    work: Task::Post { body, url, .. },
+                    ..
+                } if url.contains("/keys?") => kobo_json::parse(body).ok().and_then(|value| {
+                    value
+                        .get("bytes_b64")
+                        .and_then(kobo_json::Value::as_str)
+                        .map(str::to_owned)
+                }),
+                _ => None,
+            })
+            .collect()
     }
 
     #[test]
@@ -931,13 +1019,29 @@ mod tests {
 
         app.on_action(&mut context, action_id(TOGGLE_KEYBOARD));
         assert!(!app.keyboard_open);
-        assert!(app.renegotiate);
+        let close_hello = app.hello.expect("close-grid hello starts immediately");
+        assert!(app.poll.is_none());
         assert!(context.commands().contains(&Command::Cancel(poll)));
-        app.on_task(&mut context, poll, TaskOutcome::Cancelled);
         let closed_grid = app.hello_grid.expect("closing keys renegotiates");
         assert_host_valid(closed_grid, "closed keyboard");
         assert_eq!(closed_grid.0, open_grid.0);
         assert!(closed_grid.1 > open_grid.1);
+        let retained = app.rows.clone();
+        app.on_task(
+            &mut context,
+            poll,
+            TaskOutcome::Completed(
+                br#"{"seq":20,"rows":[{"y":0,"cells":"obsolete"}],"ended":false}"#.to_vec(),
+            ),
+        );
+        assert_eq!(app.rows, retained, "obsolete poll changed resized rows");
+        assert_eq!(app.hello, Some(close_hello));
+        app.on_task(
+            &mut context,
+            close_hello,
+            TaskOutcome::Completed(br#"{"session":41,"input":"full"}"#.to_vec()),
+        );
+        assert!(app.poll.is_some(), "resized polling did not resume");
         assert_retained_rows(&app.rows, &rows);
         assert_eq!(app.cursor, cursor);
         assert_eq!(app.session, Some(41));
@@ -1022,6 +1126,70 @@ mod tests {
             .iter()
             .all(|row| row.trim().is_empty()));
         assert_eq!(app.session, Some(41));
+    }
+
+    #[test]
+    fn rapid_keys_are_queued_in_order_and_batched_to_the_host_limit() {
+        let mut app = Paperterm {
+            view: View::Watching,
+            input: Input::Full,
+            session: Some(41),
+            ..Paperterm::default()
+        };
+        let mut context = Context::default();
+        app.send(&mut context, b"a");
+        let first = app.send.expect("first key post");
+        let queued = (0..130)
+            .map(|index| b'b' + u8::try_from(index % 24).expect("letter"))
+            .collect::<Vec<_>>();
+        app.send(&mut context, &queued);
+        assert_eq!(app.send_queue.len(), queued.len());
+
+        app.on_task(&mut context, first, TaskOutcome::Completed(Vec::new()));
+        let second = app.send.expect("first queued batch");
+        app.on_task(&mut context, second, TaskOutcome::Completed(Vec::new()));
+        let third = app.send.expect("second queued batch");
+        app.on_task(&mut context, third, TaskOutcome::Completed(Vec::new()));
+        let fourth = app.send.expect("final queued batch");
+        app.on_task(&mut context, fourth, TaskOutcome::Completed(Vec::new()));
+
+        let payloads = posted_key_payloads(&context);
+        assert_eq!(
+            payloads,
+            vec![
+                base64(b"a"),
+                base64(&queued[..64]),
+                base64(&queued[64..128]),
+                base64(&queued[128..]),
+            ]
+        );
+        assert!(app.send_queue.is_empty());
+        assert!(app.send.is_none());
+    }
+
+    #[test]
+    fn failed_key_post_is_visible_and_keeps_later_keys_queued() {
+        let mut app = Paperterm {
+            view: View::Watching,
+            input: Input::Full,
+            session: Some(41),
+            ..Paperterm::default()
+        };
+        let mut context = Context::default();
+        app.send(&mut context, b"a");
+        let first = app.send.expect("active key post");
+        app.send(&mut context, b"b");
+        app.on_task(
+            &mut context,
+            first,
+            TaskOutcome::Failed(kobo_sdk::TaskError::Unreachable),
+        );
+        assert_eq!(app.failure.as_deref(), Some(INPUT_REFUSED));
+        assert_eq!(app.send_queue.iter().copied().collect::<Vec<_>>(), b"b");
+
+        app.send(&mut context, b"c");
+        assert!(app.send.is_some());
+        assert_eq!(posted_key_payloads(&context).last(), Some(&base64(b"bc")));
     }
 
     #[test]
@@ -1128,6 +1296,60 @@ mod tests {
         assert_eq!(app.session, Some(5));
         assert_eq!(app.sequence, 0);
         assert_eq!(app.failure, None);
+        assert!(app.poll.is_some());
+    }
+
+    #[test]
+    fn repairing_cancels_retry_and_fences_every_old_host_outcome() {
+        let mut app = Paperterm {
+            view: View::Watching,
+            address: "old-host:9332".to_owned(),
+            code: "old123".to_owned(),
+            hello: Some(TaskId(9)),
+            hello_grid: Some((80, 24)),
+            poll: Some(TaskId(10)),
+            nap: Some(TaskId(11)),
+            send: Some(TaskId(12)),
+            session: Some(4),
+            ..Paperterm::default()
+        };
+        let mut context = Context::default();
+        app.on_action(&mut context, action_id(REPAIR));
+        assert_eq!(app.pairing_generation, 1);
+        assert!(app.hello.is_none());
+        assert!(app.poll.is_none());
+        assert!(app.nap.is_none());
+        assert!(app.send.is_none());
+        for task in [TaskId(9), TaskId(10), TaskId(11), TaskId(12)] {
+            assert!(context.commands().contains(&Command::Cancel(task)));
+        }
+
+        app.address = "new-host:9332".to_owned();
+        app.code = "new123".to_owned();
+        app.view = View::Watching;
+        app.hello(&mut context);
+        let current = app.hello.expect("new pairing hello");
+        assert!(context.commands().iter().any(
+            |command| matches!(command, Command::Spawn { task, work: Task::Fetch { url, .. } }
+                if *task == current && url.contains("new-host:9332/hello"))
+        ));
+
+        app.on_task(
+            &mut context,
+            TaskId(9),
+            TaskOutcome::Completed(br#"{"session":99,"input":"full"}"#.to_vec()),
+        );
+        app.on_task(&mut context, TaskId(11), TaskOutcome::Completed(Vec::new()));
+        assert_eq!(app.hello, Some(current));
+        assert_eq!(app.session, None);
+        assert_eq!(app.address, "new-host:9332");
+
+        app.on_task(
+            &mut context,
+            current,
+            TaskOutcome::Completed(br#"{"session":5,"input":"full"}"#.to_vec()),
+        );
+        assert_eq!(app.session, Some(5));
         assert!(app.poll.is_some());
     }
 
