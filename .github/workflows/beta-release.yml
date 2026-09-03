@@ -35,6 +35,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
+          set -o pipefail
           tag="beta-v${VERSION}"
           tag_count="$(git ls-remote --tags origin "refs/tags/$tag" | wc -l)"
           release_count="$(gh release list --limit 100 --json tagName \
