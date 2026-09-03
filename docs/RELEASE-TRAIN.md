@@ -30,7 +30,8 @@ artifacts are promoted from beta rather than rebuilt.
    For a protocol transition, OTA over an existing protocol-11 installation
    before installing protocol-12 apps. Confirm old apps retain their state,
    secrets and preferences, keep their legacy layout, can return to Nickel,
-   and can roll back. Confirm a protocol-12 Store app is beta-gated with its
+   and can roll back. Confirm protocol-12 Folio, protocol-13 selected-cell,
+   and protocol-14 PUT Store apps are beta-gated with their
    `minimum_cobalt_version` before promotion.
 4. Merge `beta` into `main` without squashing away the tested commit.
 5. Run **Promote tested beta** from `main`. The workflow tags the tested commit

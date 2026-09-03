@@ -58,8 +58,6 @@ const MAX_FEEDS: usize = 40;
 const FEEDS: &str = "feeds";
 const CONFIG: &str = "config";
 const ITEM_STATES: &str = "item-states";
-const FLUX_ACTIONS: &str = "miniflux-actions";
-const FLUX_FULL_INDEX: &str = "miniflux-full-index";
 const CACHE_BYTES: usize = 240 * 1024;
 const MAX_ITEM_STATES: usize = 2_000;
 const MAX_FULL_ARTICLES: usize = 8;
@@ -167,19 +165,24 @@ enum TaskTarget {
         subscription_url: String,
     },
     FluxEntries {
+        server: String,
         mode: miniflux::ListMode,
     },
     FluxDiscover {
+        server: String,
         website: String,
     },
     FluxSubscribe {
+        server: String,
         feed_url: String,
     },
     FluxFull {
+        server: String,
         mode: miniflux::ListMode,
         entry_id: u64,
     },
     FluxMutation {
+        server: String,
         mutation: miniflux::Mutation,
     },
 }
@@ -194,6 +197,17 @@ impl TaskTarget {
             Self::FluxSubscribe { .. } => TaskKind::FluxSubscribe,
             Self::FluxFull { .. } => TaskKind::FluxFull,
             Self::FluxMutation { .. } => TaskKind::FluxMutation,
+        }
+    }
+
+    fn miniflux_server(&self) -> Option<&str> {
+        match self {
+            Self::FluxEntries { server, .. }
+            | Self::FluxDiscover { server, .. }
+            | Self::FluxSubscribe { server, .. }
+            | Self::FluxFull { server, .. }
+            | Self::FluxMutation { server, .. } => Some(server),
+            Self::Search | Self::Feed { .. } => None,
         }
     }
 }
@@ -315,6 +329,56 @@ impl Feeds {
         miniflux::configured_server(&self.server)
     }
 
+    /// Cancels work for one Miniflux server and activates another server's
+    /// durable namespace without touching the old namespace on disk.
+    fn change_flux_server(&mut self, context: &mut Context, server: &str) {
+        let server = miniflux::canonical_server(server)
+            .unwrap_or_else(|| server.trim().trim_end_matches('/').to_owned());
+        if miniflux::canonical_server(&self.server).as_deref() == Some(server.as_str()) {
+            return;
+        }
+        if let Some(task) = self.task.take() {
+            context.cancel(task.id);
+        }
+        if let Some(in_flight) = self.flux_in_flight.take() {
+            self.flux_pending.insert(0, in_flight);
+        }
+        // Save before changing `self.server`: queued mutations stay with the
+        // host they were created for and can never be sent to the new one.
+        self.save_flux_actions(context);
+        self.flux_pending.clear();
+        self.flux_caches = Default::default();
+        self.flux_live_cache = [false; 3];
+        self.full_content.clear();
+        self.flux_open = None;
+        self.flux_discovered.clear();
+        self.flux_menu_open = false;
+        self.flux_pages.clear();
+        self.flux_page = 0;
+        self.list_page = 0;
+        self.server = server;
+        self.load_flux_namespace(context);
+    }
+
+    fn load_flux_namespace(&self, context: &mut Context) {
+        let Some(actions) = miniflux::actions_key(&self.server) else {
+            return;
+        };
+        context.store().load(actions);
+        if let Some(index) = miniflux::full_index_key(&self.server) {
+            context.store().load(index);
+        }
+        for mode in [
+            miniflux::ListMode::Unread,
+            miniflux::ListMode::Starred,
+            miniflux::ListMode::History,
+        ] {
+            if let Some(key) = miniflux::cache_key(&self.server, mode) {
+                context.store().load(key);
+            }
+        }
+    }
+
     fn flux_entries(&self, mode: miniflux::ListMode) -> &[miniflux::Article] {
         &self.flux_caches[mode.cache_index()]
     }
@@ -332,21 +396,27 @@ impl Feeds {
     }
 
     fn save_flux_cache(&self, context: &mut Context, mode: miniflux::ListMode) {
-        context
-            .store()
-            .save(mode.cache_key(), encode_flux_cache(self.flux_entries(mode)));
+        if let Some(key) = miniflux::cache_key(&self.server, mode) {
+            context
+                .store()
+                .save(key, encode_flux_cache(self.flux_entries(mode)));
+        }
     }
 
     fn save_flux_actions(&self, context: &mut Context) {
-        context.store().save(
-            FLUX_ACTIONS,
-            encode_flux_actions(self.flux_in_flight.iter().chain(self.flux_pending.iter())),
-        );
+        if let Some(key) = miniflux::actions_key(&self.server) {
+            context.store().save(
+                key,
+                encode_flux_actions(self.flux_in_flight.iter().chain(self.flux_pending.iter())),
+            );
+        }
     }
 
     fn load_full_content(&self, context: &mut Context, mode: miniflux::ListMode) {
         for article in self.flux_entries(mode) {
-            context.store().load(full_content_key(article.id));
+            if let Some(key) = miniflux::full_content_key(&self.server, article.id) {
+                context.store().load(key);
+            }
         }
     }
 
@@ -358,27 +428,30 @@ impl Feeds {
         });
         while self.full_content.len() > MAX_FULL_ARTICLES {
             let removed = self.full_content.remove(0);
-            context.store().forget(full_content_key(removed.id));
+            if let Some(key) = miniflux::full_content_key(&self.server, removed.id) {
+                context.store().forget(key);
+            }
         }
         let saved = self
             .full_content
             .iter()
             .find(|saved| saved.id == id)
             .expect("just inserted");
-        context
-            .store()
-            .save(full_content_key(id), saved.content.as_bytes().to_vec());
-        context.store().save(
-            FLUX_FULL_INDEX,
-            encode_full_content_index(&self.full_content),
-        );
+        if let Some(key) = miniflux::full_content_key(&self.server, id) {
+            context.store().save(key, saved.content.as_bytes().to_vec());
+        }
+        if let Some(index) = miniflux::full_index_key(&self.server) {
+            context
+                .store()
+                .save(index, encode_full_content_index(&self.full_content));
+        }
     }
 
     fn restore_flux_mutation(&mut self, context: &mut Context, target: &TaskTarget) {
-        let TaskTarget::FluxMutation { mutation } = target else {
+        let TaskTarget::FluxMutation { server, mutation } = target else {
             return;
         };
-        if self.flux_in_flight.as_ref() == Some(mutation) {
+        if server == &self.server && self.flux_in_flight.as_ref() == Some(mutation) {
             self.flux_in_flight = None;
             self.flux_pending.insert(0, mutation.clone());
             self.save_flux_actions(context);
@@ -543,10 +616,14 @@ impl Feeds {
 
     fn request_flux_entries(&mut self, context: &mut Context) {
         let mode = self.flux_mode;
+        let server = self.server.clone();
         self.start_flux(
             context,
-            TaskTarget::FluxEntries { mode },
-            miniflux::entries(&self.server, mode),
+            TaskTarget::FluxEntries {
+                server: server.clone(),
+                mode,
+            },
+            miniflux::entries(&server, mode),
         );
     }
 
@@ -560,12 +637,14 @@ impl Feeds {
         };
         self.flux_pending.remove(0);
         self.flux_in_flight = Some(mutation.clone());
+        let server = self.server.clone();
         if !self.start_flux(
             context,
             TaskTarget::FluxMutation {
+                server: server.clone(),
                 mutation: mutation.clone(),
             },
-            miniflux::mutate(&self.server, &mutation),
+            miniflux::mutate(&server, &mutation),
         ) {
             self.flux_in_flight = None;
             self.flux_pending.insert(0, mutation);
@@ -663,6 +742,7 @@ impl Feeds {
                         if self.start_flux(
                             context,
                             TaskTarget::FluxDiscover {
+                                server: self.server.clone(),
                                 website: website.clone(),
                             },
                             miniflux::discover(&self.server, &website),
@@ -736,7 +816,11 @@ impl Feeds {
                 let mode = self.flux_mode;
                 self.start_flux(
                     context,
-                    TaskTarget::FluxFull { mode, entry_id },
+                    TaskTarget::FluxFull {
+                        server: self.server.clone(),
+                        mode,
+                        entry_id,
+                    },
                     miniflux::full_content(&self.server, entry_id),
                 );
             }
@@ -786,6 +870,7 @@ impl Feeds {
                 self.start_flux(
                     context,
                     TaskTarget::FluxSubscribe {
+                        server: self.server.clone(),
                         feed_url: found.url.clone(),
                     },
                     miniflux::subscribe(&self.server, &found.url),
@@ -807,7 +892,7 @@ impl Feeds {
     fn on_flux_task(&mut self, context: &mut Context, target: TaskTarget, outcome: TaskOutcome) {
         match outcome {
             TaskOutcome::Completed(bytes) => match target {
-                TaskTarget::FluxEntries { mode } => {
+                TaskTarget::FluxEntries { mode, .. } => {
                     let mut entries = miniflux::parse_entries(&bytes);
                     overlay_full_content(&self.full_content, &mut entries);
                     self.flux_caches[mode.cache_index()] = entries;
@@ -832,7 +917,7 @@ impl Feeds {
                     self.view = View::FluxShelf;
                     self.request_flux_entries(context);
                 }
-                TaskTarget::FluxFull { mode, entry_id } => {
+                TaskTarget::FluxFull { mode, entry_id, .. } => {
                     let full_text = miniflux::parse_full_content(&bytes, FULL_CONTENT_BYTES);
                     if let Some(full_text) = full_text {
                         if full_text.len() > FULL_CONTENT_BYTES {
@@ -860,7 +945,7 @@ impl Feeds {
                         self.problem = Some("Miniflux did not return article text.".to_owned());
                     }
                 }
-                TaskTarget::FluxMutation { mutation } => {
+                TaskTarget::FluxMutation { mutation, .. } => {
                     if self.flux_in_flight.as_ref() == Some(&mutation) {
                         self.flux_in_flight = None;
                     }
@@ -1713,10 +1798,6 @@ fn feed_cache_key(url: &str) -> String {
     format!("feed-cache-{:016x}", stable_hash(url))
 }
 
-fn full_content_key(id: u64) -> String {
-    format!("miniflux-full-{id}")
-}
-
 fn encode_feed_cache(feed: &feed::Feed) -> Vec<u8> {
     let mut stored = format!(
         "{}\t{}\n",
@@ -1830,10 +1911,6 @@ fn decode_full_content_index(bytes: &[u8]) -> Vec<u64> {
         .collect()
 }
 
-fn full_content_id(key: &str) -> Option<u64> {
-    key.strip_prefix("miniflux-full-")?.parse().ok()
-}
-
 fn overlay_full_content(contents: &[FullContent], entries: &mut [miniflux::Article]) {
     for article in entries {
         if let Some(saved) = contents.iter().find(|saved| saved.id == article.id) {
@@ -1938,15 +2015,6 @@ impl KoboApp for Feeds {
         context.store().load(FEEDS);
         context.store().load(CONFIG);
         context.store().load(ITEM_STATES);
-        context.store().load(FLUX_ACTIONS);
-        context.store().load(FLUX_FULL_INDEX);
-        for mode in [
-            miniflux::ListMode::Unread,
-            miniflux::ListMode::Starred,
-            miniflux::ListMode::History,
-        ] {
-            context.store().load(mode.cache_key());
-        }
         self.show(context);
     }
 
@@ -1960,27 +2028,29 @@ impl KoboApp for Feeds {
                     if let Some(value) = value {
                         let (backend, server) = decode_config(&value);
                         self.backend = backend;
-                        self.server = server;
+                        self.change_flux_server(context, &server);
                         if self.backend == Backend::Miniflux {
                             self.view = View::FluxShelf;
                         }
                     }
                 } else if key == ITEM_STATES {
                     self.item_states = value.as_deref().map(decode_item_states).unwrap_or_default();
-                } else if key == FLUX_ACTIONS {
+                } else if miniflux::actions_key(&self.server).as_deref() == Some(key.as_str()) {
                     self.flux_pending = value
                         .as_deref()
                         .map(decode_flux_actions)
                         .unwrap_or_default();
-                } else if key == FLUX_FULL_INDEX {
+                } else if miniflux::full_index_key(&self.server).as_deref() == Some(key.as_str()) {
                     for id in value
                         .as_deref()
                         .map(decode_full_content_index)
                         .unwrap_or_default()
                     {
-                        context.store().load(full_content_key(id));
+                        if let Some(key) = miniflux::full_content_key(&self.server, id) {
+                            context.store().load(key);
+                        }
                     }
-                } else if let Some(id) = full_content_id(&key) {
+                } else if let Some(id) = miniflux::full_content_id(&self.server, &key) {
                     if let Some(content) = value
                         .and_then(|content| String::from_utf8(content).ok())
                         .filter(|content| content.len() <= FULL_CONTENT_BYTES)
@@ -2002,8 +2072,9 @@ impl KoboApp for Feeds {
                     miniflux::ListMode::History,
                 ]
                 .into_iter()
-                .find(|mode| key == mode.cache_key())
-                {
+                .find(|mode| {
+                    miniflux::cache_key(&self.server, *mode).as_deref() == Some(key.as_str())
+                }) {
                     if self.flux_entries(mode).is_empty() {
                         self.flux_caches[mode.cache_index()] =
                             value.as_deref().map(decode_flux_cache).unwrap_or_default();
@@ -2051,7 +2122,7 @@ impl KoboApp for Feeds {
                     let value = self.keyboard.take().trim().to_owned();
                     if !value.is_empty() {
                         match setting {
-                            Setting::Server => self.server = value,
+                            Setting::Server => self.change_flux_server(context, &value),
                         }
                         self.save_config(context);
                     }
@@ -2323,6 +2394,16 @@ impl KoboApp for Feeds {
             return;
         }
         self.task = None;
+        if pending
+            .target
+            .miniflux_server()
+            .is_some_and(|server| server != self.server)
+        {
+            // A server edit cancels and detaches its old request. If a late
+            // outcome still reaches the app, it cannot populate or mutate the
+            // newly selected host's namespace.
+            return;
+        }
         if matches!(
             pending.target,
             TaskTarget::FluxEntries { .. }
@@ -2423,10 +2504,10 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::{
-        article_text, byline, decode, encode, encode_feed_cache, feed_cache_key, full_content_key,
-        miniflux, pretty_host, search, Backend, Feeds, PendingTask, Subscription, TaskKind,
-        TaskTarget, View, FEED_BYTES, FLUX_ACTIONS, FLUX_FULL_INDEX, FULL_CONTENT_BYTES,
-        ITEM_STATES, MAX_FEEDS, SEARCH_BYTES,
+        article_text, byline, decode, encode, encode_feed_cache, encode_flux_cache, feed_cache_key,
+        miniflux, pretty_host, search, Backend, Feeds, PendingTask, Setting, Subscription,
+        TaskKind, TaskTarget, View, CONFIG, FEED_BYTES, FULL_CONTENT_BYTES, ITEM_STATES, MAX_FEEDS,
+        SEARCH_BYTES,
     };
     use kobo_sdk::{
         action_id, AppRunner, Command, Credential, StoreResult, Task, TaskError, TaskId,
@@ -2455,6 +2536,18 @@ mod tests {
             view: View::FluxShelf,
             ..Feeds::default()
         }
+    }
+
+    fn flux_actions(server: &str) -> String {
+        miniflux::actions_key(server).expect("valid test server")
+    }
+
+    fn flux_full_index(server: &str) -> String {
+        miniflux::full_index_key(server).expect("valid test server")
+    }
+
+    fn flux_full_content(server: &str, id: u64) -> String {
+        miniflux::full_content_key(server, id).expect("valid test server")
     }
 
     fn pending_feed() -> PendingTask {
@@ -2609,7 +2702,8 @@ mod tests {
             .contains(&miniflux::Mutation::Read(8)));
         assert!(commands.iter().any(|command| matches!(
             command,
-            Command::Store(kobo_sdk::StoreRequest::Save { key, .. }) if key == FLUX_ACTIONS
+            Command::Store(kobo_sdk::StoreRequest::Save { key, .. })
+                if key == &flux_actions("https://flux.example")
         )));
         runner.action(action_id("flux-toggle-star"));
         assert!(runner.app().selected_flux_entries()[0].starred);
@@ -2789,6 +2883,7 @@ mod tests {
             Some(PendingTask {
                 id: subscribe_task,
                 target: TaskTarget::FluxSubscribe {
+                    server: "https://flux.example".to_owned(),
                     feed_url: "https://example.org/feed.xml".to_owned()
                 }
             })
@@ -2885,7 +2980,8 @@ mod tests {
         assert!(commands.iter().any(|command| matches!(
             command,
             Command::Store(kobo_sdk::StoreRequest::Save { key, .. })
-                if key == miniflux::ListMode::Starred.cache_key()
+                if key == &miniflux::cache_key("https://flux.example", miniflux::ListMode::Starred)
+                    .expect("valid test server")
         )));
 
         let mut initial = flux_reader();
@@ -2911,16 +3007,16 @@ mod tests {
         assert!(commands.iter().any(|command| matches!(
             command,
             Command::Store(kobo_sdk::StoreRequest::Save { key, value })
-                if key == &full_content_key(9) && value == full.as_bytes()
+                if key == &flux_full_content("https://flux.example", 9) && value == full.as_bytes()
         )));
 
         let mut restarted = AppRunner::new(flux_reader());
         restarted.store_result(StoreResult::Loaded {
-            key: FLUX_FULL_INDEX.to_owned(),
+            key: flux_full_index("https://flux.example"),
             value: Some(b"9".to_vec()),
         });
         restarted.store_result(StoreResult::Loaded {
-            key: full_content_key(9),
+            key: flux_full_content("https://flux.example", 9),
             value: Some(full.as_bytes().to_vec()),
         });
         let commands = restarted.action(action_id("flux-sync"));
@@ -2936,6 +3032,158 @@ mod tests {
             restarted.app().selected_flux_entries()[0].content,
             full,
             "a refreshed list must overlay the exact stable-ID full-content cache"
+        );
+    }
+
+    #[test]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one test follows the complete two-server persistence boundary"
+    )]
+    fn miniflux_server_namespaces_isolate_same_entry_ids_and_survive_restart() {
+        let first = "https://one.example/reader";
+        let second = "https://two.example/reader/";
+        let first_article = miniflux::Article {
+            id: 7,
+            title: "One's entry".to_owned(),
+            feed: "One".to_owned(),
+            content: "One's content".to_owned(),
+            status: "unread".to_owned(),
+            starred: false,
+        };
+        let second_article = miniflux::Article {
+            id: 7,
+            title: "Two's entry".to_owned(),
+            feed: "Two".to_owned(),
+            content: "Two's content".to_owned(),
+            status: "unread".to_owned(),
+            starred: false,
+        };
+        let mut reader = flux_reader();
+        reader.server = first.to_owned();
+        reader.flux_caches[miniflux::ListMode::Unread.cache_index()] = vec![first_article.clone()];
+        reader.flux_pending.push(miniflux::Mutation::Read(7));
+        reader.flux_in_flight = Some(miniflux::Mutation::Star {
+            id: 7,
+            starred: true,
+        });
+        reader.task = Some(PendingTask {
+            id: TaskId(44),
+            target: TaskTarget::FluxEntries {
+                server: first.to_owned(),
+                mode: miniflux::ListMode::Unread,
+            },
+        });
+        reader.editing = Some(Setting::Server);
+        reader.keyboard = kobo_sdk::keyboard::Keyboard::with_text(second);
+        let mut runner = AppRunner::new(reader);
+        let commands = runner.action(action_id("kb.enter"));
+        assert_eq!(runner.app().server, "https://two.example/reader");
+        assert!(runner.app().task.is_none());
+        assert!(runner.app().flux_pending.is_empty());
+        assert!(runner.app().flux_in_flight.is_none());
+        assert!(runner.app().selected_flux_entries().is_empty());
+        assert!(commands
+            .iter()
+            .any(|command| matches!(command, Command::Cancel(TaskId(44)))));
+        assert!(commands.iter().any(|command| matches!(
+            command,
+            Command::Store(kobo_sdk::StoreRequest::Save { key, value })
+                if key == &flux_actions(first)
+                    && String::from_utf8_lossy(value).contains("r\t7")
+                    && String::from_utf8_lossy(value).contains("s\t7\ttrue")
+        )));
+        assert!(commands.iter().any(|command| matches!(
+            command,
+            Command::Store(kobo_sdk::StoreRequest::Load { key })
+                if key == &miniflux::cache_key(second, miniflux::ListMode::Unread)
+                    .expect("valid test server")
+        )));
+        assert!(!commands.iter().any(|command| matches!(
+            command,
+            Command::Store(kobo_sdk::StoreRequest::Forget { key })
+                if key.starts_with("miniflux.")
+        )));
+
+        // A delayed response from the old namespace must not repopulate the
+        // new host, even though both servers use entry ID 7.
+        runner.store_result(StoreResult::Loaded {
+            key: miniflux::cache_key(first, miniflux::ListMode::Unread).expect("valid test server"),
+            value: Some(encode_flux_cache(&[first_article])),
+        });
+        assert!(runner.app().selected_flux_entries().is_empty());
+        runner.store_result(StoreResult::Loaded {
+            key: miniflux::cache_key(second, miniflux::ListMode::Unread)
+                .expect("valid test server"),
+            value: Some(encode_flux_cache(std::slice::from_ref(&second_article))),
+        });
+        assert_eq!(
+            runner.app().selected_flux_entries(),
+            std::slice::from_ref(&second_article)
+        );
+
+        let mut restarted = AppRunner::new(Feeds::default());
+        let startup = restarted.start();
+        assert!(startup.iter().any(|command| matches!(
+            command,
+            Command::Store(kobo_sdk::StoreRequest::Load { key }) if key == CONFIG
+        )));
+        let startup = restarted.store_result(StoreResult::Loaded {
+            key: CONFIG.to_owned(),
+            value: Some(b"miniflux\nhttps://two.example/reader/".to_vec()),
+        });
+        assert!(startup.iter().any(|command| matches!(
+            command,
+            Command::Store(kobo_sdk::StoreRequest::Load { key })
+                if key == &miniflux::cache_key(second, miniflux::ListMode::Unread)
+                    .expect("valid test server")
+        )));
+        restarted.store_result(StoreResult::Loaded {
+            key: miniflux::cache_key(first, miniflux::ListMode::Unread).expect("valid test server"),
+            value: Some(encode_flux_cache(&[miniflux::Article {
+                id: 7,
+                title: "Stale".to_owned(),
+                ..second_article.clone()
+            }])),
+        });
+        restarted.store_result(StoreResult::Loaded {
+            key: miniflux::cache_key(second, miniflux::ListMode::Unread)
+                .expect("valid test server"),
+            value: Some(encode_flux_cache(std::slice::from_ref(&second_article))),
+        });
+        assert_eq!(restarted.app().selected_flux_entries(), &[second_article]);
+    }
+
+    #[test]
+    fn equivalent_server_edits_keep_the_same_namespace_and_pending_work() {
+        let raw = "https://FLUX.example:443/reader/";
+        let mut reader = flux_reader();
+        reader.server = raw.to_owned();
+        reader.flux_pending.push(miniflux::Mutation::Read(7));
+        reader.task = Some(PendingTask {
+            id: TaskId(44),
+            target: TaskTarget::FluxEntries {
+                server: raw.to_owned(),
+                mode: miniflux::ListMode::Unread,
+            },
+        });
+        reader.editing = Some(Setting::Server);
+        reader.keyboard = kobo_sdk::keyboard::Keyboard::with_text("https://flux.example/reader");
+        let mut runner = AppRunner::new(reader);
+
+        let commands = runner.action(action_id("kb.enter"));
+
+        assert_eq!(runner.app().server, raw);
+        assert_eq!(runner.app().flux_pending, vec![miniflux::Mutation::Read(7)]);
+        assert_eq!(
+            runner.app().task.as_ref().map(|task| task.id),
+            Some(TaskId(44))
+        );
+        assert!(
+            !commands
+                .iter()
+                .any(|command| matches!(command, Command::Cancel(TaskId(44)))),
+            "equivalent settings must not detach their existing request"
         );
     }
 
@@ -2969,7 +3217,7 @@ mod tests {
             !commands.iter().any(|command| matches!(
                 command,
                 Command::Store(kobo_sdk::StoreRequest::Save { key, .. })
-                    if key == &full_content_key(9)
+                    if key == &flux_full_content("https://flux.example", 9)
             )),
             "a truncated full article must never replace the exact stored value"
         );

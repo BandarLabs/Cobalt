@@ -110,6 +110,12 @@ pub type Poster = dyn Fn(
     + Send
     + Sync;
 
+/// The host-provided implementation a `Put` task runs through.
+///
+/// Kept distinct from [`Poster`] at the builder boundary so a typed
+/// `Task::Put` cannot silently become a POST on the wire.
+pub type Putter = Poster;
+
 /// Decides whether one named credential may be sent to one URL.
 ///
 /// Secret files alone are not authority: without this second decision an
@@ -304,6 +310,7 @@ pub struct TaskRunner {
     receiver: Receiver<Finished>,
     fetch: Option<Arc<Fetcher>>,
     post: Option<Arc<Poster>>,
+    put: Option<Arc<Putter>>,
     line_streams: Option<Arc<LineStreams>>,
     /// Where named secrets are read from, if anywhere.
     secrets: Option<SecretStore>,
@@ -330,6 +337,7 @@ impl std::fmt::Debug for TaskRunner {
             // Deliberately whether, not where and never what. This type ends
             // up in error messages and traces.
             .field("posts", &self.post.is_some())
+            .field("puts", &self.put.is_some())
             .field("line_streams", &self.line_streams.is_some())
             .field("secrets", &self.secrets.is_some())
             .field("credential_policy", &self.credentials.is_some())
@@ -354,6 +362,7 @@ impl TaskRunner {
             receiver,
             fetch: None,
             post: None,
+            put: None,
             line_streams: None,
             secrets: None,
             credentials: None,
@@ -379,6 +388,13 @@ impl TaskRunner {
     #[must_use]
     pub fn with_post(mut self, post: Arc<Poster>) -> Self {
         self.post = Some(post);
+        self
+    }
+
+    /// Supplies the network backend used by `Put`.
+    #[must_use]
+    pub fn with_put(mut self, put: Arc<Putter>) -> Self {
+        self.put = Some(put);
         self
     }
 
@@ -469,7 +485,7 @@ impl TaskRunner {
         }
 
         let required = match &work {
-            Task::Fetch { .. } | Task::Post { .. } => Some(Capability::Network),
+            Task::Fetch { .. } | Task::Post { .. } | Task::Put { .. } => Some(Capability::Network),
             Task::ReadFile { .. } | Task::Sleep { .. } => None,
         };
         if let Some(capability) = required {
@@ -495,6 +511,7 @@ impl TaskRunner {
         let root = self.root.clone();
         let fetch = self.fetch.clone();
         let post = self.post.clone();
+        let put = self.put.clone();
         let line_streams = self.line_streams.clone();
         let secrets = self.secrets.clone();
         let credentials = self.credentials.clone();
@@ -509,6 +526,7 @@ impl TaskRunner {
                     Backends {
                         fetch: fetch.as_deref(),
                         post: post.as_deref(),
+                        put: put.as_deref(),
                         line_streams: line_streams.as_deref(),
                         secrets: secrets.as_ref(),
                         credentials: credentials.as_deref(),
@@ -616,6 +634,7 @@ impl Drop for TaskRunner {
 struct Backends<'a> {
     fetch: Option<&'a Fetcher>,
     post: Option<&'a Poster>,
+    put: Option<&'a Putter>,
     line_streams: Option<&'a LineStreams>,
     secrets: Option<&'a SecretStore>,
     credentials: Option<&'a CredentialAuthorizer>,
@@ -755,6 +774,23 @@ fn run(
             headers,
             max_bytes,
         } => run_post(
+            url,
+            body,
+            content_type,
+            *max_bytes,
+            wanted.as_ref(),
+            headers,
+            backends,
+            cancel,
+        ),
+        Task::Put {
+            url,
+            body,
+            content_type,
+            credential: wanted,
+            headers,
+            max_bytes,
+        } => run_put(
             url,
             body,
             content_type,
@@ -928,6 +964,7 @@ fn run_post(
     if controls.stream.is_some() || (controls.wait_until_cancelled && wanted.is_none()) {
         return TaskOutcome::Failed(TaskError::Denied);
     }
+
     let resolved = match resolved_credential(
         wanted,
         url,
@@ -952,6 +989,63 @@ fn run_post(
         RequestOptions {
             report_rate_limit: controls.report_rate_limit,
             wait_until_cancelled: controls.wait_until_cancelled,
+        },
+        cancel,
+    ) {
+        Ok(bytes) => TaskOutcome::Completed(bytes),
+        Err(error) => TaskOutcome::Failed(error),
+    }
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the closed Task::Put fields and runtime backends are passed explicitly"
+)]
+fn run_put(
+    url: &str,
+    body: &str,
+    content_type: &str,
+    max_bytes: u32,
+    wanted: Option<&Credential>,
+    headers: &[kobo_protocol::Header],
+    backends: Backends<'_>,
+    cancel: &AtomicBool,
+) -> TaskOutcome {
+    let Some(put) = backends.put else {
+        return TaskOutcome::Failed(TaskError::Denied);
+    };
+    let prepared = match own_headers(headers) {
+        Ok(prepared) => prepared,
+        Err(error) => return TaskOutcome::Failed(error),
+    };
+    let (extra, controls) = (prepared.forwarded, prepared.controls);
+    if controls.stream.is_some() || controls.wait_until_cancelled {
+        return TaskOutcome::Failed(TaskError::Denied);
+    }
+    let resolved = match resolved_credential(
+        wanted,
+        url,
+        CredentialUse::Put,
+        Some(body),
+        Some(content_type),
+        backends.credentials,
+        backends.secrets,
+    ) {
+        Ok(credential) => credential,
+        Err(error) => return TaskOutcome::Failed(error),
+    };
+    match put(
+        url,
+        body.as_bytes(),
+        content_type,
+        resolved
+            .as_ref()
+            .map(|(name, value)| (name.as_str(), value.as_str())),
+        &extra,
+        max_bytes.min(MAX_TASK_BYTES_U32),
+        RequestOptions {
+            report_rate_limit: controls.report_rate_limit,
+            wait_until_cancelled: false,
         },
         cancel,
     ) {
@@ -1327,6 +1421,51 @@ mod tests {
         assert_eq!(
             finished[0].outcome,
             TaskOutcome::Completed(b"Accept: application/opds+json".to_vec())
+        );
+    }
+
+    #[test]
+    fn a_put_uses_its_own_backend_and_credential_usage() {
+        let directory = secret_dir("put");
+        std::fs::rename(directory.join("openai"), directory.join("miniflux"))
+            .expect("name Miniflux secret");
+        let mut runner = TaskRunner::simulated(temp_root("put-root"))
+            .with_capabilities([Capability::Network])
+            .with_secrets(&directory)
+            .with_credential_policy(Arc::new(|credential, url, usage, body, content_type| {
+                credential.secret == "miniflux"
+                    && url == "https://feeds.example/v1/entries"
+                    && usage == CredentialUse::Put
+                    && body == Some(r#"{"entry_ids":[7],"starred":true}"#)
+                    && content_type == Some("application/json")
+            }))
+            .with_put(Arc::new(
+                |url, body, content_type, credential, headers, _, options, _| {
+                    assert_eq!(url, "https://feeds.example/v1/entries");
+                    assert_eq!(body, br#"{"entry_ids":[7],"starred":true}"#);
+                    assert_eq!(content_type, "application/json");
+                    assert_eq!(credential, Some(("X-Auth-Token", "not-a-real-key")));
+                    assert!(headers.is_empty());
+                    assert!(!options.wait_until_cancelled);
+                    Ok(Vec::new())
+                },
+            ));
+        runner
+            .submit(
+                TaskId(1),
+                Task::Put {
+                    url: "https://feeds.example/v1/entries".into(),
+                    body: r#"{"entry_ids":[7],"starred":true}"#.into(),
+                    content_type: "application/json".into(),
+                    credential: Some(Credential::in_header("miniflux", "X-Auth-Token")),
+                    headers: Vec::new(),
+                    max_bytes: 1024,
+                },
+            )
+            .expect("PUT submitted");
+        assert_eq!(
+            collect(&mut runner, 1)[0].outcome,
+            TaskOutcome::Completed(Vec::new())
         );
     }
 

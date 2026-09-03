@@ -46,8 +46,11 @@ link. Relative RSS, Atom, and JSON Feed links resolve only against the safe
 subscription URL requested. Redirect-relative and `xml:base` resolution are
 unavailable: `TaskOutcome` provides neither a final URL nor response metadata.
 Miniflux keeps a separate bounded cache for each list mode, exact full articles
-by entry ID, and durable read/star changes for the next sync. Unauthorized
-tokens, offline devices, and unreachable servers leave cached reading intact.
+by entry ID, and durable read/star changes for the next sync. All Miniflux
+state is namespaced by the canonical HTTPS server and any configured
+reverse-proxy prefix, so changing servers never displays an old server's entry
+or sends its queued action to the new one. Unauthorized tokens, offline
+devices, and unreachable servers leave cached reading intact.
 
 ### Conditional requests
 

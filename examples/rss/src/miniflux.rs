@@ -39,11 +39,11 @@ impl ListMode {
     }
 
     #[must_use]
-    pub const fn cache_key(self) -> &'static str {
+    const fn cache_name(self) -> &'static str {
         match self {
-            Self::Unread => "miniflux-cache-unread",
-            Self::Starred => "miniflux-cache-starred",
-            Self::History => "miniflux-cache-history",
+            Self::Unread => "unread",
+            Self::Starred => "starred",
+            Self::History => "history",
         }
     }
 
@@ -79,6 +79,77 @@ pub enum Mutation {
     Star { id: u64, starred: bool },
 }
 
+/// Returns the canonical HTTPS server and optional reverse-proxy prefix.
+///
+/// The result removes redundant trailing slashes, folds host case, and folds
+/// the default HTTPS port so equivalent settings share one durable namespace.
+/// A path prefix remains part of the value because it is part of the service
+/// selected by a reverse proxy.
+#[must_use]
+pub fn canonical_server(server: &str) -> Option<String> {
+    let server = server.trim();
+    if server.is_empty() || server.contains(['?', '#', '\\', '%']) {
+        return None;
+    }
+    let address = kobo_net::parse(server).ok()?;
+    let path = address.path.trim_end_matches('/');
+    if !path.is_empty()
+        && (!path.starts_with('/')
+            || path.starts_with("//")
+            || path.split('/').any(|part| matches!(part, "." | "..")))
+    {
+        return None;
+    }
+    let host = if address.host.contains(':') {
+        format!("[{}]", address.host.to_ascii_lowercase())
+    } else {
+        address.host.to_ascii_lowercase()
+    };
+    let authority = if address.port == 443 {
+        host
+    } else {
+        format!("{host}:{}", address.port)
+    };
+    Some(format!("https://{authority}{path}"))
+}
+
+/// Returns the short durable-store namespace for one canonical server.
+///
+/// The origin and its intentional proxy prefix determine the identifier; no
+/// credential or user-entered secret contributes to it.
+#[must_use]
+pub fn namespace(server: &str) -> Option<String> {
+    canonical_server(server).map(|server| format!("{:016x}", stable_hash(&server)))
+}
+
+#[must_use]
+pub fn cache_key(server: &str, mode: ListMode) -> Option<String> {
+    namespace(server).map(|namespace| format!("miniflux.{namespace}.cache.{}", mode.cache_name()))
+}
+
+#[must_use]
+pub fn actions_key(server: &str) -> Option<String> {
+    namespace(server).map(|namespace| format!("miniflux.{namespace}.actions"))
+}
+
+#[must_use]
+pub fn full_index_key(server: &str) -> Option<String> {
+    namespace(server).map(|namespace| format!("miniflux.{namespace}.full-index"))
+}
+
+#[must_use]
+pub fn full_content_key(server: &str, id: u64) -> Option<String> {
+    namespace(server).map(|namespace| format!("miniflux.{namespace}.full-{id}"))
+}
+
+#[must_use]
+pub fn full_content_id(server: &str, key: &str) -> Option<u64> {
+    let namespace = namespace(server)?;
+    key.strip_prefix(&format!("miniflux.{namespace}.full-"))?
+        .parse()
+        .ok()
+}
+
 /// Builds a v1 URL beneath the configured Miniflux server.
 #[must_use]
 pub fn endpoint(server: &str, path: &str) -> String {
@@ -96,11 +167,13 @@ fn token() -> Credential {
 /// below and approved by the platform policy.
 #[must_use]
 pub fn configured_server(server: &str) -> bool {
-    let server = server.trim().trim_end_matches('/');
-    !server.is_empty()
-        && !server.contains(['?', '#'])
-        && kobo_opds::safe_href(server, "/").is_some()
-        && kobo_net::parse(&format!("{server}/")).is_ok()
+    canonical_server(server).is_some()
+}
+
+fn stable_hash(value: &str) -> u64 {
+    value.bytes().fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
+        (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3)
+    })
 }
 
 #[must_use]
@@ -347,5 +420,21 @@ mod tests {
         assert!(configured_server("https://flux.example/miniflux"));
         assert!(!configured_server("http://flux.example"));
         assert!(!configured_server("https://flux.example/?bad"));
+    }
+
+    #[test]
+    fn server_namespace_canonicalizes_only_equivalent_origins() {
+        assert_eq!(
+            canonical_server(" https://FLUX.example:443/reader/ "),
+            Some("https://flux.example/reader".to_owned())
+        );
+        assert_eq!(
+            namespace("https://FLUX.example:443/reader/"),
+            namespace("https://flux.example/reader")
+        );
+        assert_ne!(
+            namespace("https://flux.example/reader"),
+            namespace("https://other.example/reader")
+        );
     }
 }

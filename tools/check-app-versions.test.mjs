@@ -519,13 +519,13 @@ test("responsive SDK release isolation covers only exact reviewed inputs", () =>
   ];
   const files = new Map(
     manifest.changes
-      .find(change => change.protocol_version === 12)
+      .find(change => change.protocol_version === 14)
       .files.map(file => [file.path, file])
   );
   assert.deepEqual(
     compatibleChangePaths(
       manifest,
-      12,
+      14,
       responsivePaths,
       path => files.get(path)?.base_blob,
       path => files.get(path)?.compatible_blob
@@ -537,7 +537,7 @@ test("responsive SDK release isolation covers only exact reviewed inputs", () =>
     assert.equal(
       compatibleChangePaths(
         manifest,
-        12,
+        14,
         [path],
         candidate => files.get(candidate)?.base_blob,
         () => "f".repeat(40)
@@ -558,13 +558,13 @@ test("Gutenbird test-only changes are isolated by exact reviewed blobs", () => {
   ];
   const files = new Map(
     manifest.changes
-      .find(change => change.protocol_version === 12)
+      .find(change => change.protocol_version === 14)
       .files.map(file => [file.path, file])
   );
   assert.deepEqual(
     compatibleChangePaths(
       manifest,
-      12,
+      14,
       paths,
       path => files.get(path)?.base_blob,
       path => files.get(path)?.compatible_blob
@@ -574,7 +574,7 @@ test("Gutenbird test-only changes are isolated by exact reviewed blobs", () => {
   assert.equal(
     compatibleChangePaths(
       manifest,
-      12,
+      14,
       ["examples/gutenbird/src/main.rs"],
       path => files.get(path)?.base_blob,
       () => "f".repeat(40)
@@ -599,13 +599,13 @@ test("Lichess runtime prerequisites are isolated by exact reviewed blobs", () =>
   ];
   const files = new Map(
     manifest.changes
-      .find(change => change.protocol_version === 12)
+      .find(change => change.protocol_version === 14)
       .files.map(file => [file.path, file])
   );
   assert.deepEqual(
     compatibleChangePaths(
       manifest,
-      12,
+      14,
       paths,
       path => files.get(path)?.base_blob,
       path => files.get(path)?.compatible_blob
@@ -615,7 +615,7 @@ test("Lichess runtime prerequisites are isolated by exact reviewed blobs", () =>
   assert.equal(
     compatibleChangePaths(
       manifest,
-      12,
+      14,
       ["crates/kobo-net/src/lines.rs"],
       () => null,
       () => "f".repeat(40)

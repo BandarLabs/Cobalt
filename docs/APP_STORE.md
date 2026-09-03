@@ -95,13 +95,15 @@ registry supplies public metadata; binary size and SHA-256 are calculated from
 the exact ARM release binary during publishing.
 
 `minimum_cobalt_version` must cover both the SDK wire protocol and the runtime
-services used by the app. Protocol 11 SDK builds require Cobalt 0.3.1 or newer.
-The 0.3.5 runtime deliberately accepts both protocol 11 and 12: installed
-protocol-11 apps, their state, secrets, update preferences, rollback path, and
-Nickel handoff remain usable after its OTA. Those frames retain legacy
-Atkinson metrics so their local pagination stays correct. Protocol-12 apps use
-Folio fields and typography and must declare `minimum_cobalt_version` 0.3.5;
-old runtimes may reject them. The publishing check rejects a lower value.
+services used by the app. Protocol-11 SDK builds require Cobalt 0.3.1 or newer.
+The 0.3.5 runtime deliberately accepts protocol 11, Folio protocol 12, and
+selected-cell protocol 13: installed protocol-11 apps, their state, secrets,
+update preferences, rollback path, and Nickel handoff remain usable after its
+OTA. Those frames retain legacy Atkinson metrics so their local pagination
+stays correct. Protocol-12 Folio fields, protocol-13 selected cells, and
+protocol-14 `Task::Put` mutations require
+`minimum_cobalt_version` 0.3.5; old runtimes may reject them. The publishing
+check rejects a lower value.
 
 The initial Cobalt applications are registered too. Their `0.2.0` copies are
 bundled for a useful first boot, appear as installed in Store, and can later be
@@ -169,11 +171,12 @@ A local Clara BW can run the complete flow without a tagged Cobalt release:
 4. On the reader, refresh Store and test install, update, uninstall, and
    reinstall.
 
-For a protocol-12 beta candidate, first OTA a reader that already has a
-protocol-11 app and stored state. Confirm it launches, pages identically,
+For a protocol-14 beta candidate, first OTA a reader that already has
+protocol-11, -12, and -13 apps and stored state. Confirm each launches,
 retains its secrets and preferences, can roll back, and still returns to
-Nickel. Then install the protocol-12 build from `app-catalog-beta`; its
-`minimum_cobalt_version` gate must prevent installation on an older runtime.
+Nickel. Then install the protocol-14 build from `app-catalog-beta`, exercise
+its PUT mutation path, and confirm its `minimum_cobalt_version` gate prevents
+installation on an older runtime.
 
 This does not create a `v*` platform tag. Record the resulting catalog and
 package digests with physical evidence before `beta` → `main` promotion.

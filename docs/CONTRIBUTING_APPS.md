@@ -75,9 +75,11 @@ The runtime must explicitly authorize the app/secret-name pair in
 The CLI route tells the owner to close and reopen the app after installation.
 
 Existing protocol-11 apps remain valid from Cobalt 0.3.1 during the 0.3.5
-compatibility window. New apps that use Folio protocol-12 fields require
-Cobalt 0.3.5 or newer; set that `minimum_cobalt_version` and increment the
-app version. A newer runtime service can require a higher minimum.
+compatibility window. The 0.3.5 runtime also retains Folio protocol-12 and
+selected-cell protocol-13 frames. New apps using those fields, or the
+protocol-14 `Task::Put` mutation task, require Cobalt 0.3.5 or newer; set that
+`minimum_cobalt_version` and increment the app version. A newer runtime service
+can require a higher minimum.
 
 ## Test the app
 
@@ -147,10 +149,11 @@ each package with the last published catalog and rejects a reused version.
 
 Do not change the Cobalt platform version for an ordinary app update. Raise
 `minimum_cobalt_version` when the app starts using a protocol or runtime
-service absent from older platform releases. For Folio protocol 12, target
-`beta`, declare at least `0.3.5`, and physically confirm the beta OTA still
-launches an installed protocol-11 app with its state, preferences, secrets,
-legacy pagination, rollback, and Nickel handoff intact.
+service absent from older platform releases. For Folio protocol 12,
+selected-cell protocol 13, or PUT protocol 14, target `beta`, declare at least
+`0.3.5`, and physically confirm the beta OTA still launches installed
+protocol-11, -12, and -13 apps with their state, preferences, secrets,
+pagination, rollback, and Nickel handoff intact.
 
 After merge to `beta`, `.github/workflows/apps.yml`:
 

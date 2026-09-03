@@ -456,12 +456,12 @@ fn serve_simulation(socket_path: &Path, frame_path: &Path) -> Result<(), Box<dyn
     println!("simulation socket ready: {}", socket_path.display());
 
     let (mut stream, _) = listener.accept()?;
-    let hello = kobo_protocol::read_from(&mut stream)?;
+    let (peer_version, hello) = kobo_protocol::read_from_versioned(&mut stream)?;
     let Message::Hello { name } = hello.message else {
         return Err("first application message must be Hello".into());
     };
     println!("application connected: {name}");
-    kobo_protocol::write_to(
+    kobo_protocol::write_to_version(
         &mut stream,
         &Frame {
             version: hello.version,
@@ -473,8 +473,9 @@ fn serve_simulation(socket_path: &Path, frame_path: &Path) -> Result<(), Box<dyn
                 text_scale: metrics.text_scale,
             },
         },
+        peer_version,
     )?;
-    serve_application(&mut stream, frame_path, &name, metrics, hello.version)
+    serve_application(&mut stream, frame_path, &name, metrics, peer_version)
 }
 
 /// Where a host runtime looks for owner-installed TLS trust roots.
@@ -570,6 +571,7 @@ fn serve_application(
         TaskRunner::simulated(std::env::temp_dir())
             .with_fetch(std::sync::Arc::new(kobo_net::fetch_from_controlled))
             .with_post(std::sync::Arc::new(kobo_net::post_controlled))
+            .with_put(std::sync::Arc::new(kobo_net::put_controlled))
             .with_line_streams(std::sync::Arc::new(kobo_net::LineStreams::default()))
             .with_app_secrets(&secrets, name)
             .with_credential_policy(std::sync::Arc::new(
@@ -603,7 +605,10 @@ fn serve_application(
     let mut pictures = kobo_ui::PictureCache::default();
     let mut preview = PreviewState::default();
     loop {
-        let frame = kobo_protocol::read_from(stream)?;
+        let (version, frame) = kobo_protocol::read_from_versioned(stream)?;
+        if version != peer_version {
+            return Err("application changed its negotiated protocol version".into());
+        }
         match frame.message {
             Message::SetScreen(screen) => {
                 // Per screen, as the device does it: a book is drawn
@@ -713,6 +718,7 @@ fn serve_application(
                         request_id: frame.request_id,
                         message: Message::DeviceResult(result),
                     },
+                    peer_version,
                 )?;
             }
             Message::Spawn { task, work } => {
@@ -732,6 +738,7 @@ fn serve_application(
                                 outcome: TaskOutcome::Failed(TaskError::Denied),
                             },
                         },
+                        peer_version,
                     )?;
                 }
             }
@@ -746,6 +753,7 @@ fn serve_application(
                         request_id: frame.request_id,
                         message: Message::StoreResult(result),
                     },
+                    peer_version,
                 )?;
             }
             // This path renders to a file and has no reader at a keyboard, so
@@ -762,6 +770,7 @@ fn serve_application(
                         kobo_protocol::ShellError::Unavailable,
                     )),
                 },
+                peer_version,
             )?,
             Message::Cancel { task } => tasks
                 .lock()
@@ -800,9 +809,10 @@ fn serve_application(
 fn write_shared(
     writer: &std::sync::Arc<std::sync::Mutex<UnixStream>>,
     frame: &Frame,
+    peer_version: u8,
 ) -> Result<(), Box<dyn Error>> {
     let mut stream = writer.lock().map_err(|_| "the writer lock was poisoned")?;
-    kobo_protocol::write_to(&mut *stream, frame)?;
+    kobo_protocol::write_to_version(&mut *stream, frame, peer_version)?;
     Ok(())
 }
 
@@ -820,7 +830,7 @@ fn deliver_outcomes(
             let Ok(mut stream) = writer.lock() else {
                 return;
             };
-            if kobo_protocol::write_to(
+            if kobo_protocol::write_to_version(
                 &mut *stream,
                 &Frame {
                     version: peer_version,
@@ -830,6 +840,7 @@ fn deliver_outcomes(
                         outcome: finished.outcome,
                     },
                 },
+                peer_version,
             )
             .is_err()
             {

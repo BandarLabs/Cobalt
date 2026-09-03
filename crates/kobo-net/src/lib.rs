@@ -707,6 +707,14 @@ enum Method<'a> {
         /// Further headers the request needs, none of them secret.
         headers: &'a [(&'a str, &'a str)],
     },
+    Put {
+        body: &'a [u8],
+        content_type: &'a str,
+        /// The credential header, already assembled as a name and its value.
+        credential: Option<(&'a str, &'a str)>,
+        /// Further headers the request needs, none of them secret.
+        headers: &'a [(&'a str, &'a str)],
+    },
 }
 
 impl Method<'_> {
@@ -714,6 +722,7 @@ impl Method<'_> {
         match self {
             Self::Get { .. } => "GET",
             Self::Post { .. } => "POST",
+            Self::Put { .. } => "PUT",
         }
     }
 }
@@ -758,6 +767,91 @@ pub fn post(
         RequestOptions::default(),
         &cancel,
     )
+}
+
+/// Replaces a resource at `url` and returns at most `max_bytes` of its reply.
+///
+/// PUT mutations are never retained or retried after the transport starts:
+/// their outcome can be unknown when a connection breaks, so reusing a
+/// persistent request path would risk applying an app action twice.
+///
+/// # Errors
+///
+/// Returns the same bounded transport failures as [`post`].
+pub fn put(
+    url: &str,
+    body: &[u8],
+    content_type: &str,
+    credential: Option<(&str, &str)>,
+    headers: &[(&str, &str)],
+    max_bytes: u32,
+) -> Result<Vec<u8>, TaskError> {
+    let cancel = AtomicBool::new(false);
+    put_controlled(
+        url,
+        body,
+        content_type,
+        credential,
+        headers,
+        max_bytes,
+        RequestOptions::default(),
+        &cancel,
+    )
+}
+
+/// The cancellable runtime form of [`put`].
+///
+/// # Errors
+///
+/// Returns the same bounded transport failures as [`put`].
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the runtime transport boundary keeps body, credential, headers, limits, options, and cancellation explicit"
+)]
+pub fn put_controlled(
+    url: &str,
+    body: &[u8],
+    content_type: &str,
+    credential: Option<(&str, &str)>,
+    headers: &[(&str, &str)],
+    max_bytes: u32,
+    options: RequestOptions,
+    cancel: &AtomicBool,
+) -> Result<Vec<u8>, TaskError> {
+    let valid_header = |name: &str, value: &str| {
+        name.parse::<http::HeaderName>().is_ok() && value.parse::<http::HeaderValue>().is_ok()
+    };
+    if credential.is_some_and(|(name, value)| !valid_header(name, value))
+        || headers
+            .iter()
+            .any(|(name, value)| !valid_header(name, value))
+        || content_type.parse::<http::HeaderValue>().is_err()
+        || options.wait_until_cancelled
+    {
+        return Err(TaskError::Denied);
+    }
+    let address = parse(url)?;
+    let response = request(
+        &address,
+        &Method::Put {
+            body,
+            content_type,
+            credential,
+            headers,
+        },
+        max_bytes,
+        cancel,
+    )?;
+    if options.report_rate_limit {
+        if let RateLimit::Limited(delay) = rate_limit(&response)? {
+            return Ok(rate_limit_envelope(delay));
+        }
+    }
+    match split_response(&response, max_bytes)? {
+        Response::Body(body) if body.len() <= max_bytes as usize => Ok(body.to_vec()),
+        Response::Body(_) => Err(TaskError::TooLarge),
+        Response::Redirect(_) => Err(TaskError::NotFound),
+    }
 }
 
 /// The cancellable runtime form of [`post`].
@@ -1000,7 +1094,8 @@ fn request_head(
             streaming: false,
             ..
         }
-        | Method::Post { .. } => "gzip",
+        | Method::Post { .. }
+        | Method::Put { .. } => "gzip",
     };
     // Ordinary POSTs hang up after their answer so they can never be replayed
     // on a stale pooled connection. A retained POST is itself the resource:
@@ -1008,7 +1103,7 @@ fn request_head(
     let connection = match method {
         Method::Get { .. } => "keep-alive",
         Method::Post { .. } if retain_post => "keep-alive",
-        Method::Post { .. } => "close",
+        Method::Post { .. } | Method::Put { .. } => "close",
     };
     let mut head = format!(
         "{verb} {path} HTTP/1.1\r\nHost: {host}\r\nConnection: {connection}\r\nAccept-Encoding: {encoding}\r\nUser-Agent: kobo-runtime\r\n"
@@ -1042,6 +1137,12 @@ fn request_head(
             }
         }
         Method::Post {
+            body,
+            content_type,
+            credential,
+            headers,
+        }
+        | Method::Put {
             body,
             content_type,
             credential,
@@ -1645,7 +1746,7 @@ fn exchange(
             WriteFailure::Cancelled | WriteFailure::TimedOut => Failed::Real(TaskError::TimedOut),
         },
     )?;
-    if let Method::Post { body, .. } = method {
+    if let Method::Post { body, .. } | Method::Put { body, .. } = method {
         let body_deadline = Instant::now() + RESPONSE_TIMEOUT;
         write_all_cancellable(&mut tls, body, body_deadline, &cancelled).map_err(|error| {
             match error {
@@ -2820,6 +2921,27 @@ mod tests {
             head.contains("Authorization: Bearer sk-or-secret\r\n"),
             "{head}"
         );
+    }
+
+    #[test]
+    fn a_put_keeps_its_method_and_body_headers() {
+        let address = parse("https://feeds.example/v1/entries").expect("PUT URL");
+        let request = head(
+            &address,
+            &Method::Put {
+                body: br#"{"entry_ids":[7],"starred":true}"#,
+                content_type: "application/json",
+                credential: Some(("X-Auth-Token", "runtime-only")),
+                headers: &[("Accept", "application/json")],
+            },
+            1024,
+        );
+        assert!(request.starts_with("PUT /v1/entries HTTP/1.1\r\n"));
+        assert!(request.contains("X-Auth-Token: runtime-only\r\n"));
+        assert!(request.contains("Accept: application/json\r\n"));
+        assert!(request.contains("Content-Type: application/json\r\n"));
+        assert!(request.contains("Content-Length: 32\r\n"));
+        assert!(request.contains("Connection: close\r\n"));
     }
 
     #[test]

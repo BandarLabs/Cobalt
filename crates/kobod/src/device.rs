@@ -1208,16 +1208,31 @@ impl AppLaunch {
 
 impl Hosted {
     fn send(&mut self, message: Message) -> Result<(), String> {
-        kobo_protocol::write_to(
-            &mut self.stream,
-            &Frame {
-                version: self.version,
-                request_id: 0,
-                message,
-            },
-        )
-        .map_err(|error| format!("send to {}: {error}", self.name))
+        write_application_frame(&mut self.stream, self.version, 0, message)
+            .map_err(|error| format!("send to {}: {error}", self.name))
     }
+}
+
+/// Writes an outbound application frame at the version negotiated in Hello.
+///
+/// Every device-originated path uses this boundary: synchronous replies,
+/// lifecycle and shell events, task outcomes, and touch delivery must never
+/// quietly adopt the runtime's newest wire format.
+fn write_application_frame(
+    stream: &mut std::os::unix::net::UnixStream,
+    version: u8,
+    request_id: u32,
+    message: Message,
+) -> Result<(), kobo_protocol::StreamError> {
+    kobo_protocol::write_to_version(
+        stream,
+        &Frame {
+            version,
+            request_id,
+            message,
+        },
+        version,
+    )
 }
 
 /// Hosts applications on a panel that is already owned.
@@ -2589,15 +2604,8 @@ fn id_of_path(apps: &[Hosted], path: &Path) -> Option<u64> {
 }
 
 fn reply(app: &mut Hosted, request_id: u32, message: Message) -> Result<(), String> {
-    kobo_protocol::write_to(
-        &mut app.stream,
-        &Frame {
-            version: app.version,
-            request_id,
-            message,
-        },
-    )
-    .map_err(|error| format!("answer {}: {error}", app.name))
+    write_application_frame(&mut app.stream, app.version, request_id, message)
+        .map_err(|error| format!("answer {}: {error}", app.name))
 }
 
 /// One line describing how the session ended and what ran during it.
@@ -3038,6 +3046,7 @@ fn start_application(
     let tasks = TaskRunner::simulated(std::env::temp_dir())
         .with_fetch(Arc::new(kobo_net::fetch_from_controlled))
         .with_post(Arc::new(kobo_net::post_controlled))
+        .with_put(Arc::new(kobo_net::put_controlled))
         .with_line_streams(Arc::new(kobo_net::LineStreams::default()))
         .with_app_secrets(SECRETS, &name)
         .with_credential_policy(Arc::new(
@@ -3482,8 +3491,8 @@ fn greet(
     let (mut stream, _) = listener
         .accept()
         .map_err(|error| format!("application never connected: {error}"))?;
-    let hello =
-        kobo_protocol::read_from(&mut stream).map_err(|error| format!("first message: {error}"))?;
+    let (version, hello) = kobo_protocol::read_from_versioned(&mut stream)
+        .map_err(|error| format!("first message: {error}"))?;
     let Message::Hello { name } = hello.message else {
         return Err("the first application message must be Hello".to_owned());
     };
@@ -3492,25 +3501,23 @@ fn greet(
             "application identity mismatch: launched {expected_name:?}, but it said {name:?}"
         ));
     }
-    kobo_protocol::write_to(
+    write_application_frame(
         &mut stream,
-        &Frame {
-            version: hello.version,
-            request_id: hello.request_id,
-            message: Message::Welcome {
-                width: u16::try_from(whole_screen.width).unwrap_or(u16::MAX),
-                height: u16::try_from(whole_screen.height).unwrap_or(u16::MAX),
-                // The panel this runtime renders for. An application that
-                // measures text has to measure it for the same one, and pixel
-                // counts alone do not say how large a pixel is.
-                pixels_per_inch: u16::try_from(crate::device_metrics().pixels_per_inch)
-                    .unwrap_or(u16::MAX),
-                text_scale: crate::device_metrics().text_scale,
-            },
+        version,
+        hello.request_id,
+        Message::Welcome {
+            width: u16::try_from(whole_screen.width).unwrap_or(u16::MAX),
+            height: u16::try_from(whole_screen.height).unwrap_or(u16::MAX),
+            // The panel this runtime renders for. An application that
+            // measures text has to measure it for the same one, and pixel
+            // counts alone do not say how large a pixel is.
+            pixels_per_inch: u16::try_from(crate::device_metrics().pixels_per_inch)
+                .unwrap_or(u16::MAX),
+            text_scale: crate::device_metrics().text_scale,
         },
     )
     .map_err(|error| format!("welcome: {error}"))?;
-    Ok((stream, name, hello.version))
+    Ok((stream, name, version))
 }
 
 /// Keeps the recovery watchdog fed from a thread, for the stretches where the
@@ -3605,17 +3612,15 @@ fn deliver_touch(
     if let Some((action, hit)) =
         text_hold_for_oriented(logical_event, current, chrome, held, orientation)
     {
-        kobo_protocol::write_to(
+        write_application_frame(
             stream,
-            &Frame {
-                version,
-                request_id: 0,
-                message: Message::TextHold {
-                    action,
-                    context: hit.context,
-                    start: hit.start,
-                    end: hit.end,
-                },
+            version,
+            0,
+            Message::TextHold {
+                action,
+                context: hit.context,
+                start: hit.start,
+                end: hit.end,
             },
         )
         .map_err(|error| format!("deliver a text hold: {error}"))?;
@@ -3630,15 +3635,8 @@ fn deliver_touch(
     if offered && !current.is_some_and(|screen| screen.owns_back) {
         return Ok(Tap::Leave);
     }
-    kobo_protocol::write_to(
-        stream,
-        &Frame {
-            version,
-            request_id: 0,
-            message: Message::Action { action },
-        },
-    )
-    .map_err(|error| format!("deliver a tap: {error}"))?;
+    write_application_frame(stream, version, 0, Message::Action { action })
+        .map_err(|error| format!("deliver a tap: {error}"))?;
     Ok(if offered {
         Tap::OfferedBack
     } else {
@@ -3911,11 +3909,11 @@ fn pump_application(
         .map_err(|error| format!("watch the application: {error}"))?;
     let sender = sender.clone();
     thread::spawn(move || loop {
-        let Ok(frame) = kobo_protocol::read_from(&mut reader) else {
+        let Ok((frame_version, frame)) = kobo_protocol::read_from_versioned(&mut reader) else {
             let _ignored = sender.send(Event::AppGone(id));
             return;
         };
-        if frame.version != version {
+        if frame_version != version {
             let _ignored = sender.send(Event::AppGone(id));
             return;
         }
@@ -4184,6 +4182,43 @@ mod tests {
     }
 
     #[test]
+    fn outbound_events_always_use_each_applications_negotiated_version() {
+        let (mut runtime, mut application) =
+            std::os::unix::net::UnixStream::pair().expect("socket pair");
+        for version in [
+            kobo_protocol::LEGACY_VERSION,
+            kobo_protocol::FOLIO_VERSION,
+            kobo_protocol::SELECTED_CELL_VERSION,
+        ] {
+            for message in [
+                Message::TaskOutcome {
+                    task: TaskId(7),
+                    outcome: TaskOutcome::Completed(b"done".to_vec()),
+                },
+                Message::Lifecycle(kobo_protocol::Lifecycle::Background),
+                Message::TextHold {
+                    action: kobo_ui::ActionId(8),
+                    context: 3,
+                    start: 1,
+                    end: 2,
+                },
+                Message::ShellEvent(kobo_protocol::ShellEvent::Opened),
+                Message::CoverChanged {
+                    magnet_present: true,
+                },
+                Message::PageTurn { forward: false },
+            ] {
+                super::write_application_frame(&mut runtime, version, 0, message)
+                    .expect("send outbound event");
+                let (encoded_version, frame) =
+                    kobo_protocol::read_from_versioned(&mut application).expect("read event");
+                assert_eq!(encoded_version, version);
+                assert_eq!(frame.version, version);
+            }
+        }
+    }
+
+    #[test]
     fn protocol_11_lichess_consumes_host_secret_for_stream_and_cancellable_seek() {
         trust_mock_root();
         let config = mock_server_config();
@@ -4214,6 +4249,7 @@ mod tests {
                                     && body == Some(SEEK_BODY)
                                     && content_type == Some(FORM)
                             }
+                            CredentialUse::Put => false,
                         }
                 },
             ))
@@ -4706,7 +4742,7 @@ mod tests {
         assert_eq!(
             deliver_touch(
                 &mut runtime,
-                kobo_protocol::VERSION,
+                kobo_protocol::LEGACY_VERSION,
                 tap,
                 Some(&screen),
                 &chrome,
@@ -4734,7 +4770,9 @@ mod tests {
             .expect("route the tap"),
             Tap::OfferedBack
         );
-        let frame = kobo_protocol::read_from(&mut app).expect("the application is told");
+        let (version, frame) =
+            kobo_protocol::read_from_versioned(&mut app).expect("the application is told");
+        assert_eq!(version, kobo_protocol::LEGACY_VERSION);
         assert!(matches!(
             frame.message,
             Message::Action {

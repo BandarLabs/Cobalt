@@ -829,6 +829,9 @@ The four kinds of work:
   document in pieces; a range is sent for every piece including the first.
 - **`Post { url, body, content_type, secret, max_bytes }`**. `secret` is the
   *name* of a credential the runtime holds. Never its value.
+- **`Put { url, body, content_type, credential, headers, max_bytes }`**.
+  Protocol 14's non-retrying replacement request. It is deliberately distinct
+  from `Post` so the runtime can authorize mutations independently.
 - **`ReadFile { path }`**. Confined to the application's own directory.
 - **`Sleep { seconds }`**. Waits without holding a wake lock.
 
@@ -855,8 +858,8 @@ wrong is a way to be slow or to be unsafe.
   requests to one host, and each used to pay for its own TCP connection and
   TLS handshake. The runtime holds the last connection open and asks the next
   question on it, which on a slow link roughly halves the time to fill that
-  screen. Only a `Fetch` does this: a `Post` may have been acted on by the far
-  end, so it is never the request that gets repeated.
+  screen. Only a `Fetch` does this: a `Post` or `Put` may have been acted on
+  by the far end, so neither is ever the request that gets repeated.
 
 None of this changes what `on_task` receives. It is the same bytes, sooner.
 
@@ -882,7 +885,7 @@ if self.clock.on_task(context, task) {
 `Heartbeat::default()` is five seconds, not zero. Stop it on every path that
 ends the work, including cancel and failure, or it naps forever.
 
-A `Post` body may be up to `MAX_POST_BODY_LEN`, which is far larger than the
+A `Post` or `Put` body may be up to `MAX_POST_BODY_LEN`, which is far larger than the
 16 KiB ceiling on a label, because a request that carries research or a
 document is not a string on a screen. `Context::spawn` returns `None` rather
 than failing the process if a task is still too large to send, so an

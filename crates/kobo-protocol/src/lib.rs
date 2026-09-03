@@ -17,9 +17,9 @@ use std::cmp::min;
 pub const MAGIC: [u8; 4] = *b"KOBO";
 /// The newest wire version emitted by this runtime.
 ///
-/// During the 0.3.5 OTA window the decoder also accepts
-/// [`LEGACY_VERSION`]. Every other version remains refused rather than
-/// reinterpreted.
+/// During the 0.3.5 OTA window the decoder also accepts the established
+/// protocol-11, -12, and -13 shapes. Every other version remains refused
+/// rather than reinterpreted.
 ///
 /// Went to 3 when a grid cell gained an optional glyph. That is a change to
 /// the payload of an existing tag rather than a new tag, so an old runtime
@@ -54,9 +54,15 @@ pub const MAGIC: [u8; 4] = *b"KOBO";
 /// Version 12 adds Folio tile values, card tiles, section links and page rails.
 /// Version 13 adds persistent selected state to grid cells. Its runtime retains
 /// a version-12 reader so already installed Folio applications keep working.
-pub const VERSION: u8 = 13;
+/// Version 14 adds the `Put` task. Its distinct task tag lets an older peer
+/// refuse the request instead of interpreting a mutation as another task.
+pub const VERSION: u8 = 14;
 /// Folio's tile, section, and page-rail protocol.
 pub const FOLIO_VERSION: u8 = 12;
+/// Persistent selected state in grid-cell frames.
+pub const SELECTED_CELL_VERSION: u8 = 13;
+/// The first protocol version that carries `Task::Put`.
+pub const PUT_VERSION: u8 = 14;
 /// The pre-Folio protocol retained during the compatibility window.
 pub const LEGACY_VERSION: u8 = 11;
 pub const HEADER_LEN: usize = 14;
@@ -312,6 +318,7 @@ pub struct Credential {
 pub enum CredentialUse {
     Fetch,
     Post,
+    Put,
 }
 
 impl Credential {
@@ -421,6 +428,17 @@ pub enum Task {
         headers: Vec<Header>,
         max_bytes: u32,
     },
+    /// Replaces a resource. This is separate from [`Task::Post`] so credential
+    /// policy can permit a create without authorizing a mutation at the same
+    /// URL.
+    Put {
+        url: String,
+        body: String,
+        content_type: String,
+        credential: Option<Credential>,
+        headers: Vec<Header>,
+        max_bytes: u32,
+    },
     /// Reads a file from the application's own directory.
     ReadFile { path: String },
     /// Waits, without holding a wake lock.
@@ -448,6 +466,14 @@ impl Task {
                     && credential.as_ref().is_none_or(Credential::is_well_formed)
             }
             Self::Post {
+                url,
+                body,
+                content_type,
+                credential,
+                headers,
+                ..
+            }
+            | Self::Put {
                 url,
                 body,
                 content_type,
@@ -1754,10 +1780,25 @@ impl From<io::Error> for StreamError {
 /// Returns an error when a message exceeds protocol limits.
 #[allow(clippy::too_many_lines)]
 pub fn encode(frame: &Frame) -> Result<Vec<u8>, ProtocolError> {
-    if !matches!(frame.version, LEGACY_VERSION | FOLIO_VERSION | VERSION) {
-        return Err(ProtocolError::UnsupportedVersion(frame.version));
+    encode_with_version(frame, frame.version)
+}
+
+/// Encodes `frame` for a negotiated peer protocol version.
+///
+/// The passed version is authoritative so a host can serialize every
+/// unsolicited message for the application that negotiated it, even when the
+/// caller builds ordinary current-version frames.
+///
+/// # Errors
+///
+/// Returns an error for unsupported versions or a message the selected
+/// protocol cannot represent.
+#[allow(clippy::too_many_lines)]
+pub fn encode_with_version(frame: &Frame, version: u8) -> Result<Vec<u8>, ProtocolError> {
+    if !supported_version(version) {
+        return Err(ProtocolError::UnsupportedVersion(version));
     }
-    let (kind, payload_len) = encoded_message_layout(&frame.message, frame.version)?;
+    let (kind, payload_len) = encoded_message_layout(&frame.message, version)?;
     let mut payload = Vec::with_capacity(payload_len);
     match &frame.message {
         Message::Hello { name } => {
@@ -1776,7 +1817,7 @@ pub fn encode(frame: &Frame) -> Result<Vec<u8>, ProtocolError> {
         }
         Message::SetScreen(screen) => {
             let mut count = 0;
-            encode_screen(&mut payload, screen, 0, &mut count, frame.version)?;
+            encode_screen(&mut payload, screen, 0, &mut count, version)?;
         }
         Message::SetOrientation(orientation) => payload.push(*orientation as u8),
         Message::Action { action } => {
@@ -1800,7 +1841,7 @@ pub fn encode(frame: &Frame) -> Result<Vec<u8>, ProtocolError> {
         Message::Exit => {}
         Message::Launch { name } => push_string(&mut payload, name)?,
         Message::DeviceRequest(request) => {
-            encode_device_request(&mut payload, request, frame.version)?;
+            encode_device_request(&mut payload, request, version)?;
         }
         Message::DeviceResult(result) => encode_device_result(&mut payload, result)?,
         Message::Spawn { .. } | Message::Cancel { .. } | Message::TaskOutcome { .. } => {
@@ -1862,13 +1903,20 @@ pub fn encode(frame: &Frame) -> Result<Vec<u8>, ProtocolError> {
     debug_assert_eq!(payload.len(), payload_len);
     let mut bytes = Vec::with_capacity(HEADER_LEN + payload.len());
     bytes.extend_from_slice(&MAGIC);
-    bytes.push(frame.version);
+    bytes.push(version);
     bytes.push(kind);
     let payload_len = u32::try_from(payload.len()).map_err(|_| ProtocolError::FrameTooLarge)?;
     bytes.extend_from_slice(&payload_len.to_be_bytes());
     bytes.extend_from_slice(&frame.request_id.to_be_bytes());
     bytes.extend_from_slice(&payload);
     Ok(bytes)
+}
+
+const fn supported_version(version: u8) -> bool {
+    matches!(
+        version,
+        LEGACY_VERSION | FOLIO_VERSION | SELECTED_CELL_VERSION | VERSION
+    )
 }
 
 /// Writes a credential, or the absence of one.
@@ -1923,6 +1971,10 @@ fn take_credential(reader: &mut Reader<'_>) -> Result<Option<Credential>, Protoc
     Ok(credential)
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "one arm per closed task message keeps tags and payloads auditable together"
+)]
 fn encode_task_message(payload: &mut Vec<u8>, message: &Message) -> Result<(), ProtocolError> {
     match message {
         Message::Spawn { task, work } => {
@@ -1966,6 +2018,29 @@ fn encode_task_message(payload: &mut Vec<u8>, message: &Message) -> Result<(), P
                     max_bytes,
                 } => {
                     payload.push(3);
+                    push_string(payload, url)?;
+                    push_long_string(payload, body)?;
+                    push_string(payload, content_type)?;
+                    push_credential(payload, credential.as_ref())?;
+                    payload.push(
+                        u8::try_from(headers.len())
+                            .map_err(|_| ProtocolError::InvalidValue("too many headers"))?,
+                    );
+                    for header in headers {
+                        push_string(payload, &header.name)?;
+                        push_string(payload, &header.value)?;
+                    }
+                    push_u32(payload, *max_bytes);
+                }
+                Task::Put {
+                    url,
+                    body,
+                    content_type,
+                    credential,
+                    headers,
+                    max_bytes,
+                } => {
+                    payload.push(4);
                     push_string(payload, url)?;
                     push_long_string(payload, body)?;
                     push_string(payload, content_type)?;
@@ -2234,6 +2309,10 @@ fn shell_chunk_len(bytes: &[u8]) -> Result<usize, ProtocolError> {
 }
 
 /// How many bytes one [`Task`] encodes to, identifier and tag included.
+#[allow(
+    clippy::too_many_lines,
+    reason = "one arm per closed task form keeps length accounting aligned with encoding"
+)]
 fn encoded_task_len(work: &Task) -> Result<usize, ProtocolError> {
     // Four bytes of task identifier and one tag byte. This was six, which made
     // every spawned task claim one byte more than it encodes to, and the debug
@@ -2317,10 +2396,47 @@ fn encoded_task_len(work: &Task) -> Result<usize, ProtocolError> {
                 add_encoded_len(&mut length, encoded_string_len(&header.value)?)?;
             }
         }
+        Task::Put {
+            url,
+            body,
+            content_type,
+            credential,
+            headers,
+            ..
+        } => {
+            if headers.len() > MAX_HEADERS || headers.iter().any(|header| !header.is_well_formed())
+            {
+                return Err(ProtocolError::InvalidValue("request header"));
+            }
+            if credential
+                .as_ref()
+                .is_some_and(|credential| !credential.is_well_formed())
+            {
+                return Err(ProtocolError::InvalidValue("credential"));
+            }
+            add_encoded_len(&mut length, 6)?;
+            add_encoded_len(&mut length, encoded_string_len(url)?)?;
+            add_encoded_len(&mut length, encoded_body_len(body)?)?;
+            add_encoded_len(&mut length, encoded_string_len(content_type)?)?;
+            if let Some(credential) = credential {
+                add_encoded_len(&mut length, encoded_string_len(&credential.secret)?)?;
+                if let SecretHeader::Named(name) = &credential.header {
+                    add_encoded_len(&mut length, encoded_string_len(name)?)?;
+                }
+            }
+            for header in headers {
+                add_encoded_len(&mut length, encoded_string_len(&header.name)?)?;
+                add_encoded_len(&mut length, encoded_string_len(&header.value)?)?;
+            }
+        }
     }
     Ok(length)
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "the closed message-to-tag map is safest when its wire layout stays in one match"
+)]
 fn encoded_message_layout(message: &Message, version: u8) -> Result<(u8, usize), ProtocolError> {
     match message {
         Message::Hello { name } => Ok((1, encoded_string_len(name)?)),
@@ -2350,7 +2466,12 @@ fn encoded_message_layout(message: &Message, version: u8) -> Result<(u8, usize),
         }
         Message::DeviceRequest(request) => Ok((7, device_request_len(request, version)?)),
         Message::DeviceResult(result) => Ok((8, device_result_len(result)?)),
-        Message::Spawn { work, .. } => Ok((9, encoded_task_len(work)?)),
+        Message::Spawn { work, .. } => {
+            if matches!(work, Task::Put { .. }) && version < PUT_VERSION {
+                return Err(ProtocolError::InvalidValue("PUT task"));
+            }
+            Ok((9, encoded_task_len(work)?))
+        }
         Message::Cancel { .. } => Ok((10, 4)),
         Message::TaskOutcome { outcome, .. } => {
             let mut length = 5;
@@ -4053,7 +4174,7 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, ProtocolError> {
         return Err(ProtocolError::BadMagic);
     }
     let version = bytes[4];
-    if !matches!(version, LEGACY_VERSION | FOLIO_VERSION | VERSION) {
+    if !supported_version(version) {
         return Err(ProtocolError::UnsupportedVersion(bytes[4]));
     }
     let payload_len = u32::from_be_bytes([bytes[6], bytes[7], bytes[8], bytes[9]]) as usize;
@@ -4184,6 +4305,36 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, ProtocolError> {
                         max_bytes: min(reader.u32()?, MAX_TASK_BYTES_U32),
                     }
                 }
+                4 if version >= PUT_VERSION => {
+                    let url = reader.string()?;
+                    if url.len() > MAX_URL_LEN {
+                        return Err(ProtocolError::StringTooLarge);
+                    }
+                    let body = reader.long_string()?;
+                    let content_type = reader.string()?;
+                    let credential = take_credential(&mut reader)?;
+                    let count = usize::from(reader.u8()?);
+                    if count > MAX_HEADERS {
+                        return Err(ProtocolError::InvalidValue("too many headers"));
+                    }
+                    let mut headers = Vec::with_capacity(count);
+                    for _ in 0..count {
+                        let header = Header::new(reader.string()?, reader.string()?);
+                        if !header.is_well_formed() {
+                            return Err(ProtocolError::InvalidValue("request header"));
+                        }
+                        headers.push(header);
+                    }
+                    Task::Put {
+                        url,
+                        body,
+                        content_type,
+                        credential,
+                        headers,
+                        max_bytes: min(reader.u32()?, MAX_TASK_BYTES_U32),
+                    }
+                }
+                4 => return Err(ProtocolError::InvalidValue("PUT task")),
                 _ => return Err(ProtocolError::InvalidValue("task kind")),
             };
             Message::Spawn { task, work }
@@ -4458,6 +4609,23 @@ pub fn write_to<W: Write>(writer: &mut W, frame: &Frame) -> Result<(), StreamErr
     Ok(())
 }
 
+/// Writes a frame using a hosted application's negotiated protocol version.
+///
+/// # Errors
+///
+/// Returns a protocol error for an unsupported version or a message it cannot
+/// represent, and an I/O error from the destination.
+pub fn write_to_version<W: Write>(
+    writer: &mut W,
+    frame: &Frame,
+    version: u8,
+) -> Result<(), StreamError> {
+    let bytes = encode_with_version(frame, version)?;
+    writer.write_all(&bytes)?;
+    writer.flush()?;
+    Ok(())
+}
+
 /// Reads one bounded frame from a reliable byte stream.
 ///
 /// # Errors
@@ -4465,12 +4633,22 @@ pub fn write_to<W: Write>(writer: &mut W, frame: &Frame) -> Result<(), StreamErr
 /// Returns an I/O error when the frame is truncated and a protocol error when
 /// its header or payload is invalid.
 pub fn read_from<R: Read>(reader: &mut R) -> Result<Frame, StreamError> {
+    read_from_versioned(reader).map(|(_, frame)| frame)
+}
+
+/// Reads one frame and returns the protocol version its peer selected.
+///
+/// # Errors
+///
+/// Returns an I/O error when the frame is truncated and a protocol error when
+/// its header or payload is invalid.
+pub fn read_from_versioned<R: Read>(reader: &mut R) -> Result<(u8, Frame), StreamError> {
     let mut header = [0_u8; HEADER_LEN];
     reader.read_exact(&mut header)?;
     if header[..4] != MAGIC {
         return Err(ProtocolError::BadMagic.into());
     }
-    if !matches!(header[4], LEGACY_VERSION | FOLIO_VERSION | VERSION) {
+    if !supported_version(header[4]) {
         return Err(ProtocolError::UnsupportedVersion(header[4]).into());
     }
     let payload_len = u32::from_be_bytes([header[6], header[7], header[8], header[9]]) as usize;
@@ -4481,7 +4659,8 @@ pub fn read_from<R: Read>(reader: &mut R) -> Result<Frame, StreamError> {
     bytes.extend_from_slice(&header);
     bytes.resize(HEADER_LEN + payload_len, 0);
     reader.read_exact(&mut bytes[HEADER_LEN..])?;
-    Ok(decode(&bytes)?)
+    let version = header[4];
+    Ok((version, decode(&bytes)?))
 }
 
 fn encode_top_bar(output: &mut Vec<u8>, top_bar: Option<&TopBar>) -> Result<(), ProtocolError> {
@@ -7723,6 +7902,121 @@ mod tests {
     }
 
     #[test]
+    fn legacy_folio_and_selected_cell_frames_keep_their_negotiated_shapes() {
+        // This is the complete fixed protocol-11 Exit frame installed apps
+        // already send. Its bytes must not acquire a newer header version.
+        let legacy_fixture = [
+            b'K',
+            b'O',
+            b'B',
+            b'O',
+            LEGACY_VERSION,
+            6,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            7,
+        ];
+        let legacy = Frame {
+            version: VERSION,
+            request_id: 7,
+            message: Message::Exit,
+        };
+        assert_eq!(
+            encode_with_version(&legacy, LEGACY_VERSION).expect("legacy fixture"),
+            legacy_fixture
+        );
+        assert_eq!(
+            decode(&legacy_fixture).expect("legacy fixture accepted"),
+            Frame {
+                version: LEGACY_VERSION,
+                request_id: 7,
+                message: Message::Exit,
+            }
+        );
+
+        let folio = Frame {
+            version: VERSION,
+            request_id: 8,
+            message: Message::SetScreen(Screen::new(
+                1,
+                vec![Node::TileGrid {
+                    id: NodeId(1),
+                    tiles: vec![Tile::new(ActionId(2), "Folio", Glyph::Book).with_value("12")],
+                    shape: TileShape::Card,
+                }],
+            )),
+        };
+        let folio_bytes =
+            encode_with_version(&folio, FOLIO_VERSION).expect("protocol-12 Folio frame");
+        assert_eq!(folio_bytes[4], FOLIO_VERSION);
+        assert_eq!(
+            decode(&folio_bytes).expect("Folio frame accepted").version,
+            FOLIO_VERSION
+        );
+
+        let selected = Frame {
+            version: VERSION,
+            request_id: 9,
+            message: Message::SetScreen(Screen::new(
+                1,
+                vec![Node::Grid {
+                    id: NodeId(1),
+                    columns: 1,
+                    square: false,
+                    cells: vec![Cell::new(ActionId(2), "Selected").with_selected(true)],
+                }],
+            )),
+        };
+        let selected_bytes =
+            encode_with_version(&selected, SELECTED_CELL_VERSION).expect("protocol-13 grid");
+        assert_eq!(selected_bytes[4], SELECTED_CELL_VERSION);
+        let Message::SetScreen(selected) = decode(&selected_bytes)
+            .expect("selected cell accepted")
+            .message
+        else {
+            panic!("expected selected-cell screen");
+        };
+        let Some(Node::Grid { cells, .. }) = selected.nodes.first() else {
+            panic!("expected grid");
+        };
+        assert!(cells[0].selected);
+    }
+
+    #[test]
+    fn protocol_14_put_tasks_round_trip_and_older_peers_refuse_them() {
+        let work = Task::Put {
+            url: "https://feeds.example/v1/entries".into(),
+            body: r#"{"entry_ids":[7],"starred":true}"#.into(),
+            content_type: "application/json".into(),
+            credential: Some(Credential::in_header("miniflux", "X-Auth-Token")),
+            headers: Vec::new(),
+            max_bytes: 1024,
+        };
+        let frame = Frame {
+            version: VERSION,
+            request_id: 4,
+            message: Message::Spawn {
+                task: TaskId(7),
+                work: work.clone(),
+            },
+        };
+        let bytes = encode(&frame).expect("protocol-14 PUT encodes");
+        assert_eq!(bytes[4], PUT_VERSION);
+        assert_eq!(decode(&bytes).expect("protocol-14 PUT decodes"), frame);
+        for version in [LEGACY_VERSION, FOLIO_VERSION, SELECTED_CELL_VERSION] {
+            assert_eq!(
+                encode_with_version(&frame, version),
+                Err(ProtocolError::InvalidValue("PUT task"))
+            );
+        }
+    }
+
+    #[test]
     fn version_11_sections_and_tiles_use_the_legacy_wire_layout() {
         let nodes = vec![
             Node::Section {
@@ -8910,6 +9204,17 @@ mod store_tests {
                     body: String::new(),
                     content_type: "application/json".into(),
                     credential: None,
+                    headers: Vec::new(),
+                    max_bytes: 4096,
+                },
+            },
+            Message::Spawn {
+                task: TaskId(17),
+                work: Task::Put {
+                    url: "https://feeds.example/v1/entries".into(),
+                    body: r#"{"entry_ids":[7],"status":"read"}"#.into(),
+                    content_type: "application/json".into(),
+                    credential: Some(Credential::in_header("miniflux", "X-Auth-Token")),
                     headers: Vec::new(),
                     max_bytes: 4096,
                 },

@@ -46,7 +46,9 @@ const COMPATIBLE_RELEASE_PATHS = new Set([
 const PROTOCOL_MINIMUMS = new Map([
   [10, "0.2.4"],
   [11, "0.3.1"],
-  [12, "0.3.5"]
+  [12, "0.3.5"],
+  [13, "0.3.5"],
+  [14, "0.3.5"]
 ]);
 
 function readJson(path, label) {

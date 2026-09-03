@@ -130,6 +130,7 @@ pub fn may_set(app: &str, name: &str) -> bool {
     match app {
         "audiobook" => matches!(name, "exa" | "openai" | "elevenlabs"),
         "chat" => matches!(name, "openai" | "anthropic" | "gemini"),
+        "rss" => name == "miniflux",
         "zotero-reader" => name == "zotero",
         _ => false,
     }
@@ -164,6 +165,9 @@ pub fn allowed_request(
     }
     if app == "zotero-reader" {
         return usage == CredentialUse::Fetch && zotero_credential_allowed(credential, url);
+    }
+    if app == "rss" {
+        return miniflux_credential_allowed(credential, url, usage, body, content_type);
     }
     if app == "audiobook" {
         return match (&*credential.secret, &credential.header) {
@@ -255,7 +259,108 @@ fn lichess_credential_allowed(
             content_type == Some("application/x-www-form-urlencoded")
                 && body.is_some_and(|body| lichess_post(&target.path, body))
         }
+        CredentialUse::Put => false,
     }
+}
+
+/// Binds RSS to its dedicated Miniflux token and the small v1 API vocabulary
+/// the application actually uses. The server is owner-configured, so the
+/// static policy cannot pin its origin; `parse` still requires HTTPS and the
+/// route guard preserves an intentional reverse-proxy prefix.
+fn miniflux_credential_allowed(
+    credential: &Credential,
+    url: &str,
+    usage: CredentialUse,
+    body: Option<&str>,
+    content_type: Option<&str>,
+) -> bool {
+    if credential.secret != "miniflux"
+        || !matches!(
+            &credential.header,
+            SecretHeader::Named(header) if header.eq_ignore_ascii_case("x-auth-token")
+        )
+    {
+        return false;
+    }
+    let Ok(target) = parse(url) else {
+        return false;
+    };
+    miniflux_v1_request_allowed(&target.path, usage, body, content_type)
+}
+
+fn miniflux_v1_request_allowed(
+    path_and_query: &str,
+    usage: CredentialUse,
+    body: Option<&str>,
+    content_type: Option<&str>,
+) -> bool {
+    if path_and_query.contains(['%', '\\', '#']) {
+        return false;
+    }
+    let (path, query) = path_and_query
+        .split_once('?')
+        .map_or((path_and_query, None), |(path, query)| (path, Some(query)));
+    let Some(path) = path.strip_prefix('/') else {
+        return false;
+    };
+    let parts: Vec<&str> = path.split('/').collect();
+    if parts.is_empty()
+        || parts
+            .iter()
+            .any(|part| part.is_empty() || matches!(*part, "." | ".."))
+    {
+        return false;
+    }
+    let Some(v1) = parts.iter().position(|part| *part == "v1") else {
+        return false;
+    };
+    match (&parts[v1..], usage) {
+        (["v1", "entries"], CredentialUse::Fetch) => {
+            body.is_none()
+                && content_type.is_none()
+                && matches!(
+                    query,
+                    Some(
+                        "status=unread&limit=100&order=published_at&direction=desc"
+                            | "starred=true&limit=100&order=published_at&direction=desc"
+                            | "status=read&limit=100&order=published_at&direction=desc"
+                    )
+                )
+        }
+        (["v1", "entries", id, "fetch-content"], CredentialUse::Fetch) => {
+            body.is_none()
+                && content_type.is_none()
+                && query.is_none()
+                && !id.is_empty()
+                && id.bytes().all(|byte| byte.is_ascii_digit())
+        }
+        (["v1", "discover" | "feeds"], CredentialUse::Post) => {
+            query.is_none() && content_type == Some("application/json") && body.is_some()
+        }
+        (["v1", "entries"], CredentialUse::Put) => {
+            query.is_none()
+                && content_type == Some("application/json")
+                && body.is_some_and(miniflux_mutation_body)
+        }
+        _ => false,
+    }
+}
+
+fn miniflux_mutation_body(body: &str) -> bool {
+    let Some(ids) = body
+        .strip_prefix(r#"{"entry_ids":["#)
+        .and_then(|body| body.split_once("],"))
+    else {
+        return false;
+    };
+    let (id, tail) = ids;
+    !id.is_empty()
+        && id.bytes().all(|byte| byte.is_ascii_digit())
+        && id.parse::<u64>().is_ok()
+        && matches!(
+            tail,
+            r#""status":"read"}"# | r#""starred":true}"# | r#""starred":false}"#
+        )
 }
 
 fn lichess_post(path: &str, body: &str) -> bool {
@@ -394,9 +499,64 @@ mod tests {
         assert!(may_set("zotero-reader", "zotero"));
         assert!(may_set("chat", "anthropic"));
         assert!(may_set("audiobook", "elevenlabs"));
+        assert!(may_set("rss", "miniflux"));
+        assert!(!may_set("rss", "personal-miniflux"));
         assert!(!may_set("zotero-reader", "openai"));
         assert!(!may_set("lichess", "lichess"));
         assert!(!may_set("other", "zotero"));
+    }
+
+    #[test]
+    fn rss_miniflux_token_is_exact_and_put_is_limited_to_entry_mutations() {
+        let token = Credential::in_header("miniflux", "X-Auth-Token");
+        let entries = "https://feeds.example/reader/v1/entries";
+        assert!(allowed_request(
+            "rss",
+            &token,
+            entries,
+            CredentialUse::Put,
+            Some(r#"{"entry_ids":[7],"starred":true}"#),
+            Some("application/json"),
+        ));
+        assert!(allowed(
+            "rss",
+            &token,
+            "https://feeds.example/reader/v1/entries?status=unread&limit=100&order=published_at&direction=desc",
+            CredentialUse::Fetch,
+        ));
+        for (credential, usage, body, content_type) in [
+            (
+                Credential::in_header("personal-miniflux", "X-Auth-Token"),
+                CredentialUse::Put,
+                Some(r#"{"entry_ids":[7],"status":"read"}"#),
+                Some("application/json"),
+            ),
+            (
+                Credential::in_header("miniflux", "X-Auth-Token"),
+                CredentialUse::Post,
+                Some(r#"{"entry_ids":[7],"status":"read"}"#),
+                Some("application/json"),
+            ),
+            (
+                Credential::in_header("miniflux", "X-Auth-Token"),
+                CredentialUse::Put,
+                Some(r#"{"entry_ids":[7],"status":"unread"}"#),
+                Some("application/json"),
+            ),
+        ] {
+            assert!(
+                !allowed_request("rss", &credential, entries, usage, body, content_type),
+                "{credential:?} {usage:?} unexpectedly authorized"
+            );
+        }
+        assert!(!allowed_request(
+            "rss",
+            &token,
+            "http://feeds.example/v1/entries",
+            CredentialUse::Put,
+            Some(r#"{"entry_ids":[7],"status":"read"}"#),
+            Some("application/json"),
+        ));
     }
 
     #[test]

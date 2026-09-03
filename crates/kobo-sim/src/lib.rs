@@ -1752,7 +1752,9 @@ fn scenario_task_error(
 ) -> Option<kobo_protocol::TaskError> {
     let network = matches!(
         task,
-        kobo_protocol::Task::Fetch { .. } | kobo_protocol::Task::Post { .. }
+        kobo_protocol::Task::Fetch { .. }
+            | kobo_protocol::Task::Post { .. }
+            | kobo_protocol::Task::Put { .. }
     );
     match scenario {
         Scenario::Offline if network => Some(kobo_protocol::TaskError::Offline),
@@ -1764,6 +1766,9 @@ fn scenario_task_error(
             if matches!(
                 task,
                 kobo_protocol::Task::Post {
+                    credential: Some(_),
+                    ..
+                } | kobo_protocol::Task::Put {
                     credential: Some(_),
                     ..
                 }
@@ -2204,6 +2209,7 @@ fn simulated_tasks(name: &str) -> TaskRunner {
     runner
         .with_fetch(Arc::new(kobo_net::fetch_from_controlled))
         .with_post(Arc::new(kobo_net::post_controlled))
+        .with_put(Arc::new(kobo_net::put_controlled))
         .with_line_streams(Arc::new(kobo_net::LineStreams::default()))
         .with_credential_policy(Arc::new(
             move |credential, url, usage, body, content_type| {
