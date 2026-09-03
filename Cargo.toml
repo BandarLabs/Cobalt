@@ -56,7 +56,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.3.4"
+version = "0.3.5"
 edition = "2021"
 rust-version = "1.85.1"
 license = "AGPL-3.0-only"
