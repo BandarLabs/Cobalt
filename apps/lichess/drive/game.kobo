@@ -1,0 +1,13 @@
+expect KnightReader
+expect Your move
+expect Offer draw
+shot live-board
+tap More
+wait-for Resign
+shot game-menu
+tap Resign
+wait-for Resign game?
+shot resign-confirmation
+tap Keep playing
+wait-for Offer draw
+expect-missing Resign game?

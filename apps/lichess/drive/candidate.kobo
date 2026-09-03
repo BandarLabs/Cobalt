@@ -1,0 +1,9 @@
+expect Game started
+expect account event stream is global
+expect Open this game
+expect Keep waiting
+expect Cancel pairing
+shot confirm-global-game
+tap Keep waiting
+wait-for Rated 10+0 Rapid
+shot continued-seek

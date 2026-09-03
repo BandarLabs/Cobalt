@@ -260,7 +260,18 @@ fn lichess_credential_allowed(
 
 fn lichess_post(path: &str, body: &str) -> bool {
     if path == "/api/board/seek" {
-        return body == "rated=true&time=10&increment=0&variant=standard&color=random";
+        return [
+            "rated=true&time=3&increment=0&variant=standard&color=random",
+            "rated=true&time=3&increment=2&variant=standard&color=random",
+            "rated=true&time=5&increment=0&variant=standard&color=random",
+            "rated=true&time=5&increment=3&variant=standard&color=random",
+            "rated=true&time=10&increment=0&variant=standard&color=random",
+            "rated=true&time=10&increment=5&variant=standard&color=random",
+            "rated=true&time=15&increment=10&variant=standard&color=random",
+            "rated=true&time=30&increment=0&variant=standard&color=random",
+            "rated=true&time=30&increment=20&variant=standard&color=random",
+        ]
+        .contains(&body);
     }
     let parts = path.trim_start_matches('/').split('/').collect::<Vec<_>>();
     match parts.as_slice() {
@@ -528,11 +539,27 @@ mod tests {
                 "{url}"
             );
         }
-        for (url, body) in [
-            (
+        for body in [
+            "rated=true&time=3&increment=0&variant=standard&color=random",
+            "rated=true&time=3&increment=2&variant=standard&color=random",
+            "rated=true&time=5&increment=0&variant=standard&color=random",
+            "rated=true&time=5&increment=3&variant=standard&color=random",
+            "rated=true&time=10&increment=0&variant=standard&color=random",
+            "rated=true&time=10&increment=5&variant=standard&color=random",
+            "rated=true&time=15&increment=10&variant=standard&color=random",
+            "rated=true&time=30&increment=0&variant=standard&color=random",
+            "rated=true&time=30&increment=20&variant=standard&color=random",
+        ] {
+            assert!(allowed_request(
+                "lichess",
+                &token,
                 "https://lichess.org/api/board/seek",
-                "rated=true&time=10&increment=0&variant=standard&color=random",
-            ),
+                CredentialUse::Post,
+                Some(body),
+                Some("application/x-www-form-urlencoded"),
+            ));
+        }
+        for (url, body) in [
             ("https://lichess.org/api/board/game/abcdEF12/move/e2e4", ""),
             ("https://lichess.org/api/board/game/abcdEF12/resign", ""),
             ("https://lichess.org/api/board/game/abcdEF12/abort", ""),
@@ -586,6 +613,16 @@ mod tests {
             (
                 "https://lichess.org/api/board/seek",
                 "rated=true&time=10&increment=0&variant=standard&color=random&extra=1",
+                "application/x-www-form-urlencoded",
+            ),
+            (
+                "https://lichess.org/api/board/seek",
+                "rated=true&time=2&increment=1&variant=standard&color=random",
+                "application/x-www-form-urlencoded",
+            ),
+            (
+                "https://lichess.org/api/board/seek",
+                "rated=true&time=30&increment=20&variant=standard&color=white",
                 "application/x-www-form-urlencoded",
             ),
             (

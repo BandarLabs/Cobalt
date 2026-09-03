@@ -1,0 +1,8 @@
+expect Puzzles
+expect Play
+expect protocol 11
+shot home
+tap Play
+wait-for No secret named lichess
+expect shown on this screen
+shot missing-credential
