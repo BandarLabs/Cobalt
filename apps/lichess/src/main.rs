@@ -163,12 +163,13 @@ impl Puzzle {
             .collect::<Vec<_>>();
         let game = value.get("game")?;
         let initial_ply = usize::try_from(puzzle.get("initialPly")?.as_i64()?).ok()?;
-        let fen = game
+        let fen = puzzle
             .get("fen")
             .and_then(Value::as_str)
             .map(str::to_owned)
             .or_else(|| chess::puzzle_position(game.get("pgn")?.as_str()?, initial_ply))?;
-        (!solution.is_empty()).then_some(Self {
+        let first_move = solution.first()?;
+        chess::legal(&fen, first_move).then_some(Self {
             id,
             fen,
             solution,
@@ -199,7 +200,11 @@ impl Puzzle {
         let cursor = usize::try_from(value.get("cursor")?.as_i64()?).ok()?;
         let fen = value.get("fen")?.as_str()?.to_owned();
         chess::replay(&fen, &[])?;
-        (!solution.is_empty() && cursor <= solution.len()).then_some(Self {
+        let progress_is_valid = cursor == solution.len()
+            || solution
+                .get(cursor)
+                .is_some_and(|movement| chess::legal(&fen, movement));
+        (!solution.is_empty() && cursor <= solution.len() && progress_is_valid).then_some(Self {
             id: value.get("id")?.as_str()?.to_owned(),
             fen,
             solution,
@@ -3598,6 +3603,9 @@ mod tests {
 
     #[test]
     fn puzzle_resume_position_and_progress_survive_restart() {
+        let second_fen = super::chess::play(super::chess::START, "d2d4")
+            .expect("opening move")
+            .0;
         let mut app = Lichess {
             puzzles: vec![
                 Puzzle {
@@ -3608,7 +3616,7 @@ mod tests {
                 },
                 Puzzle {
                     id: "second".to_owned(),
-                    fen: super::chess::START.to_owned(),
+                    fen: second_fen,
                     solution: vec!["d2d4".to_owned(), "d7d5".to_owned()],
                     cursor: 1,
                 },
@@ -3632,6 +3640,20 @@ mod tests {
         assert!(app.decode_puzzles(&completed));
         assert_eq!(app.current_puzzle, 1);
         assert_eq!(app.remaining_puzzles(), 1);
+    }
+
+    #[test]
+    fn stale_pre_fix_puzzle_position_is_not_restored() {
+        let stale = kobo_json::ObjectBuilder::new()
+            .set("id", "uOjyL")
+            .set(
+                "fen",
+                "2r3k1/1b4bp/pp4p1/5pq1/2Pn4/PPN4P/1B3PP1/2RBQ1K1 w - - 2 21",
+            )
+            .set("solution", vec!["b7d5".to_owned(), "c4d5".to_owned()])
+            .set("cursor", 0_u32)
+            .build();
+        assert!(Puzzle::from_stored(&stale).is_none());
     }
 
     #[test]
@@ -3671,7 +3693,7 @@ mod tests {
         let mut app = app_with_game(&[], Color::White);
         let mut context = Context::default();
         let response = format!(
-            r#"{{"puzzles":[{{"game":{{"fen":"{}"}},"puzzle":{{"id":"puzzle1","solution":["e2e4"],"initialPly":0}}}}]}}"#,
+            r#"{{"puzzles":[{{"game":{{}},"puzzle":{{"id":"puzzle1","fen":"{}","solution":["e2e4"],"initialPly":0}}}}]}}"#,
             super::chess::START
         );
         app.handle_completed(&mut context, Pending::Puzzle, response.as_bytes());
@@ -3682,6 +3704,59 @@ mod tests {
             .unwrap_or_default()
             .contains("ready offline"));
         assert_eq!(app.puzzles.len(), 1);
+    }
+
+    #[test]
+    fn official_batch_position_includes_the_move_before_the_solution() {
+        let value = kobo_json::parse(
+            r#"{
+                "game": {
+                    "pgn": "c4 Nf6 Nc3 d6 e4 Bg4 f3 Bh5 h4 e6 g4 Be7 gxh5 Nxh5 d4 Bxh4+ Kd2 Bg5+ Kc2 Nf4 Nge2 Nxe2 Qxe2 Nc6 Qd3"
+                },
+                "puzzle": {
+                    "id": "94Rds",
+                    "initialPly": 24,
+                    "solution": ["c6b4", "c2b3", "b4d3"]
+                }
+            }"#,
+        )
+        .expect("official puzzle example");
+        let puzzle = Puzzle::read(&value).expect("playable puzzle");
+        assert!(super::chess::legal(&puzzle.fen, &puzzle.solution[0]));
+        assert_eq!(super::chess::side_to_move(&puzzle.fen), Some('b'));
+    }
+
+    #[test]
+    fn puzzle_fen_is_read_from_the_puzzle_object_and_must_match_the_solution() {
+        let value = kobo_json::parse(&format!(
+            r#"{{
+                "game": {{}},
+                "puzzle": {{
+                    "id": "direct-fen",
+                    "initialPly": 0,
+                    "fen": "{}",
+                    "solution": ["e2e4"]
+                }}
+            }}"#,
+            super::chess::START
+        ))
+        .expect("puzzle with direct fen");
+        assert!(Puzzle::read(&value).is_some());
+
+        let invalid = kobo_json::parse(&format!(
+            r#"{{
+                "game": {{}},
+                "puzzle": {{
+                    "id": "invalid-fen",
+                    "initialPly": 0,
+                    "fen": "{}",
+                    "solution": ["e7e5"]
+                }}
+            }}"#,
+            super::chess::START
+        ))
+        .expect("puzzle with mismatched solution");
+        assert!(Puzzle::read(&invalid).is_none());
     }
 
     #[test]

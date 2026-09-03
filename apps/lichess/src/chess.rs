@@ -120,8 +120,9 @@ pub fn checked_king(fen: &str) -> Option<String> {
     square_of(fen, king)
 }
 
-/// Replays normal PGN movetext through the ply immediately before a puzzle.
+/// Replays normal PGN movetext through the move that creates a puzzle position.
 pub fn puzzle_position(pgn: &str, initial_ply: usize) -> Option<String> {
+    let puzzle_ply = initial_ply.checked_add(1)?;
     let mut position = Chess::default();
     let mut played = 0;
     for token in pgn.split_whitespace() {
@@ -136,7 +137,7 @@ pub fn puzzle_position(pgn: &str, initial_ply: usize) -> Option<String> {
         {
             continue;
         }
-        if played == initial_ply {
+        if played == puzzle_ply {
             break;
         }
         let san = SanPlus::from_ascii(
@@ -149,7 +150,7 @@ pub fn puzzle_position(pgn: &str, initial_ply: usize) -> Option<String> {
         position = position.play(&movement).ok()?;
         played += 1;
     }
-    (played == initial_ply).then(|| Fen::from_position(position, EnPassantMode::Legal).to_string())
+    (played == puzzle_ply).then(|| Fen::from_position(position, EnPassantMode::Legal).to_string())
 }
 
 fn square_of(fen: &str, wanted: char) -> Option<String> {
@@ -242,8 +243,8 @@ mod tests {
     }
 
     #[test]
-    fn pgn_replay_stops_at_the_puzzle_ply() {
-        let fen = puzzle_position("1. e4 e5 2. Nf3 Nc6", 3).expect("position");
+    fn pgn_replay_includes_the_move_that_creates_the_puzzle() {
+        let fen = puzzle_position("1. e4 e5 2. Nf3 Nc6", 2).expect("position");
         assert!(legal(&fen, "b8c6"));
     }
 }
