@@ -15,7 +15,6 @@ concurrency:
 
 jobs:
   trusted-tool:
-    if: github.ref == 'refs/heads/beta'
     runs-on: ubuntu-latest
     outputs:
       packages: ${{ steps.registry.outputs.packages }}
@@ -25,6 +24,14 @@ jobs:
       published-sha: ${{ steps.registry.outputs.published-sha }}
       publish: ${{ steps.registry.outputs.publish }}
     steps:
+      # Every job used to be gated on the branch, so dispatching this workflow
+      # anywhere else skipped all of them and reported success.
+      - name: Refuse to publish an app channel from another branch
+        if: github.ref != 'refs/heads/beta'
+        run: |
+          echo "This workflow publishes the beta app channel and only runs on refs/heads/beta." >&2
+          echo "It was started on ${GITHUB_REF}; re-run it with the beta branch selected." >&2
+          exit 1
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
@@ -95,6 +102,20 @@ jobs:
               echo "GitHub asset download for asset $asset_id returned HTTP $status" >&2
               return 1
             fi
+          }
+          # A single page holds 100 artifacts. A catalog heading for forty-six
+          # apps passes that in one run, and an unpaginated query then reports a
+          # short list, silently discards reusable binaries and rebuilds
+          # everything. Ask for every page and keep the expired flag, which the
+          # callers below need.
+          run_artifacts() {
+            gh api --paginate \
+              "repos/${GITHUB_REPOSITORY}/actions/runs/${2}/artifacts?per_page=100" \
+              --jq '.artifacts[] | [.name, .expired] | @tsv' \
+              > "$1"
+          }
+          live_verified_apps() {
+            awk -F'\t' '$2 == "false" && $1 ~ /^verified-app-/ {print $1}' "$1" | sort
           }
           asset_id() {
             # shellcheck disable=SC2016
@@ -212,9 +233,11 @@ jobs:
               previous_sha="$(node -p 'require(process.argv[1]).source_sha' ./published-app-catalog-provenance.json)"
               previous_run="$(node -p 'require(process.argv[1]).workflow_run_id' ./published-app-catalog-provenance.json)"
               previous_set_name="verified-app-set-$(node -p 'require(process.argv[1]).workflow_run_attempt' ./published-app-catalog-provenance.json)"
-              complete_sets="$(gh api \
-                "repos/${GITHUB_REPOSITORY}/actions/runs/${previous_run}/artifacts?per_page=100" \
-                --jq '[.artifacts[] | select(.expired == false and .name == "'"$previous_set_name"'")] | length')"
+              previous_artifacts="$RUNNER_TEMP/artifacts-$previous_run.tsv"
+              run_artifacts "$previous_artifacts" "$previous_run"
+              complete_sets="$(awk -F'\t' -v name="$previous_set_name" \
+                '$1 == name && $2 == "false" {count += 1} END {print count + 0}' \
+                "$previous_artifacts")"
               if [ "$complete_sets" = 1 ]; then
                 previous_artifact="set"
               else
@@ -225,23 +248,24 @@ jobs:
             if [ "$provenance_loaded" = false ] && [ "$catalog_present" = true ]; then
               # shellcheck disable=SC2016
               expected="$(node -e \
-                'console.log(JSON.stringify(JSON.parse(process.argv[1]).map(name => `verified-app-${name}`).sort()))' \
+                'for (const name of JSON.parse(process.argv[1]).sort()) console.log(`verified-app-${name}`)' \
                 "$all_packages")"
               runs_file="$RUNNER_TEMP/$release_tag-successful-runs.tsv"
+              # Deliberately one page of runs rather than every run this branch
+              # has ever had: this walk exists to find reusable binaries, and
+              # artifacts older than the retention window have none left to
+              # reuse. Finding nothing rebuilds every app, which is correct.
               gh api \
                 "repos/${GITHUB_REPOSITORY}/actions/workflows/apps.yml/runs?branch=${GITHUB_REF_NAME}&status=success&per_page=100" \
                 --jq '.workflow_runs[] | [.id, .head_sha] | @tsv' \
                 > "$runs_file"
               while IFS=$'\t' read -r run_id run_sha; do
-                artifact_names="$(gh api \
-                  "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/artifacts?per_page=100" \
-                  --jq '[.artifacts[] | select(.name | startswith("verified-app-")) | .name] | sort')"
+                candidate="$RUNNER_TEMP/artifacts-$run_id.tsv"
+                run_artifacts "$candidate" "$run_id"
+                artifact_names="$(awk -F'\t' '$1 ~ /^verified-app-/ {print $1}' "$candidate" | sort)"
                 if [ "$artifact_names" = "$expected" ]; then
                   previous_sha="$run_sha"
-                  reusable="$(gh api \
-                    "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/artifacts?per_page=100" \
-                    --jq '[.artifacts[] | select(.expired == false and (.name | startswith("verified-app-"))) | .name] | sort')"
-                  if [ "$reusable" = "$expected" ]; then
+                  if [ "$(live_verified_apps "$candidate")" = "$expected" ]; then
                     previous_run="$run_id"
                     previous_artifact="individual"
                   fi
@@ -270,18 +294,34 @@ jobs:
           if [ "$repair" = true ]; then
             publish=true
           fi
+          if [ "$publish" = false ] && [ "$has_release" = true ]; then
+            # Having nothing to publish is not the same as what is published
+            # being correct, and this is the only run that ever looks. Verify
+            # the signature readers verify, and that every bundle the catalog
+            # sends them to is still on the release.
+            signature_asset_id="$(asset_id "$release_state" cobalt-app-catalog.json.sig)"
+            if [ -z "$signature_asset_id" ]; then
+              echo "$release_tag publishes a catalog with no signature beside it" >&2
+              exit 1
+            fi
+            api_download_asset published-app-catalog.json.sig "$signature_asset_id"
+            node tools/verify-published-catalog.mjs \
+              --catalog published-app-catalog.json \
+              --signature published-app-catalog.json.sig \
+              --registry apps/catalog.json \
+              --release "$release_state"
+          fi
           if [ "$publish" = true ] && [ "$has_release" = true ] && [ "$packages" != "$all_packages" ]; then
             if [ -z "$previous_run" ]; then
               packages="$all_packages"
             elif [ "$previous_artifact" = individual ]; then
               # shellcheck disable=SC2016
               expected="$(node -e \
-                'console.log(JSON.stringify(JSON.parse(process.argv[1]).map(name => `verified-app-${name}`).sort()))' \
+                'for (const name of JSON.parse(process.argv[1]).sort()) console.log(`verified-app-${name}`)' \
                 "$all_packages")"
-              reusable="$(gh api \
-                "repos/${GITHUB_REPOSITORY}/actions/runs/${previous_run}/artifacts?per_page=100" \
-                --jq '[.artifacts[] | select(.expired == false and (.name | startswith("verified-app-"))) | .name] | sort')"
-              if [ "$reusable" != "$expected" ]; then
+              reusable_artifacts="$RUNNER_TEMP/reusable-$previous_run.tsv"
+              run_artifacts "$reusable_artifacts" "$previous_run"
+              if [ "$(live_verified_apps "$reusable_artifacts")" != "$expected" ]; then
                 packages="$all_packages"
                 previous_run=
                 previous_artifact=
@@ -353,6 +393,63 @@ jobs:
           name: verified-app-${{ matrix.package }}
           path: dist/prebuilt/${{ matrix.package }}
           if-no-files-found: error
+
+  # The catalog is one signed document covering every app, and the binary set is
+  # assembled only when every registered app has an artifact. There is no safe
+  # partial publication: shipping a catalog without the app that failed
+  # withdraws a working app from readers, and shipping one with it points them
+  # at a bundle that was never built. So the catalog waits, and this job says
+  # which app it is waiting for, because "publish: skipped" under forty-six
+  # matrix legs is not something anybody can act on.
+  unbuilt-apps:
+    if: >-
+      always() &&
+      github.ref == 'refs/heads/beta' &&
+      needs.trusted-tool.result == 'success' &&
+      needs.trusted-tool.outputs.publish == 'true' &&
+      needs.trusted-tool.outputs.packages != '[]' &&
+      needs.build-apps.result != 'success'
+    needs: [trusted-tool, build-apps]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Name the apps holding back the catalog
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PACKAGES: ${{ needs.trusted-tool.outputs.packages }}
+          BUILD_RESULT: ${{ needs.build-apps.result }}
+        run: |
+          artifacts="$RUNNER_TEMP/run-artifacts.txt"
+          gh api --paginate \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/artifacts?per_page=100" \
+            --jq '.artifacts[] | select(.name | startswith("verified-app-")) | .name' \
+            > "$artifacts"
+          built="$RUNNER_TEMP/built-packages.txt"
+          sed 's/^verified-app-//' "$artifacts" | sort > "$built"
+          # shellcheck disable=SC2016
+          node -e '
+            const fs = require("fs");
+            const requested = JSON.parse(process.argv[1]).sort();
+            const built = new Set(
+              fs.readFileSync(process.argv[2], "utf8").split("\n").filter(Boolean)
+            );
+            const missing = requested.filter(name => !built.has(name));
+            if (missing.length > 0) {
+              console.error("These app packages produced no verified binary in this run:");
+              for (const name of missing) console.error(`  ${name}`);
+            } else {
+              console.error(
+                `Every one of the ${requested.length} requested packages produced a verified binary, so build-apps ${process.argv[3]} after the build; read the failed matrix legs.`
+              );
+            }
+            console.error("");
+            console.error(
+              `${requested.length - missing.length} of ${requested.length} packages built and verified. Their artifacts stay on this run, and the next attempt reuses them instead of rebuilding.`
+            );
+            console.error(
+              "The catalog was not published. Readers keep the previous publication, which is signed and complete, so no reader is ever offered an app whose bundle does not exist."
+            );
+            process.exit(1);
+          ' "$PACKAGES" "$built" "$BUILD_RESULT"
 
   publish:
     if: >-
@@ -656,9 +753,17 @@ jobs:
             "dist/apps/cobalt-app-catalog-provenance-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
           # Publish the signed pointer only after every referenced bundle is
           # present, then record canonical provenance as the final commit.
-          gh release upload \
-            "$release_tag" dist/apps/cobalt-app-catalog.json.sig --clobber
+          #
+          # The catalog goes up before its signature. Replacing the signature
+          # first left a window in which the channel offered a signature for a
+          # catalog nobody could fetch yet, so a reader fetching in that window
+          # was told the catalog it had been given was forged. Doing it this way
+          # round, the signature is never newer than the catalog it covers: the
+          # window holds the previous signature over the new catalog, which a
+          # reader also rejects, but as the retryable state it is.
           gh release upload \
             "$release_tag" dist/apps/cobalt-app-catalog.json --clobber
+          gh release upload \
+            "$release_tag" dist/apps/cobalt-app-catalog.json.sig --clobber
           gh release upload \
             "$release_tag" dist/apps/cobalt-app-catalog-provenance.json --clobber
