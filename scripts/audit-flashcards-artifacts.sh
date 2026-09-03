@@ -26,10 +26,12 @@ catalog_signature="$target_root/artifacts/catalog/catalog.sig"
 host="$target_root/host-target/release/flashcards-import"
 cli="$target_root/host-tools/release/kobo"
 source_commit_file="$target_root/artifacts/flashcards-import.source-commit.txt"
+host_notice_file="$target_root/artifacts/flashcards-import.notice.txt"
+host_licenses_file="$target_root/artifacts/flashcards-import.licenses.txt"
 readelf=${READELF:-armv7-unknown-linux-musleabihf-readelf}
 expected_validation_key=d759793bbc13a2819a827c76adb6fba8a49aee007f49f2d0992d99b825ad2c48
 
-for path in "$device" "$audit_device" "$package" "$manifest" "$public_key" "$catalog" "$catalog_signature" "$host" "$cli" "$source_commit_file"; do
+for path in "$device" "$audit_device" "$package" "$manifest" "$public_key" "$catalog" "$catalog_signature" "$host" "$cli" "$source_commit_file" "$host_notice_file" "$host_licenses_file"; do
   if [ ! -f "$path" ]; then
     echo "missing artifact: $path" >&2
     exit 1
@@ -60,7 +62,7 @@ host_tree=$(
   cd "$repo"
   cargo tree --locked --offline -p kobo-flashcards-import --edges normal --prefix none
 )
-for package_name in anki anki_i18n; do
+for package_name in anki anki_i18n anki_io anki_proto; do
   if ! printf '%s\n' "$host_tree" |
     grep -E "^${package_name} v" >/dev/null; then
     echo "host dependency tree is missing $package_name" >&2
@@ -225,6 +227,18 @@ if ! "$host" --licenses | grep -F "$source_commit" >/dev/null; then
   echo "host helper does not expose its exact Cobalt source commit" >&2
   exit 1
 fi
+notice_hash=$("$host" --notice | shasum -a 256 | awk '{print $1}')
+notice_file_hash=$(shasum -a 256 "$host_notice_file" | awk '{print $1}')
+if [ "$notice_hash" != "$notice_file_hash" ]; then
+  echo "host notice sidecar differs from helper output" >&2
+  exit 1
+fi
+licenses_hash=$("$host" --licenses | shasum -a 256 | awk '{print $1}')
+licenses_file_hash=$(shasum -a 256 "$host_licenses_file" | awk '{print $1}')
+if [ "$licenses_hash" != "$licenses_file_hash" ]; then
+  echo "host licence/source sidecar differs from helper output" >&2
+  exit 1
+fi
 
 echo "device dependency tree: no Anki packages"
 echo "device ELF/package strings and unstripped symbols: no Anki or AnkiDroid implementation material"
@@ -233,7 +247,8 @@ echo "device symbols: no known high-level remote-network implementation"
 echo "device local transport: generic socket primitives remain for required Cobalt Unix-domain IPC"
 echo "device package: signature/canonical manifest verified against catalog and standalone ELF"
 echo "validation catalog: signature and sole package entry verified"
-echo "host helper: pinned Anki rslib/i18n, AGPL notice, source pin, and source instructions present"
+echo "host helper: pinned Anki rslib/i18n/io/proto, AGPL notice, source pin, and source instructions present"
+echo "host notice sidecars: exact copies of helper notice/licence output"
 (
   cd "$target_root"
   shasum -a 256 \
@@ -245,5 +260,7 @@ echo "host helper: pinned Anki rslib/i18n, AGPL notice, source pin, and source i
     artifacts/catalog/catalog.json \
     artifacts/catalog/catalog.sig \
     artifacts/flashcards-import.source-commit.txt \
+    artifacts/flashcards-import.notice.txt \
+    artifacts/flashcards-import.licenses.txt \
     host-target/release/flashcards-import
 )

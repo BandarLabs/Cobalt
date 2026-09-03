@@ -9,7 +9,7 @@ and upstream library only. No upstream logo or artwork is included.
 
 | Project | Exact source | Use in Flashcards | Licence |
 | --- | --- | --- | --- |
-| Anki | <https://github.com/ankitects/anki/tree/9e32ad8849068510a82273889c21b22e1acf0949> | The host helper links the pinned `rslib`, `anki_proto`, and `anki_i18n` code for collection migration/normalization, scheduler queues, media-reference extraction, and card rendering. | AGPL-3.0-or-later; see `LICENSE-Anki.txt` |
+| Anki | <https://github.com/ankitects/anki/tree/9e32ad8849068510a82273889c21b22e1acf0949> | The host helper links the pinned `anki` (rslib), `anki_i18n`, `anki_io`, and `anki_proto` crates for collection migration/normalization, scheduler queues, media-reference extraction, card rendering, localization, I/O support, and generated service types. | AGPL-3.0-or-later; see `LICENSE-Anki.txt` |
 | resvg/usvg 0.45.1 | <https://github.com/linebender/resvg/tree/1b6c2fddbcbeffa8135df4323b02aaae84890907> | The host helper rasterizes accepted SVG media with all file/data/network image resolvers disabled and only bundled fonts. At admission the Kobo app uses the same bounded path only to verify due-card source/raster equality, then displays the PNG. | Apache-2.0 OR MIT; see `LICENSE-resvg.txt` |
 
 Corresponding-source retrieval and build instructions are in
