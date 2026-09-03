@@ -223,6 +223,7 @@ struct Lichess {
     tasks: BTreeMap<TaskId, Pending>,
     retired_tasks: BTreeMap<TaskId, Pending>,
     event_open: bool,
+    deferred_event_open: bool,
     event_rate_limit: Option<u64>,
     board_open: Option<String>,
     board_ready: bool,
@@ -272,6 +273,7 @@ impl Default for Lichess {
             tasks: BTreeMap::new(),
             retired_tasks: BTreeMap::new(),
             event_open: false,
+            deferred_event_open: false,
             event_rate_limit: None,
             board_open: None,
             board_ready: false,
@@ -511,7 +513,13 @@ impl Lichess {
                     )
                 }));
         }
-        if let Some(game) = &self.game {
+        if let Some(game) = self.game.as_ref().filter(|game| {
+            game.active()
+                && self
+                    .session
+                    .as_ref()
+                    .is_some_and(|session| session.game_id == game.id)
+        }) {
             screen = screen.section("Current board").rows([(
                 "resume-current",
                 game.opponent().display(),
@@ -872,9 +880,12 @@ impl Lichess {
     }
 
     fn schedule_event_rate_wait(&mut self, context: &mut Context, remaining: u32) {
-        if self.suspended
-            || self.has_pending(|pending| matches!(pending, Pending::EventRateWait { .. }))
-        {
+        if self.suspended {
+            self.deferred_event_open = true;
+            return;
+        }
+        if self.has_pending(|pending| matches!(pending, Pending::EventRateWait { .. })) {
+            self.deferred_event_open = false;
             return;
         }
         if remaining == 0 {
@@ -883,27 +894,35 @@ impl Lichess {
             return;
         }
         let step = remaining.min(300);
-        let _ = self.spawn(
-            context,
-            Pending::EventRateWait {
-                remaining: remaining.saturating_sub(step),
-            },
-            Task::Sleep { seconds: step },
-            false,
-        );
+        self.deferred_event_open = self
+            .spawn(
+                context,
+                Pending::EventRateWait {
+                    remaining: remaining.saturating_sub(step),
+                },
+                Task::Sleep { seconds: step },
+                false,
+            )
+            .is_none();
     }
 
     fn open_event_stream(&mut self, context: &mut Context) {
-        if self.suspended
-            || self.event_open
-            || self
-                .has_pending(|pending| matches!(pending, Pending::EventOpen | Pending::EventClose))
+        if self.suspended {
+            self.deferred_event_open = true;
+            return;
+        }
+        if self.event_open || self.has_pending(|pending| matches!(pending, Pending::EventOpen)) {
+            self.deferred_event_open = false;
+            return;
+        }
+        if self.has_pending(|pending| matches!(pending, Pending::EventClose))
             || self
                 .retired_tasks
                 .values()
                 .any(|pending| matches!(pending, Pending::EventClose))
             || !matches!(self.account, AccountState::Ready(_))
         {
+            self.deferred_event_open = true;
             return;
         }
         if let Some(remaining) = self.event_rate_remaining() {
@@ -913,12 +932,20 @@ impl Lichess {
             }
             self.clear_event_rate_limit(context);
         }
-        let _ = self.spawn(
-            context,
-            Pending::EventOpen,
-            api::event_stream("open"),
-            false,
-        );
+        self.deferred_event_open = self
+            .spawn(
+                context,
+                Pending::EventOpen,
+                api::event_stream("open"),
+                false,
+            )
+            .is_none();
+    }
+
+    fn retry_deferred_event(&mut self, context: &mut Context) {
+        if self.deferred_event_open {
+            self.open_event_stream(context);
+        }
     }
 
     fn next_event(&mut self, context: &mut Context) {
@@ -950,16 +977,21 @@ impl Lichess {
 
     fn schedule_event_reconnect(&mut self, context: &mut Context) {
         self.event_open = false;
-        if self.suspended
-            || self
-                .has_pending(|pending| matches!(pending, Pending::EventOpen | Pending::EventRetry))
+        if self.suspended {
+            self.deferred_event_open = true;
+            return;
+        }
+        if self.has_pending(|pending| matches!(pending, Pending::EventOpen | Pending::EventRetry))
             || !matches!(self.account, AccountState::Ready(_))
         {
+            self.deferred_event_open = true;
             return;
         }
         let seconds = self.event_backoff.min(30);
         self.event_backoff = self.event_backoff.saturating_mul(2).min(30);
-        let _ = self.spawn(context, Pending::EventRetry, Task::Sleep { seconds }, false);
+        self.deferred_event_open = self
+            .spawn(context, Pending::EventRetry, Task::Sleep { seconds }, false)
+            .is_none();
     }
 
     #[allow(
@@ -2238,6 +2270,7 @@ impl Lichess {
             Pending::EventOpen => {
                 if bytes.is_empty() {
                     self.event_open = true;
+                    self.deferred_event_open = false;
                     self.clear_event_rate_limit(context);
                     self.event_backoff = 1;
                     self.next_event(context);
@@ -2610,6 +2643,7 @@ impl Lichess {
         self.seek_baseline.clear();
         self.seek_candidate = None;
         self.event_open = false;
+        self.deferred_event_open = matches!(self.account, AccountState::Ready(_));
         self.board_open = None;
         self.board_ready = false;
         self.clock.stop(context);
@@ -3007,13 +3041,11 @@ impl KoboApp for Lichess {
                     && !self.has_pending(|pending| matches!(pending, Pending::Account))
                 {
                     self.validate_account(context);
-                } else {
-                    if self.accepted_challenge.is_some() || self.reconcile_accepted_challenge {
-                        let _ = self.refresh_playing(context);
-                    }
-                    self.open_event_stream(context);
+                } else if self.accepted_challenge.is_some() || self.reconcile_accepted_challenge {
+                    let _ = self.refresh_playing(context);
                 }
                 self.retry_deferred_board(context);
+                self.retry_deferred_event(context);
             }
             return;
         };
@@ -3023,6 +3055,7 @@ impl KoboApp for Lichess {
             TaskOutcome::Cancelled => self.handle_cancelled(context, &pending),
         }
         self.retry_deferred_board(context);
+        self.retry_deferred_event(context);
         self.show(context);
     }
 
@@ -3874,6 +3907,26 @@ mod tests {
         resumed.open_event_stream(&mut Context::default());
         assert!(resumed.has_pending(|pending| { matches!(pending, Pending::EventRateWait { .. }) }));
         assert!(!resumed.has_pending(|pending| matches!(pending, Pending::EventOpen)));
+
+        let mut capacity = Lichess {
+            account: AccountState::Ready(super::Account {
+                id: "owner123".to_owned(),
+                username: "Owner".to_owned(),
+            }),
+            event_rate_limit: Some(super::unix_seconds() + 20),
+            ..Lichess::default()
+        };
+        let mut full = Context::default();
+        for _ in 0..4 {
+            assert!(full.spawn(kobo_sdk::Task::Sleep { seconds: 30 }).is_some());
+        }
+        capacity.open_event_stream(&mut full);
+        assert!(capacity.deferred_event_open);
+        capacity.retry_deferred_event(&mut Context::default());
+        assert!(!capacity.deferred_event_open);
+        assert!(
+            capacity.has_pending(|pending| { matches!(pending, Pending::EventRateWait { .. }) })
+        );
     }
 
     #[test]
@@ -4545,6 +4598,8 @@ mod tests {
         assert!(!app.game.as_ref().expect("finished game").active());
         assert!(app.session.is_none());
         assert_eq!(app.game.as_ref().expect("game").result(), "Draw agreed");
+        app.route = Route::Play;
+        assert!(!format!("{:?}", app.play_screen()).contains("Current board"));
     }
 
     #[test]
