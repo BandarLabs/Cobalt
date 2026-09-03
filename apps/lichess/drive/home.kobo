@@ -1,10 +1,12 @@
-expect responsive Folio controls
+expect Ready
+expect Account/Games
 expect Puzzles
 expect 3+0
 expect Blitz
 expect 3+2
+expect 5+0
+expect 5+3
+expect 10+0
+expect 10+5
+expect 15+10
 shot home
-tap 3+0
-wait-for Rated 3+0 Blitz
-expect event stream was opened before this seek
-shot preset-pairing

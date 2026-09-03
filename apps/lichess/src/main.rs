@@ -13,7 +13,6 @@ use kobo_json::{ObjectBuilder, Value};
 use kobo_sdk::{
     action_id, ActionId, BannerLevel, Context, ControlState, Failure, Glyph, Heartbeat, KoboApp,
     Screen, ScreenBuilder, StoreResult, Task, TaskError, TaskId, TaskOutcome, Tile, TileShape,
-    TileState,
 };
 use model::{
     Account, ApplyState, Challenge, ChallengeDirection, Color, FullGame, Game, GameSummary, Session,
@@ -364,6 +363,7 @@ impl Lichess {
 
     fn seek_ready(&self) -> bool {
         matches!(self.account, AccountState::Ready(_))
+            && !self.suspended
             && self.event_open
             && self.playing_ready
             && self.seek_task.is_none()
@@ -371,13 +371,45 @@ impl Lichess {
             && !self.has_pending(|pending| matches!(pending, Pending::SeekReconcile { .. }))
             && self.seek_rate_remaining().unwrap_or(0) == 0
             && self.game.as_ref().is_none_or(|game| !game.active())
+            && self.accepted_challenge.is_none()
             && self.pending_action.is_none()
+    }
+
+    fn pairing_status(&self) -> String {
+        if self.seek_ready() {
+            return "Ready · rated games · random color".to_owned();
+        }
+        if let Some(remaining) = self
+            .seek_rate_remaining()
+            .filter(|remaining| *remaining > 0)
+        {
+            return format!("Pairing unavailable · retry in {remaining}s");
+        }
+        match self.account {
+            AccountState::Unknown | AccountState::Missing | AccountState::Invalid => {
+                "Pairing unavailable · open Account/Games to connect".to_owned()
+            }
+            AccountState::Checking => "Pairing unavailable · checking account".to_owned(),
+            AccountState::Failed(_) => {
+                "Pairing unavailable · check Account/Games status".to_owned()
+            }
+            AccountState::Ready(_) if !self.event_open => {
+                "Pairing unavailable · preparing event stream".to_owned()
+            }
+            AccountState::Ready(_) if !self.playing_ready => {
+                "Pairing unavailable · refreshing current games".to_owned()
+            }
+            AccountState::Ready(_) if self.game.as_ref().is_some_and(Game::active) => {
+                "Pairing unavailable · a board is active".to_owned()
+            }
+            AccountState::Ready(_) => "Pairing unavailable · request in progress".to_owned(),
+        }
     }
 
     fn home_header(&self) -> ScreenBuilder {
         let mut screen = ScreenBuilder::new("lichess-home")
             .top_bar("Lichess")
-            .secondary("Rated random games · responsive Folio controls");
+            .secondary(self.pairing_status());
         if let Some(notice) = &self.notice {
             screen = screen.banner(BannerLevel::Attention, notice);
         }
@@ -387,7 +419,7 @@ impl Lichess {
     fn home_pages(&self, context: &Context) -> Vec<Vec<usize>> {
         let pages = context.paginate_tiles_under(
             HOME_TILE_COUNT,
-            TileShape::Card,
+            TileShape::Square,
             false,
             &self.home_header().build(),
         );
@@ -410,50 +442,43 @@ impl Lichess {
         let page_count = u16::try_from(pages.len()).unwrap_or(u16::MAX);
         let page_index = u16::try_from(page).unwrap_or(u16::MAX);
         let page_number = u16::try_from(page.saturating_add(1)).unwrap_or(u16::MAX);
-        let ready = self.seek_ready();
         self.home_header()
             .page_rail(page_index, page_count)
             .tile_grid(
-                TileShape::Card,
+                TileShape::Square,
                 pages[page].iter().map(|&index| {
-                    let (action, label, glyph, caption, value, available) = if index == 0 {
+                    let (action, label, glyph, subtitle, badge) = if index == 0 {
+                        (
+                            "play".to_owned(),
+                            "Account/Games".to_owned(),
+                            Glyph::Settings,
+                            "Challenges · boards".to_owned(),
+                            games.to_string(),
+                        )
+                    } else if index == 1 {
                         (
                             "puzzles".to_owned(),
                             "Puzzles".to_owned(),
                             Glyph::Grid,
                             "Offline training".to_owned(),
-                            format!("{} ready", self.remaining_puzzles()),
-                            true,
+                            self.remaining_puzzles().to_string(),
                         )
-                    } else if let Some(preset) = SeekPreset::ALL.get(index - 1).copied() {
+                    } else {
+                        let preset = SeekPreset::ALL[index - 2];
                         (
                             preset.action().to_owned(),
                             preset.label(),
-                            Glyph::Play,
-                            if ready {
-                                "Rated · random color".to_owned()
-                            } else {
-                                "Rated · connect in Account / Games".to_owned()
-                            },
+                            Glyph::Clock,
                             preset.speed_label().to_owned(),
-                            ready,
-                        )
-                    } else {
-                        (
-                            "play".to_owned(),
-                            "Account / Games".to_owned(),
-                            Glyph::Settings,
-                            "Challenges · current board · refresh".to_owned(),
-                            format!("{games} active"),
-                            true,
+                            String::new(),
                         )
                     };
                     (action, label, glyph, move |tile: Tile| {
-                        let tile = tile.with_caption(caption).with_value(value);
-                        if available {
+                        let tile = tile.with_subtitle(subtitle);
+                        if badge.is_empty() {
                             tile
                         } else {
-                            tile.with_state(TileState::Unavailable)
+                            tile.with_badge(badge)
                         }
                     })
                 }),
@@ -1543,10 +1568,9 @@ impl Lichess {
             }
             self.clear_seek_rate_limit(context);
         }
-        if self.seek_task.is_some() || !self.event_open || !self.playing_ready {
+        if !self.seek_ready() {
             self.notice = Some(
-                "The event stream and current-game snapshot must be ready before pairing."
-                    .to_owned(),
+                "Pairing is unavailable. Open Account/Games for status or refresh.".to_owned(),
             );
             return;
         }
@@ -3205,6 +3229,9 @@ impl Lichess {
                 self.playing_ready = true;
                 self.route = Route::Home;
             }
+            "home-disabled" => {
+                self.route = Route::Home;
+            }
             "game" => {
                 self.account = AccountState::Ready(Account {
                     id: "demo-owner".to_owned(),
@@ -3456,8 +3483,10 @@ impl KoboApp for Lichess {
                 };
             }
         } else if action == action_id("puzzles") {
+            self.home_page = 0;
             self.route = Route::Puzzles;
         } else if action == action_id("play") {
+            self.home_page = 0;
             self.route = Route::Play;
             self.validate_account(context);
         } else if action == action_id("home-next") || action == action_id("home-previous") {
@@ -3844,7 +3873,8 @@ mod tests {
         TaskOutcome,
     };
     use kobo_ui::{
-        Chrome, DisplayMetrics, Node, TextScale, TileShape, TileState, CLARA_BW_METRICS,
+        Chrome, DisplayMetrics, Glyph, LayoutKind, Node, TextScale, TileShape, TileState,
+        CLARA_BW_METRICS,
     };
     use std::collections::BTreeSet;
 
@@ -3965,6 +3995,18 @@ mod tests {
             .collect()
     }
 
+    fn visible_tile_actions(screen: &Screen, metrics: &DisplayMetrics) -> BTreeSet<ActionId> {
+        screen
+            .layout_with(metrics, &Chrome::with_back(false))
+            .nodes
+            .iter()
+            .filter_map(|node| match node.kind {
+                LayoutKind::Tile(action, _) => Some(action),
+                _ => None,
+            })
+            .collect()
+    }
+
     #[test]
     fn black_orientation_and_live_controls_fit_clara_bw() {
         let app = app_with_game(&["e2e4", "c7c5", "g1f3"], Color::Black);
@@ -4012,15 +4054,26 @@ mod tests {
                         node.kind
                     );
                 }
+                let mut declared = BTreeSet::new();
                 for node in &screen.nodes {
                     if let Node::TileGrid { shape, tiles, .. } = node {
-                        assert_eq!(*shape, TileShape::Card);
+                        assert_eq!(*shape, TileShape::Square);
                         for tile in tiles {
-                            assert!(!tile.value.is_empty());
-                            seen.insert(tile.action);
+                            assert!(!tile.subtitle.is_empty());
+                            declared.insert(tile.action);
                         }
                     }
                 }
+                let visible = visible_tile_actions(&screen, &metrics);
+                assert_eq!(
+                    visible, declared,
+                    "{name}: page {page} declared a tile that was not laid out"
+                );
+                if page == 0 {
+                    assert!(visible.contains(&action_id("play")));
+                    assert!(visible.contains(&action_id("puzzles")));
+                }
+                seen.extend(visible);
                 let Some(next) = painted(runner.action(action_id("home-next"))) else {
                     break;
                 };
@@ -4031,36 +4084,105 @@ mod tests {
     }
 
     #[test]
-    fn unavailable_home_presets_are_disabled_but_account_and_puzzles_remain_open() {
-        let context = Context::default();
-        let mut app = Lichess::default();
-        let pages = app.home_pages(&context);
-        let mut preset_states = Vec::new();
-        let mut utility_states = Vec::new();
-        for page in 0..pages.len() {
-            app.home_page = page;
-            for node in &app.home(&context).nodes {
-                if let Node::TileGrid { tiles, .. } = node {
-                    for tile in tiles {
-                        if api::SeekPreset::ALL
-                            .into_iter()
-                            .any(|preset| tile.action == action_id(preset.action()))
-                        {
-                            preset_states.push(tile.state);
-                        } else {
-                            utility_states.push(tile.state);
-                        }
-                    }
-                }
+    fn unready_home_uses_one_status_and_safe_tiles_without_close_accessories() {
+        let mut runner = AppRunner::new(Lichess::default());
+        let screen = painted(runner.start()).expect("home");
+        assert!(format!("{screen:?}").contains("Pairing unavailable"));
+        for node in &screen.nodes {
+            if let Node::TileGrid { tiles, .. } = node {
+                assert!(tiles.iter().all(|tile| tile.state == TileState::Normal));
             }
         }
-        assert_eq!(preset_states.len(), api::SeekPreset::ALL.len());
-        assert!(preset_states
+        assert!(!screen
+            .layout_with(&CLARA_BW_METRICS, &Chrome::with_back(false))
+            .nodes
             .iter()
-            .all(|state| *state == TileState::Unavailable));
-        assert!(utility_states
-            .iter()
-            .all(|state| *state == TileState::Normal));
+            .any(|node| node.kind == LayoutKind::TileGlyph(Glyph::Close)));
+        let commands = runner.action(action_id(api::SeekPreset::Blitz3_0.action()));
+        assert!(!commands.iter().any(|command| {
+            matches!(
+                command,
+                Command::Spawn {
+                    work: kobo_sdk::Task::Post { url, .. },
+                    ..
+                } if url.ends_with("/api/board/seek")
+            )
+        }));
+        assert_eq!(runner.app().route, Route::Home);
+        assert!(runner
+            .app()
+            .notice
+            .as_deref()
+            .unwrap_or_default()
+            .contains("Account/Games"));
+    }
+
+    #[test]
+    fn clara_home_is_dense_in_portrait_and_landscape() {
+        for (name, metrics, minimum) in [
+            ("portrait", CLARA_BW_METRICS, 9),
+            (
+                "landscape",
+                DisplayMetrics {
+                    width: CLARA_BW_METRICS.height,
+                    height: CLARA_BW_METRICS.width,
+                    ..CLARA_BW_METRICS
+                },
+                8,
+            ),
+        ] {
+            let mut runner = AppRunner::with_metrics(ready_app(), metrics);
+            let screen = painted(runner.start()).expect("home");
+            let layout = screen.layout_with(&metrics, &Chrome::with_back(false));
+            let tiles = layout
+                .nodes
+                .iter()
+                .filter(|node| matches!(node.kind, LayoutKind::Tile(_, _)))
+                .collect::<Vec<_>>();
+            let visible = visible_tile_actions(&screen, &metrics);
+            assert!(
+                visible.len() >= minimum,
+                "Clara {name} showed only {} tiles",
+                visible.len()
+            );
+            assert!(visible.contains(&action_id("play")));
+            assert!(visible.contains(&action_id("puzzles")));
+            assert!(tiles.iter().all(|tile| {
+                tile.rect.width >= metrics.touch_target_minimum()
+                    && tile.rect.height >= metrics.touch_target_minimum()
+            }));
+            if name == "portrait" {
+                assert_eq!(
+                    tiles
+                        .iter()
+                        .map(|tile| tile.rect.x)
+                        .collect::<BTreeSet<_>>()
+                        .len(),
+                    3
+                );
+                assert_eq!(
+                    tiles
+                        .iter()
+                        .map(|tile| tile.rect.y)
+                        .collect::<BTreeSet<_>>()
+                        .len(),
+                    3
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn returning_from_account_games_restores_the_primary_home_page() {
+        let mut app = ready_app();
+        app.home_page = 2;
+        let mut context = Context::default();
+        app.on_action(&mut context, action_id("play"));
+        assert_eq!(app.home_page, 0);
+        assert_eq!(app.route, Route::Play);
+        app.on_action(&mut context, ActionId::BACK);
+        assert_eq!(app.route, Route::Home);
+        assert_eq!(app.home_page, 0);
     }
 
     #[test]

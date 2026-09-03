@@ -12,6 +12,10 @@ resign, conservative abort, and opponent-gone victory claims.
 Account-global starts are confirmed explicitly before opening:
 ![A confirmation screen for a selected-preset game recovered from the global account state](screenshots/candidate.png)
 
+Before account and stream readiness, the same dense chooser remains safe and
+uses one concise page status instead of per-tile failure marks:
+![The Lichess chooser with Account/Games and Puzzles first and a single pairing-unavailable status](screenshots/readiness.png)
+
 An ended seek enters an explicit current-game reconciliation state:
 ![The selected preset waiting while current games are checked after the seek transport ended](screenshots/reconciling.png)
 
