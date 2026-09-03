@@ -2,8 +2,9 @@
 
 An unofficial, touch-first Lichess Board API client for Cobalt. It supports
 responsive Folio time-control presets, incoming standard-clock challenges,
-live games, legal move entry, promotion, clocks, reconnect, draw actions,
-resign, conservative abort, and opponent-gone victory claims.
+live games, two-tap legal move entry, vector pieces, promotion, clocks,
+reconnect, draw actions, resign, conservative abort, and opponent-gone
+victory claims.
 
 | Responsive presets | Live board | Pairing |
 | --- | --- | --- |
@@ -41,7 +42,10 @@ broadening credential authority.
 - Ended seeks reconcile once and are never replayed automatically
 - `gameStart`, `gameFinish`, and incoming challenge events
 - Board stream reconstruction from server-acknowledged UCI moves
-- White/black orientation, castling, en passant, and four promotion choices
+- White/black vector pieces, player clocks above and below the board, and a
+  portrait board that follows the player's side
+- Two-tap source/destination moves with a brief invalid-square mark
+- Castling, en passant, and four promotion choices
 - Last move, check, result, turn, server clocks, and opponent-gone countdown
 - Move, resign, abort during Lichess's first-two-ply window, draw offer/accept/decline, and
   claim-victory requests

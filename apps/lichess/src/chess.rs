@@ -112,14 +112,6 @@ pub fn promotion_choices(fen: &str, from: &str, to: &str) -> Vec<char> {
         .collect()
 }
 
-pub fn checked_king(fen: &str) -> Option<String> {
-    if !position(fen)?.is_check() {
-        return None;
-    }
-    let king = if side_to_move(fen)? == 'w' { 'K' } else { 'k' };
-    square_of(fen, king)
-}
-
 /// Replays normal PGN movetext through the move that creates a puzzle position.
 pub fn puzzle_position(pgn: &str, initial_ply: usize) -> Option<String> {
     let puzzle_ply = initial_ply.checked_add(1)?;
@@ -153,27 +145,6 @@ pub fn puzzle_position(pgn: &str, initial_ply: usize) -> Option<String> {
     (played == puzzle_ply).then(|| Fen::from_position(position, EnPassantMode::Legal).to_string())
 }
 
-fn square_of(fen: &str, wanted: char) -> Option<String> {
-    for (rank_index, rank) in fen.split_whitespace().next()?.split('/').enumerate() {
-        let mut file = 0_u8;
-        for character in rank.chars() {
-            if let Some(empty) = character.to_digit(10) {
-                file = file.saturating_add(u8::try_from(empty).ok()?);
-            } else {
-                if character == wanted {
-                    return Some(format!(
-                        "{}{}",
-                        char::from(b'a'.saturating_add(file)),
-                        8_usize.saturating_sub(rank_index)
-                    ));
-                }
-                file = file.saturating_add(1);
-            }
-        }
-    }
-    None
-}
-
 fn position(fen: &str) -> Option<Chess> {
     fen.parse::<Fen>()
         .ok()?
@@ -192,8 +163,7 @@ fn move_for(fen: &str, uci: &str) -> Option<shakmaty::Move> {
 #[cfg(test)]
 mod tests {
     use super::{
-        checked_king, legal, piece_at, piece_belongs_to, play, promotion_choices, puzzle_position,
-        replay, START,
+        legal, piece_at, piece_belongs_to, play, promotion_choices, puzzle_position, replay, START,
     };
     use shakmaty::{fen::Fen, perft, CastlingMode, Chess};
 
@@ -225,11 +195,9 @@ mod tests {
     }
 
     #[test]
-    fn ownership_and_check_are_read_from_the_reconstructed_position() {
+    fn ownership_is_read_from_the_reconstructed_position() {
         assert!(piece_belongs_to(START, "e2", 'w'));
         assert!(!piece_belongs_to(START, "e7", 'w'));
-        let checked = "4k3/8/8/8/8/8/4r3/4K3 w - - 0 1";
-        assert_eq!(checked_king(checked).as_deref(), Some("e1"));
     }
 
     #[test]

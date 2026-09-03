@@ -12,8 +12,8 @@ use api::{BoardRecord, Event, SeekPreset};
 use kobo_json::{ObjectBuilder, Value};
 use kobo_sdk::{
     action_id, ActionId, BandAlign, BannerLevel, Context, ControlState, Failure, Glyph, Heartbeat,
-    KoboApp, Screen, ScreenBuilder, SlotWidth, StoreResult, Task, TaskError, TaskId, TaskOutcome,
-    Tile, TileShape, TileState,
+    KoboApp, Orientation, Screen, ScreenBuilder, SlotWidth, StoreResult, Task, TaskError, TaskId,
+    TaskOutcome, Tile, TileShape, TileState,
 };
 use model::{
     Account, ApplyState, Challenge, ChallengeDirection, Color, FullGame, Game, GameSummary, Session,
@@ -41,7 +41,7 @@ struct HomeTile {
     enabled: bool,
 }
 
-type HomeSlot = (SlotWidth, Box<dyn FnOnce(ScreenBuilder) -> ScreenBuilder>);
+type BuilderSlot = (SlotWidth, Box<dyn FnOnce(ScreenBuilder) -> ScreenBuilder>);
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 enum Route {
@@ -282,6 +282,8 @@ struct Lichess {
     reconcile_accepted_challenge: bool,
     pending_move: Option<PendingMove>,
     selected: Option<String>,
+    invalid_square: Option<String>,
+    invalid_until_tick: u64,
     promotion: Option<Promotion>,
     confirmation: Option<Confirmation>,
     menu_open: bool,
@@ -342,6 +344,8 @@ impl Default for Lichess {
             reconcile_accepted_challenge: false,
             pending_move: None,
             selected: None,
+            invalid_square: None,
+            invalid_until_tick: 0,
             promotion: None,
             confirmation: None,
             menu_open: false,
@@ -481,7 +485,7 @@ impl Lichess {
     }
 
     fn home_card_row(screen: ScreenBuilder, tiles: Vec<HomeTile>, columns: usize) -> ScreenBuilder {
-        let mut slots: Vec<HomeSlot> = tiles
+        let mut slots: Vec<BuilderSlot> = tiles
             .into_iter()
             .map(|tile| {
                 (
@@ -589,9 +593,13 @@ impl Lichess {
         } else {
             Color::White
         };
+        let puzzle_status = self.selected.as_deref().map_or_else(
+            || orientation.name().to_owned(),
+            |square| format!("{} · {square} →", orientation.name()),
+        );
         let mut screen = ScreenBuilder::new("lichess-solve")
-            .top_bar("Solve")
-            .secondary(format!("{} to move", orientation.name()));
+            .top_bar("Puzzle")
+            .secondary(puzzle_status);
         if let Some(notice) = &self.notice {
             screen = screen.banner(BannerLevel::Attention, notice);
         }
@@ -601,12 +609,11 @@ impl Lichess {
                 board_cells(
                     &puzzle.fen,
                     orientation,
-                    self.selected.as_deref(),
-                    None,
-                    None,
+                    self.invalid_square
+                        .as_deref()
+                        .filter(|_| self.total_ticks < self.invalid_until_tick),
                 ),
             )
-            .secondary("Tap a piece, then its destination.")
             .button("skip-puzzle", "Skip puzzle")
             .build()
     }
@@ -799,37 +806,77 @@ impl Lichess {
         let elapsed = self.clock.waited().as_secs();
         let white = clock(game.clock_ms(Color::White, elapsed));
         let black = clock(game.clock_ms(Color::Black, elapsed));
+        let (you_name, you_color, you_clock, opponent_name, opponent_color, opponent_clock) =
+            match game.my_color {
+                Color::White => (
+                    game.white.name.clone(),
+                    "White",
+                    white,
+                    game.black.name.clone(),
+                    "Black",
+                    black,
+                ),
+                Color::Black => (
+                    game.black.name.clone(),
+                    "Black",
+                    black,
+                    game.white.name.clone(),
+                    "White",
+                    white,
+                ),
+            };
         let last = game
             .last_san
             .as_deref()
             .or_else(|| game.state.moves.last().map(String::as_str))
             .unwrap_or("none");
+        let move_status = self
+            .selected
+            .as_deref()
+            .map_or_else(|| last.to_owned(), |square| format!("{square} →"));
         let live = self.board_is_live(&game.id);
+        let blocked = !live || self.pending_action.is_some() || self.pending_move.is_some();
         let mut menu = Vec::new();
-        if live {
+        if !blocked {
+            if game.draw_offer_from_opponent() {
+                menu.push(("accept-draw".to_owned(), "Accept draw".to_owned()));
+                menu.push(("decline-draw".to_owned(), "Decline draw".to_owned()));
+            } else {
+                menu.push(("offer-draw".to_owned(), "Offer draw".to_owned()));
+            }
+            if game.opponent_gone && self.claim_remaining() == Some(0) {
+                menu.push(("claim-victory".to_owned(), "Claim victory".to_owned()));
+            }
             menu.push(("confirm-resign".to_owned(), "Resign".to_owned()));
             if game.can_abort() {
                 menu.push(("confirm-abort".to_owned(), "Abort".to_owned()));
             }
+        } else if !live && self.pending_action.is_none() && self.pending_move.is_none() {
+            menu.push(("reconnect-board".to_owned(), "Reconnect".to_owned()));
         }
+        let turn = if !live {
+            "Paused"
+        } else if game.my_turn() {
+            "You"
+        } else {
+            "Opponent"
+        };
+        let game_kind = if game.rated { "Rated" } else { "Casual" };
+        let check = if game.check { " · Check" } else { "" };
+        let opponent_slots: Vec<BuilderSlot> = vec![
+            (
+                SlotWidth::Fill,
+                Box::new(move |slot| slot.heading(opponent_name).secondary(opponent_color)),
+            ),
+            (
+                SlotWidth::Natural,
+                Box::new(move |slot| slot.heading(opponent_clock)),
+            ),
+        ];
         let mut screen = ScreenBuilder::new("lichess-game")
-            .top_bar(format!("vs {}", game.opponent().name))
+            .top_bar("Lichess")
             .top_bar_overflow("game-menu", self.menu_open, menu)
-            .secondary(format!(
-                "White {white}    Black {black} · {}",
-                if game.rated { "Rated" } else { "Casual" }
-            ))
-            .secondary(format!(
-                "{} · Last {last}{}",
-                if !live {
-                    "Board stream paused"
-                } else if game.my_turn() {
-                    "Your move"
-                } else {
-                    "Opponent's move"
-                },
-                if game.check { " · Check" } else { "" }
-            ));
+            .band(BandAlign::Top, opponent_slots);
         if let Some(notice) = &self.notice {
             screen = screen.banner(BannerLevel::Attention, notice);
         }
@@ -859,45 +906,33 @@ impl Lichess {
             board_cells(
                 &game.fen,
                 game.my_color,
-                self.selected.as_deref(),
-                game.state.moves.last().map(String::as_str),
-                chess::checked_king(&game.fen).as_deref(),
+                self.invalid_square
+                    .as_deref()
+                    .filter(|_| self.total_ticks < self.invalid_until_tick),
             ),
         );
+        let you_slots: Vec<BuilderSlot> = vec![
+            (
+                SlotWidth::Fill,
+                Box::new(move |slot| {
+                    slot.heading(you_name).secondary(format!(
+                        "{you_color} · {turn} · {game_kind} · {move_status}{check}"
+                    ))
+                }),
+            ),
+            (
+                SlotWidth::Natural,
+                Box::new(move |slot| slot.heading(you_clock)),
+            ),
+        ];
+        screen = screen.band(BandAlign::Top, you_slots);
         if !game.active() {
+            let result = game.result();
             return screen
-                .heading(game.result())
-                .primary_button("back-to-play", "Back to Play")
+                .modal("", move |builder| {
+                    builder.primary_button("back-to-play", result)
+                })
                 .build();
-        }
-        let blocked = !live || self.pending_action.is_some() || self.pending_move.is_some();
-        if !live {
-            let reconnecting = self.has_pending(|pending| {
-                matches!(
-                    pending,
-                    Pending::BoardOpen(_)
-                        | Pending::BoardNext(_)
-                        | Pending::BoardRetry(_)
-                        | Pending::BoardRateWait { .. }
-                        | Pending::BoardClose(_)
-                )
-            });
-            screen = screen.button_with_state(
-                "reconnect-board",
-                "Reconnect board",
-                enabled(
-                    !reconnecting && self.pending_action.is_none() && self.pending_move.is_none(),
-                ),
-            );
-        } else if game.draw_offer_from_opponent() {
-            screen = screen
-                .button_with_state("accept-draw", "Accept draw", enabled(!blocked))
-                .button_with_state("decline-draw", "Decline draw", enabled(!blocked));
-        } else {
-            screen = screen.button_with_state("offer-draw", "Offer draw", enabled(!blocked));
-        }
-        if live && game.opponent_gone && self.claim_remaining() == Some(0) {
-            screen = screen.button_with_state("claim-victory", "Claim victory", enabled(!blocked));
         }
         if let Some(promotion) = &self.promotion {
             screen = screen.modal("Choose promotion", |builder| {
@@ -919,28 +954,23 @@ impl Lichess {
         } else if let Some(confirmation) = self.confirmation {
             screen = match confirmation {
                 Confirmation::Resign => screen.confirm(
-                    "Resign game?",
-                    "This ends the game.",
+                    "Resign?",
+                    "Final",
                     ("resign", "Resign"),
-                    ("cancel-confirm", "Keep playing"),
+                    ("cancel-confirm", "Cancel"),
                 ),
                 Confirmation::Abort => screen.confirm(
-                    "Abort game?",
-                    "Only before both players move.",
+                    "Abort?",
+                    "Opening only",
                     ("abort", "Abort"),
-                    ("cancel-confirm", "Keep playing"),
+                    ("cancel-confirm", "Cancel"),
                 ),
             };
         } else if let Some(action) = &self.pending_action {
-            screen = screen.modal(action.label(), |builder| {
-                builder.text("Waiting for Lichess. This request will not be replayed.")
-            });
+            screen = screen.modal(action.label(), |builder| builder.secondary("Sending"));
         } else if let Some(movement) = &self.pending_move {
-            screen = screen.modal("Waiting for board", |builder| {
-                builder.text(format!(
-                    "{} was sent. The board will change only after the stream acknowledges it.",
-                    movement.movement
-                ))
+            screen = screen.modal("Move sent", |builder| {
+                builder.heading(movement.movement.clone())
             });
         }
         screen.build()
@@ -1889,6 +1919,11 @@ impl Lichess {
         self.pending_action_generation = None;
     }
 
+    fn flash_invalid(&mut self, square: String) {
+        self.invalid_square = Some(square);
+        self.invalid_until_tick = self.total_ticks.saturating_add(2);
+    }
+
     fn choose_game_square(&mut self, context: &mut Context, square: String) {
         if self.pending_action.is_some()
             || self.pending_move.is_some()
@@ -1914,13 +1949,16 @@ impl Lichess {
         let Some(from) = self.selected.take() else {
             if chess::piece_belongs_to(&game.fen, &square, game.my_color.fen()) {
                 self.selected = Some(square);
+                self.invalid_square = None;
                 self.notice = None;
             } else {
-                self.notice = Some("Select one of your pieces.".to_owned());
+                self.flash_invalid(square);
+                self.notice = Some("Your piece".to_owned());
             }
             return;
         };
         if from == square {
+            self.invalid_square = None;
             self.notice = None;
             return;
         }
@@ -1935,9 +1973,13 @@ impl Lichess {
         }
         let movement = format!("{from}{square}");
         if !chess::legal(&game.fen, &movement) {
-            self.notice = Some("That move is not legal in the server position.".to_owned());
+            self.selected = Some(from);
+            self.flash_invalid(square);
+            self.notice = Some("Illegal".to_owned());
             return;
         }
+        self.invalid_square = None;
+        self.notice = None;
         self.send_action(
             context,
             GameAction::Move(movement.clone()),
@@ -1955,11 +1997,19 @@ impl Lichess {
         }
         let solver = chess::side_to_move(&puzzle.fen);
         let Some(from) = self.selected.take() else {
-            self.selected = Some(square);
-            self.notice = None;
+            if solver.is_some_and(|color| chess::piece_belongs_to(&puzzle.fen, &square, color)) {
+                self.selected = Some(square);
+                self.invalid_square = None;
+                self.notice = None;
+            } else {
+                self.invalid_square = Some(square);
+                self.invalid_until_tick = self.total_ticks.saturating_add(2);
+                self.notice = Some("Your piece".to_owned());
+            }
             return;
         };
         if from == square {
+            self.invalid_square = None;
             return;
         }
         let expected = puzzle.solution.get(puzzle.cursor).cloned();
@@ -1979,9 +2029,13 @@ impl Lichess {
             .into_iter()
             .find(|movement| chess::legal(&puzzle.fen, movement))
         else {
-            self.notice = Some("That move is not legal here.".to_owned());
+            self.selected = Some(from);
+            self.invalid_square = Some(square);
+            self.invalid_until_tick = self.total_ticks.saturating_add(2);
+            self.notice = Some("Illegal".to_owned());
             return;
         };
+        self.invalid_square = None;
         if expected
             .as_ref()
             .is_some_and(|solution| solution != &movement)
@@ -3302,6 +3356,15 @@ impl Lichess {
                 self.board_ready = true;
                 self.route = Route::Game;
             }
+            "result" => {
+                if !self.install_demo("game") {
+                    return false;
+                }
+                if let Some(game) = self.game.as_mut() {
+                    "mate".clone_into(&mut game.state.status);
+                    game.state.winner = Some(Color::White);
+                }
+            }
             "pairing" => {
                 self.account = AccountState::Ready(Account {
                     id: "demo-owner".to_owned(),
@@ -3396,6 +3459,7 @@ impl Lichess {
 
 impl KoboApp for Lichess {
     fn on_start(&mut self, context: &mut Context) {
+        context.set_orientation(Orientation::Portrait);
         if std::env::var("KOBO_LICHESS_DEMO")
             .ok()
             .is_some_and(|scenario| self.install_demo(&scenario))
@@ -3730,12 +3794,8 @@ fn clock(milliseconds: u64) -> String {
 fn board_cells(
     fen: &str,
     orientation: Color,
-    selected: Option<&str>,
-    last_move: Option<&str>,
-    checked_king: Option<&str>,
+    invalid_square: Option<&str>,
 ) -> Vec<(String, String, Option<Glyph>)> {
-    let last_from = last_move.and_then(|movement| movement.get(0..2));
-    let last_to = last_move.and_then(|movement| movement.get(2..4));
     let ranks: Vec<u8> = match orientation {
         Color::White => (1..=8).rev().collect(),
         Color::Black => (1..=8).collect(),
@@ -3749,40 +3809,33 @@ fn board_cells(
         for file in &files {
             let square = format!("{}{}", char::from(*file), rank);
             let piece = chess::piece_at(fen, &square);
-            let mut label = piece.map_or_else(|| " ".to_owned(), piece_label);
-            if selected == Some(square.as_str()) {
-                label.push('*');
-            } else if checked_king == Some(square.as_str()) {
-                label.push('+');
-            } else if last_to == Some(square.as_str()) {
-                label.push('!');
-            } else if last_from == Some(square.as_str()) && piece.is_none() {
-                label.clear();
-                label.push_str("..");
-            }
-            cells.push((format!("square-{square}"), label, None));
+            let (label, glyph) = if invalid_square == Some(square.as_str()) {
+                ("×".to_owned(), None)
+            } else {
+                (" ".to_owned(), piece.and_then(piece_glyph))
+            };
+            cells.push((format!("square-{square}"), label, glyph));
         }
     }
     cells
 }
 
-fn piece_label(piece: char) -> String {
-    match piece {
-        'K' => "wK",
-        'Q' => "wQ",
-        'R' => "wR",
-        'B' => "wB",
-        'N' => "wN",
-        'P' => "wP",
-        'k' => "bK",
-        'q' => "bQ",
-        'r' => "bR",
-        'b' => "bB",
-        'n' => "bN",
-        'p' => "bP",
-        _ => " ",
-    }
-    .to_owned()
+fn piece_glyph(piece: char) -> Option<Glyph> {
+    Some(match piece {
+        'K' => Glyph::ChessWhiteKing,
+        'Q' => Glyph::ChessWhiteQueen,
+        'R' => Glyph::ChessWhiteRook,
+        'B' => Glyph::ChessWhiteBishop,
+        'N' => Glyph::ChessWhiteKnight,
+        'P' => Glyph::ChessWhitePawn,
+        'k' => Glyph::ChessBlackKing,
+        'q' => Glyph::ChessBlackQueen,
+        'r' => Glyph::ChessBlackRook,
+        'b' => Glyph::ChessBlackBishop,
+        'n' => Glyph::ChessBlackKnight,
+        'p' => Glyph::ChessBlackPawn,
+        _ => return None,
+    })
 }
 
 fn square_action(action: ActionId) -> Option<String> {
@@ -3884,7 +3937,7 @@ mod tests {
     use super::{
         api, board_cells, clock, AccountState, ActionScope, BoardRecord, Challenge,
         ChallengeDirection, ChallengeTime, Color, Event, FullGame, Game, GameAction, Lichess,
-        Pending, Player, Puzzle, Route, ServerState, Session, ACCOUNT_RETRY_SECONDS,
+        Orientation, Pending, Player, Puzzle, Route, ServerState, Session, ACCOUNT_RETRY_SECONDS,
         BOARD_RATE_KEY, EVENT_RATE_KEY, HOME_TILE_COUNT, SEEK_RATE_KEY,
     };
     use kobo_sdk::{
@@ -4145,15 +4198,20 @@ mod tests {
                 .rect_of_action(action_id(&format!("square-{square}")))
                 .is_some());
         }
-        let cells = board_cells(
-            &app.game.as_ref().expect("game").fen,
-            Color::Black,
-            None,
-            Some("g1f3"),
-            None,
-        );
+        let cells = board_cells(&app.game.as_ref().expect("game").fen, Color::Black, None);
         assert_eq!(cells.first().expect("first").0, "square-h1");
         assert_eq!(cells.last().expect("last").0, "square-a8");
+        assert_eq!(cells.first().expect("first").2, Some(Glyph::ChessWhiteRook));
+        assert_eq!(cells.last().expect("last").2, Some(Glyph::ChessBlackRook));
+    }
+
+    #[test]
+    fn lichess_requests_portrait_for_the_square_board() {
+        let mut runner = AppRunner::new(Lichess::default());
+        let commands = runner.start();
+        assert!(commands
+            .iter()
+            .any(|command| { matches!(command, Command::SetOrientation(Orientation::Portrait)) }));
     }
 
     #[test]
@@ -4523,6 +4581,62 @@ mod tests {
             posts,
             "a pending move was submitted twice"
         );
+    }
+
+    #[test]
+    fn illegal_destination_flashes_and_keeps_the_piece_selected() {
+        let mut app = app_with_game(&[], Color::White);
+        let mut context = Context::default();
+        app.on_action(&mut context, action_id("square-e2"));
+        app.on_action(&mut context, action_id("square-e5"));
+
+        assert_eq!(app.selected.as_deref(), Some("e2"));
+        assert_eq!(app.invalid_square.as_deref(), Some("e5"));
+        assert_eq!(app.notice.as_deref(), Some("Illegal"));
+        assert!(!context
+            .commands()
+            .iter()
+            .any(|command| matches!(command, Command::Spawn { .. })));
+
+        let cells = board_cells(
+            &app.game.as_ref().expect("game").fen,
+            Color::White,
+            app.invalid_square.as_deref(),
+        );
+        assert_eq!(
+            cells
+                .iter()
+                .find(|(action, _, _)| action == "square-e5")
+                .map(|(_, label, _)| label.as_str()),
+            Some("×")
+        );
+
+        app.total_ticks = app.invalid_until_tick;
+        let cells = board_cells(
+            &app.game.as_ref().expect("game").fen,
+            Color::White,
+            app.invalid_square
+                .as_deref()
+                .filter(|_| app.total_ticks < app.invalid_until_tick),
+        );
+        assert_eq!(
+            cells
+                .iter()
+                .find(|(action, _, _)| action == "square-e5")
+                .map(|(_, label, _)| label.as_str()),
+            Some(" ")
+        );
+    }
+
+    #[test]
+    fn first_tap_must_select_the_players_piece() {
+        let mut app = app_with_game(&[], Color::White);
+        let mut context = Context::default();
+        app.on_action(&mut context, action_id("square-e7"));
+
+        assert!(app.selected.is_none());
+        assert_eq!(app.invalid_square.as_deref(), Some("e7"));
+        assert_eq!(app.notice.as_deref(), Some("Your piece"));
     }
 
     #[test]
@@ -5907,8 +6021,9 @@ mod tests {
                 } if id == "abcdEF12"
             )
         }));
+        app.menu_open = true;
         let screen = format!("{:?}", app.game_screen());
-        assert!(screen.contains("Reconnect board"));
+        assert!(screen.contains("Reconnect"));
         assert!(!screen.contains("Offer draw"));
         app.set_board_rate_limit(&mut context, "other123", 31);
         let saved = context
@@ -6154,6 +6269,7 @@ mod tests {
     fn draw_acceptance_and_decline_wait_for_authoritative_server_state() {
         let mut accepting = app_with_game(&["e2e4", "e7e5"], Color::White);
         accepting.game.as_mut().expect("game").state.black_draw = true;
+        accepting.menu_open = true;
         let offered = format!("{:?}", accepting.game_screen());
         assert!(offered.contains("Accept draw"));
         assert!(offered.contains("Decline draw"));
@@ -6213,6 +6329,7 @@ mod tests {
         )
         .expect("declined draw");
         declining.handle_board(&mut decline_context, "abcdEF12", declined);
+        declining.menu_open = true;
         let cleared = format!("{:?}", declining.game_screen());
         assert!(cleared.contains("Offer draw"));
         assert!(!cleared.contains("Accept draw"));

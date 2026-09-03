@@ -95,7 +95,7 @@
       "display_name": "Lichess",
       "short_label": "Lichess",
       "summary": "Play live standard chess on Lichess with responsive e-ink presets, puzzles, and reconnect.",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "minimum_cobalt_version": "0.3.5",
       "glyph": "grid",
       "capabilities": ["network", "hold-wifi", "keep-awake"],

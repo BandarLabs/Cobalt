@@ -1,13 +1,20 @@
 expect KnightReader
-expect Your move
-expect Offer draw
+expect You
 shot live-board
+tap-at 472,1037
+wait-for e7 →
+tap-at 472,669
+wait-for Illegal
+shot illegal-move
 tap More
+wait-for Offer draw
 wait-for Resign
 shot game-menu
 tap Resign
-wait-for Resign game?
+wait-for Resign?
 shot resign-confirmation
-tap Keep playing
+tap Cancel
+wait-for DemoOwner
+tap More
 wait-for Offer draw
-expect-missing Resign game?
+expect-missing Resign?
