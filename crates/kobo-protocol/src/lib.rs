@@ -5512,6 +5512,18 @@ const fn encode_glyph(glyph: Glyph) -> u8 {
         Glyph::Plus => 42,
         Glyph::Headphones => 43,
         Glyph::Minus => 44,
+        Glyph::ChessWhiteKing => 45,
+        Glyph::ChessWhiteQueen => 46,
+        Glyph::ChessWhiteRook => 47,
+        Glyph::ChessWhiteBishop => 48,
+        Glyph::ChessWhiteKnight => 49,
+        Glyph::ChessWhitePawn => 50,
+        Glyph::ChessBlackKing => 51,
+        Glyph::ChessBlackQueen => 52,
+        Glyph::ChessBlackRook => 53,
+        Glyph::ChessBlackBishop => 54,
+        Glyph::ChessBlackKnight => 55,
+        Glyph::ChessBlackPawn => 56,
     }
 }
 
@@ -5562,6 +5574,18 @@ const fn decode_glyph(tag: u8) -> Option<Glyph> {
         42 => Glyph::Plus,
         43 => Glyph::Headphones,
         44 => Glyph::Minus,
+        45 => Glyph::ChessWhiteKing,
+        46 => Glyph::ChessWhiteQueen,
+        47 => Glyph::ChessWhiteRook,
+        48 => Glyph::ChessWhiteBishop,
+        49 => Glyph::ChessWhiteKnight,
+        50 => Glyph::ChessWhitePawn,
+        51 => Glyph::ChessBlackKing,
+        52 => Glyph::ChessBlackQueen,
+        53 => Glyph::ChessBlackRook,
+        54 => Glyph::ChessBlackBishop,
+        55 => Glyph::ChessBlackKnight,
+        56 => Glyph::ChessBlackPawn,
 
         _ => return None,
     })
