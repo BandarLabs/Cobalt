@@ -48,7 +48,7 @@
         {
           "path": "crates/kobo-policy/src/credentials.rs",
           "base_blob": "229061a856c96fcfbecbd264f65107f0b9d5293c",
-          "compatible_blob": "af3b821eb0193dc5aa9926fc98b88d380f25a478"
+          "compatible_blob": "2309b1dcb50dea3b0c95045c9dd45aa8f9140360"
         },
         {
           "path": "crates/kobo-policy/src/services.rs",
@@ -103,7 +103,7 @@
         {
           "path": "crates/kobo-ui/src/lib.rs",
           "base_blob": "b423c372440c61e785db9dd0128eac22343cb9f8",
-          "compatible_blob": "1f7e22d3291f01676dbfffbd31fceae987e71f78"
+          "compatible_blob": "812ab171ca023d24c11fe7e66e3c4aee7467a2ec"
         },
         {
           "path": "examples/gutenbird/Cargo.toml",
