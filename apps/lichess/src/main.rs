@@ -224,10 +224,12 @@ struct Lichess {
     retired_tasks: BTreeMap<TaskId, Pending>,
     event_open: bool,
     deferred_event_open: bool,
+    deferred_event_next: bool,
     event_rate_limit: Option<u64>,
     board_open: Option<String>,
     board_ready: bool,
     deferred_board_open: Option<Session>,
+    deferred_board_next: Option<String>,
     board_rate_limits: BTreeMap<String, u64>,
     seek_task: Option<TaskId>,
     seek_waiting: bool,
@@ -274,10 +276,12 @@ impl Default for Lichess {
             retired_tasks: BTreeMap::new(),
             event_open: false,
             deferred_event_open: false,
+            deferred_event_next: false,
             event_rate_limit: None,
             board_open: None,
             board_ready: false,
             deferred_board_open: None,
+            deferred_board_next: None,
             board_rate_limits: BTreeMap::new(),
             seek_task: None,
             seek_waiting: false,
@@ -943,28 +947,36 @@ impl Lichess {
     }
 
     fn retry_deferred_event(&mut self, context: &mut Context) {
+        if self.deferred_event_next {
+            self.next_event(context);
+        }
         if self.deferred_event_open {
             self.open_event_stream(context);
         }
     }
 
     fn next_event(&mut self, context: &mut Context) {
-        if self.suspended
-            || !self.event_open
-            || self.has_pending(|pending| matches!(pending, Pending::EventNext))
-        {
+        if self.suspended || !self.event_open {
+            self.deferred_event_next = self.event_open;
             return;
         }
-        let _ = self.spawn(
-            context,
-            Pending::EventNext,
-            api::event_stream("next"),
-            false,
-        );
+        if self.has_pending(|pending| matches!(pending, Pending::EventNext)) {
+            self.deferred_event_next = false;
+            return;
+        }
+        self.deferred_event_next = self
+            .spawn(
+                context,
+                Pending::EventNext,
+                api::event_stream("next"),
+                false,
+            )
+            .is_none();
     }
 
     fn close_event(&mut self, context: &mut Context) {
         self.event_open = false;
+        self.deferred_event_next = false;
         if !self.has_pending(|pending| matches!(pending, Pending::EventClose)) {
             let _ = self.spawn(
                 context,
@@ -977,6 +989,7 @@ impl Lichess {
 
     fn schedule_event_reconnect(&mut self, context: &mut Context) {
         self.event_open = false;
+        self.deferred_event_next = false;
         if self.suspended {
             self.deferred_event_open = true;
             return;
@@ -1044,6 +1057,7 @@ impl Lichess {
             }
             self.board_open = None;
             self.board_ready = false;
+            self.deferred_board_next = None;
             self.game = None;
             self.selected = None;
             self.promotion = None;
@@ -1111,22 +1125,34 @@ impl Lichess {
     }
 
     fn next_board(&mut self, context: &mut Context, id: &str) {
-        if self.suspended
-            || self.board_open.as_deref() != Some(id)
-            || self.has_pending(|pending| matches!(pending, Pending::BoardNext(open) if open == id))
-        {
+        if self.suspended || self.board_open.as_deref() != Some(id) {
+            if self.board_open.as_deref() == Some(id) {
+                self.deferred_board_next = Some(id.to_owned());
+            }
+            return;
+        }
+        if self.has_pending(|pending| matches!(pending, Pending::BoardNext(open) if open == id)) {
+            self.deferred_board_next = None;
             return;
         }
         let Some(work) = api::board_stream(id, "next") else {
             return;
         };
-        let _ = self.spawn(context, Pending::BoardNext(id.to_owned()), work, false);
+        if self
+            .spawn(context, Pending::BoardNext(id.to_owned()), work, false)
+            .is_some()
+        {
+            self.deferred_board_next = None;
+        } else {
+            self.deferred_board_next = Some(id.to_owned());
+        }
     }
 
     fn close_board(&mut self, context: &mut Context, id: &str) {
         if self.board_open.as_deref() == Some(id) {
             self.board_open = None;
             self.board_ready = false;
+            self.deferred_board_next = None;
         }
         if self.has_pending(|pending| matches!(pending, Pending::BoardClose(open) if open == id)) {
             return;
@@ -1165,6 +1191,7 @@ impl Lichess {
         self.confirmation = None;
         self.menu_open = false;
         self.board_ready = false;
+        self.deferred_board_next = None;
         if self
             .deferred_board_open
             .as_ref()
@@ -1195,6 +1222,7 @@ impl Lichess {
         }
         self.board_open = None;
         self.board_ready = false;
+        self.deferred_board_next = None;
         self.clock.stop(context);
         if self.suspended
             || self.has_pending(|pending| {
@@ -1268,6 +1296,12 @@ impl Lichess {
     fn retry_deferred_board(&mut self, context: &mut Context) {
         if self.suspended {
             return;
+        }
+        if let Some(id) = self.deferred_board_next.clone() {
+            self.next_board(context, &id);
+            if self.deferred_board_next.is_some() {
+                return;
+            }
         }
         if let Some(session) = self.deferred_board_open.clone() {
             self.open_board(context, session);
@@ -1835,9 +1869,17 @@ impl Lichess {
                 }
             }
             Event::GameFinish(id) => {
-                if self.game.as_ref().is_some_and(|game| game.id == id) {
+                let current = self
+                    .session
+                    .as_ref()
+                    .is_some_and(|session| session.game_id == id);
+                if current && !self.board_is_live(&id) {
+                    self.notice =
+                        Some("The game finished while its board stream was paused.".to_owned());
+                    self.discard_game(context, &id);
+                } else if self.game.as_ref().is_some_and(|game| game.id == id) {
                     self.notice = Some("Lichess reports that the game finished.".to_owned());
-                    if self.board_open.as_deref() == Some(id.as_str()) {
+                    if self.board_is_live(&id) {
                         self.next_board(context, &id);
                     }
                 }
@@ -2644,8 +2686,10 @@ impl Lichess {
         self.seek_candidate = None;
         self.event_open = false;
         self.deferred_event_open = matches!(self.account, AccountState::Ready(_));
+        self.deferred_event_next = false;
         self.board_open = None;
         self.board_ready = false;
+        self.deferred_board_next = None;
         self.clock.stop(context);
     }
 
@@ -4201,6 +4245,36 @@ mod tests {
     }
 
     #[test]
+    fn stream_next_intents_retry_after_task_capacity_clears() {
+        let mut full = Context::default();
+        for _ in 0..4 {
+            assert!(full.spawn(kobo_sdk::Task::Sleep { seconds: 30 }).is_some());
+        }
+        let mut app = Lichess {
+            account: AccountState::Ready(super::Account {
+                id: "owner123".to_owned(),
+                username: "Owner".to_owned(),
+            }),
+            event_open: true,
+            ..Lichess::default()
+        };
+        app.next_event(&mut full);
+        assert!(app.deferred_event_next);
+        app.retry_deferred_event(&mut Context::default());
+        assert!(!app.deferred_event_next);
+        assert!(app.has_pending(|pending| matches!(pending, Pending::EventNext)));
+
+        let mut board = app_with_game(&[], Color::White);
+        board.next_board(&mut full, "abcdEF12");
+        assert_eq!(board.deferred_board_next.as_deref(), Some("abcdEF12"));
+        board.retry_deferred_board(&mut Context::default());
+        assert!(board.deferred_board_next.is_none());
+        assert!(board.has_pending(|pending| {
+            matches!(pending, Pending::BoardNext(id) if id == "abcdEF12")
+        }));
+    }
+
+    #[test]
     fn suspend_does_not_cancel_close_tasks_before_they_drop_old_streams() {
         let mut app = Lichess::default();
         let event_close = kobo_sdk::TaskId(91);
@@ -4449,6 +4523,19 @@ mod tests {
         assert!(app.game.is_none());
         assert_eq!(app.route, Route::Play);
         assert!(!app.has_pending(|pending| matches!(pending, Pending::BoardRetry(_))));
+    }
+
+    #[test]
+    fn game_finish_on_paused_board_clears_resumable_state() {
+        let mut app = app_with_game(&[], Color::White);
+        app.board_open = None;
+        app.board_ready = false;
+        let mut context = Context::default();
+        app.handle_event(&mut context, api::Event::GameFinish("abcdEF12".to_owned()));
+        assert!(app.session.is_none());
+        assert!(app.game.is_none());
+        assert_eq!(app.route, Route::Play);
+        assert!(!format!("{:?}", app.play_screen()).contains("Current board"));
     }
 
     #[test]
