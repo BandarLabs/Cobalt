@@ -3272,11 +3272,9 @@ enum FeedbackKind {
 }
 
 fn feedback_kind(layout: &Layout, rect: kobo_ui::Rect) -> FeedbackKind {
-    if layout
-        .nodes
-        .iter()
-        .any(|node| node.rect == rect && matches!(node.kind, LayoutKind::Cell(_, CellStyle::Key)))
-    {
+    if layout.nodes.iter().any(|node| {
+        node.rect == rect && matches!(node.kind, LayoutKind::Cell(_, CellStyle::Key, _))
+    }) {
         FeedbackKind::KeyboardKey
     } else {
         FeedbackKind::Control
@@ -5050,7 +5048,7 @@ mod hosting_tests {
             .find(|node| {
                 matches!(
                     node.kind,
-                    kobo_ui::LayoutKind::Cell(_, kobo_ui::CellStyle::Key)
+                    kobo_ui::LayoutKind::Cell(_, kobo_ui::CellStyle::Key, _)
                 )
             })
             .expect("keyboard key")

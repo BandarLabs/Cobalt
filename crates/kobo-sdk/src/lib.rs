@@ -2303,6 +2303,36 @@ impl ScreenBuilder {
         self
     }
 
+    /// A board whose current source cell is drawn inverted.
+    #[must_use]
+    pub fn board_with_selection<I, N, L>(mut self, columns: u8, cells: I) -> Self
+    where
+        I: IntoIterator<Item = (N, L, Option<Glyph>, bool)>,
+        N: AsRef<str>,
+        L: Into<String>,
+    {
+        let id = self.next_id();
+        let mut source = cells.into_iter();
+        let mut cells = Vec::new();
+        for (name, label, glyph, selected) in source.by_ref().take(MAX_CELLS) {
+            let cell = Cell::new(self.register(name.as_ref()), label).with_selected(selected);
+            cells.push(match glyph {
+                Some(glyph) => cell.with_glyph(glyph),
+                None => cell,
+            });
+        }
+        if source.next().is_some() {
+            self.warn_limit(id, "grid cells", MAX_CELLS);
+        }
+        self.nodes.push(Node::Grid {
+            id,
+            columns: columns.clamp(1, MAX_COLUMNS),
+            square: true,
+            cells,
+        });
+        self
+    }
+
     /// A row of buttons that each have a picture as well as a word.
     ///
     /// For the handful of actions that have a drawing everybody already knows:

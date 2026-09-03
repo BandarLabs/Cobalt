@@ -3703,7 +3703,7 @@ fn layout_bottom_action(bottom: &BottomAction, metrics: &DisplayMetrics, layout:
                 width: side,
                 height: side,
             },
-            kind: LayoutKind::InlineGlyph(glyph),
+            kind: LayoutKind::InlineGlyph(glyph, false),
             text_lines: Vec::new(),
         });
     }
@@ -4758,6 +4758,8 @@ pub struct Cell {
     /// already knows. Optional because most cells do not: a glyph invented for
     /// a verb nobody draws is worse than the verb written out.
     pub glyph: Option<Glyph>,
+    /// Drawn inverted while this cell is the current board selection.
+    pub selected: bool,
 }
 
 impl Cell {
@@ -4767,6 +4769,7 @@ impl Cell {
             action,
             label: label.into(),
             glyph: None,
+            selected: false,
         }
     }
 
@@ -4779,6 +4782,12 @@ impl Cell {
     #[must_use]
     pub const fn with_glyph(mut self, glyph: Glyph) -> Self {
         self.glyph = Some(glyph);
+        self
+    }
+
+    #[must_use]
+    pub const fn with_selected(mut self, selected: bool) -> Self {
+        self.selected = selected;
         self
     }
 }
@@ -5482,8 +5491,8 @@ pub enum LayoutKind {
     NavDestination(ActionId, Option<Glyph>),
     NavDestinationSelected(ActionId, Option<Glyph>),
     Row(ActionId),
-    Cell(ActionId, CellStyle),
-    CellLabel,
+    Cell(ActionId, CellStyle, bool),
+    CellLabel(bool),
     /// One cell of a table, drawn in the body face.
     TableCell,
     /// One cell of a table's heading row, drawn muted so the rule under it
@@ -5526,7 +5535,7 @@ pub enum LayoutKind {
     /// action's word. Deliberately not a control, so hit testing and press
     /// inversion both belong to the thing underneath it. A glyph that was its
     /// own target would invert a square in the middle of a button.
-    InlineGlyph(Glyph),
+    InlineGlyph(Glyph, bool),
     /// A picture, already placed. `rect` is where it goes; the renderer scales
     /// it to fit only if the application handed over something larger.
     Picture(PictureHandle),
@@ -7855,7 +7864,7 @@ fn layout_node(
                 layout.nodes.push(LayoutNode {
                     id: *id,
                     rect,
-                    kind: LayoutKind::Cell(cell.action, style),
+                    kind: LayoutKind::Cell(cell.action, style, cell.selected),
                     text_lines: Vec::new(),
                 });
                 // A cell with a picture is drawn as the picture alone. The
@@ -7877,14 +7886,14 @@ fn layout_node(
                                 width: mark,
                                 height: mark,
                             },
-                            kind: LayoutKind::InlineGlyph(glyph),
+                            kind: LayoutKind::InlineGlyph(glyph, cell.selected),
                             text_lines: vec![cell.label.clone()],
                         });
                     }
                     None => layout.nodes.push(LayoutNode {
                         id: *id,
                         rect,
-                        kind: LayoutKind::CellLabel,
+                        kind: LayoutKind::CellLabel(cell.selected),
                         text_lines: vec![cell.label.clone()],
                     }),
                 }
@@ -11998,7 +12007,7 @@ const fn is_tappable(kind: LayoutKind) -> bool {
 fn layout_text_style(node: &LayoutNode) -> Option<(FontSize, Face)> {
     let size = match node.kind {
         LayoutKind::Heading(level) => FontSize::for_heading_level(level),
-        LayoutKind::CellLabel
+        LayoutKind::CellLabel(_)
             if node
                 .text_lines
                 .first()
@@ -12035,7 +12044,7 @@ fn layout_text_style(node: &LayoutNode) -> Option<(FontSize, Face)> {
         | LayoutKind::BarAction(_)
         | LayoutKind::RowTitle
         | LayoutKind::RowTitleDone
-        | LayoutKind::CellLabel
+        | LayoutKind::CellLabel(_)
         | LayoutKind::ChoicePrompt
         | LayoutKind::ChoiceOption(_, _)
         | LayoutKind::StepperValue
@@ -12840,7 +12849,10 @@ fn render_all_with_selected_font(
             // ruled squares and an empty cell stays paper white. Filling would
             // make every move a full-cell change, which is slow on E Ink and
             // looks like a mistake.
-            LayoutKind::Cell(_, CellStyle::Board) => stroke_clipped(
+            LayoutKind::Cell(_, CellStyle::Board, true) => {
+                fill_clipped(surface, node.rect, tone::INK, clip);
+            }
+            LayoutKind::Cell(_, CellStyle::Board, false) => stroke_clipped(
                 surface,
                 node.rect,
                 tone::RULE,
@@ -12851,15 +12863,15 @@ fn render_all_with_selected_font(
             // gaps between the keys separate them, which is how a keyboard has
             // always been read, and it takes forty-five outlines off the panel.
             // Nothing at all: the picture is the whole of it.
-            LayoutKind::Cell(_, CellStyle::Plain) => {}
-            LayoutKind::Cell(_, CellStyle::Key) => fill_rounded_clipped(
+            LayoutKind::Cell(_, CellStyle::Plain, _) => {}
+            LayoutKind::Cell(_, CellStyle::Key, _) => fill_rounded_clipped(
                 surface,
                 node.rect,
                 metrics.tenth_mm(BUTTON_RADIUS_TENTH_MM),
                 tone::SURFACE,
                 clip,
             ),
-            LayoutKind::CellLabel => {
+            LayoutKind::CellLabel(selected) => {
                 // A short label in a tall cell is a mark rather than a word:
                 // an X, an O or a letter key is the content of the cell and
                 // should fill it. A short label in a *wide* cell is one word
@@ -12881,7 +12893,14 @@ fn render_all_with_selected_font(
                 } else {
                     FontSize::Body
                 };
-                draw_centered(surface, &node.text_lines, node.rect, size, tone::INK, clip);
+                draw_centered(
+                    surface,
+                    &node.text_lines,
+                    node.rect,
+                    size,
+                    if selected { tone::PAPER } else { tone::INK },
+                    clip,
+                );
             }
             LayoutKind::Divider => fill_clipped(surface, node.rect, tone::RULE, clip),
             LayoutKind::RowRule => fill_clipped(surface, node.rect, tone::RULE_LIGHT, clip),
@@ -13291,8 +13310,11 @@ fn render_all_with_selected_font(
                     tone::MUTED,
                 );
             }
-            LayoutKind::TileGlyph(glyph) | LayoutKind::InlineGlyph(glyph) => {
+            LayoutKind::TileGlyph(glyph) | LayoutKind::InlineGlyph(glyph, false) => {
                 draw_glyph_icon(surface, glyph, node.rect, clip);
+            }
+            LayoutKind::InlineGlyph(glyph, true) => {
+                draw_glyph_icon_in(surface, glyph, node.rect, clip, tone::PAPER);
             }
             LayoutKind::TileGlyphMuted(glyph) => {
                 draw_glyph_icon_in(surface, glyph, node.rect, clip, tone::MUTED);
@@ -14796,7 +14818,7 @@ mod tests {
             .nodes
             .iter()
             .filter_map(|node| match node.kind {
-                LayoutKind::InlineGlyph(glyph) => Some(glyph),
+                LayoutKind::InlineGlyph(glyph, _) => Some(glyph),
                 _ => None,
             })
             .collect();
@@ -14810,7 +14832,7 @@ mod tests {
         for node in layout
             .nodes
             .iter()
-            .filter(|node| matches!(node.kind, LayoutKind::InlineGlyph(_)))
+            .filter(|node| matches!(node.kind, LayoutKind::InlineGlyph(..)))
         {
             assert!(
                 layout.nodes.iter().any(|other| {
