@@ -282,6 +282,17 @@ fi
 
 rm -rf "$audit_tools" "$fresh_device_root" "$target_root/build-tmp"
 
+for directory in "$target_root"/*; do
+  [ -d "$directory" ] || continue
+  case $(basename "$directory") in
+    armv7-unknown-linux-musleabihf | artifacts | audit-unstripped | host-target) ;;
+    *)
+      echo "unexpected unaudited directory remains in target root: $directory" >&2
+      exit 1
+      ;;
+  esac
+done
+
 echo "device dependency tree: no Anki packages"
 echo "device ELF/package strings and unstripped symbols: no Anki or AnkiDroid implementation material"
 echo "device production/audit ELFs: static, with no declared remote-network capability"

@@ -34,7 +34,13 @@ rm -rf \
   "$target_root/armv7-unknown-linux-musleabihf" \
   "$target_root/audit-unstripped" \
   "$target_root/host-target" \
-  "$target_root/host-tools"
+  "$target_root/host-tools" \
+  "$target_root/audit-tools" \
+  "$target_root/audit-device-fresh" \
+  "$target_root/audit-submitted-host" \
+  "$target_root/release" \
+  "$target_root/cargo-home"
+rm -f "$artifacts/SHA256SUMS" "$artifacts/ARTIFACT-AUDIT.txt"
 
 (
   cd "$repo"
