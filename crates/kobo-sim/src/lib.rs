@@ -350,12 +350,22 @@ impl Server {
 
     /// Serves requests indefinitely. The listener is bound only to IPv4 localhost.
     ///
+    /// One connection that goes wrong is reported and stepped over rather than
+    /// ending the session. A browser opening a speculative connection and
+    /// closing it unused, a port knock, or a reload abandoned halfway all
+    /// arrive here as a read error on one stream, and none of them is a reason
+    /// to take the panel away from somebody who is working.
+    ///
     /// # Errors
     ///
-    /// Returns an error if accepting, reading, or writing a request fails.
+    /// Returns an error if the listener itself stops accepting, which is not
+    /// something the next connection would recover from.
     pub fn serve(&mut self) -> io::Result<()> {
         loop {
-            self.serve_one()?;
+            let (stream, _) = self.listener.accept()?;
+            if let Err(error) = self.handle(stream) {
+                report_dropped_request(&error);
+            }
         }
     }
 
@@ -605,7 +615,10 @@ impl AppServer {
     pub fn serve(&self) -> io::Result<()> {
         let session = self.accept_app()?;
         loop {
-            self.serve_one(&session)?;
+            let (stream, _) = self.http.accept()?;
+            if let Err(error) = session.handle_http(stream) {
+                report_dropped_request(&error);
+            }
         }
     }
 
@@ -624,14 +637,20 @@ impl AppServer {
     /// Call [`Self::set_nonblocking`] with `true` first. Returns `false` when
     /// no browser request is currently pending.
     ///
+    /// A connection that fails to produce a request is reported and counted as
+    /// served, for the reason given on [`Server::serve`]: the developer whose
+    /// application is running behind this is not the one who opened it.
+    ///
     /// # Errors
     ///
-    /// Returns an error when accepting, reading, or writing the request fails.
+    /// Returns an error when the listener itself stops accepting.
     pub fn try_serve_one(&self, session: &AppSession) -> io::Result<bool> {
         match self.http.accept() {
             Ok((stream, _)) => {
                 stream.set_nonblocking(false)?;
-                session.handle_http(stream)?;
+                if let Err(error) = session.handle_http(stream) {
+                    report_dropped_request(&error);
+                }
                 Ok(true)
             }
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => Ok(false),
@@ -2166,6 +2185,14 @@ fn parse_local_address(address: &str) -> io::Result<SocketAddr> {
     Ok(SocketAddr::from(([127, 0, 0, 1], port)))
 }
 
+/// Says that one browser connection came to nothing, and carries on.
+///
+/// On stderr rather than stdout, so it cannot be mistaken for the address line
+/// the simulator prints for somebody to paste into a browser.
+fn report_dropped_request(error: &io::Error) {
+    eprintln!("kobo: dropped one browser connection: {error}");
+}
+
 #[derive(Debug, Eq, PartialEq)]
 struct HttpRequest {
     method: String,
@@ -2949,6 +2976,32 @@ mod tests {
         drop(server);
         assert!(!socket_path.exists());
         fs::remove_dir(root).expect("remove private directory");
+    }
+
+    /// A dropped connection is the commonest thing a listener on a developer's
+    /// own machine sees, and it used to end the session: the browser preconnect
+    /// that is never used, whatever is watching for open ports, a reload
+    /// abandoned before the request went out. Each one arrived as an
+    /// `UnexpectedEof` from the first read and took the simulator, and the
+    /// application running behind it, down with it.
+    #[test]
+    fn a_connection_that_sends_no_request_does_not_end_the_session() {
+        let mut server = Server::bind_address("127.0.0.1:0").expect("bind simulator");
+        let address = server.local_addr().expect("simulator address");
+        thread::spawn(move || server.serve());
+
+        TcpStream::connect(address)
+            .expect("open a connection")
+            .shutdown(std::net::Shutdown::Both)
+            .expect("close it again unused");
+
+        let mut stream = TcpStream::connect(address).expect("ask for the page afterwards");
+        stream
+            .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            .expect("send the request");
+        let mut answer = [0_u8; 15];
+        stream.read_exact(&mut answer).expect("read the answer");
+        assert_eq!(&answer, b"HTTP/1.1 200 OK");
     }
 
     #[test]
