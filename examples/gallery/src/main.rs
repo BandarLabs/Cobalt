@@ -88,7 +88,7 @@ enum Tab {
     Lists,
     Input,
     States,
-    V2,
+    Work,
 }
 
 impl Tab {
@@ -102,7 +102,7 @@ impl Tab {
         (Self::Lists, "tab-lists", "Lists"),
         (Self::Input, "tab-input", "Input"),
         (Self::States, "tab-states", "States"),
-        (Self::V2, "tab-v2", "V2"),
+        (Self::Work, "tab-work", "Work"),
     ];
 
     fn index(self) -> usize {
@@ -143,11 +143,10 @@ impl Tab {
             // One state per page, because a standard state is a splash and a
             // splash centres itself in the whole of what is left. Two of them
             // on one panel is two half-pages, which is neither.
-            Self::V2 => &[
-                ("page-folio", "Folio"),
-                ("page-ghosting", "Ghosting"),
+            Self::Work => &[
                 ("page-transfer", "Transfer"),
                 ("page-request", "Requests"),
+                ("page-splash", "Waiting"),
             ],
         }
     }
@@ -157,7 +156,6 @@ impl Tab {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Floating {
     Menu,
-    FolioMenu,
     Sheet,
     Confirm,
     /// The menu behind one row's overflow mark, by position in the list.
@@ -262,7 +260,7 @@ impl Gallery {
             Tab::Lists => "Lists, rows and tiles",
             Tab::Input => "Groups, fields and asking",
             Tab::States => "Nothing to show",
-            Tab::V2 => "Folio",
+            Tab::Work => "Work in flight",
         });
 
         // The sub-tab strip is drawn by the tab in the SDK rather than by a
@@ -287,10 +285,9 @@ impl Gallery {
             (Tab::States, 1) => Self::offline_page(screen),
             (Tab::States, 2) => Self::denied_page(screen),
             (Tab::States, _) => Self::trouble_page(screen),
-            (Tab::V2, 0) => self.folio_page(screen),
-            (Tab::V2, 1) => Self::ghosting_page(screen),
-            (Tab::V2, 2) => self.transfer_page(screen),
-            (Tab::V2, _) => self.request_page(screen),
+            (Tab::Work, 0) => self.transfer_page(screen),
+            (Tab::Work, 1) => self.request_page(screen),
+            (Tab::Work, _) => Self::splash_page(screen),
         };
 
         let screen = screen
@@ -406,102 +403,6 @@ impl Gallery {
                         "Second",
                         "and another",
                         RowLead::from(Glyph::Note),
-                    ),
-                ],
-            )
-    }
-
-    /// Folio's visual acceptance surface: display hierarchy, feature cards,
-    /// a section destination, page rail and the selected navigation notch.
-    fn folio_page(&self, screen: ScreenBuilder) -> ScreenBuilder {
-        let screen = screen
-            .heading("COBALT")
-            .secondary("Tuesday, September 1 · Folio")
-            .divider()
-            .section("Featured")
-            .section_link("folio-details", "Reader details")
-            .button("folio-button", "Content-width action")
-            .page_rail(0, 3)
-            .tile_grid(
-                TileShape::Card,
-                [
-                    (
-                        "grp-one",
-                        "Reader",
-                        Glyph::Reader,
-                        (|tile: Tile| {
-                            tile.with_caption("Left open")
-                                .with_value("Now")
-                                .with_menu(action_id("folio-details"))
-                        }) as fn(Tile) -> Tile,
-                    ),
-                    (
-                        "folio-store",
-                        "App Store",
-                        Glyph::Download,
-                        (|tile: Tile| tile.with_caption("Updates").with_value("3"))
-                            as fn(Tile) -> Tile,
-                    ),
-                    (
-                        "folio-settings",
-                        "Settings",
-                        Glyph::Settings,
-                        (|tile: Tile| tile.with_caption("Wi-Fi · Bluetooth")) as fn(Tile) -> Tile,
-                    ),
-                    (
-                        "folio-terminal",
-                        "Terminal",
-                        Glyph::Terminal,
-                        (|tile: Tile| tile.with_caption("Local shell")) as fn(Tile) -> Tile,
-                    ),
-                ],
-            );
-        if self.floating == Some(Floating::FolioMenu) {
-            screen.popover("grp-one", |menu| {
-                menu.rows([
-                    (
-                        "grp-one",
-                        "Open Reader",
-                        "Return to the selected item",
-                        Glyph::Reader,
-                    ),
-                    (
-                        "folio-close-menu",
-                        "Keep reading",
-                        "Dismiss this menu",
-                        Glyph::Check,
-                    ),
-                ])
-            })
-        } else {
-            screen
-        }
-    }
-
-    /// Alternating state marks make retained-image residue visible during a
-    /// physical-device acceptance pass without any animation or timer.
-    fn ghosting_page(screen: ScreenBuilder) -> ScreenBuilder {
-        screen
-            .heading("Ghosting")
-            .secondary("Turn between Folio and this page on a physical panel.")
-            .page_rail(1, 3)
-            .tile_grid(
-                TileShape::Card,
-                [
-                    (
-                        "ghost-a",
-                        "Ink state",
-                        Glyph::App,
-                        (|tile: Tile| {
-                            tile.with_caption("Alternating state")
-                                .with_state(TileState::Busy)
-                        }) as fn(Tile) -> Tile,
-                    ),
-                    (
-                        "ghost-b",
-                        "Paper state",
-                        Glyph::App,
-                        (|tile: Tile| tile.with_caption("Quiet reference")) as fn(Tile) -> Tile,
                     ),
                 ],
             )
@@ -860,14 +761,25 @@ impl Gallery {
             .button("state-retry", "Try again")
     }
 
+    /// A mark, a name and a sentence, centred in what is left.
+    ///
+    /// Alone on its page because that is the only way it is ever right: it
+    /// takes the rest of the content area, so anything after it has nowhere to
+    /// go.
+    fn splash_page(screen: ScreenBuilder) -> ScreenBuilder {
+        screen.splash(
+            Some(Glyph::Wifi),
+            "Looking for the library",
+            "This takes a few seconds on a cold radio.",
+        )
+    }
+
     /// Raises and lowers the two things that float above a screen.
     ///
     /// Returns whether it took the tap.
     fn overlays(&mut self, context: &mut Context, action: ActionId) -> bool {
         let floating = if action == action_id("bar-more") {
             Some(Floating::Menu)
-        } else if action == action_id("folio-details") {
-            Some(Floating::FolioMenu)
         } else if action == action_id("menu-one-more") {
             Some(Floating::RowMenu(0))
         } else if action == action_id("open-sheet") {
@@ -881,7 +793,6 @@ impl Gallery {
             || action == action_id("confirm-no")
             || action == action_id("row-menu-rename")
             || action == action_id("row-menu-forget")
-            || action == action_id("folio-close-menu")
         {
             None
         } else {
@@ -922,12 +833,6 @@ impl Gallery {
         self.card = context.put_picture(PictureHandle(1), WEDGE_WIDTH, WEDGE_HEIGHT, wedge());
         self.swatch = context.put_picture(PictureHandle(2), CARD_WIDTH, CARD_HEIGHT, card());
     }
-
-    fn open_group(&mut self, context: &mut Context) {
-        self.floating = None;
-        self.detail = true;
-        self.show(context);
-    }
 }
 
 impl KoboApp for Gallery {
@@ -945,6 +850,9 @@ impl KoboApp for Gallery {
             }
         }
 
+        // A tap off an overlay arrives as BACK, which is the runtime telling
+        // us the reader dismissed it. Nothing else in this app owns back, so
+        // this is the whole of the dismissal logic.
         if action == ActionId::BACK {
             if self.floating.take().is_some() || self.detail {
                 self.detail = false;
@@ -954,11 +862,7 @@ impl KoboApp for Gallery {
         }
 
         if action == action_id("grp-one") {
-            self.open_group(context);
-            return;
-        }
-        if action == action_id("folio-button") {
-            self.page[Tab::V2.index()] = 1;
+            self.detail = true;
             self.show(context);
             return;
         }
@@ -1148,7 +1052,7 @@ mod tests {
                     gallery.floating = Some(super::Floating::Sheet);
                     screens.push(("page-over-sheet".to_owned(), painted(&gallery)));
                 }
-                if tab == Tab::V2 && index == 0 {
+                if tab == Tab::Work && index == 0 {
                     gallery.stalled = true;
                     screens.push(("page-transfer-failed".to_owned(), painted(&gallery)));
                     gallery.stalled = false;

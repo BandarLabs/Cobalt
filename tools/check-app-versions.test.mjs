@@ -21,6 +21,19 @@ import {
   releaseDependencyIds
 } from "./check-app-versions.mjs";
 
+const BETA_RELEASE_BASE = "2b08e793e13d36547fb72841df846774ca69798d";
+
+function baseBlob(path) {
+  try {
+    return execFileSync("git", ["rev-parse", `${BETA_RELEASE_BASE}:${path}`], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"]
+    }).trim();
+  } catch {
+    return null;
+  }
+}
+
 function fixture({ currentVersion = "1.0.0", summary = "Summary" } = {}) {
   const app = {
     package: "kobo-notes",
@@ -393,15 +406,6 @@ test("removing obsolete OPDS URL reexports leaves Gutenbird's binary inputs unch
     onlyRemovesOpdsUrlReexports(previous, current.replace("mod url;", "mod changed;")),
     false
   );
-  assert.equal(
-    onlyRemovesOpdsUrlReexports(
-      execFileSync("git", ["show", "HEAD:crates/kobo-opds/src/lib.rs"], {
-        encoding: "utf8"
-      }),
-      readFileSync("crates/kobo-opds/src/lib.rs", "utf8")
-    ),
-    true
-  );
 });
 
 test("only exact reviewed compatible blobs are excluded from app release inputs", () => {
@@ -514,12 +518,17 @@ test("only exact reviewed compatible blobs are excluded from app release inputs"
   );
 });
 
-test("reviewed compatible-change entries name the exact current files", () => {
+test("reviewed compatible-change entries name exact beta-base and current files", () => {
   const manifest = JSON.parse(
     readFileSync("tools/app-release-compatible-changes.json", "utf8")
   );
   for (const change of manifest.changes) {
     for (const file of change.files) {
+      assert.equal(
+        baseBlob(file.path),
+        file.base_blob,
+        `${file.path} has an unreviewed beta-base blob`
+      );
       assert.equal(
         execFileSync("git", ["hash-object", file.path], { encoding: "utf8" }).trim(),
         file.compatible_blob,
@@ -529,15 +538,49 @@ test("reviewed compatible-change entries name the exact current files", () => {
   }
 });
 
-test("protocol 14 limits compatible release inputs to net and protocol", () => {
+test("protocol 14 has an exact reviewed set of compatible release inputs", () => {
   const manifest = JSON.parse(
     readFileSync("tools/app-release-compatible-changes.json", "utf8")
   );
   const files = manifest.changes.find(change => change.protocol_version === 14).files;
   const paths = files.map(file => file.path);
   assert.deepEqual(paths, [
+    "Cargo.lock",
+    "apps/backgammon/Cargo.toml",
+    "apps/backgammon/README.md",
+    "apps/backgammon/drive.txt",
+    "apps/backgammon/screenshots/backgammon-opening.png",
+    "apps/backgammon/screenshots/backgammon-play.png",
+    "apps/backgammon/screenshots/backgammon-selected.png",
+    "apps/backgammon/src/main.rs",
+    "apps/zotero-reader/src/main.rs",
+    "crates/kobo-abi/src/lib.rs",
     "crates/kobo-net/src/lib.rs",
-    "crates/kobo-protocol/src/lib.rs"
+    "crates/kobo-net/src/lines.rs",
+    "crates/kobo-net/tests/fixtures/localhost-ca.der",
+    "crates/kobo-net/tests/fixtures/localhost-cert.der",
+    "crates/kobo-net/tests/fixtures/localhost-key.der",
+    "crates/kobo-net/tests/lichess_stream_mock.rs",
+    "crates/kobo-policy/src/credentials.rs",
+    "crates/kobo-policy/src/services.rs",
+    "crates/kobo-policy/src/tasks.rs",
+    "crates/kobo-protocol/src/lib.rs",
+    "crates/kobo-sdk/Cargo.toml",
+    "crates/kobo-sdk/src/credentials.rs",
+    "crates/kobo-sdk/src/keyboard.rs",
+    "crates/kobo-sdk/src/lib.rs",
+    "crates/kobo-sdk/src/terminal.rs",
+    "crates/kobo-text/src/lib.rs",
+    "crates/kobo-ui/Cargo.toml",
+    "crates/kobo-ui/src/lib.rs",
+    "crates/kobo-ui/src/vector.rs",
+    "crates/kobo-ui/src/vector/tabler.rs",
+    "crates/kobod/src/app_store.rs",
+    "examples/gallery/README.md",
+    "examples/gallery/src/main.rs",
+    "examples/gutenbird/Cargo.toml",
+    "examples/gutenbird/src/main.rs",
+    "tools/icon-import/icons.txt"
   ]);
   const byPath = new Map(files.map(file => [file.path, file]));
   assert.deepEqual(

@@ -12,13 +12,6 @@ sizes are right, not that the result is worth reading.
 
 *Captured from a Kobo Clara BW over Wi-Fi with `kobo shot --device`.*
 
-The **V2** tab is the Folio acceptance surface: masthead, featured card tiles
-(including caption and live-value variants), a trailing section link, page
-rail, active nav notch, and a deliberately alternating ghosting comparison.
-Its ordinary action is a centered content-width button; only primary actions
-expand to the full content measure.
-It is captured by `scripts/shoot-apps.sh` with the normal gallery pass.
-
 ## Why this is the conformance screen
 
 Every node in `kobo-ui` has an instance here. Adding a node to the vocabulary

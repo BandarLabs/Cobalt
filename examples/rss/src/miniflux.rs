@@ -7,6 +7,7 @@
 use kobo_html::{to_text, to_text_within};
 use kobo_json::Value;
 use kobo_sdk::{Credential, Task};
+use std::net::Ipv6Addr;
 
 const ENTRY_BYTES: u32 = 512 * 1024;
 const SMALL_RESPONSE_BYTES: u32 = 32 * 1024;
@@ -81,10 +82,10 @@ pub enum Mutation {
 
 /// Returns the canonical HTTPS server and optional reverse-proxy prefix.
 ///
-/// The result removes redundant trailing slashes, folds host case, and folds
-/// the default HTTPS port so equivalent settings share one durable namespace.
-/// A path prefix remains part of the value because it is part of the service
-/// selected by a reverse proxy.
+/// The result removes redundant trailing slashes, canonicalizes host spelling,
+/// and folds the default HTTPS port so equivalent settings share one durable
+/// namespace. A path prefix remains part of the value because it is part of
+/// the service selected by a reverse proxy.
 #[must_use]
 pub fn canonical_server(server: &str) -> Option<String> {
     let server = server.trim();
@@ -101,8 +102,12 @@ pub fn canonical_server(server: &str) -> Option<String> {
         return None;
     }
     let host = address.host.to_ascii_lowercase();
-    let host = if host.contains(':') && !host.starts_with('[') {
-        format!("[{host}]")
+    let host = if host.contains(':') || host.starts_with('[') || host.ends_with(']') {
+        let literal = host
+            .strip_prefix('[')
+            .and_then(|host| host.strip_suffix(']'))
+            .unwrap_or(&host);
+        format!("[{}]", literal.parse::<Ipv6Addr>().ok()?)
     } else {
         host
     };
@@ -256,14 +261,12 @@ fn post(server: &str, path: &str, body: String) -> Task {
 #[must_use]
 pub fn parse_entries(bytes: &[u8]) -> Option<Vec<Article>> {
     let value = kobo_json::parse(&String::from_utf8_lossy(bytes)).ok()?;
-    Some(
-        value
-            .get("entries")?
-            .as_array()?
-            .iter()
-            .filter_map(article)
-            .collect(),
-    )
+    value
+        .get("entries")?
+        .as_array()?
+        .iter()
+        .map(article)
+        .collect()
 }
 
 #[must_use]
@@ -450,7 +453,22 @@ mod tests {
     }
 
     #[test]
-    fn ipv6_servers_have_one_pair_of_authority_brackets() {
+    fn entries_payload_rejects_any_invalid_article_but_allows_missing_optional_fields() {
+        let entries = parse_entries(br#"{"entries":[{"id":7}]}"#)
+            .expect("an article ID is the only required article field");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].title, "Untitled");
+        assert_eq!(
+            parse_entries(
+                br#"{"entries":[{"id":7,"title":"Valid"},{"title":"Missing identifier"}]}"#
+            ),
+            None
+        );
+        assert_eq!(parse_entries(br#"{"entries":[{},null]}"#), None);
+    }
+
+    #[test]
+    fn ipv6_servers_canonicalize_equivalent_literal_spellings() {
         assert_eq!(
             canonical_server("https://[::1]"),
             Some("https://[::1]".to_owned())
@@ -459,5 +477,19 @@ mod tests {
             canonical_server("https://[::1]:8443/reader/"),
             Some("https://[::1]:8443/reader".to_owned())
         );
+        assert_eq!(
+            canonical_server("https://[0:0:0:0:0:0:0:1]"),
+            Some("https://[::1]".to_owned())
+        );
+        assert_eq!(
+            namespace("https://[0:0:0:0:0:0:0:1]"),
+            namespace("https://[::1]")
+        );
+        assert_eq!(
+            namespace("https://[0:0:0:0:0:0:0:1]:8443"),
+            namespace("https://[::1]:8443")
+        );
+        assert_eq!(canonical_server("https://[0:0:0:0:0:0:0:zz]"), None);
+        assert_eq!(canonical_server("https://[not-an-ip]"), None);
     }
 }

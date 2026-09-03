@@ -3289,7 +3289,7 @@ mod tests {
     }
 
     #[test]
-    fn invalid_completed_miniflux_entries_keep_ram_and_persisted_cache() {
+    fn mixed_invalid_completed_miniflux_entries_keep_ram_and_persisted_cache() {
         let mode = miniflux::ListMode::Unread;
         let mut reader = flux_reader();
         reader.flux_caches[mode.cache_index()] = vec![miniflux::Article {
@@ -3303,7 +3303,13 @@ mod tests {
         let mut runner = AppRunner::new(reader);
         let (task, _) = spawned(&runner.action(action_id("flux-sync")));
 
-        let commands = runner.task_outcome(task, TaskOutcome::Completed(b"{not JSON".to_vec()));
+        let commands = runner.task_outcome(
+            task,
+            TaskOutcome::Completed(
+                br#"{"entries":[{"id":7,"title":"New entry"},{"title":"Missing identifier"}]}"#
+                    .to_vec(),
+            ),
+        );
 
         assert_eq!(runner.app().selected_flux_entries()[0].title, "Cached");
         assert!(runner

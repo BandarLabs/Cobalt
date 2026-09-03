@@ -12,8 +12,42 @@ const MANIFEST_FIELDS = [
   "glyph"
 ];
 const COMPATIBLE_RELEASE_PATHS = new Set([
+  "Cargo.lock",
+  "apps/backgammon/Cargo.toml",
+  "apps/backgammon/README.md",
+  "apps/backgammon/drive.txt",
+  "apps/backgammon/screenshots/backgammon-opening.png",
+  "apps/backgammon/screenshots/backgammon-play.png",
+  "apps/backgammon/screenshots/backgammon-selected.png",
+  "apps/backgammon/src/main.rs",
+  "apps/zotero-reader/src/main.rs",
+  "crates/kobo-abi/src/lib.rs",
   "crates/kobo-net/src/lib.rs",
-  "crates/kobo-protocol/src/lib.rs"
+  "crates/kobo-net/src/lines.rs",
+  "crates/kobo-net/tests/fixtures/localhost-ca.der",
+  "crates/kobo-net/tests/fixtures/localhost-cert.der",
+  "crates/kobo-net/tests/fixtures/localhost-key.der",
+  "crates/kobo-net/tests/lichess_stream_mock.rs",
+  "crates/kobo-policy/src/credentials.rs",
+  "crates/kobo-policy/src/services.rs",
+  "crates/kobo-policy/src/tasks.rs",
+  "crates/kobo-protocol/src/lib.rs",
+  "crates/kobo-sdk/Cargo.toml",
+  "crates/kobo-sdk/src/credentials.rs",
+  "crates/kobo-sdk/src/keyboard.rs",
+  "crates/kobo-sdk/src/lib.rs",
+  "crates/kobo-sdk/src/terminal.rs",
+  "crates/kobo-text/src/lib.rs",
+  "crates/kobo-ui/Cargo.toml",
+  "crates/kobo-ui/src/lib.rs",
+  "crates/kobo-ui/src/vector.rs",
+  "crates/kobo-ui/src/vector/tabler.rs",
+  "crates/kobod/src/app_store.rs",
+  "examples/gallery/README.md",
+  "examples/gallery/src/main.rs",
+  "examples/gutenbird/Cargo.toml",
+  "examples/gutenbird/src/main.rs",
+  "tools/icon-import/icons.txt"
 ]);
 
 // Store packages are built from the current SDK and therefore speak its exact
