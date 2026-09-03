@@ -56,49 +56,50 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          set -o pipefail
+          release_tag="$(node tools/app-catalog-channel.mjs)"
+          echo "Checking app versions against the $release_tag channel."
           mkdir -p published-state
-          gh release download app-catalog \
+          gh release download "$release_tag" \
             --dir published-state \
             --pattern cobalt-app-catalog.json
           catalog_sha256="$(
             sha256sum published-state/cobalt-app-catalog.json | cut -d' ' -f1
           )"
           provenance_count="$(
-            gh release view app-catalog --json assets \
+            gh release view "$release_tag" --json assets \
               --jq '[.assets[] | select(.name == "cobalt-app-catalog-provenance.json")] | length'
           )"
-          if [ "$provenance_count" -eq 1 ]; then
-            gh release download app-catalog \
-              --dir published-state \
-              --pattern cobalt-app-catalog-provenance.json
-            published_sha="$(
-              # shellcheck disable=SC2016
-              node -e '
-                const fs = require("fs");
-                const value = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
-                if (
-                  value.format_version !== 1 ||
-                  value.channel !== "app-catalog" ||
-                  !/^[0-9a-f]{40}$/.test(value.source_sha) ||
-                  value.catalog_sha256 !== process.argv[2]
-                ) process.exit(1);
-                process.stdout.write(value.source_sha);
-              ' \
-                published-state/cobalt-app-catalog-provenance.json \
-                "$catalog_sha256"
-            )"
-          elif [ "$provenance_count" -eq 0 ]; then
-            # The first promotion migrates the legacy catalog, which predates
-            # provenance assets. Do not use this fallback after provenance is
-            # present.
-            published_sha="$(gh api \
-              "repos/${GITHUB_REPOSITORY}/actions/workflows/apps.yml/runs?branch=main&status=success&per_page=1" \
-              --jq '.workflow_runs[0].head_sha')"
-            test -n "$published_sha"
-          else
-            echo "stable app catalog has duplicate provenance assets" >&2
+          # Every publication since the legacy catalog migration writes
+          # provenance, so the migration fallback that read a workflow run's head
+          # SHA is no longer a legitimate answer. A missing asset now means the
+          # channel was published by hand or a run was interrupted, and guessing
+          # a base revision would check this branch against the wrong tree.
+          if [ "$provenance_count" -ne 1 ]; then
+            echo "$release_tag carries $provenance_count catalog provenance assets; exactly one is required" >&2
+            echo "Re-run the app publication workflow on the channel branch to restore it." >&2
             exit 1
           fi
+          gh release download "$release_tag" \
+            --dir published-state \
+            --pattern cobalt-app-catalog-provenance.json
+          published_sha="$(
+            # shellcheck disable=SC2016
+            node -e '
+              const fs = require("fs");
+              const value = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+              if (
+                value.format_version !== 1 ||
+                value.channel !== process.argv[3] ||
+                !/^[0-9a-f]{40}$/.test(value.source_sha) ||
+                value.catalog_sha256 !== process.argv[2]
+              ) process.exit(1);
+              process.stdout.write(value.source_sha);
+            ' \
+              published-state/cobalt-app-catalog-provenance.json \
+              "$catalog_sha256" \
+              "$release_tag"
+          )"
           git cat-file -e "${published_sha}^{commit}"
           node tools/check-app-versions.mjs \
             --registry apps/catalog.json \
