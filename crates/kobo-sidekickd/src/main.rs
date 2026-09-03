@@ -21,6 +21,7 @@
 
 mod agents;
 mod board;
+mod deck;
 mod hooks;
 mod http;
 mod server;

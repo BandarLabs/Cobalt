@@ -10,10 +10,12 @@
 //! pressing buttons; there is nothing here worth an event loop.
 
 use crate::board::{Ask, Asking, Board, Choice, Decision};
+use crate::deck::Deck;
 use crate::http::{read_request, respond_json, Request};
 use crate::state;
 use std::io::{Read, Write};
 use std::net::TcpListener;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -48,8 +50,13 @@ const WRITE_PATIENCE: Duration = Duration::from_secs(30);
 /// that, individual connections fail individually.
 pub fn run() -> Result<(), String> {
     let identity = state::load()?;
+    let directory = state::state_directory()?;
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .ok_or("no HOME in the environment")?;
     let tls = kobo_net::serve::TlsServer::from_pem(&identity.certificate, &identity.key)?;
     let board = Arc::new(Board::new());
+    let deck = Deck::new(directory.join("deck.toml"), home);
     let hooks = TcpListener::bind(("127.0.0.1", state::HOOK_PORT))
         .map_err(|error| format!("bind 127.0.0.1:{}: {error}", state::HOOK_PORT))?;
     let reader = TcpListener::bind(("0.0.0.0", state::READER_PORT))
@@ -84,6 +91,7 @@ pub fn run() -> Result<(), String> {
     for stream in reader.incoming().flatten() {
         let Some(seat) = crowd.admit() else { continue };
         let board = Arc::clone(&board);
+        let deck = Arc::clone(&deck);
         let pairing = Arc::clone(&pairing);
         let tls = Arc::clone(&tls);
         std::thread::spawn(move || {
@@ -92,7 +100,7 @@ pub fn run() -> Result<(), String> {
             let _ = stream.set_write_timeout(Some(WRITE_PATIENCE));
             if let Ok(mut stream) = tls.accept(stream) {
                 if let Ok(request) = read_request(&mut stream) {
-                    reader_route(&board, &pairing, &request, &mut stream);
+                    reader_route_with_deck(&board, &deck, &pairing, &request, &mut stream);
                 }
             }
         });
@@ -209,7 +217,32 @@ fn read_choices(value: Option<&kobo_json::Value>) -> Vec<Choice> {
 }
 
 /// `GET /pending` and `POST /answer` from the reader, behind the code.
+#[cfg(test)]
 fn reader_route(board: &Board, pairing: &str, request: &Request, stream: &mut (impl Read + Write)) {
+    reader_route_inner(board, None, pairing, request, stream);
+}
+
+fn reader_route_with_deck(
+    board: &Board,
+    deck: &Arc<Deck>,
+    pairing: &str,
+    request: &Request,
+    stream: &mut (impl Read + Write),
+) {
+    reader_route_inner(board, Some(deck), pairing, request, stream);
+}
+
+fn reader_route_inner(
+    board: &Board,
+    deck: Option<&Arc<Deck>>,
+    pairing: &str,
+    request: &Request,
+    stream: &mut (impl Read + Write),
+) {
+    if request.path().starts_with("/deck") {
+        deck_route(deck, pairing, request, stream);
+        return;
+    }
     match (request.method.as_str(), request.path()) {
         ("GET", "/pending") => {
             if request.query("token") != Some(pairing) {
@@ -289,6 +322,75 @@ fn reader_route(board: &Board, pairing: &str, request: &Request, stream: &mut (i
     }
 }
 
+fn deck_route(
+    deck: Option<&Arc<Deck>>,
+    pairing: &str,
+    request: &Request,
+    stream: &mut (impl Read + Write),
+) {
+    if request.query("token") != Some(pairing) {
+        respond_json(stream, 403, "Forbidden", "{}");
+        return;
+    }
+    let Some(deck) = deck else {
+        respond_json(stream, 404, "Not Found", "{}");
+        return;
+    };
+    if !deck.available() {
+        respond_json(stream, 404, "Not Found", "{}");
+        return;
+    }
+    match (request.method.as_str(), request.path()) {
+        ("GET", "/deck") => {
+            let known = request
+                .query("version")
+                .and_then(|value| value.parse::<u64>().ok())
+                .unwrap_or_default();
+            let wait = request
+                .query("wait")
+                .and_then(|value| value.parse::<u64>().ok())
+                .map_or(LONGEST_POLL, Duration::from_secs)
+                .min(LONGEST_POLL);
+            let reply = deck
+                .snapshot(known, wait)
+                .unwrap_or_else(|| "{}".to_owned());
+            respond_json(stream, 200, "OK", &reply);
+        }
+        ("POST", "/deck/press") => {
+            let body = String::from_utf8_lossy(&request.body);
+            let Ok(press) = kobo_json::parse(&body) else {
+                respond_json(stream, 400, "Bad Request", "{}");
+                return;
+            };
+            let Some(key) = press.get("key").and_then(kobo_json::Value::as_str) else {
+                respond_json(stream, 400, "Bad Request", "{}");
+                return;
+            };
+            let confirmed =
+                press.get("confirmed").and_then(kobo_json::Value::as_bool) == Some(true);
+            let outcome = deck.press_default(key, confirmed);
+            let reply = kobo_json::ObjectBuilder::new()
+                .set("outcome", outcome.as_str())
+                .build();
+            respond_json(stream, 200, "OK", &reply.to_json());
+        }
+        ("GET", "/deck/result") => {
+            let Some(key) = request.query("key") else {
+                respond_json(stream, 400, "Bad Request", "{}");
+                return;
+            };
+            let reply = deck.result(key).unwrap_or_else(|| {
+                kobo_json::ObjectBuilder::new()
+                    .set("outcome", "gone")
+                    .build()
+                    .to_json()
+            });
+            respond_json(stream, 200, "OK", &reply);
+        }
+        _ => respond_json(stream, 404, "Not Found", "{}"),
+    }
+}
+
 /// The question as the reader sees it.
 fn ask_json(ask: &Ask) -> kobo_json::Value {
     let choices = ask
@@ -315,12 +417,15 @@ fn ask_json(ask: &Ask) -> kobo_json::Value {
 
 #[cfg(test)]
 mod tests {
-    use super::{hook_route, reader_route};
+    use super::{hook_route, reader_route, reader_route_with_deck};
     use crate::board::{Board, Decision};
+    use crate::deck::Deck;
     use crate::http::Request;
+    use std::fs;
     use std::io::Cursor;
+    use std::path::PathBuf;
     use std::sync::Arc;
-    use std::time::Duration;
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     fn get(target: &str) -> Request {
         Request {
@@ -354,6 +459,19 @@ mod tests {
             .and_then(kobo_json::Value::as_i64)
             .expect("an ask with an id");
         u32::try_from(id).expect("an id that fits")
+    }
+
+    fn directory() -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "cobalt-deck-route-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&path).unwrap();
+        path
     }
 
     #[test]
@@ -420,6 +538,102 @@ mod tests {
         );
         let text = String::from_utf8_lossy(wire.get_ref()).into_owned();
         assert!(text.starts_with("HTTP/1.1 403"), "{text}");
+    }
+
+    #[test]
+    fn deck_routes_share_auth_and_run_only_configured_commands() {
+        let directory = directory();
+        let config = directory.join("deck.toml");
+        fs::write(
+            &config,
+            r#"[[page]]
+name = "Build"
+[[page.key]]
+label = "Test"
+run = "true"
+confirm = true
+"#,
+        )
+        .unwrap();
+        let deck = Deck::new(config, directory.clone());
+        let board = Board::new();
+
+        let mut wire = Cursor::new(Vec::new());
+        reader_route_with_deck(
+            &board,
+            &deck,
+            "code",
+            &get("/deck?version=0&wait=0&token=wrong"),
+            &mut wire,
+        );
+        assert!(
+            String::from_utf8_lossy(wire.get_ref()).starts_with("HTTP/1.1 403"),
+            "{}",
+            String::from_utf8_lossy(wire.get_ref())
+        );
+
+        let mut wire = Cursor::new(Vec::new());
+        reader_route_with_deck(
+            &board,
+            &deck,
+            "code",
+            &get("/deck?version=0&wait=0&token=code"),
+            &mut wire,
+        );
+        let snapshot = body_of(&wire.into_inner());
+        let value = kobo_json::parse(&snapshot).unwrap();
+        let id = value
+            .get("pages")
+            .and_then(kobo_json::Value::as_array)
+            .and_then(|pages| pages.first())
+            .and_then(|page| page.get("keys"))
+            .and_then(kobo_json::Value::as_array)
+            .and_then(|keys| keys.first())
+            .and_then(|key| key.get("id"))
+            .and_then(kobo_json::Value::as_str)
+            .unwrap();
+
+        let mut wire = Cursor::new(Vec::new());
+        reader_route_with_deck(
+            &board,
+            &deck,
+            "code",
+            &post(
+                "/deck/press?token=code",
+                &format!(r#"{{"key":"{id}","confirmed":false}}"#),
+            ),
+            &mut wire,
+        );
+        assert!(body_of(&wire.into_inner()).contains("\"outcome\":\"needs-confirm\""));
+
+        let mut wire = Cursor::new(Vec::new());
+        reader_route_with_deck(
+            &board,
+            &deck,
+            "code",
+            &post(
+                "/deck/press?token=code",
+                &format!(r#"{{"key":"{id}","confirmed":true}}"#),
+            ),
+            &mut wire,
+        );
+        assert!(body_of(&wire.into_inner()).contains("\"outcome\":\"started\""));
+        for _ in 0..100 {
+            let mut wire = Cursor::new(Vec::new());
+            reader_route_with_deck(
+                &board,
+                &deck,
+                "code",
+                &get(&format!("/deck/result?key={id}&token=code")),
+                &mut wire,
+            );
+            if body_of(&wire.into_inner()).contains("\"status\":\"ok\"") {
+                fs::remove_dir_all(directory).unwrap();
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        panic!("configured command did not finish");
     }
 
     #[test]
