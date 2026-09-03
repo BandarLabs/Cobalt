@@ -13,7 +13,7 @@ use super::{
 use kobo_protocol::TaskError;
 use std::collections::HashMap;
 use std::io::{ErrorKind, Read};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -36,6 +36,38 @@ pub struct LineStreams {
     state: Mutex<StreamState>,
     budget: Arc<StreamBudget>,
     connector: Arc<Connector>,
+}
+
+/// A task's opaque claim on one retained stream generation.
+///
+/// Clones refer to the same claim so a task thread can record the generation
+/// it entered while its runner retains a cancellation handle.
+#[derive(Clone, Default)]
+pub struct LineStreamOwner {
+    generation: Arc<AtomicU64>,
+}
+
+impl LineStreamOwner {
+    fn capture(&self, generation: Option<u64>) {
+        self.generation
+            .store(generation.unwrap_or_default(), Ordering::SeqCst);
+    }
+
+    fn generation(&self) -> Option<u64> {
+        match self.generation.load(Ordering::SeqCst) {
+            0 => None,
+            generation => Some(generation),
+        }
+    }
+}
+
+impl std::fmt::Debug for LineStreamOwner {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("LineStreamOwner")
+            .field("claimed", &self.generation().is_some())
+            .finish()
+    }
 }
 
 type Connector = dyn Fn(&Address, &dyn Fn() -> bool) -> Result<Held, TaskError> + Send + Sync;
@@ -208,11 +240,68 @@ impl LineStreams {
         options: RequestOptions,
         cancel: &AtomicBool,
     ) -> Result<Vec<u8>, TaskError> {
+        self.request_with_owner(
+            None, action, url, max_bytes, credential, headers, options, cancel,
+        )
+    }
+
+    /// Performs one pull operation while recording the retained generation
+    /// owned by the calling task.
+    ///
+    /// The owner can later be passed to [`Self::close_owned`], which makes a
+    /// stale task unable to close a same-URL replacement.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same bounded transport, framing, policy, and cancellation
+    /// errors as [`Self::request`].
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the owned transport boundary adds only the task's opaque generation claim"
+    )]
+    pub fn request_owned(
+        &self,
+        owner: &LineStreamOwner,
+        action: LineStreamAction,
+        url: &str,
+        max_bytes: u32,
+        credential: Option<(&str, &str)>,
+        headers: &[(&str, &str)],
+        options: RequestOptions,
+        cancel: &AtomicBool,
+    ) -> Result<Vec<u8>, TaskError> {
+        self.request_with_owner(
+            Some(owner),
+            action,
+            url,
+            max_bytes,
+            credential,
+            headers,
+            options,
+            cancel,
+        )
+    }
+
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the transport boundary keeps credential, headers, limits, options, ownership, and cancellation explicit"
+    )]
+    fn request_with_owner(
+        &self,
+        owner: Option<&LineStreamOwner>,
+        action: LineStreamAction,
+        url: &str,
+        max_bytes: u32,
+        credential: Option<(&str, &str)>,
+        headers: &[(&str, &str)],
+        options: RequestOptions,
+        cancel: &AtomicBool,
+    ) -> Result<Vec<u8>, TaskError> {
         match action {
             LineStreamAction::Open => {
-                self.open(url, max_bytes, credential, headers, options, cancel)
+                self.open(url, max_bytes, credential, headers, options, owner, cancel)
             }
-            LineStreamAction::Next => self.next(url, max_bytes, credential, headers, cancel),
+            LineStreamAction::Next => self.next(url, max_bytes, credential, headers, owner, cancel),
             LineStreamAction::Close => self.close_controlled(url, cancel),
         }
     }
@@ -222,6 +311,47 @@ impl LineStreams {
         if let Ok(mut state) = self.state.lock() {
             Self::mark_closed(&mut state, url);
         }
+    }
+
+    /// Closes `url` only while it still names the generation claimed by
+    /// `owner`.
+    pub fn close_owned(&self, url: &str, owner: &LineStreamOwner) {
+        if let Ok(mut state) = self.state.lock() {
+            let claimed_generation = owner.generation();
+            if claimed_generation.is_some_and(|generation| {
+                state
+                    .streams
+                    .get(url)
+                    .is_some_and(|slot| slot.generation() == generation)
+            }) {
+                Self::mark_closed(&mut state, url);
+            }
+        }
+    }
+
+    /// Captures the current generation before a task performs policy work
+    /// needed for `Next`.
+    ///
+    /// Taking the state lock also orders this capture against cancellation:
+    /// either cancellation sees the captured generation, or this call sees
+    /// the task's cancellation flag and leaves the stream untouched.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TaskError::TimedOut`] when the task was already cancelled, or
+    /// [`TaskError::Unreachable`] when the stream registry is unavailable.
+    pub fn claim_current(
+        &self,
+        url: &str,
+        owner: &LineStreamOwner,
+        cancel: &AtomicBool,
+    ) -> Result<(), TaskError> {
+        let state = self.state.lock().map_err(|_| TaskError::Unreachable)?;
+        if cancel.load(Ordering::SeqCst) {
+            return Err(TaskError::TimedOut);
+        }
+        owner.capture(state.streams.get(url).map(StreamSlot::generation));
+        Ok(())
     }
 
     fn close_controlled(&self, url: &str, cancel: &AtomicBool) -> Result<Vec<u8>, TaskError> {
@@ -282,6 +412,10 @@ impl LineStreams {
         }
     }
 
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "opening adds only the optional task ownership claim to the existing transport boundary"
+    )]
     fn open(
         &self,
         url: &str,
@@ -289,6 +423,7 @@ impl LineStreams {
         credential: Option<(&str, &str)>,
         headers: &[(&str, &str)],
         options: RequestOptions,
+        owner: Option<&LineStreamOwner>,
         cancel: &AtomicBool,
     ) -> Result<Vec<u8>, TaskError> {
         if max_bytes == 0 {
@@ -303,7 +438,8 @@ impl LineStreams {
             format: Format::from_headers(headers)?,
             maximum: max_bytes as usize,
         };
-        let Some((generation, close, lease)) = self.reserve_open(url, &identity)? else {
+        let Some((generation, close, lease)) = self.reserve_open(url, &identity, owner, cancel)?
+        else {
             return Ok(Vec::new());
         };
         let cancellation = Cancellation {
@@ -338,12 +474,20 @@ impl LineStreams {
         &self,
         url: &str,
         identity: &StreamIdentity,
+        owner: Option<&LineStreamOwner>,
+        cancel: &AtomicBool,
     ) -> Result<Option<(u64, Arc<AtomicBool>, StreamLease)>, TaskError> {
         let mut state = self.state.lock().map_err(|_| TaskError::Unreachable)?;
-        if state.streams.get(url).is_some_and(
-            |slot| matches!(slot, StreamSlot::Ready { stream, .. } if stream.identity == *identity),
-        ) {
-            return Ok(None);
+        if cancel.load(Ordering::SeqCst) {
+            return Err(TaskError::TimedOut);
+        }
+        if let Some(StreamSlot::Ready { generation, stream }) = state.streams.get(url) {
+            if stream.identity == *identity {
+                if let Some(owner) = owner {
+                    owner.capture(Some(*generation));
+                }
+                return Ok(None);
+            }
         }
         if let Some(slot) = state.streams.remove(url) {
             Self::interrupt(slot);
@@ -358,6 +502,9 @@ impl LineStreams {
                 close: Arc::clone(&close),
             },
         );
+        if let Some(owner) = owner {
+            owner.capture(Some(generation));
+        }
         Ok(Some((generation, close, lease)))
     }
 
@@ -478,6 +625,7 @@ impl LineStreams {
         max_bytes: u32,
         credential: Option<(&str, &str)>,
         headers: &[(&str, &str)],
+        owner: Option<&LineStreamOwner>,
         cancel: &AtomicBool,
     ) -> Result<Vec<u8>, TaskError> {
         let format = Format::from_headers(headers)?;
@@ -489,11 +637,17 @@ impl LineStreams {
         };
         let (generation, close, mut stream) = {
             let mut state = self.state.lock().map_err(|_| TaskError::Unreachable)?;
+            if cancel.load(Ordering::SeqCst) {
+                return Err(TaskError::TimedOut);
+            }
             let slot = state.streams.remove(url).ok_or(TaskError::Unreachable)?;
             let StreamSlot::Ready { generation, stream } = slot else {
                 state.streams.insert(url.to_owned(), slot);
                 return Err(TaskError::Unreachable);
             };
+            if let Some(owner) = owner {
+                owner.capture(Some(generation));
+            }
             if stream.identity.credential != expected.credential {
                 return Err(TaskError::Unauthorized);
             }
@@ -518,7 +672,7 @@ impl LineStreams {
         let mut state = self.state.lock().map_err(|_| TaskError::Unreachable)?;
         let current = state.streams.get(url);
         let may_retain = result.is_ok()
-            && !stream.ended
+            && (!stream.ended || stream.has_complete_record())
             && !cancellation.requested()
             && matches!(
                 current,
@@ -774,6 +928,14 @@ impl LineStream {
             self.identity.maximum,
         )
     }
+
+    fn has_complete_record(&self) -> bool {
+        has_complete_record(
+            self.identity.format,
+            &self.decoded,
+            !self.partial.is_empty(),
+        )
+    }
 }
 
 fn decode_wire(
@@ -899,6 +1061,25 @@ fn take_record(
     Ok(None)
 }
 
+fn has_complete_record(format: Format, decoded: &[u8], mut populated: bool) -> bool {
+    let mut start = 0;
+    while let Some(relative_end) = decoded[start..].iter().position(|byte| *byte == b'\n') {
+        let end = start + relative_end;
+        let mut line = &decoded[start..end];
+        if line.last() == Some(&b'\r') {
+            line = &line[..line.len() - 1];
+        }
+        match format {
+            Format::Ndjson if !line.is_empty() => return true,
+            Format::EventStream if line.is_empty() && populated => return true,
+            Format::EventStream if !line.starts_with(b":") => populated = true,
+            Format::Ndjson | Format::EventStream => {}
+        }
+        start = end + 1;
+    }
+    false
+}
+
 fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack
         .windows(needle.len())
@@ -908,14 +1089,15 @@ fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::{
-        decode_wire, take_record, ChunkPhase, Format, Framing, LineStreamAction, LineStreams,
-        RequestOptions, StreamSlot, MAX_RETAINED_STREAMS,
+        decode_wire, take_record, ChunkPhase, Format, Framing, LineStreamAction, LineStreamOwner,
+        LineStreams, RequestOptions, StreamSlot, MAX_RETAINED_STREAMS,
     };
     use kobo_protocol::TaskError;
     use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
     use rustls::{ServerConfig, ServerConnection, StreamOwned};
     use std::io::{Read, Write};
     use std::net::{TcpListener, TcpStream};
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{mpsc, Arc};
     use std::thread;
     use std::time::{Duration, Instant};
@@ -1265,6 +1447,32 @@ mod tests {
             open.release.send(()).expect("release server");
             open.handle.join().expect("stream server");
         }
+    }
+
+    #[test]
+    fn stale_owner_cannot_close_replacement_but_current_owner_can() {
+        let streams = LineStreams::default();
+        let url = "https://example.test/api/stream/event";
+        let stale = LineStreamOwner::default();
+        stale.capture(Some(1));
+        let current = LineStreamOwner::default();
+        current.capture(Some(2));
+        let interrupted = Arc::new(AtomicBool::new(false));
+        streams.state.lock().expect("stream state").streams.insert(
+            url.to_owned(),
+            StreamSlot::Opening {
+                generation: 2,
+                close: Arc::clone(&interrupted),
+            },
+        );
+
+        streams.close_owned(url, &stale);
+        assert!(!interrupted.load(Ordering::SeqCst));
+        assert_eq!(slot_kind(&streams, url), Some(SlotKind::Opening));
+
+        streams.close_owned(url, &current);
+        assert!(interrupted.load(Ordering::SeqCst));
+        assert_eq!(slot_kind(&streams, url), Some(SlotKind::Closed));
     }
 
     #[test]

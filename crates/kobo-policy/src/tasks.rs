@@ -6,7 +6,7 @@
 //! every unit of work is registered, counted, cancellable, and reports back
 //! exactly once.
 
-use kobo_net::{LineStreamAction, LineStreams, RequestOptions};
+use kobo_net::{LineStreamAction, LineStreamOwner, LineStreams, RequestOptions};
 use kobo_protocol::{
     Credential, CredentialUse, SecretHeader, Task, TaskError, TaskId, TaskOutcome, MAX_TASK_BYTES,
     MAX_TASK_BYTES_U32,
@@ -56,7 +56,12 @@ pub struct Finished {
 struct Running {
     cancel: Arc<AtomicBool>,
     handle: Option<thread::JoinHandle<()>>,
-    stream_url: Option<String>,
+    stream: Option<RunningStream>,
+}
+
+struct RunningStream {
+    url: String,
+    owner: LineStreamOwner,
 }
 
 #[derive(Clone, Debug)]
@@ -481,7 +486,11 @@ impl TaskRunner {
         }
 
         let cancel = Arc::new(AtomicBool::new(false));
-        let stream_url = line_stream_url(&work);
+        let stream = line_stream_url(&work).map(|url| RunningStream {
+            url,
+            owner: LineStreamOwner::default(),
+        });
+        let stream_owner = stream.as_ref().map(|stream| stream.owner.clone());
         let sender = self.sender.clone();
         let root = self.root.clone();
         let fetch = self.fetch.clone();
@@ -505,6 +514,7 @@ impl TaskRunner {
                         credentials: credentials.as_deref(),
                     },
                     &flag,
+                    stream_owner.as_ref(),
                 );
                 let outcome = if flag.load(Ordering::SeqCst) {
                     TaskOutcome::Cancelled
@@ -524,7 +534,7 @@ impl TaskRunner {
             Running {
                 cancel,
                 handle: Some(handle),
-                stream_url,
+                stream,
             },
         );
         Ok(())
@@ -537,10 +547,10 @@ impl TaskRunner {
     pub fn cancel(&mut self, task: TaskId) {
         if let Some(running) = self.running.get(&task) {
             running.cancel.store(true, Ordering::SeqCst);
-            if let (Some(streams), Some(url)) =
-                (self.line_streams.as_deref(), running.stream_url.as_deref())
+            if let (Some(streams), Some(stream)) =
+                (self.line_streams.as_deref(), running.stream.as_ref())
             {
-                streams.close(url);
+                streams.close_owned(&stream.url, &stream.owner);
             }
         }
     }
@@ -679,7 +689,13 @@ fn read_secret(root: &Path, path: &Path) -> Option<String> {
     }
 }
 
-fn run(work: &Task, root: &Path, backends: Backends<'_>, cancel: &AtomicBool) -> TaskOutcome {
+fn run(
+    work: &Task,
+    root: &Path,
+    backends: Backends<'_>,
+    cancel: &AtomicBool,
+    stream_owner: Option<&LineStreamOwner>,
+) -> TaskOutcome {
     match work {
         Task::Sleep { seconds } => {
             // Polled in short slices rather than slept in one call, so a
@@ -729,6 +745,7 @@ fn run(work: &Task, root: &Path, backends: Backends<'_>, cancel: &AtomicBool) ->
             headers,
             backends,
             cancel,
+            stream_owner,
         ),
         Task::Post {
             url,
@@ -751,8 +768,9 @@ fn run(work: &Task, root: &Path, backends: Backends<'_>, cancel: &AtomicBool) ->
 }
 
 #[allow(
+    clippy::too_many_arguments,
     clippy::too_many_lines,
-    reason = "ordinary fetch and retained-stream fetch share one credential and header gate"
+    reason = "ordinary fetch and retained-stream fetch share one credential, header, cancellation, and ownership gate"
 )]
 fn run_fetch(
     url: &str,
@@ -762,6 +780,7 @@ fn run_fetch(
     headers: &[kobo_protocol::Header],
     backends: Backends<'_>,
     cancel: &AtomicBool,
+    stream_owner: Option<&LineStreamOwner>,
 ) -> TaskOutcome {
     // `Range` and the runtime-owned credential cannot be replaced by app
     // headers; `own_headers` applies the same gate used for POST.
@@ -808,6 +827,14 @@ fn run_fetch(
                 Err(error) => TaskOutcome::Failed(error),
             };
         }
+        let Some(owner) = stream_owner else {
+            return TaskOutcome::Failed(TaskError::Unreachable);
+        };
+        if action == LineStreamAction::Next {
+            if let Err(error) = streams.claim_current(url, owner, cancel) {
+                return TaskOutcome::Failed(error);
+            }
+        }
         let resolved = match resolved_credential(
             wanted,
             url,
@@ -819,11 +846,12 @@ fn run_fetch(
         ) {
             Ok(credential) => credential,
             Err(error) => {
-                streams.close(url);
+                streams.close_owned(url, owner);
                 return TaskOutcome::Failed(error);
             }
         };
-        return match streams.request(
+        return match streams.request_owned(
+            owner,
             action,
             url,
             max_bytes.min(MAX_TASK_BYTES_U32),
@@ -1398,6 +1426,76 @@ mod tests {
         assert!(line_stream_url(&work("open")).is_some());
         assert!(line_stream_url(&work("next")).is_some());
         assert!(line_stream_url(&work("close")).is_none());
+    }
+
+    #[test]
+    fn cancelling_superseded_stream_owner_cannot_close_current_generation() {
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).expect("bind blocking server");
+        let port = listener.local_addr().expect("server address").port();
+        let (report_accepted, accepted) = std::sync::mpsc::channel();
+        let (release, wait) = std::sync::mpsc::channel();
+        let server = std::thread::spawn(move || {
+            let (first, _) = listener.accept().expect("accept first stream");
+            report_accepted.send(()).expect("report first stream");
+            let (second, _) = listener.accept().expect("accept replacement stream");
+            report_accepted.send(()).expect("report replacement stream");
+            let _ = wait.recv_timeout(Duration::from_secs(5));
+            drop((first, second));
+        });
+        let url = format!("https://localhost:{port}/api/stream/event");
+        let work = || Task::Fetch {
+            url: url.clone(),
+            offset: 0,
+            max_bytes: 4096,
+            credential: Some(Credential::bearer("openai")),
+            headers: vec![
+                Header::new("Accept", "application/x-ndjson"),
+                Header::new("X-Cobalt-Line-Stream", "open"),
+            ],
+        };
+        let streams = Arc::new(LineStreams::default());
+        let mut runner = TaskRunner::simulated(temp_root("stream-owner-race"))
+            .with_capabilities([Capability::Network])
+            .with_secrets(secret_dir("stream-owner-race"))
+            .with_line_streams(Arc::clone(&streams))
+            .with_credential_policy(Arc::new(|_, _, _, _, _| true));
+
+        runner.submit(TaskId(1), work()).expect("submit first open");
+        accepted
+            .recv_timeout(Duration::from_secs(2))
+            .expect("first stream connected");
+        runner
+            .submit(TaskId(2), work())
+            .expect("submit replacement open");
+        accepted
+            .recv_timeout(Duration::from_secs(2))
+            .expect("replacement stream connected");
+
+        runner.cancel(TaskId(1));
+        std::thread::sleep(Duration::from_millis(600));
+        assert!(
+            !runner
+                .running
+                .get(&TaskId(2))
+                .and_then(|running| running.handle.as_ref())
+                .is_some_and(thread::JoinHandle::is_finished),
+            "stale cancellation closed the replacement generation"
+        );
+
+        runner.cancel(TaskId(2));
+        let finished = collect(&mut runner, 2);
+        assert_eq!(finished.len(), 2);
+        assert_eq!(
+            finished
+                .iter()
+                .find(|finished| finished.task == TaskId(2))
+                .map(|finished| &finished.outcome),
+            Some(&TaskOutcome::Cancelled),
+            "the current owner did not close its generation"
+        );
+
+        release.send(()).expect("release server");
+        server.join().expect("blocking server");
     }
 
     #[test]

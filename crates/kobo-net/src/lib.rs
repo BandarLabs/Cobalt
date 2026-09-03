@@ -30,7 +30,7 @@ pub mod pem;
 pub mod serve;
 pub mod sha256;
 
-pub use lines::{LineStreamAction, LineStreams, MAX_RETAINED_STREAMS};
+pub use lines::{LineStreamAction, LineStreamOwner, LineStreams, MAX_RETAINED_STREAMS};
 
 use kobo_protocol::TaskError;
 use std::borrow::Cow;

@@ -433,6 +433,77 @@ fn clean_event_and_game_stream_endings_are_retryable_and_can_reopen() {
 }
 
 #[test]
+fn terminal_framing_drains_every_buffered_record_before_releasing_the_stream() {
+    trust_fixture();
+    let body = b"{\"sequence\":1}\n{\"sequence\":2}\n";
+    let mut content_length = Vec::new();
+    write!(
+        content_length,
+        "HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        body.len()
+    )
+    .expect("content-length response head");
+    content_length.extend_from_slice(body);
+
+    let mut chunked = Vec::new();
+    write!(
+        chunked,
+        "HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n{:x}\r\n",
+        body.len()
+    )
+    .expect("chunked response head");
+    chunked.extend_from_slice(body);
+    chunked.extend_from_slice(b"\r\n0\r\n\r\n");
+
+    for (framing, response) in [("content-length", content_length), ("chunked", chunked)] {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind terminal stream");
+        let address = listener.local_addr().expect("terminal stream address");
+        let config = server_config();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = accept(&listener, config);
+            stream.write_all(&response).expect("terminal response");
+            stream.flush().expect("flush terminal response");
+            close_tls(&mut stream);
+        });
+        let streams = LineStreams::default();
+        let url = format!("https://localhost:{}/api/stream/{framing}", address.port());
+        let headers = [("Accept", "application/x-ndjson")];
+        let cancel = AtomicBool::new(false);
+
+        assert_eq!(open_ndjson(&streams, &url), Ok(Vec::new()), "{framing}");
+        for expected in [br#"{"sequence":1}"#, br#"{"sequence":2}"#] {
+            assert_eq!(
+                streams.request(
+                    LineStreamAction::Next,
+                    &url,
+                    4096,
+                    Some(("Authorization", "******")),
+                    &headers,
+                    RequestOptions::default(),
+                    &cancel,
+                ),
+                Ok(expected.to_vec()),
+                "{framing}"
+            );
+        }
+        assert_eq!(
+            streams.request(
+                LineStreamAction::Next,
+                &url,
+                4096,
+                Some(("Authorization", "******")),
+                &headers,
+                RequestOptions::default(),
+                &cancel,
+            ),
+            Err(TaskError::Unreachable),
+            "{framing}"
+        );
+        server.join().expect("terminal stream server");
+    }
+}
+
+#[test]
 fn retained_stream_budget_releases_on_error_close_and_shutdown() {
     trust_fixture();
     assert_eq!(kobo_net::MAX_RETAINED_STREAMS, 2);
