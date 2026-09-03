@@ -5,5 +5,5 @@ expect Keep waiting
 expect Cancel pairing
 shot confirm-global-game
 tap Keep waiting
-wait-for Rated 10+0 Rapid
+wait-for Rated 10+5 Rapid
 shot continued-seek

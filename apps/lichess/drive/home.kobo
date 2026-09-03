@@ -1,8 +1,10 @@
+expect responsive Folio controls
 expect Puzzles
-expect Play
-expect protocol 11
+expect 3+0
+expect Blitz
+expect 3+2
 shot home
-tap Play
-wait-for No secret named lichess
-expect shown on this screen
-shot missing-credential
+tap 3+0
+wait-for Rated 3+0 Blitz
+expect event stream was opened before this seek
+shot preset-pairing

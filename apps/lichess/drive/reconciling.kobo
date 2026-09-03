@@ -1,0 +1,5 @@
+expect Rated 10+5 Rapid
+expect Checking current games
+expect fresh current-game snapshot
+expect Cancel pairing
+shot reconciling
