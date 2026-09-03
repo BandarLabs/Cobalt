@@ -12,32 +12,8 @@ const MANIFEST_FIELDS = [
   "glyph"
 ];
 const COMPATIBLE_RELEASE_PATHS = new Set([
-  "Cargo.lock",
-  "crates/kobo-abi/src/lib.rs",
   "crates/kobo-net/src/lib.rs",
-  "crates/kobo-net/src/lines.rs",
-  "crates/kobo-net/tests/fixtures/localhost-ca.der",
-  "crates/kobo-net/tests/fixtures/localhost-cert.der",
-  "crates/kobo-net/tests/fixtures/localhost-key.der",
-  "crates/kobo-net/tests/lichess_stream_mock.rs",
-  "crates/kobo-policy/src/credentials.rs",
-  "crates/kobo-policy/src/services.rs",
-  "crates/kobo-policy/src/tasks.rs",
-  "crates/kobo-protocol/src/lib.rs",
-  "crates/kobo-sdk/Cargo.toml",
-  "crates/kobo-sdk/src/credentials.rs",
-  "crates/kobo-sdk/src/keyboard.rs",
-  "crates/kobo-sdk/src/lib.rs",
-  "crates/kobo-sdk/src/terminal.rs",
-  "crates/kobo-text/src/lib.rs",
-  "crates/kobo-ui/Cargo.toml",
-  "crates/kobo-ui/src/lib.rs",
-  "crates/kobo-ui/src/vector.rs",
-  "crates/kobo-ui/src/vector/tabler.rs",
-  "crates/kobod/src/app_store.rs",
-  "examples/gutenbird/Cargo.toml",
-  "examples/gutenbird/src/main.rs",
-  "tools/icon-import/icons.txt"
+  "crates/kobo-protocol/src/lib.rs"
 ]);
 
 // Store packages are built from the current SDK and therefore speak its exact
@@ -377,6 +353,17 @@ export function manifestOnlyChangesPathDependencyVersions(previousSource, curren
   return normalize(previousSource).trimEnd() === normalize(currentSource).trimEnd();
 }
 
+// `url` is private to kobo-opds, so deleting these two root re-exports emits
+// no code in an app that does not name them. RSS now calls kobo-net directly;
+// retaining the exact source check keeps an unrelated OPDS edit fail-closed.
+export function onlyRemovesOpdsUrlReexports(previousSource, currentSource) {
+  const removed = previousSource.replace(
+    "pub use url::{is_https, safe_href, same_origin};",
+    "pub use url::same_origin;"
+  );
+  return removed !== previousSource && removed === currentSource;
+}
+
 export function compatibleChangePaths(
   manifest,
   protocolVersion,
@@ -615,6 +602,19 @@ export function affectedWorkspacePackages(baseRevision, registry) {
     path => optionalCommand("git", ["rev-parse", `${baseRevision}:${path}`]),
     path => command("git", ["hash-object", path])
   );
+  const nonReleaseSourcePaths = new Set(
+    changedPaths.filter(path => {
+      if (path !== "crates/kobo-opds/src/lib.rs") return false;
+      const previous = optionalCommand("git", ["show", `${baseRevision}:${path}`]);
+      return (
+        previous !== null &&
+        onlyRemovesOpdsUrlReexports(
+          previous,
+          readFileSync(resolve(workspaceRoot, path), "utf8")
+        )
+      );
+    })
+  );
 
   const registeredPackages = registry.apps.map(app => app.package);
   const unconditionalGlobalInputs = new Set(["rust-toolchain", "rust-toolchain.toml"]);
@@ -651,7 +651,10 @@ export function affectedWorkspacePackages(baseRevision, registry) {
     const directory = dirname(package_.manifest_path);
     const relativeDirectory = relative(workspaceRoot, directory).split(sep).join("/");
     const packageChanges = changedPaths.filter(
-      path => isInside(path, relativeDirectory) && !compatiblePaths.has(path)
+      path =>
+        isInside(path, relativeDirectory) &&
+        !compatiblePaths.has(path) &&
+        !nonReleaseSourcePaths.has(path)
     );
     if (packageChanges.length === 0) continue;
     const relativeManifest = relative(workspaceRoot, package_.manifest_path).split(sep).join("/");

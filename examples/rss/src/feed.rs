@@ -31,7 +31,7 @@
 //! two prefixed names that mean anything are named explicitly.
 
 use kobo_html::to_text;
-use kobo_opds::safe_href;
+use kobo_net::resolve_https_url;
 use kobo_xml::{scan, Event};
 
 /// The most items one feed contributes.
@@ -176,15 +176,15 @@ pub fn parse_at(bytes: &[u8], requested_url: &str) -> Option<Feed> {
 }
 
 /// Resolves every URL a feed supplied and refuses anything the runtime cannot
-/// fetch. This shares the OPDS reader's RFC 3986 resolver and HTTPS boundary,
+/// fetch. This shares the transport's RFC 3986 resolver and HTTPS boundary,
 /// rather than allowing each feed dialect to grow a subtly different parser.
 fn resolve_addresses(feed: &mut Feed, requested_url: &str) {
     if !feed.site.trim().is_empty() {
-        feed.site = safe_href(requested_url, &feed.site).unwrap_or_default();
+        feed.site = resolve_https_url(requested_url, &feed.site).unwrap_or_default();
     }
     for item in &mut feed.items {
         if !item.link.trim().is_empty() {
-            item.link = safe_href(requested_url, &item.link).unwrap_or_default();
+            item.link = resolve_https_url(requested_url, &item.link).unwrap_or_default();
         }
         if item.id.trim().is_empty() {
             item.id.clone_from(&item.link);

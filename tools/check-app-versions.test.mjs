@@ -12,6 +12,7 @@ import {
   lockfileOnlyAddsPackages,
   manifestOnlyChangesPathDependencyVersions,
   manifestOnlyChangesWorkspaceMembershipOrVersion,
+  onlyRemovesOpdsUrlReexports,
   packagesToBuild,
   registeredConsumers,
   releaseDiffArguments,
@@ -380,6 +381,29 @@ test("path dependency version-only manifest edits are not app release inputs", (
   );
 });
 
+test("removing obsolete OPDS URL reexports leaves Gutenbird's binary inputs unchanged", () => {
+  const previous = `mod url;\n\npub use url::{is_https, safe_href, same_origin};\n`;
+  const current = `mod url;\n\npub use url::same_origin;\n`;
+  assert.equal(onlyRemovesOpdsUrlReexports(previous, current), true);
+  assert.equal(
+    onlyRemovesOpdsUrlReexports(previous, current.replace("same_origin", "other")),
+    false
+  );
+  assert.equal(
+    onlyRemovesOpdsUrlReexports(previous, current.replace("mod url;", "mod changed;")),
+    false
+  );
+  assert.equal(
+    onlyRemovesOpdsUrlReexports(
+      execFileSync("git", ["show", "HEAD:crates/kobo-opds/src/lib.rs"], {
+        encoding: "utf8"
+      }),
+      readFileSync("crates/kobo-opds/src/lib.rs", "utf8")
+    ),
+    true
+  );
+});
+
 test("only exact reviewed compatible blobs are excluded from app release inputs", () => {
   const manifest = {
     format_version: 1,
@@ -423,10 +447,10 @@ test("only exact reviewed compatible blobs are excluded from app release inputs"
     changes: [
       {
         protocol_version: 11,
-        reason: "reviewed additive SDK module",
+        reason: "reviewed additive transport helper",
         files: [
           {
-            path: "crates/kobo-sdk/src/credentials.rs",
+            path: "crates/kobo-net/src/lib.rs",
             base_blob: null,
             compatible_blob: "c".repeat(40)
           }
@@ -438,17 +462,17 @@ test("only exact reviewed compatible blobs are excluded from app release inputs"
     compatibleChangePaths(
       additive,
       11,
-      ["crates/kobo-sdk/src/credentials.rs"],
+      ["crates/kobo-net/src/lib.rs"],
       () => null,
       () => "c".repeat(40)
     ),
-    new Set(["crates/kobo-sdk/src/credentials.rs"])
+    new Set(["crates/kobo-net/src/lib.rs"])
   );
   assert.deepEqual(
     compatibleChangePaths(
       additive,
       11,
-      ["crates/kobo-sdk/src/credentials.rs"],
+      ["crates/kobo-net/src/lib.rs"],
       () => "a".repeat(40),
       () => "c".repeat(40)
     ),
@@ -505,120 +529,48 @@ test("reviewed compatible-change entries name the exact current files", () => {
   }
 });
 
-test("responsive SDK release isolation covers only exact reviewed inputs", () => {
+test("protocol 14 limits compatible release inputs to net and protocol", () => {
   const manifest = JSON.parse(
     readFileSync("tools/app-release-compatible-changes.json", "utf8")
   );
-  const responsivePaths = [
-    "Cargo.lock",
-    "crates/kobo-sdk/Cargo.toml",
-    "crates/kobo-sdk/src/keyboard.rs",
-    "crates/kobo-sdk/src/terminal.rs",
-    "crates/kobo-ui/Cargo.toml",
-    "crates/kobo-ui/src/lib.rs"
-  ];
-  const files = new Map(
-    manifest.changes
-      .find(change => change.protocol_version === 14)
-      .files.map(file => [file.path, file])
-  );
+  const files = manifest.changes.find(change => change.protocol_version === 14).files;
+  const paths = files.map(file => file.path);
+  assert.deepEqual(paths, [
+    "crates/kobo-net/src/lib.rs",
+    "crates/kobo-protocol/src/lib.rs"
+  ]);
+  const byPath = new Map(files.map(file => [file.path, file]));
   assert.deepEqual(
     compatibleChangePaths(
       manifest,
       14,
-      responsivePaths,
-      path => files.get(path)?.base_blob,
-      path => files.get(path)?.compatible_blob
+      paths,
+      path => byPath.get(path)?.base_blob,
+      path => byPath.get(path)?.compatible_blob
     ),
-    new Set(responsivePaths)
+    new Set(paths)
   );
 
-  for (const path of responsivePaths) {
+  for (const path of paths) {
     assert.equal(
       compatibleChangePaths(
         manifest,
         14,
         [path],
-        candidate => files.get(candidate)?.base_blob,
+        candidate => byPath.get(candidate)?.base_blob,
         () => "f".repeat(40)
       ).size,
       0,
       `${path} must fail closed when its reviewed blob changes`
     );
   }
-});
-
-test("Gutenbird test-only changes are isolated by exact reviewed blobs", () => {
-  const manifest = JSON.parse(
-    readFileSync("tools/app-release-compatible-changes.json", "utf8")
-  );
-  const paths = [
-    "examples/gutenbird/Cargo.toml",
-    "examples/gutenbird/src/main.rs"
-  ];
-  const files = new Map(
-    manifest.changes
-      .find(change => change.protocol_version === 14)
-      .files.map(file => [file.path, file])
-  );
-  assert.deepEqual(
-    compatibleChangePaths(
-      manifest,
-      14,
-      paths,
-      path => files.get(path)?.base_blob,
-      path => files.get(path)?.compatible_blob
-    ),
-    new Set(paths)
-  );
   assert.equal(
     compatibleChangePaths(
       manifest,
       14,
       ["examples/gutenbird/src/main.rs"],
-      path => files.get(path)?.base_blob,
-      () => "f".repeat(40)
-    ).size,
-    0
-  );
-});
-
-test("Lichess runtime prerequisites are isolated by exact reviewed blobs", () => {
-  const manifest = JSON.parse(
-    readFileSync("tools/app-release-compatible-changes.json", "utf8")
-  );
-  const paths = [
-    "crates/kobo-net/src/lib.rs",
-    "crates/kobo-net/src/lines.rs",
-    "crates/kobo-net/tests/fixtures/localhost-ca.der",
-    "crates/kobo-net/tests/fixtures/localhost-cert.der",
-    "crates/kobo-net/tests/fixtures/localhost-key.der",
-    "crates/kobo-net/tests/lichess_stream_mock.rs",
-    "crates/kobo-policy/src/credentials.rs",
-    "crates/kobo-policy/src/tasks.rs"
-  ];
-  const files = new Map(
-    manifest.changes
-      .find(change => change.protocol_version === 14)
-      .files.map(file => [file.path, file])
-  );
-  assert.deepEqual(
-    compatibleChangePaths(
-      manifest,
-      14,
-      paths,
-      path => files.get(path)?.base_blob,
-      path => files.get(path)?.compatible_blob
-    ),
-    new Set(paths)
-  );
-  assert.equal(
-    compatibleChangePaths(
-      manifest,
-      14,
-      ["crates/kobo-net/src/lines.rs"],
       () => null,
-      () => "f".repeat(40)
+      () => null
     ).size,
     0
   );

@@ -214,6 +214,136 @@ pub fn parse(url: &str) -> Result<Address, TaskError> {
     })
 }
 
+/// Resolves a link against its requested URL and accepts only a fetchable
+/// HTTPS result.
+///
+/// Relative links in feeds are data supplied by a remote server. Keeping their
+/// RFC 3986 resolution alongside the transport parser ensures callers cannot
+/// resolve a link and accidentally hand a non-HTTPS result to a task.
+#[must_use]
+pub fn resolve_https_url(base: &str, href: &str) -> Option<String> {
+    let resolved = resolve_url(base, href)?;
+    parse(&resolved).ok().map(|_| resolved)
+}
+
+struct UrlParts<'a> {
+    scheme: &'a str,
+    authority: &'a str,
+    path: &'a str,
+    query: Option<&'a str>,
+}
+
+fn split_url(url: &str) -> Option<UrlParts<'_>> {
+    let (scheme, rest) = url.split_once("://")?;
+    if scheme.is_empty() || !scheme.as_bytes()[0].is_ascii_alphabetic() {
+        return None;
+    }
+    let before_fragment = rest.split_once('#').map_or(rest, |(before, _)| before);
+    let (authority_and_path, query) = match before_fragment.split_once('?') {
+        Some((authority_and_path, query)) => (authority_and_path, Some(query)),
+        None => (before_fragment, None),
+    };
+    let (authority, path) = match authority_and_path.find('/') {
+        Some(index) => (&authority_and_path[..index], &authority_and_path[index..]),
+        None => (authority_and_path, ""),
+    };
+    Some(UrlParts {
+        scheme,
+        authority,
+        path,
+        query,
+    })
+}
+
+fn has_url_scheme(text: &str) -> bool {
+    let mut characters = text.char_indices();
+    let Some((_, first)) = characters.next() else {
+        return false;
+    };
+    if !first.is_ascii_alphabetic() {
+        return false;
+    }
+    for (index, character) in characters {
+        match character {
+            'a'..='z' | 'A'..='Z' | '0'..='9' | '+' | '-' | '.' => {}
+            ':' => return index > 0,
+            _ => return false,
+        }
+    }
+    false
+}
+
+fn resolve_url(base: &str, href: &str) -> Option<String> {
+    let href = href.trim();
+    if href.is_empty() {
+        return None;
+    }
+    if has_url_scheme(href) {
+        return Some(href.to_owned());
+    }
+    let base = split_url(base)?;
+
+    if let Some(rest) = href.strip_prefix("//") {
+        return Some(format!("{}://{rest}", base.scheme));
+    }
+    if let Some(rest) = href.strip_prefix('/') {
+        return Some(format!("{}://{}/{rest}", base.scheme, base.authority));
+    }
+    if let Some(rest) = href.strip_prefix('?') {
+        let path = if base.path.is_empty() { "/" } else { base.path };
+        return Some(format!("{}://{}{path}?{rest}", base.scheme, base.authority));
+    }
+    if let Some(rest) = href.strip_prefix('#') {
+        let path = if base.path.is_empty() { "/" } else { base.path };
+        let query = base
+            .query
+            .map(|query| format!("?{query}"))
+            .unwrap_or_default();
+        return Some(format!(
+            "{}://{}{path}{query}#{rest}",
+            base.scheme, base.authority
+        ));
+    }
+
+    let (href_path, href_rest) = match href.split_once('#') {
+        Some((before, fragment)) => (before, format!("#{fragment}")),
+        None => (href, String::new()),
+    };
+    let (href_path, href_query) = match href_path.split_once('?') {
+        Some((before, query)) => (before, format!("?{query}")),
+        None => (href_path, String::new()),
+    };
+    let directory = match base.path.rfind('/') {
+        Some(index) => &base.path[..=index],
+        None => "/",
+    };
+    let normalized = remove_url_dot_segments(&format!("{directory}{href_path}"));
+    Some(format!(
+        "{}://{}{normalized}{href_query}{href_rest}",
+        base.scheme, base.authority
+    ))
+}
+
+fn remove_url_dot_segments(path: &str) -> String {
+    let mut output: Vec<&str> = Vec::new();
+    for segment in path.split('/') {
+        match segment {
+            "." => {}
+            ".." => {
+                if output.len() > 1 {
+                    output.pop();
+                }
+            }
+            segment => output.push(segment),
+        }
+    }
+    if output.is_empty() {
+        "/".to_owned()
+    } else {
+        output.join("/")
+    }
+}
+
 /// Whether `url` has exactly the supplied HTTPS host and port.
 ///
 /// Credential policy uses this instead of string prefixes, for which
@@ -2320,8 +2450,8 @@ mod tests {
     }
 
     use super::{
-        fetch, head, message_end, parse, post, resolve_redirect, split_response, stays_open,
-        Address, Cow, Method, Response,
+        fetch, head, message_end, parse, post, resolve_https_url, resolve_redirect, split_response,
+        stays_open, Address, Cow, Method, Response,
     };
     use kobo_protocol::TaskError;
 
@@ -2437,6 +2567,25 @@ mod tests {
                 authority: "example.com:8443".into(),
             })
         );
+    }
+
+    #[test]
+    fn feed_links_resolve_against_the_requested_https_url() {
+        let base = "https://example.org/feeds/technology.xml";
+        assert_eq!(
+            resolve_https_url(base, "../stories/one").as_deref(),
+            Some("https://example.org/stories/one")
+        );
+        assert_eq!(
+            resolve_https_url(base, "?page=2").as_deref(),
+            Some("https://example.org/feeds/technology.xml?page=2")
+        );
+        assert_eq!(
+            resolve_https_url("", "https://elsewhere.example/feed.xml").as_deref(),
+            Some("https://elsewhere.example/feed.xml")
+        );
+        assert_eq!(resolve_https_url(base, "http://example.org/plain"), None);
+        assert_eq!(resolve_https_url(base, "javascript:alert(1)"), None);
     }
 
     /// Unencrypted requests are refused rather than quietly upgraded.

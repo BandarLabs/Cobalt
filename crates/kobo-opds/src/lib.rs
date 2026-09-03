@@ -53,7 +53,7 @@ mod url;
 
 pub use atom::{parse_opensearch, SearchTemplate};
 pub use json::expand_search;
-pub use url::{is_https, safe_href, same_origin};
+pub use url::same_origin;
 
 use std::fmt;
 

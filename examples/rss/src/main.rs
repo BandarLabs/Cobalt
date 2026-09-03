@@ -893,17 +893,23 @@ impl Feeds {
         match outcome {
             TaskOutcome::Completed(bytes) => match target {
                 TaskTarget::FluxEntries { mode, .. } => {
-                    let mut entries = miniflux::parse_entries(&bytes);
-                    overlay_full_content(&self.full_content, &mut entries);
-                    self.flux_caches[mode.cache_index()] = entries;
-                    self.flux_live_cache[mode.cache_index()] = true;
-                    self.save_flux_cache(context, mode);
-                    self.load_full_content(context, mode);
-                    self.problem = Some(format!(
-                        "Synced {} {} entries.",
-                        self.flux_entries(mode).len(),
-                        mode.label().to_lowercase()
-                    ));
+                    if let Some(mut entries) = miniflux::parse_entries(&bytes) {
+                        overlay_full_content(&self.full_content, &mut entries);
+                        self.flux_caches[mode.cache_index()] = entries;
+                        self.flux_live_cache[mode.cache_index()] = true;
+                        self.save_flux_cache(context, mode);
+                        self.load_full_content(context, mode);
+                        self.problem = Some(format!(
+                            "Synced {} {} entries.",
+                            self.flux_entries(mode).len(),
+                            mode.label().to_lowercase()
+                        ));
+                    } else {
+                        self.problem = Some(
+                            "Miniflux entries were invalid; cached entries remain readable."
+                                .to_owned(),
+                        );
+                    }
                 }
                 TaskTarget::FluxDiscover { .. } => {
                     self.flux_discovered = miniflux::parse_discoveries(&bytes);
@@ -977,7 +983,7 @@ impl Feeds {
     /// Returns where it sits in the list either way, so that choosing
     /// something already subscribed opens it rather than refusing.
     fn subscribe(&mut self, found: &search::Found) -> Option<usize> {
-        let Some(url) = kobo_opds::safe_href("", &found.url) else {
+        let Some(url) = kobo_net::resolve_https_url("", &found.url) else {
             self.problem = Some("Feedsearch did not return an HTTPS feed.".to_owned());
             return None;
         };
@@ -3280,6 +3286,68 @@ mod tests {
             .problem
             .as_deref()
             .is_some_and(|message| message.starts_with("Offline")));
+    }
+
+    #[test]
+    fn invalid_completed_miniflux_entries_keep_ram_and_persisted_cache() {
+        let mode = miniflux::ListMode::Unread;
+        let mut reader = flux_reader();
+        reader.flux_caches[mode.cache_index()] = vec![miniflux::Article {
+            id: 4,
+            title: "Cached".to_owned(),
+            feed: "Paper".to_owned(),
+            content: "Readable".to_owned(),
+            status: "unread".to_owned(),
+            starred: false,
+        }];
+        let mut runner = AppRunner::new(reader);
+        let (task, _) = spawned(&runner.action(action_id("flux-sync")));
+
+        let commands = runner.task_outcome(task, TaskOutcome::Completed(b"{not JSON".to_vec()));
+
+        assert_eq!(runner.app().selected_flux_entries()[0].title, "Cached");
+        assert!(runner
+            .app()
+            .problem
+            .as_deref()
+            .is_some_and(|message| message.contains("invalid")));
+        assert!(
+            !commands.iter().any(|command| matches!(
+                command,
+                Command::Store(kobo_sdk::StoreRequest::Save { key, .. })
+                    if key == &miniflux::cache_key("https://flux.example", mode)
+                        .expect("valid test server")
+            )),
+            "an invalid completed response must not overwrite the persisted cache"
+        );
+    }
+
+    #[test]
+    fn empty_completed_miniflux_entries_replace_the_cached_mode() {
+        let mode = miniflux::ListMode::Unread;
+        let mut reader = flux_reader();
+        reader.flux_caches[mode.cache_index()] = vec![miniflux::Article {
+            id: 4,
+            title: "Cached".to_owned(),
+            feed: "Paper".to_owned(),
+            content: "Readable".to_owned(),
+            status: "unread".to_owned(),
+            starred: false,
+        }];
+        let mut runner = AppRunner::new(reader);
+        let (task, _) = spawned(&runner.action(action_id("flux-sync")));
+
+        let commands =
+            runner.task_outcome(task, TaskOutcome::Completed(br#"{"entries":[]}"#.to_vec()));
+
+        assert!(runner.app().selected_flux_entries().is_empty());
+        assert!(runner.app().flux_live_cache[mode.cache_index()]);
+        assert!(commands.iter().any(|command| matches!(
+            command,
+            Command::Store(kobo_sdk::StoreRequest::Save { key, .. })
+                if key == &miniflux::cache_key("https://flux.example", mode)
+                    .expect("valid test server")
+        )));
     }
 
     #[test]

@@ -100,10 +100,11 @@ pub fn canonical_server(server: &str) -> Option<String> {
     {
         return None;
     }
-    let host = if address.host.contains(':') {
-        format!("[{}]", address.host.to_ascii_lowercase())
+    let host = address.host.to_ascii_lowercase();
+    let host = if host.contains(':') && !host.starts_with('[') {
+        format!("[{host}]")
     } else {
-        address.host.to_ascii_lowercase()
+        host
     };
     let authority = if address.port == 443 {
         host
@@ -250,18 +251,19 @@ fn post(server: &str, path: &str, body: String) -> Task {
     }
 }
 
+/// Reads the `/v1/entries` response, distinguishing an empty list from an
+/// invalid payload so a completed malformed response cannot erase a cache.
 #[must_use]
-pub fn parse_entries(bytes: &[u8]) -> Vec<Article> {
-    let Ok(value) = kobo_json::parse(&String::from_utf8_lossy(bytes)) else {
-        return Vec::new();
-    };
-    value
-        .get("entries")
-        .and_then(Value::as_array)
-        .unwrap_or(&[])
-        .iter()
-        .filter_map(article)
-        .collect()
+pub fn parse_entries(bytes: &[u8]) -> Option<Vec<Article>> {
+    let value = kobo_json::parse(&String::from_utf8_lossy(bytes)).ok()?;
+    Some(
+        value
+            .get("entries")?
+            .as_array()?
+            .iter()
+            .filter_map(article)
+            .collect(),
+    )
 }
 
 #[must_use]
@@ -405,7 +407,8 @@ mod tests {
             br#"[{"url":"https://example.test/atom","title":"Journal","type":"atom"}]"#,
         );
         assert_eq!(feeds[0].title, "Journal");
-        let entries = parse_entries(br#"{"entries":[{"id":7,"title":"News","feed":{"title":"Paper"},"content":"<p>Body</p>","status":"read","starred":true}]}"#);
+        let entries = parse_entries(br#"{"entries":[{"id":7,"title":"News","feed":{"title":"Paper"},"content":"<p>Body</p>","status":"read","starred":true}]}"#)
+            .expect("valid entries response");
         assert_eq!(entries[0].content, "Body");
         assert_eq!(entries[0].status, "read");
         assert_eq!(
@@ -435,6 +438,26 @@ mod tests {
         assert_ne!(
             namespace("https://flux.example/reader"),
             namespace("https://other.example/reader")
+        );
+    }
+
+    #[test]
+    fn entries_payload_requires_an_entries_array_but_allows_an_empty_one() {
+        assert_eq!(parse_entries(b"{not JSON"), None);
+        assert_eq!(parse_entries(br#"{"total":0}"#), None);
+        assert_eq!(parse_entries(br#"{"entries":{}}"#), None);
+        assert_eq!(parse_entries(br#"{"entries":[]}"#), Some(Vec::new()));
+    }
+
+    #[test]
+    fn ipv6_servers_have_one_pair_of_authority_brackets() {
+        assert_eq!(
+            canonical_server("https://[::1]"),
+            Some("https://[::1]".to_owned())
+        );
+        assert_eq!(
+            canonical_server("https://[::1]:8443/reader/"),
+            Some("https://[::1]:8443/reader".to_owned())
         );
     }
 }

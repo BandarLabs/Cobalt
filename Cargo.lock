@@ -848,7 +848,6 @@ dependencies = [
  "kobo-html",
  "kobo-json",
  "kobo-net",
- "kobo-opds",
  "kobo-sdk",
  "kobo-ui",
  "kobo-xml",

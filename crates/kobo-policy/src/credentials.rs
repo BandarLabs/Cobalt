@@ -311,11 +311,8 @@ fn miniflux_v1_request_allowed(
     {
         return false;
     }
-    let Some(v1) = parts.iter().position(|part| *part == "v1") else {
-        return false;
-    };
-    match (&parts[v1..], usage) {
-        (["v1", "entries"], CredentialUse::Fetch) => {
+    match usage {
+        CredentialUse::Fetch if parts.ends_with(&["v1", "entries"]) => {
             body.is_none()
                 && content_type.is_none()
                 && matches!(
@@ -327,17 +324,22 @@ fn miniflux_v1_request_allowed(
                     )
                 )
         }
-        (["v1", "entries", id, "fetch-content"], CredentialUse::Fetch) => {
-            body.is_none()
-                && content_type.is_none()
-                && query.is_none()
-                && !id.is_empty()
-                && id.bytes().all(|byte| byte.is_ascii_digit())
+        CredentialUse::Fetch
+            if parts.len() >= 4
+                && matches!(
+                    &parts[parts.len() - 4..],
+                    ["v1", "entries", id, "fetch-content"]
+                        if !id.is_empty() && id.bytes().all(|byte| byte.is_ascii_digit())
+                ) =>
+        {
+            body.is_none() && content_type.is_none() && query.is_none()
         }
-        (["v1", "discover" | "feeds"], CredentialUse::Post) => {
+        CredentialUse::Post
+            if parts.ends_with(&["v1", "discover"]) || parts.ends_with(&["v1", "feeds"]) =>
+        {
             query.is_none() && content_type == Some("application/json") && body.is_some()
         }
-        (["v1", "entries"], CredentialUse::Put) => {
+        CredentialUse::Put if parts.ends_with(&["v1", "entries"]) => {
             query.is_none()
                 && content_type == Some("application/json")
                 && body.is_some_and(miniflux_mutation_body)
@@ -510,6 +512,7 @@ mod tests {
     fn rss_miniflux_token_is_exact_and_put_is_limited_to_entry_mutations() {
         let token = Credential::in_header("miniflux", "X-Auth-Token");
         let entries = "https://feeds.example/reader/v1/entries";
+        let v1_prefix = "https://feeds.example/reader/v1/proxy";
         assert!(allowed_request(
             "rss",
             &token,
@@ -523,6 +526,33 @@ mod tests {
             &token,
             "https://feeds.example/reader/v1/entries?status=unread&limit=100&order=published_at&direction=desc",
             CredentialUse::Fetch,
+        ));
+        assert!(
+            allowed(
+                "rss",
+                &token,
+                &format!(
+                    "{v1_prefix}/v1/entries?status=unread&limit=100&order=published_at&direction=desc"
+                ),
+                CredentialUse::Fetch,
+            ),
+            "a configured reverse-proxy prefix may itself contain v1"
+        );
+        assert!(allowed_request(
+            "rss",
+            &token,
+            &format!("{v1_prefix}/v1/entries"),
+            CredentialUse::Put,
+            Some(r#"{"entry_ids":[7],"starred":true}"#),
+            Some("application/json"),
+        ));
+        assert!(allowed_request(
+            "rss",
+            &token,
+            &format!("{v1_prefix}/v1/discover"),
+            CredentialUse::Post,
+            Some(r#"{"url":"https://example.org"}"#),
+            Some("application/json"),
         ));
         for (credential, usage, body, content_type) in [
             (
@@ -549,6 +579,24 @@ mod tests {
                 "{credential:?} {usage:?} unexpectedly authorized"
             );
         }
+        for url in [
+            "https://feeds.example/reader/v1/proxy/entries?status=unread&limit=100&order=published_at&direction=desc",
+            "https://feeds.example/reader/v1/proxy/../v1/entries?status=unread&limit=100&order=published_at&direction=desc",
+            "https://feeds.example/reader/%2e/v1/entries?status=unread&limit=100&order=published_at&direction=desc",
+        ] {
+            assert!(
+                !allowed("rss", &token, url, CredentialUse::Fetch),
+                "non-terminal route or traversing prefix unexpectedly authorized: {url}"
+            );
+        }
+        assert!(!allowed_request(
+            "rss",
+            &token,
+            "https://feeds.example/reader/v1/proxy/v1/entries/7",
+            CredentialUse::Put,
+            Some(r#"{"entry_ids":[7],"status":"read"}"#),
+            Some("application/json"),
+        ));
         assert!(!allowed_request(
             "rss",
             &token,

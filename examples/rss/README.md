@@ -50,7 +50,8 @@ by entry ID, and durable read/star changes for the next sync. All Miniflux
 state is namespaced by the canonical HTTPS server and any configured
 reverse-proxy prefix, so changing servers never displays an old server's entry
 or sends its queued action to the new one. Unauthorized tokens, offline
-devices, and unreachable servers leave cached reading intact.
+devices, unreachable servers, and malformed successful entry responses leave
+cached reading intact; a valid empty Miniflux list replaces that cache.
 
 ### Conditional requests
 
