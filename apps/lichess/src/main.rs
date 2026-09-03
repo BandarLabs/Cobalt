@@ -997,7 +997,6 @@ impl Lichess {
                     Pending::BoardOpen(open)
                         | Pending::BoardNext(open)
                         | Pending::BoardRetry(open)
-                        | Pending::BoardClose(open)
                         if open == &previous
                 ) || matches!(
                     &pending,
@@ -1112,7 +1111,6 @@ impl Lichess {
                 Pending::BoardOpen(game)
                     | Pending::BoardNext(game)
                     | Pending::BoardRetry(game)
-                    | Pending::BoardClose(game)
                     if game == game_id
             ) || matches!(
                 &pending,
@@ -2595,12 +2593,10 @@ impl Lichess {
                     | Pending::EventNext
                     | Pending::EventRetry
                     | Pending::EventRateWait { .. }
-                    | Pending::EventClose
                     | Pending::BoardOpen(_)
                     | Pending::BoardNext(_)
                     | Pending::BoardRetry(_)
                     | Pending::BoardRateWait { .. }
-                    | Pending::BoardClose(_)
                     | Pending::Seek
                     | Pending::SeekGrace
             ) {
@@ -4149,6 +4145,26 @@ mod tests {
         assert!(!app.has_pending(|pending| matches!(pending, Pending::EventOpen)));
         app.handle_completed(&mut context, Pending::EventClose, &[]);
         assert!(app.has_pending(|pending| matches!(pending, Pending::EventRetry)));
+    }
+
+    #[test]
+    fn suspend_does_not_cancel_close_tasks_before_they_drop_old_streams() {
+        let mut app = Lichess::default();
+        let event_close = kobo_sdk::TaskId(91);
+        let board_close = kobo_sdk::TaskId(92);
+        app.tasks.insert(event_close, Pending::EventClose);
+        app.tasks
+            .insert(board_close, Pending::BoardClose("abcdEF12".to_owned()));
+        let mut context = Context::default();
+        app.on_suspend(&mut context);
+        assert!(app.tasks.contains_key(&event_close));
+        assert!(app.tasks.contains_key(&board_close));
+        assert!(!context.commands().iter().any(|command| {
+            matches!(
+                command,
+                Command::Cancel(task) if *task == event_close || *task == board_close
+            )
+        }));
     }
 
     #[test]
