@@ -145,6 +145,6 @@ printf '%s\n' "$source_commit" > "$artifacts/flashcards-import.source-commit.txt
 
 rm -f "$seed" "$artifacts/.flashcards-validation-second.cobalt-app"
 trap - EXIT
-rm -rf "$target_root/host-tools" "$target_root/build-tmp"
+rm -rf "$target_root/host-tools" "$target_root/build-tmp" "$target_root/release"
 
 echo "built validation-only Flashcards artifacts under $target_root"
