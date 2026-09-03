@@ -128,18 +128,28 @@ fn store_app_credential_allowed(
         "lichess" => {
             credential.secret == "lichess"
                 && credential.header == SecretHeader::Bearer
-                && usage == CredentialUse::Fetch
                 && has_origin(url, "lichess.org", 443)
-                && matches!(
-                    parsed_path(url).as_deref(),
-                    Some("/api/puzzle/batch/mix?nb=32&difficulty=normal" | "/api/account/playing")
-                )
+                && match usage {
+                    CredentialUse::Fetch => matches!(
+                        parsed_path(url).as_deref(),
+                        Some(
+                            "/api/puzzle/batch/mix?nb=32&difficulty=normal"
+                                | "/api/account/playing"
+                        )
+                    ),
+                    CredentialUse::Post => parsed_path(url).as_deref() == Some("/api/board/seek"),
+                }
         }
         "needles" => {
             credential.secret == "ravelry"
                 && matches!(credential.header, SecretHeader::Basic)
                 && usage == CredentialUse::Fetch
-                && url == "https://api.ravelry.com/people/me/library/list.json"
+                && matches!(
+                    url,
+                    "https://api.ravelry.com/people/me/library/list.json"
+                        | "https://api.ravelry.com/people/me/queue/list.json"
+                        | "https://api.ravelry.com/people/me/favorites/list.json"
+                )
                 && has_origin(url, "api.ravelry.com", 443)
         }
         "panels" => {
@@ -394,6 +404,12 @@ mod tests {
                 Credential::bearer("lichess"),
                 "https://lichess.org/api/account/playing",
                 CredentialUse::Fetch,
+            ),
+            (
+                "lichess",
+                Credential::bearer("lichess"),
+                "https://lichess.org/api/board/seek",
+                CredentialUse::Post,
             ),
             (
                 "needles",

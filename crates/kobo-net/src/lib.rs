@@ -252,9 +252,27 @@ pub fn split_response(response: &[u8], max_bytes: u32) -> Result<Response<'_>, T
         // exactly this, and reporting it as "not found" sent them looking for
         // a book rather than for a login.
         401 | 403 => Err(TaskError::Unauthorized),
+        429 => Err(TaskError::RateLimited(retry_after_seconds(headers))),
         400..=599 => Err(TaskError::NotFound),
         _ => Err(TaskError::Unreachable),
     }
+}
+
+/// Reads either Retry-After form and bounds hostile values to one hour.
+fn retry_after_seconds(headers: &[httparse::Header<'_>]) -> u32 {
+    let Some(value) = header(headers, "retry-after").map(str::trim) else {
+        return 60;
+    };
+    if let Ok(seconds) = value.parse::<u64>() {
+        return seconds.clamp(1, 60 * 60) as u32;
+    }
+    if value.bytes().all(|byte| byte.is_ascii_digit()) {
+        return 60 * 60;
+    }
+    httpdate::parse_http_date(value)
+        .ok()
+        .and_then(|deadline| deadline.duration_since(std::time::SystemTime::now()).ok())
+        .map_or(1, |delay| delay.as_secs().clamp(1, 60 * 60) as u32)
 }
 
 /// Undoes the content coding the server applied, if it applied one.
@@ -1609,6 +1627,42 @@ mod tests {
     fn a_server_refusal_is_reported_as_such() {
         let response = b"HTTP/1.1 404 Not Found\r\n\r\nmissing";
         assert_eq!(split_response(response, CEILING), Err(TaskError::NotFound));
+    }
+
+    #[test]
+    fn rate_limit_exposes_a_bounded_retry_after_delay() {
+        assert_eq!(
+            split_response(
+                b"HTTP/1.1 429 Too Many Requests\r\nRetry-After: 17\r\nContent-Length: 0\r\n\r\n",
+                CEILING
+            ),
+            Err(TaskError::RateLimited(17))
+        );
+        let deadline = httpdate::fmt_http_date(
+            std::time::SystemTime::now() + std::time::Duration::from_secs(17),
+        );
+        let response = format!(
+            "HTTP/1.1 429 Too Many Requests\r\nRetry-After: {deadline}\r\nContent-Length: 0\r\n\r\n"
+        );
+        let Err(TaskError::RateLimited(delay)) = split_response(response.as_bytes(), CEILING)
+        else {
+            panic!("HTTP-date Retry-After was not exposed");
+        };
+        assert!((15..=17).contains(&delay), "unexpected delay: {delay}");
+        assert_eq!(
+            split_response(
+                b"HTTP/1.1 429 Too Many Requests\r\nRetry-After: 99999\r\nContent-Length: 0\r\n\r\n",
+                CEILING
+            ),
+            Err(TaskError::RateLimited(3600))
+        );
+        assert_eq!(
+            split_response(
+                b"HTTP/1.1 429 Too Many Requests\r\nRetry-After: 999999999999999999999999999999\r\nContent-Length: 0\r\n\r\n",
+                CEILING
+            ),
+            Err(TaskError::RateLimited(3600))
+        );
     }
 
     #[test]
