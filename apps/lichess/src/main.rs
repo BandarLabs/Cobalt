@@ -27,6 +27,7 @@ const SESSION_KEY: &str = "lichess.session.v1";
 const PUZZLE_KEY: &str = "lichess.puzzles.v1";
 const BOARD_RATE_KEY: &str = "lichess.board-rate.v1";
 const EVENT_RATE_KEY: &str = "lichess.event-rate.v1";
+const SEEK_RATE_KEY: &str = "lichess.seek-rate.v1";
 const MAX_STORED_PUZZLES: usize = 32;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -67,6 +68,9 @@ enum Pending {
     EventClose,
     Seek,
     SeekGrace,
+    SeekRateWait {
+        remaining: u32,
+    },
     BoardOpen(String),
     BoardNext(String),
     BoardRetry(String),
@@ -215,6 +219,7 @@ struct Lichess {
     loaded_puzzles: bool,
     loaded_board_rate: bool,
     loaded_event_rate: bool,
+    loaded_seek_rate: bool,
     playing_ready: bool,
     session: Option<Session>,
     summaries: Vec<GameSummary>,
@@ -225,16 +230,19 @@ struct Lichess {
     event_open: bool,
     deferred_event_open: bool,
     deferred_event_next: bool,
+    deferred_event_close: bool,
     event_rate_limit: Option<u64>,
     board_open: Option<String>,
     board_ready: bool,
     deferred_board_open: Option<Session>,
     deferred_board_next: Option<String>,
+    deferred_board_closes: BTreeSet<String>,
     board_rate_limits: BTreeMap<String, u64>,
     seek_task: Option<TaskId>,
     seek_waiting: bool,
     seek_baseline: BTreeSet<String>,
     seek_candidate: Option<GameSummary>,
+    seek_rate_limit: Option<u64>,
     pending_action: Option<GameAction>,
     pending_scope: Option<ActionScope>,
     pending_action_generation: Option<u64>,
@@ -267,6 +275,7 @@ impl Default for Lichess {
             loaded_puzzles: false,
             loaded_board_rate: false,
             loaded_event_rate: false,
+            loaded_seek_rate: false,
             playing_ready: false,
             session: None,
             summaries: Vec::new(),
@@ -277,16 +286,19 @@ impl Default for Lichess {
             event_open: false,
             deferred_event_open: false,
             deferred_event_next: false,
+            deferred_event_close: false,
             event_rate_limit: None,
             board_open: None,
             board_ready: false,
             deferred_board_open: None,
             deferred_board_next: None,
+            deferred_board_closes: BTreeSet::new(),
             board_rate_limits: BTreeMap::new(),
             seek_task: None,
             seek_waiting: false,
             seek_baseline: BTreeSet::new(),
             seek_candidate: None,
+            seek_rate_limit: None,
             pending_action: None,
             pending_scope: None,
             pending_action_generation: None,
@@ -540,6 +552,7 @@ impl Lichess {
             && self.playing_ready
             && self.seek_task.is_none()
             && !self.seek_waiting
+            && self.seek_rate_remaining().unwrap_or(0) == 0
             && self.game.as_ref().is_none_or(|game| !game.active())
             && self.pending_action.is_none();
         screen
@@ -564,10 +577,16 @@ impl Lichess {
                 },
             )
             .secondary(
-                if matches!(self.account, AccountState::Ready(_)) && !self.event_open {
-                    "Preparing the event stream before pairing."
+                if let Some(remaining) = self
+                    .seek_rate_remaining()
+                    .filter(|remaining| *remaining > 0)
+                {
+                    format!("Pairing is rate-limited for {remaining}s.")
+                } else if matches!(self.account, AccountState::Ready(_)) && !self.event_open {
+                    "Preparing the event stream before pairing.".to_owned()
                 } else {
                     "Closing a pending seek cancels it. It is never replayed automatically."
+                        .to_owned()
                 },
             )
             .build()
@@ -920,6 +939,7 @@ impl Lichess {
             return;
         }
         if self.has_pending(|pending| matches!(pending, Pending::EventClose))
+            || self.deferred_event_close
             || self
                 .retired_tasks
                 .values()
@@ -974,17 +994,58 @@ impl Lichess {
             .is_none();
     }
 
+    fn flush_deferred_stream_closes(&mut self, context: &mut Context) {
+        let event_close_pending = self
+            .has_pending(|pending| matches!(pending, Pending::EventClose))
+            || self
+                .retired_tasks
+                .values()
+                .any(|pending| matches!(pending, Pending::EventClose));
+        if self.deferred_event_close {
+            let started = event_close_pending
+                || self
+                    .spawn(
+                        context,
+                        Pending::EventClose,
+                        api::event_stream("close"),
+                        false,
+                    )
+                    .is_some();
+            if started {
+                self.deferred_event_close = false;
+            }
+        }
+        for id in self.deferred_board_closes.clone() {
+            if self.has_pending(
+                |pending| matches!(pending, Pending::BoardClose(closing) if closing == &id),
+            ) || self
+                .retired_tasks
+                .values()
+                .any(|pending| matches!(pending, Pending::BoardClose(closing) if closing == &id))
+            {
+                self.deferred_board_closes.remove(&id);
+                continue;
+            }
+            let Some(work) = api::board_stream(&id, "close") else {
+                self.deferred_board_closes.remove(&id);
+                continue;
+            };
+            if self
+                .spawn(context, Pending::BoardClose(id.clone()), work, false)
+                .is_some()
+            {
+                self.deferred_board_closes.remove(&id);
+            } else {
+                break;
+            }
+        }
+    }
+
     fn close_event(&mut self, context: &mut Context) {
         self.event_open = false;
         self.deferred_event_next = false;
-        if !self.has_pending(|pending| matches!(pending, Pending::EventClose)) {
-            let _ = self.spawn(
-                context,
-                Pending::EventClose,
-                api::event_stream("close"),
-                false,
-            );
-        }
+        self.deferred_event_close = true;
+        self.flush_deferred_stream_closes(context);
     }
 
     fn schedule_event_reconnect(&mut self, context: &mut Context) {
@@ -1053,9 +1114,8 @@ impl Lichess {
                     self.retired_tasks.insert(task, pending);
                 }
             }
-            if let Some(work) = api::board_stream(&previous, "close") {
-                let _ = self.spawn(context, Pending::BoardClose(previous), work, false);
-            }
+            self.deferred_board_closes.insert(previous);
+            self.flush_deferred_stream_closes(context);
             self.board_open = None;
             self.board_ready = false;
             self.deferred_board_next = None;
@@ -1087,6 +1147,7 @@ impl Lichess {
             .retired_tasks
             .values()
             .any(|pending| matches!(pending, Pending::BoardClose(closing) if closing == &id))
+            || self.deferred_board_closes.contains(&id)
         {
             self.deferred_board_open = self.session.clone();
             return;
@@ -1154,12 +1215,8 @@ impl Lichess {
             self.board_ready = false;
             self.deferred_board_next = None;
         }
-        if self.has_pending(|pending| matches!(pending, Pending::BoardClose(open) if open == id)) {
-            return;
-        }
-        if let Some(work) = api::board_stream(id, "close") {
-            let _ = self.spawn(context, Pending::BoardClose(id.to_owned()), work, false);
-        }
+        self.deferred_board_closes.insert(id.to_owned());
+        self.flush_deferred_stream_closes(context);
     }
 
     fn discard_game(&mut self, context: &mut Context, game_id: &str) {
@@ -1308,7 +1365,64 @@ impl Lichess {
         }
     }
 
+    fn set_seek_rate_limit(&mut self, context: &mut Context, seconds: u32) {
+        let not_before = unix_seconds().saturating_add(u64::from(seconds.max(1)));
+        self.seek_rate_limit = Some(not_before);
+        context.store().save(
+            SEEK_RATE_KEY,
+            ObjectBuilder::new()
+                .set("version", 1_u32)
+                .set("not_before", u32::try_from(not_before).unwrap_or(u32::MAX))
+                .build()
+                .to_json()
+                .into_bytes(),
+        );
+    }
+
+    fn clear_seek_rate_limit(&mut self, context: &mut Context) {
+        if self.seek_rate_limit.take().is_some() {
+            context.store().forget(SEEK_RATE_KEY);
+        }
+    }
+
+    fn seek_rate_remaining(&self) -> Option<u32> {
+        Some(
+            u32::try_from(self.seek_rate_limit?.saturating_sub(unix_seconds())).unwrap_or(u32::MAX),
+        )
+    }
+
+    fn schedule_seek_rate_wait(&mut self, context: &mut Context, remaining: u32) {
+        if self.suspended
+            || self.has_pending(|pending| matches!(pending, Pending::SeekRateWait { .. }))
+        {
+            return;
+        }
+        if remaining == 0 {
+            self.clear_seek_rate_limit(context);
+            return;
+        }
+        let step = remaining.min(300);
+        let _ = self.spawn(
+            context,
+            Pending::SeekRateWait {
+                remaining: remaining.saturating_sub(step),
+            },
+            Task::Sleep { seconds: step },
+            false,
+        );
+    }
+
     fn start_seek(&mut self, context: &mut Context) {
+        if let Some(remaining) = self.seek_rate_remaining() {
+            if remaining > 0 {
+                self.notice = Some(format!(
+                    "Lichess asked pairing to wait {remaining}s before another seek."
+                ));
+                self.schedule_seek_rate_wait(context, remaining);
+                return;
+            }
+            self.clear_seek_rate_limit(context);
+        }
         if self.seek_task.is_some() || !self.event_open || !self.playing_ready {
             self.notice = Some(
                 "The event stream and current-game snapshot must be ready before pairing."
@@ -1776,6 +1890,7 @@ impl Lichess {
             && self.loaded_puzzles
             && self.loaded_board_rate
             && self.loaded_event_rate
+            && self.loaded_seek_rate
             && self.session.is_some()
         {
             self.validate_account(context);
@@ -2231,6 +2346,9 @@ impl Lichess {
                     self.seek_candidate = None;
                     self.clock.stop(context);
                     self.route = Route::Play;
+                    let seconds = delay.unwrap_or(30).max(1);
+                    self.set_seek_rate_limit(context, seconds);
+                    self.schedule_seek_rate_wait(context, seconds);
                 }
                 Pending::Action {
                     action,
@@ -2254,6 +2372,12 @@ impl Lichess {
                     self.event_backoff = 1;
                     let _ = self.refresh_playing(context);
                     self.open_event_stream(context);
+                    if let Some(remaining) = self
+                        .seek_rate_remaining()
+                        .filter(|remaining| *remaining > 0)
+                    {
+                        self.schedule_seek_rate_wait(context, remaining);
+                    }
                 } else {
                     self.account = AccountState::Failed(
                         "Lichess returned an account response this client cannot read.".to_owned(),
@@ -2360,6 +2484,9 @@ impl Lichess {
                         "No gameStart followed the ended seek. It was not replayed.".to_owned(),
                     );
                 }
+            }
+            Pending::SeekRateWait { remaining } => {
+                self.schedule_seek_rate_wait(context, remaining);
             }
             Pending::BoardOpen(id) => {
                 if self
@@ -2563,6 +2690,7 @@ impl Lichess {
             | Pending::EventRateWait { .. }
             | Pending::EventClose
             | Pending::SeekGrace
+            | Pending::SeekRateWait { .. }
             | Pending::BoardRetry(_)
             | Pending::BoardRateWait { .. }
             | Pending::BoardClose(_)
@@ -2658,6 +2786,16 @@ impl Lichess {
         if self.accepted_challenge.is_some() {
             self.reconcile_accepted_challenge = true;
         }
+        if self.event_open || self.deferred_event_next {
+            self.deferred_event_close = true;
+        }
+        if let Some(id) = self
+            .board_open
+            .clone()
+            .or_else(|| self.deferred_board_next.clone())
+        {
+            self.deferred_board_closes.insert(id);
+        }
         for (task, pending) in self.tasks.clone() {
             if matches!(
                 pending,
@@ -2674,6 +2812,7 @@ impl Lichess {
                     | Pending::BoardRateWait { .. }
                     | Pending::Seek
                     | Pending::SeekGrace
+                    | Pending::SeekRateWait { .. }
             ) {
                 context.cancel(task);
                 self.tasks.remove(&task);
@@ -2691,6 +2830,7 @@ impl Lichess {
         self.board_ready = false;
         self.deferred_board_next = None;
         self.clock.stop(context);
+        self.flush_deferred_stream_closes(context);
     }
 
     #[cfg(debug_assertions)]
@@ -2816,6 +2956,7 @@ impl Lichess {
         self.loaded_puzzles = true;
         self.loaded_board_rate = true;
         self.loaded_event_rate = true;
+        self.loaded_seek_rate = true;
         true
     }
 
@@ -2841,6 +2982,7 @@ impl KoboApp for Lichess {
         context.store().load(PUZZLE_KEY);
         context.store().load(BOARD_RATE_KEY);
         context.store().load(EVENT_RATE_KEY);
+        context.store().load(SEEK_RATE_KEY);
         self.show(context);
     }
 
@@ -2882,6 +3024,17 @@ impl KoboApp for Lichess {
                         context.store().forget(EVENT_RATE_KEY);
                         self.notice =
                             Some("Corrupted event retry metadata was discarded.".to_owned());
+                    }
+                }
+            } else if key == SEEK_RATE_KEY {
+                self.loaded_seek_rate = true;
+                if let Some(value) = value {
+                    if let Some(not_before) = decode_rate_deadline(&value) {
+                        self.seek_rate_limit = Some(not_before);
+                    } else {
+                        context.store().forget(SEEK_RATE_KEY);
+                        self.notice =
+                            Some("Corrupted pairing retry metadata was discarded.".to_owned());
                     }
                 }
             }
@@ -3088,6 +3241,7 @@ impl KoboApp for Lichess {
                 } else if self.accepted_challenge.is_some() || self.reconcile_accepted_challenge {
                     let _ = self.refresh_playing(context);
                 }
+                self.flush_deferred_stream_closes(context);
                 self.retry_deferred_board(context);
                 self.retry_deferred_event(context);
             }
@@ -3098,6 +3252,7 @@ impl KoboApp for Lichess {
             TaskOutcome::Failed(error) => self.handle_failed(context, pending, error),
             TaskOutcome::Cancelled => self.handle_cancelled(context, &pending),
         }
+        self.flush_deferred_stream_closes(context);
         self.retry_deferred_board(context);
         self.retry_deferred_event(context);
         self.show(context);
@@ -3284,7 +3439,7 @@ mod tests {
     use super::{
         api, board_cells, clock, AccountState, ActionScope, Challenge, ChallengeDirection,
         ChallengeTime, Color, FullGame, Game, GameAction, Lichess, Pending, Player, Puzzle, Route,
-        ServerState, Session, BOARD_RATE_KEY, EVENT_RATE_KEY,
+        ServerState, Session, BOARD_RATE_KEY, EVENT_RATE_KEY, SEEK_RATE_KEY,
     };
     use kobo_sdk::{action_id, ActionId, Command, Context, KoboApp, StoreRequest, TaskOutcome};
     use kobo_ui::{Chrome, CLARA_BW_METRICS};
@@ -3557,6 +3712,64 @@ mod tests {
             })
             .count();
         assert_eq!(seeks, 1);
+    }
+
+    #[test]
+    fn seek_retry_after_disables_immediate_duplicate_pairing() {
+        let mut app = Lichess {
+            route: Route::Pairing,
+            account: AccountState::Ready(super::Account {
+                id: "owner123".to_owned(),
+                username: "Owner".to_owned(),
+            }),
+            event_open: true,
+            playing_ready: true,
+            seek_waiting: true,
+            ..Lichess::default()
+        };
+        let mut context = Context::default();
+        app.handle_completed(
+            &mut context,
+            Pending::Seek,
+            b"COBALT-HTTP/1 429\nRetry-After: 27\n\n",
+        );
+        assert_eq!(app.route, Route::Play);
+        assert!(app.seek_rate_remaining().is_some_and(|seconds| seconds > 0));
+        assert!(app.has_pending(|pending| { matches!(pending, Pending::SeekRateWait { .. }) }));
+        assert!(context.commands().iter().any(|command| {
+            matches!(
+                command,
+                Command::Store(StoreRequest::Save { key, .. }) if key == SEEK_RATE_KEY
+            )
+        }));
+        let before = context
+            .commands()
+            .iter()
+            .filter(|command| {
+                matches!(
+                    command,
+                    Command::Spawn {
+                        work: kobo_sdk::Task::Post { url, .. },
+                        ..
+                    } if url.ends_with("/api/board/seek")
+                )
+            })
+            .count();
+        app.start_seek(&mut context);
+        let after = context
+            .commands()
+            .iter()
+            .filter(|command| {
+                matches!(
+                    command,
+                    Command::Spawn {
+                        work: kobo_sdk::Task::Post { url, .. },
+                        ..
+                    } if url.ends_with("/api/board/seek")
+                )
+            })
+            .count();
+        assert_eq!(after, before);
     }
 
     #[test]
@@ -4291,6 +4504,30 @@ mod tests {
                 command,
                 Command::Cancel(task) if *task == event_close || *task == board_close
             )
+        }));
+    }
+
+    #[test]
+    fn suspend_defers_closing_idle_retained_streams_when_capacity_is_full() {
+        let mut app = app_with_game(&[], Color::White);
+        app.event_open = true;
+        app.deferred_event_next = true;
+        app.deferred_board_next = Some("abcdEF12".to_owned());
+        let mut full = Context::default();
+        for _ in 0..4 {
+            assert!(full.spawn(kobo_sdk::Task::Sleep { seconds: 30 }).is_some());
+        }
+        app.close_live_reads(&mut full);
+        assert!(app.deferred_event_close);
+        assert!(app.deferred_board_closes.contains("abcdEF12"));
+
+        let mut available = Context::default();
+        app.flush_deferred_stream_closes(&mut available);
+        assert!(!app.deferred_event_close);
+        assert!(!app.deferred_board_closes.contains("abcdEF12"));
+        assert!(app.has_pending(|pending| matches!(pending, Pending::EventClose)));
+        assert!(app.has_pending(|pending| {
+            matches!(pending, Pending::BoardClose(id) if id == "abcdEF12")
         }));
     }
 
