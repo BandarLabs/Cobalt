@@ -1,9 +1,9 @@
 //! The device half of Paperterm. It renders host rows but never owns a shell.
-use kobo_sdk::keyboard::{Keyboard, Pressed};
+use kobo_sdk::keyboard::{Keyboard, Layer, Pressed};
 use kobo_sdk::terminal::{TerminalKeys, Typed};
 use kobo_sdk::{
-    action_id, ActionId, BannerLevel, Caret, Context, KoboApp, Orientation, Screen, ScreenBuilder,
-    Space, StoreResult, Task, TaskId, TaskOutcome,
+    action_id, ActionId, BannerLevel, Caret, Context, DisplayMetrics, KoboApp, Orientation, Screen,
+    ScreenBuilder, Space, StoreResult, Task, TaskId, TaskOutcome,
 };
 use std::process::ExitCode;
 
@@ -15,9 +15,15 @@ const FAILURE_SLEEP_SECONDS: u32 = 5;
 const MAX_REPLY_BYTES: u32 = 64 * 1024;
 const PAIRING: &str = "pairing";
 const REPAIR: &str = "repair";
+const TOGGLE_KEYBOARD: &str = "toggle-keyboard";
 const OFF_AIR: &str = "off the air";
 const PAIRING_REFUSED: &str = "Pairing was refused — run kobo stream init.";
 const INPUT_REFUSED: &str = "Input was not accepted by your computer.";
+const KB_SHIFT: &str = "kb.shift";
+const KB_LAYER: &str = "kb.layer";
+const KB_SPACE: &str = "kb.space";
+const KB_BACKSPACE: &str = "kb.backspace";
+const KB_ENTER: &str = "kb.enter";
 const CONTROL_COLUMNS: u8 = 6;
 const CONTROL_KEYS: [(&str, &str, &[u8]); 9] = [
     ("key-up", "↑", b"\x1b[A"),
@@ -55,13 +61,6 @@ impl Input {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum Hello {
-    Ready,
-    Resize,
-    Invalid,
-}
-
 struct Paperterm {
     view: View,
     keyboard: Keyboard,
@@ -70,10 +69,13 @@ struct Paperterm {
     rows: Vec<String>,
     cursor: Option<Caret>,
     input: Input,
-    grid_input: Input,
+    keyboard_open: bool,
     session: Option<u64>,
     sequence: u64,
+    hello: Option<TaskId>,
+    hello_grid: Option<(u16, u16)>,
     poll: Option<TaskId>,
+    renegotiate: bool,
     nap: Option<TaskId>,
     send: Option<TaskId>,
     keys: TerminalKeys,
@@ -90,10 +92,13 @@ impl Default for Paperterm {
             rows: Vec::new(),
             cursor: None,
             input: Input::None,
-            grid_input: Input::Full,
+            keyboard_open: false,
             session: None,
             sequence: 0,
+            hello: None,
+            hello_grid: None,
             poll: None,
+            renegotiate: false,
             nap: None,
             send: None,
             keys: TerminalKeys::new(),
@@ -139,8 +144,18 @@ impl Paperterm {
                 } else {
                     "Paperterm"
                 })
-                .top_bar_action(REPAIR, "Pairing")
-                .terminal(self.rows.clone(), self.cursor);
+                .top_bar_action(REPAIR, "Pairing");
+                if self.view == View::Watching && self.input == Input::Full {
+                    screen = screen.top_bar_action(
+                        TOGGLE_KEYBOARD,
+                        if self.keyboard_open {
+                            "Close keys"
+                        } else {
+                            "Keyboard"
+                        },
+                    );
+                }
+                screen = screen.terminal(self.rows.clone(), self.cursor);
                 if let Some(failure) = &self.failure {
                     screen = screen.banner(BannerLevel::Attention, failure.clone());
                 }
@@ -148,13 +163,15 @@ impl Paperterm {
                     screen = screen.secondary("The host held the final terminal screen.");
                 } else {
                     screen = match self.input {
-                        Input::None => screen,
                         Input::Controls => screen.grid(
                             CONTROL_COLUMNS,
                             false,
                             CONTROL_KEYS.map(|(name, label, _)| (name, label)),
                         ),
-                        Input::Full => screen.terminal_keys(&self.keys),
+                        Input::Full if self.keyboard_open => {
+                            paperterm_terminal_keys(screen, &self.keys)
+                        }
+                        Input::None | Input::Full => screen,
                     };
                 }
                 screen.build()
@@ -163,29 +180,43 @@ impl Paperterm {
     }
 
     fn grid(&self, context: &Context) -> (u16, u16) {
-        kobo_sdk::terminal_grid_for(
-            &Self::screen_for_grid(self.grid_input),
+        Self::grid_for(
+            self.input,
+            self.keyboard_open,
             &context.metrics().oriented(Orientation::Landscape),
         )
     }
-    fn screen_for_grid(input: Input) -> Screen {
-        let screen = ScreenBuilder::new("paperterm-grid")
+    fn grid_for(input: Input, keyboard_open: bool, metrics: &DisplayMetrics) -> (u16, u16) {
+        kobo_sdk::terminal_grid_for(&Self::screen_for_grid(input, keyboard_open), metrics)
+    }
+    fn screen_for_grid(input: Input, keyboard_open: bool) -> Screen {
+        let mut screen = ScreenBuilder::new("paperterm-grid")
             .top_bar("Paperterm")
-            .top_bar_action(REPAIR, "Pairing")
-            .terminal(Vec::<String>::new(), None);
-        match input {
-            Input::None => screen,
-            Input::Controls => screen.grid(
+            .top_bar_action(REPAIR, "Pairing");
+        if input == Input::Full {
+            screen = screen.top_bar_action(
+                TOGGLE_KEYBOARD,
+                if keyboard_open {
+                    "Close keys"
+                } else {
+                    "Keyboard"
+                },
+            );
+        }
+        screen = screen.terminal(Vec::<String>::new(), None);
+        match (input, keyboard_open) {
+            (Input::Controls, _) => screen.grid(
                 CONTROL_COLUMNS,
                 false,
                 CONTROL_KEYS.map(|(name, label, _)| (name, label)),
             ),
-            Input::Full => screen.terminal_keys(&TerminalKeys::new()),
+            (Input::Full, true) => paperterm_terminal_keys(screen, &TerminalKeys::new()),
+            (Input::None | Input::Full, _) => screen,
         }
         .build()
     }
     fn hello(&mut self, context: &mut Context) {
-        if self.poll.is_some() {
+        if self.hello.is_some() {
             return;
         }
         let (columns, rows) = self.grid(context);
@@ -193,16 +224,32 @@ impl Paperterm {
             "https://{}/hello?token={}&grid={}x{}",
             self.address, self.code, columns, rows
         );
-        self.poll = context.spawn_retrying(Task::Fetch {
+        self.hello = context.spawn_retrying(Task::Fetch {
             url,
             offset: 0,
             max_bytes: MAX_REPLY_BYTES,
             credential: None,
             headers: Vec::new(),
         });
+        if self.hello.is_some() {
+            self.hello_grid = Some((columns, rows));
+        }
+    }
+    fn renegotiate(&mut self, context: &mut Context) {
+        if self.hello.is_some() {
+            return;
+        }
+        if let Some(poll) = self.poll {
+            if !self.renegotiate {
+                context.cancel(poll);
+            }
+            self.renegotiate = true;
+        } else {
+            self.hello(context);
+        }
     }
     fn poll(&mut self, context: &mut Context) {
-        if self.poll.is_some() || self.session.is_none() {
+        if self.poll.is_some() || self.hello.is_some() || self.session.is_none() {
             return;
         }
         let url = format!(
@@ -276,16 +323,16 @@ impl Paperterm {
         self.show(context);
         true
     }
-    fn parse_hello(&mut self, bytes: &[u8]) -> Hello {
+    fn parse_hello(&mut self, bytes: &[u8]) -> bool {
         let Ok(value) = kobo_json::parse(std::str::from_utf8(bytes).unwrap_or("")) else {
-            return Hello::Invalid;
+            return false;
         };
         let Some(session) = value
             .get("session")
             .and_then(kobo_json::Value::as_i64)
             .and_then(|id| u64::try_from(id).ok())
         else {
-            return Hello::Invalid;
+            return false;
         };
         let input = Input::from_wire(
             value
@@ -294,13 +341,14 @@ impl Paperterm {
                 .unwrap_or("none"),
         );
         self.input = input;
-        if input != self.grid_input {
-            self.grid_input = input;
-            return Hello::Resize;
+        if input != Input::Full {
+            self.keyboard_open = false;
+        }
+        if self.session != Some(session) {
+            self.sequence = 0;
         }
         self.session = Some(session);
-        self.sequence = 0;
-        Hello::Ready
+        true
     }
     fn parse_screen(&mut self, bytes: &[u8]) -> Option<bool> {
         let Ok(value) = kobo_json::parse(std::str::from_utf8(bytes).unwrap_or("")) else {
@@ -354,6 +402,70 @@ impl Paperterm {
     }
 }
 
+fn paperterm_terminal_keys(screen: ScreenBuilder, keys: &TerminalKeys) -> ScreenBuilder {
+    let keyboard = keys.keyboard();
+    let shifted = keyboard.is_shifted();
+    let row = |row, characters: &str| {
+        characters
+            .chars()
+            .enumerate()
+            .map(|(column, character)| {
+                (
+                    format!("kb.r{row}c{column}"),
+                    if shifted {
+                        character.to_ascii_uppercase().to_string()
+                    } else {
+                        character.to_string()
+                    },
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    let rows = match keyboard.layer() {
+        Layer::Letters => ["qwertyuiop", "asdfghjkl", "zxcvbnm"],
+        Layer::Symbols => ["1234567890", "-/:;()&@\"", ".,?!'+="],
+    };
+    let top = row(0, rows[0]);
+    let mut home = row(1, rows[1]);
+    home.push((
+        "term.ctrl".to_string(),
+        if keys.is_control() { "CTRL" } else { "ctrl" }.to_string(),
+    ));
+    let mut lower = vec![(
+        KB_SHIFT.to_string(),
+        if shifted { "⇧•" } else { "⇧" }.to_string(),
+    )];
+    lower.extend(row(2, rows[2]));
+    lower.push((KB_BACKSPACE.to_string(), "back".to_string()));
+    lower.push(("term.esc".to_string(), "esc".to_string()));
+
+    screen
+        .fill()
+        .grid(u8::try_from(top.len()).unwrap_or(u8::MAX), false, top)
+        .grid(u8::try_from(home.len()).unwrap_or(u8::MAX), false, home)
+        .grid(u8::try_from(lower.len()).unwrap_or(u8::MAX), false, lower)
+        .grid(
+            8,
+            false,
+            [
+                ("term.tab".to_string(), "tab".to_string()),
+                (
+                    KB_LAYER.to_string(),
+                    match keyboard.layer() {
+                        Layer::Letters => "?123".to_string(),
+                        Layer::Symbols => "abc".to_string(),
+                    },
+                ),
+                (KB_SPACE.to_string(), "space".to_string()),
+                (KB_ENTER.to_string(), "enter".to_string()),
+                ("term.up".to_string(), "up".to_string()),
+                ("term.down".to_string(), "down".to_string()),
+                ("term.left".to_string(), "left".to_string()),
+                ("term.right".to_string(), "right".to_string()),
+            ],
+        )
+}
+
 impl KoboApp for Paperterm {
     fn on_start(&mut self, context: &mut Context) {
         context.set_orientation(Orientation::Landscape);
@@ -375,6 +487,7 @@ impl KoboApp for Paperterm {
             address.trim().clone_into(&mut self.address);
             code.trim().clone_into(&mut self.code);
             self.view = View::Watching;
+            self.keyboard_open = false;
             self.hello(context);
         } else {
             self.view = View::Address;
@@ -386,13 +499,29 @@ impl KoboApp for Paperterm {
             return;
         }
         if action == action_id(REPAIR) {
+            if let Some(task) = self.hello.take() {
+                context.cancel(task);
+            }
+            if let Some(task) = self.poll.take() {
+                context.cancel(task);
+            }
+            self.hello_grid = None;
+            self.renegotiate = false;
             self.keyboard = Keyboard::with_text(&self.address);
+            self.keyboard_open = false;
+            self.input = Input::None;
             self.view = View::Address;
             self.session = None;
             self.show(context);
             return;
         }
         if matches!(self.view, View::Watching) {
+            if action == action_id(TOGGLE_KEYBOARD) && self.input == Input::Full {
+                self.keyboard_open = !self.keyboard_open;
+                self.renegotiate(context);
+                self.show(context);
+                return;
+            }
             if let Some((_, _, bytes)) = CONTROL_KEYS
                 .iter()
                 .find(|(name, _, _)| action == action_id(name))
@@ -411,42 +540,63 @@ impl KoboApp for Paperterm {
         }
     }
     fn on_task(&mut self, context: &mut Context, task: TaskId, outcome: TaskOutcome) {
-        if self.poll == Some(task) {
-            self.poll = None;
+        if self.hello == Some(task) {
+            self.hello = None;
+            let requested_grid = self.hello_grid.take();
             match outcome {
                 TaskOutcome::Completed(bytes) => {
-                    if self.session.is_none() {
-                        let previous_input = self.input;
-                        match self.parse_hello(&bytes) {
-                            Hello::Ready => {
-                                if self.clear_failure() || self.input != previous_input {
-                                    self.show(context);
-                                }
-                                if self.view != View::Ended {
-                                    self.poll(context);
-                                }
-                            }
-                            Hello::Resize => {
-                                if self.clear_failure() || self.input != previous_input {
-                                    self.show(context);
-                                }
-                                self.hello(context);
-                            }
-                            Hello::Invalid => {
-                                if self.set_failure(PAIRING_REFUSED) {
-                                    self.show(context);
-                                }
-                                self.retry(context);
-                            }
+                    let previous_input = self.input;
+                    let previous_keyboard_open = self.keyboard_open;
+                    if self.parse_hello(&bytes) {
+                        let repaint = self.clear_failure()
+                            || self.input != previous_input
+                            || self.keyboard_open != previous_keyboard_open;
+                        if repaint {
+                            self.show(context);
                         }
-                    } else if let Some(content_changed) = self.parse_screen(&bytes) {
+                        if requested_grid == Some(self.grid(context)) {
+                            if self.view != View::Ended {
+                                self.poll(context);
+                            }
+                        } else {
+                            self.hello(context);
+                        }
+                    } else {
+                        self.session = None;
+                        if self.set_failure(PAIRING_REFUSED) {
+                            self.show(context);
+                        }
+                        self.retry(context);
+                    }
+                }
+                TaskOutcome::Failed(_) => {
+                    self.session = None;
+                    if self.set_failure(OFF_AIR) {
+                        self.show(context);
+                    }
+                    self.retry(context);
+                }
+                TaskOutcome::Cancelled => {}
+            }
+        } else if self.poll == Some(task) {
+            self.poll = None;
+            let renegotiate = std::mem::take(&mut self.renegotiate);
+            match outcome {
+                TaskOutcome::Completed(bytes) => {
+                    if let Some(content_changed) = self.parse_screen(&bytes) {
                         let repaint = self.clear_failure() || content_changed;
                         if repaint {
                             self.show(context);
                         }
                         if self.view != View::Ended {
-                            self.poll(context);
+                            if renegotiate {
+                                self.hello(context);
+                            } else {
+                                self.poll(context);
+                            }
                         }
+                    } else if renegotiate {
+                        self.hello(context);
                     } else {
                         self.poll(context);
                     }
@@ -458,7 +608,11 @@ impl KoboApp for Paperterm {
                     }
                     self.retry(context);
                 }
-                TaskOutcome::Cancelled => {}
+                TaskOutcome::Cancelled => {
+                    if renegotiate && self.session.is_some() && self.view == View::Watching {
+                        self.hello(context);
+                    }
+                }
             }
         } else if self.nap == Some(task) {
             self.nap = None;
@@ -475,8 +629,16 @@ impl KoboApp for Paperterm {
         }
     }
     fn on_foreground(&mut self, context: &mut Context) {
-        if self.view == View::Watching && self.poll.is_none() && self.nap.is_none() {
-            self.poll(context);
+        if self.view == View::Watching
+            && self.hello.is_none()
+            && self.poll.is_none()
+            && self.nap.is_none()
+        {
+            if self.session.is_some() {
+                self.poll(context);
+            } else {
+                self.hello(context);
+            }
         }
     }
 }
@@ -518,6 +680,12 @@ mod tests {
     use super::*;
     use kobo_sdk::{Command, StoreRequest};
     use kobo_ui::{Chrome, CLARA_BW_METRICS};
+
+    fn begin_hello(app: &mut Paperterm, context: &mut Context) -> TaskId {
+        app.hello(context);
+        app.hello.expect("hello task")
+    }
+
     #[test]
     fn paired_start_measures_grid_and_asks_the_host() {
         let mut app = Paperterm::default();
@@ -548,6 +716,91 @@ mod tests {
             app.parse_screen(br#"{"seq":1,"rows":[],"ended":false,"exit":null}"#),
             Some(false)
         );
+    }
+
+    #[test]
+    fn full_input_starts_with_the_keyboard_hidden_and_the_larger_canvas() {
+        for metrics in [
+            CLARA_BW_METRICS,
+            CLARA_BW_METRICS.oriented(Orientation::Landscape),
+        ] {
+            let closed = Paperterm::grid_for(Input::Full, false, &metrics);
+            let open = Paperterm::grid_for(Input::Full, true, &metrics);
+            assert_eq!(closed.0, open.0);
+            assert!(
+                closed.1 > open.1,
+                "{}x{} did not return the hidden keyboard space to the terminal",
+                metrics.width,
+                metrics.height
+            );
+
+            let app = Paperterm {
+                view: View::Watching,
+                input: Input::Full,
+                ..Paperterm::default()
+            };
+            let layout = app.screen().layout_with(&metrics, &Chrome::measuring(true));
+            assert!(layout.rect_of_action(action_id(TOGGLE_KEYBOARD)).is_some());
+            assert!(layout.rect_of_action(action_id("kb.r0c0")).is_none());
+        }
+    }
+
+    #[test]
+    fn keyboard_toggle_renegotiates_without_replacing_terminal_state() {
+        let rows = vec!["first".to_owned(), "second".to_owned()];
+        let cursor = Some(Caret::new(1, 3));
+        let mut app = Paperterm {
+            view: View::Watching,
+            input: Input::Full,
+            rows: rows.clone(),
+            cursor,
+            session: Some(41),
+            sequence: 19,
+            ..Paperterm::default()
+        };
+        let _changed = app.keys.press(action_id("term.ctrl"));
+        let mut context = Context::default();
+
+        app.on_action(&mut context, action_id(TOGGLE_KEYBOARD));
+        assert!(app.keyboard_open);
+        assert_eq!(app.rows, rows);
+        assert_eq!(app.cursor, cursor);
+        assert_eq!(app.session, Some(41));
+        assert_eq!(app.sequence, 19);
+        assert!(app.keys.is_control());
+        let open_grid = app.hello_grid.expect("opening keys renegotiates");
+        assert!(app
+            .screen()
+            .layout_with(
+                &CLARA_BW_METRICS.oriented(Orientation::Landscape),
+                &Chrome::measuring(true),
+            )
+            .rect_of_action(action_id("kb.r0c0"))
+            .is_some());
+
+        let hello = app.hello.expect("open-grid hello");
+        app.on_task(
+            &mut context,
+            hello,
+            TaskOutcome::Completed(br#"{"session":41,"input":"full"}"#.to_vec()),
+        );
+        assert_eq!(app.session, Some(41));
+        assert_eq!(app.sequence, 19);
+        let poll = app.poll.expect("poll resumes after resize");
+
+        app.on_action(&mut context, action_id(TOGGLE_KEYBOARD));
+        assert!(!app.keyboard_open);
+        assert!(app.renegotiate);
+        assert!(context.commands().contains(&Command::Cancel(poll)));
+        app.on_task(&mut context, poll, TaskOutcome::Cancelled);
+        let closed_grid = app.hello_grid.expect("closing keys renegotiates");
+        assert_eq!(closed_grid.0, open_grid.0);
+        assert!(closed_grid.1 > open_grid.1);
+        assert_eq!(app.rows, rows);
+        assert_eq!(app.cursor, cursor);
+        assert_eq!(app.session, Some(41));
+        assert_eq!(app.sequence, 19);
+        assert!(app.keys.is_control());
     }
     #[test]
     fn controls_send_exact_bytes_and_full_input_is_not_shown_when_read_only() {
@@ -615,6 +868,48 @@ mod tests {
     }
 
     #[test]
+    fn reconnect_retains_terminal_rows_and_cursor_then_resumes_polling() {
+        let rows = vec!["Claude".to_owned(), "thinking…".to_owned()];
+        let cursor = Some(Caret::new(1, 9));
+        let mut app = Paperterm {
+            view: View::Watching,
+            address: "host:9332".to_owned(),
+            code: "abc123".to_owned(),
+            rows: rows.clone(),
+            cursor,
+            input: Input::Full,
+            session: Some(4),
+            sequence: 27,
+            poll: Some(TaskId(9)),
+            ..Paperterm::default()
+        };
+        let mut context = Context::default();
+        app.on_task(
+            &mut context,
+            TaskId(9),
+            TaskOutcome::Failed(kobo_sdk::TaskError::Unreachable),
+        );
+        assert_eq!(app.rows, rows);
+        assert_eq!(app.cursor, cursor);
+        assert_eq!(app.failure.as_deref(), Some(OFF_AIR));
+
+        let nap = app.nap.expect("retry sleep");
+        app.on_task(&mut context, nap, TaskOutcome::Completed(Vec::new()));
+        let hello = app.hello.expect("reconnect hello");
+        app.on_task(
+            &mut context,
+            hello,
+            TaskOutcome::Completed(br#"{"session":5,"input":"full"}"#.to_vec()),
+        );
+        assert_eq!(app.rows, rows);
+        assert_eq!(app.cursor, cursor);
+        assert_eq!(app.session, Some(5));
+        assert_eq!(app.sequence, 0);
+        assert_eq!(app.failure, None);
+        assert!(app.poll.is_some());
+    }
+
+    #[test]
     fn repeated_offline_failures_do_not_repaint() {
         let mut app = Paperterm {
             view: View::Watching,
@@ -642,10 +937,11 @@ mod tests {
             address: "host:9332".to_owned(),
             code: "abc123".to_owned(),
             failure: Some(OFF_AIR.to_owned()),
-            poll: Some(TaskId(9)),
             ..Paperterm::default()
         };
         let mut context = Context::default();
+        app.hello = Some(TaskId(9));
+        app.hello_grid = Some(app.grid(&context));
         app.on_task(
             &mut context,
             TaskId(9),
@@ -669,17 +965,18 @@ mod tests {
             address: "host:9332".to_owned(),
             code: "abc123".to_owned(),
             failure: Some(OFF_AIR.to_owned()),
-            poll: Some(TaskId(9)),
             ..Paperterm::default()
         };
         let mut context = Context::default();
+        app.hello = Some(TaskId(9));
+        app.hello_grid = Some(app.grid(&context));
         app.on_task(
             &mut context,
             TaskId(9),
             TaskOutcome::Completed(br#"{"session":4,"input":"controls"}"#.to_vec()),
         );
         assert_eq!(app.failure, None);
-        assert_eq!(app.session, None);
+        assert_eq!(app.session, Some(4));
         assert_eq!(
             context
                 .commands()
@@ -691,6 +988,7 @@ mod tests {
         assert!(context.commands().iter().any(
             |command| matches!(command, Command::Spawn { work: Task::Fetch { url, .. }, .. } if url.contains("/hello?"))
         ));
+        assert!(app.hello.is_some());
     }
 
     #[test]
@@ -700,11 +998,12 @@ mod tests {
             address: "host:9332".to_owned(),
             code: "abc123".to_owned(),
             input: Input::Full,
-            grid_input: Input::Full,
-            poll: Some(TaskId(9)),
+            session: Some(4),
+            hello: Some(TaskId(9)),
             ..Paperterm::default()
         };
         let mut context = Context::default();
+        app.hello_grid = Some(app.grid(&context));
         app.on_task(
             &mut context,
             TaskId(9),
@@ -769,17 +1068,19 @@ mod tests {
 
     #[test]
     fn paperterm_uses_the_terminal_viewport_reported_by_the_runtime() {
-        let metrics = CLARA_BW_METRICS.oriented(Orientation::Landscape);
-        let full = kobo_sdk::terminal_grid_for(&Paperterm::screen_for_grid(Input::Full), &metrics);
-        let controls =
-            kobo_sdk::terminal_grid_for(&Paperterm::screen_for_grid(Input::Controls), &metrics);
-        assert!(full.0 > 0 && full.1 > 0);
-        assert!(full.0 > full.1);
-        assert_eq!(controls.0, full.0);
-        assert!(
-            controls.1 > full.1,
-            "control mode {controls:?} should exceed full-keyboard mode {full:?}"
-        );
+        for metrics in [
+            CLARA_BW_METRICS,
+            CLARA_BW_METRICS.oriented(Orientation::Landscape),
+        ] {
+            let hidden = Paperterm::grid_for(Input::Full, false, &metrics);
+            let open = Paperterm::grid_for(Input::Full, true, &metrics);
+            let controls = Paperterm::grid_for(Input::Controls, false, &metrics);
+            assert!(hidden.0 > 0 && hidden.1 > 0);
+            assert_eq!(hidden.0, open.0);
+            assert_eq!(controls.0, hidden.0);
+            assert!(hidden.1 > open.1);
+            assert!(hidden.1 > controls.1);
+        }
     }
 
     #[test]
@@ -799,10 +1100,15 @@ mod tests {
             CLARA_BW_METRICS,
             CLARA_BW_METRICS.oriented(Orientation::Landscape),
         ] {
-            for input in [Input::Controls, Input::Full] {
+            for (input, keyboard_open) in [
+                (Input::Controls, false),
+                (Input::Full, false),
+                (Input::Full, true),
+            ] {
                 let app = Paperterm {
                     view: View::Watching,
                     input,
+                    keyboard_open,
                     rows: vec!["terminal row".to_owned(); 64],
                     ..Paperterm::default()
                 };
@@ -814,15 +1120,22 @@ mod tests {
                     metrics.width,
                     metrics.height
                 );
-                let required = match input {
-                    Input::Controls => CONTROL_KEYS
+                let required = match (input, keyboard_open) {
+                    (Input::Controls, _) => CONTROL_KEYS
                         .iter()
                         .map(|(name, _, _)| action_id(name))
                         .collect::<Vec<_>>(),
-                    Input::Full => ["term.esc", "term.right", "kb.r0c0", "kb.enter"]
-                        .map(action_id)
-                        .to_vec(),
-                    Input::None => unreachable!(),
+                    (Input::Full, true) => [
+                        TOGGLE_KEYBOARD,
+                        "term.esc",
+                        "term.right",
+                        "kb.r0c0",
+                        KB_ENTER,
+                    ]
+                    .map(action_id)
+                    .to_vec(),
+                    (Input::Full, false) => vec![action_id(TOGGLE_KEYBOARD)],
+                    (Input::None, _) => unreachable!(),
                 };
                 let layout = screen.layout_with(&metrics, &chrome);
                 for action in required {
@@ -839,38 +1152,102 @@ mod tests {
 
     #[test]
     fn negotiated_grid_matches_the_rows_the_layout_can_show() {
-        let metrics = CLARA_BW_METRICS.oriented(Orientation::Landscape);
-        for input in [Input::None, Input::Controls, Input::Full] {
-            let (_, rows) =
-                kobo_sdk::terminal_grid_for(&Paperterm::screen_for_grid(input), &metrics);
-            let app = Paperterm {
-                view: View::Watching,
-                input,
-                rows: vec!["terminal row".to_owned(); usize::from(rows)],
-                ..Paperterm::default()
-            };
-            let layout = app.screen().layout_with(&metrics, &Chrome::measuring(true));
-            let shown = layout
-                .nodes
-                .iter()
-                .find(|node| node.kind == kobo_ui::LayoutKind::TerminalGrid)
-                .expect("terminal")
-                .text_lines
-                .len();
-            assert_eq!(shown, usize::from(rows), "{input:?}");
+        for metrics in [
+            CLARA_BW_METRICS,
+            CLARA_BW_METRICS.oriented(Orientation::Landscape),
+        ] {
+            for (input, keyboard_open) in [
+                (Input::None, false),
+                (Input::Controls, false),
+                (Input::Full, false),
+                (Input::Full, true),
+            ] {
+                let (_, rows) = Paperterm::grid_for(input, keyboard_open, &metrics);
+                let app = Paperterm {
+                    view: View::Watching,
+                    input,
+                    keyboard_open,
+                    rows: vec!["terminal row".to_owned(); usize::from(rows)],
+                    ..Paperterm::default()
+                };
+                let layout = app.screen().layout_with(&metrics, &Chrome::measuring(true));
+                let shown = layout
+                    .nodes
+                    .iter()
+                    .find(|node| node.kind == kobo_ui::LayoutKind::TerminalGrid)
+                    .expect("terminal")
+                    .text_lines
+                    .len();
+                assert_eq!(
+                    shown,
+                    usize::from(rows),
+                    "{input:?}, keyboard_open={keyboard_open}, {}x{}",
+                    metrics.width,
+                    metrics.height
+                );
+            }
         }
     }
 
     #[test]
     fn hello_is_repeated_once_when_the_host_input_mode_changes_the_grid() {
-        let reply = br#"{"session":42,"grid":"100x25","title":"claude","input":"controls"}"#;
-        let mut app = Paperterm::default();
-        assert_eq!(app.grid_input, Input::Full);
-        assert_eq!(app.parse_hello(reply), Hello::Resize);
-        assert_eq!(app.grid_input, Input::Controls);
+        let mut app = Paperterm {
+            view: View::Watching,
+            address: "host:9332".to_owned(),
+            code: "abc123".to_owned(),
+            ..Paperterm::default()
+        };
+        let mut context = Context::default();
+        let first = begin_hello(&mut app, &mut context);
+        let first_grid = app.hello_grid.expect("initial grid");
+        app.on_task(
+            &mut context,
+            first,
+            TaskOutcome::Completed(
+                br#"{"session":42,"grid":"100x25","title":"claude","input":"controls"}"#.to_vec(),
+            ),
+        );
         assert_eq!(app.input, Input::Controls);
-        assert_eq!(app.session, None);
-        assert_eq!(app.parse_hello(reply), Hello::Ready);
         assert_eq!(app.session, Some(42));
+        let second = app.hello.expect("control grid hello");
+        let second_grid = app.hello_grid.expect("control grid");
+        assert_ne!(second_grid, first_grid);
+        app.on_task(
+            &mut context,
+            second,
+            TaskOutcome::Completed(br#"{"session":42,"input":"controls"}"#.to_vec()),
+        );
+        assert!(app.hello.is_none());
+        assert!(app.poll.is_some());
+    }
+
+    #[test]
+    fn landscape_keyboard_is_compact_and_all_keys_remain_in_bounds() {
+        let metrics = CLARA_BW_METRICS.oriented(Orientation::Landscape);
+        let app = Paperterm {
+            view: View::Watching,
+            input: Input::Full,
+            keyboard_open: true,
+            rows: vec!["terminal".to_owned(); 64],
+            ..Paperterm::default()
+        };
+        let layout = app.screen().layout_with(&metrics, &Chrome::measuring(true));
+        let keys = layout
+            .nodes
+            .iter()
+            .filter(|node| matches!(node.kind, kobo_ui::LayoutKind::Cell(..)))
+            .collect::<Vec<_>>();
+        let mut key_rows = keys.iter().map(|key| key.rect.y).collect::<Vec<_>>();
+        key_rows.sort_unstable();
+        key_rows.dedup();
+        assert_eq!(key_rows.len(), 4);
+        assert!(keys.iter().all(|key| {
+            key.rect.x >= 0
+                && key.rect.y >= 0
+                && key.rect.x + key.rect.width <= metrics.width
+                && key.rect.y + key.rect.height <= metrics.height
+                && key.rect.width >= metrics.touch_target_minimum()
+                && key.rect.height >= metrics.touch_target_minimum()
+        }));
     }
 }
