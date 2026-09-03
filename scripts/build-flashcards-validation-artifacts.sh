@@ -25,6 +25,17 @@ find_arm_tool() {
   return 1
 }
 
+find_rust_lld() {
+  rust_sysroot=$(rustc --print sysroot) || return 1
+  for candidate in "$rust_sysroot"/lib/rustlib/*/bin/rust-lld; do
+    if [ -x "$candidate" ]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
 case $1 in
   /*) target_root=$1 ;;
   *) target_root=$(pwd)/$1 ;;
@@ -66,28 +77,30 @@ find "$target_root" -mindepth 1 -maxdepth 1 \
   -exec rm -rf -- {} +
 mkdir -p "$artifacts/catalog" "$target_root/build-tmp"
 export TMPDIR="$target_root/build-tmp"
-if [ -z "${CC_armv7_unknown_linux_musleabihf:-}" ]; then
-  CC_armv7_unknown_linux_musleabihf=$(find_arm_tool \
-    armv7-unknown-linux-musleabihf-gcc \
-    armv7-linux-musleabihf-gcc \
-    arm-linux-musleabihf-gcc \
-    arm-linux-gnueabihf-gcc) || {
-      echo "no supported ARM C compiler was found" >&2
-      exit 1
-    }
-  export CC_armv7_unknown_linux_musleabihf
-fi
-if [ -z "${AR_armv7_unknown_linux_musleabihf:-}" ]; then
-  AR_armv7_unknown_linux_musleabihf=$(find_arm_tool \
-    armv7-unknown-linux-musleabihf-ar \
-    armv7-linux-musleabihf-ar \
-    arm-linux-musleabihf-ar \
-    arm-linux-gnueabihf-ar) || {
-      echo "no supported ARM archiver was found" >&2
-      exit 1
-    }
-  export AR_armv7_unknown_linux_musleabihf
-fi
+CC_armv7_unknown_linux_musleabihf=$(find_arm_tool \
+  armv7-unknown-linux-musleabihf-gcc \
+  armv7-linux-musleabihf-gcc \
+  arm-linux-musleabihf-gcc \
+  arm-linux-gnueabihf-gcc) || {
+    echo "no supported ARM C compiler was found" >&2
+    exit 1
+  }
+AR_armv7_unknown_linux_musleabihf=$(find_arm_tool \
+  armv7-unknown-linux-musleabihf-ar \
+  armv7-linux-musleabihf-ar \
+  arm-linux-musleabihf-ar \
+  arm-linux-gnueabihf-ar) || {
+    echo "no supported ARM archiver was found" >&2
+    exit 1
+  }
+CARGO_TARGET_ARMV7_UNKNOWN_LINUX_MUSLEABIHF_LINKER=$(find_rust_lld) || {
+  echo "rust-lld was not found in the active Rust toolchain" >&2
+  exit 1
+}
+export CC_armv7_unknown_linux_musleabihf
+export AR_armv7_unknown_linux_musleabihf
+export CARGO_TARGET_ARMV7_UNKNOWN_LINUX_MUSLEABIHF_LINKER
+unset RUSTFLAGS CARGO_ENCODED_RUSTFLAGS CARGO_BUILD_RUSTFLAGS
 
 (
   cd "$repo"
