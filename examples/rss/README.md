@@ -5,6 +5,11 @@ The sites you read, on the device.
 Type an address, pick the feed it finds, and read the articles without leaving
 the application.
 
+Feeds starts in standalone mode. Settings can switch the same app to Miniflux:
+enter an HTTPS server and a credential name (default: `miniflux`), then install
+the token with `kobo secret set miniflux`. The runtime attaches that named token
+as `X-Auth-Token`; neither mode stores token bytes.
+
 | The articles | Finding a feed |
 | --- | --- |
 | ![A list of articles with glyph leads and clamped titles](screenshots/articles.png) | ![The search screen, with the Feedsearch attribution](screenshots/search.png) |
@@ -27,7 +32,7 @@ few hundred lines rather than a browser.
 Their terms ask for a visible attribution wherever their results are shown,
 which is why it is on both the search screen and the results screen.
 
-## Why the articles are read from the feed and not from the site
+## Reading offline
 
 Because the feed is the readable copy. Most publishers put the whole post in
 `content:encoded`, and the ones that do not put a summary there. Either way it
@@ -35,11 +40,41 @@ is prose with a little markup, which is exactly what an E Ink panel wants.
 Following the link instead would mean fetching a modern web page: a megabyte of
 layout, script and advertising wrapped around the same words.
 
+Subscribed standalone feeds retain a bounded readable cache per feed, plus
+read/unread and starred state keyed by the entry GUID/id or its safe canonical
+link. Relative RSS, Atom, and JSON Feed links resolve against the exact
+subscription URL requested. Miniflux retains cached entries and full articles;
+read and star changes queue durably while offline and drain on the next sync.
+Unauthorized tokens, offline devices, and unreachable servers leave cached
+reading intact and explain the next action on screen.
+
+### Conditional requests
+
+The current SDK cannot implement ETag or Last-Modified conditional GET
+correctly. `TaskOutcome` is exactly `Completed(Vec<u8>)`, `Failed`, or
+`Cancelled`: it carries no response status, headers, or redirected final URL.
+The app therefore does not fake validators. Runtime task response metadata is
+the concrete blocker; until it exposes those fields, each sync fetches the
+requested feed URL normally.
+
 ## Running it
 
 ```sh
 kobo run --sim --app rss                # in the browser simulator
 kobo deploy --device <ip>               # onto a reader over Wi-Fi
+```
+
+## Deterministic drives
+
+The scripts exercise the standalone discovery surface and the Miniflux mode
+switch without relying on a network service:
+
+```sh
+kobo dev
+kobo drive --ideal --script examples/rss/drive-standalone.kobo --shots examples/rss/screenshots
+
+kobo dev
+kobo drive --ideal --script examples/rss/drive-miniflux.kobo --shots examples/rss/screenshots
 ```
 
 ---

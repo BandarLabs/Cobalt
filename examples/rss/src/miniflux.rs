@@ -1,0 +1,326 @@
+//! Narrow Miniflux request builders and response readers.
+//!
+//! The reader persists only a credential *name*. `kobod` resolves that name
+//! into `X-Auth-Token` while executing a task, so token bytes never enter this
+//! module, the UI, or the store.
+
+use kobo_html::to_text;
+use kobo_json::Value;
+use kobo_sdk::{Credential, Task};
+
+const ENTRY_BYTES: u32 = 512 * 1024;
+const SMALL_RESPONSE_BYTES: u32 = 32 * 1024;
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum ListMode {
+    #[default]
+    Unread,
+    Starred,
+    History,
+}
+
+impl ListMode {
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Unread => "Unread",
+            Self::Starred => "Starred",
+            Self::History => "History",
+        }
+    }
+
+    fn query(self) -> &'static str {
+        match self {
+            Self::Unread => "status=unread&limit=100&order=published_at&direction=desc",
+            Self::Starred => "starred=true&limit=100&order=published_at&direction=desc",
+            Self::History => "status=read&limit=100&order=published_at&direction=desc",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct Article {
+    pub id: u64,
+    pub title: String,
+    pub feed: String,
+    pub content: String,
+    pub status: String,
+    pub starred: bool,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct Discovered {
+    pub url: String,
+    pub title: String,
+    pub kind: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Mutation {
+    Read(u64),
+    Star { id: u64, starred: bool },
+}
+
+/// Builds a v1 URL beneath the configured Miniflux server.
+#[must_use]
+pub fn endpoint(server: &str, path: &str) -> String {
+    format!("{}/v1/{path}", server.trim().trim_end_matches('/'))
+}
+
+fn token(credential: &str) -> Option<Credential> {
+    (!credential.trim().is_empty()).then(|| Credential::in_header(credential, "X-Auth-Token"))
+}
+
+/// Validates the user-supplied server before the UI offers a sync.
+///
+/// Requests retain a configured path prefix (for reverse-proxy deployments),
+/// but credentials can only ever be attached to the `/v1` endpoints built
+/// below and approved by the platform policy.
+#[must_use]
+pub fn configured_server(server: &str) -> bool {
+    let server = server.trim().trim_end_matches('/');
+    !server.is_empty()
+        && !server.contains(['?', '#'])
+        && kobo_opds::safe_href(server, "/").is_some()
+        && kobo_net::parse(&format!("{server}/")).is_ok()
+}
+
+#[must_use]
+pub fn entries(server: &str, credential: &str, mode: ListMode) -> Task {
+    Task::Fetch {
+        url: endpoint(server, &format!("entries?{}", mode.query())),
+        offset: 0,
+        max_bytes: ENTRY_BYTES,
+        credential: token(credential),
+        headers: Vec::new(),
+    }
+}
+
+#[must_use]
+pub fn discover(server: &str, credential: &str, website: &str) -> Task {
+    post(
+        server,
+        credential,
+        "discover",
+        format!(r#"{{"url":{}}}"#, json_string(website.trim())),
+    )
+}
+
+/// Creates a feed from a documented discovery URL.
+///
+/// `category_id` is optional in supported current Miniflux releases. Leaving
+/// it out lets Miniflux select its default category without pretending every
+/// account's category IDs are the same.
+#[must_use]
+pub fn subscribe(server: &str, credential: &str, feed_url: &str) -> Task {
+    post(
+        server,
+        credential,
+        "feeds",
+        format!(r#"{{"feed_url":{}}}"#, json_string(feed_url)),
+    )
+}
+
+#[must_use]
+pub fn full_content(server: &str, credential: &str, id: u64) -> Task {
+    Task::Fetch {
+        url: endpoint(server, &format!("entries/{id}/fetch-content")),
+        offset: 0,
+        max_bytes: ENTRY_BYTES,
+        credential: token(credential),
+        headers: Vec::new(),
+    }
+}
+
+#[must_use]
+pub fn mutate(server: &str, credential: &str, mutation: &Mutation) -> Task {
+    let body = match mutation {
+        Mutation::Read(id) => format!(r#"{{"entry_ids":[{id}],"status":"read"}}"#),
+        Mutation::Star { id, starred } => {
+            format!(r#"{{"entry_ids":[{id}],"starred":{starred}}}"#)
+        }
+    };
+    post(server, credential, "entries", body)
+}
+
+fn post(server: &str, credential: &str, path: &str, body: String) -> Task {
+    Task::Post {
+        url: endpoint(server, path),
+        body,
+        content_type: "application/json".to_owned(),
+        credential: token(credential),
+        headers: Vec::new(),
+        max_bytes: SMALL_RESPONSE_BYTES,
+    }
+}
+
+#[must_use]
+pub fn parse_entries(bytes: &[u8]) -> Vec<Article> {
+    let Ok(value) = kobo_json::parse(&String::from_utf8_lossy(bytes)) else {
+        return Vec::new();
+    };
+    value
+        .get("entries")
+        .and_then(Value::as_array)
+        .unwrap_or(&[])
+        .iter()
+        .filter_map(article)
+        .collect()
+}
+
+#[must_use]
+pub fn parse_discoveries(bytes: &[u8]) -> Vec<Discovered> {
+    let Ok(value) = kobo_json::parse(&String::from_utf8_lossy(bytes)) else {
+        return Vec::new();
+    };
+    value
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| {
+            let url = entry.get("url").and_then(Value::as_str)?.trim();
+            (!url.is_empty()).then(|| Discovered {
+                url: url.to_owned(),
+                title: text(entry.get("title").and_then(Value::as_str), "Untitled feed"),
+                kind: text(entry.get("type").and_then(Value::as_str), "feed"),
+            })
+        })
+        .collect()
+}
+
+/// Reads the entry payload returned by `/fetch-content`.
+#[must_use]
+pub fn parse_full_content(bytes: &[u8]) -> Option<String> {
+    let value = kobo_json::parse(&String::from_utf8_lossy(bytes)).ok()?;
+    value
+        .get("content")
+        .and_then(Value::as_str)
+        .map(to_text)
+        .filter(|content| !content.trim().is_empty())
+}
+
+fn article(entry: &Value) -> Option<Article> {
+    Some(Article {
+        id: u64::try_from(entry.get("id")?.as_i64()?).ok()?,
+        title: text(entry.get("title").and_then(Value::as_str), "Untitled"),
+        feed: text(
+            entry
+                .get("feed")
+                .and_then(|feed| feed.get("title"))
+                .and_then(Value::as_str),
+            "Feed",
+        ),
+        content: to_text(
+            entry
+                .get("content")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+        ),
+        status: text(entry.get("status").and_then(Value::as_str), "unread"),
+        starred: entry
+            .get("starred")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+    })
+}
+
+fn text(found: Option<&str>, fallback: &str) -> String {
+    let found = found.unwrap_or_default().trim();
+    if found.is_empty() {
+        fallback.to_owned()
+    } else {
+        found.to_owned()
+    }
+}
+
+fn json_string(value: &str) -> String {
+    let mut quoted = String::from("\"");
+    for character in value.chars() {
+        match character {
+            '"' => quoted.push_str("\\\""),
+            '\\' => quoted.push_str("\\\\"),
+            '\n' => quoted.push_str("\\n"),
+            '\r' => quoted.push_str("\\r"),
+            '\t' => quoted.push_str("\\t"),
+            character if character.is_control() => {
+                use std::fmt::Write as _;
+                let _ = write!(quoted, "\\u{:04x}", character as u32);
+            }
+            character => quoted.push(character),
+        }
+    }
+    quoted.push('"');
+    quoted
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn requests_use_the_named_runtime_token_and_documented_json() {
+        let Task::Post {
+            body, credential, ..
+        } = mutate("https://flux.example", "personal-flux", &Mutation::Read(42))
+        else {
+            panic!("expected POST");
+        };
+        assert_eq!(body, r#"{"entry_ids":[42],"status":"read"}"#);
+        assert_eq!(
+            credential,
+            Some(Credential::in_header("personal-flux", "X-Auth-Token"))
+        );
+
+        let Task::Post { body, .. } = mutate(
+            "https://flux.example",
+            "personal-flux",
+            &Mutation::Star {
+                id: 42,
+                starred: true,
+            },
+        ) else {
+            panic!("expected POST");
+        };
+        assert_eq!(body, r#"{"entry_ids":[42],"starred":true}"#);
+    }
+
+    #[test]
+    fn modes_and_full_content_have_only_the_allowed_request_shapes() {
+        let Task::Fetch { url, .. } =
+            entries("https://flux.example", "miniflux", ListMode::History)
+        else {
+            panic!("expected fetch");
+        };
+        assert_eq!(
+            url,
+            "https://flux.example/v1/entries?status=read&limit=100&order=published_at&direction=desc"
+        );
+        let Task::Fetch { url, .. } = full_content("https://flux.example", "miniflux", 7) else {
+            panic!("expected fetch");
+        };
+        assert_eq!(url, "https://flux.example/v1/entries/7/fetch-content");
+    }
+
+    #[test]
+    fn discovery_and_entries_parse_without_leaking_markup() {
+        let feeds = parse_discoveries(
+            br#"[{"url":"https://example.test/atom","title":"Journal","type":"atom"}]"#,
+        );
+        assert_eq!(feeds[0].title, "Journal");
+        let entries = parse_entries(br#"{"entries":[{"id":7,"title":"News","feed":{"title":"Paper"},"content":"<p>Body</p>","status":"read","starred":true}]}"#);
+        assert_eq!(entries[0].content, "Body");
+        assert_eq!(entries[0].status, "read");
+        assert_eq!(
+            parse_full_content(br#"{"content":"<p>Full story</p>"}"#).as_deref(),
+            Some("Full story")
+        );
+    }
+
+    #[test]
+    fn server_must_be_a_plain_https_origin_or_prefix() {
+        assert!(configured_server("https://flux.example"));
+        assert!(configured_server("https://flux.example/miniflux"));
+        assert!(!configured_server("http://flux.example"));
+        assert!(!configured_server("https://flux.example/?bad"));
+    }
+}

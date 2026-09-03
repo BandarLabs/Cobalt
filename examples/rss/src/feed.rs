@@ -31,6 +31,7 @@
 //! two prefixed names that mean anything are named explicitly.
 
 use kobo_html::to_text;
+use kobo_opds::safe_href;
 use kobo_xml::{scan, Event};
 
 /// The most items one feed contributes.
@@ -53,6 +54,11 @@ const MAX_TITLE: usize = 300;
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Item {
     pub title: String,
+    /// A feed-provided GUID or id, falling back to the canonical article URL.
+    ///
+    /// This is deliberately an identifier rather than a display field: it is
+    /// what the reader uses to retain read and starred state across refreshes.
+    pub id: String,
     /// Where the full article lives, if the feed says.
     pub link: String,
     /// The publication date, as the feed wrote it.
@@ -142,10 +148,22 @@ pub struct Feed {
 /// answer from a feed with no items, a publisher between posts is not an
 /// error, and the screen says so differently.
 #[must_use]
+#[cfg(test)]
 pub fn parse(bytes: &[u8]) -> Option<Feed> {
+    parse_at(bytes, "")
+}
+
+/// Reads a feed using the URL requested by the application as the base.
+///
+/// `TaskOutcome` intentionally exposes only body bytes, not a redirect's
+/// final URL. The requested subscription URL is therefore the only honest
+/// base available to the parser; inventing a canonical redirect URL would
+/// resolve relative links against an address we never received.
+#[must_use]
+pub fn parse_at(bytes: &[u8], requested_url: &str) -> Option<Feed> {
     let text = String::from_utf8_lossy(bytes);
     let body = text.trim_start_matches(['\u{feff}', ' ', '\n', '\r', '\t']);
-    let feed = if body.starts_with('{') {
+    let mut feed = if body.starts_with('{') {
         json_feed(body)?
     } else {
         xml_feed(body)
@@ -153,7 +171,25 @@ pub fn parse(bytes: &[u8]) -> Option<Feed> {
     if feed.items.is_empty() && feed.title.is_empty() {
         return None;
     }
+    resolve_addresses(&mut feed, requested_url);
     Some(feed)
+}
+
+/// Resolves every URL a feed supplied and refuses anything the runtime cannot
+/// fetch. This shares the OPDS reader's RFC 3986 resolver and HTTPS boundary,
+/// rather than allowing each feed dialect to grow a subtly different parser.
+fn resolve_addresses(feed: &mut Feed, requested_url: &str) {
+    if !feed.site.trim().is_empty() {
+        feed.site = safe_href(requested_url, &feed.site).unwrap_or_default();
+    }
+    for item in &mut feed.items {
+        if !item.link.trim().is_empty() {
+            item.link = safe_href(requested_url, &item.link).unwrap_or_default();
+        }
+        if item.id.trim().is_empty() {
+            item.id.clone_from(&item.link);
+        }
+    }
 }
 
 /// Which of the names this module reads an element is, if any.
@@ -161,6 +197,7 @@ pub fn parse(bytes: &[u8]) -> Option<Feed> {
 enum Field {
     Item,
     Title,
+    Id,
     Link,
     /// A body, with how complete a body of that name tends to be. A feed that
     /// carries both a summary and the full text keeps the full text, whichever
@@ -191,6 +228,9 @@ fn field(name: &str) -> Field {
     }
     if name.eq_ignore_ascii_case("title") {
         return Field::Title;
+    }
+    if name.eq_ignore_ascii_case("guid") || name.eq_ignore_ascii_case("id") {
+        return Field::Id;
     }
     if name.eq_ignore_ascii_case("link") {
         return Field::Link;
@@ -341,6 +381,12 @@ fn xml_feed(input: &str) -> Feed {
                         }
                         buffer.clear();
                     }
+                    Field::Id => {
+                        if in_item && item.id.is_empty() && !value.is_empty() {
+                            item.id = clamp(&value, MAX_TITLE);
+                        }
+                        buffer.clear();
+                    }
                     Field::Link => {
                         if !value.is_empty() {
                             if in_item {
@@ -432,6 +478,11 @@ fn json_feed(input: &str) -> Option<Feed> {
                 .and_then(kobo_json::Value::as_str)
                 .map(|title| clamp(title, MAX_TITLE))
                 .unwrap_or_default(),
+            id: entry
+                .get("id")
+                .and_then(kobo_json::Value::as_str)
+                .map(|id| clamp(id, MAX_TITLE))
+                .unwrap_or_default(),
             link: entry
                 .get("url")
                 .and_then(kobo_json::Value::as_str)
@@ -478,7 +529,7 @@ fn clamp(text: &str, characters: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{attribute, parse, Feed, Item, MAX_ITEMS};
+    use super::{attribute, parse, parse_at, Feed, Item, MAX_ITEMS};
     use kobo_xml::decode_entities;
     use std::fmt::Write as _;
 
@@ -557,6 +608,48 @@ mod tests {
         assert_eq!(feed.items[0].title, "First");
         assert_eq!(feed.items[0].body, "Hello");
         assert_eq!(feed.items[0].author, "A Writer");
+        assert_eq!(feed.items[0].id, "1");
+    }
+
+    #[test]
+    fn rss_atom_and_json_relative_urls_share_the_requested_feed_base() {
+        let rss = parse_at(
+            br"<rss><channel><link>/site</link><item><guid>rss-guid</guid><link>stories/one</link><title>One</title></item></channel></rss>",
+            "https://example.test/feeds/news.xml",
+        )
+        .expect("RSS");
+        assert_eq!(rss.site, "https://example.test/site");
+        assert_eq!(rss.items[0].link, "https://example.test/feeds/stories/one");
+        assert_eq!(rss.items[0].id, "rss-guid");
+
+        let atom = parse_at(
+            br#"<feed><link rel="alternate" href="/site"/><entry><id>atom-id</id><link href="../two"/><title>Two</title></entry></feed>"#,
+            "https://example.test/feeds/atom.xml",
+        )
+        .expect("Atom");
+        assert_eq!(atom.site, "https://example.test/site");
+        assert_eq!(atom.items[0].link, "https://example.test/two");
+        assert_eq!(atom.items[0].id, "atom-id");
+
+        let json = parse_at(
+            br#"{"title":"JSON","home_page_url":"/site","items":[{"url":"three","title":"Three"}]}"#,
+            "https://example.test/feeds/json.json",
+        )
+        .expect("JSON Feed");
+        assert_eq!(json.site, "https://example.test/site");
+        assert_eq!(json.items[0].link, "https://example.test/feeds/three");
+        assert_eq!(json.items[0].id, "https://example.test/feeds/three");
+    }
+
+    #[test]
+    fn unsafe_links_are_not_persisted_as_stable_url_fallbacks() {
+        let feed = parse_at(
+            br"<rss><channel><item><title>Nope</title><link>javascript:alert(1)</link></item></channel></rss>",
+            "https://example.test/feed.xml",
+        )
+        .expect("feed");
+        assert!(feed.items[0].link.is_empty());
+        assert!(feed.items[0].id.is_empty());
     }
 
     #[test]
