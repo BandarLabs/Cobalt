@@ -17,7 +17,7 @@
 
 use kobo_sdk::{
     action_id, ActionId, AppInfo, Context, DeviceIdentity, DeviceRequest, DeviceResult, Glyph,
-    KoboApp, ScreenBuilder, Tile, TileShape, TileState,
+    KoboApp, ScreenBuilder, Tile, TileShape,
 };
 use std::process::ExitCode;
 
@@ -42,6 +42,13 @@ struct Entry {
     needs: &'static str,
     glyph: Glyph,
 }
+
+/// Where Settings and the store sit in [`ENTRIES`].
+///
+/// Named because two navigation destinations start these by position, and a
+/// bare index in that code says nothing about which application it will run.
+const SETTINGS: usize = 0;
+const STORE: usize = 1;
 
 const ENTRIES: &[Entry] = &[
     Entry {
@@ -74,7 +81,6 @@ const ENTRIES: &[Entry] = &[
 enum View {
     #[default]
     Home,
-    Apps,
     /// A tile was tapped and the runtime has been asked to start it. The
     /// screen says so, because the panel is slow enough that a tap with no
     /// visible answer reads as a tap that was missed.
@@ -117,7 +123,6 @@ impl Launcher {
     fn show(&mut self, context: &mut Context) {
         let screen = match self.view {
             View::Home => self.home(context),
-            View::Apps => self.apps(context),
             View::Starting(index) => self.starting(index),
             View::Leaving => Self::leaving(),
         };
@@ -201,51 +206,6 @@ impl Launcher {
             .page_position(page_number, page_count)
             .nav_bar_marked(
                 0,
-                [
-                    ("home", "Home", Glyph::App),
-                    ("apps", "Apps", Glyph::App),
-                    ("settings", "Settings", Glyph::Settings),
-                    ("reader", "Kobo reader", Glyph::Reader),
-                ],
-            )
-            .build()
-    }
-
-    /// The app drawer remains dense and paginated; its rail says where the
-    /// reader is without turning the display into a scrolling surface.
-    fn apps(&mut self, context: &Context) -> kobo_sdk::Screen {
-        let pages = self.pages(context);
-        self.page = self.page.min(pages.len() - 1);
-        let page = self.page;
-        let page_count = u16::try_from(pages.len()).unwrap_or(u16::MAX);
-        let page_index = u16::try_from(page).unwrap_or(u16::MAX);
-        let page_number = u16::try_from(page.saturating_add(1)).unwrap_or(u16::MAX);
-        ScreenBuilder::new("launcher-apps")
-            .top_bar("Apps")
-            .page_rail(page_index, page_count)
-            .tile_grid(
-                TileShape::Square,
-                pages[page].iter().map(|&index| {
-                    let entry = self.entry(index);
-                    let busy = self.working == Some(index);
-                    (
-                        opening(&entry.name),
-                        entry.label,
-                        entry.glyph,
-                        move |tile: Tile| {
-                            if busy {
-                                tile.with_state(TileState::Busy)
-                            } else {
-                                tile
-                            }
-                        },
-                    )
-                }),
-            )
-            .page_turns("previous", "next")
-            .page_position(page_number, page_count)
-            .nav_bar_marked(
-                1,
                 [
                     ("home", "Home", Glyph::App),
                     ("apps", "Apps", Glyph::App),
@@ -376,14 +336,21 @@ impl KoboApp for Launcher {
             return;
         }
         if action == action_id("apps") {
-            self.view = View::Apps;
+            // The drawer this used to open was Home's grid under a different
+            // title, and it stopped being a second thing worth showing once
+            // Home carried every application. What a reader wants from a tab
+            // called Apps is where apps come from, so it opens the store --
+            // the same application the Home tile opens, started the same way,
+            // so the two cannot drift into showing different catalogues.
+            self.view = View::Starting(STORE);
             self.show(context);
+            context.launch(ENTRIES[STORE].name);
             return;
         }
         if action == action_id("settings") {
-            self.view = View::Starting(0);
+            self.view = View::Starting(SETTINGS);
             self.show(context);
-            context.launch(ENTRIES[0].name);
+            context.launch(ENTRIES[SETTINGS].name);
             return;
         }
         if action == action_id("next") || action == action_id("previous") {
@@ -466,14 +433,13 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::{opening, Launcher, View, ENTRIES};
+    use super::{opening, Launcher, View, ENTRIES, STORE};
     use kobo_sdk::{
-        action_id, AppInfo, AppRunner, Command, DeviceIdentity, DeviceRequest, DeviceResult, Glyph,
-        Lifecycle,
+        action_id, AppInfo, AppRunner, Command, DeviceRequest, DeviceResult, Glyph, Lifecycle,
     };
     use kobo_ui::{
         render_with, tone, Chrome, DisplayMetrics, LayoutKind, Node, Surface, TextScale, TileShape,
-        TileState, CLARA_BW_METRICS,
+        CLARA_BW_METRICS,
     };
 
     fn panels() -> Vec<(String, DisplayMetrics)> {
@@ -643,8 +609,7 @@ mod tests {
             let mut runner = AppRunner::with_metrics(Launcher::default(), metrics);
             let mut runs = 0;
             let mut found = Vec::new();
-            runner.start();
-            let mut screen = painted(runner.action(action_id("apps")));
+            let mut screen = painted(runner.start());
             loop {
                 let layout = screen.layout_with(&metrics, &Chrome::with_back(false));
                 for node in &layout.nodes {
@@ -683,8 +648,7 @@ mod tests {
     fn every_tile_on_a_page_is_drawn_rather_than_dropped() {
         for (name, metrics) in panels() {
             let mut runner = AppRunner::with_metrics(Launcher::default(), metrics);
-            runner.start();
-            let screen = painted(runner.action(action_id("apps")));
+            let screen = painted(runner.start());
             let layout = screen.layout_with(&metrics, &Chrome::with_back(false));
             let rows = layout
                 .nodes
@@ -782,12 +746,13 @@ mod tests {
     }
 
     #[test]
-    fn launcher_home_and_apps_are_tappable_and_render_on_every_panel() {
+    fn launcher_home_is_tappable_and_renders_on_every_panel() {
         for (name, metrics) in panels() {
             let mut runner = AppRunner::with_metrics(Launcher::default(), metrics);
             let home = painted(runner.start());
-            let apps = painted(runner.action(action_id("apps")));
-            for (view, screen) in [("home", home), ("apps", apps)] {
+            // Apps is no longer a screen this application draws; it starts the
+            // store, which renders its own and is measured by its own tests.
+            for (view, screen) in [("home", home)] {
                 let chrome = Chrome::with_back(false);
                 let layout = screen.layout_with(&metrics, &chrome);
                 let controls = layout
@@ -981,7 +946,7 @@ mod tests {
     /// this platform. Home marks it for resume while the complete Apps view
     /// retains the busy state.
     #[test]
-    fn the_active_app_is_busy_in_the_full_apps_view() {
+    fn the_active_app_is_marked_for_resume_on_home() {
         let mut runner = AppRunner::new(Launcher::default());
         runner.start();
         runner.action(action_id(&opening(ENTRIES[0].name)));
@@ -1005,13 +970,6 @@ mod tests {
             home_text.contains(&"Resume"),
             "the active app lost its Home resume marker"
         );
-
-        let apps = painted(runner.action(action_id("apps")));
-        let busy = apps.nodes.iter().any(|node| match node {
-            Node::TileGrid { tiles, .. } => tiles.iter().any(|tile| tile.state == TileState::Busy),
-            _ => false,
-        });
-        assert!(busy, "the active app was not busy in the full Apps view");
     }
 
     #[test]
@@ -1047,7 +1005,7 @@ mod tests {
     }
 
     #[test]
-    fn home_navigation_reaches_apps_and_keeps_the_reader_exit_visible() {
+    fn the_apps_tab_starts_the_store_and_keeps_the_reader_exit_visible() {
         let mut runner = AppRunner::new(Launcher::default());
         let home = painted(runner.start());
         assert!(home.nodes.iter().any(|node| matches!(
@@ -1057,16 +1015,22 @@ mod tests {
                 ..
             }
         )));
-        let apps = painted(runner.action(action_id("apps")));
-        assert!(matches!(runner.app().view, View::Apps));
-        let layout = apps.layout_with(&CLARA_BW_METRICS, &Chrome::with_back(false));
+        let layout = home.layout_with(&CLARA_BW_METRICS, &Chrome::with_back(false));
         assert!(layout.nodes.iter().any(|node| {
-            matches!(node.kind, LayoutKind::NavDestinationSelected(action, _)
+            matches!(node.kind, LayoutKind::NavDestination(action, _)
                 if action == action_id("apps"))
         }));
         assert!(layout.nodes.iter().any(|node| {
             matches!(node.kind, LayoutKind::NavDestination(action, _)
                 if action == action_id("reader"))
         }));
+
+        // Apps starts the store rather than drawing a drawer of its own, so
+        // that the tab and the Home tile cannot show different catalogues.
+        let commands = runner.action(action_id("apps"));
+        assert!(matches!(runner.app().view, View::Starting(STORE)));
+        assert!(commands.iter().any(
+            |command| matches!(command, Command::Launch(name) if name == ENTRIES[STORE].name)
+        ));
     }
 }
