@@ -116,11 +116,21 @@ struct Subscription {
     site: String,
 }
 
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct CachedFeed {
+    url: String,
+    title: String,
+    site: String,
+    items: Vec<feed::Item>,
+}
+
 /// Which screen is in front of the reader.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 enum View {
-    /// The feeds being followed.
+    /// Articles from every followed feed.
     #[default]
+    Combined,
+    /// The feeds being followed.
     Shelf,
     /// Typing an address.
     Search,
@@ -265,6 +275,10 @@ struct Feeds {
     items: Vec<feed::Item>,
     /// Which article is being read.
     article: Option<usize>,
+    /// Where Back returns after reading an article.
+    reading_parent: View,
+    /// The publisher shown above the article body.
+    article_source: String,
     /// The article, cut into pages that fit the panel.
     pages: Vec<Vec<String>>,
     page: usize,
@@ -283,6 +297,11 @@ struct Feeds {
     /// State is independent of a feed's current response, keyed by its GUID,
     /// id, or safe canonical link.
     item_states: Vec<ItemState>,
+    /// Per-feed caches power the default combined article list.
+    feed_caches: Vec<CachedFeed>,
+    cache_loads_pending: usize,
+    /// URLs left in a user-requested refresh of every followed feed.
+    refresh_queue: Vec<String>,
     /// A cache response may arrive after a successful network response; the
     /// latter is authoritative even when it legitimately contains no items.
     live_cache: [bool; 2],
@@ -470,15 +489,169 @@ impl Feeds {
         }
     }
 
-    fn standalone_state_key(&self, item: &feed::Item) -> Option<String> {
-        let stable = item.id.trim();
-        (!stable.is_empty()).then(|| {
-            let feed = self
+    fn remember_feed_cache(&mut self, url: &str, parsed: &feed::Feed, replace: bool) {
+        if let Some(cached) = self.feed_caches.iter_mut().find(|cached| cached.url == url) {
+            if replace {
+                cached.title.clone_from(&parsed.title);
+                cached.site.clone_from(&parsed.site);
+                cached.items.clone_from(&parsed.items);
+            }
+            return;
+        }
+        self.feed_caches.push(CachedFeed {
+            url: url.to_owned(),
+            title: parsed.title.clone(),
+            site: parsed.site.clone(),
+            items: parsed.items.clone(),
+        });
+    }
+
+    fn combined_indices(&self) -> Vec<(usize, usize)> {
+        let longest = self
+            .feed_caches
+            .iter()
+            .map(|cached| cached.items.len())
+            .max()
+            .unwrap_or(0);
+        let mut combined = Vec::new();
+        for item in 0..longest {
+            for (feed, cached) in self.feed_caches.iter().enumerate() {
+                if item < cached.items.len() {
+                    combined.push((feed, item));
+                }
+            }
+        }
+        combined
+    }
+
+    fn start_feed_request(&mut self, context: &mut Context, url: String) -> bool {
+        if let Some(task) = context.spawn_retrying(Task::Fetch {
+            url: url.clone(),
+            offset: 0,
+            max_bytes: FEED_BYTES,
+            credential: None,
+            headers: Vec::new(),
+        }) {
+            self.task = Some(PendingTask {
+                id: task,
+                target: TaskTarget::Feed {
+                    subscription_url: url,
+                },
+            });
+            true
+        } else {
+            self.problem = Some("The device is busy. Try that again.".to_owned());
+            false
+        }
+    }
+
+    fn restore_feed_cache(&mut self, key: &str, value: Option<&[u8]>) -> bool {
+        let Some(subscription_url) = self
+            .subscriptions
+            .iter()
+            .find(|subscription| feed_cache_key(&subscription.url) == key)
+            .map(|subscription| subscription.url.clone())
+        else {
+            return false;
+        };
+        self.cache_loads_pending = self.cache_loads_pending.saturating_sub(1);
+        if let Some(cached) = value.and_then(decode_feed_cache) {
+            self.remember_feed_cache(&subscription_url, &cached, false);
+            if self
                 .open
                 .and_then(|index| self.subscriptions.get(index))
-                .map_or(0, |subscription| stable_hash(&subscription.url));
-            format!("{feed:016x}:{stable}")
-        })
+                .is_some_and(|subscription| subscription.url == subscription_url)
+                && self.items.is_empty()
+                && !self.live_cache[0]
+            {
+                self.items = cached.items;
+            }
+        }
+        true
+    }
+
+    fn finish_standalone_feed(
+        &mut self,
+        context: &mut Context,
+        subscription_url: &str,
+        bytes: &[u8],
+    ) {
+        let Some(parsed) = feed::parse_at(bytes, subscription_url) else {
+            self.problem = Some(if truncated(bytes, FEED_BYTES) {
+                "That feed is larger than this can read.".to_owned()
+            } else {
+                "That address did not answer with a feed.".to_owned()
+            });
+            return;
+        };
+        self.live_cache[0] = true;
+        self.remember_feed_cache(subscription_url, &parsed, true);
+        context
+            .store()
+            .save(feed_cache_key(subscription_url), encode_feed_cache(&parsed));
+        if self
+            .open
+            .and_then(|index| self.subscriptions.get(index))
+            .is_some_and(|subscription| subscription.url == subscription_url)
+        {
+            self.items.clone_from(&parsed.items);
+        }
+        if let Some(subscription) = self
+            .subscriptions
+            .iter_mut()
+            .find(|subscription| subscription.url == subscription_url)
+        {
+            if !parsed.title.trim().is_empty() && subscription.title != parsed.title {
+                subscription.title = parsed.title;
+                context.store().save(FEEDS, encode(&self.subscriptions));
+            }
+        }
+    }
+
+    fn fail_standalone_feed(&mut self, subscription_url: &str, failure: Failure) {
+        let is_open = self
+            .open
+            .and_then(|index| self.subscriptions.get(index))
+            .is_some_and(|subscription| subscription.url == subscription_url);
+        if self.view == View::Items && is_open && self.items.is_empty() {
+            self.trouble = Some(failure);
+            self.problem = None;
+        } else {
+            self.problem = Some("Some feeds could not refresh.".to_owned());
+        }
+    }
+
+    fn start_next_feed_refresh(&mut self, context: &mut Context) {
+        if self.task.is_some() {
+            return;
+        }
+        if let Some(url) = self.refresh_queue.pop() {
+            if !self.start_feed_request(context, url) {
+                self.refresh_queue.clear();
+            }
+        }
+    }
+
+    fn refresh_all_feeds(&mut self, context: &mut Context) {
+        if self.task.is_some() {
+            self.problem = Some("A request is already in progress.".to_owned());
+            return;
+        }
+        self.problem = None;
+        self.trouble = None;
+        self.refresh_queue = self
+            .subscriptions
+            .iter()
+            .rev()
+            .map(|subscription| subscription.url.clone())
+            .collect();
+        self.start_next_feed_refresh(context);
+    }
+
+    fn standalone_state_key(&self, item: &feed::Item) -> Option<String> {
+        self.open
+            .and_then(|index| self.subscriptions.get(index))
+            .and_then(|subscription| standalone_state_key_for(&subscription.url, item))
     }
 
     fn item_state(&self, item: &feed::Item) -> ItemState {
@@ -491,6 +664,21 @@ impl Feeds {
             })
             .unwrap_or_else(|| ItemState {
                 key: self.standalone_state_key(item).unwrap_or_default(),
+                read: false,
+                starred: false,
+            })
+    }
+
+    fn item_state_for(&self, feed_url: &str, item: &feed::Item) -> ItemState {
+        standalone_state_key_for(feed_url, item)
+            .and_then(|key| {
+                self.item_states
+                    .iter()
+                    .find(|state| state.key == key)
+                    .cloned()
+            })
+            .unwrap_or_else(|| ItemState {
+                key: standalone_state_key_for(feed_url, item).unwrap_or_default(),
                 read: false,
                 starred: false,
             })
@@ -578,23 +766,7 @@ impl Feeds {
         self.load_open_cache(context);
         self.problem = None;
         self.trouble = None;
-        match context.spawn_retrying(Task::Fetch {
-            url,
-            offset: 0,
-            max_bytes: FEED_BYTES,
-            credential: None,
-            headers: Vec::new(),
-        }) {
-            Some(task) => {
-                self.task = Some(PendingTask {
-                    id: task,
-                    target: TaskTarget::Feed {
-                        subscription_url: subscription.url.clone(),
-                    },
-                });
-            }
-            None => self.problem = Some("The device is busy. Try that again.".to_owned()),
-        }
+        self.start_feed_request(context, url);
     }
 
     /// Miniflux operations are intentionally one-shot: the service may apply
@@ -1021,8 +1193,15 @@ impl Feeds {
             (true, false) => "Read",
             (true, true) => "Read · Starred",
         };
-        self.pages =
-            context.paginate_reading(&format!("{status}\n\n{}", article_text(item)), false);
+        let source = if self.article_source.is_empty() {
+            String::new()
+        } else {
+            format!("{}\n\n", self.article_source)
+        };
+        self.pages = context.paginate_reading(
+            &format!("{status}\n\n{source}{}", article_text(item)),
+            false,
+        );
         self.page = 0;
     }
 
@@ -1270,6 +1449,7 @@ impl Feeds {
             }
         } else {
             match self.view {
+                View::Combined => self.combined(context),
                 View::Shelf => self.shelf(context),
                 View::Search => self.search(),
                 View::Found => self.results(context),
@@ -1288,15 +1468,100 @@ impl Feeds {
         // unwinds this application first and leaves it only from the shelf.
         // Without this, Back out of an article lands at the launcher.
         context.set_screen(screen.with_own_back(
-            !matches!(self.view, View::Shelf | View::FluxShelf)
+            !matches!(self.view, View::Combined | View::FluxShelf)
                 || self.menu_open.is_some()
                 || self.flux_menu_open,
         ));
     }
 
+    fn combined(&self, context: &Context) -> Screen {
+        let mut screen = ScreenBuilder::new("rss-combined")
+            .top_bar("All articles")
+            .top_bar_action("sources", "Sources");
+        if self.task.is_none() && !self.subscriptions.is_empty() {
+            screen = screen.top_bar_glyph("refresh-all", "Refresh", Glyph::Refresh);
+        }
+        if let Some(problem) = &self.problem {
+            screen = screen.banner(BannerLevel::Attention, problem.clone());
+        }
+        if !self.loaded || self.cache_loads_pending > 0 {
+            return screen
+                .activity("Opening articles", None)
+                .skeleton(5)
+                .build();
+        }
+        if self.subscriptions.is_empty() {
+            return screen
+                .splash(
+                    Some(Glyph::Rss),
+                    "No feeds yet",
+                    "Add a site to start your reading list.",
+                )
+                .primary_button("add", "Add a feed")
+                .build();
+        }
+        let combined = self.combined_indices();
+        if combined.is_empty() {
+            return screen
+                .empty_state("No articles cached.")
+                .buttons([("refresh-all", "Refresh"), ("add", "Add a feed")])
+                .build();
+        }
+        let rows: Vec<(String, String)> = combined
+            .iter()
+            .map(|(feed_index, item_index)| {
+                let cached = &self.feed_caches[*feed_index];
+                let item = &cached.items[*item_index];
+                let source = pretty_host(&cached.site, &cached.url);
+                let date = item.short_date();
+                let meta = if date.is_empty() {
+                    source
+                } else {
+                    format!("{source} · {date}")
+                };
+                let excerpt = first_words(&item.body);
+                (
+                    context.clamped_row(&item.title, 2, true),
+                    if excerpt.is_empty() {
+                        meta
+                    } else {
+                        format!("{meta}\n{excerpt}")
+                    },
+                )
+            })
+            .collect();
+        let pages = page_groups(context, &rows, false, false);
+        let page = self.list_page.min(pages.len().saturating_sub(1));
+        let shown = pages.get(page).cloned().unwrap_or_default();
+        screen = screen.rows(shown.iter().map(|position| {
+            let (feed_index, item_index) = combined[*position];
+            let item = &self.feed_caches[feed_index].items[item_index];
+            (
+                format!("combined-{position}"),
+                rows[*position].0.clone(),
+                rows[*position].1.clone(),
+                if self
+                    .item_state_for(&self.feed_caches[feed_index].url, item)
+                    .starred
+                {
+                    Glyph::Bookmark
+                } else {
+                    Glyph::News
+                },
+            )
+        }));
+        if pages.len() > 1 {
+            screen = screen
+                .page_turns("list-back", "list-next")
+                .page_position(page_number(page), page_total(pages.len()));
+        }
+        screen.build()
+    }
+
     fn shelf(&self, context: &Context) -> Screen {
         let mut screen = ScreenBuilder::new("rss-shelf")
-            .top_bar("Feeds")
+            .top_bar("Sources")
+            .top_bar_action("combined", "All articles")
             .top_bar_action("settings", "Settings");
         if let Some(problem) = &self.problem {
             screen = screen.banner(BannerLevel::Attention, problem.clone());
@@ -1305,16 +1570,8 @@ impl Feeds {
             return screen.activity("Opening your feeds", None).build();
         }
         if self.subscriptions.is_empty() {
-            // Centred under a mark rather than ranged left at the top: this
-            // is the first screen anybody sees, and a lone paragraph in the
-            // corner of a 1448-pixel panel reads as a page that failed.
             return screen
-                .splash(
-                    Some(Glyph::Rss),
-                    "No feeds yet",
-                    "Follow a site and its new articles arrive here, \
-                     ready to read without a browser.",
-                )
+                .splash(Some(Glyph::Rss), "No sources", "")
                 .primary_button("add", "Add a feed")
                 .build();
         }
@@ -1799,6 +2056,11 @@ fn stable_hash(value: &str) -> u64 {
     })
 }
 
+fn standalone_state_key_for(feed_url: &str, item: &feed::Item) -> Option<String> {
+    let stable = item.id.trim();
+    (!stable.is_empty()).then(|| format!("{:016x}:{stable}", stable_hash(feed_url)))
+}
+
 fn feed_cache_key(url: &str) -> String {
     format!("feed-cache-{:016x}", stable_hash(url))
 }
@@ -2029,6 +2291,10 @@ impl KoboApp for Feeds {
                 if key == FEEDS {
                     self.subscriptions = value.map(|bytes| decode(&bytes)).unwrap_or_default();
                     self.loaded = true;
+                    self.cache_loads_pending = self.subscriptions.len();
+                    for subscription in &self.subscriptions {
+                        context.store().load(feed_cache_key(&subscription.url));
+                    }
                 } else if key == CONFIG {
                     if let Some(value) = value {
                         let (backend, server) = decode_config(&value);
@@ -2085,13 +2351,8 @@ impl KoboApp for Feeds {
                             value.as_deref().map(decode_flux_cache).unwrap_or_default();
                         self.load_full_content(context, mode);
                     }
-                } else if key == self.cache_key().unwrap_or_default()
-                    && self.items.is_empty()
-                    && !self.live_cache[0]
-                {
-                    if let Some(cached) = value.as_deref().and_then(decode_feed_cache) {
-                        self.items = cached.items;
-                    }
+                } else {
+                    self.restore_feed_cache(&key, value.as_deref());
                 }
                 self.show(context);
             }
@@ -2169,7 +2430,7 @@ impl KoboApp for Feeds {
                 self.view = View::FluxDiscover;
             } else if action == action_id("back") || action == ActionId::BACK {
                 self.view = match self.backend {
-                    Backend::Standalone => View::Shelf,
+                    Backend::Standalone => View::Combined,
                     Backend::Miniflux => View::FluxShelf,
                 };
             }
@@ -2218,14 +2479,18 @@ impl KoboApp for Feeds {
             self.trouble = None;
             self.menu_open = None;
             match self.view {
-                View::Shelf => {}
+                View::Combined => {}
+                View::Shelf => {
+                    self.view = View::Combined;
+                    self.list_page = 0;
+                }
                 View::Search | View::Items => {
                     self.view = View::Shelf;
                     self.list_page = 0;
                 }
                 View::Found => self.view = View::Search,
                 View::Reading => {
-                    self.view = View::Items;
+                    self.view = self.reading_parent;
                     self.article = None;
                 }
                 View::Settings
@@ -2243,6 +2508,27 @@ impl KoboApp for Feeds {
             self.problem = None;
             self.trouble = None;
             self.view = View::Search;
+            self.show(context);
+            return;
+        }
+
+        if action == action_id("sources") {
+            self.view = View::Shelf;
+            self.list_page = 0;
+            self.show(context);
+            return;
+        }
+
+        if action == action_id("combined") {
+            self.view = View::Combined;
+            self.list_page = 0;
+            self.show(context);
+            return;
+        }
+
+        if action == action_id("refresh-all") {
+            self.list_page = 0;
+            self.refresh_all_feeds(context);
             self.show(context);
             return;
         }
@@ -2281,7 +2567,9 @@ impl KoboApp for Feeds {
                     context
                         .store()
                         .forget(feed_cache_key(&self.subscriptions[index].url));
+                    let removed_url = self.subscriptions[index].url.clone();
                     self.subscriptions.remove(index);
+                    self.feed_caches.retain(|cached| cached.url != removed_url);
                     self.save(context);
                 }
                 // The open feed is named by position, so removing one before
@@ -2310,13 +2598,15 @@ impl KoboApp for Feeds {
                     context
                         .store()
                         .forget(feed_cache_key(&self.subscriptions[index].url));
+                    let removed_url = self.subscriptions[index].url.clone();
                     self.subscriptions.remove(index);
+                    self.feed_caches.retain(|cached| cached.url != removed_url);
                     self.save(context);
                 }
             }
             self.items.clear();
             self.list_page = 0;
-            self.view = View::Shelf;
+            self.view = View::Combined;
             self.show(context);
             return;
         }
@@ -2381,9 +2671,44 @@ impl KoboApp for Feeds {
             }
         }
 
+        if self.view == View::Combined {
+            let combined = self.combined_indices();
+            if let Some(position) = indexed(action, "combined", combined.len()) {
+                let Some(&(feed_index, item_index)) = combined.get(position) else {
+                    return;
+                };
+                let Some(cached) = self.feed_caches.get(feed_index).cloned() else {
+                    return;
+                };
+                let Some(open) = self
+                    .subscriptions
+                    .iter()
+                    .position(|subscription| subscription.url == cached.url)
+                else {
+                    return;
+                };
+                self.open = Some(open);
+                self.items = cached.items;
+                self.article = Some(item_index);
+                self.article_source = pretty_host(&cached.site, &cached.url);
+                self.reading_parent = View::Combined;
+                self.view = View::Reading;
+                self.lay_out(context);
+                self.show(context);
+                return;
+            }
+        }
+
         if self.view == View::Items {
             if let Some(index) = indexed(action, "item", self.items.len()) {
                 self.article = Some(index);
+                self.article_source = self
+                    .open
+                    .and_then(|open| self.subscriptions.get(open))
+                    .map_or_else(String::new, |subscription| {
+                        pretty_host(&subscription.site, &subscription.url)
+                    });
+                self.reading_parent = View::Items;
                 self.view = View::Reading;
                 self.lay_out(context);
                 self.show(context);
@@ -2421,6 +2746,7 @@ impl KoboApp for Feeds {
             self.show(context);
             return;
         }
+        let standalone_feed = matches!(&pending.target, TaskTarget::Feed { .. });
         match outcome {
             TaskOutcome::Completed(bytes) => match pending.target {
                 TaskTarget::Search => {
@@ -2434,48 +2760,7 @@ impl KoboApp for Feeds {
                     }
                 }
                 TaskTarget::Feed { subscription_url } => {
-                    match feed::parse_at(&bytes, &subscription_url) {
-                        Some(parsed) => {
-                            self.live_cache[0] = true;
-                            context.store().save(
-                                feed_cache_key(&subscription_url),
-                                encode_feed_cache(&parsed),
-                            );
-                            if self
-                                .open
-                                .and_then(|index| self.subscriptions.get(index))
-                                .is_some_and(|subscription| subscription.url == subscription_url)
-                            {
-                                self.items.clone_from(&parsed.items);
-                            }
-                            // A feed usually names itself better than a search
-                            // result does, so the shelf takes the better name once
-                            // it has been read.
-                            if let Some(subscription) = self
-                                .subscriptions
-                                .iter_mut()
-                                .find(|subscription| subscription.url == subscription_url)
-                            {
-                                if !parsed.title.trim().is_empty()
-                                    && subscription.title != parsed.title
-                                {
-                                    subscription.title = parsed.title;
-                                    let bytes = encode(&self.subscriptions);
-                                    context.store().save(FEEDS, bytes);
-                                }
-                            }
-                        }
-                        None => {
-                            // It did answer with a feed; the feed did not fit.
-                            // Saying it was not a feed sends somebody looking for
-                            // a different address, which will not help.
-                            self.problem = Some(if truncated(&bytes, FEED_BYTES) {
-                                "That feed is larger than this can read.".to_owned()
-                            } else {
-                                "That address did not answer with a feed.".to_owned()
-                            });
-                        }
-                    }
+                    self.finish_standalone_feed(context, &subscription_url, &bytes);
                 }
                 TaskTarget::FluxEntries { .. }
                 | TaskTarget::FluxDiscover { .. }
@@ -2484,13 +2769,20 @@ impl KoboApp for Feeds {
                 | TaskTarget::FluxMutation { .. } => unreachable!("handled above"),
             },
             TaskOutcome::Failed(error) => {
-                // The SDK owns the wording. Five applications wrote five
-                // different sentences for the same failure before this existed.
                 let failure = Failure::of(error);
-                self.trouble = Some(failure);
-                self.problem = Some(failure.advice.to_owned());
+                if let TaskTarget::Feed { subscription_url } = &pending.target {
+                    self.fail_standalone_feed(subscription_url, failure);
+                } else {
+                    // The SDK owns the wording. Five applications wrote five
+                    // different sentences for the same failure before this existed.
+                    self.trouble = Some(failure);
+                    self.problem = Some(failure.advice.to_owned());
+                }
             }
             TaskOutcome::Cancelled => self.problem = Some("Cancelled.".to_owned()),
+        }
+        if standalone_feed {
+            self.start_next_feed_refresh(context);
         }
         self.show(context);
     }
@@ -2510,9 +2802,9 @@ fn main() -> ExitCode {
 mod tests {
     use super::{
         article_text, byline, decode, encode, encode_feed_cache, encode_flux_cache, feed_cache_key,
-        miniflux, pretty_host, search, Backend, Feeds, PendingTask, Setting, Subscription,
-        TaskKind, TaskTarget, View, CONFIG, FEED_BYTES, FULL_CONTENT_BYTES, ITEM_STATES, MAX_FEEDS,
-        SEARCH_BYTES,
+        miniflux, pretty_host, search, Backend, CachedFeed, Feeds, PendingTask, Setting,
+        Subscription, TaskKind, TaskTarget, View, CONFIG, FEED_BYTES, FULL_CONTENT_BYTES,
+        ITEM_STATES, MAX_FEEDS, SEARCH_BYTES,
     };
     use kobo_sdk::{
         action_id, AppRunner, Command, Credential, StoreResult, Task, TaskError, TaskId,
@@ -3498,6 +3790,7 @@ mod tests {
     fn the_mark_on_a_feed_opens_a_menu_rather_than_the_feed() {
         let mut runner = AppRunner::new(Feeds {
             loaded: true,
+            view: View::Shelf,
             subscriptions: following(),
             ..Feeds::default()
         });
@@ -3527,6 +3820,7 @@ mod tests {
     fn stopping_following_removes_the_feed_and_writes_the_list_back() {
         let mut runner = AppRunner::new(Feeds {
             loaded: true,
+            view: View::Shelf,
             subscriptions: following(),
             ..Feeds::default()
         });
@@ -3551,7 +3845,7 @@ mod tests {
         assert!(
             text_of(&screen)
                 .iter()
-                .any(|line| line.contains("No feeds yet")),
+                .any(|line| line.contains("No sources")),
             "the last feed was removed and the shelf still listed it"
         );
     }
@@ -3563,6 +3857,7 @@ mod tests {
     fn putting_the_menu_away_does_not_leave_the_application() {
         let mut runner = AppRunner::new(Feeds {
             loaded: true,
+            view: View::Shelf,
             subscriptions: following(),
             ..Feeds::default()
         });
@@ -3687,6 +3982,7 @@ mod tests {
             view: View::Reading,
             open: Some(0),
             article: Some(0),
+            reading_parent: View::Items,
             subscriptions: following(),
             ..Feeds::default()
         });
@@ -3708,7 +4004,7 @@ mod tests {
         runner.action(action_id("remove"));
         let application = runner.app_mut();
         assert!(application.subscriptions.is_empty());
-        assert_eq!(application.view, View::Shelf);
+        assert_eq!(application.view, View::Combined);
     }
 
     #[test]
@@ -3730,6 +4026,78 @@ mod tests {
         assert_eq!(read[0], feeds[0]);
         assert_eq!(read[1].url, feeds[1].url);
         assert_eq!(read[1].title, "Another one entirely");
+    }
+
+    #[test]
+    fn combined_articles_are_the_default_and_sources_remain_separate() {
+        let subscriptions = vec![
+            Subscription {
+                url: "https://first.example/feed".to_owned(),
+                title: "First source".to_owned(),
+                site: "https://first.example/".to_owned(),
+            },
+            Subscription {
+                url: "https://second.example/feed".to_owned(),
+                title: "Second source".to_owned(),
+                site: "https://second.example/".to_owned(),
+            },
+        ];
+        let item = |id: &str, title: &str, body: &str| super::feed::Item {
+            id: id.to_owned(),
+            title: title.to_owned(),
+            link: format!("https://example.test/{id}"),
+            stamp: "2026-09-04T00:00:00Z".to_owned(),
+            author: String::new(),
+            body: body.to_owned(),
+        };
+        let mut runner = AppRunner::new(Feeds {
+            loaded: true,
+            subscriptions,
+            feed_caches: vec![
+                CachedFeed {
+                    url: "https://first.example/feed".to_owned(),
+                    title: "First source".to_owned(),
+                    site: "https://first.example/".to_owned(),
+                    items: vec![
+                        item(
+                            "first-1",
+                            "First headline",
+                            "Opening words from the first story.",
+                        ),
+                        item("first-2", "Older first story", "Older words."),
+                    ],
+                },
+                CachedFeed {
+                    url: "https://second.example/feed".to_owned(),
+                    title: "Second source".to_owned(),
+                    site: "https://second.example/".to_owned(),
+                    items: vec![item(
+                        "second-1",
+                        "Second headline",
+                        "Opening words from the second story.",
+                    )],
+                },
+            ],
+            ..Feeds::default()
+        });
+
+        let screen = screen_of(&runner.start());
+        let text = text_of(&screen);
+        assert!(text.iter().any(|line| line.contains("First headline")));
+        assert!(text.iter().any(|line| line.contains("Second headline")));
+        assert!(text.iter().any(|line| line.contains("first.example")));
+        assert!(text.iter().any(|line| line.contains("Opening words")));
+
+        runner.action(action_id("combined-1"));
+        assert_eq!(runner.app().view, View::Reading);
+        assert_eq!(runner.app().reading_parent, View::Combined);
+        assert_eq!(runner.app().article_source, "second.example");
+        assert_eq!(runner.app().items[0].title, "Second headline");
+        runner.action(kobo_sdk::ActionId::BACK);
+        assert_eq!(runner.app().view, View::Combined);
+
+        runner.action(action_id("sources"));
+        assert_eq!(runner.app().view, View::Shelf);
     }
 
     #[test]
@@ -3834,7 +4202,11 @@ mod tests {
                 ..Feeds::default()
             });
             runner.task_outcome(TaskId(1), TaskOutcome::Failed(error));
-            let said = runner.app_mut().problem.clone().unwrap_or_default();
+            let said = runner
+                .app()
+                .trouble
+                .map(|failure| failure.advice)
+                .unwrap_or_default();
             assert_eq!(said, kobo_sdk::Failure::of(error).advice);
             assert!(said.contains(expected), "{error:?} was worded as {said:?}");
         }
