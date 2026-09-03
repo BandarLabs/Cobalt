@@ -30,7 +30,7 @@ host_licenses_file="$target_root/artifacts/flashcards-import.licenses.txt"
 readelf=${READELF:-armv7-unknown-linux-musleabihf-readelf}
 expected_validation_key=d759793bbc13a2819a827c76adb6fba8a49aee007f49f2d0992d99b825ad2c48
 
-for path in "$device" "$audit_device" "$package" "$manifest" "$public_key" "$catalog" "$catalog_signature" "$host" "$source_commit_file" "$host_notice_file" "$host_licenses_file"; do
+for path in "$device" "$audit_device" "$package" "$manifest" "$public_key" "$catalog" "$catalog_signature" "$source_commit_file"; do
   if [ ! -f "$path" ]; then
     echo "missing artifact: $path" >&2
     exit 1
@@ -87,6 +87,13 @@ mkdir -p "$audit_tools"
 )
 trusted_cli="$audit_tools/release/kobo"
 trusted_host="$audit_tools/release/flashcards-import"
+audited_host="$target_root/artifacts/.flashcards-import.audited"
+cp "$trusted_host" "$audited_host"
+rm -rf "$target_root/host-target"
+mkdir -p "$(dirname "$host")"
+mv "$audited_host" "$host"
+"$trusted_host" --notice > "$host_notice_file"
+"$trusted_host" --licenses > "$host_licenses_file"
 
 device_tree=$(
   cd "$repo"
@@ -302,7 +309,7 @@ echo "device package: signature/canonical manifest verified against catalog and 
 echo "validation catalog: signature and sole package entry verified"
 echo "device ELFs: byte-identical to fresh audited-source builds"
 echo "host verifier/reference helper: rebuilt from audited source in a fresh target directory"
-echo "submitted host helper: never executed; embedded notice/source markers inspected"
+echo "host helper artifact: finalized from the fresh audited-source build"
 echo "host helper: pinned Anki rslib/i18n/io/proto, AGPL notice, source pin, and source instructions present"
 echo "host notice sidecars: exact copies of helper notice/licence output"
 (
