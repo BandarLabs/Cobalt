@@ -2025,11 +2025,13 @@ impl Lichess {
         let Some(accepted) = self.accepted_challenge.take() else {
             return false;
         };
-        let matched = self
+        let mut candidates = self
             .summaries
             .iter()
-            .find(|summary| accepted.matches_playing_game(summary))
-            .cloned();
+            .filter(|summary| accepted.matches_playing_game(summary));
+        let first = candidates.next().cloned();
+        let ambiguous = candidates.next().is_some();
+        let recovered = (!ambiguous).then_some(first).flatten();
         if self
             .challenge
             .as_ref()
@@ -2046,7 +2048,7 @@ impl Lichess {
         ) {
             self.clear_pending_action();
         }
-        if let Some(summary) = matched {
+        if let Some(summary) = recovered {
             self.notice =
                 Some("Recovered the accepted challenge from the current-game snapshot.".to_owned());
             self.open_board(context, summary.session());
@@ -2055,10 +2057,13 @@ impl Lichess {
             if self.route == Route::Challenge {
                 self.route = Route::Play;
             }
-            self.notice = Some(
+            self.notice = Some(if ambiguous {
+                "Several games matched the accepted challenge; choose the correct one from Ongoing games."
+                    .to_owned()
+            } else {
                 "The accepted challenge was not active after reconnect; the wait was cleared."
-                    .to_owned(),
-            );
+                    .to_owned()
+            });
             false
         }
     }
@@ -3671,6 +3676,37 @@ mod tests {
         );
         assert!(missing.accepted_challenge.is_none());
         assert_eq!(missing.route, Route::Play);
+
+        let mut ambiguous = Lichess {
+            route: Route::Challenge,
+            accepted_challenge: Some(Challenge {
+                id: "chall123".to_owned(),
+                challenger: "ReaderTwo".to_owned(),
+                direction: ChallengeDirection::Incoming,
+                status: "created".to_owned(),
+                rated: false,
+                variant: "standard".to_owned(),
+                speed: "rapid".to_owned(),
+                time_control: ChallengeTime::Clock {
+                    initial_seconds: Some(600),
+                    increment_seconds: Some(0),
+                },
+            }),
+            reconcile_accepted_challenge: true,
+            ..Lichess::default()
+        };
+        ambiguous.handle_completed(
+            &mut Context::default(),
+            Pending::Playing,
+            br#"{"nowPlaying":[{"gameId":"match123","color":"black","rated":false,"source":"friend","speed":"rapid","variant":{"key":"standard"},"secondsLeft":480,"isMyTurn":false,"lastMove":"","opponent":{"username":"ReaderTwo"}},{"gameId":"match456","color":"white","rated":false,"source":"friend","speed":"rapid","variant":{"key":"standard"},"secondsLeft":420,"isMyTurn":true,"lastMove":"e7e5","opponent":{"username":"ReaderTwo"}}]}"#,
+        );
+        assert!(ambiguous.session.is_none());
+        assert_eq!(ambiguous.route, Route::Play);
+        assert!(ambiguous
+            .notice
+            .as_deref()
+            .unwrap_or_default()
+            .contains("Several games matched"));
     }
 
     #[test]

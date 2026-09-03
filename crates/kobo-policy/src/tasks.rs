@@ -264,7 +264,7 @@ fn line_stream_url(work: &Task) -> Option<String> {
         .iter()
         .any(|header| {
             header.name.eq_ignore_ascii_case(LINE_STREAM_HEADER)
-                && matches!(header.value.as_str(), "open" | "next" | "close")
+                && matches!(header.value.as_str(), "open" | "next")
         })
         .then(|| url.clone())
 }
@@ -1275,6 +1275,23 @@ mod tests {
         write_to(&mut encoded, &frame).expect("encode protocol 11");
         let decoded = read_from(&mut Cursor::new(encoded)).expect("decode protocol 11");
         assert_eq!(decoded, frame);
+    }
+
+    #[test]
+    fn cancelling_open_or_next_closes_a_stream_but_cancelling_close_does_not() {
+        let work = |action| Task::Fetch {
+            url: "https://lichess.org/api/stream/event".into(),
+            offset: 0,
+            max_bytes: 4096,
+            credential: Some(Credential::bearer("lichess")),
+            headers: vec![
+                Header::new("Accept", "application/x-ndjson"),
+                Header::new("X-Cobalt-Line-Stream", action),
+            ],
+        };
+        assert!(line_stream_url(&work("open")).is_some());
+        assert!(line_stream_url(&work("next")).is_some());
+        assert!(line_stream_url(&work("close")).is_none());
     }
 
     #[test]
