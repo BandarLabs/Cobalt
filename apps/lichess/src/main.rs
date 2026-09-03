@@ -1661,7 +1661,7 @@ impl Lichess {
                 self.tasks.remove(&task);
             }
         }
-        self.notice = Some("Opening the confirmed game without replaying the seek.".to_owned());
+        self.notice = None;
         self.open_board(context, candidate.session());
     }
 
@@ -1757,13 +1757,8 @@ impl Lichess {
                 return;
             }
         }
-        if let Some(candidate) = &self.seek_candidate {
-            self.notice = Some(format!(
-                "Recovered a new rated {} {} game from current games. Confirm {} before opening.",
-                preset.label(),
-                preset.speed_label(),
-                candidate.opponent
-            ));
+        if self.seek_candidate.is_some() {
+            self.open_seek_candidate(context);
         } else {
             self.seek_waiting = false;
             self.selected_preset = None;
@@ -2297,16 +2292,8 @@ impl Lichess {
                     self.notice = Some("Challenge accepted. Opening the board.".to_owned());
                     self.open_board(context, summary.session());
                 } else if seek_match {
-                    if self.seek_candidate.is_none() {
-                        self.seek_candidate = Some(summary);
-                    }
-                    let description = self.selected_preset.map_or_else(
-                        || "selected preset".to_owned(),
-                        |preset| format!("{} {}", preset.label(), preset.speed_label()),
-                    );
-                    self.notice = Some(format!(
-                        "A matching {description} game started. Confirm it before closing the global seek."
-                    ));
+                    self.seek_candidate = Some(summary);
+                    self.open_seek_candidate(context);
                 } else if self.route == Route::Play {
                     self.notice =
                         Some("A Lichess game started. Open it from Ongoing games.".to_owned());
@@ -2737,7 +2724,22 @@ impl Lichess {
             Pending::Playing => {
                 if let Some(games) = api::parse_playing(bytes) {
                     self.playing_ready = true;
+                    if self.seek_waiting && self.seek_candidate.is_none() {
+                        if let Some(preset) = self.selected_preset {
+                            let mut candidates = games.iter().filter(|summary| {
+                                !self.seek_baseline.contains(&summary.id)
+                                    && preset.matches_summary(summary)
+                            });
+                            let first = candidates.next().cloned();
+                            if candidates.next().is_none() {
+                                self.seek_candidate = first;
+                            }
+                        }
+                    }
                     self.summaries = games;
+                    if self.seek_candidate.is_some() {
+                        self.open_seek_candidate(context);
+                    }
                     let recovered = self.reconcile_accepted_challenge_from_playing(context);
                     if !recovered {
                         if let Some(session) = self.session.clone() {
@@ -4849,11 +4851,8 @@ mod tests {
             &mut context,
             Event::GameStart(summary("rightClk", api::SeekPreset::Rapid10_5)),
         );
-        assert_eq!(
-            app.seek_candidate.as_ref().map(|game| game.id.as_str()),
-            Some("rightClk")
-        );
-        app.open_seek_candidate(&mut context);
+        assert_eq!(app.route, Route::Game);
+        assert!(app.seek_candidate.is_none());
         assert_eq!(
             app.expected_seek_game,
             Some(("rightClk".to_owned(), api::SeekPreset::Rapid10_5))
@@ -5381,12 +5380,9 @@ mod tests {
         )
         .expect("matched game");
         app.handle_event(&mut context, started);
-        assert!(app.seek_waiting);
-        assert!(app.seek_candidate.is_some());
-        assert_eq!(app.route, Route::Pairing);
-        app.on_action(&mut context, action_id("open-seek-candidate"));
         assert!(!app.seek_waiting);
         assert_eq!(app.route, Route::Game);
+        assert!(app.seek_candidate.is_none());
         assert_eq!(
             app.session.as_ref().map(|session| session.game_id.as_str()),
             Some("abcdEF12")
@@ -5423,18 +5419,15 @@ mod tests {
                 br#"{"nowPlaying":[{"gameId":"oldGame1","color":"white","rated":true,"source":"lobby","speed":"rapid","variant":{"key":"standard"},"secondsLeft":600,"isMyTurn":true,"lastMove":"","opponent":{"username":"Existing"}},{"gameId":"newGame2","color":"black","rated":true,"source":"lobby","speed":"rapid","variant":{"key":"standard"},"secondsLeft":600,"isMyTurn":false,"lastMove":"","opponent":{"username":"NewOpponent"}}]}"#.to_vec(),
             ),
         );
-        assert_eq!(app.route, Route::Pairing);
-        assert!(app.seek_waiting);
-        assert_eq!(app.selected_preset, Some(api::SeekPreset::Rapid10_5));
+        assert_eq!(app.route, Route::Game);
+        assert!(!app.seek_waiting);
+        assert!(app.selected_preset.is_none());
+        assert!(app.seek_candidate.is_none());
         assert_eq!(
-            app.seek_candidate.as_ref().map(|game| game.id.as_str()),
+            app.session.as_ref().map(|game| game.game_id.as_str()),
             Some("newGame2")
         );
-        assert!(app
-            .notice
-            .as_deref()
-            .unwrap_or_default()
-            .contains("current games"));
+        assert_ne!(app.notice.as_deref(), Some("No match."));
     }
 
     #[test]
@@ -6193,10 +6186,8 @@ mod tests {
         )
         .expect("gameStart");
         app.handle_event(&mut pairing, started);
-        assert_eq!(app.route, Route::Pairing);
-        assert!(app.seek_candidate.is_some());
-        app.on_action(&mut pairing, action_id("open-seek-candidate"));
         assert_eq!(app.route, Route::Game);
+        assert!(app.seek_candidate.is_none());
         assert_eq!(
             app.session.as_ref().map(|session| session.game_id.as_str()),
             Some("abcdEF12")
