@@ -345,10 +345,24 @@ impl Session {
             .and_then(|mut terminal| terminal.screen_for(since, lease, generation))
     }
 
-    fn accepts_lease(&self, lease: u64) -> bool {
-        self.terminal
+    fn write_for(
+        &self,
+        lease: u64,
+        bytes: &[u8],
+        write_pty: impl FnOnce(&[u8]) -> Result<(), String>,
+    ) -> Result<bool, String> {
+        let terminal = self
+            .terminal
             .lock()
-            .is_ok_and(|terminal| terminal.lease == lease)
+            .map_err(|_| "terminal screen lock failed")?;
+        if terminal.lease != lease {
+            return Ok(false);
+        }
+        // Kept through the PTY write: resize takes this same terminal-then-PTY
+        // order, while output draining releases the PTY before feeding state.
+        write_pty(bytes)?;
+        drop(terminal);
+        Ok(true)
     }
 
     #[must_use]
@@ -865,9 +879,6 @@ fn route(
             let lease = query(&request.target, "lease")
                 .and_then(|value| value.parse().ok())
                 .unwrap_or(0);
-            if !session.accepts_lease(lease) {
-                return respond(stream, 409, r#"{"stale":true}"#);
-            }
             let body = String::from_utf8_lossy(&request.body);
             let parsed = kobo_json::parse(&body).map_err(|_| "invalid keys JSON")?;
             if parsed.get("session").and_then(kobo_json::Value::as_i64) != Some(session_id as i64) {
@@ -881,10 +892,16 @@ fn route(
             if !permits_input(mode, &bytes) {
                 return respond(stream, 403, r#"{"accepted":false}"#);
             }
-            let mut terminal = input.lock().map_err(|_| "terminal input lock failed")?;
-            terminal
-                .write(&bytes)
-                .map_err(|error| format!("write terminal input: {error}"))?;
+            let accepted = session.write_for(lease, &bytes, |bytes| {
+                input
+                    .lock()
+                    .map_err(|_| "terminal input lock failed")?
+                    .write(bytes)
+                    .map_err(|error| format!("write terminal input: {error}"))
+            })?;
+            if !accepted {
+                return respond(stream, 409, r#"{"stale":true}"#);
+            }
             respond(stream, 200, r#"{"accepted":true}"#)
         }
         _ => respond(stream, 404, "{}"),
@@ -1318,6 +1335,74 @@ mod tests {
             .screen_for(0, relaunched, 0)
             .expect("relaunched screen");
         assert_eq!(current.rows.len(), 4);
+    }
+
+    #[test]
+    fn delayed_old_lease_keys_cannot_cross_new_lease_activation() {
+        let session = Arc::new(Session::new(Grid {
+            columns: 12,
+            rows: 2,
+        }));
+        let first = session.issue_lease().expect("first lease");
+        assert!(session
+            .resize_for(
+                Grid {
+                    columns: 12,
+                    rows: 2,
+                },
+                first,
+                0,
+                || Ok(()),
+            )
+            .expect("activate first lease"));
+        let current = session.issue_lease().expect("current lease");
+        let writes = Arc::new(Mutex::new(Vec::<Vec<u8>>::new()));
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+        let (continue_tx, continue_rx) = std::sync::mpsc::channel();
+
+        std::thread::scope(|scope| {
+            let stale_session = Arc::clone(&session);
+            let stale_writes = Arc::clone(&writes);
+            let stale = scope.spawn(move || {
+                ready_tx.send(()).expect("announce parsed stale request");
+                continue_rx.recv().expect("continue stale request");
+                stale_session
+                    .write_for(first, b"old", |bytes| {
+                        stale_writes
+                            .lock()
+                            .expect("stale writes lock")
+                            .push(bytes.to_vec());
+                        Ok(())
+                    })
+                    .expect("stale write verdict")
+            });
+
+            ready_rx.recv().expect("stale request ready");
+            assert!(session
+                .resize_for(
+                    Grid {
+                        columns: 20,
+                        rows: 3,
+                    },
+                    current,
+                    0,
+                    || Ok(()),
+                )
+                .expect("activate current lease"));
+            continue_tx.send(()).expect("release stale request");
+            assert!(!stale.join().expect("stale request thread"));
+        });
+
+        assert!(session
+            .write_for(current, b"new", |bytes| {
+                writes
+                    .lock()
+                    .expect("current writes lock")
+                    .push(bytes.to_vec());
+                Ok(())
+            })
+            .expect("current write verdict"));
+        assert_eq!(*writes.lock().expect("writes lock"), [b"new".to_vec()]);
     }
 
     #[test]
