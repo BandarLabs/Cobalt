@@ -1,6 +1,53 @@
 #!/bin/sh
 set -eu
 
+bootstrap_python=
+for candidate in /usr/bin/python3 /opt/homebrew/bin/python3; do
+  if [ -x "$candidate" ]; then
+    bootstrap_python=$candidate
+    break
+  fi
+done
+if [ -z "$bootstrap_python" ]; then
+  echo "a trusted system Python 3 is required" >&2
+  exit 1
+fi
+
+if [ "${COBALT_FLASHCARDS_SANITIZED_PID:-}" != "$$" ]; then
+  script_dir=${0%/*}
+  script_name=${0##*/}
+  if [ "$script_dir" = "$0" ]; then
+    script_dir=.
+  fi
+  script_dir=$(CDPATH= cd -- "$script_dir" && /bin/pwd -P)
+  script_path=$script_dir/$script_name
+  account_home=$("$bootstrap_python" -I -c \
+    'import os, pwd; print(pwd.getpwuid(os.getuid()).pw_dir)')
+  account_user=$("$bootstrap_python" -I -c \
+    'import os, pwd; print(pwd.getpwuid(os.getuid()).pw_name)')
+  case $account_home in
+    /*) ;;
+    *) echo "could not determine an absolute account home" >&2; exit 1 ;;
+  esac
+  case $account_home in
+    *:*) echo "account home cannot be represented safely in PATH" >&2; exit 1 ;;
+  esac
+  trusted_path="/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/opt/homebrew/opt/llvm/bin:$account_home/.cargo/bin"
+  exec /usr/bin/env -i \
+    HOME="$account_home" \
+    USER="$account_user" \
+    LOGNAME="$account_user" \
+    PATH="$trusted_path" \
+    LANG=C \
+    LC_ALL=C \
+    TZ=UTC \
+    GIT_CONFIG_NOSYSTEM=1 \
+    GIT_CONFIG_GLOBAL=/dev/null \
+    CARGO_TERM_COLOR=never \
+    COBALT_FLASHCARDS_SANITIZED_PID="$$" \
+    /bin/sh "$script_path" "$@"
+fi
+
 if [ "$#" -ne 1 ]; then
   echo "usage: scripts/audit-flashcards-artifacts.sh TARGET_ROOT" >&2
   exit 2
@@ -14,18 +61,19 @@ fi
 
 find_arm_tool() {
   for candidate in "$@"; do
-    candidate_path=$(command -v "$candidate" 2>/dev/null || true)
-    if [ -n "$candidate_path" ] &&
-      "$candidate_path" --version >/dev/null 2>&1; then
-      printf '%s\n' "$candidate_path"
-      return 0
-    fi
+    for directory in /usr/bin /bin /opt/homebrew/bin /opt/homebrew/opt/llvm/bin; do
+      candidate_path=$directory/$candidate
+      if [ -x "$candidate_path" ] &&
+        "$candidate_path" --version >/dev/null 2>&1; then
+        printf '%s\n' "$candidate_path"
+        return 0
+      fi
+    done
   done
   return 1
 }
 
 find_rust_lld() {
-  rust_sysroot=$(rustc --print sysroot) || return 1
   for candidate in "$rust_sysroot"/lib/rustlib/*/bin/rust-lld; do
     if [ -x "$candidate" ]; then
       printf '%s\n' "$candidate"
@@ -34,6 +82,27 @@ find_rust_lld() {
   done
   return 1
 }
+
+rust_driver=
+for candidate in "$HOME/.cargo/bin/rustc" /usr/bin/rustc /opt/homebrew/bin/rustc; do
+  if [ -x "$candidate" ] && "$candidate" --version >/dev/null 2>&1; then
+    rust_driver=$candidate
+    break
+  fi
+done
+if [ -z "$rust_driver" ]; then
+  echo "no trusted Rust toolchain driver was found" >&2
+  exit 1
+fi
+rust_sysroot=$("$rust_driver" --print sysroot)
+RUSTC="$rust_sysroot/bin/rustc"
+CARGO="$rust_sysroot/bin/cargo"
+if [ ! -x "$RUSTC" ] || [ ! -x "$CARGO" ]; then
+  echo "the active Rust sysroot lacks rustc or cargo" >&2
+  exit 1
+fi
+PATH="$rust_sysroot/bin:$PATH"
+export PATH RUSTC
 
 case $1 in
   /*) target_root=$1 ;;
@@ -53,23 +122,14 @@ host_notice_file="$target_root/artifacts/flashcards-import.notice.txt"
 host_licenses_file="$target_root/artifacts/flashcards-import.licenses.txt"
 audit_report="$target_root/artifacts/ARTIFACT-AUDIT.txt"
 sentinel="$target_root/.cobalt-flashcards-validation-root"
-readelf=
-for candidate in \
+readelf=$(find_arm_tool \
   armv7-unknown-linux-musleabihf-readelf \
   armv7-linux-musleabihf-readelf \
   arm-linux-musleabihf-readelf \
-  arm-linux-gnueabihf-readelf; do
-  candidate_path=$(command -v "$candidate" 2>/dev/null || true)
-  if [ -n "$candidate_path" ] &&
-    "$candidate_path" --version >/dev/null 2>&1; then
-    readelf=$candidate_path
-    break
-  fi
-done
-if [ -z "$readelf" ]; then
-  echo "no supported ARM readelf tool was found" >&2
-  exit 1
-fi
+  arm-linux-gnueabihf-readelf) || {
+    echo "no supported ARM readelf tool was found" >&2
+    exit 1
+  }
 CC_armv7_unknown_linux_musleabihf=$(find_arm_tool \
   armv7-unknown-linux-musleabihf-gcc \
   armv7-linux-musleabihf-gcc \
@@ -93,7 +153,14 @@ CARGO_TARGET_ARMV7_UNKNOWN_LINUX_MUSLEABIHF_LINKER=$(find_rust_lld) || {
 export CC_armv7_unknown_linux_musleabihf
 export AR_armv7_unknown_linux_musleabihf
 export CARGO_TARGET_ARMV7_UNKNOWN_LINUX_MUSLEABIHF_LINKER
-unset RUSTFLAGS CARGO_ENCODED_RUSTFLAGS CARGO_BUILD_RUSTFLAGS
+unset \
+  RUSTFLAGS \
+  CARGO_ENCODED_RUSTFLAGS \
+  CARGO_BUILD_RUSTFLAGS \
+  RUSTC_WRAPPER \
+  RUSTC_WORKSPACE_WRAPPER \
+  CARGO_BUILD_RUSTC_WRAPPER \
+  CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER
 expected_validation_key=d759793bbc13a2819a827c76adb6fba8a49aee007f49f2d0992d99b825ad2c48
 rm -f "$audit_report"
 
@@ -135,11 +202,11 @@ mkdir -p "$fresh_device_root/production" "$fresh_device_root/unstripped" "$targe
   cd "$repo"
   export TMPDIR="$target_root/build-tmp"
   CARGO_TARGET_DIR="$fresh_device_root/production" \
-    cargo build --quiet --locked --release \
+    "$CARGO" build --quiet --locked --release \
     --target armv7-unknown-linux-musleabihf -p kobo-flashcards
   CARGO_TARGET_DIR="$fresh_device_root/unstripped" \
   CARGO_PROFILE_RELEASE_STRIP=none \
-    cargo build --quiet --locked --release \
+    "$CARGO" build --quiet --locked --release \
     --target armv7-unknown-linux-musleabihf -p kobo-flashcards
 )
 assert_source_unchanged
@@ -163,7 +230,7 @@ mkdir -p "$audit_tools"
   TMPDIR="$target_root/build-tmp" \
   COBALT_SOURCE_COMMIT="$source_commit" \
   CARGO_TARGET_DIR="$audit_tools" \
-    cargo build --quiet --locked --release -p kobo-cli -p kobo-flashcards-import
+    "$CARGO" build --quiet --locked --release -p kobo-cli -p kobo-flashcards-import
 )
 assert_source_unchanged
 trusted_cli="$audit_tools/release/kobo"
@@ -181,7 +248,7 @@ fi
 
 device_tree=$(
   cd "$repo"
-  cargo tree --locked --offline -p kobo-flashcards --edges normal --prefix none
+  "$CARGO" tree --locked --offline -p kobo-flashcards --edges normal --prefix none
 )
 if printf '%s\n' "$device_tree" |
   grep -E '^(anki|anki_i18n|anki_io|anki_proto) v' >/dev/null; then
@@ -191,7 +258,7 @@ fi
 
 host_tree=$(
   cd "$repo"
-  cargo tree --locked --offline -p kobo-flashcards-import --edges normal --prefix none
+  "$CARGO" tree --locked --offline -p kobo-flashcards-import --edges normal --prefix none
 )
 for package_name in anki anki_i18n anki_io anki_proto; do
   if ! printf '%s\n' "$host_tree" |

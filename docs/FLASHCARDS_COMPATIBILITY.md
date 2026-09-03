@@ -42,8 +42,10 @@ scripts/audit-flashcards-artifacts.sh "$target_root"
 
 The build script varies only symbol stripping between production and audit
 device builds. Both scripts ignore caller compiler/archiver/linker overrides,
-discover a fixed allowlist of ARM tools, clear Rust flag overrides, and pin the
-active toolchain's `rust-lld`. The fixed validation
+restart with a minimal environment and fixed system-tool path, discover ARM
+tools only from fixed directories and name allowlists, clear Rust
+compiler/wrapper/flag overrides, and pin the active toolchain's real
+`cargo`, `rustc`, and `rust-lld` executables. The fixed validation
 signing material is public, removed immediately, and derives the fixed audit
 public key
 `d759793bbc13a2819a827c76adb6fba8a49aee007f49f2d0992d99b825ad2c48`.
