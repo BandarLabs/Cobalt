@@ -62,11 +62,12 @@ single-entry catalog are verified with Cobalt's real Ed25519/canonical parsers,
 bound back to `apps/catalog.json`, and checked against the exact standalone
 ARM ELF.
 The verifier CLI is rebuilt from the clean audited checkout in a freshly
-emptied target directory. The submitted host helper is preserved, rebuilt from
-the same source in its original target layout, and must be byte-identical
-before its output is trusted. Production and unstripped device ELFs are also
-rebuilt in fresh target directories and must be byte-identical to the packaged
-artifact inputs.
+emptied target directory together with a reference host helper. The submitted
+host helper is never used to verify device artifacts; its embedded
+notice/source markers and `--notice`/`--licenses` output must match the fresh
+reference build. Host binary byte reproducibility is not claimed. Production
+and unstripped device ELFs are rebuilt in fresh target directories and must be
+byte-identical to the packaged artifact inputs.
 
 ## Exact supported package boundary
 

@@ -32,7 +32,9 @@ export AR_armv7_unknown_linux_musleabihf="${AR_armv7_unknown_linux_musleabihf:-a
 
 rm -rf \
   "$target_root/armv7-unknown-linux-musleabihf" \
-  "$target_root/audit-unstripped"
+  "$target_root/audit-unstripped" \
+  "$target_root/host-target" \
+  "$target_root/host-tools"
 
 (
   cd "$repo"

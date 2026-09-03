@@ -75,28 +75,18 @@ if ! cmp "$fresh_audit_device" "$audit_device" >/dev/null; then
   exit 1
 fi
 
-submitted_host_root="$target_root/audit-submitted-host"
 audit_tools="$target_root/audit-tools"
-rm -rf "$submitted_host_root" "$audit_tools"
-mkdir -p "$submitted_host_root" "$audit_tools"
-cp "$host" "$submitted_host_root/flashcards-import"
-rm -rf "$target_root/host-target"
+rm -rf "$audit_tools"
+mkdir -p "$audit_tools"
 (
   cd "$repo"
   TMPDIR="$target_root/build-tmp" \
   COBALT_SOURCE_COMMIT="$source_commit" \
-  CARGO_TARGET_DIR="$target_root/host-target" \
-    cargo build --quiet --locked --release -p kobo-flashcards-import
-  TMPDIR="$target_root/build-tmp" \
   CARGO_TARGET_DIR="$audit_tools" \
-    cargo build --quiet --locked --release -p kobo-cli
+    cargo build --quiet --locked --release -p kobo-cli -p kobo-flashcards-import
 )
 trusted_cli="$audit_tools/release/kobo"
-if ! cmp "$submitted_host_root/flashcards-import" "$host" >/dev/null; then
-  echo "submitted host helper differs from the fresh same-layout source build" >&2
-  exit 1
-fi
-rm -rf "$submitted_host_root"
+trusted_host="$audit_tools/release/flashcards-import"
 
 device_tree=$(
   cd "$repo"
@@ -268,25 +258,33 @@ for required in \
   fi
 done
 
-if ! "$host" --licenses |
+if ! "$trusted_host" --licenses |
   grep -F 'Corresponding source for the Flashcards host converter' >/dev/null; then
   echo "host helper does not expose corresponding-source instructions" >&2
   exit 1
 fi
-if ! "$host" --licenses | grep -F "$source_commit" >/dev/null; then
+if ! "$trusted_host" --licenses | grep -F "$source_commit" >/dev/null; then
   echo "host helper does not expose its exact Cobalt source commit" >&2
   exit 1
 fi
-notice_hash=$("$host" --notice | shasum -a 256 | awk '{print $1}')
+notice_hash=$("$trusted_host" --notice | shasum -a 256 | awk '{print $1}')
 notice_file_hash=$(shasum -a 256 "$host_notice_file" | awk '{print $1}')
 if [ "$notice_hash" != "$notice_file_hash" ]; then
   echo "host notice sidecar differs from helper output" >&2
   exit 1
 fi
-licenses_hash=$("$host" --licenses | shasum -a 256 | awk '{print $1}')
+if [ "$notice_hash" != "$("$host" --notice | shasum -a 256 | awk '{print $1}')" ]; then
+  echo "submitted host helper notice output differs from the fresh reference build" >&2
+  exit 1
+fi
+licenses_hash=$("$trusted_host" --licenses | shasum -a 256 | awk '{print $1}')
 licenses_file_hash=$(shasum -a 256 "$host_licenses_file" | awk '{print $1}')
 if [ "$licenses_hash" != "$licenses_file_hash" ]; then
   echo "host licence/source sidecar differs from helper output" >&2
+  exit 1
+fi
+if [ "$licenses_hash" != "$("$host" --licenses | shasum -a 256 | awk '{print $1}')" ]; then
+  echo "submitted host helper licence output differs from the fresh reference build" >&2
   exit 1
 fi
 
@@ -298,8 +296,8 @@ echo "device local transport: generic socket primitives remain for required Coba
 echo "device package: signature/canonical manifest verified against catalog and standalone ELF"
 echo "validation catalog: signature and sole package entry verified"
 echo "device ELFs: byte-identical to fresh audited-source builds"
-echo "host helper: submitted binary matches a fresh same-layout audited-source build"
-echo "host verifier CLI: rebuilt from audited source in a fresh target directory"
+echo "host verifier/reference helper: rebuilt from audited source in a fresh target directory"
+echo "submitted host helper: notice/source output matches the fresh reference build"
 echo "host helper: pinned Anki rslib/i18n/io/proto, AGPL notice, source pin, and source instructions present"
 echo "host notice sidecars: exact copies of helper notice/licence output"
 (
