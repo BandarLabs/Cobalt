@@ -14,6 +14,7 @@ path = "src/main.rs"
 anki = { git = "https://github.com/ankitects/anki.git", rev = "9e32ad8849068510a82273889c21b22e1acf0949" }
 anki_proto = { git = "https://github.com/ankitects/anki.git", rev = "9e32ad8849068510a82273889c21b22e1acf0949" }
 kobo-flashcards-format = { path = "../kobo-flashcards-format" }
+kobo-doc = { path = "../kobo-doc" }
 kobo-html = { path = "../kobo-html" }
 kobo-image = { path = "../kobo-image" }
 rusqlite = { version = "0.36.0", features = ["bundled", "collation"] }

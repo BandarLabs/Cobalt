@@ -1,6 +1,8 @@
 #![forbid(unsafe_code)]
 
-use kobo_flashcards_format::{ATKINSON_LICENSE, DEJAVU_LICENSE, RESVG_LICENSE};
+use kobo_flashcards_format::{
+    ATKINSON_LICENSE, DEJAVU_LICENSE, JAPANESE_FONT_LICENSE, JAPANESE_FONT_SOURCE, RESVG_LICENSE,
+};
 use kobo_flashcards_import::{
     export_local_review_log, import, stage_for_kobo, verify_bundle, ImportMode, ImportOptions,
 };
@@ -17,7 +19,7 @@ const COBALT_SOURCE_COMMIT: &str = match option_env!("COBALT_SOURCE_COMMIT") {
     Some(commit) => commit,
     None => "unrecorded-development-build",
 };
-const HOST_DISTRIBUTION_DOCUMENTS: [(&str, &str); 8] = [
+const HOST_DISTRIBUTION_DOCUMENTS: [(&str, &str); 10] = [
     ("Host converter notice", ANKI_NOTICE),
     ("Anki licence", ANKI_LICENSE),
     ("Anki corresponding source", ANKI_SOURCE),
@@ -25,6 +27,8 @@ const HOST_DISTRIBUTION_DOCUMENTS: [(&str, &str); 8] = [
     ("resvg licence", RESVG_LICENSE),
     ("Atkinson Hyperlegible licence", ATKINSON_LICENSE),
     ("DejaVu licence", DEJAVU_LICENSE),
+    ("Cobalt Japanese font licence", JAPANESE_FONT_LICENSE),
+    ("Cobalt Japanese font source", JAPANESE_FONT_SOURCE),
     (
         "Flashcards host helper non-Anki dependency licences",
         HOST_DEPENDENCY_LICENSES,
@@ -187,5 +191,6 @@ mod tests {
             .iter()
             .all(|(_, document)| !document.is_empty()));
         assert!(ANKI_SOURCE.contains("9e32ad8849068510a82273889c21b22e1acf0949"));
+        assert!(JAPANESE_FONT_SOURCE.contains("165c01b46ea533872e002e0785ff17e44f6d97d8"));
     }
 }

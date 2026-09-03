@@ -1825,6 +1825,7 @@ dependencies = [
  "kobo-flashcards-format",
  "kobo-image",
  "kobo-sdk",
+ "kobo-text",
  "kobo-ui",
 ]
 
@@ -1850,6 +1851,7 @@ version = "0.3.3"
 dependencies = [
  "anki",
  "anki_proto",
+ "kobo-doc",
  "kobo-flashcards-format",
  "kobo-html",
  "kobo-image",

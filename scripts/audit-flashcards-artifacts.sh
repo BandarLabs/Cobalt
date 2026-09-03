@@ -161,6 +161,7 @@ host_notice_file="$target_root/artifacts/flashcards-import.notice.txt"
 host_licenses_file="$target_root/artifacts/flashcards-import.licenses.txt"
 audit_report="$target_root/artifacts/ARTIFACT-AUDIT.txt"
 sentinel="$target_root/.cobalt-flashcards-validation-root"
+japanese_font="$repo/crates/kobo-flashcards-format/fonts/CobaltJapanese-Regular.otf"
 readelf=$(find_arm_tool \
   armv7-unknown-linux-musleabihf-readelf \
   armv7-linux-musleabihf-readelf \
@@ -205,6 +206,7 @@ export \
   CARGO_BUILD_RUSTC_WRAPPER \
   CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER
 expected_validation_key=d759793bbc13a2819a827c76adb6fba8a49aee007f49f2d0992d99b825ad2c48
+expected_japanese_font_hash=150c82a7b6a4e39645099b3d27c96a00a148a1f57faf523027559910059c2dc0
 rm -f "$audit_report"
 cargo_home="$target_root/cargo-home"
 rm -rf "$cargo_home"
@@ -223,6 +225,11 @@ for path in "$device" "$audit_device" "$package" "$manifest" "$public_key" "$cat
     exit 1
   fi
 done
+if [ ! -f "$japanese_font" ] ||
+  [ "$(shasum -a 256 "$japanese_font" | awk '{print $1}')" != "$expected_japanese_font_hash" ]; then
+  echo "bounded Japanese font does not match its documented deterministic source" >&2
+  exit 1
+fi
 if [ -L "$sentinel" ] ||
   [ "$(cat "$sentinel")" != "Cobalt Flashcards validation root v1" ]; then
   echo "validation target sentinel is invalid" >&2
@@ -485,6 +492,9 @@ done
 
 for required in \
   'Flashcards device notice' \
+  'Cobalt Japanese font source' \
+  '165c01b46ea533872e002e0785ff17e44f6d97d8' \
+  "$expected_japanese_font_hash" \
   'cobalt-flashcards-converter-v1' \
   '"capabilities":[]'; do
   if ! strings "$package" | grep -F "$required" >/dev/null; then
@@ -492,6 +502,16 @@ for required in \
     exit 1
   fi
 done
+
+"$PYTHON3" -I - "$japanese_font" "$device" "$host" <<'PY'
+import sys
+from pathlib import Path
+
+font = Path(sys.argv[1]).read_bytes()
+for artifact in map(Path, sys.argv[2:]):
+    if font not in artifact.read_bytes():
+        raise SystemExit(f"{artifact} does not contain the audited Japanese font bytes")
+PY
 
 if [ -e "$repo/licenses/LICENSE-AnkiDroid.txt" ]; then
   echo "standalone AnkiDroid notice remains in the current source tree" >&2
@@ -503,6 +523,9 @@ for required in \
   "$source_commit" \
   'GNU AFFERO GENERAL PUBLIC LICENSE' \
   'Corresponding source for the Flashcards host converter' \
+  'Corresponding source for the Cobalt Japanese font subset' \
+  '165c01b46ea533872e002e0785ff17e44f6d97d8' \
+  "$expected_japanese_font_hash" \
   'Flashcards host helper non-Anki dependency notices'; do
   if ! strings "$host" | grep -F "$required" >/dev/null; then
     echo "host helper is missing required Anki source/licence material" >&2
@@ -584,6 +607,7 @@ PY
   echo "device symbols: no known high-level remote-network implementation"
   echo "device local transport: generic socket primitives remain for required Cobalt Unix-domain IPC"
   echo "device package: signature/canonical manifest verified against catalog and standalone ELF"
+  echo "host/device font: exact bounded Cobalt Japanese bytes, SIL OFL notice, source pin, and deterministic hash present"
   echo "validation catalog: signature and sole package entry verified"
   echo "device ELFs: byte-identical to fresh audited-source builds"
   echo "host verifier/reference helper: rebuilt from audited source in a fresh target directory"

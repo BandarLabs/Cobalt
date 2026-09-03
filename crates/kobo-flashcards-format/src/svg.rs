@@ -1,4 +1,4 @@
-use crate::FormatError;
+use crate::{FormatError, JAPANESE_FONT};
 use std::sync::{Arc, OnceLock};
 
 const MAX_SVG_NODES: usize = 20_000;
@@ -78,7 +78,7 @@ pub fn validate_svg_source(bytes: &[u8]) -> Result<(), FormatError> {
 fn safe_svg_options() -> resvg::usvg::Options<'static> {
     resvg::usvg::Options {
         resources_dir: None,
-        font_family: "Atkinson Hyperlegible".to_owned(),
+        font_family: "Cobalt Japanese".to_owned(),
         fontdb: safe_font_db(),
         image_href_resolver: resvg::usvg::ImageHrefResolver {
             resolve_data: Box::new(|_, _, _| None),
@@ -346,8 +346,9 @@ fn safe_font_db() -> Arc<resvg::usvg::fontdb::Database> {
             fonts.load_font_data(kobo_text::TEXT_FONT.to_vec());
             fonts.load_font_data(kobo_text::DISPLAY_FONT.to_vec());
             fonts.load_font_data(kobo_text::MONO_FONT.to_vec());
-            fonts.set_serif_family("Atkinson Hyperlegible");
-            fonts.set_sans_serif_family("Atkinson Hyperlegible");
+            fonts.load_font_data(JAPANESE_FONT.to_vec());
+            fonts.set_serif_family("Cobalt Japanese");
+            fonts.set_sans_serif_family("Cobalt Japanese");
             fonts.set_monospace_family("DejaVu Sans Mono");
             Arc::new(fonts)
         })
@@ -373,5 +374,17 @@ mod tests {
         )
         .expect("different text");
         assert_ne!(original, rewritten);
+    }
+
+    #[test]
+    fn bundled_font_renders_japanese_svg_text() {
+        let png = rasterize_svg(
+            r#"<svg xmlns="http://www.w3.org/2000/svg" width="360" height="100"><text x="12" y="64" font-size="48">日本語</text></svg>"#
+                .as_bytes(),
+        )
+        .expect("Japanese SVG text");
+        let image = kobo_image::decode(&png).expect("rendered PNG");
+        assert_eq!((image.width(), image.height()), (360, 100));
+        assert!(image.grey().iter().any(|pixel| *pixel < 240));
     }
 }

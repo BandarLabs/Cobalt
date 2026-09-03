@@ -30,6 +30,7 @@ pub const MAX_MEDIA_ENTRIES: usize = 8_192;
 pub const MAX_NOTES: usize = 100_000;
 pub const MAX_CARDS: usize = 100_000;
 pub const MAX_REVIEW_QUEUE_CARDS: usize = 512;
+pub const MAX_CARD_TEXT_SPANS: usize = 256;
 pub const MAX_REVLOG_ENTRIES: usize = 500_000;
 pub const MAX_REVIEW_LOG_BYTES: usize = 16 * 1024 * 1024;
 pub const MAX_REVIEW_LOG_LINE_BYTES: usize = 512;
@@ -41,8 +42,13 @@ pub const DEVICE_DEPENDENCY_LICENSES: &str =
 pub const ATKINSON_LICENSE: &str =
     include_str!("../../kobo-text/fonts/LICENSE-AtkinsonHyperlegible.txt");
 pub const DEJAVU_LICENSE: &str = include_str!("../../kobo-text/fonts/LICENSE-DejaVu.txt");
+pub const JAPANESE_FONT: &[u8] = include_bytes!("../fonts/CobaltJapanese-Regular.otf");
+pub const JAPANESE_FONT_LICENSE: &str =
+    include_str!("../../../licenses/LICENSE-Cobalt-Japanese-font.txt");
+pub const JAPANESE_FONT_SOURCE: &str =
+    include_str!("../../../licenses/SOURCE-Cobalt-Japanese-font.md");
 
-pub const DEVICE_DISTRIBUTION_DOCUMENTS: [(&str, &str); 5] = [
+pub const DEVICE_DISTRIBUTION_DOCUMENTS: [(&str, &str); 7] = [
     ("Flashcards device notice", DEVICE_NOTICE),
     ("resvg licence", RESVG_LICENSE),
     (
@@ -51,7 +57,48 @@ pub const DEVICE_DISTRIBUTION_DOCUMENTS: [(&str, &str); 5] = [
     ),
     ("Atkinson Hyperlegible licence", ATKINSON_LICENSE),
     ("DejaVu licence", DEJAVU_LICENSE),
+    ("Cobalt Japanese font licence", JAPANESE_FONT_LICENSE),
+    ("Cobalt Japanese font source", JAPANESE_FONT_SOURCE),
 ];
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CardTextFont {
+    Interface,
+    Japanese,
+}
+
+/// Chooses the deterministic font path for one rendered card side.
+///
+/// # Errors
+///
+/// Returns an error instead of allowing an unsupported character to turn into
+/// an empty box on the Kobo.
+pub fn card_text_font(text: &str) -> Result<CardTextFont, FormatError> {
+    let interface = ttf_parser::Face::parse(kobo_text::TEXT_FONT, 0)
+        .map_err(|_| FormatError::InvalidManifest("bundled text font is malformed".to_owned()))?;
+    let fallback = ttf_parser::Face::parse(kobo_text::MONO_FONT, 0).map_err(|_| {
+        FormatError::InvalidManifest("bundled fallback font is malformed".to_owned())
+    })?;
+    if text.chars().all(|character| {
+        character.is_whitespace()
+            || interface.glyph_index(character).is_some()
+            || fallback.glyph_index(character).is_some()
+    }) {
+        return Ok(CardTextFont::Interface);
+    }
+    let japanese = ttf_parser::Face::parse(JAPANESE_FONT, 0).map_err(|_| {
+        FormatError::InvalidManifest("bundled Japanese font is malformed".to_owned())
+    })?;
+    if text
+        .chars()
+        .all(|character| character.is_whitespace() || japanese.glyph_index(character).is_some())
+    {
+        return Ok(CardTextFont::Japanese);
+    }
+    Err(FormatError::InvalidManifest(
+        "rendered card text needs a glyph outside the bundled font set".to_owned(),
+    ))
+}
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct BundleManifest {
@@ -204,12 +251,40 @@ pub struct Card {
     pub template_name: String,
     pub front: String,
     pub back: String,
+    #[serde(default)]
+    pub front_spans: Vec<CardTextSpan>,
+    #[serde(default)]
+    pub back_spans: Vec<CardTextSpan>,
     pub tags: Vec<String>,
     pub question_media_names: Vec<String>,
     pub answer_media_names: Vec<String>,
     pub media_names: Vec<String>,
     pub attachments: Vec<Attachment>,
     pub diagnostics: Vec<Diagnostic>,
+}
+
+#[allow(clippy::struct_excessive_bools)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct CardTextStyle {
+    pub strong: bool,
+    pub emphasis: bool,
+    pub underline: bool,
+    pub superscript: bool,
+    pub subscript: bool,
+}
+
+impl CardTextStyle {
+    #[must_use]
+    pub const fn is_plain(self) -> bool {
+        !self.strong && !self.emphasis && !self.underline && !self.superscript && !self.subscript
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct CardTextSpan {
+    pub start: usize,
+    pub end: usize,
+    pub style: CardTextStyle,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -873,6 +948,12 @@ fn validate_manifest_shape(manifest: &BundleManifest) -> Result<(), FormatError>
         |grave| (grave.object_id, grave.object_kind),
         "graves",
     )?;
+    for deck in &manifest.decks {
+        card_text_font(&deck.name)?;
+    }
+    for card in &manifest.cards {
+        card_text_font(&card.template_name)?;
+    }
     if manifest.notes.iter().any(|note| note.id <= 0)
         || manifest.notetypes.iter().any(|notetype| notetype.id <= 0)
         || manifest.decks.iter().any(|deck| deck.id <= 0)
@@ -968,6 +1049,8 @@ fn validate_card_references(
                 card.id
             )));
         }
+        validate_card_text(&card.front, &card.front_spans)?;
+        validate_card_text(&card.back, &card.back_spans)?;
         validate_sorted_media_names(&card.question_media_names)?;
         validate_sorted_media_names(&card.answer_media_names)?;
         validate_sorted_media_names(&card.media_names)?;
@@ -1033,6 +1116,31 @@ fn validate_card_references(
                 card.id
             )));
         }
+    }
+    Ok(())
+}
+
+fn validate_card_text(text: &str, spans: &[CardTextSpan]) -> Result<(), FormatError> {
+    card_text_font(text)?;
+    if spans.len() > MAX_CARD_TEXT_SPANS {
+        return Err(FormatError::InvalidManifest(
+            "rendered card text has too many emphasis spans".to_owned(),
+        ));
+    }
+    let mut previous_end = 0;
+    for span in spans {
+        if span.start >= span.end
+            || span.end > text.len()
+            || !text.is_char_boundary(span.start)
+            || !text.is_char_boundary(span.end)
+            || span.start < previous_end
+            || span.style.is_plain()
+        {
+            return Err(FormatError::InvalidManifest(
+                "rendered card emphasis spans are invalid".to_owned(),
+            ));
+        }
+        previous_end = span.end;
     }
     Ok(())
 }
@@ -1168,7 +1276,7 @@ pub fn validate_review_log(bytes: &[u8]) -> Result<usize, FormatError> {
             || record.card_id <= 0
             || i32::try_from(record.imported_due).is_err()
             || i32::try_from(record.imported_reps).is_err()
-            || !matches!(record.grade.as_str(), "again" | "hard" | "good")
+            || !matches!(record.grade.as_str(), "again" | "hard" | "good" | "easy")
             || record.bundle_sha256.len() != 64
             || !record
                 .bundle_sha256
@@ -1269,6 +1377,8 @@ mod tests {
             template_name: "Card".to_owned(),
             front: "front".to_owned(),
             back: "back".to_owned(),
+            front_spans: Vec::new(),
+            back_spans: Vec::new(),
             tags: Vec::new(),
             question_media_names: Vec::new(),
             answer_media_names: Vec::new(),
@@ -1339,6 +1449,8 @@ mod tests {
     fn owner_review_log_is_versioned_bounded_and_bundle_bound() {
         let valid = b"{\"format\":2,\"bundle_sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"card_id\":7,\"grade\":\"good\",\"imported_due\":3,\"imported_reps\":2}\n";
         assert_eq!(validate_review_log(valid), Ok(1));
+        let easy = b"{\"format\":2,\"bundle_sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"card_id\":7,\"grade\":\"easy\",\"imported_due\":3,\"imported_reps\":2}\n";
+        assert_eq!(validate_review_log(easy), Ok(1));
         assert!(validate_review_log(&valid[..valid.len() - 1]).is_err());
         assert!(validate_review_log(
             b"{\"format\":2,\"bundle_sha256\":\"bad\",\"card_id\":7,\"grade\":\"easy\",\"imported_due\":3,\"imported_reps\":2}\n"
@@ -1358,6 +1470,43 @@ mod tests {
     fn bundle_validation_matches_review_log_scheduling_bounds() {
         let mut manifest = single_card_manifest();
         manifest.cards[0].due = i64::MAX;
+        assert!(matches!(
+            encode(manifest, BTreeMap::new()),
+            Err(FormatError::InvalidManifest(_))
+        ));
+    }
+
+    #[test]
+    fn rendered_text_has_bounded_fonts_and_emphasis() {
+        assert_eq!(
+            card_text_font("Readable Latin"),
+            Ok(CardTextFont::Interface)
+        );
+        assert_eq!(card_text_font("日本語のカード"), Ok(CardTextFont::Japanese));
+        assert!(card_text_font("unsupported emoji \u{1f680}").is_err());
+
+        let mut manifest = single_card_manifest();
+        manifest.cards[0].front = "日本語".to_owned();
+        manifest.cards[0].front_spans = vec![CardTextSpan {
+            start: 0,
+            end: "日本".len(),
+            style: CardTextStyle {
+                strong: true,
+                ..CardTextStyle::default()
+            },
+        }];
+        assert!(encode(manifest.clone(), BTreeMap::new()).is_ok());
+
+        manifest.cards[0].front_spans[0].end = 1;
+        assert!(matches!(
+            encode(manifest, BTreeMap::new()),
+            Err(FormatError::InvalidManifest(_))
+        ));
+
+        let mut manifest = single_card_manifest();
+        manifest.decks[0].name = "日本語".to_owned();
+        assert!(encode(manifest.clone(), BTreeMap::new()).is_ok());
+        manifest.decks[0].name = "Deck \u{1f680}".to_owned();
         assert!(matches!(
             encode(manifest, BTreeMap::new()),
             Err(FormatError::InvalidManifest(_))

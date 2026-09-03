@@ -16,10 +16,11 @@ use anki_proto::generic;
 use kobo_flashcards_format::{
     canonical_media_name, decode, digest_hex, encode, media_type, rasterize_svg,
     validate_review_log, validate_svg_source, verify_card_images, Attachment, AttachmentKind,
-    BundleManifest, Card, CollectionConfig, CollectionTag, Deck, DeckConfiguration, DeckQueue,
-    Diagnostic, FormatError, Grave, Note as BundleNote, NoteType, ReviewLog, ReviewQueue, Source,
-    CONVERTER_REVISION, MAX_BUNDLE_BYTES, MAX_CARDS, MAX_MEDIA_BYTES, MAX_MEDIA_ENTRIES,
-    MAX_PAYLOAD_BYTES, MAX_REVIEW_QUEUE_CARDS,
+    BundleManifest, Card, CardTextSpan, CardTextStyle, CollectionConfig, CollectionTag, Deck,
+    DeckConfiguration, DeckQueue, Diagnostic, FormatError, Grave, Note as BundleNote, NoteType,
+    ReviewLog, ReviewQueue, Source, CONVERTER_REVISION, MAX_BUNDLE_BYTES, MAX_CARDS,
+    MAX_CARD_TEXT_SPANS, MAX_MEDIA_BYTES, MAX_MEDIA_ENTRIES, MAX_PAYLOAD_BYTES,
+    MAX_REVIEW_QUEUE_CARDS,
 };
 use rusqlite::Connection;
 use serde::de::{MapAccess, Visitor};
@@ -1397,8 +1398,15 @@ fn read_card(
     let type_answer = template_uses_type_answer(&template.config.q_format)
         || template_uses_type_answer(&template.config.a_format);
     let mut diagnostics = Vec::new();
-    let (front, back, question_references, answer_references) =
-        render_existing_with_rslib(collection, row.id, type_answer, &mut diagnostics)?;
+    let (front, back) = render_existing_with_rslib(
+        collection,
+        row.id,
+        &notetype.config.css,
+        type_answer,
+        &mut diagnostics,
+    )?;
+    let question_references = front.media;
+    let answer_references = back.media;
     ensure_single_image_reference(&question_references)?;
     ensure_single_image_reference(&answer_references)?;
     let question_media_names = sorted_unique_references(question_references);
@@ -1448,8 +1456,10 @@ fn read_card(
         data: row.data,
         modified: row.modified,
         template_name,
-        front,
-        back,
+        front: front.text,
+        back: back.text,
+        front_spans: front.spans,
+        back_spans: back.spans,
         tags: note.tags.clone(),
         question_media_names,
         answer_media_names,
@@ -1459,12 +1469,19 @@ fn read_card(
     })
 }
 
+struct RenderedSide {
+    text: String,
+    spans: Vec<CardTextSpan>,
+    media: Vec<String>,
+}
+
 fn render_existing_with_rslib(
     collection: &mut Collection,
     card_id: i64,
+    css: &str,
     type_answer: bool,
     diagnostics: &mut Vec<Diagnostic>,
-) -> Result<(String, String, Vec<String>, Vec<String>), ImportError> {
+) -> Result<(RenderedSide, RenderedSide), ImportError> {
     let partial = anki::services::CardRenderingService::render_existing_card(
         collection,
         anki_proto::card_rendering::RenderExistingCardRequest {
@@ -1496,12 +1513,108 @@ fn render_existing_with_rslib(
     }
     let question_media = upstream_media_references(collection, &question)?;
     let answer_media = upstream_media_references(collection, &answer)?;
+    let question_text = kobo_html::to_text(&question);
+    let answer_text = kobo_html::to_text(&answer);
+    let question_spans = rendered_emphasis(&question, css, &question_text)?;
+    let answer_spans = rendered_emphasis(&answer, css, &answer_text)?;
     Ok((
-        annotate_type_answer(&kobo_html::to_text(&question), type_answer),
-        annotate_type_answer(&kobo_html::to_text(&answer), type_answer),
-        question_media,
-        answer_media,
+        RenderedSide {
+            text: annotate_type_answer(&question_text, type_answer),
+            spans: question_spans,
+            media: question_media,
+        },
+        RenderedSide {
+            text: annotate_type_answer(&answer_text, type_answer),
+            spans: answer_spans,
+            media: answer_media,
+        },
     ))
+}
+
+fn rendered_emphasis(html: &str, css: &str, plain: &str) -> Result<Vec<CardTextSpan>, ImportError> {
+    let document = kobo_doc::html::parse_with_css(html, css);
+    if document.truncated {
+        return Err(ImportError::InvalidPackage(
+            "rendered card styling exceeds the bounded document parser".to_owned(),
+        ));
+    }
+    let mut spans: Vec<CardTextSpan> = Vec::new();
+    let mut cursor = 0;
+    for rich in document.rich.values() {
+        for source in &rich.spans {
+            let source_text = source.text.trim();
+            if source_text.is_empty() {
+                continue;
+            }
+            let style = CardTextStyle {
+                strong: source.style.strong,
+                emphasis: source.style.emphasis,
+                underline: source.style.underline,
+                superscript: source.style.superscript,
+                subscript: source.style.subscript,
+            };
+            let Some((start, end)) = find_without_whitespace(plain, cursor, source_text) else {
+                if !style.is_plain() && !source.text.trim().is_empty() {
+                    return Err(ImportError::InvalidPackage(
+                        "rendered card emphasis cannot be mapped safely to device text".to_owned(),
+                    ));
+                }
+                continue;
+            };
+            cursor = end;
+            if style.is_plain() {
+                continue;
+            }
+            if let Some(previous) = spans.last_mut() {
+                if previous.end == start && previous.style == style {
+                    previous.end = end;
+                    continue;
+                }
+            }
+            spans.push(CardTextSpan { start, end, style });
+            if spans.len() > MAX_CARD_TEXT_SPANS {
+                return Err(ImportError::InvalidPackage(
+                    "rendered card has too many emphasis spans".to_owned(),
+                ));
+            }
+        }
+    }
+    Ok(spans)
+}
+
+fn find_without_whitespace(haystack: &str, from: usize, needle: &str) -> Option<(usize, usize)> {
+    let wanted = needle
+        .char_indices()
+        .filter_map(|(_, character)| (!character.is_whitespace()).then_some(character))
+        .collect::<Vec<_>>();
+    if wanted.is_empty() {
+        return None;
+    }
+    let available = haystack
+        .get(from..)?
+        .char_indices()
+        .filter_map(|(offset, character)| {
+            (!character.is_whitespace()).then_some((
+                character,
+                from + offset,
+                from + offset + character.len_utf8(),
+            ))
+        })
+        .collect::<Vec<_>>();
+    available
+        .windows(wanted.len())
+        .find(|window| {
+            window
+                .iter()
+                .map(|(character, _, _)| *character)
+                .eq(wanted.iter().copied())
+        })
+        .map(|window| {
+            (
+                window.first().expect("non-empty wanted").1,
+                window.last().expect("non-empty wanted").2,
+            )
+        })
 }
 
 fn reject_unresolved_filters(
@@ -2333,6 +2446,29 @@ mod tests {
     }
 
     #[test]
+    fn rendered_semantic_and_bounded_css_emphasis_survives() {
+        let html = r#"<div class="accent">plain <strong>bold</strong> <u>under</u></div>"#;
+        let plain = kobo_html::to_text(html);
+        let spans = rendered_emphasis(
+            html,
+            ".accent { font-style: italic; text-align: right; font-size: 90px; }",
+            &plain,
+        )
+        .expect("bounded emphasis");
+        assert_eq!(plain, "plain bold under");
+        assert!(spans.iter().any(|span| span.style.emphasis));
+        assert!(spans
+            .iter()
+            .any(|span| span.style.strong && span.style.emphasis));
+        assert!(spans
+            .iter()
+            .any(|span| span.style.underline && span.style.emphasis));
+        assert!(spans
+            .iter()
+            .all(|span| span.end <= plain.len() && span.start < span.end));
+    }
+
+    #[test]
     fn interrupted_write_keeps_the_previous_bundle() {
         let path = unique("atomic.cobfc");
         fs::write(&path, b"previous").expect("prior");
@@ -2526,6 +2662,14 @@ mod tests {
         let bundle_bytes = fs::read(&output).expect("private bundle");
         let bundle = decode(&bundle_bytes).expect("private bundle decode");
         verify_bundle(&output).expect("private image verification");
+        assert!(
+            bundle
+                .manifest()
+                .cards
+                .iter()
+                .any(|card| !card.front_spans.is_empty() || !card.back_spans.is_empty()),
+            "private aggregate contains no retained emphasis"
+        );
 
         let unpacked = read_archive(&package, PackageKind::Apkg).expect("private archive");
         let collection_path = root.join("upstream.anki2");
@@ -2606,15 +2750,20 @@ mod tests {
             let answer_media = sorted_unique_references(
                 upstream_media_references(collection, &answer).expect("answer media"),
             );
+            let question_plain = kobo_html::to_text(&question);
+            let answer_plain = kobo_html::to_text(&answer);
+            let question_spans =
+                rendered_emphasis(&question, &notetype.config.css, &question_plain)
+                    .expect("question emphasis");
+            let answer_spans = rendered_emphasis(&answer, &notetype.config.css, &answer_plain)
+                .expect("answer emphasis");
+            let question_text = annotate_type_answer(&question_plain, type_answer);
+            let answer_text = annotate_type_answer(&answer_plain, type_answer);
             append_identity_field(&mut aggregate, &row.id.to_le_bytes());
-            append_identity_field(
-                &mut aggregate,
-                annotate_type_answer(&kobo_html::to_text(&question), type_answer).as_bytes(),
-            );
-            append_identity_field(
-                &mut aggregate,
-                annotate_type_answer(&kobo_html::to_text(&answer), type_answer).as_bytes(),
-            );
+            append_identity_field(&mut aggregate, question_text.as_bytes());
+            append_text_span_identity(&mut aggregate, &question_spans);
+            append_identity_field(&mut aggregate, answer_text.as_bytes());
+            append_text_span_identity(&mut aggregate, &answer_spans);
             for name in question_media {
                 append_identity_field(&mut aggregate, name.as_bytes());
             }
@@ -2632,7 +2781,9 @@ mod tests {
         for card in &manifest.cards {
             append_identity_field(&mut aggregate, &card.id.to_le_bytes());
             append_identity_field(&mut aggregate, card.front.as_bytes());
+            append_text_span_identity(&mut aggregate, &card.front_spans);
             append_identity_field(&mut aggregate, card.back.as_bytes());
+            append_text_span_identity(&mut aggregate, &card.back_spans);
             for name in &card.question_media_names {
                 append_identity_field(&mut aggregate, name.as_bytes());
             }
@@ -2643,6 +2794,31 @@ mod tests {
             aggregate.push(0xfe);
         }
         digest_hex(&aggregate)
+    }
+
+    fn append_text_span_identity(aggregate: &mut Vec<u8>, spans: &[CardTextSpan]) {
+        for span in spans {
+            append_identity_field(
+                aggregate,
+                &u64::try_from(span.start)
+                    .expect("span start fits")
+                    .to_le_bytes(),
+            );
+            append_identity_field(
+                aggregate,
+                &u64::try_from(span.end)
+                    .expect("span end fits")
+                    .to_le_bytes(),
+            );
+            aggregate.extend_from_slice(&[
+                u8::from(span.style.strong),
+                u8::from(span.style.emphasis),
+                u8::from(span.style.underline),
+                u8::from(span.style.superscript),
+                u8::from(span.style.subscript),
+            ]);
+        }
+        aggregate.push(0xfd);
     }
 
     fn append_identity_field(output: &mut Vec<u8>, field: &[u8]) {

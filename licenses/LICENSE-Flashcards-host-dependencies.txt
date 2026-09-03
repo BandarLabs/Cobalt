@@ -493,7 +493,7 @@ limitations under the License.
 
 ===============================================================================
 Apache License 2.0 [Apache-2.0]
-Used by: fdeflate 0.3.7, image 0.25.8, miniz_oxide 0.8.9, num-conv 0.2.2, pin-project 1.1.13, pin-project-internal 1.1.13, pin-project-lite 0.2.17, portable-atomic 1.15.0, portable-atomic-util 0.2.7, sync_wrapper 1.0.2, time 0.3.55, time-core 0.1.9, zstd-safe 7.2.4, zstd-sys 2.0.16+zstd.1.5.7
+Used by: fdeflate 0.3.7, image 0.25.8, miniz_oxide 0.8.9, miniz_oxide 0.9.1, num-conv 0.2.2, pin-project 1.1.13, pin-project-internal 1.1.13, pin-project-lite 0.2.17, portable-atomic 1.15.0, portable-atomic-util 0.2.7, sync_wrapper 1.0.2, time 0.3.55, time-core 0.1.9, zstd-safe 7.2.4, zstd-sys 2.0.16+zstd.1.5.7
 -------------------------------------------------------------------------------
 
                                  Apache License
