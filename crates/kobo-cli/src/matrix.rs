@@ -12,6 +12,8 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 
 const DRIVE_ROUTE: &str = include_str!("../../../apps/backgammon/drive.txt");
+const PROBE_PICTURE_SIDE: u32 = 256;
+const PROBE_PICTURES: u32 = 5;
 
 #[derive(Debug)]
 struct Failure {
@@ -20,6 +22,14 @@ struct Failure {
     rotation: u32,
     subject: String,
     error: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct Screenshot {
+    path: String,
+    width: u32,
+    height: u32,
+    sha256: String,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -37,6 +47,174 @@ struct Options {
     worker: Option<(String, u32)>,
 }
 
+struct ScenarioProbe {
+    scenario: kobo_sim::Scenario,
+    result: &'static str,
+    picture: Option<kobo_sdk::TilePicture>,
+}
+
+impl ScenarioProbe {
+    fn new(scenario: kobo_sim::Scenario) -> Self {
+        Self {
+            scenario,
+            result: "pending",
+            picture: None,
+        }
+    }
+
+    fn show(&self, context: &mut kobo_sdk::Context) {
+        let mut screen = kobo_sdk::ScreenBuilder::new("matrix-scenario")
+            .heading("Simulator scenario")
+            .text(format!("scenario:{}", self.scenario.name()))
+            .text(format!("result:{}", self.result));
+        if let Some(picture) = self.picture {
+            screen = screen.picture(picture, 25);
+        }
+        context.set_screen(screen.build());
+    }
+
+    fn set_result(&mut self, context: &mut kobo_sdk::Context, result: &'static str) {
+        self.result = result;
+        self.show(context);
+    }
+}
+
+impl kobo_sdk::KoboApp for ScenarioProbe {
+    fn on_start(&mut self, context: &mut kobo_sdk::Context) {
+        match self.scenario {
+            kobo_sim::Scenario::Normal | kobo_sim::Scenario::LowBattery => {
+                context.device().read_battery();
+            }
+            kobo_sim::Scenario::Offline
+            | kobo_sim::Scenario::HostDown
+            | kobo_sim::Scenario::NetworkTimeout => {
+                let _ = context.spawn(kobo_sdk::Task::Fetch {
+                    url: "https://example.invalid/matrix".to_owned(),
+                    offset: 0,
+                    max_bytes: 16,
+                    credential: None,
+                    headers: Vec::new(),
+                });
+            }
+            kobo_sim::Scenario::PermissionDenied => {
+                context.applications().cached_catalog();
+            }
+            kobo_sim::Scenario::MissingSecret => {
+                let _ = context.spawn(kobo_sdk::Task::Post {
+                    url: "https://example.invalid/matrix".to_owned(),
+                    body: "{}".to_owned(),
+                    content_type: "application/json".to_owned(),
+                    credential: Some(kobo_sdk::Credential::bearer("matrix-missing")),
+                    headers: Vec::new(),
+                    max_bytes: 16,
+                });
+            }
+            kobo_sim::Scenario::StorageFull => {
+                context.store().save("matrix-probe", b"saved".to_vec());
+            }
+            kobo_sim::Scenario::CachePressure => {
+                for handle in 1..=PROBE_PICTURES {
+                    let picture = context.put_picture(
+                        kobo_sdk::PictureHandle(handle),
+                        PROBE_PICTURE_SIDE,
+                        PROBE_PICTURE_SIDE,
+                        vec![
+                            u8::try_from(handle).unwrap_or(u8::MAX);
+                            (PROBE_PICTURE_SIDE * PROBE_PICTURE_SIDE) as usize
+                        ],
+                    );
+                    if handle == 1 {
+                        self.picture = picture;
+                    }
+                }
+                self.result = "picture-evicted";
+            }
+        }
+        self.show(context);
+    }
+
+    fn on_action(&mut self, _context: &mut kobo_sdk::Context, _action: kobo_sdk::ActionId) {}
+
+    fn on_device_result(
+        &mut self,
+        context: &mut kobo_sdk::Context,
+        _request: kobo_sdk::DeviceRequest,
+        result: kobo_sdk::DeviceResult,
+    ) {
+        let result = match (self.scenario, result) {
+            (
+                kobo_sim::Scenario::Normal,
+                kobo_sdk::DeviceResult::Battery {
+                    percent: 72,
+                    charging: false,
+                },
+            ) => "battery-72",
+            (
+                kobo_sim::Scenario::LowBattery,
+                kobo_sdk::DeviceResult::Battery {
+                    percent: 5,
+                    charging: false,
+                },
+            ) => "battery-5",
+            (
+                kobo_sim::Scenario::PermissionDenied,
+                kobo_sdk::DeviceResult::Denied(kobo_sdk::DenyReason::NotDeclared),
+            ) => "denied-not-declared",
+            _ => "unexpected-device-result",
+        };
+        self.set_result(context, result);
+    }
+
+    fn on_task(
+        &mut self,
+        context: &mut kobo_sdk::Context,
+        _task: kobo_sdk::TaskId,
+        outcome: kobo_sdk::TaskOutcome,
+    ) {
+        let result = match (self.scenario, outcome) {
+            (
+                kobo_sim::Scenario::Offline,
+                kobo_sdk::TaskOutcome::Failed(kobo_sdk::TaskError::Offline),
+            ) => "offline",
+            (
+                kobo_sim::Scenario::HostDown,
+                kobo_sdk::TaskOutcome::Failed(kobo_sdk::TaskError::Unreachable),
+            ) => "unreachable",
+            (
+                kobo_sim::Scenario::MissingSecret,
+                kobo_sdk::TaskOutcome::Failed(kobo_sdk::TaskError::NotFound),
+            ) => "missing-secret",
+            (
+                kobo_sim::Scenario::NetworkTimeout,
+                kobo_sdk::TaskOutcome::Failed(kobo_sdk::TaskError::TimedOut),
+            ) => "timed-out",
+            _ => "unexpected-task-result",
+        };
+        self.set_result(context, result);
+    }
+
+    fn on_store(&mut self, context: &mut kobo_sdk::Context, result: kobo_sdk::StoreResult) {
+        let result = match (self.scenario, result) {
+            (
+                kobo_sim::Scenario::StorageFull,
+                kobo_sdk::StoreResult::Denied(kobo_sdk::StoreError::TooFull),
+            ) => "storage-too-full",
+            _ => "unexpected-store-result",
+        };
+        self.set_result(context, result);
+    }
+}
+
+pub fn run_probe(arguments: &[String]) -> Result<(), String> {
+    let [scenario] = arguments else {
+        return Err("internal matrix probe needs one scenario".to_owned());
+    };
+    let scenario = kobo_sim::Scenario::parse(scenario.as_bytes())
+        .ok_or_else(|| format!("unknown internal matrix scenario {scenario:?}"))?;
+    kobo_sdk::run("store", ScenarioProbe::new(scenario))
+        .map_err(|error| format!("matrix scenario probe: {error}"))
+}
+
 pub fn run(arguments: &[String]) -> Result<(), String> {
     if matches!(arguments, [help] if matches!(help.as_str(), "--help" | "-h")) {
         println!("{USAGE}");
@@ -47,8 +225,12 @@ pub fn run(arguments: &[String]) -> Result<(), String> {
     if !options.skip_build {
         build(&packages)?;
     }
-    fs::create_dir_all(&options.screenshots)
-        .map_err(|error| format!("create {}: {error}", options.screenshots.display()))?;
+    if options.worker.is_none() {
+        prepare_screenshot_directory(&options.screenshots)?;
+    } else {
+        fs::create_dir_all(&options.screenshots)
+            .map_err(|error| format!("create {}: {error}", options.screenshots.display()))?;
+    }
     if let Some(parent) = options.report.parent() {
         fs::create_dir_all(parent)
             .map_err(|error| format!("create {}: {error}", parent.display()))?;
@@ -65,6 +247,7 @@ fn coordinate(packages: &[&str], report: &Path, screenshots: &Path) -> Result<()
     let configs = kobo_sim::SimulationConfig::supported().collect::<Vec<_>>();
     let mut counts = Counts::default();
     let mut failures = Vec::new();
+    let mut screenshots_inventory = Vec::new();
     let mut coverage = BTreeMap::<(&'static str, u32), Counts>::new();
     let executable =
         std::env::current_exe().map_err(|error| format!("locate matrix executable: {error}"))?;
@@ -107,9 +290,19 @@ fn coordinate(packages: &[&str], report: &Path, screenshots: &Path) -> Result<()
         add_counts(&mut counts, parsed.0);
         coverage.insert((config.profile().id, config.pose().rotation()), parsed.0);
         failures.extend(parsed.1);
+        screenshots_inventory.extend(parsed.2);
     }
+    verify_screenshot_inventory(screenshots, &screenshots_inventory)?;
 
-    finish_report(packages, &configs, report, &counts, &coverage, &failures)
+    finish_report(
+        packages,
+        &configs,
+        report,
+        &counts,
+        &coverage,
+        &failures,
+        &screenshots_inventory,
+    )
 }
 
 fn execute(
@@ -120,6 +313,7 @@ fn execute(
 ) -> Result<(), String> {
     let mut counts = Counts::default();
     let mut failures = Vec::new();
+    let mut screenshots_inventory = Vec::new();
     let mut coverage = BTreeMap::<(&'static str, u32), Counts>::new();
 
     for config in configs.iter().copied() {
@@ -137,7 +331,12 @@ fn execute(
                         .or_default()
                         .warnings += warnings;
                     if *package == "kobo-store" {
-                        write_shot(screenshots, config, "store-initial", &frame)?;
+                        screenshots_inventory.push(write_shot(
+                            screenshots,
+                            config,
+                            "store-initial",
+                            &frame,
+                        )?);
                     }
                 }
                 Err(error) => failures.push(Failure {
@@ -172,18 +371,29 @@ fn execute(
             .entry((config.profile().id, config.pose().rotation()))
             .or_default()
             .drives += 1;
-        if let Err(error) = drive_case(config, screenshots) {
-            failures.push(Failure {
-                kind: "drive".to_owned(),
-                profile: config.profile().id.to_owned(),
-                rotation: config.pose().rotation(),
-                subject: "apps/backgammon/drive.txt".to_owned(),
-                error,
-            });
+        match drive_case(config, screenshots) {
+            Ok(shots) => screenshots_inventory.extend(shots),
+            Err(error) => {
+                failures.push(Failure {
+                    kind: "drive".to_owned(),
+                    profile: config.profile().id.to_owned(),
+                    rotation: config.pose().rotation(),
+                    subject: "apps/backgammon/drive.txt".to_owned(),
+                    error,
+                });
+            }
         }
     }
 
-    finish_report(packages, configs, report, &counts, &coverage, &failures)
+    finish_report(
+        packages,
+        configs,
+        report,
+        &counts,
+        &coverage,
+        &failures,
+        &screenshots_inventory,
+    )
 }
 
 fn finish_report(
@@ -193,8 +403,9 @@ fn finish_report(
     counts: &Counts,
     coverage: &BTreeMap<(&'static str, u32), Counts>,
     failures: &[Failure],
+    screenshots: &[Screenshot],
 ) -> Result<(), String> {
-    let json = report_json(packages, coverage, counts, failures);
+    let json = report_json(packages, coverage, counts, failures, screenshots);
     fs::write(report, json).map_err(|error| format!("write {}: {error}", report.display()))?;
     println!(
         "matrix: {} profiles, {} poses, {} apps, {} cases, {} failures; report {}",
@@ -223,7 +434,7 @@ fn add_counts(total: &mut Counts, added: Counts) {
     total.warnings += added.warnings;
 }
 
-fn read_worker_report(path: &Path) -> Result<(Counts, Vec<Failure>), String> {
+fn read_worker_report(path: &Path) -> Result<(Counts, Vec<Failure>, Vec<Screenshot>), String> {
     let text =
         fs::read_to_string(path).map_err(|error| format!("read {}: {error}", path.display()))?;
     let root =
@@ -283,7 +494,50 @@ fn read_worker_report(path: &Path) -> Result<(Counts, Vec<Failure>), String> {
             })
         })
         .collect::<Result<Vec<_>, String>>()?;
-    Ok((counts, failures))
+    let screenshots = root
+        .get("screenshots")
+        .and_then(kobo_json::Value::as_array)
+        .ok_or_else(|| format!("{} has no screenshots array", path.display()))?
+        .iter()
+        .map(read_worker_screenshot)
+        .collect::<Result<Vec<_>, String>>()?;
+    Ok((counts, failures, screenshots))
+}
+
+fn read_worker_screenshot(screenshot: &kobo_json::Value) -> Result<Screenshot, String> {
+    let string = |name| {
+        screenshot
+            .get(name)
+            .and_then(kobo_json::Value::as_str)
+            .map(str::to_owned)
+            .ok_or_else(|| format!("worker screenshot has no string {name}"))
+    };
+    let number = |name| {
+        let Some(kobo_json::Value::Number(value)) = screenshot.get(name) else {
+            return Err(format!("worker screenshot has no numeric {name}"));
+        };
+        if *value < 0.0 || value.fract() != 0.0 {
+            return Err(format!("worker screenshot {name} is not an integer"));
+        }
+        value
+            .to_string()
+            .parse::<u32>()
+            .map_err(|_| format!("worker screenshot {name} is out of range"))
+    };
+    let sha256 = string("sha256")?;
+    if sha256.len() != 64
+        || !sha256
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err("worker screenshot has an invalid SHA-256".to_owned());
+    }
+    Ok(Screenshot {
+        path: string("path")?,
+        width: number("width")?,
+        height: number("height")?,
+        sha256,
+    })
 }
 
 fn parse(arguments: &[String]) -> Result<Options, String> {
@@ -348,6 +602,104 @@ fn parse(arguments: &[String]) -> Result<Options, String> {
 
 const USAGE: &str = "usage: kobo matrix --report PATH --screenshots DIR [--skip-build]";
 
+fn prepare_screenshot_directory(path: &Path) -> Result<(), String> {
+    match fs::read_dir(path) {
+        Ok(mut entries) => {
+            if entries
+                .next()
+                .transpose()
+                .map_err(|error| {
+                    format!("inspect screenshot directory {}: {error}", path.display())
+                })?
+                .is_some()
+            {
+                return Err(format!(
+                    "screenshot directory {} must be absent or empty",
+                    path.display()
+                ));
+            }
+            Ok(())
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            fs::create_dir_all(path).map_err(|error| format!("create {}: {error}", path.display()))
+        }
+        Err(error) => Err(format!(
+            "inspect screenshot directory {}: {error}",
+            path.display()
+        )),
+    }
+}
+
+fn verify_screenshot_inventory(directory: &Path, inventory: &[Screenshot]) -> Result<(), String> {
+    let reported = inventory
+        .iter()
+        .map(|screenshot| screenshot.path.as_str())
+        .collect::<BTreeSet<_>>();
+    if reported.len() != inventory.len() {
+        return Err("matrix screenshot inventory contains duplicate paths".to_owned());
+    }
+    let actual = fs::read_dir(directory)
+        .map_err(|error| format!("read screenshot directory {}: {error}", directory.display()))?
+        .map(|entry| {
+            let entry = entry.map_err(|error| {
+                format!("read screenshot entry in {}: {error}", directory.display())
+            })?;
+            if !entry
+                .file_type()
+                .map_err(|error| format!("inspect {}: {error}", entry.path().display()))?
+                .is_file()
+            {
+                return Err(format!(
+                    "unexpected non-file screenshot artifact {}",
+                    entry.path().display()
+                ));
+            }
+            Ok(entry.path().to_string_lossy().into_owned())
+        })
+        .collect::<Result<BTreeSet<_>, String>>()?;
+    if actual != reported.iter().map(|path| (*path).to_owned()).collect() {
+        return Err("matrix screenshot directory and JSON inventory differ".to_owned());
+    }
+    for screenshot in inventory {
+        let bytes = fs::read(&screenshot.path)
+            .map_err(|error| format!("read screenshot {}: {error}", screenshot.path))?;
+        let hash = ring::digest::digest(&ring::digest::SHA256, &bytes);
+        let actual_hash = hex_digest(hash.as_ref());
+        if actual_hash != screenshot.sha256 {
+            return Err(format!("screenshot hash changed for {}", screenshot.path));
+        }
+        let dimensions = png_dimensions(&bytes)
+            .ok_or_else(|| format!("screenshot is not a PNG: {}", screenshot.path))?;
+        if dimensions != (screenshot.width, screenshot.height) {
+            return Err(format!(
+                "screenshot dimensions for {} are {}x{}, expected {}x{}",
+                screenshot.path, dimensions.0, dimensions.1, screenshot.width, screenshot.height
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn png_dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
+    if bytes.get(..16)? != b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR" {
+        return None;
+    }
+    Some((
+        u32::from_be_bytes(bytes.get(16..20)?.try_into().ok()?),
+        u32::from_be_bytes(bytes.get(20..24)?.try_into().ok()?),
+    ))
+}
+
+fn hex_digest(bytes: &[u8]) -> String {
+    bytes.iter().fold(
+        String::with_capacity(bytes.len() * 2),
+        |mut encoded, byte| {
+            let _ = write!(encoded, "{byte:02x}");
+            encoded
+        },
+    )
+}
+
 fn packages() -> Vec<&'static str> {
     INSTALLED_PACKAGES
         .iter()
@@ -391,6 +743,25 @@ fn start_app(
     config: kobo_sim::SimulationConfig,
     block_network: bool,
 ) -> Result<(kobo_sim::AppSession, AppChild), String> {
+    let command = Command::new(workspace_host_binary(package));
+    start_process(command, config, block_network)
+}
+
+fn start_probe(
+    config: kobo_sim::SimulationConfig,
+) -> Result<(kobo_sim::AppSession, AppChild), String> {
+    let executable =
+        std::env::current_exe().map_err(|error| format!("locate matrix probe: {error}"))?;
+    let mut command = Command::new(executable);
+    command.arg("__matrix-probe").arg(config.scenario().name());
+    start_process(command, config, false)
+}
+
+fn start_process(
+    mut command: Command,
+    config: kobo_sim::SimulationConfig,
+    block_network: bool,
+) -> Result<(kobo_sim::AppSession, AppChild), String> {
     reset_simulated_storage()?;
     let dev = DevSessionGuard::new()?;
     let server = kobo_sim::AppServer::bind_with_config("127.0.0.1:0", &dev.socket, config)
@@ -398,14 +769,13 @@ fn start_app(
     server
         .set_nonblocking(true)
         .map_err(|error| format!("configure simulator: {error}"))?;
-    let mut command = Command::new(workspace_host_binary(package));
     command.env("KOBO_SOCKET", &dev.socket);
     if block_network {
         command.env(kobo_sim::OFFLINE, "1");
     }
     let child = command
         .spawn()
-        .map_err(|error| format!("launch {package}: {error}"))?;
+        .map_err(|error| format!("launch simulator application: {error}"))?;
     let mut app = AppChild { child: Some(child) };
     let session = wait_for_app(&server, &mut app)?;
     wait_for_paint(&session, 0)?;
@@ -514,31 +884,73 @@ fn validate_session(session: &kobo_sim::AppSession) -> Result<(usize, Vec<u8>), 
 }
 
 fn scenario_case(config: kobo_sim::SimulationConfig) -> Result<(), String> {
-    let mut simulator = kobo_sim::Simulator::with_config(config);
-    let frame = simulator.ideal_frame();
-    let expected = (config.pose().width() as usize)
-        .checked_mul(config.pose().height() as usize)
-        .ok_or("panel dimensions overflow")?;
-    if frame.len() != expected {
-        return Err("scenario frame size does not match the selected profile".to_owned());
-    }
-    let errors = simulator
-        .diagnostics()
-        .issues
-        .into_iter()
-        .filter(|issue| format!("{:?}", issue.severity) == "Error")
-        .map(|issue| issue.to_string())
-        .collect::<Vec<_>>();
-    if errors.is_empty() {
+    let (session, app) = start_probe(config)?;
+    let result = (|| {
+        let _ = validate_session(&session)?;
+        let expected = format!("result:{}", scenario_expected(config.scenario()));
+        if find_label(&session, &expected, false).is_none() {
+            return Err(format!(
+                "probe did not show {expected:?}; screen was {:?}",
+                session
+                    .layout()
+                    .nodes
+                    .iter()
+                    .flat_map(|node| &node.text_lines)
+                    .collect::<Vec<_>>()
+            ));
+        }
+        let missing_first = session.diagnostics().issues.iter().any(|issue| {
+            matches!(
+                issue.kind,
+                kobo_sdk::LayoutIssueKind::MissingPicture(kobo_sdk::PictureHandle(1))
+            )
+        });
+        if missing_first != (config.scenario() == kobo_sim::Scenario::CachePressure) {
+            return Err(
+                "cache-pressure picture eviction did not match the selected scenario".into(),
+            );
+        }
         Ok(())
-    } else {
-        Err(errors.join("; "))
+    })();
+    let _ = session.close();
+    drop(app);
+    result
+}
+
+const fn scenario_expected(scenario: kobo_sim::Scenario) -> &'static str {
+    match scenario {
+        kobo_sim::Scenario::Normal => "battery-72",
+        kobo_sim::Scenario::Offline => "offline",
+        kobo_sim::Scenario::HostDown => "unreachable",
+        kobo_sim::Scenario::LowBattery => "battery-5",
+        kobo_sim::Scenario::PermissionDenied => "denied-not-declared",
+        kobo_sim::Scenario::MissingSecret => "missing-secret",
+        kobo_sim::Scenario::NetworkTimeout => "timed-out",
+        kobo_sim::Scenario::StorageFull => "storage-too-full",
+        kobo_sim::Scenario::CachePressure => "picture-evicted",
     }
 }
 
-fn drive_case(config: kobo_sim::SimulationConfig, screenshots: &Path) -> Result<(), String> {
+const fn scenario_operation(scenario: kobo_sim::Scenario) -> &'static str {
+    match scenario {
+        kobo_sim::Scenario::Normal | kobo_sim::Scenario::LowBattery => "device.read-battery",
+        kobo_sim::Scenario::Offline
+        | kobo_sim::Scenario::HostDown
+        | kobo_sim::Scenario::NetworkTimeout => "task.fetch",
+        kobo_sim::Scenario::PermissionDenied => "applications.cached-catalog",
+        kobo_sim::Scenario::MissingSecret => "task.post-with-credential",
+        kobo_sim::Scenario::StorageFull => "store.save",
+        kobo_sim::Scenario::CachePressure => "pictures.evict-and-render",
+    }
+}
+
+fn drive_case(
+    config: kobo_sim::SimulationConfig,
+    screenshots: &Path,
+) -> Result<Vec<Screenshot>, String> {
     let (session, app) = start_app("kobo-backgammon", config, true)?;
     let result = (|| {
+        let mut shots = Vec::new();
         for line in DRIVE_ROUTE.lines().map(str::trim) {
             if line.is_empty() || line.starts_with('#') {
                 continue;
@@ -563,7 +975,7 @@ fn drive_case(config: kobo_sim::SimulationConfig, screenshots: &Path) -> Result<
                 }
                 "shot" => {
                     let (_, frame) = validate_session(&session)?;
-                    write_shot(screenshots, config, value, &frame)?;
+                    shots.push(write_shot(screenshots, config, value, &frame)?);
                 }
                 "clean" => {
                     let _ = validate_session(&session)?;
@@ -572,7 +984,7 @@ fn drive_case(config: kobo_sim::SimulationConfig, screenshots: &Path) -> Result<
             }
         }
         let _ = validate_session(&session)?;
-        Ok(())
+        Ok(shots)
     })();
     let _ = session.close();
     drop(app);
@@ -626,7 +1038,7 @@ fn write_shot(
     config: kobo_sim::SimulationConfig,
     name: &str,
     frame: &[u8],
-) -> Result<(), String> {
+) -> Result<Screenshot, String> {
     let png = kobo_image::encode_png_grey(config.pose().width(), config.pose().height(), frame)
         .map_err(|error| format!("encode screenshot: {error}"))?;
     let path = directory.join(format!(
@@ -635,7 +1047,14 @@ fn write_shot(
         config.pose().rotation(),
         name.replace(['/', ' '], "-")
     ));
-    fs::write(&path, png).map_err(|error| format!("write {}: {error}", path.display()))
+    let sha256 = ring::digest::digest(&ring::digest::SHA256, &png);
+    fs::write(&path, png).map_err(|error| format!("write {}: {error}", path.display()))?;
+    Ok(Screenshot {
+        path: path.to_string_lossy().into_owned(),
+        width: config.pose().width(),
+        height: config.pose().height(),
+        sha256: hex_digest(sha256.as_ref()),
+    })
 }
 
 fn report_json(
@@ -643,14 +1062,28 @@ fn report_json(
     coverage: &BTreeMap<(&'static str, u32), Counts>,
     counts: &Counts,
     failures: &[Failure],
+    screenshots: &[Screenshot],
 ) -> String {
     let mut json = format!(
         "{{\"schema\":1,\"protocols\":{{\"responsiveMatrix\":{},\
          \"legacyCompatibility\":{},\"legacyIncludedInResponsiveMatrix\":false}},\
-         \"profiles\":[",
+         \"scenarioAssertions\":[",
         kobo_protocol::VERSION,
         kobo_protocol::LEGACY_VERSION,
     );
+    for (index, scenario) in kobo_sim::Scenario::ALL.into_iter().enumerate() {
+        if index > 0 {
+            json.push(',');
+        }
+        let _ = write!(
+            json,
+            "{{\"name\":{},\"operation\":{},\"expected\":{}}}",
+            quote(scenario.name()),
+            quote(scenario_operation(scenario)),
+            quote(scenario_expected(scenario))
+        );
+    }
+    json.push_str("],\"profiles\":[");
     for (index, ((profile, rotation), count)) in coverage.iter().enumerate() {
         if index > 0 {
             json.push(',');
@@ -676,14 +1109,15 @@ fn report_json(
     let total = counts.initial + counts.scenarios + counts.drives;
     let _ = write!(
         json,
-        "],\"counts\":{{\"initial\":{},\"scenarios\":{},\"drives\":{},\"total\":{},\"passed\":{},\"failed\":{},\"warnings\":{}}},\"failures\":[",
+        "],\"counts\":{{\"initial\":{},\"scenarios\":{},\"drives\":{},\"total\":{},\"passed\":{},\"failed\":{},\"warnings\":{},\"screenshots\":{}}},\"failures\":[",
         counts.initial,
         counts.scenarios,
         counts.drives,
         total,
         total.saturating_sub(failures.len()),
         failures.len(),
-        counts.warnings
+        counts.warnings,
+        screenshots.len()
     );
     for (index, failure) in failures.iter().enumerate() {
         if index > 0 {
@@ -697,6 +1131,20 @@ fn report_json(
             failure.rotation,
             quote(&failure.subject),
             quote(&failure.error)
+        );
+    }
+    json.push_str("],\"screenshots\":[");
+    for (index, screenshot) in screenshots.iter().enumerate() {
+        if index > 0 {
+            json.push(',');
+        }
+        let _ = write!(
+            json,
+            "{{\"path\":{},\"width\":{},\"height\":{},\"sha256\":{}}}",
+            quote(&screenshot.path),
+            screenshot.width,
+            screenshot.height,
+            quote(&screenshot.sha256)
         );
     }
     json.push_str("]}\n");
@@ -724,8 +1172,15 @@ fn quote(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{packages, report_json, Counts};
+    use super::{
+        packages, prepare_screenshot_directory, report_json, scenario_expected, scenario_operation,
+        Counts, Screenshot,
+    };
     use std::collections::BTreeMap;
+    use std::fs;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static NEXT_DIRECTORY: AtomicUsize = AtomicUsize::new(0);
 
     #[test]
     fn matrix_covers_the_union_of_platform_and_store_apps() {
@@ -739,9 +1194,64 @@ mod tests {
 
     #[test]
     fn responsive_and_legacy_protocols_are_reported_separately() {
-        let json = report_json(&[], &BTreeMap::new(), &Counts::default(), &[]);
+        let json = report_json(&[], &BTreeMap::new(), &Counts::default(), &[], &[]);
         assert!(json.contains("\"responsiveMatrix\":12"));
         assert!(json.contains("\"legacyCompatibility\":11"));
         assert!(json.contains("\"legacyIncludedInResponsiveMatrix\":false"));
+    }
+
+    #[test]
+    fn every_scenario_has_one_asserted_service_result() {
+        let results = kobo_sim::Scenario::ALL
+            .map(scenario_expected)
+            .into_iter()
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(results.len(), kobo_sim::Scenario::ALL.len());
+        assert!(!results.contains("pending"));
+        assert_eq!(
+            scenario_operation(kobo_sim::Scenario::CachePressure),
+            "pictures.evict-and-render"
+        );
+        let json = report_json(&[], &BTreeMap::new(), &Counts::default(), &[], &[]);
+        assert!(json.contains(
+            "\"name\":\"storage-full\",\"operation\":\"store.save\",\
+             \"expected\":\"storage-too-full\""
+        ));
+    }
+
+    #[test]
+    fn screenshot_report_is_self_inventorying() {
+        let screenshot = Screenshot {
+            path: "/artifacts/libra.png".to_owned(),
+            width: 1264,
+            height: 1680,
+            sha256: "a".repeat(64),
+        };
+        let json = report_json(
+            &[],
+            &BTreeMap::new(),
+            &Counts::default(),
+            &[],
+            &[screenshot],
+        );
+        assert!(json.contains("\"screenshots\":1"));
+        assert!(json.contains("\"path\":\"/artifacts/libra.png\""));
+        assert!(json.contains("\"width\":1264,\"height\":1680"));
+        assert!(json.contains(&format!("\"sha256\":\"{}\"", "a".repeat(64))));
+    }
+
+    #[test]
+    fn screenshot_directory_must_be_absent_or_empty() {
+        let directory = std::env::temp_dir().join(format!(
+            "km-empty-{}-{}",
+            std::process::id(),
+            NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed)
+        ));
+        let _ = fs::remove_dir_all(&directory);
+        prepare_screenshot_directory(&directory).expect("absent directory is created");
+        prepare_screenshot_directory(&directory).expect("empty directory is accepted");
+        fs::write(directory.join("stale.png"), b"stale").expect("write stale artifact");
+        assert!(prepare_screenshot_directory(&directory).is_err());
+        fs::remove_dir_all(directory).expect("remove test directory");
     }
 }

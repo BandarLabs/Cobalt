@@ -45,7 +45,13 @@ simulator failure scenario, and checked-in drive route across every verified
 profile pose. Each pose runs in an isolated worker so its PPI-specific typeface
 cannot leak into another profile. The JSON keeps protocol 12 responsive results
 separate from protocol 11 compatibility. Test the latter independently with
-`cargo test -p kobo-protocol legacy`.
+`cargo test -p kobo-protocol version_11`.
+
+The screenshot directory must be absent or empty. A complete run currently
+checks 160 initial screens, 72 scenario probes, and 8 drive routes: 240 cases.
+Each scenario probe is a real SDK application that performs the affected
+service operation and verifies the result it renders. The report inventories
+every PNG by path, dimensions, and SHA-256.
 
 Network requests and terminals are real. The inspector's deterministic
 scenarios exercise offline, low-battery, denied-permission, missing-secret,

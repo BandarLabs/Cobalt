@@ -18,6 +18,7 @@ kobo-json = { path = "../kobo-json" }
 kobo-net = { path = "../kobo-net" }
 kobo-profile = { path = "../kobo-profile" }
 kobo-protocol = { path = "../kobo-protocol" }
+kobo-sdk = { path = "../kobo-sdk" }
 ring = "0.17"
 
 [features]

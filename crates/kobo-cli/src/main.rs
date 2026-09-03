@@ -437,6 +437,7 @@ fn run(arguments: &[String]) -> Result<(), String> {
         "inspect" => inspect_package(&arguments[1..]),
         "verify" => verify_command(&arguments[1..]),
         "matrix" => matrix::run(&arguments[1..]),
+        "__matrix-probe" => matrix::run_probe(&arguments[1..]),
         "run" if arguments.get(1).is_some_and(|value| value == "--sim") => {
             run_simulation(&arguments[2..])
         }
