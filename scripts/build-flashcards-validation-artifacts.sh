@@ -145,7 +145,7 @@ find "$target_root" -mindepth 1 -maxdepth 1 \
   -exec rm -rf -- {} +
 mkdir -p "$artifacts/catalog" "$target_root/build-tmp"
 export TMPDIR="$target_root/build-tmp"
-cargo_home="$target_root/build-cargo-home"
+cargo_home="$target_root/cargo-home"
 mkdir -p "$cargo_home"
 for cache in registry git; do
   if [ -d "$HOME/.cargo/$cache" ]; then
@@ -304,7 +304,7 @@ trap - EXIT
 rm -rf \
   "$target_root/host-tools" \
   "$target_root/build-tmp" \
-  "$target_root/build-cargo-home" \
+  "$target_root/cargo-home" \
   "$target_root/release"
 rm -f "$target_root/.rustc_info.json" "$target_root/CACHEDIR.TAG"
 

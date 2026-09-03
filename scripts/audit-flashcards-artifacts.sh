@@ -162,7 +162,7 @@ unset \
   CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER
 expected_validation_key=d759793bbc13a2819a827c76adb6fba8a49aee007f49f2d0992d99b825ad2c48
 rm -f "$audit_report"
-cargo_home="$target_root/audit-cargo-home"
+cargo_home="$target_root/cargo-home"
 rm -rf "$cargo_home"
 mkdir -p "$cargo_home"
 for cache in registry git; do
@@ -491,7 +491,7 @@ rm -rf \
   "$audit_tools" \
   "$fresh_device_root" \
   "$target_root/build-tmp" \
-  "$target_root/audit-cargo-home"
+  "$target_root/cargo-home"
 assert_source_unchanged
 
 "$PYTHON3" -I - "$target_root" <<'PY'
