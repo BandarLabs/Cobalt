@@ -1293,7 +1293,11 @@ impl DeviceIdentity {
     /// would cost three times the bytes to be drawn as grey.
     #[must_use]
     pub fn colour_panel(&self) -> bool {
-        self.profile_id.to_ascii_lowercase().contains("colour")
+        const NAME: &[u8] = b"colour";
+        self.profile_id
+            .as_bytes()
+            .windows(NAME.len())
+            .any(|window| window.eq_ignore_ascii_case(NAME))
     }
 }
 

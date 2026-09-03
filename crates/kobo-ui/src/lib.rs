@@ -8808,22 +8808,24 @@ impl Surface {
         })
     }
 
-    /// The colour bytes of `region`, three per pixel row by row, when the
-    /// frame holds colour. `None` for a frame that has none, or a region that
-    /// is not inside it: the caller then has exactly the grey path it had.
+    /// The colour bytes of `region`, one row at a time with three bytes per
+    /// pixel, when the frame holds colour. The rows are borrowed from the
+    /// frame rather than copied, so a caller writing them elsewhere pays for
+    /// one buffer, not two. `None` for a frame that has no colour, or a
+    /// region that is not inside it: the caller then has exactly the grey
+    /// path it had.
     #[must_use]
-    pub fn colour_region(&self, region: Rect) -> Option<Vec<u8>> {
+    pub fn colour_rows(&self, region: Rect) -> Option<impl Iterator<Item = &[u8]> + '_> {
         let chroma = self.chroma.as_ref()?;
         let (left, top, width, height) = region_extent(region)?;
         if left.checked_add(width)? > self.width || top.checked_add(height)? > self.height {
             return None;
         }
-        let mut out = Vec::with_capacity(width * height * 3);
-        for y in top..top + height {
-            let start = (y * self.width + left) * 3;
-            out.extend_from_slice(chroma.get(start..start + width * 3)?);
-        }
-        Some(out)
+        let stride = self.width * 3;
+        Some((top..top + height).map(move |y| {
+            let start = y * stride + left * 3;
+            &chroma[start..start + width * 3]
+        }))
     }
 
     /// The colour plane, brought into being from the grey one on first use.
@@ -10590,9 +10592,10 @@ fn draw_picture(surface: &mut Surface, rect: Rect, pixels: PicturePixels<'_>, cl
                     let index = base + sample_x;
                     match colour {
                         Some(colour) => {
-                            for (sum, channel) in total.iter_mut().zip(&colour[index * 3..]) {
-                                *sum += u32::from(*channel);
-                            }
+                            let pixel = &colour[index * 3..index * 3 + 3];
+                            total[0] += u32::from(pixel[0]);
+                            total[1] += u32::from(pixel[1]);
+                            total[2] += u32::from(pixel[2]);
                         }
                         None => total[0] += u32::from(pixels.grey[index]),
                     }
@@ -13794,23 +13797,24 @@ mod tests {
             width: 2,
             height: 1
         }));
-        assert_eq!(
-            frame.colour_region(Rect {
+        let rows: Option<Vec<&[u8]>> = frame
+            .colour_rows(Rect {
                 x: 1,
                 y: 0,
                 width: 2,
-                height: 1
-            }),
-            Some(vec![255, 0, 255, 215, 215, 215])
-        );
-        assert_eq!(
-            frame.colour_region(Rect {
-                x: 3,
-                y: 0,
-                width: 2,
-                height: 1
-            }),
-            None,
+                height: 1,
+            })
+            .map(Iterator::collect);
+        assert_eq!(rows, Some(vec![&[255, 0, 255, 215, 215, 215][..]]));
+        assert!(
+            frame
+                .colour_rows(Rect {
+                    x: 3,
+                    y: 0,
+                    width: 2,
+                    height: 1,
+                })
+                .is_none(),
             "a region past the edge is refused"
         );
         for v in [0_u8, 1, 17, 137, 254, 255] {

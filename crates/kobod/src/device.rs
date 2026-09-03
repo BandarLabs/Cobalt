@@ -3463,10 +3463,10 @@ impl Painter {
         // 1.6 seconds per tap regardless of how small the change was.
         let out_of_surface = || "the transition region is not inside the surface".to_owned();
         let frame = if let Some(order) = colour {
-            let rgb = surface
-                .colour_region(transition.region)
+            let rows = surface
+                .colour_rows(transition.region)
                 .ok_or_else(out_of_surface)?;
-            RegionSnapshot::from_rgb(display.geometry(), region, &rgb, order)
+            RegionSnapshot::from_rgb_rows(display.geometry(), region, rows, order)
         } else {
             let x = usize::try_from(transition.region.x).map_err(|_| out_of_surface())?;
             let y = usize::try_from(transition.region.y).map_err(|_| out_of_surface())?;

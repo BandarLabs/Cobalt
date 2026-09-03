@@ -315,19 +315,55 @@ impl RegionSnapshot {
         rgb: &[u8],
         order: ChannelOrder,
     ) -> Result<Self, SurfaceError> {
-        let placement = RegionPlacement::new(geometry, region)?;
-        let expected = (region.width as usize)
-            .saturating_mul(region.height as usize)
-            .saturating_mul(3);
-        if rgb.len() != expected {
+        let row_bytes = (region.width as usize).saturating_mul(3);
+        let expected = row_bytes.saturating_mul(region.height as usize);
+        if row_bytes == 0 || rgb.len() != expected {
             return Err(SurfaceError::RegionMismatch);
         }
+        Self::from_rgb_rows(geometry, region, rgb.chunks_exact(row_bytes), order)
+    }
+
+    /// Builds a writable region from RGB rows read straight out of a larger
+    /// image.
+    ///
+    /// The same as [`Self::from_rgb`] for an image that already lives row by
+    /// row inside something wider, such as a rendered frame, so the region
+    /// need not be copied out into its own buffer first. Every row must hold
+    /// exactly three bytes per pixel of `region.width`, and there must be
+    /// exactly `region.height` of them.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the region is invalid for `geometry`, a row is
+    /// the wrong length, or the row count differs from the region's height.
+    pub fn from_rgb_rows<'a>(
+        geometry: SurfaceGeometry,
+        region: Rect,
+        rows: impl IntoIterator<Item = &'a [u8]>,
+        order: ChannelOrder,
+    ) -> Result<Self, SurfaceError> {
+        let placement = RegionPlacement::new(geometry, region)?;
+        let row_bytes = (region.width as usize).saturating_mul(3);
         let mut pixels = vec![0_u8; placement.total_bytes()];
-        for (pixel, colour) in pixels
-            .chunks_exact_mut(SUPPORTED_BYTES_PER_PIXEL)
-            .zip(rgb.chunks_exact(3))
-        {
-            order.store(pixel, [colour[0], colour[1], colour[2]]);
+        let mut targets = pixels.chunks_exact_mut(placement.row_bytes);
+        let mut written = 0_usize;
+        for source in rows {
+            // A source with more rows than the region is as wrong as one
+            // with fewer; neither may be quietly cropped to fit.
+            let target = targets.next().ok_or(SurfaceError::RegionMismatch)?;
+            if source.len() != row_bytes {
+                return Err(SurfaceError::RegionMismatch);
+            }
+            for (pixel, colour) in target
+                .chunks_exact_mut(SUPPORTED_BYTES_PER_PIXEL)
+                .zip(source.chunks_exact(3))
+            {
+                order.store(pixel, [colour[0], colour[1], colour[2]]);
+            }
+            written += 1;
+        }
+        if written != region.height as usize {
+            return Err(SurfaceError::RegionMismatch);
         }
         Ok(Self { placement, pixels })
     }
@@ -480,6 +516,48 @@ mod tests {
 
         assert!(matches!(
             RegionSnapshot::from_rgb(CLARA, region, &rgb[..5], mediatek),
+            Err(SurfaceError::RegionMismatch)
+        ));
+    }
+
+    #[test]
+    fn colour_rows_from_a_wider_image_match_the_copied_region() {
+        let region = Rect {
+            x: 4,
+            y: 4,
+            width: 2,
+            height: 2,
+        };
+        let order = ChannelOrder::from_profile(&LIBRA_2_388).expect("resolves");
+        // A three-pixel-wide image of which the middle two columns are wanted.
+        let image = [
+            [0, 0, 0, 10, 20, 30, 40, 50, 60, 0, 0, 0],
+            [0, 0, 0, 70, 80, 90, 11, 12, 13, 0, 0, 0],
+        ];
+        let rows = image.iter().map(|row| &row[3..9]);
+        let from_rows = RegionSnapshot::from_rgb_rows(CLARA, region, rows, order).expect("built");
+        let copied = RegionSnapshot::from_rgb(
+            CLARA,
+            region,
+            &[10, 20, 30, 40, 50, 60, 70, 80, 90, 11, 12, 13],
+            order,
+        )
+        .expect("built");
+        assert!(from_rows.matches(&copied));
+
+        let short = image.iter().take(1).map(|row| &row[3..9]);
+        assert!(matches!(
+            RegionSnapshot::from_rgb_rows(CLARA, region, short, order),
+            Err(SurfaceError::RegionMismatch)
+        ));
+        let narrow = image.iter().map(|row| &row[3..8]);
+        assert!(matches!(
+            RegionSnapshot::from_rgb_rows(CLARA, region, narrow, order),
+            Err(SurfaceError::RegionMismatch)
+        ));
+        let long = image.iter().chain(image.iter()).map(|row| &row[3..9]);
+        assert!(matches!(
+            RegionSnapshot::from_rgb_rows(CLARA, region, long, order),
             Err(SurfaceError::RegionMismatch)
         ));
     }
