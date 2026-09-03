@@ -30,6 +30,7 @@ const BOARD_RATE_KEY: &str = "lichess.board-rate.v1";
 const EVENT_RATE_KEY: &str = "lichess.event-rate.v1";
 const SEEK_RATE_KEY: &str = "lichess.seek-rate.v1";
 const MAX_STORED_PUZZLES: usize = 32;
+const ACCOUNT_RETRY_SECONDS: u32 = 15;
 const HOME_TILE_COUNT: usize = SeekPreset::ALL.len() + 2;
 
 struct HomeTile {
@@ -67,6 +68,7 @@ enum AccountState {
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum Pending {
     Account,
+    AccountRetry,
     Playing,
     Puzzle,
     EventOpen,
@@ -1019,6 +1021,13 @@ impl Lichess {
         if self.has_pending(|pending| matches!(pending, Pending::Account)) {
             return;
         }
+        for (task, pending) in self.tasks.clone() {
+            if matches!(pending, Pending::AccountRetry) {
+                context.cancel(task);
+                self.tasks.remove(&task);
+                self.retired_tasks.insert(task, pending);
+            }
+        }
         self.account = AccountState::Checking;
         self.playing_ready = false;
         self.notice = None;
@@ -1030,6 +1039,23 @@ impl Lichess {
             self.notice =
                 Some("Finishing previous requests. Refresh account again in a moment.".to_owned());
         }
+    }
+
+    fn schedule_account_retry(&mut self, context: &mut Context) {
+        if self.suspended
+            || self
+                .has_pending(|pending| matches!(pending, Pending::Account | Pending::AccountRetry))
+        {
+            return;
+        }
+        let _ = self.spawn(
+            context,
+            Pending::AccountRetry,
+            Task::Sleep {
+                seconds: ACCOUNT_RETRY_SECONDS,
+            },
+            false,
+        );
     }
 
     fn refresh_playing(&mut self, context: &mut Context) -> bool {
@@ -2247,7 +2273,6 @@ impl Lichess {
             && self.loaded_board_rate
             && self.loaded_event_rate
             && self.loaded_seek_rate
-            && self.session.is_some()
         {
             self.validate_account(context);
         }
@@ -2282,6 +2307,7 @@ impl Lichess {
             self.route = Route::Play;
         }
         self.close_live_reads(context);
+        self.schedule_account_retry(context);
     }
 
     #[allow(
@@ -2767,6 +2793,7 @@ impl Lichess {
                     );
                 }
             }
+            Pending::AccountRetry => self.validate_account(context),
             Pending::Playing => {
                 if let Some(games) = api::parse_playing(bytes) {
                     self.playing_ready = true;
@@ -3109,6 +3136,7 @@ impl Lichess {
             | Pending::BoardRateWait { .. }
             | Pending::BoardClose(_)
             | Pending::Account => {}
+            Pending::AccountRetry => self.schedule_account_retry(context),
         }
     }
 
@@ -3215,6 +3243,7 @@ impl Lichess {
             if matches!(
                 pending,
                 Pending::Account
+                    | Pending::AccountRetry
                     | Pending::Playing
                     | Pending::Puzzle
                     | Pending::EventOpen
@@ -3902,8 +3931,8 @@ mod tests {
     use super::{
         api, board_cells, clock, AccountState, ActionScope, BoardRecord, Challenge,
         ChallengeDirection, ChallengeTime, Color, Event, FullGame, Game, GameAction, Lichess,
-        Pending, Player, Puzzle, Route, ServerState, Session, BOARD_RATE_KEY, EVENT_RATE_KEY,
-        HOME_TILE_COUNT, SEEK_RATE_KEY,
+        Pending, Player, Puzzle, Route, ServerState, Session, ACCOUNT_RETRY_SECONDS,
+        BOARD_RATE_KEY, EVENT_RATE_KEY, HOME_TILE_COUNT, SEEK_RATE_KEY,
     };
     use kobo_sdk::{
         action_id, ActionId, AppRunner, Command, Context, KoboApp, Screen, StoreRequest,
@@ -6068,6 +6097,61 @@ mod tests {
             TaskOutcome::Completed(b"COBALT-HTTP/1 429\nRetry-After: 17\n\n".to_vec()),
         );
         assert!(app.notice.as_deref().unwrap_or_default().contains("17s"));
+    }
+
+    #[test]
+    fn fresh_start_validates_an_account_without_a_saved_game() {
+        let mut app = Lichess {
+            loaded_session: true,
+            loaded_puzzles: true,
+            loaded_board_rate: true,
+            loaded_event_rate: true,
+            loaded_seek_rate: true,
+            ..Lichess::default()
+        };
+        let mut context = Context::default();
+
+        app.maybe_start(&mut context);
+
+        assert!(matches!(app.account, AccountState::Checking));
+        assert!(app.has_pending(|pending| matches!(pending, Pending::Account)));
+    }
+
+    #[test]
+    fn missing_credential_is_rechecked_while_the_app_remains_open() {
+        let mut app = Lichess::default();
+        let mut context = Context::default();
+        let account = kobo_sdk::TaskId(7);
+        app.tasks.insert(account, Pending::Account);
+
+        app.on_task(
+            &mut context,
+            account,
+            TaskOutcome::Failed(kobo_sdk::TaskError::NoCredential),
+        );
+
+        assert!(matches!(app.account, AccountState::Missing));
+        let retry = app
+            .tasks
+            .iter()
+            .find_map(|(task, pending)| matches!(pending, Pending::AccountRetry).then_some(*task))
+            .expect("credential retry");
+        assert!(context.commands().iter().any(|command| {
+            matches!(
+                command,
+                Command::Spawn {
+                    work: kobo_sdk::Task::Sleep {
+                        seconds: ACCOUNT_RETRY_SECONDS
+                    },
+                    ..
+                }
+            )
+        }));
+
+        app.on_task(&mut context, retry, TaskOutcome::Completed(Vec::new()));
+
+        assert!(matches!(app.account, AccountState::Checking));
+        assert!(app.has_pending(|pending| matches!(pending, Pending::Account)));
     }
 
     #[test]
