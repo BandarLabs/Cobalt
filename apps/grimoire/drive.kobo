@@ -1,6 +1,13 @@
-tap Initiative
-expect Round 1
-tap NEXT
-expect Round 1
+wait 500
+expect Grimoire
 clean
-shot initiative
+shot home
+tap Spells
+expect 2014
+tap Class
+tap Level
+tap School
+tap Ritual
+tap Concentration
+clean
+shot spell-filters
