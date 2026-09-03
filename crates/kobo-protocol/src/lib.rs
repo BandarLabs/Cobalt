@@ -7,9 +7,9 @@ use std::io::{self, Read, Write};
 
 use kobo_ui::{
     ActionId, BannerLevel, BarAction, BarStyle, BottomAction, Caret, Cell, ControlState,
-    FontHandle, Freeform, Glyph, NavBar, Node, NodeId, PageTurns, Percent, PictureHandle, Row,
-    RowLead, RowState, Screen, Space, TextScale, Tile, TilePicture, TileShape, TileState, TopBar,
-    TransferFailure, MAX_BAR_ACTIONS, MAX_TERMINAL_COLUMNS, MAX_TERMINAL_ROWS,
+    FontHandle, Freeform, Glyph, NavBar, Node, NodeId, Orientation, PageTurns, Percent,
+    PictureHandle, Row, RowLead, RowState, Screen, Space, TextScale, Tile, TilePicture, TileShape,
+    TileState, TopBar, TransferFailure, MAX_BAR_ACTIONS, MAX_TERMINAL_COLUMNS, MAX_TERMINAL_ROWS,
     MIN_NAV_DESTINATIONS,
 };
 use std::cmp::min;
@@ -569,6 +569,9 @@ pub enum Message {
         text_scale: TextScale,
     },
     SetScreen(Screen),
+    /// Changes the logical direction for this application session. Omission
+    /// keeps the portrait-compatible default.
+    SetOrientation(Orientation),
     Action {
         action: ActionId,
     },
@@ -1719,6 +1722,7 @@ pub fn encode(frame: &Frame) -> Result<Vec<u8>, ProtocolError> {
             let mut count = 0;
             encode_screen(&mut payload, screen, 0, &mut count)?;
         }
+        Message::SetOrientation(orientation) => payload.push(*orientation as u8),
         Message::Action { action } => {
             push_u32(&mut payload, action.0);
         }
@@ -2267,6 +2271,7 @@ fn encoded_message_layout(message: &Message) -> Result<(u8, usize), ProtocolErro
             let mut count = 0;
             Ok((3, encoded_screen_len(screen, 0, &mut count)?))
         }
+        Message::SetOrientation(_) => Ok((36, 1)),
         Message::Action { .. } => Ok((4, 4)),
         Message::TextHold { start, end, .. } => {
             if start >= end {
@@ -3924,6 +3929,10 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, ProtocolError> {
             let mut count = 0;
             Message::SetScreen(decode_screen(&mut reader, 0, &mut count)?)
         }
+        36 => Message::SetOrientation(
+            Orientation::from_wire(reader.u8()?)
+                .ok_or(ProtocolError::InvalidValue("orientation"))?,
+        ),
         4 => Message::Action {
             action: ActionId(reader.u32()?),
         },
@@ -8973,6 +8982,21 @@ mod picture_tests {
             Err(ProtocolError::InvalidValue("tile shape"))
         ));
     }
+
+    #[test]
+    fn orientation_request_round_trips_and_keeps_portrait_as_the_default() {
+        let frame = Frame {
+            request_id: 4,
+            message: Message::SetOrientation(Orientation::Landscape),
+        };
+        assert_eq!(
+            decode(&encode(&frame).expect("encode")).expect("decode"),
+            frame
+        );
+        assert_eq!(Orientation::default(), Orientation::Portrait);
+        assert_eq!(Orientation::Portrait as u8, 0);
+    }
+
     #[test]
     fn a_basic_credential_survives_an_encode_decode_round_trip() {
         // A gated catalogue is reached by name, and the name is all an

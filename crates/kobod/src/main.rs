@@ -680,6 +680,7 @@ fn serve_application(
     let store = kobo_policy::store::Store::new(std::env::temp_dir().join("cobalt-host-state"));
     let shelf = kobo_policy::shelf::Shelf::new(std::env::temp_dir().join("cobalt-host-data"));
     let mut pictures = kobo_ui::PictureCache::default();
+    let mut orientation = kobo_ui::Orientation::Portrait;
     loop {
         let frame = kobo_protocol::read_from(stream)?;
         match frame.message {
@@ -687,8 +688,9 @@ fn serve_application(
                 // Per screen, as the device does it: a book is drawn
                 // without a band and everything else with one.
                 let chrome = simulated_chrome(name, &screen);
-                write_screen(frame_path, screen, &chrome, name, &pictures)?;
+                write_screen(frame_path, screen, &chrome, name, &pictures, orientation)?;
             }
+            Message::SetOrientation(requested) => orientation = requested,
             Message::PutPicture {
                 handle,
                 width,
@@ -925,6 +927,7 @@ fn write_screen(
     chrome: &kobo_ui::Chrome,
     name: &str,
     pictures: &dyn kobo_ui::Pictures,
+    orientation: kobo_ui::Orientation,
 ) -> Result<(), Box<dyn Error>> {
     let mut surface = Surface::new(
         usize::try_from(crate::device_metrics().width)?,
@@ -943,7 +946,15 @@ fn write_screen(
     // the prose keeps the reader's own size either way.
     kobo_ui::set_text_scale(metrics.text_scale);
     kobo_ui::set_reading_scale(screen.text_scale.unwrap_or(metrics.text_scale));
-    kobo_ui::render_all(&screen, &metrics, chrome, pictures, &mut surface, None);
+    kobo_ui::render_oriented(
+        &screen,
+        &metrics,
+        chrome,
+        pictures,
+        &mut surface,
+        None,
+        orientation,
+    );
 
     let temporary = path.with_extension(format!("raw.tmp-{}", std::process::id()));
     let mut file = OpenOptions::new()
