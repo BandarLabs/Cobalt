@@ -745,8 +745,7 @@ mod tests {
             std::os::unix::fs::symlink("/bin/sh", root.join(pid.to_string()).join("exe"))
                 .expect("create exe link");
         }
-        let leftovers =
-            Reader::find_all_matching_in(&root, "/bin/sh", super::Identity::Executable);
+        let leftovers = Reader::find_all_matching_in(&root, "/bin/sh", super::Identity::Executable);
         assert_eq!(
             leftovers.iter().map(Reader::pid).collect::<Vec<_>>(),
             vec![700, 701, 702],
