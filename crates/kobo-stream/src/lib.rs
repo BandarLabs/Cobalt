@@ -163,6 +163,9 @@ impl Terminal {
         self.grid = grid;
         self.previous.clear();
         self.previous_cursor = None;
+        self.last_snapshot = Instant::now()
+            .checked_sub(SNAPSHOT_INTERVAL)
+            .unwrap_or_else(Instant::now);
         self.dirty = true;
     }
 
@@ -1077,15 +1080,74 @@ mod tests {
         });
         session.feed(b"before");
         std::thread::sleep(SNAPSHOT_INTERVAL);
-        let _ = session.screen(0);
+        let before = session.screen(0);
         session.resize(Grid {
             columns: 20,
             rows: 3,
         });
-        let resized = session.screen(0);
+        let resized = session.screen(before.seq);
         assert_eq!(resized.rows.len(), 3);
         assert_eq!(resized.rows[0].cells.trim(), "before");
     }
+
+    #[test]
+    fn hidden_open_closed_resize_emits_one_coherent_full_tui_frame_each_time() {
+        let hidden = Grid {
+            columns: 40,
+            rows: 10,
+        };
+        let open = Grid {
+            columns: 40,
+            rows: 6,
+        };
+        let session = Session::new(hidden);
+        session.feed(
+            b"\x1b[2J\x1b[HQuick safety check\r\n\
+              Security guide\r\n\
+              1. Yes, I trust this folder\r\n\
+              2. No, exit\r\n\
+              Enter to confirm",
+        );
+        let first = session.screen(0);
+        assert_eq!(
+            first
+                .rows
+                .iter()
+                .filter(|row| row.cells.contains("Quick safety check"))
+                .count(),
+            1
+        );
+
+        session.resize(open);
+        let smaller = session.screen(first.seq);
+        assert_eq!(smaller.rows.len(), usize::from(open.rows));
+        assert_eq!(
+            smaller
+                .rows
+                .iter()
+                .filter(|row| row.cells.contains("Quick safety check"))
+                .count(),
+            1
+        );
+
+        session.resize(hidden);
+        let expanded = session.screen(smaller.seq);
+        assert_eq!(expanded.rows.len(), usize::from(hidden.rows));
+        assert_eq!(
+            expanded
+                .rows
+                .iter()
+                .filter(|row| row.cells.contains("Quick safety check"))
+                .count(),
+            1
+        );
+        assert!(expanded
+            .rows
+            .iter()
+            .skip(usize::from(open.rows))
+            .all(|row| row.cells.trim().is_empty()));
+    }
+
     #[test]
     fn pty_output_keeps_terminal_escape_sequences_for_the_screen_model() {
         let mut pty = kobo_abi::pty::Pty::spawn(

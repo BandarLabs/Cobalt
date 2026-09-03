@@ -12,6 +12,7 @@ kobo-json = { path = "../../crates/kobo-json" }
 
 [dev-dependencies]
 kobo-profile = { path = "../../crates/kobo-profile" }
+kobo-stream = { path = "../../crates/kobo-stream" }
 kobo-ui = { path = "../../crates/kobo-ui" }
 
 [lints]

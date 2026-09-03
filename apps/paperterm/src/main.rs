@@ -70,6 +70,7 @@ struct Paperterm {
     cursor: Option<Caret>,
     input: Input,
     keyboard_open: bool,
+    viewport: (u16, u16),
     session: Option<u64>,
     sequence: u64,
     hello: Option<TaskId>,
@@ -93,6 +94,7 @@ impl Default for Paperterm {
             cursor: None,
             input: Input::None,
             keyboard_open: false,
+            viewport: (0, 0),
             session: None,
             sequence: 0,
             hello: None,
@@ -215,11 +217,19 @@ impl Paperterm {
         }
         .build()
     }
+    fn retain_grid(&mut self, grid: (u16, u16)) {
+        if self.viewport == grid {
+            return;
+        }
+        self.rows.resize(usize::from(grid.1), String::new());
+        self.viewport = grid;
+    }
     fn hello(&mut self, context: &mut Context) {
         if self.hello.is_some() {
             return;
         }
         let (columns, rows) = self.grid(context);
+        self.retain_grid((columns, rows));
         let url = format!(
             "https://{}/hello?token={}&grid={}x{}",
             self.address, self.code, columns, rows
@@ -236,6 +246,7 @@ impl Paperterm {
         }
     }
     fn renegotiate(&mut self, context: &mut Context) {
+        self.retain_grid(self.grid(context));
         if self.hello.is_some() {
             return;
         }
@@ -369,6 +380,9 @@ impl Paperterm {
             ) else {
                 continue;
             };
+            if self.viewport.1 != 0 && y >= usize::from(self.viewport.1) {
+                continue;
+            }
             if self.rows.len() <= y {
                 self.rows.resize(y + 1, String::new());
             }
@@ -392,6 +406,10 @@ impl Paperterm {
                     changed = true;
                 }
             }
+        }
+        if self.viewport.1 != 0 {
+            self.rows
+                .resize(usize::from(self.viewport.1), String::new());
         }
         self.sequence = sequence;
         if value.get("ended").and_then(kobo_json::Value::as_bool) == Some(true) {
@@ -711,6 +729,36 @@ mod tests {
         );
     }
 
+    fn wire_screen(screen: &kobo_stream::Screen) -> Vec<u8> {
+        let rows = screen
+            .rows
+            .iter()
+            .map(|row| {
+                let cells = row.cells.replace('\\', "\\\\").replace('"', "\\\"");
+                let cursor = row
+                    .cursor
+                    .map_or_else(|| "null".to_owned(), |column| column.to_string());
+                format!(r#"{{"y":{},"cells":"{}","cursor":{cursor}}}"#, row.y, cells)
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        format!(
+            r#"{{"seq":{},"rows":[{rows}],"ended":{},"exit":null}}"#,
+            screen.seq, screen.ended
+        )
+        .into_bytes()
+    }
+
+    fn occurrences(rows: &[String], needle: &str) -> usize {
+        rows.iter().filter(|row| row.contains(needle)).count()
+    }
+
+    fn assert_retained_rows(actual: &[String], expected: &[String]) {
+        assert!(actual.len() >= expected.len());
+        assert_eq!(&actual[..expected.len()], expected);
+        assert!(actual[expected.len()..].iter().all(String::is_empty));
+    }
+
     #[test]
     fn paired_start_measures_grid_and_asks_the_host() {
         let mut app = Paperterm::default();
@@ -855,7 +903,7 @@ mod tests {
 
         app.on_action(&mut context, action_id(TOGGLE_KEYBOARD));
         assert!(app.keyboard_open);
-        assert_eq!(app.rows, rows);
+        assert_retained_rows(&app.rows, &rows);
         assert_eq!(app.cursor, cursor);
         assert_eq!(app.session, Some(41));
         assert_eq!(app.sequence, 19);
@@ -890,12 +938,92 @@ mod tests {
         assert_host_valid(closed_grid, "closed keyboard");
         assert_eq!(closed_grid.0, open_grid.0);
         assert!(closed_grid.1 > open_grid.1);
-        assert_eq!(app.rows, rows);
+        assert_retained_rows(&app.rows, &rows);
         assert_eq!(app.cursor, cursor);
         assert_eq!(app.session, Some(41));
         assert_eq!(app.sequence, 19);
         assert!(app.keys.is_control());
     }
+
+    #[test]
+    fn full_tui_hidden_open_closed_replaces_rows_without_a_stale_duplicate() {
+        let metrics = CLARA_BW_METRICS.oriented(Orientation::Landscape);
+        let hidden = Paperterm::grid_for(Input::Full, false, &metrics);
+        let open = Paperterm::grid_for(Input::Full, true, &metrics);
+        assert!(hidden.1 > open.1);
+        let host = kobo_stream::Session::new(kobo_stream::Grid {
+            columns: hidden.0,
+            rows: hidden.1,
+        });
+        let mut tui = String::from("\x1b[2J\x1b[H");
+        for _ in 0..hidden.1.saturating_sub(6) {
+            tui.push_str("\r\n");
+        }
+        tui.push_str(
+            "Quick safety check\r\n\
+             Security guide\r\n\
+             1. Yes, I trust this folder\r\n\
+             2. No, exit\r\n\
+             Enter to confirm",
+        );
+        host.feed(tui.as_bytes());
+
+        let mut app = Paperterm {
+            view: View::Watching,
+            input: Input::Full,
+            session: Some(41),
+            ..Paperterm::default()
+        };
+        app.retain_grid(hidden);
+        assert_eq!(app.parse_screen(&wire_screen(&host.screen(0))), Some(true));
+        assert_eq!(occurrences(&app.rows, "Enter to confirm"), 1);
+
+        host.resize(kobo_stream::Grid {
+            columns: open.0,
+            rows: open.1,
+        });
+        host.feed(
+            b"\x1b[2J\x1b[HQuick safety check\r\n\
+              Security guide\r\n\
+              1. Yes, I trust this folder\r\n\
+              2. No, exit\r\n\
+              Enter to confirm",
+        );
+        app.retain_grid(open);
+        let smaller = host.screen(app.sequence);
+        assert_eq!(app.parse_screen(&wire_screen(&smaller)), Some(true));
+        assert_eq!(app.rows.len(), usize::from(open.1));
+        assert_eq!(occurrences(&app.rows, "Enter to confirm"), 1);
+        assert_eq!(app.session, Some(41));
+
+        let cursor = app.cursor;
+        app.retain_grid(hidden);
+        assert_eq!(app.cursor, cursor, "grid expansion replaced the cursor");
+        assert_eq!(app.session, Some(41));
+        assert_eq!(occurrences(&app.rows, "Enter to confirm"), 1);
+        assert!(app.rows[usize::from(open.1)..].iter().all(String::is_empty));
+
+        host.resize(kobo_stream::Grid {
+            columns: hidden.0,
+            rows: hidden.1,
+        });
+        host.feed(
+            b"\x1b[2J\x1b[HQuick safety check\r\n\
+              Security guide\r\n\
+              1. Yes, I trust this folder\r\n\
+              2. No, exit\r\n\
+              Enter to confirm",
+        );
+        let expanded = host.screen(app.sequence);
+        assert!(app.parse_screen(&wire_screen(&expanded)).is_some());
+        assert_eq!(app.rows.len(), usize::from(hidden.1));
+        assert_eq!(occurrences(&app.rows, "Enter to confirm"), 1);
+        assert!(app.rows[usize::from(open.1)..]
+            .iter()
+            .all(|row| row.trim().is_empty()));
+        assert_eq!(app.session, Some(41));
+    }
+
     #[test]
     fn controls_send_exact_bytes_and_full_input_is_not_shown_when_read_only() {
         assert_eq!(base64(b"\x1b[A"), "G1tB");
@@ -983,7 +1111,7 @@ mod tests {
             TaskId(9),
             TaskOutcome::Failed(kobo_sdk::TaskError::Unreachable),
         );
-        assert_eq!(app.rows, rows);
+        assert_retained_rows(&app.rows, &rows);
         assert_eq!(app.cursor, cursor);
         assert_eq!(app.failure.as_deref(), Some(OFF_AIR));
 
@@ -995,7 +1123,7 @@ mod tests {
             hello,
             TaskOutcome::Completed(br#"{"session":5,"input":"full"}"#.to_vec()),
         );
-        assert_eq!(app.rows, rows);
+        assert_retained_rows(&app.rows, &rows);
         assert_eq!(app.cursor, cursor);
         assert_eq!(app.session, Some(5));
         assert_eq!(app.sequence, 0);

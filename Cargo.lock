@@ -794,6 +794,7 @@ dependencies = [
  "kobo-json",
  "kobo-profile",
  "kobo-sdk",
+ "kobo-stream",
  "kobo-ui",
 ]
 
