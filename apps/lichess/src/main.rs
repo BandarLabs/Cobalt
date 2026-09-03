@@ -574,7 +574,6 @@ impl Lichess {
                     ControlState::Disabled
                 },
             )
-            .secondary("Puzzle solving is local and does not change your Lichess rating.")
             .build()
     }
 
