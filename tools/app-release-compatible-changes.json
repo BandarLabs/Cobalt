@@ -18,12 +18,12 @@
         {
           "path": "crates/kobo-net/src/lib.rs",
           "base_blob": "ce2a45ae69445d06f0de5111aef775751ef8146e",
-          "compatible_blob": "257141cd5343b4cbba6d865c9956fe0f7d995754"
+          "compatible_blob": "6e35a1df5c85377a17a4c1d3c05a4bb9558b6458"
         },
         {
           "path": "crates/kobo-net/src/lines.rs",
           "base_blob": null,
-          "compatible_blob": "dd6fef63ea498dc58fd0158e62dd021ccce7fb92"
+          "compatible_blob": "00f877af25028f435a77ea6c8ccbb546fcccf1ee"
         },
         {
           "path": "crates/kobo-net/tests/fixtures/localhost-ca.der",
@@ -43,7 +43,7 @@
         {
           "path": "crates/kobo-net/tests/lichess_stream_mock.rs",
           "base_blob": null,
-          "compatible_blob": "db41522c80167096638b74624b759f1dd1e6f5c6"
+          "compatible_blob": "b35462b66df1fb416e4e5b24adf449b2b4ff32e5"
         },
         {
           "path": "crates/kobo-policy/src/credentials.rs",
@@ -58,7 +58,7 @@
         {
           "path": "crates/kobo-policy/src/tasks.rs",
           "base_blob": "7e4448442a00d0315f9bf91d50be3eb41b707d5d",
-          "compatible_blob": "e30c193a6f41d56ef68b3c7b033128d4f4d32478"
+          "compatible_blob": "26dc68731af02e65a9a5a28dd6b90d22b38155c3"
         },
         {
           "path": "crates/kobo-protocol/src/lib.rs",
