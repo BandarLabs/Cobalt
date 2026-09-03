@@ -1029,6 +1029,7 @@ impl Lichess {
                 Some("Wait for the current game action before switching boards.".to_owned());
             return;
         }
+        self.route = Route::Game;
         let previous = self
             .session
             .as_ref()
@@ -1110,7 +1111,6 @@ impl Lichess {
             self.notice = Some("Lichess returned an invalid game identifier.".to_owned());
             return;
         };
-        self.route = Route::Game;
         self.board_ready = false;
         if self
             .spawn(context, Pending::BoardOpen(id), work, false)
@@ -4369,6 +4369,7 @@ mod tests {
         }
         app.open_board(&mut full, session.clone());
         assert_eq!(app.deferred_board_open, Some(session));
+        assert_eq!(app.route, Route::Game);
         assert!(!app.has_pending(|pending| matches!(pending, Pending::BoardOpen(_))));
 
         let mut available = Context::default();
