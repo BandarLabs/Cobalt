@@ -28,10 +28,23 @@ source_commit_file="$target_root/artifacts/flashcards-import.source-commit.txt"
 host_notice_file="$target_root/artifacts/flashcards-import.notice.txt"
 host_licenses_file="$target_root/artifacts/flashcards-import.licenses.txt"
 audit_report="$target_root/artifacts/ARTIFACT-AUDIT.txt"
-readelf=$(command -v armv7-unknown-linux-musleabihf-readelf) || {
-  echo "armv7-unknown-linux-musleabihf-readelf is required" >&2
+readelf=
+for candidate in \
+  armv7-unknown-linux-musleabihf-readelf \
+  armv7-linux-musleabihf-readelf \
+  arm-linux-musleabihf-readelf \
+  arm-linux-gnueabihf-readelf; do
+  candidate_path=$(command -v "$candidate" 2>/dev/null || true)
+  if [ -n "$candidate_path" ] &&
+    "$candidate_path" --version >/dev/null 2>&1; then
+    readelf=$candidate_path
+    break
+  fi
+done
+if [ -z "$readelf" ]; then
+  echo "no supported ARM readelf tool was found" >&2
   exit 1
-}
+fi
 expected_validation_key=d759793bbc13a2819a827c76adb6fba8a49aee007f49f2d0992d99b825ad2c48
 rm -f "$audit_report"
 
