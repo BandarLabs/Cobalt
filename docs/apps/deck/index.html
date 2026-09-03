@@ -4,43 +4,43 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Install Deck on Kobo | Cobalt</title>
-<meta name="description" content="A paired-computer command surface with large e-ink keys and confirmation for risky commands. Install it on a supported Kobo e-reader with Cobalt.">
+<meta name="description" content="Pair with your computer and run favorite actions from large, clear controls. Install it on a supported Kobo e-reader with Cobalt.">
 <link rel="canonical" href="https://bandarlabs.github.io/Cobalt/apps/deck/">
 <link rel="icon" href="../../logo.svg" type="image/svg+xml">
 <meta property="og:type" content="website">
 <meta property="og:title" content="Install Deck on Kobo | Cobalt">
-<meta property="og:description" content="A paired-computer command surface with large e-ink keys and confirmation for risky commands. Install it on a supported Kobo e-reader with Cobalt.">
+<meta property="og:description" content="Pair with your computer and run favorite actions from large, clear controls. Install it on a supported Kobo e-reader with Cobalt.">
 <meta property="og:url" content="https://bandarlabs.github.io/Cobalt/apps/deck/">
 <meta property="og:site_name" content="Cobalt">
 <meta property="og:image" content="https://bandarlabs.github.io/Cobalt/media/site/apps/deck.png">
 <meta property="og:image:width" content="1072">
 <meta property="og:image:height" content="1448">
-<meta property="og:image:alt" content="Deck pairing screen on a Kobo Clara BW, explaining the existing Sidekick connection.">
+<meta property="og:image:alt" content="Deck showing six paired-computer controls in a two-column Kobo grid.">
 <meta name="twitter:card" content="summary">
 <meta name="twitter:title" content="Install Deck on Kobo | Cobalt">
-<meta name="twitter:description" content="A paired-computer command surface with large e-ink keys and confirmation for risky commands. Install it on a supported Kobo e-reader with Cobalt.">
+<meta name="twitter:description" content="Pair with your computer and run favorite actions from large, clear controls. Install it on a supported Kobo e-reader with Cobalt.">
 <meta name="twitter:image" content="https://bandarlabs.github.io/Cobalt/media/site/apps/deck.png">
-<meta name="twitter:image:alt" content="Deck pairing screen on a Kobo Clara BW, explaining the existing Sidekick connection.">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-ZGkNuq2KZHRw7eRKWrsMYZ/9jMfw86WhCTi1o4ixClI='; style-src 'self'; img-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
+<meta name="twitter:image:alt" content="Deck showing six paired-computer controls in a two-column Kobo grid.">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-Jq+kvPy40PwO/F4XTs60OqFTKZEwg97QHlaS2jVct0s='; style-src 'self'; img-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
 <script type="application/ld+json">{
   "@context": "https://schema.org",
   "@graph": [
     {
       "@type": "SoftwareApplication",
       "name": "Deck",
-      "description": "A paired-computer command surface with large e-ink keys and confirmation for risky commands.",
+      "description": "Pair with your computer and run favorite actions from large, clear controls.",
       "url": "https://bandarlabs.github.io/Cobalt/apps/deck/",
       "image": {
         "@type": "ImageObject",
         "url": "https://bandarlabs.github.io/Cobalt/media/site/apps/deck.png",
         "width": 1072,
         "height": 1448,
-        "caption": "Deck pairing screen on a Kobo Clara BW, explaining the existing Sidekick connection."
+        "caption": "Deck showing six paired-computer controls in a two-column Kobo grid."
       },
       "applicationSuite": "Cobalt",
       "applicationCategory": "SoftwareApplication",
       "operatingSystem": "Cobalt on supported Kobo e-readers",
-      "softwareVersion": "0.1.0",
+      "softwareVersion": "0.2.0",
       "isAccessibleForFree": true,
       "offers": {
         "@type": "Offer",
@@ -91,23 +91,23 @@
     </nav>
   </div>
 </header>
-<main class="wrap" data-app-id="deck" data-minimum-cobalt-version="0.3.1">
+<main class="wrap" data-app-id="deck" data-minimum-cobalt-version="0.3.2">
   <div class="app-hero">
     <div class="app-copy">
       <p class="eyebrow">Kobo app</p>
       <h1>Deck</h1>
-      <p class="summary">A paired-computer command surface with large e-ink keys and confirmation for risky commands.</p>
-      <div class="meta"><span>Version 0.1.0</span><span>network</span></div>
+      <p class="summary">Pair with your computer and run favorite actions from large, clear controls.</p>
+      <div class="meta"><span>Version 0.2.0</span><span>network</span></div>
     </div>
     <figure class="app-shot">
-      <img src="../../media/site/apps/deck.png" width="1072" height="1448" alt="Deck pairing screen on a Kobo Clara BW, explaining the existing Sidekick connection.">
+      <img src="../../media/site/apps/deck.png" width="1072" height="1448" alt="Deck showing six paired-computer controls in a two-column Kobo grid.">
     </figure>
   </div>
   <section class="panel prerequisites" aria-labelledby="prerequisites-title">
     <p class="eyebrow">App setup</p>
     <h2 id="prerequisites-title">Before you install</h2>
     <ol>
-      <li>Deck requires a compatible kobo-sidekickd build with the /deck routes and a deck.toml command map; those routes are not yet included in this repository.</li>
+      <li>Create ~/.config/kobo/sidekick/deck.toml with the pages and controls you want on the reader.</li>
       <li>Initialize the companion daemon to obtain its address, certificate, and pairing code.
         <code class="setup-command">kobo-sidekickd init</code></li>
       <li>Install the daemon certificate on the Kobo before pairing.

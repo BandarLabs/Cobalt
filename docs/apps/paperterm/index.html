@@ -91,13 +91,13 @@
     </nav>
   </div>
 </header>
-<main class="wrap" data-app-id="paperterm" data-minimum-cobalt-version="0.3.1">
+<main class="wrap" data-app-id="paperterm" data-minimum-cobalt-version="0.3.2">
   <div class="app-hero">
     <div class="app-copy">
       <p class="eyebrow">Kobo app</p>
       <h1>Paperterm</h1>
       <p class="summary">Pair a Kobo with a computer to read a terminal session on an e-ink display.</p>
-      <div class="meta"><span>Version 0.1.0</span><span>No additional permissions</span></div>
+      <div class="meta"><span>Version 0.1.0</span><span>network</span></div>
     </div>
     <figure class="app-shot">
       <img src="../../media/site/apps/paperterm.png" width="1072" height="1448" alt="Paperterm pairing screen with computer address field and on-screen keyboard on a Kobo Clara BW.">
@@ -107,7 +107,12 @@
     <p class="eyebrow">App setup</p>
     <h2 id="prerequisites-title">Before you install</h2>
     <ol>
-      <li>Paperterm's kobo stream TLS companion is not yet included in this repository; the current build provides the pairing and terminal-mirror interface only.</li>
+      <li>Initialize the terminal companion and note the address and pairing code.
+        <code class="setup-command">kobo stream init</code></li>
+      <li>Install the terminal companion certificate on the Kobo.
+        <code class="setup-command">kobo trust set stream --device &lt;address&gt;</code></li>
+      <li>Start a mirrored terminal with the controls needed on the reader.
+        <code class="setup-command">kobo stream --controls -- &lt;command&gt;</code></li>
     </ol>
   </section>
   <section class="panel" id="pair-panel">

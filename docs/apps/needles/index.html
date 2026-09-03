@@ -4,12 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Install Needles on Kobo | Cobalt</title>
-<meta name="description" content="A knuckle-sized row counter and offline pattern companion for Ravelry projects. Install it on a supported Kobo e-reader with Cobalt.">
+<meta name="description" content="A knuckle-sized row counter, Ravelry library browser, and offline pattern reader. Install it on a supported Kobo e-reader with Cobalt.">
 <link rel="canonical" href="https://bandarlabs.github.io/Cobalt/apps/needles/">
 <link rel="icon" href="../../logo.svg" type="image/svg+xml">
 <meta property="og:type" content="website">
 <meta property="og:title" content="Install Needles on Kobo | Cobalt">
-<meta property="og:description" content="A knuckle-sized row counter and offline pattern companion for Ravelry projects. Install it on a supported Kobo e-reader with Cobalt.">
+<meta property="og:description" content="A knuckle-sized row counter, Ravelry library browser, and offline pattern reader. Install it on a supported Kobo e-reader with Cobalt.">
 <meta property="og:url" content="https://bandarlabs.github.io/Cobalt/apps/needles/">
 <meta property="og:site_name" content="Cobalt">
 <meta property="og:image" content="https://bandarlabs.github.io/Cobalt/media/site/apps/needles.png">
@@ -18,17 +18,17 @@
 <meta property="og:image:alt" content="Needles pattern screen with row and repeat counters and a large +1 row button.">
 <meta name="twitter:card" content="summary">
 <meta name="twitter:title" content="Install Needles on Kobo | Cobalt">
-<meta name="twitter:description" content="A knuckle-sized row counter and offline pattern companion for Ravelry projects. Install it on a supported Kobo e-reader with Cobalt.">
+<meta name="twitter:description" content="A knuckle-sized row counter, Ravelry library browser, and offline pattern reader. Install it on a supported Kobo e-reader with Cobalt.">
 <meta name="twitter:image" content="https://bandarlabs.github.io/Cobalt/media/site/apps/needles.png">
 <meta name="twitter:image:alt" content="Needles pattern screen with row and repeat counters and a large +1 row button.">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-HBIg4M+74gmjEh/TsKpPQS53KkSPWu/2HrPgnM+kfdY='; style-src 'self'; img-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-yBztfFBgkmcObAi2xfBPZ9jPgs7BnPyHKLFmW8zKb7k='; style-src 'self'; img-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
 <script type="application/ld+json">{
   "@context": "https://schema.org",
   "@graph": [
     {
       "@type": "SoftwareApplication",
       "name": "Needles",
-      "description": "A knuckle-sized row counter and offline pattern companion for Ravelry projects.",
+      "description": "A knuckle-sized row counter, Ravelry library browser, and offline pattern reader.",
       "url": "https://bandarlabs.github.io/Cobalt/apps/needles/",
       "image": {
         "@type": "ImageObject",
@@ -91,13 +91,13 @@
     </nav>
   </div>
 </header>
-<main class="wrap" data-app-id="needles" data-minimum-cobalt-version="0.3.1">
+<main class="wrap" data-app-id="needles" data-minimum-cobalt-version="0.3.2">
   <div class="app-hero">
     <div class="app-copy">
       <p class="eyebrow">Kobo app</p>
       <h1>Needles</h1>
-      <p class="summary">A knuckle-sized row counter and offline pattern companion for Ravelry projects.</p>
-      <div class="meta"><span>Version 0.1.0</span><span>network</span></div>
+      <p class="summary">A knuckle-sized row counter, Ravelry library browser, and offline pattern reader.</p>
+      <div class="meta"><span>Version 0.1.0</span><span>network, keep-awake</span></div>
     </div>
     <figure class="app-shot">
       <img src="../../media/site/apps/needles.png" width="1072" height="1448" alt="Needles pattern screen with row and repeat counters and a large +1 row button.">
@@ -110,6 +110,8 @@
       <li>Ravelry library sync requires an approved Ravelry API account and HTTP Basic credential.</li>
       <li>Install the credential under the exact name ravelry.
         <code class="setup-command">kobo secret set ravelry --device &lt;address&gt;</code></li>
+      <li>Prepare and transfer a PDF you own with Poppler's pdftotext installed.
+        <code class="setup-command">kobo needles push PATTERN.pdf --device &lt;address&gt;</code></li>
     </ol>
   </section>
   <section class="panel" id="pair-panel">

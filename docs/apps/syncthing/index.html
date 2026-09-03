@@ -4,12 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Install Sync on Kobo | Cobalt</title>
-<meta name="description" content="Settings surface for duty-cycled Syncthing folders and battery-conscious scheduling. Install it on a supported Kobo e-reader with Cobalt.">
+<meta name="description" content="Keep selected folders in sync while controlling when your Kobo uses Wi-Fi. Install it on a supported Kobo e-reader with Cobalt.">
 <link rel="canonical" href="https://bandarlabs.github.io/Cobalt/apps/syncthing/">
 <link rel="icon" href="../../logo.svg" type="image/svg+xml">
 <meta property="og:type" content="website">
 <meta property="og:title" content="Install Sync on Kobo | Cobalt">
-<meta property="og:description" content="Settings surface for duty-cycled Syncthing folders and battery-conscious scheduling. Install it on a supported Kobo e-reader with Cobalt.">
+<meta property="og:description" content="Keep selected folders in sync while controlling when your Kobo uses Wi-Fi. Install it on a supported Kobo e-reader with Cobalt.">
 <meta property="og:url" content="https://bandarlabs.github.io/Cobalt/apps/syncthing/">
 <meta property="og:site_name" content="Cobalt">
 <meta property="og:image" content="https://bandarlabs.github.io/Cobalt/media/site/apps/syncthing.png">
@@ -18,17 +18,17 @@
 <meta property="og:image:alt" content="Sync folders showing receive-only vault, frame, books, and send-only out.">
 <meta name="twitter:card" content="summary">
 <meta name="twitter:title" content="Install Sync on Kobo | Cobalt">
-<meta name="twitter:description" content="Settings surface for duty-cycled Syncthing folders and battery-conscious scheduling. Install it on a supported Kobo e-reader with Cobalt.">
+<meta name="twitter:description" content="Keep selected folders in sync while controlling when your Kobo uses Wi-Fi. Install it on a supported Kobo e-reader with Cobalt.">
 <meta name="twitter:image" content="https://bandarlabs.github.io/Cobalt/media/site/apps/syncthing.png">
 <meta name="twitter:image:alt" content="Sync folders showing receive-only vault, frame, books, and send-only out.">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-ShaMCP5UdviUr5GxGkrERQtkueMNlysVl5ibSj0uUoI='; style-src 'self'; img-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-oCWeGo+Zyrxlt5jX0YH4zeeNqvLhzPvJq4+wwym+m5g='; style-src 'self'; img-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
 <script type="application/ld+json">{
   "@context": "https://schema.org",
   "@graph": [
     {
       "@type": "SoftwareApplication",
       "name": "Sync",
-      "description": "Settings surface for duty-cycled Syncthing folders and battery-conscious scheduling.",
+      "description": "Keep selected folders in sync while controlling when your Kobo uses Wi-Fi.",
       "url": "https://bandarlabs.github.io/Cobalt/apps/syncthing/",
       "image": {
         "@type": "ImageObject",
@@ -40,7 +40,7 @@
       "applicationSuite": "Cobalt",
       "applicationCategory": "SoftwareApplication",
       "operatingSystem": "Cobalt on supported Kobo e-readers",
-      "softwareVersion": "0.1.0",
+      "softwareVersion": "0.2.0",
       "isAccessibleForFree": true,
       "offers": {
         "@type": "Offer",
@@ -91,13 +91,13 @@
     </nav>
   </div>
 </header>
-<main class="wrap" data-app-id="syncthing" data-minimum-cobalt-version="0.3.1">
+<main class="wrap" data-app-id="syncthing" data-minimum-cobalt-version="0.3.2">
   <div class="app-hero">
     <div class="app-copy">
       <p class="eyebrow">Kobo app</p>
       <h1>Sync</h1>
-      <p class="summary">Settings surface for duty-cycled Syncthing folders and battery-conscious scheduling.</p>
-      <div class="meta"><span>Version 0.1.0</span><span>No additional permissions</span></div>
+      <p class="summary">Keep selected folders in sync while controlling when your Kobo uses Wi-Fi.</p>
+      <div class="meta"><span>Version 0.2.0</span><span>scheduled-wake</span></div>
     </div>
     <figure class="app-shot">
       <img src="../../media/site/apps/syncthing.png" width="1072" height="1448" alt="Sync folders showing receive-only vault, frame, books, and send-only out.">
@@ -107,7 +107,11 @@
     <p class="eyebrow">App setup</p>
     <h2 id="prerequisites-title">Before you install</h2>
     <ol>
-      <li>The current Store build is a settings preview; syncing requires a future Cobalt platform update that supplies and supervises the ARMv7 Syncthing binary.</li>
+      <li>Sync requires a Cobalt platform build containing the pinned ARMv7 Syncthing engine and a package-manager-installed Syncthing binary on your computer.</li>
+      <li>Pair exactly one local directory to a fixed safe folder while the Kobo is awake on Wi-Fi.
+        <code class="setup-command">kobo sync setup LOCAL_DIR --folder vault --device &lt;address&gt;</code></li>
+      <li>Resume Sync on the Kobo, then start the private host peer. It does not modify another Syncthing installation.
+        <code class="setup-command">kobo sync run</code></li>
     </ol>
   </section>
   <section class="panel" id="pair-panel">
