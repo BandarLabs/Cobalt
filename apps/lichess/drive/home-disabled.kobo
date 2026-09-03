@@ -5,6 +5,7 @@ expect 3+0
 expect Blitz
 shot unavailable-home
 tap 3+0
-wait-for Pairing is unavailable
-expect Open Account/Games
-shot unavailable-explained
+wait 300
+expect Pairing unavailable
+expect-missing Pairing is unavailable
+shot unavailable-still

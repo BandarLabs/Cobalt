@@ -5477,7 +5477,12 @@ pub enum LayoutKind {
     /// tile is still drawn, still occupies its place in the grid, and still
     /// must not answer a tap.
     Tile(ActionId, ControlState),
+    /// The visible boundary of a Folio card tile. Separate from the tap target
+    /// so hit testing continues to use the complete card rectangle.
+    TileOutline(ControlState),
     TileLabel,
+    /// A disabled card tile's title.
+    TileLabelMuted,
     /// A tile's second line. Muted, one line, and only emitted when at least
     /// one tile in the grid asked for one.
     TileSubtitle,
@@ -5490,6 +5495,8 @@ pub enum LayoutKind {
     /// A count or a word in the tile's leading corner, in the same chip.
     TileBadge,
     TileGlyph(Glyph),
+    /// A disabled card tile's icon.
+    TileGlyphMuted(Glyph),
     /// A picture drawn inside another control's rect, carrying no action of
     /// its own: the mark above a grid cell's label, or the one beside a bottom
     /// action's word. Deliberately not a control, so hit testing and press
@@ -5986,7 +5993,9 @@ impl Layout {
             // control: what the reader touched was not the page.
             if matches!(
                 node.kind,
-                LayoutKind::Button(_, ControlState::Disabled, _) | LayoutKind::Scrim { .. }
+                LayoutKind::Button(_, ControlState::Disabled, _)
+                    | LayoutKind::Tile(_, ControlState::Disabled)
+                    | LayoutKind::Scrim { .. }
             ) {
                 return true;
             }
@@ -8159,7 +8168,7 @@ fn layout_node(
             });
             let mut rows = 0;
             for (position, tile) in tiles.iter().enumerate() {
-                if layout.nodes.len() + 6 > MAX_LAYOUT_NODES {
+                if layout.nodes.len() + 7 > MAX_LAYOUT_NODES {
                     break;
                 }
                 let column = position as i32 % columns;
@@ -8173,6 +8182,13 @@ fn layout_node(
                     break;
                 }
                 rows = row + 1;
+                let state = if tile.state.is_tappable() {
+                    ControlState::Enabled
+                } else {
+                    ControlState::Disabled
+                };
+                let outlined = *shape == TileShape::Card;
+                let muted = outlined && state == ControlState::Disabled;
                 layout.nodes.push(LayoutNode {
                     id: *id,
                     rect: Rect {
@@ -8181,16 +8197,22 @@ fn layout_node(
                         width: cell,
                         height: cell_height,
                     },
-                    kind: LayoutKind::Tile(
-                        tile.action,
-                        if tile.state.is_tappable() {
-                            ControlState::Enabled
-                        } else {
-                            ControlState::Disabled
-                        },
-                    ),
+                    kind: LayoutKind::Tile(tile.action, state),
                     text_lines: Vec::new(),
                 });
+                if outlined {
+                    layout.nodes.push(LayoutNode {
+                        id: *id,
+                        rect: Rect {
+                            x: cell_x,
+                            y: cell_y,
+                            width: cell,
+                            height: cell_height,
+                        },
+                        kind: LayoutKind::TileOutline(state),
+                        text_lines: Vec::new(),
+                    });
+                }
                 if tile.state.is_tappable() {
                     if let Some(menu) = tile.menu {
                         layout.context_actions.push((
@@ -8218,7 +8240,15 @@ fn layout_node(
                     } else {
                         metrics.tenth_mm(70)
                     };
-                    (LayoutKind::TileGlyph(tile.glyph), size, size)
+                    (
+                        if muted {
+                            LayoutKind::TileGlyphMuted(tile.glyph)
+                        } else {
+                            LayoutKind::TileGlyph(tile.glyph)
+                        },
+                        size,
+                        size,
+                    )
                 };
                 let inset = metrics.space(Space::Tight);
                 // Mark and name are one object, centred together, rather than
@@ -8234,11 +8264,7 @@ fn layout_node(
                     .saturating_add(inset)
                     .saturating_add(names)
                     .min(cell_height);
-                let group_y = if *shape == TileShape::Card {
-                    cell_y.saturating_add(inset)
-                } else {
-                    cell_y.saturating_add((cell_height - group) / 2)
-                };
+                let group_y = cell_y.saturating_add((cell_height - group) / 2);
                 layout.nodes.push(LayoutNode {
                     id: *id,
                     rect: Rect {
@@ -8267,7 +8293,11 @@ fn layout_node(
                         width: label_width,
                         height: title_size.line_height() * title_lines,
                     },
-                    kind: LayoutKind::TileLabel,
+                    kind: if muted {
+                        LayoutKind::TileLabelMuted
+                    } else {
+                        LayoutKind::TileLabel
+                    },
                     text_lines: label,
                 });
                 if subtitled {
@@ -8310,7 +8340,7 @@ fn layout_node(
                 // is the one part of the tile that is certainly text.
                 let chip = caption.saturating_add(inset);
                 let chip_inset = metrics.rule_thickness().saturating_mul(2);
-                if tile.state.glyph().is_some() {
+                if tile.state.glyph().is_some() && !muted {
                     layout.nodes.push(LayoutNode {
                         id: *id,
                         rect: Rect {
@@ -11961,6 +11991,7 @@ fn layout_text_style(node: &LayoutNode) -> Option<(FontSize, Face)> {
         | LayoutKind::RowTrailing
         | LayoutKind::RowSummary
         | LayoutKind::TileLabel
+        | LayoutKind::TileLabelMuted
         | LayoutKind::TileSubtitle
         | LayoutKind::TileBadge
         | LayoutKind::Chip(_, _)
@@ -13177,6 +13208,17 @@ fn render_all_with_selected_font(
                 clip,
             ),
             LayoutKind::Tile(..) => {}
+            LayoutKind::TileOutline(state) => stroke_clipped(
+                surface,
+                node.rect,
+                if state == ControlState::Enabled {
+                    tone::INK
+                } else {
+                    tone::RULE
+                },
+                metrics.button_border(),
+                clip,
+            ),
             // The tap target itself draws nothing. A hairline between rows is
             // enough separation, and a box around each one would add weight
             // that a list of several entries cannot carry.
@@ -13228,6 +13270,9 @@ fn render_all_with_selected_font(
             LayoutKind::TileGlyph(glyph) | LayoutKind::InlineGlyph(glyph) => {
                 draw_glyph_icon(surface, glyph, node.rect, clip);
             }
+            LayoutKind::TileGlyphMuted(glyph) => {
+                draw_glyph_icon_in(surface, glyph, node.rect, clip, tone::MUTED);
+            }
             // Bare, because a formula is part of a sentence and a rule round
             // one would read as a box drawn in the middle of the words.
             LayoutKind::Picture(handle) => {
@@ -13260,6 +13305,18 @@ fn render_all_with_selected_font(
                     FontSize::Caption
                 },
                 tone::INK,
+                clip,
+            ),
+            LayoutKind::TileLabelMuted => draw_centered(
+                surface,
+                &node.text_lines,
+                node.rect,
+                if node.rect.height > FontSize::Caption.line_height() {
+                    FontSize::Body
+                } else {
+                    FontSize::Caption
+                },
+                tone::MUTED,
                 clip,
             ),
             LayoutKind::TileSubtitle => draw_centered(

@@ -103,7 +103,7 @@
         {
           "path": "crates/kobo-ui/src/lib.rs",
           "base_blob": "b423c372440c61e785db9dd0128eac22343cb9f8",
-          "compatible_blob": "1f7e22d3291f01676dbfffbd31fceae987e71f78"
+          "compatible_blob": "812ab171ca023d24c11fe7e66e3c4aee7467a2ec"
         },
         {
           "path": "examples/gutenbird/Cargo.toml",

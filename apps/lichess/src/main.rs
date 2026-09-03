@@ -11,8 +11,9 @@ mod model;
 use api::{BoardRecord, Event, SeekPreset};
 use kobo_json::{ObjectBuilder, Value};
 use kobo_sdk::{
-    action_id, ActionId, BannerLevel, Context, ControlState, Failure, Glyph, Heartbeat, KoboApp,
-    Screen, ScreenBuilder, StoreResult, Task, TaskError, TaskId, TaskOutcome, Tile, TileShape,
+    action_id, ActionId, BandAlign, BannerLevel, Context, ControlState, Failure, Glyph, Heartbeat,
+    KoboApp, Screen, ScreenBuilder, SlotWidth, StoreResult, Task, TaskError, TaskId, TaskOutcome,
+    Tile, TileShape, TileState,
 };
 use model::{
     Account, ApplyState, Challenge, ChallengeDirection, Color, FullGame, Game, GameSummary, Session,
@@ -30,6 +31,14 @@ const EVENT_RATE_KEY: &str = "lichess.event-rate.v1";
 const SEEK_RATE_KEY: &str = "lichess.seek-rate.v1";
 const MAX_STORED_PUZZLES: usize = 32;
 const HOME_TILE_COUNT: usize = SeekPreset::ALL.len() + 2;
+
+struct HomeTile {
+    action: String,
+    label: String,
+    glyph: Glyph,
+    subtitle: String,
+    enabled: bool,
+}
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 enum Route {
@@ -417,72 +426,108 @@ impl Lichess {
     }
 
     fn home_pages(&self, context: &Context) -> Vec<Vec<usize>> {
-        let pages = context.paginate_tiles_under(
+        let measured = context.paginate_tiles_under(
             HOME_TILE_COUNT,
             TileShape::Square,
             false,
             &self.home_header().build(),
         );
-        if pages.is_empty() {
-            vec![(0..HOME_TILE_COUNT).collect()]
+        let columns = context
+            .metrics()
+            .grid_columns(TileShape::Square)
+            .clamp(1, 3);
+        let rows = if context.metrics().width > context.metrics().height {
+            2
         } else {
-            pages
+            3
+        };
+        let capacity = measured
+            .first()
+            .map_or(columns, Vec::len)
+            .min(columns * rows)
+            .max(1);
+        (0..HOME_TILE_COUNT)
+            .collect::<Vec<_>>()
+            .chunks(capacity)
+            .map(<[usize]>::to_vec)
+            .collect()
+    }
+
+    fn home_tile(index: usize, ready: bool) -> HomeTile {
+        if index == 0 {
+            HomeTile {
+                action: "play".to_owned(),
+                label: "Account/Games".to_owned(),
+                glyph: Glyph::Settings,
+                subtitle: "Challenges · boards".to_owned(),
+                enabled: true,
+            }
+        } else if index == 1 {
+            HomeTile {
+                action: "puzzles".to_owned(),
+                label: "Puzzles".to_owned(),
+                glyph: Glyph::Grid,
+                subtitle: "Offline training".to_owned(),
+                enabled: true,
+            }
+        } else {
+            let preset = SeekPreset::ALL[index - 2];
+            HomeTile {
+                action: preset.action().to_owned(),
+                label: preset.label(),
+                glyph: Glyph::Clock,
+                subtitle: preset.speed_label().to_owned(),
+                enabled: ready,
+            }
         }
     }
 
+    fn home_card_row(screen: ScreenBuilder, tiles: Vec<HomeTile>) -> ScreenBuilder {
+        screen.band(
+            BandAlign::Top,
+            tiles.into_iter().map(|tile| {
+                (
+                    SlotWidth::Fill,
+                    Box::new(move |slot: ScreenBuilder| {
+                        let enabled = tile.enabled;
+                        slot.tile_grid(
+                            TileShape::Card,
+                            [(tile.action, tile.label, tile.glyph, move |card: Tile| {
+                                let card = card.with_subtitle(tile.subtitle);
+                                if enabled {
+                                    card
+                                } else {
+                                    card.with_state(TileState::Unavailable)
+                                }
+                            })],
+                        )
+                    }) as Box<dyn FnOnce(ScreenBuilder) -> ScreenBuilder>,
+                )
+            }),
+        )
+    }
+
     fn home(&mut self, context: &Context) -> Screen {
-        let games =
-            self.summaries.len()
-                + usize::from(self.game.as_ref().is_some_and(|game| {
-                    !self.summaries.iter().any(|summary| summary.id == game.id)
-                }));
         let pages = self.home_pages(context);
         self.home_page = self.home_page.min(pages.len().saturating_sub(1));
         let page = self.home_page;
         let page_count = u16::try_from(pages.len()).unwrap_or(u16::MAX);
         let page_index = u16::try_from(page).unwrap_or(u16::MAX);
         let page_number = u16::try_from(page.saturating_add(1)).unwrap_or(u16::MAX);
-        self.home_header()
-            .page_rail(page_index, page_count)
-            .tile_grid(
-                TileShape::Square,
-                pages[page].iter().map(|&index| {
-                    let (action, label, glyph, subtitle, badge) = if index == 0 {
-                        (
-                            "play".to_owned(),
-                            "Account/Games".to_owned(),
-                            Glyph::Settings,
-                            "Challenges · boards".to_owned(),
-                            games.to_string(),
-                        )
-                    } else if index == 1 {
-                        (
-                            "puzzles".to_owned(),
-                            "Puzzles".to_owned(),
-                            Glyph::Grid,
-                            "Offline training".to_owned(),
-                            self.remaining_puzzles().to_string(),
-                        )
-                    } else {
-                        let preset = SeekPreset::ALL[index - 2];
-                        (
-                            preset.action().to_owned(),
-                            preset.label(),
-                            Glyph::Clock,
-                            preset.speed_label().to_owned(),
-                            String::new(),
-                        )
-                    };
-                    (action, label, glyph, move |tile: Tile| {
-                        let tile = tile.with_subtitle(subtitle);
-                        if badge.is_empty() {
-                            tile
-                        } else {
-                            tile.with_badge(badge)
-                        }
-                    })
-                }),
-            )
+        let ready = self.seek_ready();
+        let columns = context
+            .metrics()
+            .grid_columns(TileShape::Square)
+            .clamp(1, 3);
+        let mut screen = self.home_header().page_rail(page_index, page_count);
+        for row in pages[page].chunks(columns) {
+            let tiles = row
+                .iter()
+                .map(|index| Self::home_tile(*index, ready))
+                .collect();
+            screen = Self::home_card_row(screen, tiles);
+        }
+        screen
             .page_turns("home-previous", "home-next")
             .page_position(page_number, page_count)
             .build()
@@ -3873,8 +3918,8 @@ mod tests {
         TaskOutcome,
     };
     use kobo_ui::{
-        Chrome, DisplayMetrics, Glyph, LayoutKind, Node, TextScale, TileShape, TileState,
-        CLARA_BW_METRICS,
+        render_with, tone, Chrome, ControlState, DisplayMetrics, Glyph, LayoutKind, Node, Surface,
+        TextScale, TileShape, TileState, CLARA_BW_METRICS,
     };
     use std::collections::BTreeSet;
 
@@ -4007,6 +4052,94 @@ mod tests {
             .collect()
     }
 
+    fn declared_tiles(nodes: &[Node]) -> Vec<(ActionId, TileShape, TileState, bool)> {
+        let mut declared = Vec::new();
+        for node in nodes {
+            match node {
+                Node::TileGrid { shape, tiles, .. } => declared.extend(
+                    tiles
+                        .iter()
+                        .map(|tile| (tile.action, *shape, tile.state, tile.badge.is_empty())),
+                ),
+                Node::Band { slots, .. } => {
+                    for slot in slots {
+                        declared.extend(declared_tiles(&slot.nodes));
+                    }
+                }
+                Node::Card { children, .. } => declared.extend(declared_tiles(children)),
+                _ => {}
+            }
+        }
+        declared
+    }
+
+    fn pixel(surface: &Surface, metrics: &DisplayMetrics, x: i32, y: i32) -> u8 {
+        let x = usize::try_from(x).expect("pixel x");
+        let y = usize::try_from(y).expect("pixel y");
+        let width = usize::try_from(metrics.width).expect("surface width");
+        surface.pixels[y * width + x]
+    }
+
+    fn assert_consistent_card_grid(layout: &kobo_ui::Layout, columns: usize) {
+        let outlines = layout
+            .nodes
+            .iter()
+            .filter(|node| matches!(node.kind, LayoutKind::TileOutline(_)))
+            .collect::<Vec<_>>();
+        let first_y = outlines.first().expect("card outline").rect.y;
+        let first_row = outlines
+            .iter()
+            .filter(|outline| outline.rect.y == first_y)
+            .collect::<Vec<_>>();
+        assert_eq!(first_row.len(), columns);
+        let widths = first_row
+            .iter()
+            .map(|outline| outline.rect.width)
+            .collect::<BTreeSet<_>>();
+        assert!(
+            widths.iter().next_back().expect("width") - widths.iter().next().expect("width") <= 2,
+            "card widths were {widths:?}"
+        );
+        let mut horizontal = first_row
+            .windows(2)
+            .map(|pair| pair[1].rect.x - pair[0].rect.x - pair[0].rect.width)
+            .collect::<Vec<_>>();
+        horizontal.sort_unstable();
+        assert!(horizontal.last().expect("gap") - horizontal.first().expect("gap") <= 1);
+        let rows = outlines
+            .iter()
+            .map(|outline| outline.rect.y)
+            .collect::<BTreeSet<_>>();
+        let rows = rows.into_iter().collect::<Vec<_>>();
+        let mut vertical = rows
+            .windows(2)
+            .map(|pair| pair[1] - pair[0] - outlines[0].rect.height)
+            .collect::<Vec<_>>();
+        vertical.sort_unstable();
+        if let (Some(first), Some(last)) = (vertical.first(), vertical.last()) {
+            assert!(last - first <= 1);
+        }
+        for outline in outlines {
+            let content = layout.nodes.iter().filter(|node| {
+                node.id == outline.id
+                    && matches!(
+                        node.kind,
+                        LayoutKind::TileGlyph(_)
+                            | LayoutKind::TileGlyphMuted(_)
+                            | LayoutKind::TileLabel
+                            | LayoutKind::TileLabelMuted
+                            | LayoutKind::TileSubtitle
+                    )
+            });
+            for node in content {
+                assert!(node.rect.x > outline.rect.x);
+                assert!(node.rect.y > outline.rect.y);
+                assert!(node.rect.x + node.rect.width < outline.rect.x + outline.rect.width);
+                assert!(node.rect.y + node.rect.height < outline.rect.y + outline.rect.height);
+            }
+        }
+    }
+
     #[test]
     fn black_orientation_and_live_controls_fit_clara_bw() {
         let app = app_with_game(&["e2e4", "c7c5", "g1f3"], Color::Black);
@@ -4054,16 +4187,14 @@ mod tests {
                         node.kind
                     );
                 }
-                let mut declared = BTreeSet::new();
-                for node in &screen.nodes {
-                    if let Node::TileGrid { shape, tiles, .. } = node {
-                        assert_eq!(*shape, TileShape::Square);
-                        for tile in tiles {
-                            assert!(!tile.subtitle.is_empty());
-                            declared.insert(tile.action);
-                        }
-                    }
-                }
+                let tiles = declared_tiles(&screen.nodes);
+                assert!(tiles
+                    .iter()
+                    .all(|(_, shape, _, badge_empty)| *shape == TileShape::Card && *badge_empty));
+                let declared = tiles
+                    .iter()
+                    .map(|(action, _, _, _)| *action)
+                    .collect::<BTreeSet<_>>();
                 let visible = visible_tile_actions(&screen, &metrics);
                 assert_eq!(
                     visible, declared,
@@ -4088,36 +4219,88 @@ mod tests {
         let mut runner = AppRunner::new(Lichess::default());
         let screen = painted(runner.start()).expect("home");
         assert!(format!("{screen:?}").contains("Pairing unavailable"));
-        for node in &screen.nodes {
-            if let Node::TileGrid { tiles, .. } = node {
-                assert!(tiles.iter().all(|tile| tile.state == TileState::Normal));
-            }
-        }
+        let tiles = declared_tiles(&screen.nodes);
+        assert!(tiles.iter().all(|(action, _, state, badge_empty)| {
+            let utility = *action == action_id("play") || *action == action_id("puzzles");
+            *badge_empty
+                && if utility {
+                    *state == TileState::Normal
+                } else {
+                    *state == TileState::Unavailable
+                }
+        }));
         assert!(!screen
             .layout_with(&CLARA_BW_METRICS, &Chrome::with_back(false))
             .nodes
             .iter()
             .any(|node| node.kind == LayoutKind::TileGlyph(Glyph::Close)));
-        let commands = runner.action(action_id(api::SeekPreset::Blitz3_0.action()));
-        assert!(!commands.iter().any(|command| {
-            matches!(
-                command,
-                Command::Spawn {
-                    work: kobo_sdk::Task::Post { url, .. },
-                    ..
-                } if url.ends_with("/api/board/seek")
-            )
-        }));
-        assert_eq!(runner.app().route, Route::Home);
-        assert!(runner
-            .app()
-            .notice
-            .as_deref()
-            .unwrap_or_default()
-            .contains("Account/Games"));
+        let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::with_back(false));
+        assert!(layout
+            .nodes
+            .iter()
+            .any(|node| node.kind == LayoutKind::TileOutline(ControlState::Disabled)));
+        assert!(layout
+            .nodes
+            .iter()
+            .any(|node| matches!(node.kind, LayoutKind::TileGlyphMuted(_))));
+        assert!(layout
+            .nodes
+            .iter()
+            .any(|node| node.kind == LayoutKind::TileLabelMuted));
+        assert!(!layout
+            .nodes
+            .iter()
+            .any(|node| { matches!(node.kind, LayoutKind::TileState(_) | LayoutKind::TileBadge) }));
+        let outline = layout
+            .nodes
+            .iter()
+            .find(|node| node.kind == LayoutKind::TileOutline(ControlState::Disabled))
+            .expect("disabled card outline");
+        let mut surface = Surface::new(
+            usize::try_from(CLARA_BW_METRICS.width).expect("width"),
+            usize::try_from(CLARA_BW_METRICS.height).expect("height"),
+        );
+        render_with(
+            &screen,
+            &CLARA_BW_METRICS,
+            &Chrome::with_back(false),
+            &mut surface,
+            None,
+        );
+        assert_ne!(
+            pixel(
+                &surface,
+                &CLARA_BW_METRICS,
+                outline.rect.x + outline.rect.width / 2,
+                outline.rect.y
+            ),
+            tone::PAPER
+        );
+        let preset = layout
+            .nodes
+            .iter()
+            .find(|node| {
+                node.kind
+                    == LayoutKind::Tile(
+                        action_id(api::SeekPreset::Blitz3_0.action()),
+                        ControlState::Disabled,
+                    )
+            })
+            .expect("disabled preset");
+        assert_eq!(
+            layout.hit_test(
+                preset.rect.x + preset.rect.width / 2,
+                preset.rect.y + preset.rect.height / 2
+            ),
+            None
+        );
     }
 
     #[test]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one acceptance test ties card geometry, full hit targets, and rendered outlines across both Clara orientations"
+    )]
     fn clara_home_is_dense_in_portrait_and_landscape() {
         for (name, metrics, minimum) in [
             ("portrait", CLARA_BW_METRICS, 9),
@@ -4128,7 +4311,7 @@ mod tests {
                     height: CLARA_BW_METRICS.width,
                     ..CLARA_BW_METRICS
                 },
-                8,
+                6,
             ),
         ] {
             let mut runner = AppRunner::with_metrics(ready_app(), metrics);
@@ -4139,6 +4322,11 @@ mod tests {
                 .iter()
                 .filter(|node| matches!(node.kind, LayoutKind::Tile(_, _)))
                 .collect::<Vec<_>>();
+            let outlines = layout
+                .nodes
+                .iter()
+                .filter(|node| matches!(node.kind, LayoutKind::TileOutline(_)))
+                .collect::<Vec<_>>();
             let visible = visible_tile_actions(&screen, &metrics);
             assert!(
                 visible.len() >= minimum,
@@ -4147,11 +4335,67 @@ mod tests {
             );
             assert!(visible.contains(&action_id("play")));
             assert!(visible.contains(&action_id("puzzles")));
+            assert_eq!(outlines.len(), tiles.len());
+            assert!(tiles
+                .iter()
+                .all(|tile| outlines.iter().any(|outline| outline.rect == tile.rect)));
             assert!(tiles.iter().all(|tile| {
                 tile.rect.width >= metrics.touch_target_minimum()
                     && tile.rect.height >= metrics.touch_target_minimum()
             }));
+            for tile in &tiles {
+                let LayoutKind::Tile(action, ControlState::Enabled) = tile.kind else {
+                    panic!("ready tile was disabled")
+                };
+                for (x, y) in [
+                    (tile.rect.x + 1, tile.rect.y + 1),
+                    (
+                        tile.rect.x + tile.rect.width - 2,
+                        tile.rect.y + tile.rect.height - 2,
+                    ),
+                ] {
+                    assert_eq!(
+                        layout.hit_test(x, y),
+                        Some(action),
+                        "Clara {name} card did not own its full hit rectangle"
+                    );
+                }
+            }
+            let mut surface = Surface::new(
+                usize::try_from(metrics.width).expect("width"),
+                usize::try_from(metrics.height).expect("height"),
+            );
+            render_with(
+                &screen,
+                &metrics,
+                &Chrome::with_back(false),
+                &mut surface,
+                None,
+            );
+            for outline in outlines {
+                assert_ne!(
+                    pixel(
+                        &surface,
+                        &metrics,
+                        outline.rect.x + outline.rect.width / 2,
+                        outline.rect.y
+                    ),
+                    tone::PAPER,
+                    "Clara {name} card top edge did not render"
+                );
+                assert_ne!(
+                    pixel(
+                        &surface,
+                        &metrics,
+                        outline.rect.x,
+                        outline.rect.y + outline.rect.height / 2
+                    ),
+                    tone::PAPER,
+                    "Clara {name} card left edge did not render"
+                );
+            }
             if name == "portrait" {
+                assert_consistent_card_grid(&layout, 3);
                 assert_eq!(
                     tiles
                         .iter()
@@ -4168,6 +4412,8 @@ mod tests {
                         .len(),
                     3
                 );
+            } else {
+                assert_consistent_card_grid(&layout, 3);
             }
         }
     }
