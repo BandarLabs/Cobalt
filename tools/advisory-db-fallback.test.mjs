@@ -1,6 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { fallbackFailure, fallbackRefusal } from "./advisory-db-fallback.mjs";
+import {
+  argumentsFrom,
+  fallbackFailure,
+  fallbackRefusal
+} from "./advisory-db-fallback.mjs";
 
 const SNAPSHOT = "309ad29d8fe448bf986019e05d47b9e0e29a2218";
 
@@ -54,6 +58,48 @@ test("an acknowledgement without a reason, a date or a snapshot is refused", () 
   assert.match(
     fallbackFailure(record({ expires: "soon" }), SNAPSHOT, "2026-09-04"),
     /has no expiry date/
+  );
+  // Well shaped and not a date: it sorts after every real one, so left alone it
+  // would accept the blind spot for ever.
+  assert.match(
+    fallbackFailure(record({ expires: "2026-13-45" }), SNAPSHOT, "2026-09-04"),
+    /has no expiry date/
+  );
+});
+
+test("a run that says which snapshot and which day is taken at its word", () => {
+  const values = argumentsFrom([
+    "--record",
+    "tools/advisory-db-fallback.json",
+    "--snapshot",
+    SNAPSHOT,
+    "--today",
+    "2026-09-04"
+  ]);
+  assert.equal(values.get("--snapshot"), SNAPSHOT);
+  assert.equal(values.get("--today"), "2026-09-04");
+});
+
+test("a run that cannot say which snapshot or which day is refused", () => {
+  const args = (snapshot, today) => [
+    "--record",
+    "tools/advisory-db-fallback.json",
+    "--snapshot",
+    snapshot,
+    "--today",
+    today
+  ];
+  assert.throws(
+    () => argumentsFrom(args("309ad29d", "2026-09-04")),
+    /--snapshot 309ad29d is not a 40-character advisory database commit/
+  );
+  assert.throws(
+    () => argumentsFrom(args(SNAPSHOT, "4 September 2026")),
+    /--today 4 September 2026 is not a date written YYYY-MM-DD/
+  );
+  assert.throws(
+    () => argumentsFrom(args(SNAPSHOT, "2026-13-45")),
+    /--today 2026-13-45 is not a date written YYYY-MM-DD/
   );
 });
 

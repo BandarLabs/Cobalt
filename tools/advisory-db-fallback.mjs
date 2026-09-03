@@ -3,6 +3,20 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const RECORD_PATH = "tools/advisory-db-fallback.json";
+const SNAPSHOT_PATTERN = /^[0-9a-f]{40}$/;
+
+// Expiry is decided by comparing two date strings, which orders them by date
+// only while both are real dates written the one way. `2026-13-45` sorts after
+// every genuine date and would never expire, so a date that does not exist is
+// not a date here.
+export function isCalendarDate(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value ?? "")) return false;
+  const parsed = new Date(`${value}T00:00:00Z`);
+  return (
+    Number.isFinite(parsed.getTime()) &&
+    parsed.toISOString().slice(0, 10) === value
+  );
+}
 
 // Auditing against a pinned snapshot answers a question nobody asked: it is
 // blind to every advisory published after the pin, and it reports that as a
@@ -20,13 +34,13 @@ export function fallbackFailure(record, snapshot, today) {
   ) {
     return `${RECORD_PATH} is not a format_version 1 record with a reason`;
   }
-  if (!/^[0-9a-f]{40}$/.test(record.snapshot || "")) {
+  if (!SNAPSHOT_PATTERN.test(record.snapshot || "")) {
     return `${RECORD_PATH} names no advisory database snapshot`;
   }
   if (record.snapshot !== snapshot) {
     return `${RECORD_PATH} accepts snapshot ${record.snapshot}, but this run pins ${snapshot}`;
   }
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(record.expires || "")) {
+  if (!isCalendarDate(record.expires)) {
     return `${RECORD_PATH} has no expiry date`;
   }
   if (record.expires < today) {
@@ -56,7 +70,7 @@ export function fallbackRefusal(failure, snapshot) {
   ].join("\n");
 }
 
-function argumentsFrom(argv) {
+export function argumentsFrom(argv) {
   const allowed = ["--record", "--snapshot", "--today"];
   const usage =
     "usage: node tools/advisory-db-fallback.mjs --record PATH --snapshot SHA --today YYYY-MM-DD";
@@ -68,6 +82,20 @@ function argumentsFrom(argv) {
     values.set(flag, value);
   }
   if (values.size !== allowed.length) throw new Error(usage);
+  // The shapes the usage line describes are the shapes the comparisons below
+  // assume, and nothing else checks them. A malformed date silently decides the
+  // expiry the wrong way round, which is the one answer this tool exists to get
+  // right, so say so here rather than audit blind on a typo.
+  const snapshot = values.get("--snapshot");
+  if (!SNAPSHOT_PATTERN.test(snapshot)) {
+    throw new Error(
+      `--snapshot ${snapshot} is not a 40-character advisory database commit`
+    );
+  }
+  const today = values.get("--today");
+  if (!isCalendarDate(today)) {
+    throw new Error(`--today ${today} is not a date written YYYY-MM-DD`);
+  }
   return values;
 }
 
