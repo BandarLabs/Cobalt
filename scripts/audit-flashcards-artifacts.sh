@@ -28,7 +28,10 @@ source_commit_file="$target_root/artifacts/flashcards-import.source-commit.txt"
 host_notice_file="$target_root/artifacts/flashcards-import.notice.txt"
 host_licenses_file="$target_root/artifacts/flashcards-import.licenses.txt"
 audit_report="$target_root/artifacts/ARTIFACT-AUDIT.txt"
-readelf=${READELF:-armv7-unknown-linux-musleabihf-readelf}
+readelf=$(command -v armv7-unknown-linux-musleabihf-readelf) || {
+  echo "armv7-unknown-linux-musleabihf-readelf is required" >&2
+  exit 1
+}
 expected_validation_key=d759793bbc13a2819a827c76adb6fba8a49aee007f49f2d0992d99b825ad2c48
 rm -f "$audit_report"
 
