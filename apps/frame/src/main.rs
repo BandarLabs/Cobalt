@@ -1,163 +1,591 @@
-//! A local photo-frame surface. Incoming pictures belong to the host transfer service.
+//! A private-shelf photo frame. Images are prepared and atomically published by `kobo frame`.
+
 use kobo_sdk::{
-    action_id, ActionId, Context, Glyph, KoboApp, PictureHandle, Screen, ScreenBuilder, TilePicture,
+    action_id, ActionId, BannerLevel, Context, Glyph, Heartbeat, KoboApp, PictureHandle, Screen,
+    ScreenBuilder, ShelfDownload, ShelfProgress, StoreResult, TaskId, TaskOutcome, TilePicture,
 };
+use std::collections::BTreeSet;
 use std::process::ExitCode;
 use std::time::Duration;
 
+const MANIFEST: &str = "manifest.v1";
+const STATE: &str = "frame-state-v1";
 const PHOTO: PictureHandle = PictureHandle(1);
+const MAX_PHOTOS: usize = 500;
+const MAX_MANIFEST: usize = 256 * 1024;
+const MAX_FRAME_BYTES: usize = 4 * 1024 * 1024;
+
 const SHOW: &str = "show";
+const NEXT: &str = "next";
+const PREVIOUS: &str = "previous";
+const MENU: &str = "menu";
+const EXIT: &str = "exit";
 const MODE: &str = "mode";
 const INTERVAL: &str = "interval";
-/// The currently available per-picture budget holds this portrait image.
-///
-/// The runtime refuses an oversized picture rather than silently blanking the
-/// frame.  The transfer host therefore must pre-fit photographs to this bound
-/// until the platform gains tiled full-panel pictures.
-const PHOTO_WIDTH: u32 = 536;
-const PHOTO_HEIGHT: u32 = 724;
+const ORDER: &str = "order";
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 enum View {
+    Opening,
+    #[default]
     Home,
-    Photo,
+    Show,
 }
 
-struct Frame {
-    view: View,
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct Photo {
+    id: String,
+    digest: String,
+    taken: u64,
+    album: String,
+    name: String,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct Settings {
     slow: bool,
     interval: u8,
+    shuffled: bool,
+    position: usize,
 }
-impl Default for Frame {
-    fn default() -> Self {
-        Self {
-            view: View::Home,
-            slow: false,
-            interval: 15,
+
+impl Settings {
+    fn interval(&self) -> u8 {
+        if self.slow {
+            match self.interval {
+                1 | 6 | 24 => self.interval,
+                _ => 6,
+            }
+        } else {
+            match self.interval {
+                5 | 15 | 60 => self.interval,
+                _ => 15,
+            }
         }
+    }
+
+    fn encode(&self) -> String {
+        format!(
+            "1\n{}\n{}\n{}\n{}",
+            u8::from(self.slow),
+            self.interval(),
+            u8::from(self.shuffled),
+            self.position
+        )
     }
 }
 
-fn sample_photo() -> Vec<u8> {
-    const W: u32 = PHOTO_WIDTH;
-    const H: u32 = PHOTO_HEIGHT;
-    let mut pixels = Vec::with_capacity((W * H) as usize);
-    for y in 0..H {
-        for x in 0..W {
-            let horizon = H * 47 / 100;
-            let grey = if y < horizon {
-                // Light sky, a sun, and a little intentional grain.
-                let sun = (i64::from(x) - 390).pow(2) + (i64::from(y) - 135).pow(2) < 42_i64.pow(2);
-                if sun {
-                    248
-                } else {
-                    u8::try_from(205_u32.saturating_sub(y / 5))
-                        .expect("the generated sky value fits u8")
-                }
-            } else if y < horizon + 20 {
-                80
-            } else {
-                let wave =
-                    u8::try_from((x / 19 + y / 13) % 5).expect("the wave value is below five");
-                102 + wave * 13
-            };
-            pixels.push(grey);
-        }
-    }
-    pixels
+#[derive(Default)]
+struct Startup {
+    state_loaded: bool,
+    manifest_loaded: bool,
+    started: bool,
+}
+
+#[derive(Default)]
+struct Frame {
+    view: View,
+    settings: Settings,
+    photos: Vec<Photo>,
+    picture: Option<TilePicture>,
+    manifest_load: Option<ShelfDownload>,
+    photo_load: Option<ShelfDownload>,
+    photo_load_id: Option<String>,
+    panel_width: u32,
+    panel_height: u32,
+    startup: Startup,
+    unreadable: BTreeSet<String>,
+    overlay: bool,
+    clock: Option<Heartbeat>,
+    notice: Option<String>,
 }
 
 impl Frame {
     fn show(&self, context: &mut Context) {
         context.set_screen(self.screen());
     }
+
     fn screen(&self) -> Screen {
         match self.view {
-            View::Home => {
-                let timing = if self.slow {
-                    format!("Slow slideshow · every {} hours", self.interval)
-                } else {
-                    format!("Frame mode · every {} minutes", self.interval)
-                };
-                ScreenBuilder::new("frame-home")
-                    .top_bar("Frame")
-                    .picture(TilePicture::new(PHOTO, PHOTO_WIDTH, PHOTO_HEIGHT), 72)
-                    .secondary("Sample photograph. Connect a host to add your own.")
-                    .rows([
-                        (
-                            MODE,
-                            timing,
-                            "Switches between awake and scheduled photo changes.",
-                            Glyph::Clock,
-                        ),
-                        (
-                            INTERVAL,
-                            "Change interval".to_owned(),
-                            "5, 15, 60 minutes; 1, 6, 24 hours.",
-                            Glyph::Clock,
-                        ),
-                    ])
-                    .button(SHOW, "Show photograph")
-                    .build()
-            }
-            View::Photo => ScreenBuilder::new("frame-show")
-                .unframed_picture(TilePicture::new(PHOTO, PHOTO_WIDTH, PHOTO_HEIGHT), 130)
+            View::Opening => ScreenBuilder::new("frame-opening")
+                .top_bar("Frame")
+                .activity("Opening your photo shelf", None)
                 .build(),
+            View::Home => self.home(),
+            View::Show => self.photo_screen(),
         }
     }
-    fn apply_power_policy(&self, context: &mut Context) {
-        if self.slow {
-            context.device().allow_sleep();
-            context
-                .device()
-                .schedule_wake(Duration::from_secs(u64::from(self.interval) * 3600));
+
+    fn home(&self) -> Screen {
+        let mut screen = ScreenBuilder::new("frame-home").top_bar("Frame");
+        if let Some(notice) = &self.notice {
+            screen = screen.banner(BannerLevel::Attention, notice);
+        }
+        if !self.startup.manifest_loaded {
+            return screen.activity("Opening your photo shelf", None).build();
+        }
+        if self.photos.is_empty() {
+            return screen
+                .splash(
+                    Some(Glyph::App),
+                    "Your frame is empty",
+                    "On your computer, run `kobo frame init --device IP`, then `kobo frame push PHOTO_OR_FOLDER --device IP`.",
+                )
+                .build();
+        }
+        let mode = if self.settings.slow {
+            "Slow slideshow"
         } else {
-            context
-                .device()
-                .keep_awake(Duration::from_secs(u64::from(self.interval) * 60));
+            "Frame mode"
+        };
+        let interval = if self.settings.slow {
+            format!("Every {} hours", self.settings.interval())
+        } else {
+            format!("Every {} minutes", self.settings.interval())
+        };
+        let order = if self.settings.shuffled {
+            "Shuffle"
+        } else {
+            "By date"
+        };
+        screen = screen
+            .facts([
+                ("Photos", self.photos.len().to_string()),
+                ("Mode", mode.to_owned()),
+                ("Interval", interval),
+                ("Order", order.to_owned()),
+            ])
+            .rows([
+                (
+                    MODE,
+                    mode.to_owned(),
+                    "Awake frame or battery-saving scheduled slideshow.",
+                    Glyph::Clock,
+                ),
+                (
+                    INTERVAL,
+                    "Change interval".to_owned(),
+                    "5, 15, 60 minutes; or 1, 6, 24 hours.",
+                    Glyph::Clock,
+                ),
+                (
+                    ORDER,
+                    order.to_owned(),
+                    "Cycle a stable shuffle order or chronological photos.",
+                    Glyph::App,
+                ),
+            ]);
+        if !self.unreadable.is_empty() {
+            screen = screen.secondary(format!(
+                "{} photo(s) unreadable — re-push them from your computer.",
+                self.unreadable.len()
+            ));
+        }
+        screen
+            .buttons([(SHOW, "Show photo"), (NEXT, "Next photo")])
+            .build()
+    }
+
+    fn photo_screen(&self) -> Screen {
+        let Some(picture) = self.picture else {
+            return ScreenBuilder::new("frame-show")
+                .top_bar("Frame")
+                .activity("Loading photo", None)
+                .build()
+                .with_own_back(true);
+        };
+        let mut screen = ScreenBuilder::new("frame-show")
+            .unframed_picture(picture, 500)
+            .page_turns(PREVIOUS, NEXT)
+            .reading_menu(MENU);
+        if self.overlay {
+            let selected = self.selected().expect("visible photo has a selection");
+            screen = screen.modal("Photo", |overlay| {
+                overlay
+                    .facts([
+                        ("File", selected.name.clone()),
+                        ("Album", selected.album.clone()),
+                        ("Taken", selected.taken.to_string()),
+                    ])
+                    .buttons([(PREVIOUS, "Previous"), (NEXT, "Next"), (EXIT, "Exit")])
+            });
+        }
+        screen.build().with_own_back(true)
+    }
+
+    fn selected(&self) -> Option<&Photo> {
+        let choices = self.ordered_indices();
+        choices
+            .get(self.settings.position % choices.len().max(1))
+            .and_then(|index| self.photos.get(*index))
+    }
+
+    fn ordered_indices(&self) -> Vec<usize> {
+        let mut indices = (0..self.photos.len()).collect::<Vec<_>>();
+        if self.settings.shuffled {
+            indices.sort_by_key(|index| stable_hash(&self.photos[*index].id));
+        }
+        indices
+    }
+
+    fn start_current(&mut self, context: &mut Context) {
+        if self.photo_load.is_some() || self.photos.is_empty() {
+            return;
+        }
+        let Some(photo) = self.selected() else {
+            return;
+        };
+        let mut load = ShelfDownload::new(format!("{}.png", photo.id)).at_most(MAX_FRAME_BYTES);
+        let id = photo.id.clone();
+        load.start(context);
+        self.photo_load = Some(load);
+        self.photo_load_id = Some(id);
+    }
+
+    fn advance(&mut self, context: &mut Context, forward: bool) {
+        if self.photos.is_empty() {
+            return;
+        }
+        let count = self.photos.len();
+        self.settings.position = if forward {
+            self.settings.position.saturating_add(1) % count
+        } else {
+            self.settings.position.checked_sub(1).unwrap_or(count - 1)
+        };
+        self.overlay = false;
+        self.picture = None;
+        self.save(context);
+        self.start_current(context);
+    }
+
+    fn skip_unreadable(&mut self, context: &mut Context, id: &str, error: String) {
+        self.unreadable.insert(id.to_owned());
+        if self.unreadable.len() >= self.photos.len() {
+            self.picture = None;
+            self.notice = Some("No photo on this shelf can be read. Re-push the album.".to_owned());
+            self.view = View::Home;
+            return;
+        }
+        self.notice = Some(error);
+        self.advance(context, true);
+    }
+
+    fn apply_power_policy(&mut self, context: &mut Context) {
+        if self.settings.slow {
+            if let Some(clock) = &mut self.clock {
+                clock.stop(context);
+            }
+            self.clock = None;
+            context.device().allow_sleep();
+            context.device().schedule_wake(Duration::from_secs(
+                u64::from(self.settings.interval()) * 3600,
+            ));
+        } else {
             context.device().cancel_wake();
+            context.device().keep_awake(Duration::from_secs(
+                u64::from(self.settings.interval()) * 60 + 60,
+            ));
+            if let Some(clock) = &mut self.clock {
+                clock.stop(context);
+            }
+            let mut clock = Heartbeat::every(u32::from(self.settings.interval()) * 60);
+            clock.start(context);
+            self.clock = Some(clock);
+        }
+    }
+
+    fn save(&self, context: &mut Context) {
+        context.store().save(STATE, self.settings.encode());
+    }
+
+    fn start_when_ready(&mut self, context: &mut Context) {
+        if self.startup.state_loaded && self.startup.manifest_loaded && !self.startup.started {
+            self.startup.started = true;
+            self.settings.position %= self.photos.len().max(1);
+            self.apply_power_policy(context);
+            self.start_current(context);
+            if self.view == View::Opening {
+                self.view = View::Home;
+            }
+        }
+    }
+
+    fn accept_picture(&mut self, context: &mut Context, id: &str, bytes: &[u8]) {
+        let picture = kobo_image::decode(bytes).and_then(|picture| {
+            if picture.width() == self.panel_width && picture.height() == self.panel_height {
+                Ok(picture)
+            } else {
+                Err(kobo_image::ImageError::Undecodable(
+                    "the photo is not a panel-sized Frame PNG".to_owned(),
+                ))
+            }
+        });
+        match picture {
+            Ok(picture) => {
+                self.picture = context.put_picture(
+                    PHOTO,
+                    picture.width(),
+                    picture.height(),
+                    picture.into_grey(),
+                );
+                if self.picture.is_none() {
+                    self.skip_unreadable(
+                        context,
+                        id,
+                        "The photo exceeds Frame's picture budget.".to_owned(),
+                    );
+                } else {
+                    self.notice = None;
+                }
+            }
+            Err(_) => self.skip_unreadable(
+                context,
+                id,
+                "A photo could not be read and was skipped.".to_owned(),
+            ),
+        }
+    }
+
+    fn advance_manifest(&mut self, context: &mut Context, result: &StoreResult) -> bool {
+        let Some(load) = &mut self.manifest_load else {
+            return false;
+        };
+        match load.advance(context, result) {
+            ShelfProgress::Done => {
+                let bytes = self.manifest_load.take().expect("active manifest").take();
+                match decode_manifest(&bytes) {
+                    Ok(photos) => {
+                        self.photos = photos;
+                        self.notice = None;
+                    }
+                    Err(error) => {
+                        self.photos.clear();
+                        self.notice = Some(format!("Frame shelf needs re-pushing: {error}"));
+                    }
+                }
+                self.startup.manifest_loaded = true;
+                true
+            }
+            ShelfProgress::Failed(kobo_sdk::StoreError::Missing) => {
+                self.manifest_load = None;
+                self.startup.manifest_loaded = true;
+                true
+            }
+            ShelfProgress::Failed(_) => {
+                self.manifest_load = None;
+                self.startup.manifest_loaded = true;
+                self.notice = Some("Frame shelf could not be opened.".to_owned());
+                true
+            }
+            ShelfProgress::Moving { .. } => true,
+            ShelfProgress::Elsewhere => false,
+        }
+    }
+
+    fn advance_photo(&mut self, context: &mut Context, result: &StoreResult) -> bool {
+        let Some(load) = &mut self.photo_load else {
+            return false;
+        };
+        match load.advance(context, result) {
+            ShelfProgress::Done => {
+                let bytes = self.photo_load.take().expect("active photo").take();
+                let id = self.photo_load_id.take().expect("active photo identity");
+                if self.selected().is_some_and(|photo| photo.id == id) {
+                    self.accept_picture(context, &id, &bytes);
+                } else {
+                    self.start_current(context);
+                }
+                true
+            }
+            ShelfProgress::Failed(_) => {
+                self.photo_load = None;
+                let id = self.photo_load_id.take().expect("active photo identity");
+                if self.selected().is_some_and(|photo| photo.id == id) {
+                    self.skip_unreadable(
+                        context,
+                        &id,
+                        "A photo is missing or damaged and was skipped.".to_owned(),
+                    );
+                } else {
+                    self.start_current(context);
+                }
+                true
+            }
+            ShelfProgress::Moving { .. } => true,
+            ShelfProgress::Elsewhere => false,
         }
     }
 }
 
 impl KoboApp for Frame {
     fn on_start(&mut self, context: &mut Context) {
-        let _ = context.put_picture(PHOTO, 536, 724, sample_photo());
-        self.apply_power_policy(context);
+        self.panel_width = u32::try_from(context.metrics().width).unwrap_or_default();
+        self.panel_height = u32::try_from(context.metrics().height).unwrap_or_default();
+        self.view = View::Opening;
+        context.store().load(STATE);
+        let mut manifest = ShelfDownload::new(MANIFEST).at_most(MAX_MANIFEST);
+        manifest.start(context);
+        self.manifest_load = Some(manifest);
         self.show(context);
     }
-    fn on_scheduled_wake(&mut self, context: &mut Context) {
-        // A production transfer manifest selects the next decoded photo here.
-        self.apply_power_policy(context);
+
+    fn on_store(&mut self, context: &mut Context, result: StoreResult) {
+        if self.advance_manifest(context, &result) || self.advance_photo(context, &result) {
+            self.start_when_ready(context);
+            self.show(context);
+            return;
+        }
+        if let StoreResult::Loaded { key, value } = result {
+            if key == STATE {
+                self.settings = value
+                    .as_deref()
+                    .and_then(decode_settings)
+                    .unwrap_or_default();
+                self.startup.state_loaded = true;
+            }
+        }
+        self.start_when_ready(context);
         self.show(context);
     }
+
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
-        if action == action_id(SHOW) {
-            self.view = View::Photo;
+        if action == ActionId::BACK || action == action_id(EXIT) {
+            if self.view == View::Show {
+                self.view = View::Home;
+                self.overlay = false;
+            } else {
+                context.exit();
+            }
+        } else if action == action_id(SHOW) {
+            self.view = View::Show;
+            self.start_current(context);
+        } else if action == action_id(NEXT) {
+            self.advance(context, true);
+        } else if action == action_id(PREVIOUS) {
+            self.advance(context, false);
+        } else if action == action_id(MENU) {
+            self.overlay = true;
         } else if action == action_id(MODE) {
-            self.slow = !self.slow;
-            self.interval = if self.slow { 6 } else { 15 };
+            self.settings.slow = !self.settings.slow;
+            self.settings.interval = if self.settings.slow { 6 } else { 15 };
+            self.save(context);
             self.apply_power_policy(context);
         } else if action == action_id(INTERVAL) {
-            self.interval = if self.slow {
-                match self.interval {
+            self.settings.interval = if self.settings.slow {
+                match self.settings.interval() {
                     1 => 6,
                     6 => 24,
                     _ => 1,
                 }
             } else {
-                match self.interval {
+                match self.settings.interval() {
                     5 => 15,
                     15 => 60,
                     _ => 5,
                 }
             };
+            self.save(context);
             self.apply_power_policy(context);
-        } else {
-            return;
+        } else if action == action_id(ORDER) {
+            self.settings.shuffled = !self.settings.shuffled;
+            self.settings.position = 0;
+            self.save(context);
+            self.start_current(context);
         }
         self.show(context);
     }
+
+    fn on_task(&mut self, context: &mut Context, task: TaskId, outcome: TaskOutcome) {
+        if self
+            .clock
+            .as_mut()
+            .is_some_and(|clock| clock.on_task(context, task, &outcome))
+        {
+            if !self.settings.slow {
+                self.advance(context, true);
+                self.apply_power_policy(context);
+            }
+            self.show(context);
+        }
+    }
+
+    fn on_scheduled_wake(&mut self, context: &mut Context) {
+        if self.settings.slow {
+            self.advance(context, true);
+            self.apply_power_policy(context);
+            self.show(context);
+        }
+    }
+}
+
+fn decode_manifest(bytes: &[u8]) -> Result<Vec<Photo>, String> {
+    let text = std::str::from_utf8(bytes).map_err(|_| "manifest is not UTF-8")?;
+    let mut lines = text.lines();
+    if lines.next() != Some("cobalt-frame-v1") {
+        return Err("manifest version is unsupported".to_owned());
+    }
+    let mut photos = Vec::new();
+    let mut ids = BTreeSet::new();
+    for line in lines {
+        let fields = line.split('\t').collect::<Vec<_>>();
+        let [id, digest, taken, album, name] = fields.as_slice() else {
+            return Err("manifest has a malformed entry".to_owned());
+        };
+        if !valid_id(id)
+            || digest.len() != 64
+            || !digest.bytes().all(|byte| byte.is_ascii_hexdigit())
+            || !ids.insert((*id).to_owned())
+        {
+            return Err("manifest has an invalid photo identity".to_owned());
+        }
+        let taken = taken.parse().map_err(|_| "manifest has an invalid date")?;
+        photos.push(Photo {
+            id: (*id).to_owned(),
+            digest: (*digest).to_owned(),
+            taken,
+            album: (*album).to_owned(),
+            name: (*name).to_owned(),
+        });
+    }
+    if photos.len() > MAX_PHOTOS {
+        return Err(format!("manifest exceeds the {MAX_PHOTOS}-photo limit"));
+    }
+    Ok(photos)
+}
+
+fn decode_settings(bytes: &[u8]) -> Option<Settings> {
+    let text = std::str::from_utf8(bytes).ok()?;
+    let mut lines = text.lines();
+    if lines.next()? != "1" {
+        return None;
+    }
+    let slow = lines.next()? == "1";
+    let interval = lines.next()?.parse().ok()?;
+    let shuffled = lines.next()? == "1";
+    let position = lines.next()?.parse().ok()?;
+    if lines.next().is_some() {
+        return None;
+    }
+    Some(Settings {
+        slow,
+        interval,
+        shuffled,
+        position,
+    })
+}
+
+fn valid_id(id: &str) -> bool {
+    id.starts_with("photo-")
+        && id.len() <= 64
+        && id
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+}
+
+fn stable_hash(value: &str) -> u64 {
+    value.bytes().fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
+        (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3)
+    })
 }
 
 fn main() -> ExitCode {
@@ -175,29 +603,71 @@ mod tests {
     use super::*;
     use kobo_sdk::{Command, DeviceRequest};
     use kobo_ui::{Chrome, CLARA_BW_METRICS};
-    #[test]
-    fn sample_is_a_panel_sized_greyscale_picture() {
-        assert_eq!(sample_photo().len(), (PHOTO_WIDTH * PHOTO_HEIGHT) as usize);
-        assert!(sample_photo().iter().any(|&pixel| pixel < 100));
-        assert!(sample_photo().iter().any(|&pixel| pixel > 220));
+
+    fn photo(id: &str, taken: u64) -> Photo {
+        Photo {
+            id: id.to_owned(),
+            digest: "a".repeat(64),
+            taken,
+            album: "Family".into(),
+            name: format!("{id}.png"),
+        }
     }
+
     #[test]
-    fn home_layout_fits_and_show_is_reachable() {
-        let screen = Frame::default().screen();
-        assert!(screen
-            .layout_with(&CLARA_BW_METRICS, &Chrome::default())
-            .rect_of_action(action_id(SHOW))
-            .is_some());
-        assert!(screen
-            .diagnostics(&CLARA_BW_METRICS, &Chrome::default())
-            .issues
-            .is_empty());
-    }
-    #[test]
-    fn slow_mode_requests_a_scheduled_wake() {
-        let frame = Frame {
+    fn manifest_and_state_are_bounded_and_round_trip() {
+        let manifest = format!(
+            "cobalt-frame-v1\nphoto-0123456789abcdef\t{}\t12\tFamily\tone.png\n",
+            "a".repeat(64)
+        );
+        assert_eq!(
+            decode_manifest(manifest.as_bytes()).expect("manifest")[0].taken,
+            12
+        );
+        assert!(decode_manifest(b"cobalt-frame-v1\n../bad\ta\t0\tx\ty\n").is_err());
+        let settings = Settings {
             slow: true,
-            interval: 6,
+            interval: 24,
+            shuffled: true,
+            position: 9,
+        };
+        assert_eq!(
+            decode_settings(settings.encode().as_bytes()),
+            Some(settings)
+        );
+    }
+
+    #[test]
+    fn navigation_is_durable_and_shuffle_is_stable() {
+        let mut frame = Frame {
+            photos: vec![
+                photo("photo-aaaaaaaaaaaaaaaa", 1),
+                photo("photo-bbbbbbbbbbbbbbbb", 2),
+            ],
+            ..Frame::default()
+        };
+        let before = frame.ordered_indices();
+        frame.settings.shuffled = true;
+        let shuffled = frame.ordered_indices();
+        assert_eq!(shuffled, frame.ordered_indices());
+        assert_ne!(before.len(), 0);
+        let mut context = Context::default();
+        frame.advance(&mut context, true);
+        assert_eq!(frame.settings.position, 1);
+        assert!(context
+            .commands()
+            .iter()
+            .any(|command| matches!(command, Command::Store(_))));
+    }
+
+    #[test]
+    fn requested_capabilities_use_real_wake_apis() {
+        let mut frame = Frame {
+            settings: Settings {
+                slow: true,
+                interval: 6,
+                ..Settings::default()
+            },
             ..Frame::default()
         };
         let mut context = Context::default();
@@ -206,5 +676,69 @@ mod tests {
             .commands()
             .iter()
             .any(|command| matches!(command, Command::Device(DeviceRequest::ScheduleWake { .. }))));
+        frame.settings.slow = false;
+        frame.apply_power_policy(&mut context);
+        assert!(context
+            .commands()
+            .iter()
+            .any(|command| matches!(command, Command::Device(DeviceRequest::KeepAwake { .. }))));
+    }
+
+    #[test]
+    fn a_late_photo_result_cannot_replace_the_new_selection() {
+        let mut frame = Frame {
+            photos: vec![
+                photo("photo-aaaaaaaaaaaaaaaa", 1),
+                photo("photo-bbbbbbbbbbbbbbbb", 2),
+            ],
+            panel_width: CLARA_BW_METRICS.width as u32,
+            panel_height: CLARA_BW_METRICS.height as u32,
+            ..Frame::default()
+        };
+        let mut context = Context::default();
+        frame.start_current(&mut context);
+        frame.advance(&mut context, true);
+        assert_eq!(
+            frame.photo_load_id.as_deref(),
+            Some("photo-aaaaaaaaaaaaaaaa")
+        );
+        assert!(frame.advance_photo(
+            &mut context,
+            &StoreResult::ShelfRead {
+                name: "photo-aaaaaaaaaaaaaaaa.png".into(),
+                offset: 0,
+                bytes: b"old photo".to_vec(),
+                size: 9,
+            }
+        ));
+        assert!(frame.picture.is_none());
+        assert!(frame.unreadable.is_empty());
+        assert_eq!(
+            frame.photo_load_id.as_deref(),
+            Some("photo-bbbbbbbbbbbbbbbb")
+        );
+    }
+
+    #[test]
+    fn home_and_photo_layouts_are_clean() {
+        let frame = Frame {
+            startup: Startup {
+                manifest_loaded: true,
+                ..Startup::default()
+            },
+            photos: vec![photo("photo-aaaaaaaaaaaaaaaa", 1)],
+            picture: Some(TilePicture::new(
+                PHOTO,
+                CLARA_BW_METRICS.width as u32,
+                CLARA_BW_METRICS.height as u32,
+            )),
+            ..Frame::default()
+        };
+        for screen in [frame.home(), frame.photo_screen()] {
+            assert!(screen
+                .diagnostics(&CLARA_BW_METRICS, &Chrome::default())
+                .issues
+                .is_empty());
+        }
     }
 }

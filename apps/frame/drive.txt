@@ -1,4 +1,5 @@
-expect Sample photograph
-tap Show photograph
+expect Frame mode
+tap Show photo
+wait 500
 clean
 shot frame
