@@ -863,7 +863,7 @@ fn post_until_cancelled(
     let cancelled = || cancel.load(Ordering::SeqCst);
     let mut held = connect(address, &cancelled)?;
     let mut tls = rustls::Stream::new(&mut held.connection, &mut held.socket);
-    write_request_head(&mut tls, &head(address, &method, 1), &cancelled)
+    write_request_head(&mut tls, &retained_post_head(address, &method), &cancelled)
         .map_err(WriteFailure::task_error)?;
     let body_deadline = Instant::now() + RESPONSE_TIMEOUT;
     write_all_cancellable(&mut tls, body, body_deadline, &cancelled)
@@ -963,6 +963,19 @@ fn post_until_cancelled(
 /// first piece of a document, which no test could see because it only showed
 /// up as a server sending more than the ceiling allowed.
 fn head(address: &Address, method: &Method<'_>, max_bytes: u32) -> String {
+    request_head(address, method, max_bytes, false)
+}
+
+fn retained_post_head(address: &Address, method: &Method<'_>) -> String {
+    request_head(address, method, 1, true)
+}
+
+fn request_head(
+    address: &Address,
+    method: &Method<'_>,
+    max_bytes: u32,
+    retain_post: bool,
+) -> String {
     let (verb, path, host) = (
         method.verb(),
         address.path.as_str(),
@@ -989,12 +1002,12 @@ fn head(address: &Address, method: &Method<'_>, max_bytes: u32) -> String {
         }
         | Method::Post { .. } => "gzip",
     };
-    // A POST hangs up after its answer; a GET does not. HTTP/1.1 is
-    // persistent by default, so the difference is whether `close` is said at
-    // all. Only a GET is ever replayed on a connection the far end had quietly
-    // dropped, so only a GET is allowed to hold one open.
+    // Ordinary POSTs hang up after their answer so they can never be replayed
+    // on a stale pooled connection. A retained POST is itself the resource:
+    // closing it cancels the server-side seek, so it stays open like a GET.
     let connection = match method {
         Method::Get { .. } => "keep-alive",
+        Method::Post { .. } if retain_post => "keep-alive",
         Method::Post { .. } => "close",
     };
     let mut head = format!(

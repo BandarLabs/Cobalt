@@ -18,7 +18,7 @@
         {
           "path": "crates/kobo-net/src/lib.rs",
           "base_blob": "ce2a45ae69445d06f0de5111aef775751ef8146e",
-          "compatible_blob": "6e35a1df5c85377a17a4c1d3c05a4bb9558b6458"
+          "compatible_blob": "30ce808e28b91ef7890b983ecee153fa89fa2510"
         },
         {
           "path": "crates/kobo-net/src/lines.rs",
@@ -43,7 +43,7 @@
         {
           "path": "crates/kobo-net/tests/lichess_stream_mock.rs",
           "base_blob": null,
-          "compatible_blob": "b35462b66df1fb416e4e5b24adf449b2b4ff32e5"
+          "compatible_blob": "d192f04edbcc24cb14db2971d2da29fd8480444f"
         },
         {
           "path": "crates/kobo-policy/src/credentials.rs",
