@@ -138,17 +138,6 @@ impl Launcher {
         }
     }
 
-    /// A short first row keeps launch targets immediately visible without
-    /// duplicating the complete, paged catalogue. The active app leads it.
-    fn home_entries(&self) -> Vec<(DisplayEntry, bool)> {
-        self.working
-            .into_iter()
-            .chain((0..self.entry_count()).filter(|index| Some(*index) != self.working))
-            .take(6)
-            .map(|index| (self.entry(index), self.working == Some(index)))
-            .collect()
-    }
-
     fn app_grid(screen: ScreenBuilder, entries: Vec<(DisplayEntry, bool)>) -> ScreenBuilder {
         screen.tile_grid(
             TileShape::Square,
@@ -186,10 +175,30 @@ impl Launcher {
     /// against is now handled where it belongs: the splash names what is
     /// starting and carries the way back, so a mistaken tap is one tap to
     /// undo.
-    fn home(&mut self, _context: &Context) -> kobo_sdk::Screen {
-        let screen = ScreenBuilder::new("launcher").heading("COBALT").divider();
-        Self::app_grid(screen, self.home_entries())
-            .secondary(self.status_line())
+    fn home(&mut self, context: &Context) -> kobo_sdk::Screen {
+        // Home is every application on the device, paged the way the drawer
+        // is. It used to be a short row of six with the wordmark set as
+        // display type above it, which spent the top eighth of the panel on
+        // our own name and then hid most of what the reader came here to
+        // open. The name now sits in the running head at the same size every
+        // other screen titles itself with, because a launcher's subject is
+        // the applications, not the launcher.
+        let pages = self.pages(context);
+        self.page = self.page.min(pages.len() - 1);
+        let page = self.page;
+        let page_count = u16::try_from(pages.len()).unwrap_or(u16::MAX);
+        let page_index = u16::try_from(page).unwrap_or(u16::MAX);
+        let page_number = u16::try_from(page.saturating_add(1)).unwrap_or(u16::MAX);
+        let entries = pages[page]
+            .iter()
+            .map(|&index| (self.entry(index), self.working == Some(index)))
+            .collect();
+        let screen = ScreenBuilder::new("launcher")
+            .top_bar("Cobalt")
+            .page_rail(page_index, page_count);
+        Self::app_grid(screen, entries)
+            .page_turns("previous", "next")
+            .page_position(page_number, page_count)
             .nav_bar_marked(
                 0,
                 [
@@ -289,15 +298,6 @@ impl Launcher {
 
     fn entry_count(&self) -> usize {
         ENTRIES.len() + self.installed.len()
-    }
-
-    fn status_line(&self) -> String {
-        match &self.identity {
-            Some(identity) if !identity.model.is_empty() => {
-                format!("{} · {}", identity.runtime_version, identity.model)
-            }
-            _ => format!("Cobalt {}", env!("CARGO_PKG_VERSION")),
-        }
     }
 
     fn entry(&self, index: usize) -> DisplayEntry {
@@ -782,33 +782,6 @@ mod tests {
     }
 
     #[test]
-    fn home_entries_are_capped_at_six_and_lead_with_the_active_app() {
-        let launcher = Launcher {
-            installed: (0..4)
-                .map(|index| AppInfo {
-                    id: format!("test-{index}"),
-                    title: format!("Test {index}"),
-                    label: format!("Test {index}"),
-                    summary: "Test app.".to_owned(),
-                    version: "1.0.0".to_owned(),
-                    minimum_cobalt_version: env!("CARGO_PKG_VERSION").to_owned(),
-                    glyph: Glyph::App,
-                    capabilities: Vec::new(),
-                    installed_version: Some("1.0.0".to_owned()),
-                })
-                .collect(),
-            working: Some(ENTRIES.len() + 3),
-            ..Launcher::default()
-        };
-
-        let entries = launcher.home_entries();
-
-        assert_eq!(entries.len(), 6, "Home showed more than its two-row cap");
-        assert_eq!(entries[0].0.name, "test-3");
-        assert!(entries[0].1, "the active app was not marked for resume");
-    }
-
-    #[test]
     fn launcher_home_and_apps_are_tappable_and_render_on_every_panel() {
         for (name, metrics) in panels() {
             let mut runner = AppRunner::with_metrics(Launcher::default(), metrics);
@@ -1095,20 +1068,5 @@ mod tests {
             matches!(node.kind, LayoutKind::NavDestination(action, _)
                 if action == action_id("reader"))
         }));
-    }
-
-    #[test]
-    fn status_line_only_names_runtime_identity_when_the_daemon_supplied_it() {
-        let mut launcher = Launcher::default();
-        assert_eq!(
-            launcher.status_line(),
-            format!("Cobalt {}", env!("CARGO_PKG_VERSION"))
-        );
-        launcher.identity = Some(DeviceIdentity {
-            model: "Kobo Clara BW".to_owned(),
-            runtime_version: "0.3.4".to_owned(),
-            ..DeviceIdentity::default()
-        });
-        assert_eq!(launcher.status_line(), "0.3.4 · Kobo Clara BW");
     }
 }
