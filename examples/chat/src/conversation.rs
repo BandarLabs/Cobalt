@@ -64,7 +64,7 @@ impl Provider {
         match self {
             Self::OpenAi => "gpt-4o-mini",
             Self::Anthropic => "claude-3-5-haiku-latest",
-            Self::Gemini => "gemini-2.0-flash",
+            Self::Gemini => "gemini-3.6-flash",
         }
     }
 
@@ -75,7 +75,7 @@ impl Provider {
             Self::Anthropic => "https://api.anthropic.com/v1/messages",
             Self::Gemini => concat!(
                 "https://generativelanguage.googleapis.com/v1beta/models/",
-                "gemini-2.0-flash:generateContent"
+                "gemini-3.6-flash:generateContent"
             ),
         }
     }
