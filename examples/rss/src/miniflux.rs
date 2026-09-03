@@ -1,10 +1,10 @@
 //! Narrow Miniflux request builders and response readers.
 //!
-//! The reader persists only a credential *name*. `kobod` resolves that name
-//! into `X-Auth-Token` while executing a task, so token bytes never enter this
-//! module, the UI, or the store.
+//! `kobod` resolves the dedicated `miniflux` secret into `X-Auth-Token` while
+//! executing a task, so token bytes never enter this module, the UI, or the
+//! store.
 
-use kobo_html::to_text;
+use kobo_html::{to_text, to_text_within};
 use kobo_json::Value;
 use kobo_sdk::{Credential, Task};
 
@@ -26,6 +26,24 @@ impl ListMode {
             Self::Unread => "Unread",
             Self::Starred => "Starred",
             Self::History => "History",
+        }
+    }
+
+    #[must_use]
+    pub const fn cache_index(self) -> usize {
+        match self {
+            Self::Unread => 0,
+            Self::Starred => 1,
+            Self::History => 2,
+        }
+    }
+
+    #[must_use]
+    pub const fn cache_key(self) -> &'static str {
+        match self {
+            Self::Unread => "miniflux-cache-unread",
+            Self::Starred => "miniflux-cache-starred",
+            Self::History => "miniflux-cache-history",
         }
     }
 
@@ -67,8 +85,8 @@ pub fn endpoint(server: &str, path: &str) -> String {
     format!("{}/v1/{path}", server.trim().trim_end_matches('/'))
 }
 
-fn token(credential: &str) -> Option<Credential> {
-    (!credential.trim().is_empty()).then(|| Credential::in_header(credential, "X-Auth-Token"))
+fn token() -> Credential {
+    Credential::in_header("miniflux", "X-Auth-Token")
 }
 
 /// Validates the user-supplied server before the UI offers a sync.
@@ -86,21 +104,20 @@ pub fn configured_server(server: &str) -> bool {
 }
 
 #[must_use]
-pub fn entries(server: &str, credential: &str, mode: ListMode) -> Task {
+pub fn entries(server: &str, mode: ListMode) -> Task {
     Task::Fetch {
         url: endpoint(server, &format!("entries?{}", mode.query())),
         offset: 0,
         max_bytes: ENTRY_BYTES,
-        credential: token(credential),
+        credential: Some(token()),
         headers: Vec::new(),
     }
 }
 
 #[must_use]
-pub fn discover(server: &str, credential: &str, website: &str) -> Task {
+pub fn discover(server: &str, website: &str) -> Task {
     post(
         server,
-        credential,
         "discover",
         format!(r#"{{"url":{}}}"#, json_string(website.trim())),
     )
@@ -112,43 +129,49 @@ pub fn discover(server: &str, credential: &str, website: &str) -> Task {
 /// it out lets Miniflux select its default category without pretending every
 /// account's category IDs are the same.
 #[must_use]
-pub fn subscribe(server: &str, credential: &str, feed_url: &str) -> Task {
+pub fn subscribe(server: &str, feed_url: &str) -> Task {
     post(
         server,
-        credential,
         "feeds",
         format!(r#"{{"feed_url":{}}}"#, json_string(feed_url)),
     )
 }
 
 #[must_use]
-pub fn full_content(server: &str, credential: &str, id: u64) -> Task {
+pub fn full_content(server: &str, id: u64) -> Task {
     Task::Fetch {
         url: endpoint(server, &format!("entries/{id}/fetch-content")),
         offset: 0,
         max_bytes: ENTRY_BYTES,
-        credential: token(credential),
+        credential: Some(token()),
         headers: Vec::new(),
     }
 }
 
 #[must_use]
-pub fn mutate(server: &str, credential: &str, mutation: &Mutation) -> Task {
+pub fn mutate(server: &str, mutation: &Mutation) -> Task {
     let body = match mutation {
         Mutation::Read(id) => format!(r#"{{"entry_ids":[{id}],"status":"read"}}"#),
         Mutation::Star { id, starred } => {
             format!(r#"{{"entry_ids":[{id}],"starred":{starred}}}"#)
         }
     };
-    post(server, credential, "entries", body)
+    Task::Put {
+        url: endpoint(server, "entries"),
+        body,
+        content_type: "application/json".to_owned(),
+        credential: Some(token()),
+        headers: Vec::new(),
+        max_bytes: SMALL_RESPONSE_BYTES,
+    }
 }
 
-fn post(server: &str, credential: &str, path: &str, body: String) -> Task {
+fn post(server: &str, path: &str, body: String) -> Task {
     Task::Post {
         url: endpoint(server, path),
         body,
         content_type: "application/json".to_owned(),
-        credential: token(credential),
+        credential: Some(token()),
         headers: Vec::new(),
         max_bytes: SMALL_RESPONSE_BYTES,
     }
@@ -190,12 +213,17 @@ pub fn parse_discoveries(bytes: &[u8]) -> Vec<Discovered> {
 
 /// Reads the entry payload returned by `/fetch-content`.
 #[must_use]
-pub fn parse_full_content(bytes: &[u8]) -> Option<String> {
+pub fn parse_full_content(bytes: &[u8], maximum_bytes: usize) -> Option<String> {
     let value = kobo_json::parse(&String::from_utf8_lossy(bytes)).ok()?;
     value
         .get("content")
         .and_then(Value::as_str)
-        .map(to_text)
+        // One byte beyond the storable ceiling ensures `to_text_within`'s
+        // explicit truncation marker makes an overlong article unmistakable
+        // to the caller. A full article is either stored exactly or kept out
+        // of the offline cache; it is never silently shortened and labelled
+        // "saved".
+        .map(|content| to_text_within(content, maximum_bytes.saturating_add(1)))
         .filter(|content| !content.trim().is_empty())
 }
 
@@ -259,21 +287,20 @@ mod tests {
 
     #[test]
     fn requests_use_the_named_runtime_token_and_documented_json() {
-        let Task::Post {
+        let Task::Put {
             body, credential, ..
-        } = mutate("https://flux.example", "personal-flux", &Mutation::Read(42))
+        } = mutate("https://flux.example", &Mutation::Read(42))
         else {
-            panic!("expected POST");
+            panic!("expected PUT");
         };
         assert_eq!(body, r#"{"entry_ids":[42],"status":"read"}"#);
         assert_eq!(
             credential,
-            Some(Credential::in_header("personal-flux", "X-Auth-Token"))
+            Some(Credential::in_header("miniflux", "X-Auth-Token"))
         );
 
-        let Task::Post { body, .. } = mutate(
+        let Task::Put { body, .. } = mutate(
             "https://flux.example",
-            "personal-flux",
             &Mutation::Star {
                 id: 42,
                 starred: true,
@@ -286,16 +313,14 @@ mod tests {
 
     #[test]
     fn modes_and_full_content_have_only_the_allowed_request_shapes() {
-        let Task::Fetch { url, .. } =
-            entries("https://flux.example", "miniflux", ListMode::History)
-        else {
+        let Task::Fetch { url, .. } = entries("https://flux.example", ListMode::History) else {
             panic!("expected fetch");
         };
         assert_eq!(
             url,
             "https://flux.example/v1/entries?status=read&limit=100&order=published_at&direction=desc"
         );
-        let Task::Fetch { url, .. } = full_content("https://flux.example", "miniflux", 7) else {
+        let Task::Fetch { url, .. } = full_content("https://flux.example", 7) else {
             panic!("expected fetch");
         };
         assert_eq!(url, "https://flux.example/v1/entries/7/fetch-content");
@@ -311,7 +336,7 @@ mod tests {
         assert_eq!(entries[0].content, "Body");
         assert_eq!(entries[0].status, "read");
         assert_eq!(
-            parse_full_content(br#"{"content":"<p>Full story</p>"}"#).as_deref(),
+            parse_full_content(br#"{"content":"<p>Full story</p>"}"#, 1024).as_deref(),
             Some("Full story")
         );
     }

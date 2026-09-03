@@ -150,8 +150,8 @@
       "short_label": "Feeds",
       "summary": "Follow website feeds or sync Miniflux for offline reading without the web page around them.",
       "page_description": "A standalone Feedsearch reader with optional Miniflux sync, cached articles, and durable reading state.",
-      "version": "1.0.5",
-      "minimum_cobalt_version": "0.3.1",
+      "version": "1.0.6",
+      "minimum_cobalt_version": "0.3.5",
       "glyph": "rss",
       "capabilities": ["network"],
       "setup": {
@@ -160,7 +160,7 @@
             "text": "Standalone mode works immediately. For Miniflux mode, have an HTTPS server and API token."
           },
           {
-            "text": "Install the token as miniflux (or select another credential name in Settings); the runtime sends X-Auth-Token.",
+            "text": "Install the token as miniflux; the runtime sends X-Auth-Token.",
             "command": "kobo secret set miniflux --device <address>"
           }
         ]

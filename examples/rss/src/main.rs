@@ -59,9 +59,11 @@ const FEEDS: &str = "feeds";
 const CONFIG: &str = "config";
 const ITEM_STATES: &str = "item-states";
 const FLUX_ACTIONS: &str = "miniflux-actions";
-const FLUX_CACHE: &str = "miniflux-cache";
+const FLUX_FULL_INDEX: &str = "miniflux-full-index";
 const CACHE_BYTES: usize = 240 * 1024;
 const MAX_ITEM_STATES: usize = 2_000;
+const MAX_FULL_ARTICLES: usize = 8;
+const FULL_CONTENT_BYTES: usize = 224 * 1024;
 
 /// How much of a search answer to accept.
 ///
@@ -142,9 +144,8 @@ enum View {
     FluxArticle,
 }
 
-/// What the one outstanding request is for.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum Awaiting {
+enum TaskKind {
     Search,
     Feed,
     FluxEntries,
@@ -152,6 +153,55 @@ enum Awaiting {
     FluxSubscribe,
     FluxFull,
     FluxMutation,
+}
+
+/// The immutable destination a running request will update.
+///
+/// UI indices are intentionally absent: an item can move when a fresh list
+/// arrives, but a response may only update the stable target it was created
+/// for.
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum TaskTarget {
+    Search,
+    Feed {
+        subscription_url: String,
+    },
+    FluxEntries {
+        mode: miniflux::ListMode,
+    },
+    FluxDiscover {
+        website: String,
+    },
+    FluxSubscribe {
+        feed_url: String,
+    },
+    FluxFull {
+        mode: miniflux::ListMode,
+        entry_id: u64,
+    },
+    FluxMutation {
+        mutation: miniflux::Mutation,
+    },
+}
+
+impl TaskTarget {
+    const fn kind(&self) -> TaskKind {
+        match self {
+            Self::Search => TaskKind::Search,
+            Self::Feed { .. } => TaskKind::Feed,
+            Self::FluxEntries { .. } => TaskKind::FluxEntries,
+            Self::FluxDiscover { .. } => TaskKind::FluxDiscover,
+            Self::FluxSubscribe { .. } => TaskKind::FluxSubscribe,
+            Self::FluxFull { .. } => TaskKind::FluxFull,
+            Self::FluxMutation { .. } => TaskKind::FluxMutation,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct PendingTask {
+    id: TaskId,
+    target: TaskTarget,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -164,7 +214,6 @@ enum Backend {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Setting {
     Server,
-    Credential,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -174,12 +223,17 @@ struct ItemState {
     starred: bool,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct FullContent {
+    id: u64,
+    content: String,
+}
+
 #[derive(Default)]
 struct Feeds {
     view: View,
     backend: Backend,
     server: String,
-    credential: String,
     editing: Option<Setting>,
     /// The subscription list, as stored.
     subscriptions: Vec<Subscription>,
@@ -203,7 +257,7 @@ struct Feeds {
     /// Which page of a list is showing. Shared by the shelf and the articles,
     /// because only one of them is ever on screen.
     list_page: usize,
-    task: Option<(TaskId, Awaiting)>,
+    task: Option<PendingTask>,
     problem: Option<String>,
     /// The last task failure as the SDK read it. An empty article list wants
     /// the whole-screen version of it; a list with articles wants the banner.
@@ -218,20 +272,27 @@ struct Feeds {
     /// A cache response may arrive after a successful network response; the
     /// latter is authoritative even when it legitimately contains no items.
     live_cache: [bool; 2],
-    /// Miniflux has one entry cache and one small durable mutation queue.
+    /// Miniflux entry caches are isolated by selected list mode.
     flux_mode: miniflux::ListMode,
-    flux_entries: Vec<miniflux::Article>,
-    flux_open: Option<usize>,
+    flux_caches: [Vec<miniflux::Article>; 3],
+    flux_live_cache: [bool; 3],
+    /// The open article is stable across a list refresh, unlike a row index.
+    flux_open: Option<u64>,
     flux_discovered: Vec<miniflux::Discovered>,
     flux_pending: Vec<miniflux::Mutation>,
+    /// Kept apart from the coalescible queue and durably requeued on restart.
+    flux_in_flight: Option<miniflux::Mutation>,
+    full_content: Vec<FullContent>,
     flux_menu_open: bool,
     flux_pages: Vec<Vec<String>>,
     flux_page: usize,
 }
 
 impl Feeds {
-    fn awaiting(&self, what: Awaiting) -> bool {
-        matches!(self.task, Some((_, outstanding)) if outstanding == what)
+    fn awaiting(&self, kind: TaskKind) -> bool {
+        self.task
+            .as_ref()
+            .is_some_and(|task| task.target.kind() == kind)
     }
 
     /// Writes the subscription list back. Called after every change.
@@ -245,15 +306,83 @@ impl Feeds {
             Backend::Standalone => "standalone",
             Backend::Miniflux => "miniflux",
         };
-        // This contains the server and a secret *name*, never secret bytes.
-        context.store().save(
-            CONFIG,
-            format!("{backend}\n{}\n{}", self.server, self.credential),
-        );
+        context
+            .store()
+            .save(CONFIG, format!("{backend}\n{}", self.server));
     }
 
     fn miniflux_configured(&self) -> bool {
-        miniflux::configured_server(&self.server) && !self.credential.trim().is_empty()
+        miniflux::configured_server(&self.server)
+    }
+
+    fn flux_entries(&self, mode: miniflux::ListMode) -> &[miniflux::Article] {
+        &self.flux_caches[mode.cache_index()]
+    }
+
+    fn flux_entries_mut(&mut self, mode: miniflux::ListMode) -> &mut Vec<miniflux::Article> {
+        &mut self.flux_caches[mode.cache_index()]
+    }
+
+    fn selected_flux_entries(&self) -> &[miniflux::Article] {
+        self.flux_entries(self.flux_mode)
+    }
+
+    fn selected_flux_entries_mut(&mut self) -> &mut Vec<miniflux::Article> {
+        self.flux_entries_mut(self.flux_mode)
+    }
+
+    fn save_flux_cache(&self, context: &mut Context, mode: miniflux::ListMode) {
+        context
+            .store()
+            .save(mode.cache_key(), encode_flux_cache(self.flux_entries(mode)));
+    }
+
+    fn save_flux_actions(&self, context: &mut Context) {
+        context.store().save(
+            FLUX_ACTIONS,
+            encode_flux_actions(self.flux_in_flight.iter().chain(self.flux_pending.iter())),
+        );
+    }
+
+    fn load_full_content(&self, context: &mut Context, mode: miniflux::ListMode) {
+        for article in self.flux_entries(mode) {
+            context.store().load(full_content_key(article.id));
+        }
+    }
+
+    fn remember_full_content(&mut self, context: &mut Context, id: u64, full_text: String) {
+        self.full_content.retain(|saved| saved.id != id);
+        self.full_content.push(FullContent {
+            id,
+            content: full_text,
+        });
+        while self.full_content.len() > MAX_FULL_ARTICLES {
+            let removed = self.full_content.remove(0);
+            context.store().forget(full_content_key(removed.id));
+        }
+        let saved = self
+            .full_content
+            .iter()
+            .find(|saved| saved.id == id)
+            .expect("just inserted");
+        context
+            .store()
+            .save(full_content_key(id), saved.content.as_bytes().to_vec());
+        context.store().save(
+            FLUX_FULL_INDEX,
+            encode_full_content_index(&self.full_content),
+        );
+    }
+
+    fn restore_flux_mutation(&mut self, context: &mut Context, target: &TaskTarget) {
+        let TaskTarget::FluxMutation { mutation } = target else {
+            return;
+        };
+        if self.flux_in_flight.as_ref() == Some(mutation) {
+            self.flux_in_flight = None;
+            self.flux_pending.insert(0, mutation.clone());
+            self.save_flux_actions(context);
+        }
     }
 
     fn cache_key(&self) -> Option<String> {
@@ -265,12 +394,6 @@ impl Feeds {
     fn load_open_cache(&self, context: &mut Context) {
         if let Some(key) = self.cache_key() {
             context.store().load(key);
-        }
-    }
-
-    fn save_open_cache(&self, context: &mut Context, parsed: &feed::Feed) {
-        if let Some(key) = self.cache_key() {
-            context.store().save(key, encode_feed_cache(parsed));
         }
     }
 
@@ -342,6 +465,10 @@ impl Feeds {
 
     /// Asks Feedsearch what feeds an address has.
     fn ask_search(&mut self, context: &mut Context, url: &str) {
+        if self.task.is_some() {
+            self.problem = Some("A request is already in progress.".to_owned());
+            return;
+        }
         self.found.clear();
         self.problem = None;
         self.trouble = None;
@@ -353,13 +480,22 @@ impl Feeds {
             credential: None,
             headers: Vec::new(),
         }) {
-            Some(task) => self.task = Some((task, Awaiting::Search)),
+            Some(task) => {
+                self.task = Some(PendingTask {
+                    id: task,
+                    target: TaskTarget::Search,
+                });
+            }
             None => self.problem = Some("The device is busy. Try that again.".to_owned()),
         }
     }
 
     /// Fetches the open feed.
     fn ask_feed(&mut self, context: &mut Context) {
+        if self.task.is_some() {
+            self.problem = Some("A request is already in progress.".to_owned());
+            return;
+        }
         let Some(subscription) = self.open.and_then(|index| self.subscriptions.get(index)) else {
             return;
         };
@@ -376,51 +512,80 @@ impl Feeds {
             credential: None,
             headers: Vec::new(),
         }) {
-            Some(task) => self.task = Some((task, Awaiting::Feed)),
+            Some(task) => {
+                self.task = Some(PendingTask {
+                    id: task,
+                    target: TaskTarget::Feed {
+                        subscription_url: subscription.url.clone(),
+                    },
+                });
+            }
             None => self.problem = Some("The device is busy. Try that again.".to_owned()),
         }
     }
 
     /// Miniflux operations are intentionally one-shot: the service may apply
-    /// a POST before a connection drops, so retrying a mutation would be less
+    /// a PUT before a connection drops, so retrying a mutation would be less
     /// honest than retaining it in the durable queue for the next sync.
-    fn start_flux(&mut self, context: &mut Context, awaiting: Awaiting, work: Task) {
-        match context.spawn(work) {
-            Some(task) => self.task = Some((task, awaiting)),
-            None => self.problem = Some("The device is busy. Try that again.".to_owned()),
+    fn start_flux(&mut self, context: &mut Context, target: TaskTarget, work: Task) -> bool {
+        if self.task.is_some() {
+            self.problem = Some("A Miniflux request is already in progress.".to_owned());
+            return false;
+        }
+        if let Some(task) = context.spawn(work) {
+            self.task = Some(PendingTask { id: task, target });
+            true
+        } else {
+            self.problem = Some("The device is busy. Try that again.".to_owned());
+            false
         }
     }
 
     fn request_flux_entries(&mut self, context: &mut Context) {
+        let mode = self.flux_mode;
         self.start_flux(
             context,
-            Awaiting::FluxEntries,
-            miniflux::entries(&self.server, &self.credential, self.flux_mode),
+            TaskTarget::FluxEntries { mode },
+            miniflux::entries(&self.server, mode),
         );
     }
 
     fn send_next_flux_mutation(&mut self, context: &mut Context) {
+        if self.task.is_some() || self.flux_in_flight.is_some() {
+            return;
+        }
         let Some(mutation) = self.flux_pending.first().cloned() else {
             self.request_flux_entries(context);
             return;
         };
-        self.start_flux(
+        self.flux_pending.remove(0);
+        self.flux_in_flight = Some(mutation.clone());
+        if !self.start_flux(
             context,
-            Awaiting::FluxMutation,
-            miniflux::mutate(&self.server, &self.credential, &mutation),
-        );
+            TaskTarget::FluxMutation {
+                mutation: mutation.clone(),
+            },
+            miniflux::mutate(&self.server, &mutation),
+        ) {
+            self.flux_in_flight = None;
+            self.flux_pending.insert(0, mutation);
+        }
+        self.save_flux_actions(context);
     }
 
     fn sync_flux(&mut self, context: &mut Context) {
         if !self.miniflux_configured() {
-            self.problem =
-                Some("Set a Miniflux HTTPS server and credential name in Settings.".to_owned());
+            self.problem = Some("Set a Miniflux HTTPS server in Settings.".to_owned());
             self.view = View::Settings;
+            return;
+        }
+        if self.task.is_some() {
+            self.problem = Some("A Miniflux request is already in progress.".to_owned());
             return;
         }
         self.problem = None;
         self.trouble = None;
-        self.live_cache[1] = false;
+        self.flux_live_cache[self.flux_mode.cache_index()] = false;
         if self.flux_pending.is_empty() {
             self.request_flux_entries(context);
         } else {
@@ -428,20 +593,35 @@ impl Feeds {
         }
     }
 
-    fn queue_flux_mutation(&mut self, context: &mut Context, mutation: miniflux::Mutation) {
-        if !self.flux_pending.contains(&mutation) {
-            self.flux_pending.push(mutation);
-            context
-                .store()
-                .save(FLUX_ACTIONS, encode_flux_actions(&self.flux_pending));
+    fn queue_flux_mutation(&mut self, context: &mut Context, mutation: &miniflux::Mutation) {
+        match mutation {
+            miniflux::Mutation::Read(id) => {
+                let mutation = miniflux::Mutation::Read(*id);
+                if self.flux_in_flight.as_ref() != Some(&mutation)
+                    && !self.flux_pending.contains(&mutation)
+                {
+                    self.flux_pending.push(mutation);
+                }
+            }
+            miniflux::Mutation::Star { id, starred } => {
+                self.flux_pending.retain(|pending| {
+                    !matches!(pending, miniflux::Mutation::Star { id: pending_id, .. } if pending_id == id)
+                });
+                self.flux_pending.push(miniflux::Mutation::Star {
+                    id: *id,
+                    starred: *starred,
+                });
+            }
         }
+        self.save_flux_actions(context);
     }
 
     fn lay_out_flux(&mut self, context: &Context) {
-        let Some(article) = self
-            .flux_open
-            .and_then(|index| self.flux_entries.get(index))
-        else {
+        let Some(article) = self.flux_open.and_then(|id| {
+            self.selected_flux_entries()
+                .iter()
+                .find(|article| article.id == id)
+        }) else {
             self.flux_pages.clear();
             return;
         };
@@ -457,6 +637,18 @@ impl Feeds {
         self.flux_page = 0;
     }
 
+    fn select_flux_mode(&mut self, context: &mut Context, mode: miniflux::ListMode) {
+        if self.task.is_some() {
+            self.problem = Some("A Miniflux request is already in progress.".to_owned());
+            return;
+        }
+        self.flux_mode = mode;
+        self.flux_open = None;
+        self.flux_pages.clear();
+        self.list_page = 0;
+        self.sync_flux(context);
+    }
+
     #[allow(clippy::too_many_lines)]
     fn on_flux_action(&mut self, context: &mut Context, action: ActionId) {
         if self.view == View::FluxDiscover {
@@ -468,18 +660,18 @@ impl Feeds {
                     }
                     if self.miniflux_configured() {
                         self.problem = None;
-                        self.flux_discovered.clear();
-                        self.view = View::FluxFound;
-                        self.start_flux(
+                        if self.start_flux(
                             context,
-                            Awaiting::FluxDiscover,
-                            miniflux::discover(&self.server, &self.credential, &website),
-                        );
+                            TaskTarget::FluxDiscover {
+                                website: website.clone(),
+                            },
+                            miniflux::discover(&self.server, &website),
+                        ) {
+                            self.flux_discovered.clear();
+                            self.view = View::FluxFound;
+                        }
                     } else {
-                        self.problem = Some(
-                            "Set a Miniflux HTTPS server and credential name in Settings."
-                                .to_owned(),
-                        );
+                        self.problem = Some("Set a Miniflux HTTPS server in Settings.".to_owned());
                         self.view = View::Settings;
                     }
                     self.show(context);
@@ -509,7 +701,7 @@ impl Feeds {
             return;
         }
 
-        if action == action_id("flux-more") {
+        if action == action_id("flux-more") && self.task.is_none() {
             self.flux_menu_open = true;
         } else if action == action_id("flux-sync") {
             self.sync_flux(context);
@@ -519,22 +711,15 @@ impl Feeds {
                 self.problem = None;
                 self.view = View::FluxDiscover;
             } else {
-                self.problem =
-                    Some("Set a Miniflux HTTPS server and credential name in Settings.".to_owned());
+                self.problem = Some("Set a Miniflux HTTPS server in Settings.".to_owned());
                 self.view = View::Settings;
             }
         } else if action == action_id("flux-unread") {
-            self.flux_mode = miniflux::ListMode::Unread;
-            self.list_page = 0;
-            self.sync_flux(context);
+            self.select_flux_mode(context, miniflux::ListMode::Unread);
         } else if action == action_id("flux-starred") {
-            self.flux_mode = miniflux::ListMode::Starred;
-            self.list_page = 0;
-            self.sync_flux(context);
+            self.select_flux_mode(context, miniflux::ListMode::Starred);
         } else if action == action_id("flux-history") {
-            self.flux_mode = miniflux::ListMode::History;
-            self.list_page = 0;
-            self.sync_flux(context);
+            self.select_flux_mode(context, miniflux::ListMode::History);
         } else if action == action_id("list-back") {
             self.list_page = self.list_page.saturating_sub(1);
         } else if action == action_id("list-next") {
@@ -547,129 +732,155 @@ impl Feeds {
             }
         } else if action == action_id("flux-full") {
             self.flux_menu_open = false;
-            if let Some(article) = self
-                .flux_open
-                .and_then(|index| self.flux_entries.get(index))
-            {
+            if let Some(entry_id) = self.flux_open {
+                let mode = self.flux_mode;
                 self.start_flux(
                     context,
-                    Awaiting::FluxFull,
-                    miniflux::full_content(&self.server, &self.credential, article.id),
+                    TaskTarget::FluxFull { mode, entry_id },
+                    miniflux::full_content(&self.server, entry_id),
                 );
             }
         } else if action == action_id("flux-toggle-read") {
-            if let Some(index) = self.flux_open {
-                let marked = self.flux_entries.get_mut(index).and_then(|article| {
-                    if article.status == "read" {
-                        None
-                    } else {
-                        "read".clone_into(&mut article.status);
-                        Some(article.id)
-                    }
-                });
+            if let Some(id) = self.flux_open {
+                let mode = self.flux_mode;
+                let marked = self
+                    .selected_flux_entries_mut()
+                    .iter_mut()
+                    .find(|article| article.id == id)
+                    .and_then(|article| {
+                        if article.status == "read" {
+                            None
+                        } else {
+                            "read".clone_into(&mut article.status);
+                            Some(article.id)
+                        }
+                    });
                 if let Some(id) = marked {
-                    self.queue_flux_mutation(context, miniflux::Mutation::Read(id));
-                    context
-                        .store()
-                        .save(FLUX_CACHE, encode_flux_cache(&self.flux_entries));
+                    self.queue_flux_mutation(context, &miniflux::Mutation::Read(id));
+                    self.save_flux_cache(context, mode);
                     self.lay_out_flux(context);
                 } else {
                     self.problem = Some("This entry is already read.".to_owned());
                 }
             }
         } else if action == action_id("flux-toggle-star") {
-            if let Some(index) = self.flux_open {
-                let toggled = self.flux_entries.get_mut(index).map(|article| {
-                    article.starred = !article.starred;
-                    (article.id, article.starred)
-                });
+            if let Some(id) = self.flux_open {
+                let mode = self.flux_mode;
+                let toggled = self
+                    .selected_flux_entries_mut()
+                    .iter_mut()
+                    .find(|article| article.id == id)
+                    .map(|article| {
+                        article.starred = !article.starred;
+                        (article.id, article.starred)
+                    });
                 if let Some((id, starred)) = toggled {
-                    self.queue_flux_mutation(context, miniflux::Mutation::Star { id, starred });
-                    context
-                        .store()
-                        .save(FLUX_CACHE, encode_flux_cache(&self.flux_entries));
+                    self.queue_flux_mutation(context, &miniflux::Mutation::Star { id, starred });
+                    self.save_flux_cache(context, mode);
                     self.lay_out_flux(context);
                 }
             }
         } else if let Some(index) = indexed(action, "flux-found", self.flux_discovered.len()) {
-            if let Some(found) = self.flux_discovered.get(index) {
+            if let Some(found) = self.flux_discovered.get(index).cloned() {
                 self.problem = Some("Adding the feed…".to_owned());
                 self.start_flux(
                     context,
-                    Awaiting::FluxSubscribe,
-                    miniflux::subscribe(&self.server, &self.credential, &found.url),
+                    TaskTarget::FluxSubscribe {
+                        feed_url: found.url.clone(),
+                    },
+                    miniflux::subscribe(&self.server, &found.url),
                 );
             }
-        } else if let Some(index) = indexed(action, "flux-entry", self.flux_entries.len()) {
-            self.flux_open = Some(index);
-            self.flux_menu_open = false;
-            self.view = View::FluxArticle;
-            self.lay_out_flux(context);
+        } else if let Some(index) =
+            indexed(action, "flux-entry", self.selected_flux_entries().len())
+        {
+            if let Some(article) = self.selected_flux_entries().get(index) {
+                self.flux_open = Some(article.id);
+                self.flux_menu_open = false;
+                self.view = View::FluxArticle;
+                self.lay_out_flux(context);
+            }
         }
         self.show(context);
     }
 
-    fn on_flux_task(&mut self, context: &mut Context, awaiting: Awaiting, outcome: TaskOutcome) {
+    fn on_flux_task(&mut self, context: &mut Context, target: TaskTarget, outcome: TaskOutcome) {
         match outcome {
-            TaskOutcome::Completed(bytes) => match awaiting {
-                Awaiting::FluxEntries => {
-                    self.flux_entries = miniflux::parse_entries(&bytes);
-                    self.live_cache[1] = true;
-                    context
-                        .store()
-                        .save(FLUX_CACHE, encode_flux_cache(&self.flux_entries));
+            TaskOutcome::Completed(bytes) => match target {
+                TaskTarget::FluxEntries { mode } => {
+                    let mut entries = miniflux::parse_entries(&bytes);
+                    overlay_full_content(&self.full_content, &mut entries);
+                    self.flux_caches[mode.cache_index()] = entries;
+                    self.flux_live_cache[mode.cache_index()] = true;
+                    self.save_flux_cache(context, mode);
+                    self.load_full_content(context, mode);
                     self.problem = Some(format!(
                         "Synced {} {} entries.",
-                        self.flux_entries.len(),
-                        self.flux_mode.label().to_lowercase()
+                        self.flux_entries(mode).len(),
+                        mode.label().to_lowercase()
                     ));
                 }
-                Awaiting::FluxDiscover => {
+                TaskTarget::FluxDiscover { .. } => {
                     self.flux_discovered = miniflux::parse_discoveries(&bytes);
                     self.problem = self
                         .flux_discovered
                         .is_empty()
                         .then(|| "Miniflux did not find a feed there.".to_owned());
                 }
-                Awaiting::FluxSubscribe => {
+                TaskTarget::FluxSubscribe { .. } => {
                     self.problem = Some("Feed added. Syncing entries…".to_owned());
                     self.view = View::FluxShelf;
                     self.request_flux_entries(context);
                 }
-                Awaiting::FluxFull => {
-                    let full_text = miniflux::parse_full_content(&bytes);
-                    if let (Some(index), Some(full_text)) = (self.flux_open, full_text) {
-                        if let Some(article) = self.flux_entries.get_mut(index) {
-                            article.content = full_text;
+                TaskTarget::FluxFull { mode, entry_id } => {
+                    let full_text = miniflux::parse_full_content(&bytes, FULL_CONTENT_BYTES);
+                    if let Some(full_text) = full_text {
+                        if full_text.len() > FULL_CONTENT_BYTES {
+                            self.problem = Some(
+                                "Full article is too large to save; existing offline copy remains."
+                                    .to_owned(),
+                            );
+                        } else {
+                            self.remember_full_content(context, entry_id, full_text.clone());
+                            if let Some(article) = self
+                                .flux_entries_mut(mode)
+                                .iter_mut()
+                                .find(|article| article.id == entry_id)
+                            {
+                                article.content = full_text;
+                            }
+                            self.save_flux_cache(context, mode);
+                            if self.flux_mode == mode && self.flux_open == Some(entry_id) {
+                                self.lay_out_flux(context);
+                            }
+                            self.problem =
+                                Some("Full article saved for offline reading.".to_owned());
                         }
-                        context
-                            .store()
-                            .save(FLUX_CACHE, encode_flux_cache(&self.flux_entries));
-                        self.lay_out_flux(context);
-                        self.problem = Some("Full article saved for offline reading.".to_owned());
                     } else {
                         self.problem = Some("Miniflux did not return article text.".to_owned());
                     }
                 }
-                Awaiting::FluxMutation => {
-                    if !self.flux_pending.is_empty() {
-                        self.flux_pending.remove(0);
+                TaskTarget::FluxMutation { mutation } => {
+                    if self.flux_in_flight.as_ref() == Some(&mutation) {
+                        self.flux_in_flight = None;
                     }
-                    context
-                        .store()
-                        .save(FLUX_ACTIONS, encode_flux_actions(&self.flux_pending));
+                    self.save_flux_actions(context);
                     if self.flux_pending.is_empty() {
                         self.request_flux_entries(context);
                     } else {
                         self.send_next_flux_mutation(context);
                     }
                 }
-                Awaiting::Search | Awaiting::Feed => unreachable!("standalone task"),
+                TaskTarget::Search | TaskTarget::Feed { .. } => {
+                    unreachable!("standalone task")
+                }
             },
             TaskOutcome::Failed(error) => {
-                self.problem = Some(miniflux_failure(error, &self.credential));
+                self.restore_flux_mutation(context, &target);
+                self.problem = Some(miniflux_failure(error));
             }
             TaskOutcome::Cancelled => {
+                self.restore_flux_mutation(context, &target);
                 self.problem =
                     Some("Miniflux request cancelled. Cached entries remain readable.".to_owned());
             }
@@ -732,13 +943,12 @@ impl Feeds {
         let mut screen = ScreenBuilder::new("rss-settings")
             .top_bar("Feeds settings")
             .field("mode", mode, "Standalone or Miniflux")
-            .secondary("Standalone uses Feedsearch. Miniflux uses a named API token.");
+            .secondary("Standalone uses Feedsearch. Miniflux uses its dedicated API token.");
         if self.backend == Backend::Miniflux {
             screen = screen
                 .field("server", &self.server, "https://miniflux.example")
-                .field("credential", &self.credential, "miniflux")
                 .field("flux-discover", "Add a Miniflux feed", "")
-                .secondary("The token stays in kobod as X-Auth-Token.");
+                .secondary("Install secret miniflux; kobod sends it as X-Auth-Token.");
         }
         screen.build()
     }
@@ -746,7 +956,6 @@ impl Feeds {
     fn editing(&self) -> Screen {
         let prompt = match self.editing {
             Some(Setting::Server) => "Miniflux HTTPS server",
-            Some(Setting::Credential) => "Credential name",
             None => unreachable!("only called while editing"),
         };
         ScreenBuilder::new("rss-settings")
@@ -761,7 +970,7 @@ impl Feeds {
             return ScreenBuilder::new("rss-flux")
                 .top_bar("Feeds")
                 .heading("Miniflux setup needed")
-                .text("Set an HTTPS server and credential name in Settings.")
+                .text("Set an HTTPS server in Settings.")
                 .secondary("Install the token with kobo secret set miniflux.")
                 .buttons([("settings", "Settings"), ("flux-discover", "Add a feed")])
                 .build();
@@ -774,7 +983,6 @@ impl Feeds {
         let mut screen = ScreenBuilder::new("rss-flux")
             .top_bar("Feeds")
             .top_bar_action("settings", "Settings")
-            .top_bar_glyph("flux-sync", "Sync", Glyph::Refresh)
             .tabs(
                 selected,
                 [
@@ -783,16 +991,21 @@ impl Feeds {
                     ("flux-history", "History"),
                 ],
             );
+        if self.task.is_none() {
+            screen = screen.top_bar_glyph("flux-sync", "Sync", Glyph::Refresh);
+        }
         if let Some(problem) = &self.problem {
             screen = screen.banner(BannerLevel::Attention, problem.clone());
         }
-        if self.awaiting(Awaiting::FluxEntries) {
+        if self.awaiting(TaskKind::FluxEntries) {
             return screen
                 .activity(format!("Syncing {} entries", self.flux_mode.label()), None)
                 .skeleton(6)
                 .build();
         }
-        if self.flux_entries.is_empty() && !self.live_cache[1] {
+        if self.selected_flux_entries().is_empty()
+            && !self.flux_live_cache[self.flux_mode.cache_index()]
+        {
             return screen
                 .empty_state(format!(
                     "No {} entries cached. Sync when Miniflux is reachable.",
@@ -802,7 +1015,7 @@ impl Feeds {
                 .build();
         }
         let rows: Vec<(String, String)> = self
-            .flux_entries
+            .selected_flux_entries()
             .iter()
             .map(|article| {
                 let status = if article.starred {
@@ -827,7 +1040,7 @@ impl Feeds {
                 format!("flux-entry-{index}"),
                 rows[*index].0.clone(),
                 rows[*index].1.clone(),
-                if self.flux_entries[*index].starred {
+                if self.selected_flux_entries()[*index].starred {
                     Glyph::Bookmark
                 } else {
                     Glyph::Rss
@@ -868,8 +1081,11 @@ impl Feeds {
         if let Some(problem) = &self.problem {
             screen = screen.banner(BannerLevel::Attention, problem.clone());
         }
-        if self.awaiting(Awaiting::FluxDiscover) {
+        if self.awaiting(TaskKind::FluxDiscover) {
             return screen.activity("Finding feeds", None).skeleton(4).build();
+        }
+        if self.awaiting(TaskKind::FluxSubscribe) {
+            return screen.activity("Adding feed", None).build();
         }
         if self.flux_discovered.is_empty() {
             return screen
@@ -895,10 +1111,11 @@ impl Feeds {
     }
 
     fn flux_article(&self) -> Screen {
-        let Some(article) = self
-            .flux_open
-            .and_then(|index| self.flux_entries.get(index))
-        else {
+        let Some(article) = self.flux_open.and_then(|id| {
+            self.selected_flux_entries()
+                .iter()
+                .find(|article| article.id == id)
+        }) else {
             return ScreenBuilder::new("rss-flux-reading")
                 .top_bar("Feeds")
                 .empty_state("Choose an entry from Miniflux.")
@@ -912,12 +1129,14 @@ impl Feeds {
                 if article.starred { "Unstar" } else { "Star" },
                 Glyph::Bookmark,
             )
-            .top_bar_overflow(
+            .reading(true);
+        if self.task.is_none() {
+            screen = screen.top_bar_overflow(
                 "flux-more",
                 self.flux_menu_open,
                 [("flux-full", "Load full article")],
-            )
-            .reading(true);
+            );
+        }
         if self.flux_pages.is_empty() {
             screen = screen.text(format!(
                 "{} · {}",
@@ -928,7 +1147,7 @@ impl Feeds {
                     &article.status
                 }
             ));
-            screen = screen.text(if self.awaiting(Awaiting::FluxFull) {
+            screen = screen.text(if self.awaiting(TaskKind::FluxFull) {
                 "Loading full article…"
             } else {
                 "No cached article text. Load the full article when online."
@@ -1082,7 +1301,7 @@ impl Feeds {
         if let Some(problem) = &self.problem {
             screen = screen.banner(BannerLevel::Attention, problem.clone());
         }
-        if self.awaiting(Awaiting::Search) {
+        if self.awaiting(TaskKind::Search) {
             return screen
                 .divider()
                 .activity(format!("Looking for feeds at {}", self.query), None)
@@ -1149,7 +1368,7 @@ impl Feeds {
         if let Some(problem) = &self.problem {
             screen = screen.banner(BannerLevel::Attention, problem.clone());
         }
-        if self.awaiting(Awaiting::Feed) {
+        if self.awaiting(TaskKind::Feed) {
             return screen
                 .divider()
                 .activity("Fetching the latest articles", None)
@@ -1430,7 +1649,7 @@ fn decode(bytes: &[u8]) -> Vec<Subscription> {
         .collect()
 }
 
-fn decode_config(bytes: &[u8]) -> (Backend, String, String) {
+fn decode_config(bytes: &[u8]) -> (Backend, String) {
     let stored = String::from_utf8_lossy(bytes);
     let mut fields = stored.lines();
     let backend = match fields.next().unwrap_or_default() {
@@ -1438,16 +1657,7 @@ fn decode_config(bytes: &[u8]) -> (Backend, String, String) {
         _ => Backend::Standalone,
     };
     let server = fields.next().unwrap_or_default().trim().to_owned();
-    let credential = fields.next().unwrap_or("miniflux").trim();
-    (
-        backend,
-        server,
-        if credential.is_empty() {
-            "miniflux".to_owned()
-        } else {
-            credential.to_owned()
-        },
-    )
+    (backend, server)
 }
 
 /// Store strings are escaped rather than split on an article's prose.
@@ -1501,6 +1711,10 @@ fn stable_hash(value: &str) -> u64 {
 
 fn feed_cache_key(url: &str) -> String {
     format!("feed-cache-{:016x}", stable_hash(url))
+}
+
+fn full_content_key(id: u64) -> String {
+    format!("miniflux-full-{id}")
 }
 
 fn encode_feed_cache(feed: &feed::Feed) -> Vec<u8> {
@@ -1587,9 +1801,9 @@ fn decode_item_states(bytes: &[u8]) -> Vec<ItemState> {
         .collect()
 }
 
-fn encode_flux_actions(actions: &[miniflux::Mutation]) -> Vec<u8> {
+fn encode_flux_actions<'a>(actions: impl IntoIterator<Item = &'a miniflux::Mutation>) -> Vec<u8> {
     actions
-        .iter()
+        .into_iter()
         .take(MAX_ITEM_STATES)
         .map(|action| match action {
             miniflux::Mutation::Read(id) => format!("r\t{id}\n"),
@@ -1599,22 +1813,63 @@ fn encode_flux_actions(actions: &[miniflux::Mutation]) -> Vec<u8> {
         .into_bytes()
 }
 
-fn decode_flux_actions(bytes: &[u8]) -> Vec<miniflux::Mutation> {
+fn encode_full_content_index(contents: &[FullContent]) -> Vec<u8> {
+    contents
+        .iter()
+        .map(|content| content.id.to_string())
+        .collect::<Vec<_>>()
+        .join("\n")
+        .into_bytes()
+}
+
+fn decode_full_content_index(bytes: &[u8]) -> Vec<u64> {
     String::from_utf8_lossy(bytes)
         .lines()
-        .filter_map(|line| {
-            let mut fields = line.split('\t');
-            match fields.next()? {
-                "r" => fields.next()?.parse().ok().map(miniflux::Mutation::Read),
-                "s" => Some(miniflux::Mutation::Star {
-                    id: fields.next()?.parse().ok()?,
-                    starred: fields.next()? == "true",
-                }),
-                _ => None,
-            }
-        })
-        .take(MAX_ITEM_STATES)
+        .filter_map(|id| id.parse().ok())
+        .take(MAX_FULL_ARTICLES)
         .collect()
+}
+
+fn full_content_id(key: &str) -> Option<u64> {
+    key.strip_prefix("miniflux-full-")?.parse().ok()
+}
+
+fn overlay_full_content(contents: &[FullContent], entries: &mut [miniflux::Article]) {
+    for article in entries {
+        if let Some(saved) = contents.iter().find(|saved| saved.id == article.id) {
+            article.content.clone_from(&saved.content);
+        }
+    }
+}
+
+fn decode_flux_actions(bytes: &[u8]) -> Vec<miniflux::Mutation> {
+    let mut actions = Vec::new();
+    for mutation in String::from_utf8_lossy(bytes).lines().filter_map(|line| {
+        let mut fields = line.split('\t');
+        match fields.next()? {
+            "r" => fields.next()?.parse().ok().map(miniflux::Mutation::Read),
+            "s" => Some(miniflux::Mutation::Star {
+                id: fields.next()?.parse().ok()?,
+                starred: fields.next()? == "true",
+            }),
+            _ => None,
+        }
+    }) {
+        match mutation {
+            miniflux::Mutation::Read(id) if actions.contains(&miniflux::Mutation::Read(id)) => {}
+            miniflux::Mutation::Star { id, .. } => {
+                actions.retain(
+                    |queued| !matches!(queued, miniflux::Mutation::Star { id: queued_id, .. } if *queued_id == id),
+                );
+                actions.push(mutation);
+            }
+            miniflux::Mutation::Read(_) => actions.push(mutation),
+        }
+        if actions.len() == MAX_ITEM_STATES {
+            break;
+        }
+    }
+    actions
 }
 
 fn encode_flux_cache(entries: &[miniflux::Article]) -> Vec<u8> {
@@ -1655,13 +1910,13 @@ fn decode_flux_cache(bytes: &[u8]) -> Vec<miniflux::Article> {
         .collect()
 }
 
-fn miniflux_failure(error: kobo_sdk::TaskError, credential: &str) -> String {
+fn miniflux_failure(error: kobo_sdk::TaskError) -> String {
     match error {
         kobo_sdk::TaskError::Unauthorized => {
-            "Miniflux rejected the token (401 Unauthorized). Check the credential name.".to_owned()
+            "Miniflux rejected secret miniflux (401 Unauthorized).".to_owned()
         }
         kobo_sdk::TaskError::NoCredential => {
-            format!("Miniflux needs credential {credential}. Run kobo secret set {credential}.")
+            "Miniflux needs secret miniflux. Run kobo secret set miniflux.".to_owned()
         }
         kobo_sdk::TaskError::Offline => {
             "Offline. Cached entries remain readable; join Wi-Fi to sync.".to_owned()
@@ -1680,12 +1935,18 @@ fn indexed(action: ActionId, prefix: &str, count: usize) -> Option<usize> {
 
 impl KoboApp for Feeds {
     fn on_start(&mut self, context: &mut Context) {
-        "miniflux".clone_into(&mut self.credential);
         context.store().load(FEEDS);
         context.store().load(CONFIG);
         context.store().load(ITEM_STATES);
         context.store().load(FLUX_ACTIONS);
-        context.store().load(FLUX_CACHE);
+        context.store().load(FLUX_FULL_INDEX);
+        for mode in [
+            miniflux::ListMode::Unread,
+            miniflux::ListMode::Starred,
+            miniflux::ListMode::History,
+        ] {
+            context.store().load(mode.cache_key());
+        }
         self.show(context);
     }
 
@@ -1697,10 +1958,9 @@ impl KoboApp for Feeds {
                     self.loaded = true;
                 } else if key == CONFIG {
                     if let Some(value) = value {
-                        let (backend, server, credential) = decode_config(&value);
+                        let (backend, server) = decode_config(&value);
                         self.backend = backend;
                         self.server = server;
-                        self.credential = credential;
                         if self.backend == Backend::Miniflux {
                             self.view = View::FluxShelf;
                         }
@@ -1712,10 +1972,42 @@ impl KoboApp for Feeds {
                         .as_deref()
                         .map(decode_flux_actions)
                         .unwrap_or_default();
-                } else if key == FLUX_CACHE {
-                    if self.flux_entries.is_empty() {
-                        self.flux_entries =
+                } else if key == FLUX_FULL_INDEX {
+                    for id in value
+                        .as_deref()
+                        .map(decode_full_content_index)
+                        .unwrap_or_default()
+                    {
+                        context.store().load(full_content_key(id));
+                    }
+                } else if let Some(id) = full_content_id(&key) {
+                    if let Some(content) = value
+                        .and_then(|content| String::from_utf8(content).ok())
+                        .filter(|content| content.len() <= FULL_CONTENT_BYTES)
+                    {
+                        self.full_content.retain(|saved| saved.id != id);
+                        if self.full_content.len() < MAX_FULL_ARTICLES {
+                            self.full_content.push(FullContent { id, content });
+                        }
+                        for entries in &mut self.flux_caches {
+                            overlay_full_content(&self.full_content, entries);
+                        }
+                        if self.flux_open.is_some() {
+                            self.lay_out_flux(context);
+                        }
+                    }
+                } else if let Some(mode) = [
+                    miniflux::ListMode::Unread,
+                    miniflux::ListMode::Starred,
+                    miniflux::ListMode::History,
+                ]
+                .into_iter()
+                .find(|mode| key == mode.cache_key())
+                {
+                    if self.flux_entries(mode).is_empty() {
+                        self.flux_caches[mode.cache_index()] =
                             value.as_deref().map(decode_flux_cache).unwrap_or_default();
+                        self.load_full_content(context, mode);
                     }
                 } else if key == self.cache_key().unwrap_or_default()
                     && self.items.is_empty()
@@ -1760,7 +2052,6 @@ impl KoboApp for Feeds {
                     if !value.is_empty() {
                         match setting {
                             Setting::Server => self.server = value,
-                            Setting::Credential => self.credential = value,
                         }
                         self.save_config(context);
                     }
@@ -1796,9 +2087,6 @@ impl KoboApp for Feeds {
                     &self.server
                 });
                 self.editing = Some(Setting::Server);
-            } else if action == action_id("credential") && self.backend == Backend::Miniflux {
-                self.keyboard = Keyboard::with_text(&self.credential);
-                self.editing = Some(Setting::Credential);
             } else if action == action_id("flux-discover") && self.backend == Backend::Miniflux {
                 self.keyboard.clear();
                 self.problem = None;
@@ -2028,28 +2316,28 @@ impl KoboApp for Feeds {
     }
 
     fn on_task(&mut self, context: &mut Context, task: TaskId, outcome: TaskOutcome) {
-        let Some((outstanding, awaiting)) = self.task else {
+        let Some(pending) = self.task.clone() else {
             return;
         };
-        if outstanding != task {
+        if pending.id != task {
             return;
         }
         self.task = None;
         if matches!(
-            awaiting,
-            Awaiting::FluxEntries
-                | Awaiting::FluxDiscover
-                | Awaiting::FluxSubscribe
-                | Awaiting::FluxFull
-                | Awaiting::FluxMutation
+            pending.target,
+            TaskTarget::FluxEntries { .. }
+                | TaskTarget::FluxDiscover { .. }
+                | TaskTarget::FluxSubscribe { .. }
+                | TaskTarget::FluxFull { .. }
+                | TaskTarget::FluxMutation { .. }
         ) {
-            self.on_flux_task(context, awaiting, outcome);
+            self.on_flux_task(context, pending.target, outcome);
             self.show(context);
             return;
         }
         match outcome {
-            TaskOutcome::Completed(bytes) => match awaiting {
-                Awaiting::Search => {
+            TaskOutcome::Completed(bytes) => match pending.target {
+                TaskTarget::Search => {
                     self.found = search::results(&bytes);
                     if self.found.is_empty() {
                         // A search answer is JSON, and JSON that stops halfway
@@ -2059,48 +2347,55 @@ impl KoboApp for Feeds {
                             .then(|| "That site's answer was too large to read.".to_owned());
                     }
                 }
-                Awaiting::Feed => match feed::parse_at(
-                    &bytes,
-                    &self
-                        .open
-                        .and_then(|index| self.subscriptions.get(index))
-                        .map_or_else(String::new, |subscription| subscription.url.clone()),
-                ) {
-                    Some(parsed) => {
-                        self.live_cache[0] = true;
-                        self.save_open_cache(context, &parsed);
-                        self.items = parsed.items;
-                        // A feed usually names itself better than a search
-                        // result does, so the shelf takes the better name once
-                        // it has been read.
-                        if let Some(subscription) = self
-                            .open
-                            .and_then(|index| self.subscriptions.get_mut(index))
-                        {
-                            if !parsed.title.trim().is_empty() && subscription.title != parsed.title
+                TaskTarget::Feed { subscription_url } => {
+                    match feed::parse_at(&bytes, &subscription_url) {
+                        Some(parsed) => {
+                            self.live_cache[0] = true;
+                            context.store().save(
+                                feed_cache_key(&subscription_url),
+                                encode_feed_cache(&parsed),
+                            );
+                            if self
+                                .open
+                                .and_then(|index| self.subscriptions.get(index))
+                                .is_some_and(|subscription| subscription.url == subscription_url)
                             {
-                                subscription.title = parsed.title;
-                                let bytes = encode(&self.subscriptions);
-                                context.store().save(FEEDS, bytes);
+                                self.items.clone_from(&parsed.items);
+                            }
+                            // A feed usually names itself better than a search
+                            // result does, so the shelf takes the better name once
+                            // it has been read.
+                            if let Some(subscription) = self
+                                .subscriptions
+                                .iter_mut()
+                                .find(|subscription| subscription.url == subscription_url)
+                            {
+                                if !parsed.title.trim().is_empty()
+                                    && subscription.title != parsed.title
+                                {
+                                    subscription.title = parsed.title;
+                                    let bytes = encode(&self.subscriptions);
+                                    context.store().save(FEEDS, bytes);
+                                }
                             }
                         }
+                        None => {
+                            // It did answer with a feed; the feed did not fit.
+                            // Saying it was not a feed sends somebody looking for
+                            // a different address, which will not help.
+                            self.problem = Some(if truncated(&bytes, FEED_BYTES) {
+                                "That feed is larger than this can read.".to_owned()
+                            } else {
+                                "That address did not answer with a feed.".to_owned()
+                            });
+                        }
                     }
-                    None => {
-                        // It did answer with a feed; the feed did not fit.
-                        // Saying it was not a feed sends somebody looking for
-                        // a different address, which will not help.
-                        self.problem = Some(if truncated(&bytes, FEED_BYTES) {
-                            "That feed is larger than this can read.".to_owned()
-                        } else {
-                            "That address did not answer with a feed.".to_owned()
-                        });
-                    }
-                },
-                Awaiting::FluxEntries
-                | Awaiting::FluxDiscover
-                | Awaiting::FluxSubscribe
-                | Awaiting::FluxFull
-                | Awaiting::FluxMutation => unreachable!("handled above"),
+                }
+                TaskTarget::FluxEntries { .. }
+                | TaskTarget::FluxDiscover { .. }
+                | TaskTarget::FluxSubscribe { .. }
+                | TaskTarget::FluxFull { .. }
+                | TaskTarget::FluxMutation { .. } => unreachable!("handled above"),
             },
             TaskOutcome::Failed(error) => {
                 // The SDK owns the wording. Five applications wrote five
@@ -2128,9 +2423,10 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::{
-        article_text, byline, decode, encode, encode_feed_cache, feed_cache_key, miniflux,
-        pretty_host, search, Awaiting, Backend, Feeds, Subscription, View, FEED_BYTES,
-        FLUX_ACTIONS, ITEM_STATES, MAX_FEEDS, SEARCH_BYTES,
+        article_text, byline, decode, encode, encode_feed_cache, feed_cache_key, full_content_key,
+        miniflux, pretty_host, search, Backend, Feeds, PendingTask, Subscription, TaskKind,
+        TaskTarget, View, FEED_BYTES, FLUX_ACTIONS, FLUX_FULL_INDEX, FULL_CONTENT_BYTES,
+        ITEM_STATES, MAX_FEEDS, SEARCH_BYTES,
     };
     use kobo_sdk::{
         action_id, AppRunner, Command, Credential, StoreResult, Task, TaskError, TaskId,
@@ -2156,9 +2452,24 @@ mod tests {
             loaded: true,
             backend: Backend::Miniflux,
             server: "https://flux.example".to_owned(),
-            credential: "miniflux".to_owned(),
             view: View::FluxShelf,
             ..Feeds::default()
+        }
+    }
+
+    fn pending_feed() -> PendingTask {
+        PendingTask {
+            id: TaskId(1),
+            target: TaskTarget::Feed {
+                subscription_url: "https://example.com/feed.xml".to_owned(),
+            },
+        }
+    }
+
+    fn pending_search() -> PendingTask {
+        PendingTask {
+            id: TaskId(1),
+            target: TaskTarget::Search,
         }
     }
 
@@ -2179,7 +2490,7 @@ mod tests {
             view: View::Items,
             open: Some(0),
             subscriptions: following(),
-            task: Some((TaskId(1), Awaiting::Feed)),
+            task: Some(pending_feed()),
             ..Feeds::default()
         });
         let source = br"<rss><channel><title>Journal</title><item><guid>entry-1</guid><title>Relative</title><link>stories/one</link><description>Readable offline.</description></item></channel></rss>";
@@ -2228,7 +2539,7 @@ mod tests {
             view: View::Items,
             open: Some(0),
             subscriptions: following(),
-            task: Some((TaskId(1), Awaiting::Feed)),
+            task: Some(pending_feed()),
             ..Feeds::default()
         });
         runner.store_result(StoreResult::Loaded {
@@ -2241,7 +2552,7 @@ mod tests {
     }
 
     #[test]
-    fn settings_switch_the_single_app_to_a_named_miniflux_credential() {
+    fn settings_switch_the_single_app_to_the_dedicated_miniflux_credential() {
         let mut runner = AppRunner::new(Feeds {
             loaded: true,
             ..Feeds::default()
@@ -2252,8 +2563,15 @@ mod tests {
         assert!(commands.iter().any(|command| matches!(
             command,
             Command::Store(kobo_sdk::StoreRequest::Save { key, value })
-                if key == "config" && !String::from_utf8_lossy(value).contains("token")
+                if key == "config"
+                    && !String::from_utf8_lossy(value).contains("token")
+                    && String::from_utf8_lossy(value).lines().count() == 1
         )));
+        assert_eq!(
+            super::decode_config(b"miniflux\nhttps://feeds.example\npersonal-miniflux"),
+            (Backend::Miniflux, "https://feeds.example".to_owned()),
+            "an old development-only credential field must not broaden the new boundary"
+        );
     }
 
     #[test]
@@ -2284,7 +2602,7 @@ mod tests {
         );
         runner.action(action_id("flux-entry-0"));
         let commands = runner.action(action_id("flux-toggle-read"));
-        assert_eq!(runner.app().flux_entries[0].status, "read");
+        assert_eq!(runner.app().selected_flux_entries()[0].status, "read");
         assert!(runner
             .app()
             .flux_pending
@@ -2294,7 +2612,7 @@ mod tests {
             Command::Store(kobo_sdk::StoreRequest::Save { key, .. }) if key == FLUX_ACTIONS
         )));
         runner.action(action_id("flux-toggle-star"));
-        assert!(runner.app().flux_entries[0].starred);
+        assert!(runner.app().selected_flux_entries()[0].starred);
         assert!(runner
             .app()
             .flux_pending
@@ -2305,11 +2623,11 @@ mod tests {
 
         let commands = runner.action(action_id("flux-sync"));
         let (write_task, work) = spawned(&commands);
-        let Task::Post {
+        let Task::Put {
             body, credential, ..
         } = work
         else {
-            panic!("the queued read must be posted before fetching");
+            panic!("the queued read must use PUT before fetching");
         };
         assert_eq!(body, r#"{"entry_ids":[8],"status":"read"}"#);
         assert_eq!(
@@ -2318,8 +2636,8 @@ mod tests {
         );
         let commands = runner.task_outcome(write_task, TaskOutcome::Completed(Vec::new()));
         let (star_task, next) = spawned(&commands);
-        let Task::Post { body, .. } = next else {
-            panic!("the queued star must follow the queued read");
+        let Task::Put { body, .. } = next else {
+            panic!("the queued star must use PUT after the queued read");
         };
         assert_eq!(body, r#"{"entry_ids":[8],"starred":true}"#);
         let commands = runner.task_outcome(star_task, TaskOutcome::Completed(Vec::new()));
@@ -2377,13 +2695,295 @@ mod tests {
             full_task,
             TaskOutcome::Completed(br#"{"content":"<p>Full cached story</p>"}"#.to_vec()),
         );
-        assert_eq!(runner.app().flux_entries[0].content, "Full cached story");
+        assert_eq!(
+            runner.app().selected_flux_entries()[0].content,
+            "Full cached story"
+        );
+    }
+
+    #[test]
+    fn miniflux_star_queue_coalesces_three_toggles_without_losing_an_in_flight_write() {
+        let mut reader = flux_reader();
+        reader.flux_caches[miniflux::ListMode::Unread.cache_index()] = vec![miniflux::Article {
+            id: 8,
+            title: "Story".to_owned(),
+            feed: "Paper".to_owned(),
+            content: "Cached".to_owned(),
+            status: "unread".to_owned(),
+            starred: false,
+        }];
+        reader.flux_open = Some(8);
+        reader.view = View::FluxArticle;
+        let mut runner = AppRunner::new(reader);
+
+        runner.action(action_id("flux-toggle-star"));
+        runner.action(action_id("flux-toggle-star"));
+        runner.action(action_id("flux-toggle-star"));
+        assert_eq!(
+            runner.app().flux_pending,
+            vec![miniflux::Mutation::Star {
+                id: 8,
+                starred: true
+            }],
+            "three offline toggles must retain only their newest desired state"
+        );
+
+        let commands = runner.action(action_id("flux-sync"));
+        let (task, work) = spawned(&commands);
+        assert!(matches!(
+            work,
+            Task::Put {
+                body,
+                ..
+            } if body == r#"{"entry_ids":[8],"starred":true}"#
+        ));
+        assert_eq!(
+            runner.app().flux_in_flight,
+            Some(miniflux::Mutation::Star {
+                id: 8,
+                starred: true
+            })
+        );
+        assert!(runner.app().flux_pending.is_empty());
+
+        runner.action(action_id("flux-toggle-star"));
+        assert_eq!(
+            runner.app().flux_in_flight,
+            Some(miniflux::Mutation::Star {
+                id: 8,
+                starred: true
+            }),
+            "a new desired state must not overwrite the PUT already sent"
+        );
+        assert_eq!(
+            runner.app().flux_pending,
+            vec![miniflux::Mutation::Star {
+                id: 8,
+                starred: false
+            }]
+        );
+        runner.task_outcome(task, TaskOutcome::Completed(Vec::new()));
+    }
+
+    #[test]
+    fn miniflux_duplicate_subscribe_and_full_content_actions_keep_their_original_targets() {
+        let mut reader = flux_reader();
+        reader.view = View::FluxDiscover;
+        reader.flux_discovered.push(miniflux::Discovered {
+            url: "https://example.org/feed.xml".to_owned(),
+            title: "Example".to_owned(),
+            kind: "rss".to_owned(),
+        });
+        let mut runner = AppRunner::new(reader);
+        let commands = runner.action(action_id("flux-found-0"));
+        let (subscribe_task, _) = spawned(&commands);
+        let duplicate = runner.action(action_id("flux-found-0"));
+        assert!(
+            !duplicate
+                .iter()
+                .any(|command| matches!(command, Command::Spawn { .. })),
+            "a second feed tap must not replace the in-flight subscription"
+        );
+        assert_eq!(
+            runner.app().task,
+            Some(PendingTask {
+                id: subscribe_task,
+                target: TaskTarget::FluxSubscribe {
+                    feed_url: "https://example.org/feed.xml".to_owned()
+                }
+            })
+        );
+
+        let mut reader = flux_reader();
+        reader.flux_caches[miniflux::ListMode::Unread.cache_index()] = vec![miniflux::Article {
+            id: 9,
+            title: "First".to_owned(),
+            feed: "Example".to_owned(),
+            content: "Summary".to_owned(),
+            status: "unread".to_owned(),
+            starred: false,
+        }];
+        reader.flux_open = Some(9);
+        reader.view = View::FluxArticle;
+        let mut runner = AppRunner::new(reader);
+        runner.action(action_id("flux-more"));
+        let commands = runner.action(action_id("flux-full"));
+        let (full_task, _) = spawned(&commands);
+        let duplicate = runner.action(action_id("flux-full"));
+        assert!(
+            !duplicate
+                .iter()
+                .any(|command| matches!(command, Command::Spawn { .. })),
+            "a second full-content action must not replace the first"
+        );
+        runner.app_mut().flux_caches[miniflux::ListMode::Unread.cache_index()].insert(
+            0,
+            miniflux::Article {
+                id: 10,
+                title: "Newer".to_owned(),
+                feed: "Example".to_owned(),
+                content: "Other".to_owned(),
+                status: "unread".to_owned(),
+                starred: false,
+            },
+        );
+        runner.task_outcome(
+            full_task,
+            TaskOutcome::Completed(br#"{"content":"<p>Exact full text</p>"}"#.to_vec()),
+        );
+        assert_eq!(
+            runner
+                .app()
+                .selected_flux_entries()
+                .iter()
+                .find(|article| article.id == 9)
+                .map(|article| article.content.as_str()),
+            Some("Exact full text"),
+            "the full response must update its immutable entry ID, not row zero"
+        );
+        assert_eq!(
+            runner.app().selected_flux_entries()[0].content,
+            "Other",
+            "a reordered row must not receive another entry's content"
+        );
+    }
+
+    #[test]
+    fn miniflux_cache_isolated_by_mode_and_full_content_survives_a_refresh_and_restart() {
+        let mut reader = flux_reader();
+        reader.flux_caches[miniflux::ListMode::Unread.cache_index()] = vec![miniflux::Article {
+            id: 1,
+            title: "Unread cache".to_owned(),
+            feed: "Paper".to_owned(),
+            content: "Unread".to_owned(),
+            status: "unread".to_owned(),
+            starred: false,
+        }];
+        reader.flux_caches[miniflux::ListMode::Starred.cache_index()] = vec![miniflux::Article {
+            id: 2,
+            title: "Starred cache".to_owned(),
+            feed: "Paper".to_owned(),
+            content: "Starred".to_owned(),
+            status: "read".to_owned(),
+            starred: true,
+        }];
+        let mut runner = AppRunner::new(reader);
+        let commands = runner.action(action_id("flux-starred"));
+        let (starred_task, _) = spawned(&commands);
+        assert_eq!(
+            runner.app().selected_flux_entries()[0].title,
+            "Starred cache",
+            "switching tabs must never show the unread cache under Starred"
+        );
+        let commands = runner.task_outcome(
+            starred_task,
+            TaskOutcome::Completed(
+                br#"{"entries":[{"id":9,"title":"From network","feed":{"title":"Paper"},"content":"short","status":"read","starred":true}]}"#
+                    .to_vec(),
+            ),
+        );
+        assert!(commands.iter().any(|command| matches!(
+            command,
+            Command::Store(kobo_sdk::StoreRequest::Save { key, .. })
+                if key == miniflux::ListMode::Starred.cache_key()
+        )));
+
+        let mut initial = flux_reader();
+        initial.flux_caches[miniflux::ListMode::Unread.cache_index()] = vec![miniflux::Article {
+            id: 9,
+            title: "Story".to_owned(),
+            feed: "Paper".to_owned(),
+            content: "Summary".to_owned(),
+            status: "unread".to_owned(),
+            starred: false,
+        }];
+        initial.flux_open = Some(9);
+        initial.view = View::FluxArticle;
+        let mut runner = AppRunner::new(initial);
+        runner.action(action_id("flux-more"));
+        let commands = runner.action(action_id("flux-full"));
+        let (full_task, _) = spawned(&commands);
+        let full = "The complete article is kept without truncation.";
+        let commands = runner.task_outcome(
+            full_task,
+            TaskOutcome::Completed(format!(r#"{{"content":"<p>{full}</p>"}}"#).into_bytes()),
+        );
+        assert!(commands.iter().any(|command| matches!(
+            command,
+            Command::Store(kobo_sdk::StoreRequest::Save { key, value })
+                if key == &full_content_key(9) && value == full.as_bytes()
+        )));
+
+        let mut restarted = AppRunner::new(flux_reader());
+        restarted.store_result(StoreResult::Loaded {
+            key: FLUX_FULL_INDEX.to_owned(),
+            value: Some(b"9".to_vec()),
+        });
+        restarted.store_result(StoreResult::Loaded {
+            key: full_content_key(9),
+            value: Some(full.as_bytes().to_vec()),
+        });
+        let commands = restarted.action(action_id("flux-sync"));
+        let (entries_task, _) = spawned(&commands);
+        restarted.task_outcome(
+            entries_task,
+            TaskOutcome::Completed(
+                br#"{"entries":[{"id":9,"title":"Story","feed":{"title":"Paper"},"content":"summary again","status":"unread","starred":false}]}"#
+                    .to_vec(),
+            ),
+        );
+        assert_eq!(
+            restarted.app().selected_flux_entries()[0].content,
+            full,
+            "a refreshed list must overlay the exact stable-ID full-content cache"
+        );
+    }
+
+    #[test]
+    fn oversized_full_content_keeps_the_existing_exact_article_and_is_not_saved() {
+        let mut reader = flux_reader();
+        reader.flux_caches[miniflux::ListMode::Unread.cache_index()] = vec![miniflux::Article {
+            id: 9,
+            title: "Story".to_owned(),
+            feed: "Paper".to_owned(),
+            content: "Previously saved full article.".to_owned(),
+            status: "unread".to_owned(),
+            starred: false,
+        }];
+        reader.flux_open = Some(9);
+        reader.view = View::FluxArticle;
+        let mut runner = AppRunner::new(reader);
+        runner.action(action_id("flux-more"));
+        let commands = runner.action(action_id("flux-full"));
+        let (task, _) = spawned(&commands);
+        let content = "x".repeat(FULL_CONTENT_BYTES * 2);
+        let commands = runner.task_outcome(
+            task,
+            TaskOutcome::Completed(format!(r#"{{"content":"<p>{content}</p>"}}"#).into_bytes()),
+        );
+        assert_eq!(
+            runner.app().selected_flux_entries()[0].content,
+            "Previously saved full article."
+        );
+        assert!(
+            !commands.iter().any(|command| matches!(
+                command,
+                Command::Store(kobo_sdk::StoreRequest::Save { key, .. })
+                    if key == &full_content_key(9)
+            )),
+            "a truncated full article must never replace the exact stored value"
+        );
+        assert!(runner
+            .app()
+            .problem
+            .as_deref()
+            .is_some_and(|problem| problem.contains("too large to save")));
     }
 
     #[test]
     fn miniflux_modes_and_failures_keep_cached_entries_and_explain_the_problem() {
         let mut reader = flux_reader();
-        reader.flux_entries = vec![miniflux::Article {
+        reader.flux_caches[miniflux::ListMode::History.cache_index()] = vec![miniflux::Article {
             id: 3,
             title: "Cached".to_owned(),
             feed: "Paper".to_owned(),
@@ -2399,7 +2999,7 @@ mod tests {
         };
         assert!(url.contains("status=read"), "{url}");
         runner.task_outcome(task, TaskOutcome::Failed(TaskError::Unauthorized));
-        assert_eq!(runner.app().flux_entries[0].title, "Cached");
+        assert_eq!(runner.app().selected_flux_entries()[0].title, "Cached");
         assert!(runner
             .app()
             .problem
@@ -2407,7 +3007,7 @@ mod tests {
             .is_some_and(|message| message.contains("401 Unauthorized")));
 
         let mut reader = flux_reader();
-        reader.flux_entries = vec![miniflux::Article {
+        reader.flux_caches[miniflux::ListMode::Starred.cache_index()] = vec![miniflux::Article {
             id: 4,
             title: "Offline cache".to_owned(),
             feed: "Paper".to_owned(),
@@ -2423,7 +3023,10 @@ mod tests {
         };
         assert!(url.contains("starred=true"), "{url}");
         runner.task_outcome(task, TaskOutcome::Failed(TaskError::Offline));
-        assert_eq!(runner.app().flux_entries[0].title, "Offline cache");
+        assert_eq!(
+            runner.app().selected_flux_entries()[0].title,
+            "Offline cache"
+        );
         assert!(runner
             .app()
             .problem
@@ -2472,7 +3075,7 @@ mod tests {
         let application = runner.app_mut();
         assert_eq!(application.subscriptions.len(), 1);
         assert_eq!(application.view, View::Items);
-        assert!(application.awaiting(Awaiting::Feed));
+        assert!(application.awaiting(TaskKind::Feed));
         let saved = commands
             .iter()
             .any(|command| matches!(command, Command::Store(kobo_sdk::StoreRequest::Save { .. })));
@@ -2510,7 +3113,7 @@ mod tests {
                 title: "example.com".to_owned(),
                 site: "https://example.com/".to_owned(),
             }],
-            task: Some((TaskId(1), Awaiting::Feed)),
+            task: Some(pending_feed()),
             ..Feeds::default()
         });
         runner.task_outcome(TaskId(1), TaskOutcome::Completed(ATOM.as_bytes().to_vec()));
@@ -2532,7 +3135,7 @@ mod tests {
             view: View::Items,
             open: Some(0),
             subscriptions: following(),
-            task: Some((TaskId(1), Awaiting::Feed)),
+            task: Some(pending_feed()),
             ..Feeds::default()
         });
         let commands =
@@ -2673,7 +3276,7 @@ mod tests {
             view: View::Items,
             open: Some(0),
             subscriptions: following(),
-            task: Some((TaskId(1), Awaiting::Feed)),
+            task: Some(pending_feed()),
             ..Feeds::default()
         });
         runner.task_outcome(
@@ -2690,7 +3293,7 @@ mod tests {
             view: View::Items,
             open: Some(0),
             subscriptions: following(),
-            task: Some((TaskId(1), Awaiting::Feed)),
+            task: Some(pending_feed()),
             ..Feeds::default()
         });
         let long = "Some prose about the state of the world, at length. ".repeat(80);
@@ -2716,7 +3319,7 @@ mod tests {
             view: View::Items,
             open: Some(0),
             subscriptions: following(),
-            task: Some((TaskId(1), Awaiting::Feed)),
+            task: Some(pending_feed()),
             ..Feeds::default()
         });
         let long = "Some prose about the state of the world, at length. ".repeat(120);
@@ -2876,7 +3479,7 @@ mod tests {
             view: View::Items,
             open: Some(0),
             subscriptions: following(),
-            task: Some((TaskId(1), Awaiting::Feed)),
+            task: Some(pending_feed()),
             ..Feeds::default()
         });
         let commands =
@@ -2906,7 +3509,7 @@ mod tests {
                 view: View::Items,
                 open: Some(0),
                 subscriptions: following(),
-                task: Some((TaskId(1), Awaiting::Feed)),
+                task: Some(pending_feed()),
                 ..Feeds::default()
             });
             runner.task_outcome(TaskId(1), TaskOutcome::Failed(error));
@@ -2919,7 +3522,7 @@ mod tests {
     #[test]
     fn miniflux_lists_and_articles_fit_the_clara_panel() {
         let mut reader = flux_reader();
-        reader.flux_entries = (0..30)
+        reader.flux_caches[miniflux::ListMode::Unread.cache_index()] = (0..30)
             .map(|id| miniflux::Article {
                 id,
                 title: format!("A deliberately long Miniflux article title number {id}"),
@@ -2944,7 +3547,7 @@ mod tests {
     #[test]
     fn miniflux_more_menu_claims_back_without_leaving_the_article() {
         let mut reader = flux_reader();
-        reader.flux_entries = vec![miniflux::Article {
+        reader.flux_caches[miniflux::ListMode::Unread.cache_index()] = vec![miniflux::Article {
             id: 1,
             title: "Entry".to_owned(),
             feed: "Feed".to_owned(),
@@ -3100,7 +3703,7 @@ mod tests {
             view: View::Items,
             open: Some(0),
             subscriptions: following(),
-            task: Some((TaskId(1), Awaiting::Feed)),
+            task: Some(pending_feed()),
             ..Feeds::default()
         });
         let commands =
@@ -3111,7 +3714,7 @@ mod tests {
             loaded: true,
             view: View::Found,
             query: "example.com".to_owned(),
-            task: Some((TaskId(1), Awaiting::Search)),
+            task: Some(pending_search()),
             ..Feeds::default()
         });
         let commands = runner.task_outcome(TaskId(1), TaskOutcome::Completed(b"[]".to_vec()));
@@ -3122,7 +3725,7 @@ mod tests {
             view: View::Items,
             open: Some(0),
             subscriptions: following(),
-            task: Some((TaskId(1), Awaiting::Feed)),
+            task: Some(pending_feed()),
             ..Feeds::default()
         });
         let commands = runner.task_outcome(
@@ -3162,7 +3765,7 @@ mod tests {
             loaded: true,
             view: View::Found,
             query: "example.com".to_owned(),
-            task: Some((TaskId(1), Awaiting::Search)),
+            task: Some(pending_search()),
             ..Feeds::default()
         });
         let answer = br#"[{"url":"https://example.com/rss","title":"Example","score":1}]"#;
@@ -3216,7 +3819,7 @@ mod tests {
             view: View::Items,
             open: Some(0),
             subscriptions: following(),
-            task: Some((TaskId(1), Awaiting::Feed)),
+            task: Some(pending_feed()),
             ..Feeds::default()
         });
         let cut = vec![b'{'; FEED_BYTES as usize];
@@ -3233,7 +3836,7 @@ mod tests {
             view: View::Items,
             open: Some(0),
             subscriptions: following(),
-            task: Some((TaskId(1), Awaiting::Feed)),
+            task: Some(pending_feed()),
             ..Feeds::default()
         });
         let commands =
@@ -3248,7 +3851,7 @@ mod tests {
             loaded: true,
             view: View::Found,
             query: "example.com".to_owned(),
-            task: Some((TaskId(1), Awaiting::Search)),
+            task: Some(pending_search()),
             ..Feeds::default()
         });
         let cut = vec![b'['; SEARCH_BYTES as usize];
@@ -3264,7 +3867,7 @@ mod tests {
             loaded: true,
             view: View::Found,
             query: "example.com".to_owned(),
-            task: Some((TaskId(1), Awaiting::Search)),
+            task: Some(pending_search()),
             ..Feeds::default()
         });
         let commands = runner.task_outcome(TaskId(1), TaskOutcome::Completed(b"[]".to_vec()));

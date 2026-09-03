@@ -6,9 +6,9 @@ Type an address, pick the feed it finds, and read the articles without leaving
 the application.
 
 Feeds starts in standalone mode. Settings can switch the same app to Miniflux:
-enter an HTTPS server and a credential name (default: `miniflux`), then install
-the token with `kobo secret set miniflux`. The runtime attaches that named token
-as `X-Auth-Token`; neither mode stores token bytes.
+enter an HTTPS server, then install its token with `kobo secret set miniflux`.
+The runtime attaches only that dedicated secret as `X-Auth-Token`; neither mode
+stores token bytes.
 
 | The articles | Finding a feed |
 | --- | --- |
@@ -42,11 +42,12 @@ layout, script and advertising wrapped around the same words.
 
 Subscribed standalone feeds retain a bounded readable cache per feed, plus
 read/unread and starred state keyed by the entry GUID/id or its safe canonical
-link. Relative RSS, Atom, and JSON Feed links resolve against the exact
-subscription URL requested. Miniflux retains cached entries and full articles;
-read and star changes queue durably while offline and drain on the next sync.
-Unauthorized tokens, offline devices, and unreachable servers leave cached
-reading intact and explain the next action on screen.
+link. Relative RSS, Atom, and JSON Feed links resolve only against the safe
+subscription URL requested. Redirect-relative and `xml:base` resolution are
+unavailable: `TaskOutcome` provides neither a final URL nor response metadata.
+Miniflux keeps a separate bounded cache for each list mode, exact full articles
+by entry ID, and durable read/star changes for the next sync. Unauthorized
+tokens, offline devices, and unreachable servers leave cached reading intact.
 
 ### Conditional requests
 
@@ -56,6 +57,14 @@ correctly. `TaskOutcome` is exactly `Completed(Vec<u8>)`, `Failed`, or
 The app therefore does not fake validators. Runtime task response metadata is
 the concrete blocker; until it exposes those fields, each sync fetches the
 requested feed URL normally.
+
+### Miniflux migration
+
+There is no `rss-miniflux` state migration. Git shows that the old catalog
+entry first appeared in `790ba72` (2026-09-01), after `v0.3.1`; the released
+`v0.3.2`, `v0.3.3`, `v0.3.4`, `beta-v0.3.3`, `beta-v0.3.4`, and current public
+catalog contain no such ID. It was never published, so no installed app state
+exists to migrate.
 
 ## Running it
 
