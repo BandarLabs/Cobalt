@@ -77,6 +77,32 @@ pub fn encode_png_grey(width: u32, height: u32, grey: &[u8]) -> Result<Vec<u8>, 
     Ok(png)
 }
 
+/// Encodes opaque RGB pixels as a PNG.
+///
+/// # Errors
+///
+/// Returns [`ImageError::Undecodable`] when `rgb` is not exactly
+/// `width * height * 3` bytes, and [`ImageError::TooManyPixels`] past
+/// [`MAX_PIXELS`].
+pub fn encode_png_rgb(width: u32, height: u32, rgb: &[u8]) -> Result<Vec<u8>, ImageError> {
+    let pixels = u64::from(width) * u64::from(height);
+    if pixels > MAX_PIXELS {
+        return Err(ImageError::TooManyPixels { pixels });
+    }
+    if rgb.len() as u64 != pixels.saturating_mul(3) {
+        return Err(ImageError::Undecodable(format!(
+            "RGB image is {} bytes but {width}x{height} needs {}",
+            rgb.len(),
+            pixels.saturating_mul(3)
+        )));
+    }
+    let mut png = Vec::new();
+    image::codecs::png::PngEncoder::new(&mut png)
+        .write_image(rgb, width, height, image::ExtendedColorType::Rgb8)
+        .map_err(|error| ImageError::Undecodable(error.to_string()))?;
+    Ok(png)
+}
+
 /// How a picture should occupy the rectangle a component assigned to it.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub enum FitMode {
@@ -127,16 +153,17 @@ impl fmt::Display for ImageError {
 
 impl std::error::Error for ImageError {}
 
-/// One picture, in the only form the panel has any use for: eight bit grey,
-/// one byte per pixel, top row first, no padding.
+/// One picture with an eight-bit grayscale fallback and optional opaque RGB.
 ///
-/// The same layout the drawing surface uses, so painting one is a copy rather
-/// than a conversion.
+/// Monochrome pictures retain only the fallback, keeping the established
+/// grayscale pipeline's memory use unchanged. Colour pictures carry RGB beside
+/// it so a runtime can choose the verified panel's native representation.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Picture {
     width: u32,
     height: u32,
     grey: Vec<u8>,
+    rgb: Option<Vec<u8>>,
 }
 
 impl Picture {
@@ -162,6 +189,42 @@ impl Picture {
             width,
             height,
             grey,
+            rgb: None,
+        })
+    }
+
+    /// Builds a picture from opaque red, green, and blue bytes.
+    ///
+    /// The perceptual grayscale fallback is retained beside the color pixels
+    /// so the same application binary can draw on monochrome and color Kobo
+    /// panels without decoding the source twice.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ImageError::TooManyPixels`] when the dimensions exceed
+    /// [`MAX_PIXELS`], and [`ImageError::Undecodable`] when `rgb` is not
+    /// exactly `width * height * 3` bytes.
+    pub fn from_rgb(width: u32, height: u32, rgb: Vec<u8>) -> Result<Self, ImageError> {
+        let pixels = checked_pixels(width, height)?;
+        let expected = usize::try_from(pixels)
+            .ok()
+            .and_then(|pixels| pixels.checked_mul(3))
+            .ok_or(ImageError::TooManyPixels { pixels })?;
+        if rgb.len() != expected {
+            return Err(ImageError::Undecodable(format!(
+                "{} bytes for a {width} by {height} color picture, which needs {expected}",
+                rgb.len()
+            )));
+        }
+        let grey = rgb
+            .chunks_exact(3)
+            .map(|pixel| perceptual_grey(pixel[0], pixel[1], pixel[2]))
+            .collect();
+        Ok(Self {
+            width,
+            height,
+            grey,
+            rgb: Some(rgb),
         })
     }
 
@@ -181,9 +244,29 @@ impl Picture {
         &self.grey
     }
 
+    /// Opaque red, green, and blue bytes, row by row, when this is colour.
+    ///
+    /// Grayscale pictures return `None` and retain only their established
+    /// single-channel storage.
+    #[must_use]
+    pub fn rgb(&self) -> Option<&[u8]> {
+        self.rgb.as_deref()
+    }
+
     #[must_use]
     pub fn into_grey(self) -> Vec<u8> {
         self.grey
+    }
+
+    #[must_use]
+    pub fn into_rgb(self) -> Option<Vec<u8>> {
+        self.rgb
+    }
+
+    /// Splits the required grayscale fallback and optional colour pixels.
+    #[must_use]
+    pub fn into_planes(self) -> (Vec<u8>, Option<Vec<u8>>) {
+        (self.grey, self.rgb)
     }
 
     /// The largest size that fits inside `width` by `height` without changing
@@ -301,14 +384,56 @@ impl Picture {
             )
         };
         checked_pixels(scaled_width, scaled_height)?;
-        let source = image::GrayImage::from_raw(self.width, self.height, self.grey.clone())
-            .ok_or_else(|| ImageError::Undecodable("the picture is not its own size".to_owned()))?;
-        let scaled =
-            image::imageops::resize(&source, scaled_width, scaled_height, FilterType::Lanczos3);
         let left = (scaled_width - width) / 2;
         let top = (scaled_height - height) / 2;
-        let cropped = image::imageops::crop_imm(&scaled, left, top, width, height).to_image();
-        Self::from_grey(width, height, cropped.into_raw())
+        let prepared = if let Some(rgb) = &self.rgb {
+            let source = image::RgbImage::from_raw(self.width, self.height, rgb.clone())
+                .ok_or_else(|| {
+                    ImageError::Undecodable("the picture is not its own size".to_owned())
+                })?;
+            Self::from_rgb(
+                width,
+                height,
+                image::imageops::crop_imm(
+                    &image::imageops::resize(
+                        &source,
+                        scaled_width,
+                        scaled_height,
+                        FilterType::Lanczos3,
+                    ),
+                    left,
+                    top,
+                    width,
+                    height,
+                )
+                .to_image()
+                .into_raw(),
+            )
+        } else {
+            let source = image::GrayImage::from_raw(self.width, self.height, self.grey.clone())
+                .ok_or_else(|| {
+                    ImageError::Undecodable("the picture is not its own size".to_owned())
+                })?;
+            Self::from_grey(
+                width,
+                height,
+                image::imageops::crop_imm(
+                    &image::imageops::resize(
+                        &source,
+                        scaled_width,
+                        scaled_height,
+                        FilterType::Lanczos3,
+                    ),
+                    left,
+                    top,
+                    width,
+                    height,
+                )
+                .to_image()
+                .into_raw(),
+            )
+        };
+        prepared
     }
 
     /// Resamples to the largest size inside the box, in either direction.
@@ -321,15 +446,23 @@ impl Picture {
             return Ok(self.clone());
         }
         checked_pixels(target_width, target_height)?;
-        let source = image::GrayImage::from_raw(self.width, self.height, self.grey.clone())
-            .ok_or_else(|| ImageError::Undecodable("the picture is not its own size".to_owned()))?;
-        let scaled =
-            image::imageops::resize(&source, target_width, target_height, FilterType::Lanczos3);
-        Ok(Self {
-            width: target_width,
-            height: target_height,
-            grey: scaled.into_raw(),
-        })
+        if let Some(rgb) = &self.rgb {
+            let source = image::RgbImage::from_raw(self.width, self.height, rgb.clone())
+                .ok_or_else(|| {
+                    ImageError::Undecodable("the picture is not its own size".to_owned())
+                })?;
+            let scaled =
+                image::imageops::resize(&source, target_width, target_height, FilterType::Lanczos3);
+            Self::from_rgb(target_width, target_height, scaled.into_raw())
+        } else {
+            let source = image::GrayImage::from_raw(self.width, self.height, self.grey.clone())
+                .ok_or_else(|| {
+                    ImageError::Undecodable("the picture is not its own size".to_owned())
+                })?;
+            let scaled =
+                image::imageops::resize(&source, target_width, target_height, FilterType::Lanczos3);
+            Self::from_grey(target_width, target_height, scaled.into_raw())
+        }
     }
 
     /// Reduces the picture to `levels` evenly spaced greys, spreading what is
@@ -398,6 +531,11 @@ fn nearest_level(value: i32, levels: u32) -> i32 {
     let clamped = value.clamp(0, 255);
     let step = (clamped * steps + 127) / 255;
     (step * 255 + steps / 2) / steps
+}
+
+fn perceptual_grey(red: u8, green: u8, blue: u8) -> u8 {
+    let weighted = 2126 * u32::from(red) + 7152 * u32::from(green) + 722 * u32::from(blue) + 5000;
+    u8::try_from(weighted / 10_000).unwrap_or(u8::MAX)
 }
 
 /// How large a picture will be, without decoding it.
@@ -524,23 +662,32 @@ pub fn decode(bytes: &[u8]) -> Result<Picture, ImageError> {
 
     // Transparency is composited onto the same white paper the renderer
     // clears to. Discarding alpha first turns a transparent black logo into a
-    // black rectangle. Luminance uses perceptual channel weights rather than
-    // an average, which keeps coloured title lettering distinguishable once
-    // the panel has no colour left to show.
-    //
-    // Reduced to luminance before compositing rather than after, which is the
-    // same number (luminance is an affine combination whose weights sum to
-    // one, so compositing commutes with it) at half the peak memory. A source
-    // at `MAX_PIXELS` is twenty-five megabytes as RGBA and twelve as grey with
-    // alpha, on a device with no swap.
-    let luma = image.to_luma_alpha8();
-    let mut grey = Vec::with_capacity(luma.width() as usize * luma.height() as usize);
-    for pixel in luma.pixels() {
-        let alpha = u32::from(pixel[1]);
-        let on_paper = (u32::from(pixel[0]) * alpha + 255 * (255 - alpha) + 127) / 255;
-        grey.push(u8::try_from(on_paper).unwrap_or(255));
+    // black rectangle.
+    let rgba = image.to_rgba8();
+    let has_color = rgba
+        .pixels()
+        .any(|pixel| pixel[3] != 0 && (pixel[0] != pixel[1] || pixel[1] != pixel[2]));
+    if has_color {
+        let mut rgb = Vec::with_capacity(rgba.width() as usize * rgba.height() as usize * 3);
+        for pixel in rgba.pixels() {
+            let alpha = u32::from(pixel[3]);
+            for channel in &pixel.0[..3] {
+                let on_paper = (u32::from(*channel) * alpha + 255 * (255 - alpha) + 127) / 255;
+                rgb.push(u8::try_from(on_paper).unwrap_or(255));
+            }
+        }
+        Picture::from_rgb(rgba.width(), rgba.height(), rgb)
+    } else {
+        let grey = rgba
+            .pixels()
+            .map(|pixel| {
+                let alpha = u32::from(pixel[3]);
+                let on_paper = (u32::from(pixel[0]) * alpha + 255 * (255 - alpha) + 127) / 255;
+                u8::try_from(on_paper).unwrap_or(255)
+            })
+            .collect();
+        Picture::from_grey(rgba.width(), rgba.height(), grey)
     }
-    Picture::from_grey(luma.width(), luma.height(), grey)
 }
 
 #[cfg(test)]
@@ -629,6 +776,7 @@ mod tests {
     fn transparent_pixels_are_composited_onto_paper() {
         let picture = decode(&png(2, 1, vec![0, 0, 0, 0, 0, 0, 0, 255])).expect("png");
         assert_eq!(picture.grey(), &[255, 0]);
+        assert_eq!(picture.rgb(), None);
     }
 
     #[test]
@@ -701,6 +849,32 @@ mod tests {
         let covered = picture.prepare(2, 2, FitMode::Cover).expect("cover");
         assert_eq!((covered.width(), covered.height()), (2, 2));
         assert_eq!(covered.grey(), &[20, 30, 20, 30]);
+    }
+
+    #[test]
+    fn scaling_and_cropping_retain_rgb_channels() {
+        let picture = Picture::from_rgb(
+            4,
+            2,
+            vec![
+                255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 0, 255, 0, 0, 0, 255, 0, 0, 0, 255, 255,
+                255, 0,
+            ],
+        )
+        .expect("build");
+        let covered = picture.prepare(2, 2, FitMode::Cover).expect("cover");
+        assert_eq!((covered.width(), covered.height()), (2, 2));
+        assert_eq!(
+            covered.rgb(),
+            Some([0, 255, 0, 0, 0, 255, 0, 255, 0, 0, 0, 255].as_slice())
+        );
+    }
+
+    #[test]
+    fn grayscale_pictures_do_not_allocate_an_unused_rgb_copy() {
+        let picture = Picture::from_grey(2, 1, vec![20, 30]).expect("grayscale picture");
+        assert_eq!(picture.rgb(), None);
+        assert_eq!(picture.into_planes(), (vec![20, 30], None));
     }
 
     #[test]
