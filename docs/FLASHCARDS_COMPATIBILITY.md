@@ -61,6 +61,9 @@ revision, and corresponding-source instructions. The validation `.cobalt-app` an
 single-entry catalog are verified with Cobalt's real Ed25519/canonical parsers,
 bound back to `apps/catalog.json`, and checked against the exact standalone
 ARM ELF.
+The verifier CLI and distributable host helper are rebuilt from the clean
+audited checkout in a freshly emptied target directory before their output is
+trusted.
 
 ## Exact supported package boundary
 
