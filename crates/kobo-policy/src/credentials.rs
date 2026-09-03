@@ -20,6 +20,20 @@ const AUDIOBOOK_VOICES: [&str; 6] = [
     "4VZIsMPtgggwNg7OXbPY", // James Gao, Chinese
 ];
 
+/// Whether an application may install one runtime-owned credential.
+///
+/// This is deliberately narrower than filesystem access: an app may replace
+/// only the exact secret names its reviewed network policy can consume.
+#[must_use]
+pub fn may_set(app: &str, name: &str) -> bool {
+    match app {
+        "audiobook" => matches!(name, "exa" | "openai" | "elevenlabs"),
+        "chat" => matches!(name, "openai" | "anthropic" | "gemini"),
+        "zotero-reader" => name == "zotero",
+        _ => false,
+    }
+}
+
 /// Whether a shipped application may attach one named secret to this request.
 ///
 /// The runtime calls this immediately before resolving the secret. Policies
@@ -159,8 +173,17 @@ fn zotero_key(value: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{allowed, AUDIOBOOK_VOICES};
+    use super::{allowed, may_set, AUDIOBOOK_VOICES};
     use kobo_protocol::{Credential, CredentialUse};
+
+    #[test]
+    fn apps_can_install_only_the_credentials_their_policy_consumes() {
+        assert!(may_set("zotero-reader", "zotero"));
+        assert!(may_set("chat", "anthropic"));
+        assert!(may_set("audiobook", "elevenlabs"));
+        assert!(!may_set("zotero-reader", "openai"));
+        assert!(!may_set("other", "zotero"));
+    }
 
     #[test]
     fn chat_credentials_are_bound_to_their_exact_service() {

@@ -5,7 +5,7 @@
 use std::fs;
 use std::io::{self, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
-use std::os::unix::fs::{MetadataExt, PermissionsExt};
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -566,6 +566,7 @@ impl AppServer {
         write_protocol_frame(
             stream,
             &Frame {
+                version: hello.version,
                 request_id: hello.request_id,
                 message: Message::Welcome {
                     width: u16::try_from(PROFILE.width).unwrap_or(u16::MAX),
@@ -583,7 +584,7 @@ impl AppServer {
         // to requests, and terminal output arriving on its own. Frames are
         // length-prefixed, so two of them written at once do not make two
         // frames, they make one unreadable stream.
-        let writer = AppWriter::spawn(stream.try_clone()?);
+        let writer = AppWriter::spawn_for(stream.try_clone()?, hello.version);
         let reader_writer = Arc::clone(&writer);
         thread::spawn(move || {
             // A malformed frame ends the session rather than being skipped,
@@ -1063,6 +1064,7 @@ impl AppSession {
         write_shared(
             &self.writer,
             &Frame {
+                version: kobo_protocol::VERSION,
                 request_id: 0,
                 message: Message::Action { action },
             },
@@ -1073,6 +1075,7 @@ impl AppSession {
         write_shared(
             &self.writer,
             &Frame {
+                version: kobo_protocol::VERSION,
                 request_id: 0,
                 message: Message::Lifecycle(lifecycle),
             },
@@ -1496,6 +1499,7 @@ fn answer_store(
     write_shared(
         writer,
         &Frame {
+            version: kobo_protocol::VERSION,
             request_id,
             message: Message::StoreResult(result),
         },
@@ -1537,8 +1541,9 @@ mod writer_tests {
     fn writing_to_an_application_that_is_not_reading_does_not_block_the_writer() {
         let (ours, theirs) = std::os::unix::net::UnixStream::pair().expect("socket pair");
         // Deliberately never read from.
-        let writer = AppWriter::spawn(ours);
+        let writer = AppWriter::spawn_for(ours, kobo_protocol::VERSION);
         let frame = Frame {
+            version: kobo_protocol::VERSION,
             request_id: 0,
             message: Message::Log {
                 level: kobo_protocol::LogLevel::Info,
@@ -1559,6 +1564,21 @@ mod writer_tests {
             .expect("512 frames queued without blocking on the socket");
         drop(theirs);
     }
+
+    #[test]
+    fn a_legacy_session_receives_legacy_runtime_events() {
+        let (ours, mut theirs) = std::os::unix::net::UnixStream::pair().expect("socket pair");
+        let writer = AppWriter::spawn_for(ours, kobo_protocol::LEGACY_VERSION);
+        let frame = Frame {
+            version: kobo_protocol::VERSION,
+            request_id: 4,
+            message: Message::Lifecycle(kobo_protocol::Lifecycle::Foreground),
+        };
+        write_shared(&writer, &frame).expect("queued");
+        let delivered = super::read_protocol_frame(&mut theirs).expect("delivered");
+        assert_eq!(delivered.version, kobo_protocol::LEGACY_VERSION);
+        assert_eq!(delivered.message, frame.message);
+    }
 }
 
 impl std::fmt::Debug for AppWriter {
@@ -1572,11 +1592,12 @@ struct AppWriter {
     /// The lock is only ever held across a queue push, which cannot block on
     /// anything, which is the entire point.
     sender: Mutex<std::sync::mpsc::Sender<Frame>>,
+    /// Fixed by Hello for the lifetime of this one-app session.
+    version: u8,
 }
 
 impl AppWriter {
-    /// Takes the socket, and returns the only handle anything else may use.
-    fn spawn(mut stream: UnixStream) -> Arc<Self> {
+    fn spawn_for(mut stream: UnixStream, version: u8) -> Arc<Self> {
         let (sender, receiver) = std::sync::mpsc::channel::<Frame>();
         std::thread::spawn(move || {
             for frame in receiver {
@@ -1587,17 +1608,20 @@ impl AppWriter {
         });
         Arc::new(Self {
             sender: Mutex::new(sender),
+            version,
         })
     }
 }
 
 /// Queues one frame for the application. Never blocks on the socket.
 fn write_shared(writer: &Arc<AppWriter>, frame: &Frame) -> io::Result<()> {
+    let mut frame = frame.clone();
+    frame.version = writer.version;
     writer
         .sender
         .lock()
         .map_err(|_| io::Error::other("simulator write lock poisoned"))?
-        .send(frame.clone())
+        .send(frame)
         .map_err(|_| io::Error::other("the application is no longer listening"))
 }
 
@@ -1619,6 +1643,7 @@ fn drain_shell(shells: &Arc<Mutex<kobo_shell::Shells>>, writer: &Arc<AppWriter>)
             write_shared(
                 writer,
                 &Frame {
+                    version: kobo_protocol::VERSION,
                     request_id: 0,
                     message: Message::ShellEvent(event),
                 },
@@ -1646,6 +1671,7 @@ fn answer_shell(
         write_shared(
             writer,
             &Frame {
+                version: kobo_protocol::VERSION,
                 request_id,
                 message: Message::ShellEvent(event),
             },
@@ -1813,6 +1839,7 @@ fn read_app_messages(
                 write_shared(
                     writer,
                     &Frame {
+                        version: kobo_protocol::VERSION,
                         request_id,
                         message: Message::DeviceResult(result),
                     },
@@ -1827,6 +1854,7 @@ fn read_app_messages(
                     write_shared(
                         writer,
                         &Frame {
+                            version: kobo_protocol::VERSION,
                             request_id,
                             message: Message::TaskOutcome {
                                 task,
@@ -1860,6 +1888,7 @@ fn read_app_messages(
                     write_shared(
                         writer,
                         &Frame {
+                            version: kobo_protocol::VERSION,
                             request_id,
                             message: Message::StoreResult(result),
                         },
@@ -1900,6 +1929,30 @@ fn simulated_platform_request_allowed(
     !matches!(request, kobo_protocol::DeviceRequest::Update { .. }) || caller == "settings"
 }
 
+fn write_simulated_secret(directory: &Path, name: &str, value: &str) -> io::Result<()> {
+    fs::create_dir_all(directory)?;
+    fs::set_permissions(directory, fs::Permissions::from_mode(0o700))?;
+    let temporary = directory.join(format!(".{name}.new"));
+    let destination = directory.join(name);
+    let result = (|| {
+        let mut file = fs::OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .mode(0o600)
+            .open(&temporary)?;
+        file.set_permissions(fs::Permissions::from_mode(0o600))?;
+        file.write_all(value.as_bytes())?;
+        file.sync_all()?;
+        fs::rename(&temporary, destination)?;
+        fs::File::open(directory)?.sync_all()
+    })();
+    if result.is_err() {
+        let _ignored = fs::remove_file(temporary);
+    }
+    result
+}
+
 fn simulated_app_request(
     state: &Arc<Mutex<AppState>>,
     caller: &str,
@@ -1907,6 +1960,20 @@ fn simulated_app_request(
     request: &kobo_protocol::DeviceRequest,
 ) -> io::Result<Option<kobo_protocol::DeviceResult>> {
     use kobo_protocol::{DenyReason, DeviceError, DeviceRequest, DeviceResult};
+
+    if let DeviceRequest::SetSecret { name, value } = request {
+        if scenario == Scenario::PermissionDenied
+            || !kobo_policy::credentials::may_set(caller, name)
+        {
+            return Ok(Some(DeviceResult::Denied(DenyReason::NotDeclared)));
+        }
+        let directory = std::env::temp_dir().join(SIM_SECRETS);
+        let result = write_simulated_secret(&directory, name, value.as_str()).map_or_else(
+            |_| DeviceResult::Failed(DeviceError::Backend),
+            |()| DeviceResult::Done,
+        );
+        return Ok(Some(result));
+    }
 
     let authorized = match request {
         DeviceRequest::ListInstalledApps => matches!(caller, "launcher" | "store"),
@@ -2021,6 +2088,7 @@ fn deliver_task_outcomes(
         write_shared(
             writer,
             &Frame {
+                version: kobo_protocol::VERSION,
                 request_id: 0,
                 message: Message::TaskOutcome {
                     task: finished.task,
@@ -2441,6 +2509,35 @@ mod tests {
     }
 
     #[test]
+    fn simulated_secret_install_is_authorized_and_visible_to_tasks() {
+        use kobo_protocol::{DeviceRequest, DeviceResult, SecretValue};
+
+        let directory = std::env::temp_dir().join(SIM_SECRETS);
+        let path = directory.join("zotero");
+        let _ignored = fs::remove_file(&path);
+        let state = Arc::new(Mutex::new(AppState::with_apps(Arc::new(Mutex::new(
+            SimulatedApps::default(),
+        )))));
+        let request = DeviceRequest::SetSecret {
+            name: "zotero".to_owned(),
+            value: SecretValue::new("private-token"),
+        };
+        assert_eq!(
+            app_result(&state, "zotero-reader", Scenario::Normal, &request),
+            DeviceResult::Done
+        );
+        assert_eq!(
+            fs::read(&path).expect("stored simulator secret"),
+            b"private-token"
+        );
+        assert!(matches!(
+            app_result(&state, "todo", Scenario::Normal, &request),
+            DeviceResult::Denied(_)
+        ));
+        let _ignored = fs::remove_file(path);
+    }
+
+    #[test]
     fn simulated_store_updates_and_reinstalls_in_one_session() {
         use kobo_protocol::{DeviceRequest, DeviceResult};
 
@@ -2648,7 +2745,7 @@ mod tests {
         // tapped something. Refusals arrived instantly, which is why nothing
         // noticed: the only tasks the simulator completed were refused ones.
         let (client, server) = UnixStream::pair().expect("a socket pair");
-        let writer = AppWriter::spawn(server);
+        let writer = AppWriter::spawn_for(server, kobo_protocol::VERSION);
         let state = Arc::new(Mutex::new(AppState::default()));
         let tasks = Arc::new(Mutex::new(
             TaskRunner::simulated(private_temp_dir())
@@ -2876,7 +2973,7 @@ mod tests {
         let (mut client, server) = UnixStream::pair().expect("socket pair");
         let session = AppSession {
             state: Arc::new(Mutex::new(AppState::default())),
-            writer: AppWriter::spawn(server),
+            writer: AppWriter::spawn_for(server, kobo_protocol::VERSION),
         };
 
         session
@@ -2946,6 +3043,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn app_server_handshakes_renders_and_returns_actions() {
         let root = private_temp_dir();
         let socket_path = root.join("app.sock");
@@ -2966,6 +3064,7 @@ mod tests {
             write_protocol_frame(
                 &mut stream,
                 &Frame {
+                    version: kobo_protocol::VERSION,
                     request_id: 7,
                     message: Message::Hello {
                         name: "test app".into(),
@@ -2986,6 +3085,7 @@ mod tests {
             write_protocol_frame(
                 &mut stream,
                 &Frame {
+                    version: kobo_protocol::VERSION,
                     request_id: 8,
                     message: Message::SetScreen(Screen::new(
                         1,
@@ -3010,18 +3110,36 @@ mod tests {
         });
         let session = server.accept_app().expect("accept app");
         ready_receiver.recv().expect("screen sent");
-        for _ in 0..100 {
+        let deadline = std::time::Instant::now() + Duration::from_secs(1);
+        while std::time::Instant::now() < deadline {
             if !session.screen().nodes.is_empty() {
                 break;
             }
             thread::sleep(Duration::from_millis(1));
         }
-        assert!(!session.screen().nodes.is_empty());
+        let screen = session.screen();
+        assert!(
+            !screen.nodes.is_empty(),
+            "screen was not rendered within one second"
+        );
+        let button = screen
+            .layout()
+            .nodes
+            .iter()
+            .find(|node| matches!(node.kind, kobo_ui::LayoutKind::Button(..)))
+            .expect("rendered button")
+            .rect;
+        let (x, y) = (button.x + button.width / 2, button.y + button.height / 2);
 
         let browser = thread::spawn(move || -> io::Result<()> {
             let mut stream = TcpStream::connect(address)?;
+            let body = format!("x={x}&y={y}");
             stream.write_all(
-                b"POST /touch HTTP/1.1\r\nHost: localhost\r\nContent-Length: 9\r\n\r\nx=60&y=60",
+                format!(
+                    "POST /touch HTTP/1.1\r\nHost: localhost\r\nContent-Length: {}\r\n\r\n{body}",
+                    body.len()
+                )
+                .as_bytes(),
             )?;
             let mut response = String::new();
             stream.read_to_string(&mut response)?;

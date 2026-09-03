@@ -407,6 +407,26 @@ impl ScreenBuilder {
             .button(CANCEL, "Cancel")
     }
 
+    /// Draws a credential entry without putting the entered value on screen.
+    #[must_use]
+    pub fn secret_entry(self, entry: &TextEntry, prompt: &str, submit: &str) -> Self {
+        self.heading(prompt)
+            .secret_typed(entry.keyboard(), "Type the credential here")
+            .divider()
+            .keyboard(entry.keyboard(), submit)
+            .button(CANCEL, "Cancel")
+    }
+
+    /// Indicates whether a credential has been entered without echoing it.
+    #[must_use]
+    pub fn secret_typed(self, keyboard: &Keyboard, placeholder: &str) -> Self {
+        if keyboard.is_empty() {
+            self.text(placeholder)
+        } else {
+            self.text("Credential entered")
+        }
+    }
+
     /// Shows what has been typed, or `placeholder` when nothing has been.
     ///
     /// An empty field draws nothing at all, which on a panel with no cursor

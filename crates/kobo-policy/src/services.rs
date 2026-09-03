@@ -320,9 +320,9 @@ impl DeviceServices {
             DeviceRequest::ListInstalledApps
             | DeviceRequest::ReadAppCatalog
             | DeviceRequest::RefreshAppCatalog => Self::empty_apps(),
-            DeviceRequest::InstallApp { .. } | DeviceRequest::UninstallApp { .. } => {
-                DeviceResult::Done
-            }
+            DeviceRequest::InstallApp { .. }
+            | DeviceRequest::UninstallApp { .. }
+            | DeviceRequest::SetSecret { .. } => DeviceResult::Done,
             DeviceRequest::LookupWord { word, language } => {
                 self.lookup_word(word, language.as_deref())
             }
@@ -680,7 +680,8 @@ pub fn request_capability(request: &DeviceRequest) -> Option<Capability> {
         | DeviceRequest::ReadAutoUpdate
         | DeviceRequest::SetAutoUpdate { .. }
         | DeviceRequest::ReadUpdateChannel
-        | DeviceRequest::SetUpdateChannel { .. } => return None,
+        | DeviceRequest::SetUpdateChannel { .. }
+        | DeviceRequest::SetSecret { .. } => return None,
     })
 }
 

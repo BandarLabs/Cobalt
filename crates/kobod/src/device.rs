@@ -49,6 +49,8 @@ use kobo_ui::{
 };
 use std::collections::BTreeMap;
 use std::fs;
+use std::io::Write;
+use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -65,6 +67,45 @@ const COBALT_ROOT: &str = "/mnt/onboard/.adds/cobalt";
 /// over USB without a shell, and because `/tmp` is a RAM disk that every
 /// reboot empties. An application names a secret; only the runtime reads one.
 const SECRETS: &str = "/mnt/onboard/.adds/cobalt/secrets";
+
+fn install_app_secret(
+    directory: &Path,
+    app: &str,
+    name: &str,
+    value: &str,
+) -> Result<(), kobo_protocol::DeviceError> {
+    if !kobo_policy::credentials::may_set(app, name)
+        || !kobo_protocol::valid_app_id(name)
+        || value.is_empty()
+        || value.len() > kobo_protocol::MAX_APP_SECRET_BYTES
+        || value.chars().any(char::is_control)
+    {
+        return Err(kobo_protocol::DeviceError::InvalidInput);
+    }
+    fs::create_dir_all(directory).map_err(|_| kobo_protocol::DeviceError::Backend)?;
+    fs::set_permissions(directory, fs::Permissions::from_mode(0o700))
+        .map_err(|_| kobo_protocol::DeviceError::Backend)?;
+    let temporary = directory.join(format!(".{name}.new"));
+    let destination = directory.join(name);
+    let result: std::io::Result<()> = (|| {
+        let mut file = fs::OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .mode(0o600)
+            .open(&temporary)?;
+        file.set_permissions(fs::Permissions::from_mode(0o600))?;
+        file.write_all(value.as_bytes())?;
+        file.sync_all()?;
+        fs::rename(&temporary, &destination)?;
+        fs::File::open(directory)?.sync_all()?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ignored = fs::remove_file(&temporary);
+    }
+    result.map_err(|_| kobo_protocol::DeviceError::Backend)
+}
 
 /// Where owner-installed TLS trust roots live, beside the credentials and for
 /// the same reasons. A certificate here lets the runtime verify a daemon on
@@ -926,6 +967,8 @@ struct Hosted {
     /// Identity that survives the list being reordered. An index would not:
     /// applications are removed from the middle when they end.
     id: u64,
+    /// Selected at Hello and retained for responses to this application.
+    version: u8,
     name: String,
     path: PathBuf,
     /// Root-owned filesystem visible to this application on the device.
@@ -1100,6 +1143,7 @@ impl Hosted {
         kobo_protocol::write_to(
             &mut self.stream,
             &Frame {
+                version: self.version,
                 request_id: 0,
                 message,
             },
@@ -1622,8 +1666,10 @@ fn host_applications(
                             .is_some_and(|(at, _, _)| at.elapsed() >= HOLD_TIME),
                         _ => false,
                     };
+                    let version = apps[index].version;
                     let disposition = deliver_touch(
                         &mut apps[index].stream,
+                        version,
                         event,
                         screen.as_ref(),
                         &chrome,
@@ -2200,6 +2246,19 @@ fn host_applications(
                                             }
                                         }
                                     }
+                                    kobo_protocol::DeviceRequest::SetSecret { name, value } => {
+                                        match install_app_secret(
+                                            Path::new(SECRETS),
+                                            &apps[index].name,
+                                            name,
+                                            value.as_str(),
+                                        ) {
+                                            Ok(()) => kobo_protocol::DeviceResult::Done,
+                                            Err(error) => {
+                                                kobo_protocol::DeviceResult::Failed(error)
+                                            }
+                                        }
+                                    }
                                     // Answered by probing the hardware again
                                     // rather than from anything cached, so
                                     // the screen built from it describes the
@@ -2410,6 +2469,7 @@ fn reply(app: &mut Hosted, request_id: u32, message: Message) -> Result<(), Stri
     kobo_protocol::write_to(
         &mut app.stream,
         &Frame {
+            version: app.version,
             request_id,
             message,
         },
@@ -2521,6 +2581,9 @@ fn system_request_allowed(app: &str, request: &kobo_protocol::DeviceRequest) -> 
         | kobo_protocol::DeviceRequest::SetAutoUpdate { .. }
         | kobo_protocol::DeviceRequest::ReadUpdateChannel
         | kobo_protocol::DeviceRequest::SetUpdateChannel { .. } => app == "settings",
+        kobo_protocol::DeviceRequest::SetSecret { name, .. } => {
+            kobo_policy::credentials::may_set(app, name)
+        }
         kobo_protocol::DeviceRequest::ListInstalledApps => matches!(app, "launcher" | "store"),
         kobo_protocol::DeviceRequest::ReadAppCatalog
         | kobo_protocol::DeviceRequest::RefreshAppCatalog
@@ -2824,7 +2887,7 @@ fn start_application(
     let greeting = greet(&listener, whole_screen, &expected_name);
     drop(listener);
     let _ignored = fs::remove_file(&socket_path);
-    let (stream, name) = match greeting {
+    let (stream, name, version) = match greeting {
         Ok(greeting) => greeting,
         Err(error) => {
             stop_application(&mut child, jail.as_deref());
@@ -2891,6 +2954,7 @@ fn start_application(
         store: kobo_policy::store::Store::new(Path::new(STATE_ROOT).join(&name)),
         shelf: kobo_policy::shelf::Shelf::new(shelf_root),
         name,
+        version,
         path: path.to_path_buf(),
         jail,
         child,
@@ -3051,7 +3115,10 @@ fn installed_name(path: &Path) -> Result<String, String> {
 /// Half a second, which is what every touch platform settled on: shorter and
 /// an unhurried tap becomes a gesture nobody asked for, longer and the reader
 /// concludes the panel is ignoring them and lifts off.
-const HOLD_TIME: Duration = Duration::from_millis(500);
+/// Long enough to distinguish a deliberate contextual hold from the immediate
+/// tap that opens a destination, while remaining inside the observed 1–1.5 s
+/// reader comfort range.
+const HOLD_TIME: Duration = Duration::from_millis(1_100);
 
 /// Briefly holds a release so an application's next screen can carry it.
 ///
@@ -3218,11 +3285,11 @@ fn text_hold_for(
         return None;
     };
     let screen = screen?;
-    let action = screen.hold?;
     let (Ok(x), Ok(y)) = (i32::try_from(x), i32::try_from(y)) else {
         return None;
     };
     let layout = screen.layout_with(&metrics_for(screen), chrome);
+    let action = layout.hold?;
     layout.hit_text(x, y).map(|hit| (action, hit))
 }
 
@@ -3246,7 +3313,7 @@ fn greet(
     listener: &std::os::unix::net::UnixListener,
     whole_screen: Rect,
     expected_name: &str,
-) -> Result<(std::os::unix::net::UnixStream, String), String> {
+) -> Result<(std::os::unix::net::UnixStream, String, u8), String> {
     let (mut stream, _) = listener
         .accept()
         .map_err(|error| format!("application never connected: {error}"))?;
@@ -3263,6 +3330,7 @@ fn greet(
     kobo_protocol::write_to(
         &mut stream,
         &Frame {
+            version: hello.version,
             request_id: hello.request_id,
             message: Message::Welcome {
                 width: u16::try_from(whole_screen.width).unwrap_or(u16::MAX),
@@ -3277,7 +3345,7 @@ fn greet(
         },
     )
     .map_err(|error| format!("welcome: {error}"))?;
-    Ok((stream, name))
+    Ok((stream, name, hello.version))
 }
 
 /// Keeps the recovery watchdog fed from a thread, for the stretches where the
@@ -3336,6 +3404,7 @@ enum Tap {
 /// the caller still leaves if no new screen follows.
 fn deliver_touch(
     stream: &mut std::os::unix::net::UnixStream,
+    version: u8,
     event: TouchEvent,
     current: Option<&Screen>,
     chrome: &Chrome,
@@ -3345,6 +3414,7 @@ fn deliver_touch(
         kobo_protocol::write_to(
             stream,
             &Frame {
+                version,
                 request_id: 0,
                 message: Message::TextHold {
                     action,
@@ -3367,6 +3437,7 @@ fn deliver_touch(
     kobo_protocol::write_to(
         stream,
         &Frame {
+            version,
             request_id: 0,
             message: Message::Action { action },
         },
@@ -3879,6 +3950,22 @@ mod tests {
             action_for(touch, Some(&no_hold), &chrome, true),
             Some(ActionId(12))
         );
+
+        let covered = screen.clone().with_overlay(kobo_ui::Overlay::modal(
+            kobo_ui::NodeId(9),
+            "Question",
+            Vec::new(),
+        ));
+        assert_eq!(
+            text_hold_for(touch, Some(&covered), &chrome, true),
+            None,
+            "covered text received a hold through the modal"
+        );
+        assert_ne!(
+            action_for(touch, Some(&covered), &chrome, true),
+            Some(ActionId(13)),
+            "the modal leaked the page hold"
+        );
     }
 
     /// The three states a page key can land in, and the one that used to be
@@ -4007,14 +4094,30 @@ mod tests {
         let (mut runtime, mut app) =
             std::os::unix::net::UnixStream::pair().expect("a pair of sockets");
         assert_eq!(
-            deliver_touch(&mut runtime, tap, Some(&screen), &chrome, false).expect("route the tap"),
+            deliver_touch(
+                &mut runtime,
+                kobo_protocol::VERSION,
+                tap,
+                Some(&screen),
+                &chrome,
+                false,
+            )
+            .expect("route the tap"),
             Tap::Leave,
             "a screen that did not ask keeps the old behaviour"
         );
 
         let owning = screen.clone().with_own_back(true);
         assert_eq!(
-            deliver_touch(&mut runtime, tap, Some(&owning), &chrome, false).expect("route the tap"),
+            deliver_touch(
+                &mut runtime,
+                kobo_protocol::VERSION,
+                tap,
+                Some(&owning),
+                &chrome,
+                false,
+            )
+            .expect("route the tap"),
             Tap::OfferedBack
         );
         let frame = kobo_protocol::read_from(&mut app).expect("the application is told");
@@ -4206,6 +4309,13 @@ mod hosting_tests {
             assert!(!super::system_request_allowed("todo", &request));
         }
 
+        let secret = DeviceRequest::SetSecret {
+            name: "zotero".to_owned(),
+            value: kobo_protocol::SecretValue::new("token"),
+        };
+        assert!(super::system_request_allowed("zotero-reader", &secret));
+        assert!(!super::system_request_allowed("todo", &secret));
+
         let install = DeviceRequest::InstallApp {
             id: "word-count".to_owned(),
         };
@@ -4231,6 +4341,49 @@ mod hosting_tests {
             assert!(!super::system_request_allowed("settings", &request));
             assert!(!super::system_request_allowed("todo", &request));
         }
+    }
+
+    #[test]
+    fn app_secret_installation_is_scoped_private_and_replaceable() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory =
+            std::env::temp_dir().join(format!("kobo-app-secret-{}", std::process::id()));
+        let _ignored = std::fs::remove_dir_all(&directory);
+        super::install_app_secret(&directory, "zotero-reader", "zotero", "first")
+            .expect("install credential");
+        assert_eq!(
+            std::fs::read(directory.join("zotero")).expect("read credential"),
+            b"first"
+        );
+        assert_eq!(
+            std::fs::metadata(&directory)
+                .expect("secret directory")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o700
+        );
+        assert_eq!(
+            std::fs::metadata(directory.join("zotero"))
+                .expect("secret file")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+        super::install_app_secret(&directory, "zotero-reader", "zotero", "second")
+            .expect("replace credential");
+        assert_eq!(
+            std::fs::read(directory.join("zotero")).expect("read replacement"),
+            b"second"
+        );
+        assert!(
+            super::install_app_secret(&directory, "zotero-reader", "openai", "not-authorized")
+                .is_err()
+        );
+        assert!(!directory.join("openai").exists());
+        let _ignored = std::fs::remove_dir_all(directory);
     }
 
     #[test]

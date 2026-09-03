@@ -6,7 +6,7 @@ use std::env;
 use std::error::Error;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -456,6 +456,7 @@ fn serve_simulation(socket_path: &Path, frame_path: &Path) -> Result<(), Box<dyn
     kobo_protocol::write_to(
         &mut stream,
         &Frame {
+            version: hello.version,
             request_id: hello.request_id,
             message: Message::Welcome {
                 width: u16::try_from(metrics.width)?,
@@ -465,7 +466,7 @@ fn serve_simulation(socket_path: &Path, frame_path: &Path) -> Result<(), Box<dyn
             },
         },
     )?;
-    serve_application(&mut stream, frame_path, &name, metrics)
+    serve_application(&mut stream, frame_path, &name, metrics, hello.version)
 }
 
 /// Where a host runtime looks for owner-installed TLS trust roots.
@@ -497,6 +498,34 @@ fn host_dictionary_directory() -> PathBuf {
     )
 }
 
+fn host_secret_directory() -> PathBuf {
+    std::env::temp_dir().join("cobalt-host-secrets")
+}
+
+fn install_host_secret(directory: &Path, name: &str, value: &str) -> std::io::Result<()> {
+    fs::create_dir_all(directory)?;
+    fs::set_permissions(directory, fs::Permissions::from_mode(0o700))?;
+    let temporary = directory.join(format!(".{name}.new"));
+    let destination = directory.join(name);
+    let result = (|| {
+        let mut file = OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .mode(0o600)
+            .open(&temporary)?;
+        file.set_permissions(fs::Permissions::from_mode(0o600))?;
+        file.write_all(value.as_bytes())?;
+        file.sync_all()?;
+        fs::rename(&temporary, destination)?;
+        fs::File::open(directory)?.sync_all()
+    })();
+    if result.is_err() {
+        let _ignored = fs::remove_file(temporary);
+    }
+    result
+}
+
 #[allow(
     clippy::too_many_lines,
     reason = "one arm per message type; splitting the dispatch hides it"
@@ -506,6 +535,7 @@ fn serve_application(
     frame_path: &Path,
     name: &str,
     metrics: kobo_ui::DisplayMetrics,
+    peer_version: u8,
 ) -> Result<(), Box<dyn Error>> {
     // In simulation the daemon owns no hardware, so every hardware-touching
     // request is answered honestly rather than pretended.
@@ -523,10 +553,16 @@ fn serve_application(
     // runtime uses. Without the grant the backend could never run, so this
     // path claimed to be the real runtime while refusing every request an
     // application made.
+    let secrets = host_secret_directory();
+    let credential_app = name.to_owned();
     let tasks = std::sync::Arc::new(std::sync::Mutex::new(
         TaskRunner::simulated(std::env::temp_dir())
             .with_fetch(std::sync::Arc::new(kobo_net::fetch_from))
             .with_post(std::sync::Arc::new(kobo_net::post))
+            .with_secrets(&secrets)
+            .with_credential_policy(std::sync::Arc::new(move |credential, url, usage| {
+                kobo_policy::credentials::allowed(&credential_app, credential, url, usage)
+            }))
             .with_capabilities([kobo_policy::Capability::Network]),
     ));
     // Outcomes are delivered from their own thread. This loop blocks on the
@@ -539,7 +575,7 @@ fn serve_application(
     {
         let draining = std::sync::Arc::clone(&tasks);
         let writer = std::sync::Arc::clone(&writer);
-        std::thread::spawn(move || deliver_outcomes(&draining, &writer));
+        std::thread::spawn(move || deliver_outcomes(&draining, &writer, peer_version));
     }
     let store = kobo_policy::store::Store::new(std::env::temp_dir().join("cobalt-host-state"));
     let shelf = kobo_policy::shelf::Shelf::new(std::env::temp_dir().join("cobalt-host-data"));
@@ -609,11 +645,31 @@ fn serve_application(
             Message::Launch { name } => println!("launch requested: {name}"),
             Message::Log { level, message } => log_app(level, &message),
             Message::DeviceRequest(request) => {
-                let result = services.handle(request.clone());
+                let result = if let kobo_protocol::DeviceRequest::SetSecret {
+                    name: secret_name,
+                    value,
+                } = &request
+                {
+                    if kobo_policy::credentials::may_set(name, secret_name) {
+                        install_host_secret(&secrets, secret_name, value.as_str()).map_or_else(
+                            |_| {
+                                kobo_protocol::DeviceResult::Failed(
+                                    kobo_protocol::DeviceError::Backend,
+                                )
+                            },
+                            |()| kobo_protocol::DeviceResult::Done,
+                        )
+                    } else {
+                        kobo_protocol::DeviceResult::Denied(kobo_protocol::DenyReason::NotDeclared)
+                    }
+                } else {
+                    services.handle(request.clone())
+                };
                 println!("device request {request:?} -> {result:?}");
                 write_shared(
                     &writer,
                     &Frame {
+                        version: frame.version,
                         request_id: frame.request_id,
                         message: Message::DeviceResult(result),
                     },
@@ -629,6 +685,7 @@ fn serve_application(
                     write_shared(
                         &writer,
                         &Frame {
+                            version: frame.version,
                             request_id: frame.request_id,
                             message: Message::TaskOutcome {
                                 task,
@@ -645,6 +702,7 @@ fn serve_application(
                 write_shared(
                     &writer,
                     &Frame {
+                        version: frame.version,
                         request_id: frame.request_id,
                         message: Message::StoreResult(result),
                     },
@@ -658,6 +716,7 @@ fn serve_application(
             Message::ShellRequest(_) => write_shared(
                 &writer,
                 &Frame {
+                    version: frame.version,
                     request_id: frame.request_id,
                     message: Message::ShellEvent(kobo_protocol::ShellEvent::Refused(
                         kobo_protocol::ShellError::Unavailable,
@@ -711,6 +770,7 @@ fn write_shared(
 fn deliver_outcomes(
     tasks: &std::sync::Arc<std::sync::Mutex<TaskRunner>>,
     writer: &std::sync::Arc<std::sync::Mutex<UnixStream>>,
+    peer_version: u8,
 ) {
     loop {
         let Ok(finished) = tasks.lock().map(|mut tasks| tasks.drain()) else {
@@ -723,6 +783,7 @@ fn deliver_outcomes(
             if kobo_protocol::write_to(
                 &mut *stream,
                 &Frame {
+                    version: peer_version,
                     request_id: 0,
                     message: Message::TaskOutcome {
                         task: finished.task,
@@ -874,6 +935,21 @@ impl Drop for SocketGuard {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn host_secret_installation_replaces_without_exposing_a_partial_file() {
+        let directory =
+            std::env::temp_dir().join(format!("cobalt-host-secret-test-{}", std::process::id()));
+        let _ignored = std::fs::remove_dir_all(&directory);
+        super::install_host_secret(&directory, "zotero", "first").expect("install secret");
+        super::install_host_secret(&directory, "zotero", "second").expect("replace secret");
+        assert_eq!(
+            std::fs::read(directory.join("zotero")).expect("read secret"),
+            b"second"
+        );
+        assert!(!directory.join(".zotero.new").exists());
+        let _ignored = std::fs::remove_dir_all(directory);
+    }
 
     #[test]
     fn an_elipsa_session_keeps_its_verified_metrics_without_another_probe() {
