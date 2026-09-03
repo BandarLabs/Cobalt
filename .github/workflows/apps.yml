@@ -114,8 +114,18 @@ jobs:
               --jq '.artifacts[] | [.name, .expired] | @tsv' \
               > "$1"
           }
+          # The publish job uploads a `verified-app-set-<attempt>` artifact
+          # alongside the per-app ones, and it shares their prefix. Both lists
+          # below are compared against the per-package names, so the set has to
+          # be filtered out or the comparison can never hold.
+          verified_app_names() {
+            awk -F'\t' '$1 ~ /^verified-app-/ && $1 !~ /^verified-app-set-[0-9]+$/ {print $1}' \
+              "$1" | sort
+          }
           live_verified_apps() {
-            awk -F'\t' '$2 == "false" && $1 ~ /^verified-app-/ {print $1}' "$1" | sort
+            awk -F'\t' \
+              '$2 == "false" && $1 ~ /^verified-app-/ && $1 !~ /^verified-app-set-[0-9]+$/ {print $1}' \
+              "$1" | sort
           }
           asset_id() {
             # shellcheck disable=SC2016
@@ -262,7 +272,7 @@ jobs:
               while IFS=$'\t' read -r run_id run_sha; do
                 candidate="$RUNNER_TEMP/artifacts-$run_id.tsv"
                 run_artifacts "$candidate" "$run_id"
-                artifact_names="$(awk -F'\t' '$1 ~ /^verified-app-/ {print $1}' "$candidate" | sort)"
+                artifact_names="$(verified_app_names "$candidate")"
                 if [ "$artifact_names" = "$expected" ]; then
                   previous_sha="$run_sha"
                   if [ "$(live_verified_apps "$candidate")" = "$expected" ]; then
