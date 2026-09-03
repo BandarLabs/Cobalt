@@ -141,7 +141,19 @@ retained marker text followed by a visible
 `[Type answer is unavailable on Kobo]` notice, with diagnostics; marker text is
 never silently deleted. HTML and CSS never execute on the Kobo:
 rendered HTML is reduced to bounded plain text and source styling remains inert
-metadata.
+metadata. Semantic bold, emphasis, underline, superscript, and subscript from
+the rendered HTML and a bounded safe subset of notetype CSS are retained as
+validated byte ranges. CSS cannot choose geometry, colours, fonts, animation,
+or device layout.
+
+The review interface is portrait-first for the 1072×1448 Clara BW panel. It
+opens on a paged deck picker, keeps deck/progress context compact, gives card
+content the dominant region, pins a single **Reveal answer** action on the
+question, and uses stable two-by-two **Again / Hard / Good / Easy** targets on
+the answer. Good is the one filled default; no interval is displayed because
+the Kobo intentionally does not run Anki's scheduler after a local grade.
+Long card text is split against the actual panel metrics and text scale, with
+visible page controls and the review actions retained on every page.
 
 ## Media and image safety
 
@@ -170,9 +182,13 @@ dimensions/pixels. Entity declarations, active/animated/foreign elements,
 event handlers, external/relative/absolute/data image references, external
 CSS/font references, and non-fragment `url()` values are refused. resvg/usvg's
 default file resolver is replaced with resolvers that always return `None`.
-Only the bundled Atkinson Hyperlegible and DejaVu faces are available, and SVG
-text needing another glyph is rejected. A harmless legacy doctype may be
-stripped only when there are no entity declarations. The host creates a
+Atkinson Hyperlegible remains the interface face. A deterministically derived,
+renamed **Cobalt Japanese** font subset covers Latin-1, JIS X 0208, and the
+documented JIS X 0213 plane-one additions for Japanese card and SVG text.
+Its exact Noto CJK source revision, source hash, subset recipe, output hash, and
+SIL OFL terms ship with both host and device artifacts. Text needing another
+glyph is rejected instead of becoming an empty box. A harmless legacy doctype
+may be stripped only when there are no entity declarations. The host creates a
 deterministic greyscale PNG named from the source digest; the original SVG is
 retained for reconciliation. Host verification/staging check every SVG, and
 device admission checks every SVG referenced by the bounded due queue: both
@@ -195,8 +211,8 @@ invent replacement IDs or filenames.
 A legacy COLPKG replacement atomically replaces the Flashcards collection
 bundle and does not merge the previous Anki metadata. The separately named,
 owner-local `cobalt-review-log.ndjson` is the only documented Cobalt state
-preserved by collection replacement/staging. Format-2 records bind card ID,
-grade, imported scheduling snapshot, and the exact bundle SHA-256. Export
+preserved by collection replacement/staging. Format-2 records bind card ID, one of `again`, `hard`, `good`, or `easy`, the
+imported scheduling snapshot, and the exact bundle SHA-256. Export
 requires exact fields, a supported grade, a valid digest, bounded
 newline-terminated records, and byte-for-byte verification after atomic write.
 The log is not presented as an Anki scheduler round trip.

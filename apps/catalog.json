@@ -61,8 +61,8 @@
       "id": "flashcards",
       "display_name": "Flashcards",
       "short_label": "Flashcards",
-      "summary": "Review host-prepared, verified offline flashcard bundles with due queues and side-specific media.",
-      "version": "0.3.3",
+      "summary": "Review prepared offline decks in a focused due queue with safe side-specific text and media.",
+      "version": "0.3.4",
       "minimum_cobalt_version": "0.3.1",
       "glyph": "note",
       "capabilities": []
