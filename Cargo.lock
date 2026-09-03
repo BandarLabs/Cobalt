@@ -585,6 +585,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "kobo-bible"
+version = "0.3.0"
+dependencies = [
+ "kobo-json",
+ "kobo-sdk",
+ "kobo-ui",
+]
+
+[[package]]
 name = "kobo-bookview"
 version = "0.3.3"
 dependencies = [
@@ -621,6 +630,14 @@ dependencies = [
  "kobo-json",
  "kobo-net",
  "kobo-sim",
+]
+
+[[package]]
+name = "kobo-color"
+version = "0.1.0"
+dependencies = [
+ "kobo-sdk",
+ "kobo-ui",
 ]
 
 [[package]]

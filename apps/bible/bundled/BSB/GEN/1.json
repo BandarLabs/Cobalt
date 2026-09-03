@@ -1,0 +1,468 @@
+﻿{
+    "translation":  {
+                        "id":  "BSB",
+                        "name":  "Berean Standard Bible",
+                        "website":  "https://berean.bible/",
+                        "licenseUrl":  "https://berean.bible/",
+                        "shortName":  "BSB",
+                        "englishName":  "Berean Standard Bible",
+                        "language":  "eng",
+                        "textDirection":  "ltr",
+                        "sha256":  "6cc5238e442b4204b0f617cc5c932bc04f3bae4a0658e6393b0e319653ebe37f",
+                        "availableFormats":  [
+                                                 "json"
+                                             ],
+                        "listOfBooksApiLink":  "/api/BSB/books.json",
+                        "completeTranslationApiLink":  "/api/BSB/complete.json",
+                        "simpleCompleteTranslationApiLink":  "/api/BSB/complete.simple.json",
+                        "numberOfBooks":  66,
+                        "totalNumberOfChapters":  1189,
+                        "totalNumberOfVerses":  31086,
+                        "languageName":  "English",
+                        "languageEnglishName":  "English"
+                    },
+    "book":  {
+                 "id":  "GEN",
+                 "translationId":  "BSB",
+                 "name":  "Genesis",
+                 "commonName":  "Genesis",
+                 "title":  "Genesis",
+                 "order":  1,
+                 "numberOfChapters":  50,
+                 "sha256":  "3ac54876e754cf5bb2847f2cf3d61267e2ad9a279e0defb5874c2013f2601f36",
+                 "firstChapterNumber":  1,
+                 "firstChapterApiLink":  "/api/BSB/GEN/1.json",
+                 "firstChapterReference":  {
+                                               "translationId":  "BSB",
+                                               "book":  "GEN",
+                                               "chapter":  1
+                                           },
+                 "lastChapterNumber":  50,
+                 "lastChapterApiLink":  "/api/BSB/GEN/50.json",
+                 "lastChapterReference":  {
+                                              "translationId":  "BSB",
+                                              "book":  "GEN",
+                                              "chapter":  50
+                                          },
+                 "totalNumberOfVerses":  1533
+             },
+    "thisChapterLink":  "/api/BSB/GEN/1.simple.json",
+    "thisChapterReference":  {
+                                 "translationId":  "BSB",
+                                 "book":  "GEN",
+                                 "chapter":  1
+                             },
+    "thisChapterAudioLinks":  {
+                                  "david":  "https://audio.bible.helloao.org/api/BSB/GEN/1/audio/david.mp3",
+                                  "gilbert":  "https://openbible.com/audio/gilbert/BSB_01_Gen_001_G.mp3",
+                                  "hays":  "https://audio.bible.helloao.org/api/BSB/GEN/1/audio/hays.mp3",
+                                  "souer":  "https://audio.bible.helloao.org/api/BSB/GEN/1/audio/souer.mp3"
+                              },
+    "nextChapterApiLink":  "/api/BSB/GEN/2.simple.json",
+    "nextChapterReference":  {
+                                 "translationId":  "BSB",
+                                 "book":  "GEN",
+                                 "chapter":  2
+                             },
+    "nextChapterAudioLinks":  {
+                                  "david":  "https://audio.bible.helloao.org/api/BSB/GEN/2/audio/david.mp3",
+                                  "gilbert":  "https://openbible.com/audio/gilbert/BSB_01_Gen_002_G.mp3",
+                                  "hays":  "https://audio.bible.helloao.org/api/BSB/GEN/2/audio/hays.mp3",
+                                  "souer":  "https://audio.bible.helloao.org/api/BSB/GEN/2/audio/souer.mp3"
+                              },
+    "previousChapterApiLink":  null,
+    "previousChapterReference":  null,
+    "previousChapterAudioLinks":  null,
+    "thisChapterAudioTimings":  {
+
+                                },
+    "nextChapterAudioTimings":  {
+
+                                },
+    "previousChapterAudioTimings":  null,
+    "numberOfVerses":  31,
+    "chapter":  {
+                    "number":  1,
+                    "content":  [
+                                    {
+                                        "type":  "heading",
+                                        "text":  "The Creation"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  1,
+                                        "text":  "In the beginning God created the heavens and the earth.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  2,
+                                        "text":  "Now the earth was formless and void, and darkness was over the surface of the deep. And the Spirit of God was hovering over the surface of the waters.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "heading",
+                                        "text":  "The First Day"
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  3,
+                                        "text":  "And God said, âLet there be light,â and there was light.",
+                                        "footnotes":  [
+                                                          {
+                                                              "noteId":  0,
+                                                              "offset":  35,
+                                                              "text":  "Cited in 2 Corinthians 4:6",
+                                                              "caller":  "+"
+                                                          }
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  4,
+                                        "text":  "And God saw that the light was good, and He separated the light from the darkness.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  5,
+                                        "text":  "God called the light âday,â and the darkness He called ânight.â\nAnd there was evening, and there was morningâthe first day.",
+                                        "footnotes":  [
+                                                          {
+                                                              "noteId":  1,
+                                                              "offset":  123,
+                                                              "text":  "Literally day one",
+                                                              "caller":  "+"
+                                                          }
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "heading",
+                                        "text":  "The Second Day"
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  6,
+                                        "text":  "And God said, âLet there be an expanse between the waters, to separate the waters from the waters.â",
+                                        "footnotes":  [
+                                                          {
+                                                              "noteId":  2,
+                                                              "offset":  38,
+                                                              "text":  "Or a canopy or a firmament or a vault; also in verses 7, 8, 14, 15, 17, and 20",
+                                                              "caller":  "+"
+                                                          }
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  7,
+                                        "text":  "So God made the expanse and separated the waters beneath it from the waters above. And it was so.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  8,
+                                        "text":  "God called the expanse âsky.â\nAnd there was evening, and there was morningâthe second day.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "heading",
+                                        "text":  "The Third Day"
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  9,
+                                        "text":  "And God said, âLet the waters under the sky be gathered into one place, so that the dry land may appear.â And it was so.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  10,
+                                        "text":  "God called the dry land âearth,â and the gathering of waters He called âseas.â And God saw that it was good.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  11,
+                                        "text":  "Then God said, âLet the earth bring forth vegetation: seed-bearing plants and fruit trees, each bearing fruit with seed according to its kind.â And it was so.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  12,
+                                        "text":  "The earth produced vegetation: seed-bearing plants according to their kinds and trees bearing fruit with seed according to their kinds. And God saw that it was good.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  13,
+                                        "text":  "And there was evening, and there was morningâthe third day.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "heading",
+                                        "text":  "The Fourth Day"
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  14,
+                                        "text":  "And God said, âLet there be lights in the expanse of the sky to distinguish between the day and the night, and let them be signs to mark the seasons and days and years.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  15,
+                                        "text":  "And let them serve as lights in the expanse of the sky to shine upon the earth.â And it was so.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  16,
+                                        "text":  "God made two great lights: the greater light to rule the day and the lesser light to rule the night. And He made the stars as well.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  17,
+                                        "text":  "God set these lights in the expanse of the sky to shine upon the earth,",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  18,
+                                        "text":  "to preside over the day and the night, and to separate the light from the darkness. And God saw that it was good.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  19,
+                                        "text":  "And there was evening, and there was morningâthe fourth day.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "heading",
+                                        "text":  "The Fifth Day"
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  20,
+                                        "text":  "And God said, âLet the waters teem with living creatures, and let birds fly above the earth in the open expanse of the sky.â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  21,
+                                        "text":  "So God created the great sea creatures and every living thing that moves, with which the waters teemed according to their kinds, and every winged bird after its kind. And God saw that it was good.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  22,
+                                        "text":  "Then God blessed them and said, âBe fruitful and multiply and fill the waters of the seas, and let birds multiply on the earth.â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  23,
+                                        "text":  "And there was evening, and there was morningâthe fifth day.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "heading",
+                                        "text":  "The Sixth Day"
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  24,
+                                        "text":  "And God said, âLet the earth bring forth living creatures according to their kinds: livestock, land crawlers, and beasts of the earth according to their kinds.â And it was so.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  25,
+                                        "text":  "God made the beasts of the earth according to their kinds, the livestock according to their kinds, and everything that crawls upon the earth according to its kind. And God saw that it was good.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  26,
+                                        "text":  "Then God said, âLet Us make man in Our image, after Our likeness, to rule over the fish of the sea and the birds of the air, over the livestock, and over all the earth itself and every creature that crawls upon it.â",
+                                        "footnotes":  [
+                                                          {
+                                                              "noteId":  3,
+                                                              "offset":  174,
+                                                              "text":  "MT; Syriac and over all the beasts of the earth",
+                                                              "caller":  "+"
+                                                          }
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  27,
+                                        "text":  "So God created man in His own image;\nin the image of God He created him;\nmale and female He created them.",
+                                        "footnotes":  [
+                                                          {
+                                                              "noteId":  4,
+                                                              "offset":  105,
+                                                              "text":  "Cited in Matthew 19:4 and Mark 10:6",
+                                                              "caller":  "+"
+                                                          }
+                                                      ],
+                                        "poem":  [
+                                                     {
+                                                         "start":  0,
+                                                         "end":  36,
+                                                         "level":  1
+                                                     },
+                                                     {
+                                                         "start":  37,
+                                                         "end":  72,
+                                                         "level":  2
+                                                     },
+                                                     {
+                                                         "start":  73,
+                                                         "end":  105,
+                                                         "level":  2
+                                                     }
+                                                 ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  28,
+                                        "text":  "God blessed them and said to them, âBe fruitful and multiply, and fill the earth and subdue it; rule over the fish of the sea and the birds of the air and every creature that crawls upon the earth.â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  29,
+                                        "text":  "Then God said, âBehold, I have given you every seed-bearing plant on the face of all the earth, and every tree whose fruit contains seed. They will be yours for food.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  30,
+                                        "text":  "And to every beast of the earth and every bird of the air and every creature that crawls upon the earthâeverything that has the breath of life in itâI have given every green plant for food.â And it was so.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  31,
+                                        "text":  "And God looked upon all that He had made, and indeed, it was very good.\nAnd there was evening, and there was morningâthe sixth day.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    }
+                                ],
+                    "footnotes":  [
+
+                                  ]
+                },
+    "fullChapterApiLink":  "/api/BSB/GEN/1.json"
+}

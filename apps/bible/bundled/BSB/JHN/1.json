@@ -1,0 +1,682 @@
+﻿{
+    "translation":  {
+                        "id":  "BSB",
+                        "name":  "Berean Standard Bible",
+                        "website":  "https://berean.bible/",
+                        "licenseUrl":  "https://berean.bible/",
+                        "shortName":  "BSB",
+                        "englishName":  "Berean Standard Bible",
+                        "language":  "eng",
+                        "textDirection":  "ltr",
+                        "sha256":  "6cc5238e442b4204b0f617cc5c932bc04f3bae4a0658e6393b0e319653ebe37f",
+                        "availableFormats":  [
+                                                 "json"
+                                             ],
+                        "listOfBooksApiLink":  "/api/BSB/books.json",
+                        "completeTranslationApiLink":  "/api/BSB/complete.json",
+                        "simpleCompleteTranslationApiLink":  "/api/BSB/complete.simple.json",
+                        "numberOfBooks":  66,
+                        "totalNumberOfChapters":  1189,
+                        "totalNumberOfVerses":  31086,
+                        "languageName":  "English",
+                        "languageEnglishName":  "English"
+                    },
+    "book":  {
+                 "id":  "JHN",
+                 "translationId":  "BSB",
+                 "name":  "John",
+                 "commonName":  "John",
+                 "title":  "John",
+                 "order":  43,
+                 "numberOfChapters":  21,
+                 "sha256":  "791572ca3cd6b120a73156670c1547b4844aba6e0e1c61a4c44e94e21c3b54a8",
+                 "firstChapterNumber":  1,
+                 "firstChapterApiLink":  "/api/BSB/JHN/1.json",
+                 "firstChapterReference":  {
+                                               "translationId":  "BSB",
+                                               "book":  "JHN",
+                                               "chapter":  1
+                                           },
+                 "lastChapterNumber":  21,
+                 "lastChapterApiLink":  "/api/BSB/JHN/21.json",
+                 "lastChapterReference":  {
+                                              "translationId":  "BSB",
+                                              "book":  "JHN",
+                                              "chapter":  21
+                                          },
+                 "totalNumberOfVerses":  878
+             },
+    "thisChapterLink":  "/api/BSB/JHN/1.simple.json",
+    "thisChapterReference":  {
+                                 "translationId":  "BSB",
+                                 "book":  "JHN",
+                                 "chapter":  1
+                             },
+    "thisChapterAudioLinks":  {
+                                  "david":  "https://audio.bible.helloao.org/api/BSB/JHN/1/audio/david.mp3",
+                                  "gilbert":  "https://openbible.com/audio/gilbert/BSB_43_Jhn_001_G.mp3",
+                                  "hays":  "https://audio.bible.helloao.org/api/BSB/JHN/1/audio/hays.mp3",
+                                  "souer":  "https://audio.bible.helloao.org/api/BSB/JHN/1/audio/souer.mp3"
+                              },
+    "nextChapterApiLink":  "/api/BSB/JHN/2.simple.json",
+    "nextChapterReference":  {
+                                 "translationId":  "BSB",
+                                 "book":  "JHN",
+                                 "chapter":  2
+                             },
+    "nextChapterAudioLinks":  {
+                                  "david":  "https://audio.bible.helloao.org/api/BSB/JHN/2/audio/david.mp3",
+                                  "gilbert":  "https://openbible.com/audio/gilbert/BSB_43_Jhn_002_G.mp3",
+                                  "hays":  "https://audio.bible.helloao.org/api/BSB/JHN/2/audio/hays.mp3",
+                                  "souer":  "https://audio.bible.helloao.org/api/BSB/JHN/2/audio/souer.mp3"
+                              },
+    "previousChapterApiLink":  "/api/BSB/LUK/24.simple.json",
+    "previousChapterReference":  {
+                                     "translationId":  "BSB",
+                                     "book":  "LUK",
+                                     "chapter":  24
+                                 },
+    "previousChapterAudioLinks":  {
+                                      "david":  "https://audio.bible.helloao.org/api/BSB/LUK/24/audio/david.mp3",
+                                      "gilbert":  "https://openbible.com/audio/gilbert/BSB_42_Luk_024_G.mp3",
+                                      "hays":  "https://audio.bible.helloao.org/api/BSB/LUK/24/audio/hays.mp3",
+                                      "souer":  "https://audio.bible.helloao.org/api/BSB/LUK/24/audio/souer.mp3"
+                                  },
+    "thisChapterAudioTimings":  {
+
+                                },
+    "nextChapterAudioTimings":  {
+
+                                },
+    "previousChapterAudioTimings":  {
+
+                                    },
+    "numberOfVerses":  51,
+    "chapter":  {
+                    "number":  1,
+                    "content":  [
+                                    {
+                                        "type":  "heading",
+                                        "text":  "The Beginning"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  1,
+                                        "text":  "In the beginning was the Word, and the Word was with God, and the Word was God.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  2,
+                                        "text":  "He was with God in the beginning.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  3,
+                                        "text":  "Through Him all things were made, and without Him nothing was made that has been made.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  4,
+                                        "text":  "In Him was life, and that life was the light of men.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  5,
+                                        "text":  "The Light shines in the darkness, and the darkness has not overcome it.",
+                                        "footnotes":  [
+                                                          {
+                                                              "noteId":  0,
+                                                              "offset":  67,
+                                                              "text":  "Or comprehended",
+                                                              "caller":  "+"
+                                                          }
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "heading",
+                                        "text":  "The Witness of John"
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  6,
+                                        "text":  "There came a man who was sent from God. His name was John.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  7,
+                                        "text":  "He came as a witness to testify about the Light, so that through him everyone might believe.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  8,
+                                        "text":  "He himself was not the Light, but he came to testify about the Light.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  9,
+                                        "text":  "The true Light, who gives light to everyone, was coming into the world.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  10,
+                                        "text":  "He was in the world, and though the world was made through Him, the world did not recognize Him.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  11,
+                                        "text":  "He came to His own, and His own did not receive Him.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  12,
+                                        "text":  "But to all who did receive Him, to those who believed in His name, He gave the right to become children of Godâ",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  13,
+                                        "text":  "children born not of blood, nor of the desire or will of man, but born of God.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "heading",
+                                        "text":  "The Word Became Flesh"
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  14,
+                                        "text":  "The Word became flesh and made His dwelling among us. We have seen His glory, the glory of the one and only Son from the Father, full of grace and truth.",
+                                        "footnotes":  [
+                                                          {
+                                                              "noteId":  1,
+                                                              "offset":  53,
+                                                              "text":  "Or and tabernacled among us",
+                                                              "caller":  "+"
+                                                          },
+                                                          {
+                                                              "noteId":  2,
+                                                              "offset":  111,
+                                                              "text":  "Or the Only Begotten or the Unique One",
+                                                              "caller":  "+"
+                                                          }
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  15,
+                                        "text":  "John testified concerning Him. He cried out, saying, âThis is He of whom I said, âHe who comes after me has surpassed me because He was before me.ââ",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  16,
+                                        "text":  "From His fullness we have all received grace upon grace.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  17,
+                                        "text":  "For the law was given through Moses; grace and truth came through Jesus Christ.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  18,
+                                        "text":  "No one has ever seen God, but the one and only Son, who is Himself God and is at the Fatherâs side, has made Him known.",
+                                        "footnotes":  [
+                                                          {
+                                                              "noteId":  3,
+                                                              "offset":  74,
+                                                              "text":  "Or but the only begotten God, who; BYZ and TR but the only begotten Son, who",
+                                                              "caller":  "+"
+                                                          },
+                                                          {
+                                                              "noteId":  4,
+                                                              "offset":  99,
+                                                              "text":  "Greek in the Fatherâs bosom",
+                                                              "caller":  "+"
+                                                          }
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "heading",
+                                        "text":  "The Mission of John the Baptist"
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  19,
+                                        "text":  "And this was Johnâs testimony when the Jews of Jerusalem sent priests and Levites to ask him, âWho are you?â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  20,
+                                        "text":  "He did not refuse to confess, but openly declared, âI am not the Christ.â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  21,
+                                        "text":  "âThen who are you?â they inquired. âAre you Elijah?â\nHe said, âI am not.â\nâAre you the Prophet?â\nHe answered, âNo.â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  22,
+                                        "text":  "So they said to him, âWho are you? We need an answer for those who sent us. What do you say about yourself?â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  23,
+                                        "text":  "John replied in the words of Isaiah the prophet:\nâI am a voice of one calling in the wilderness,\nâMake straight the way for the Lord.ââ",
+                                        "footnotes":  [
+                                                          {
+                                                              "noteId":  5,
+                                                              "offset":  135,
+                                                              "text":  "Isaiah 40:3 (see also LXX)",
+                                                              "caller":  "+"
+                                                          }
+                                                      ],
+                                        "poem":  [
+                                                     {
+                                                         "start":  49,
+                                                         "end":  96,
+                                                         "level":  1
+                                                     },
+                                                     {
+                                                         "start":  97,
+                                                         "end":  135,
+                                                         "level":  2
+                                                     }
+                                                 ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  24,
+                                        "text":  "Then the Pharisees who had been sent",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  25,
+                                        "text":  "asked him, âWhy then do you baptize, if you are not the Christ, nor Elijah, nor the Prophet?â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  26,
+                                        "text":  "âI baptize with water,â John replied, âbut among you stands One you do not know.",
+                                        "footnotes":  [
+                                                          {
+                                                              "noteId":  6,
+                                                              "offset":  15,
+                                                              "text":  "Or in; also in verse 31 and twice in 33",
+                                                              "caller":  "+"
+                                                          }
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  27,
+                                        "text":  "He is the One who comes after me, the straps of whose sandals I am not worthy to untie.â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  28,
+                                        "text":  "All this happened at Bethany beyond the Jordan, where John was baptizing.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "heading",
+                                        "text":  "Jesus the Lamb of God"
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  29,
+                                        "text":  "The next day John saw Jesus coming toward him and said, âLook, the Lamb of God, who takes away the sin of the world!",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  30,
+                                        "text":  "This is He of whom I said, âA man who comes after me has surpassed me because He was before me.â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  31,
+                                        "text":  "I myself did not know Him, but the reason I came baptizing with water was that He might be revealed to Israel.â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  32,
+                                        "text":  "Then John testified, âI saw the Spirit descending from heaven like a dove and resting on Him.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  33,
+                                        "text":  "I myself did not know Him, but the One who sent me to baptize with water told me, âThe man on whom you see the Spirit descend and rest is He who will baptize with the Holy Spirit.â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  34,
+                                        "text":  "I have seen and testified that this is the Son of God. â",
+                                        "footnotes":  [
+                                                          {
+                                                              "noteId":  7,
+                                                              "offset":  54,
+                                                              "text":  "SBL the Chosen One of God",
+                                                              "caller":  "+"
+                                                          }
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "heading",
+                                        "text":  "The First Disciples"
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  35,
+                                        "text":  "The next day John was there again with two of his disciples.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  36,
+                                        "text":  "When he saw Jesus walking by, he said, âLook, the Lamb of God!â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  37,
+                                        "text":  "And when the two disciples heard him say this, they followed Jesus.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  38,
+                                        "text":  "Jesus turned and saw them following. âWhat do you want?â He asked.\nThey said to Him, âRabbiâ (which means Teacher), âwhere are You staying?â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  39,
+                                        "text":  "âCome and see,â He replied. So they went and saw where He was staying, and spent that day with Him. It was about the tenth hour.",
+                                        "footnotes":  [
+                                                          {
+                                                              "noteId":  8,
+                                                              "offset":  128,
+                                                              "text":  "That is, about four in the afternoon",
+                                                              "caller":  "+"
+                                                          }
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  40,
+                                        "text":  "Andrew, Simon Peterâs brother, was one of the two who heard Johnâs testimony and followed Jesus.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  41,
+                                        "text":  "He first found his brother Simon and told him, âWe have found the Messiahâ (which is translated as Christ).",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  42,
+                                        "text":  "Andrew brought him to Jesus, who looked at him and said, âYou are Simon son of John. You will be called Cephasâ (which is translated as Peter).",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "heading",
+                                        "text":  "Jesus Calls Philip and Nathanael"
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  43,
+                                        "text":  "The next day Jesus decided to set out for Galilee. Finding Philip, He told him, âFollow Me.â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  44,
+                                        "text":  "Now Philip was from Bethsaida, the same town as Andrew and Peter.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  45,
+                                        "text":  "Philip found Nathanael and told him, âWe have found the One Moses wrote about in the Law, the One the prophets foretoldâJesus of Nazareth, the son of Joseph.â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  46,
+                                        "text":  "âCan anything good come from Nazareth?â Nathanael asked.\nâCome and see,â said Philip.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  47,
+                                        "text":  "When Jesus saw Nathanael approaching, He said of him, âHere is a true Israelite, in whom there is no deceit.â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  48,
+                                        "text":  "âHow do You know me?â Nathanael asked.\nJesus replied, âBefore Philip called you, I saw you under the fig tree.â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  49,
+                                        "text":  "âRabbi,â Nathanael answered, âYou are the Son of God! You are the King of Israel!â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  50,
+                                        "text":  "Jesus said to him, âDo you believe just because I told you I saw you under the fig tree? You will see greater things than these.â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  51,
+                                        "text":  "Then He declared, âTruly, truly, I tell you, you will all see heaven open and the angels of God ascending and descending on the Son of Man.â",
+                                        "footnotes":  [
+                                                          {
+                                                              "noteId":  9,
+                                                              "offset":  140,
+                                                              "text":  "See Genesis 28:12.",
+                                                              "caller":  "+"
+                                                          }
+                                                      ]
+                                    }
+                                ],
+                    "footnotes":  [
+
+                                  ]
+                },
+    "fullChapterApiLink":  "/api/BSB/JHN/1.json"
+}

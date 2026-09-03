@@ -24,6 +24,28 @@
       "capabilities": ["network", "audio", "bluetooth-audio", "bluetooth-control"]
     },
     {
+      "package": "kobo-bible",
+      "id": "bible",
+      "display_name": "Holy Bible",
+      "short_label": "Bible",
+      "summary": "Read the Holy Scriptures with offline caching, clean typography, and fast book navigation.",
+      "version": "1.0.0",
+      "minimum_cobalt_version": "0.2.0",
+      "glyph": "book",
+      "capabilities": ["network", "hold-wifi"]
+    },
+    {
+      "package": "kobo-color",
+      "id": "color",
+      "display_name": "Color Patterns",
+      "short_label": "Color Test",
+      "summary": "Evaluate and enjoy color test patterns on Kaleido Color E Ink displays.",
+      "version": "1.0.0",
+      "minimum_cobalt_version": "0.2.0",
+      "glyph": "chart",
+      "capabilities": []
+    },
+    {
       "package": "kobo-brief",
       "id": "brief",
       "display_name": "Daily Brief",
