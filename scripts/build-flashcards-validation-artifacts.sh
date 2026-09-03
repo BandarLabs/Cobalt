@@ -41,11 +41,12 @@ exec /usr/bin/env -i \
   GIT_CONFIG_NOSYSTEM=1 \
   GIT_CONFIG_GLOBAL=/dev/null \
   CARGO_TERM_COLOR=never \
-  /bin/sh -s -- "$repo" "$@" <<'COBALT_FLASHCARDS_CLEAN_SCRIPT'
+  /bin/sh -s -- "$repo" "$bootstrap_python" "$@" <<'COBALT_FLASHCARDS_CLEAN_SCRIPT'
 set -eu
 
 repo=$1
-shift
+PYTHON3=$2
+shift 2
 
 if [ "$#" -ne 1 ]; then
   echo "usage: scripts/build-flashcards-validation-artifacts.sh TARGET_ROOT" >&2
@@ -107,7 +108,7 @@ case $1 in
   /*) target_root=$1 ;;
   *) target_root=$(pwd)/$1 ;;
 esac
-target_root=$(python3 - "$target_root" "$repo" <<'PY'
+target_root=$("$PYTHON3" -I - "$target_root" "$repo" <<'PY'
 import sys
 from pathlib import Path
 
@@ -144,6 +145,14 @@ find "$target_root" -mindepth 1 -maxdepth 1 \
   -exec rm -rf -- {} +
 mkdir -p "$artifacts/catalog" "$target_root/build-tmp"
 export TMPDIR="$target_root/build-tmp"
+cargo_home="$target_root/build-cargo-home"
+mkdir -p "$cargo_home"
+for cache in registry git; do
+  if [ -d "$HOME/.cargo/$cache" ]; then
+    ln -s "$HOME/.cargo/$cache" "$cargo_home/$cache"
+  fi
+done
+export CARGO_HOME="$cargo_home"
 CC_armv7_unknown_linux_musleabihf=$(find_arm_tool \
   armv7-unknown-linux-musleabihf-gcc \
   armv7-linux-musleabihf-gcc \
@@ -198,7 +207,7 @@ if [ -n "$(git -C "$repo" status --porcelain --untracked-files=normal)" ] ||
   exit 1
 fi
 
-python3 - "$repo/apps/catalog.json" "$device" "$artifacts/flashcards.manifest.json" <<'PY'
+"$PYTHON3" -I - "$repo/apps/catalog.json" "$device" "$artifacts/flashcards.manifest.json" <<'PY'
 import hashlib
 import json
 import sys
@@ -292,7 +301,11 @@ mv "$audit_copy" "$audit_device"
 
 rm -f "$seed" "$artifacts/.flashcards-validation-second.cobalt-app"
 trap - EXIT
-rm -rf "$target_root/host-tools" "$target_root/build-tmp" "$target_root/release"
+rm -rf \
+  "$target_root/host-tools" \
+  "$target_root/build-tmp" \
+  "$target_root/build-cargo-home" \
+  "$target_root/release"
 rm -f "$target_root/.rustc_info.json" "$target_root/CACHEDIR.TAG"
 
 echo "built validation-only Flashcards artifacts under $target_root"

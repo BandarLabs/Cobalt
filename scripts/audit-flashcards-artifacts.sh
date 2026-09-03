@@ -41,11 +41,12 @@ exec /usr/bin/env -i \
   GIT_CONFIG_NOSYSTEM=1 \
   GIT_CONFIG_GLOBAL=/dev/null \
   CARGO_TERM_COLOR=never \
-  /bin/sh -s -- "$repo" "$@" <<'COBALT_FLASHCARDS_CLEAN_SCRIPT'
+  /bin/sh -s -- "$repo" "$bootstrap_python" "$@" <<'COBALT_FLASHCARDS_CLEAN_SCRIPT'
 set -eu
 
 repo=$1
-shift
+PYTHON3=$2
+shift 2
 
 if [ "$#" -ne 1 ]; then
   echo "usage: scripts/audit-flashcards-artifacts.sh TARGET_ROOT" >&2
@@ -161,6 +162,15 @@ unset \
   CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER
 expected_validation_key=d759793bbc13a2819a827c76adb6fba8a49aee007f49f2d0992d99b825ad2c48
 rm -f "$audit_report"
+cargo_home="$target_root/audit-cargo-home"
+rm -rf "$cargo_home"
+mkdir -p "$cargo_home"
+for cache in registry git; do
+  if [ -d "$HOME/.cargo/$cache" ]; then
+    ln -s "$HOME/.cargo/$cache" "$cargo_home/$cache"
+  fi
+done
+export CARGO_HOME="$cargo_home"
 
 for path in "$device" "$audit_device" "$package" "$manifest" "$public_key" "$catalog" "$catalog_signature" "$source_commit_file" "$sentinel"; do
   if [ ! -f "$path" ]; then
@@ -266,7 +276,7 @@ for package_name in anki anki_i18n anki_io anki_proto; do
   fi
 done
 
-python3 - "$repo" <<'PY'
+"$PYTHON3" -I - "$repo" <<'PY'
 import json
 import subprocess
 import sys
@@ -304,7 +314,7 @@ for name, source in sources.items():
 PY
 
 TMPDIR="$target_root/build-tmp" \
-  "$repo/scripts/generate-flashcards-licenses.py" --check
+  "$PYTHON3" -I "$repo/scripts/generate-flashcards-licenses.py" --check
 assert_source_unchanged
 
 if ! device_headers=$("$readelf" -lW "$device"); then
@@ -345,7 +355,7 @@ if printf '%s\n' "$audit_symbols" |
   exit 1
 fi
 
-python3 - "$repo/apps/catalog.json" "$device" "$manifest" "$catalog" "$package" <<'PY'
+"$PYTHON3" -I - "$repo/apps/catalog.json" "$device" "$manifest" "$catalog" "$package" <<'PY'
 import hashlib
 import json
 import sys
@@ -477,10 +487,14 @@ if [ "$licenses_hash" != "$licenses_file_hash" ]; then
   exit 1
 fi
 
-rm -rf "$audit_tools" "$fresh_device_root" "$target_root/build-tmp"
+rm -rf \
+  "$audit_tools" \
+  "$fresh_device_root" \
+  "$target_root/build-tmp" \
+  "$target_root/audit-cargo-home"
 assert_source_unchanged
 
-python3 - "$target_root" <<'PY'
+"$PYTHON3" -I - "$target_root" <<'PY'
 import sys
 from pathlib import Path
 
