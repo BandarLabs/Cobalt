@@ -6,25 +6,46 @@ application and photographs what it drew. Part of [Cobalt](../README.md).
 ```sh
 cargo test --workspace --all-features
 cargo run -p kobo-cli -- dev --builtin      # browser simulator
+cargo run -p kobo-cli -- dev --builtin --profile libra-2-388 --rotation 3
 cargo run -p kobo-cli -- run --sim          # the real runtime, host socket
-cargo run -p kobo-cli -- run --sim --app rss   # ... pointed at one application
+cargo run -p kobo-cli -- run --sim --app rss --profile elipsa-2e-389
 ```
 
 `run --sim` starts the real `kobod`, runs one application against it over a
-host socket and saves what it drew to `target/kobo-sim-last.raw`: 1072 × 1448
-bytes of eight-bit grey, one per pixel, which `P5` PGM will open directly.
+host socket and saves what it drew to `target/kobo-sim-last.raw`: one byte of
+eight-bit grey per logical pixel at the selected profile's measured resolution.
 `--app` takes any shipped application by the name the launcher uses or the name
 cargo uses. It is the shortest way to see what a screen really looks like
 without a reader in front of you.
 
-The simulator binds only to `127.0.0.1` and currently targets the measured Kobo
-Clara BW 391 profile: 1072 × 1448 at 300 PPI, including its rotated raw touch
-coordinates. It uses the same renderer, layout engine, policy, typeface and
-panel refresh planner as the device, so a screen that fits in the browser fits
-on the panel and the reported changed rectangle, waveform and clean-refresh
-cadence cannot drift from the runtime. The inspector can compare ideal pixels
-with a clearly labelled approximation of E Ink residue and outline the next
-refresh region.
+The simulator binds only to `127.0.0.1`. It defaults to Clara BW 391 and accepts
+`--profile` for every profile in the
+[device matrix](DEVICES.md#simulator-profile-facts). `--rotation` accepts only
+poses verified for that exact profile; currently only Libra 2 has two, rotations
+1 and 3. It uses the selected resolution, PPI, touch transform, framebuffer
+packing, renderer, layout engine, policy, typeface and panel refresh planner.
+The inspector can compare ideal pixels with a clearly labelled approximation of
+E Ink residue and outline the next refresh region.
+
+Colour profiles report Kaleido 3 and serialize their measured RGBA packing, but
+the renderer is not chromatic yet. The browser says `unavailable` and keeps its
+preview greyscale. Elipsa 2E's zero-length channel capture does not identify a
+packing, so `/framebuffer` refuses it instead of choosing one.
+
+Run the complete headless matrix with artifact paths outside the repository:
+
+```sh
+kobo matrix \
+  --report "$ARTIFACTS/profile-matrix.json" \
+  --screenshots "$ARTIFACTS/profile-matrix-screens"
+```
+
+It builds the union of platform and Store apps, then runs every initial screen,
+simulator failure scenario, and checked-in drive route across every verified
+profile pose. Each pose runs in an isolated worker so its PPI-specific typeface
+cannot leak into another profile. The JSON keeps protocol 12 responsive results
+separate from protocol 11 compatibility. Test the latter independently with
+`cargo test -p kobo-protocol legacy`.
 
 Network requests and terminals are real. The inspector's deterministic
 scenarios exercise offline, low-battery, denied-permission, missing-secret,

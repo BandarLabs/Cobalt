@@ -28,6 +28,48 @@ fixture results are not substitutes.
 Firmware versions not listed here are unsupported even on the same model until
 a new read-only probe and the applicable attended evidence have been reviewed.
 
+## Simulator profile facts
+
+The simulator uses the same seven exact profiles. `Measured` below means a
+doctor capture or attended hardware run exists; `derived` means arithmetic from
+measured pixels and PPI. `Unknown` is not treated as unsupported hardware: it
+means the simulator refuses or disables the operation rather than guessing.
+
+| Profile | Measured logical panel | Derived size | Measured framebuffer | Verified poses |
+|---|---:|---:|---|---|
+| `clara-bw-391` | 1072×1448, 300 PPI | 90.7×122.5 mm | 32 bpp, grayscale 0, visual 2, stride 4288; RGBA offsets 0/8/16/24, length 8, `msb_right` 0 | rotation 3 |
+| `clara-bw-395` | 1072×1448, 300 PPI | 90.7×122.5 mm | same measured panel fields as 391 | rotation 3 |
+| `clara-hd-376` | 1072×1448, 300 PPI | 90.7×122.5 mm | 32 bpp, grayscale 0, visual 2, stride 4352; BGRA offsets 16/8/0/24, length 8, `msb_right` 0 | rotation 3 |
+| `clara-colour-393` | 1072×1448, 300 PPI | 90.7×122.5 mm | same measured RGBA fields as 391; Kaleido 3 panel | rotation 3 |
+| `elipsa-2e-389` | 1404×1872, 227 PPI | 157.0×209.4 mm | 32 bpp, grayscale 0, visual 2, stride 5616; every reported channel field is zero-length, so packing is unknown and serialization is refused | rotation 1 |
+| `libra-2-388` | 1264×1680, 300 PPI | 107.0×142.2 mm | 32 bpp, grayscale 0, visual 2, stride 5120; BGRA offsets 16/8/0/24, length 8, `msb_right` 0 | rotations 1 and 3 |
+| `libra-colour-390` | 1264×1680, 300 PPI | 107.0×142.2 mm | 32 bpp, grayscale 0, visual 2, stride 5056; RGBA offsets 0/8/16/24, length 8, `msb_right` 0; Kaleido 3 panel | rotation 1 |
+
+The 7 mm minimum touch target is derived as 83 pixels on the 300 PPI
+profiles and 63 pixels on Elipsa 2E. Touch itself is measured:
+
+| Profiles | Controller range (inclusive) | Reference-pose transform |
+|---|---:|---|
+| Clara BW 391/395, Clara HD, Clara Colour | X 0–1447, Y 0–1071 | transpose and mirror X |
+| Elipsa 2E | X 0–1872, Y 0–1404 | transpose and mirror Y |
+| Libra 2 | X 0–1680, Y 0–1264 | transpose; rotation 3 uses the verified half-turn composition |
+| Libra Colour | X 0–1680, Y 0–1264 | transpose and mirror Y |
+
+Measured non-framebuffer facts are intentionally sparse. Libra 2 and Libra
+Colour have page keys 193/194, meaning back/forward at the reference pose;
+Libra 2 also has measured orientation-sensor values. Clara BW 391 has measured
+frontlight brightness 0–100 and raw warm/cool balance 0–10. Wi-Fi operation is
+measured only on Clara BW 391 and Libra 2. The shared MediaTek radio platform
+applies to the current MediaTek profiles, Libra 2 uses Realtek 8723ds, and
+Clara HD's radio platform is unknown. Reaping Nickel's leftover supplicant is
+measured only on Clara BW 391 and Libra 2.
+
+No other pose, orientation sensor, frontlight range, warm-light range, button
+mapping, framebuffer packing, or supplicant handoff is implied. Chromatic
+rendering is also still unavailable: colour profiles identify Kaleido 3 and
+their measured 32-bit packing, but simulator presentation remains explicitly
+greyscale rather than inventing a colour response.
+
 ## Connecting a device
 
 The reader has to be on the same wireless network as the machine you work from.
