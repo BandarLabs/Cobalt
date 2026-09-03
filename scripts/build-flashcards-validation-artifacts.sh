@@ -13,6 +13,18 @@ if [ -n "$(git -C "$repo" status --porcelain --untracked-files=normal)" ]; then
 fi
 source_commit=$(git -C "$repo" rev-parse HEAD)
 
+find_arm_tool() {
+  for candidate in "$@"; do
+    candidate_path=$(command -v "$candidate" 2>/dev/null || true)
+    if [ -n "$candidate_path" ] &&
+      "$candidate_path" --version >/dev/null 2>&1; then
+      printf '%s\n' "$candidate_path"
+      return 0
+    fi
+  done
+  return 1
+}
+
 case $1 in
   /*) target_root=$1 ;;
   *) target_root=$(pwd)/$1 ;;
@@ -28,8 +40,28 @@ cli="$target_root/host-tools/release/kobo"
 find "$target_root" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
 mkdir -p "$artifacts/catalog" "$target_root/build-tmp"
 export TMPDIR="$target_root/build-tmp"
-export CC_armv7_unknown_linux_musleabihf="${CC_armv7_unknown_linux_musleabihf:-armv7-unknown-linux-musleabihf-gcc}"
-export AR_armv7_unknown_linux_musleabihf="${AR_armv7_unknown_linux_musleabihf:-armv7-unknown-linux-musleabihf-ar}"
+if [ -z "${CC_armv7_unknown_linux_musleabihf:-}" ]; then
+  CC_armv7_unknown_linux_musleabihf=$(find_arm_tool \
+    armv7-unknown-linux-musleabihf-gcc \
+    armv7-linux-musleabihf-gcc \
+    arm-linux-musleabihf-gcc \
+    arm-linux-gnueabihf-gcc) || {
+      echo "no supported ARM C compiler was found" >&2
+      exit 1
+    }
+  export CC_armv7_unknown_linux_musleabihf
+fi
+if [ -z "${AR_armv7_unknown_linux_musleabihf:-}" ]; then
+  AR_armv7_unknown_linux_musleabihf=$(find_arm_tool \
+    armv7-unknown-linux-musleabihf-ar \
+    armv7-linux-musleabihf-ar \
+    arm-linux-musleabihf-ar \
+    arm-linux-gnueabihf-ar) || {
+      echo "no supported ARM archiver was found" >&2
+      exit 1
+    }
+  export AR_armv7_unknown_linux_musleabihf
+fi
 
 (
   cd "$repo"

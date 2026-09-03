@@ -11,6 +11,19 @@ if [ -n "$(git -C "$repo" status --porcelain --untracked-files=normal)" ]; then
   echo "artifact audits require a clean committed source tree" >&2
   exit 1
 fi
+
+find_arm_tool() {
+  for candidate in "$@"; do
+    candidate_path=$(command -v "$candidate" 2>/dev/null || true)
+    if [ -n "$candidate_path" ] &&
+      "$candidate_path" --version >/dev/null 2>&1; then
+      printf '%s\n' "$candidate_path"
+      return 0
+    fi
+  done
+  return 1
+}
+
 case $1 in
   /*) target_root=$1 ;;
   *) target_root=$(pwd)/$1 ;;
@@ -45,6 +58,28 @@ if [ -z "$readelf" ]; then
   echo "no supported ARM readelf tool was found" >&2
   exit 1
 fi
+if [ -z "${CC_armv7_unknown_linux_musleabihf:-}" ]; then
+  CC_armv7_unknown_linux_musleabihf=$(find_arm_tool \
+    armv7-unknown-linux-musleabihf-gcc \
+    armv7-linux-musleabihf-gcc \
+    arm-linux-musleabihf-gcc \
+    arm-linux-gnueabihf-gcc) || {
+      echo "no supported ARM C compiler was found" >&2
+      exit 1
+    }
+  export CC_armv7_unknown_linux_musleabihf
+fi
+if [ -z "${AR_armv7_unknown_linux_musleabihf:-}" ]; then
+  AR_armv7_unknown_linux_musleabihf=$(find_arm_tool \
+    armv7-unknown-linux-musleabihf-ar \
+    armv7-linux-musleabihf-ar \
+    arm-linux-musleabihf-ar \
+    arm-linux-gnueabihf-ar) || {
+      echo "no supported ARM archiver was found" >&2
+      exit 1
+    }
+  export AR_armv7_unknown_linux_musleabihf
+fi
 expected_validation_key=d759793bbc13a2819a827c76adb6fba8a49aee007f49f2d0992d99b825ad2c48
 rm -f "$audit_report"
 
@@ -72,8 +107,6 @@ mkdir -p "$fresh_device_root/production" "$fresh_device_root/unstripped" "$targe
 (
   cd "$repo"
   export TMPDIR="$target_root/build-tmp"
-  export CC_armv7_unknown_linux_musleabihf="${CC_armv7_unknown_linux_musleabihf:-armv7-unknown-linux-musleabihf-gcc}"
-  export AR_armv7_unknown_linux_musleabihf="${AR_armv7_unknown_linux_musleabihf:-armv7-unknown-linux-musleabihf-ar}"
   CARGO_TARGET_DIR="$fresh_device_root/production" \
     cargo build --quiet --locked --release \
     --target armv7-unknown-linux-musleabihf -p kobo-flashcards
