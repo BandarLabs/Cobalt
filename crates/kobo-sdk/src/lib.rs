@@ -22,11 +22,11 @@ pub use kobo_ui::{
     BannerLevel, BarAction, BarStyle, BottomAction, Caret, Cell, Chip, Chrome, ControlState,
     DiagnosticSeverity, DisplayMetrics, Emphasis, Fold, FontHandle, Freeform, Glyph, InlineFormula,
     LayoutIssue, LayoutIssueKind, NavBar, Node, NodeId, Overlay, OverlayKind, ParagraphAlignment,
-    ParagraphPresentation, Percent, PictureHandle, ProseArea, RichTextSpan, Row, RowLead, RowState,
-    Screen, SlotWidth, Space, TextHit, TextPresentation, TextSelection, Tile, TilePicture,
-    TileShape, TileState, TopBar, TransferFailure, CLARA_BW_METRICS, MAX_BAND_SLOTS, MAX_CELLS,
-    MAX_CHIPS, MAX_CHOICE_OPTIONS, MAX_COLUMNS, MAX_INLINE_FORMULAE, MAX_QUOTE_DEPTH, MAX_ROWS,
-    MAX_TABS, MAX_TERMINAL_COLUMNS, MAX_TERMINAL_ROWS, TILE_BADGE_LIMIT,
+    ParagraphPresentation, Percent, PictureFormat, PictureHandle, ProseArea, RichTextSpan, Row,
+    RowLead, RowState, Screen, SlotWidth, Space, TextHit, TextPresentation, TextSelection, Tile,
+    TilePicture, TileShape, TileState, TopBar, TransferFailure, CLARA_BW_METRICS, MAX_BAND_SLOTS,
+    MAX_CELLS, MAX_CHIPS, MAX_CHOICE_OPTIONS, MAX_COLUMNS, MAX_INLINE_FORMULAE, MAX_QUOTE_DEPTH,
+    MAX_ROWS, MAX_TABS, MAX_TERMINAL_COLUMNS, MAX_TERMINAL_ROWS, TILE_BADGE_LIMIT,
 };
 use std::collections::BTreeMap;
 use std::collections::VecDeque;
@@ -2705,7 +2705,8 @@ pub enum Command {
         handle: PictureHandle,
         width: u32,
         height: u32,
-        grey: Vec<u8>,
+        format: PictureFormat,
+        pixels: Vec<u8>,
     },
     /// Release a picture the runtime is holding.
     DropPicture(PictureHandle),
@@ -3214,17 +3215,51 @@ impl Context {
         height: u32,
         grey: Vec<u8>,
     ) -> Option<TilePicture> {
-        let expected = usize::try_from(width)
-            .ok()
-            .and_then(|width| width.checked_mul(usize::try_from(height).ok()?))?;
-        if expected == 0 || expected != grey.len() || expected > MAX_PICTURE_BYTES {
+        self.put_picture_with(handle, width, height, PictureFormat::Grey, grey)
+    }
+
+    /// [`Self::put_picture`] for a picture in colour: three bytes per pixel,
+    /// red, green, blue, row major.
+    ///
+    /// Only worth sending when the reader can show it. A colour picture costs
+    /// three times the wire and the runtime's cache of a grey one, and on a
+    /// greyscale panel the runtime draws its luminance, which is exactly what
+    /// [`Self::put_picture`] would have sent for a third of the bytes. Ask
+    /// with [`Self::read_identity`] and [`DeviceIdentity::colour_panel`]
+    /// first; a runtime from before colour pictures existed refuses the frame
+    /// and drops the connection, so an application that has not been told the
+    /// panel is colour should not send one.
+    ///
+    /// The byte bound is the same as for grey, so a colour picture may be at
+    /// most a third as many pixels: one full Clara panel fits.
+    pub fn put_colour_picture(
+        &mut self,
+        handle: PictureHandle,
+        width: u32,
+        height: u32,
+        rgb: Vec<u8>,
+    ) -> Option<TilePicture> {
+        self.put_picture_with(handle, width, height, PictureFormat::Rgb, rgb)
+    }
+
+    fn put_picture_with(
+        &mut self,
+        handle: PictureHandle,
+        width: u32,
+        height: u32,
+        format: PictureFormat,
+        pixels: Vec<u8>,
+    ) -> Option<TilePicture> {
+        let expected = format.byte_len(width, height)?;
+        if expected == 0 || expected != pixels.len() || expected > MAX_PICTURE_BYTES {
             return None;
         }
         self.commands.push(Command::PutPicture {
             handle,
             width,
             height,
-            grey,
+            format,
+            pixels,
         });
         Some(TilePicture::new(handle, width, height))
     }
@@ -4988,22 +5023,25 @@ impl Client {
                     handle,
                     width,
                     height,
-                    grey,
+                    format,
+                    pixels,
                 } => {
-                    if grey.len() <= MAX_INLINE_PICTURE_BYTES {
+                    if pixels.len() <= MAX_INLINE_PICTURE_BYTES {
                         self.send(Message::PutPicture {
                             handle,
                             width,
                             height,
-                            grey,
+                            format,
+                            pixels,
                         })?;
                     } else {
                         self.send(Message::BeginPicture {
                             handle,
                             width,
                             height,
+                            format,
                         })?;
-                        for (index, chunk) in grey.chunks(MAX_PICTURE_CHUNK_BYTES).enumerate() {
+                        for (index, chunk) in pixels.chunks(MAX_PICTURE_CHUNK_BYTES).enumerate() {
                             let offset = index
                                 .checked_mul(MAX_PICTURE_CHUNK_BYTES)
                                 .and_then(|offset| u32::try_from(offset).ok())
@@ -5013,7 +5051,7 @@ impl Client {
                             self.send(Message::PictureChunk {
                                 handle,
                                 offset,
-                                grey: chunk.to_vec(),
+                                pixels: chunk.to_vec(),
                             })?;
                         }
                         self.send(Message::CommitPicture { handle })?;
@@ -6040,7 +6078,8 @@ mod tests {
                 Message::BeginPicture {
                     handle: PictureHandle(9),
                     width: 1072,
-                    height: 1448
+                    height: 1448,
+                    format: PictureFormat::Grey,
                 }
             ));
             let expected = 1072_usize * 1448;
@@ -6049,7 +6088,7 @@ mod tests {
                 let Message::PictureChunk {
                     handle,
                     offset,
-                    grey,
+                    pixels,
                 } = kobo_protocol::read_from(&mut daemon_stream)
                     .expect("chunk")
                     .message
@@ -6058,8 +6097,8 @@ mod tests {
                 };
                 assert_eq!(handle, PictureHandle(9));
                 assert_eq!(usize::try_from(offset).expect("offset"), received);
-                assert!(grey.len() <= MAX_PICTURE_CHUNK_BYTES);
-                received += grey.len();
+                assert!(pixels.len() <= MAX_PICTURE_CHUNK_BYTES);
+                received += pixels.len();
             }
             assert!(matches!(
                 kobo_protocol::read_from(&mut daemon_stream)
@@ -6076,10 +6115,46 @@ mod tests {
                 handle: PictureHandle(9),
                 width: 1072,
                 height: 1448,
-                grey: vec![127; 1072 * 1448],
+                format: PictureFormat::Grey,
+                pixels: vec![127; 1072 * 1448],
             }])
             .expect("upload");
         daemon.join().expect("daemon");
+    }
+
+    #[test]
+    fn a_colour_picture_is_checked_at_three_bytes_a_pixel() {
+        let mut context = Context {
+            commands: Vec::new(),
+            next_task: 1,
+            in_flight: 0,
+            metrics: CLARA_BW_METRICS,
+            retrying: Vec::new(),
+        };
+        assert!(context
+            .put_colour_picture(PictureHandle(1), 2, 2, vec![0; 4])
+            .is_none());
+        assert!(context
+            .put_picture(PictureHandle(1), 2, 2, vec![0; 12])
+            .is_none());
+        let placed = context
+            .put_colour_picture(PictureHandle(1), 2, 2, vec![0; 12])
+            .expect("sized correctly");
+        assert_eq!(placed, TilePicture::new(PictureHandle(1), 2, 2));
+        assert!(matches!(
+            context.commands.last(),
+            Some(Command::PutPicture {
+                format: PictureFormat::Rgb,
+                ..
+            })
+        ));
+        // Two Clara panels of grey fit the byte bound; two of colour do not.
+        assert!(context
+            .put_picture(PictureHandle(2), 1072, 1448 * 2, vec![0; 1072 * 1448 * 2])
+            .is_some());
+        assert!(context
+            .put_colour_picture(PictureHandle(2), 1072, 1448 * 2, vec![0; 1072 * 1448 * 6])
+            .is_none());
     }
 }
 

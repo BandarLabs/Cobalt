@@ -170,7 +170,10 @@ impl PanelPreview {
                             kobo_ui::tone::PAPER
                         }
                     }
-                    PanelWaveform::Gl16 | PanelWaveform::Gc16 => target,
+                    // The simulated panel is a Clara BW, which has no colour
+                    // filter: a colour update lands as its luminance, exactly
+                    // as the runtime writes it on that device.
+                    PanelWaveform::Gl16 | PanelWaveform::Gc16 | PanelWaveform::Colour => target,
                 };
                 // An LCD cannot reproduce electrophoretic residue. Retaining
                 // one sixteenth of the previous displayed value makes stale
@@ -727,22 +730,27 @@ fn hold_picture(state: &Arc<Mutex<AppState>>, message: Message) -> io::Result<()
                 handle,
                 width,
                 height,
-                grey,
-            } => picture_result(handle, pictures.put_report(handle, width, height, grey)),
+                format,
+                pixels,
+            } => picture_result(
+                handle,
+                pictures.put_report_with(handle, width, height, format, pixels),
+            ),
             Message::BeginPicture {
                 handle,
                 width,
                 height,
-            } => (!pictures.begin_upload(handle, width, height))
+                format,
+            } => (!pictures.begin_upload_with(handle, width, height, format))
                 .then(|| format!("picture {} upload refused", handle.0)),
             Message::PictureChunk {
                 handle,
                 offset,
-                grey,
+                pixels,
             } => (!pictures.upload_chunk(
                 handle,
                 usize::try_from(offset).unwrap_or(usize::MAX),
-                &grey,
+                &pixels,
             ))
             .then(|| format!("picture {} chunk refused", handle.0)),
             Message::CommitPicture { handle } => {

@@ -533,7 +533,29 @@ pub mod hwtcon {
     pub const WAVEFORM_GL16: u32 = 3;
     pub const WAVEFORM_GLR16: u32 = 4;
     pub const WAVEFORM_A2: u32 = 6;
+    /// The four waveforms the controller gained with the colour panels: dark
+    /// mode GC16 and GL16, and the colour variants of GC16 and GLR16. Whether
+    /// a given firmware's waveform file carries them is not knowable from
+    /// userland, so the display layer stays on the shared greyscale set and
+    /// records these for the day an owner-attended run says otherwise.
+    pub const WAVEFORM_GCK16: u32 = 8;
+    pub const WAVEFORM_GLKW16: u32 = 9;
+    pub const WAVEFORM_GCC16: u32 = 10;
+    pub const WAVEFORM_GLRC16: u32 = 11;
     pub const WAVEFORM_AUTO: u32 = 257;
+
+    /// Bits for [`HwtconUpdateData::flags`].
+    ///
+    /// The controller quantises the framebuffer to the panel's grey levels
+    /// when asked, and on a colour panel decides per update whether to drive
+    /// the colour filter. Bits `0x7f00` select a colour processing mode; zero
+    /// there leaves the choice to the driver's global setting. The
+    /// monochrome bit forces a greyscale update whatever the global setting
+    /// says, which is what every update from a greyscale surface wants.
+    pub const FLAG_DITHER: u32 = 0x1;
+    pub const FLAG_MONOCHROME_ONLY: u32 = 0x8000;
+    pub const FLAG_COLOUR_FILTER_MASK: u32 = 0x7f00;
+    pub const FLAG_COLOUR_FILTER_STANDARD: u32 = 0x100;
 
     #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
     #[repr(C)]

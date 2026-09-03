@@ -289,6 +289,7 @@ pub const CLARA_BW_391: DeviceProfile = DeviceProfile {
     kernel_release: "4.9.77",
     write_ready: true,
     reap_nickel_supplicant: false,
+    colour_panel: false,
 };
 
 /// The 2025 P365 hardware refresh of the Clara BW. Kobo lists N365 and P365
@@ -355,6 +356,7 @@ pub const CLARA_BW_395: DeviceProfile = DeviceProfile {
     kernel_release: "4.9.77",
     write_ready: true,
     reap_nickel_supplicant: false,
+    colour_panel: false,
 };
 
 /// The Kobo Clara HD, added upstream without i.MX6 hardware to test on.
@@ -422,6 +424,7 @@ pub const CLARA_HD_376: DeviceProfile = DeviceProfile {
     kernel_release: "4.1.15-00136-g12655eaaef89",
     write_ready: true,
     reap_nickel_supplicant: false,
+    colour_panel: false,
 };
 
 /// Kobo Clara Colour, whose measured framebuffer geometry, HWTCON interface,
@@ -440,6 +443,7 @@ pub const CLARA_COLOUR_393: DeviceProfile = DeviceProfile {
     serial_prefix: "N367",
     write_ready: true,
     reap_nickel_supplicant: false,
+    colour_panel: true,
     ..CLARA_BW_391
 };
 
@@ -499,6 +503,7 @@ pub const ELIPSA_2E_389: DeviceProfile = DeviceProfile {
     kernel_release: "4.9.77",
     write_ready: true,
     reap_nickel_supplicant: false,
+    colour_panel: false,
 };
 
 /// Kobo Libra 2, codename `io`, an i.MX6SLL Mark 7 device driven by
@@ -592,6 +597,7 @@ pub const LIBRA_2_388: DeviceProfile = DeviceProfile {
     // a normal hand-back, and the clean recovery after the leftover one was
     // killed during a live session.
     reap_nickel_supplicant: true,
+    colour_panel: false,
 };
 
 /// Kobo Libra Colour, a `MediaTek` HWTCON device like the Clara BW, and the
@@ -686,6 +692,7 @@ pub const LIBRA_COLOUR_390: DeviceProfile = DeviceProfile {
     // radio on i.MX6SLL; this is a MediaTek device whose Wi-Fi stack is shared
     // with Bluetooth and known to behave differently.
     reap_nickel_supplicant: false,
+    colour_panel: true,
 };
 
 /// Kobo Libra Colour on firmware 4.46.23836. The doctor report and attended
@@ -945,6 +952,22 @@ pub struct DeviceProfile {
     /// can test; enable this per device once the symptom and the fix are
     /// observed on it.
     pub reap_nickel_supplicant: bool,
+    /// Whether the panel has a colour filter array over its greyscale layer.
+    ///
+    /// A Kaleido panel reports exactly the same framebuffer as its greyscale
+    /// sibling: 32 bits per pixel, the same bitfields, the same geometry. The
+    /// difference is downstream of the framebuffer, in the controller, which
+    /// on these panels reads the red, green and blue bytes separately and
+    /// drives each sub-pixel behind its own filter. Nothing readable from
+    /// `/sys` or the framebuffer says so, which is why it is a profile fact.
+    ///
+    /// When false, the runtime writes every pixel with equal red, green and
+    /// blue and never asks for colour processing; a colour picture is drawn
+    /// as its luminance. When true, a picture that arrived in colour is
+    /// written in colour and the update asks the controller to use the
+    /// filter. The greyscale path is identical either way, so a wrong `true`
+    /// costs colour content and nothing else.
+    pub colour_panel: bool,
 }
 
 /// Pose geometry derived by a profile's [`GeometryRule`].
@@ -2713,5 +2736,34 @@ mod tests {
     fn missing_identity_blocks_every_write() {
         let blockers = CLARA_BW_391.write_identity_blockers(&DeviceSnapshot::default());
         assert_eq!(blockers.len(), 4);
+    }
+
+    #[test]
+    fn only_the_kaleido_panels_claim_colour() {
+        // The colour readers share every framebuffer field with a greyscale
+        // sibling, so this is the one place the difference is recorded, and
+        // a spread literal must not lose it.
+        for profile in SUPPORTED_PROFILES {
+            let expected = matches!(
+                profile.id,
+                "clara-colour-393" | "libra-colour-390" | "libra-colour-390-4.46.23836"
+            );
+            assert_eq!(
+                profile.colour_panel, expected,
+                "{} colour_panel should be {expected}",
+                profile.id
+            );
+        }
+        // Applications learn this from the profile name in the identity
+        // reply, which is a fixed frame that cannot grow a field. The name
+        // therefore has to say what the flag says.
+        for profile in SUPPORTED_PROFILES {
+            assert_eq!(
+                profile.colour_panel,
+                profile.id.contains("colour"),
+                "{} name and colour flag disagree",
+                profile.id
+            );
+        }
     }
 }

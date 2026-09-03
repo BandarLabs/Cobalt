@@ -1024,11 +1024,11 @@ mod tests {
                 if let Command::PutPicture {
                     width,
                     height,
-                    grey,
+                    pixels,
                     ..
                 } = command
                 {
-                    panel = letter_in(grey, *width, *height);
+                    panel = letter_in(pixels, *width, *height);
                 }
             }
             seen.push((beat.lit, panel));
