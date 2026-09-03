@@ -3,7 +3,7 @@
   "changes": [
     {
       "protocol_version": 12,
-      "reason": "The 0.3.5 runtime retains protocol-11 rendering, responses, and Atkinson metrics for unchanged Store binaries. Responsive renderer fixes, single-source section links, SDK profile tests, and Gutenbird test-only pagination coverage do not alter already-published app bytes. Protocol 12 additively introduces Folio nodes, orientation, and a write-only app-scoped credential request that protocol-11 apps cannot emit; only catalog apps changed to use the new SDK surface are rebuilt.",
+      "reason": "The 0.3.5 runtime retains protocol-11 rendering, responses, and Atkinson metrics for unchanged Store binaries. Responsive renderer fixes, single-source section links, SDK profile tests, Gutenbird test-only pagination coverage, and Lichess runtime transport and policy prerequisites do not alter already-published app bytes. Protocol 12 additively introduces Folio nodes, orientation, and a write-only app-scoped credential request that protocol-11 apps cannot emit; only catalog apps changed to use the new SDK surface are rebuilt.",
       "files": [
         {
           "path": "Cargo.lock",
@@ -16,9 +16,39 @@
           "compatible_blob": "3f4c4c11e78686f10dbea1456d911dcc03ce3f7f"
         },
         {
+          "path": "crates/kobo-net/src/lib.rs",
+          "base_blob": "ce2a45ae69445d06f0de5111aef775751ef8146e",
+          "compatible_blob": "257141cd5343b4cbba6d865c9956fe0f7d995754"
+        },
+        {
+          "path": "crates/kobo-net/src/lines.rs",
+          "base_blob": null,
+          "compatible_blob": "dd6fef63ea498dc58fd0158e62dd021ccce7fb92"
+        },
+        {
+          "path": "crates/kobo-net/tests/fixtures/localhost-ca.der",
+          "base_blob": null,
+          "compatible_blob": "c94b448a7103cd723c34349c8ce25352783d41f7"
+        },
+        {
+          "path": "crates/kobo-net/tests/fixtures/localhost-cert.der",
+          "base_blob": null,
+          "compatible_blob": "34a3ae946020aed21622549fe3bd497c34bd708e"
+        },
+        {
+          "path": "crates/kobo-net/tests/fixtures/localhost-key.der",
+          "base_blob": null,
+          "compatible_blob": "05c93b80f8cfb9b032f9c10a44723ac68f54e0fb"
+        },
+        {
+          "path": "crates/kobo-net/tests/lichess_stream_mock.rs",
+          "base_blob": null,
+          "compatible_blob": "db41522c80167096638b74624b759f1dd1e6f5c6"
+        },
+        {
           "path": "crates/kobo-policy/src/credentials.rs",
           "base_blob": "229061a856c96fcfbecbd264f65107f0b9d5293c",
-          "compatible_blob": "ec34b656489cb5a8d24f2f7a3f3695d403141112"
+          "compatible_blob": "af3b821eb0193dc5aa9926fc98b88d380f25a478"
         },
         {
           "path": "crates/kobo-policy/src/services.rs",
@@ -28,7 +58,7 @@
         {
           "path": "crates/kobo-policy/src/tasks.rs",
           "base_blob": "7e4448442a00d0315f9bf91d50be3eb41b707d5d",
-          "compatible_blob": "35862b4c4f457abc25bc785fd9c91d008131312b"
+          "compatible_blob": "e30c193a6f41d56ef68b3c7b033128d4f4d32478"
         },
         {
           "path": "crates/kobo-protocol/src/lib.rs",

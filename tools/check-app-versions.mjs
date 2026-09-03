@@ -14,6 +14,12 @@ const MANIFEST_FIELDS = [
 const COMPATIBLE_RELEASE_PATHS = new Set([
   "Cargo.lock",
   "crates/kobo-abi/src/lib.rs",
+  "crates/kobo-net/src/lib.rs",
+  "crates/kobo-net/src/lines.rs",
+  "crates/kobo-net/tests/fixtures/localhost-ca.der",
+  "crates/kobo-net/tests/fixtures/localhost-cert.der",
+  "crates/kobo-net/tests/fixtures/localhost-key.der",
+  "crates/kobo-net/tests/lichess_stream_mock.rs",
   "crates/kobo-policy/src/credentials.rs",
   "crates/kobo-policy/src/services.rs",
   "crates/kobo-policy/src/tasks.rs",

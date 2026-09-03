@@ -583,6 +583,47 @@ test("Gutenbird test-only changes are isolated by exact reviewed blobs", () => {
   );
 });
 
+test("Lichess runtime prerequisites are isolated by exact reviewed blobs", () => {
+  const manifest = JSON.parse(
+    readFileSync("tools/app-release-compatible-changes.json", "utf8")
+  );
+  const paths = [
+    "crates/kobo-net/src/lib.rs",
+    "crates/kobo-net/src/lines.rs",
+    "crates/kobo-net/tests/fixtures/localhost-ca.der",
+    "crates/kobo-net/tests/fixtures/localhost-cert.der",
+    "crates/kobo-net/tests/fixtures/localhost-key.der",
+    "crates/kobo-net/tests/lichess_stream_mock.rs",
+    "crates/kobo-policy/src/credentials.rs",
+    "crates/kobo-policy/src/tasks.rs"
+  ];
+  const files = new Map(
+    manifest.changes
+      .find(change => change.protocol_version === 12)
+      .files.map(file => [file.path, file])
+  );
+  assert.deepEqual(
+    compatibleChangePaths(
+      manifest,
+      12,
+      paths,
+      path => files.get(path)?.base_blob,
+      path => files.get(path)?.compatible_blob
+    ),
+    new Set(paths)
+  );
+  assert.equal(
+    compatibleChangePaths(
+      manifest,
+      12,
+      ["crates/kobo-net/src/lines.rs"],
+      () => null,
+      () => "f".repeat(40)
+    ).size,
+    0
+  );
+});
+
 test("new lockfile package blocks do not change existing app release inputs", () => {
   const previous = `version = 4\n\n[[package]]\nname = "notes"\nversion = "1.0.0"\n`;
   const current = `${previous}\n[[package]]\nname = "reader"\nversion = "1.0.0"\n`;
