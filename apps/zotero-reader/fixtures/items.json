@@ -1,0 +1,34 @@
+[
+  {
+    "key": "PAPER001",
+    "version": 9,
+    "data": {
+      "key": "PAPER001",
+      "version": 9,
+      "itemType": "journalArticle",
+      "title": "Bounded Research Readers",
+      "creators": [
+        {"creatorType": "author", "firstName": "Ada", "lastName": "Lovelace"},
+        {"creatorType": "author", "firstName": "Grace", "lastName": "Hopper"},
+        {"creatorType": "author", "name": "Systems Group"}
+      ],
+      "date": "2026-05-14",
+      "dateAdded": "2026-08-19T12:00:00Z",
+      "tags": [{"tag": "systems"}, {"tag": "reading"}]
+    }
+  },
+  {
+    "key": "PAPER002",
+    "version": 2,
+    "data": {
+      "key": "PAPER002",
+      "version": 2,
+      "itemType": "conferencePaper",
+      "title": "Offline First Notes",
+      "creators": [{"creatorType": "author", "name": "Research Collective"}],
+      "date": "2025",
+      "dateAdded": "2026-07-01T09:30:00Z",
+      "tags": []
+    }
+  }
+]

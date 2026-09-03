@@ -155,8 +155,9 @@ recovery steps.
 
 ## App Store
 
-Store reads a signed catalog from the fixed `app-catalog` GitHub release. Each
-package contains one ARM executable and a signed canonical manifest. The
+Store reads a signed catalog from the Stable `app-catalog` GitHub release, or
+the isolated `app-catalog-beta` release when the owner enables Beta updates.
+Each package contains one ARM executable and a signed canonical manifest. The
 runtime verifies the catalog, package, installed manifest, and binary before
 launch.
 

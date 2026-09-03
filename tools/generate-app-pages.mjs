@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { setupPanel } from "./app-page-setup.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const catalog = JSON.parse(readFileSync(resolve(root, "apps/catalog.json"), "utf8"));
@@ -45,7 +46,8 @@ const screenshots = {
   sudoku: ["sudoku.png", "A Sudoku game designed for the Kobo touch screen"],
   terminal: ["terminal.png", "A shell and touch keyboard on a Kobo"],
   tictactoe: ["tictactoe.png", "A completed game of tic-tac-toe on a Kobo"],
-  todo: ["todo.png", "A to-do list with completed items on a Kobo"]
+  todo: ["todo.png", "A to-do list with completed items on a Kobo"],
+  "zotero-reader": ["zotero-reader.png", "Reading a paper with structured layout and Zotero metadata on a Kobo"]
 };
 const screenshotFor = app => {
   const screenshot = screenshots[app.id];
@@ -149,6 +151,7 @@ for (const app of catalog.apps) {
   const image = `https://bandarlabs.github.io/Cobalt/media/site/apps/${screenshot}`;
   const structuredData = jsonLd(appSchema(app, canonical, screenshot, screenshotAlt));
   const structuredDataHash = scriptHash(structuredData);
+  const prerequisites = setupPanel(app);
   const html = `<!doctype html>
 <html lang="en">
 <head>
@@ -202,7 +205,7 @@ for (const app of catalog.apps) {
     <figure class="app-shot">
       <img src="../../media/site/apps/${screenshot}" width="1072" height="1448" alt="${escape(screenshotAlt)}">
     </figure>
-  </div>
+  </div>${prerequisites}
   <section class="panel" id="pair-panel">
     <p class="eyebrow">Install with Cobalt</p>
     <h2>Link your Kobo to install</h2>

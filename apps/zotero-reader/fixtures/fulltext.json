@@ -1,0 +1,5 @@
+{
+  "content": "First paragraph with <script>alert('not active')</script> markup.\n\nSecond paragraph contains enough text to exercise the reader's bounded HTML publication path without claiming that Zotero's plain-text index retains tables, formulas, or figures.\n\nThird paragraph is intentionally beyond the small test envelope.",
+  "indexedPages": 2,
+  "totalPages": 3
+}

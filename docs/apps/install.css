@@ -92,6 +92,18 @@ h1 {
 }
 
 .panel + .panel { margin-top: 22px; }
+.prerequisites { background: var(--paper-deep); }
+.prerequisites ol { margin: 20px 0 0; padding-left: 22px; color: var(--muted); }
+.prerequisites li + li { margin-top: 12px; }
+.setup-command {
+  display: block;
+  width: fit-content;
+  max-width: 100%;
+  margin-top: 8px;
+  overflow-wrap: anywhere;
+  color: var(--ink);
+  font: 14px/1.5 var(--mono);
+}
 .setup { background: var(--paper-deep); }
 .setup ol { margin: 20px 0 24px; padding-left: 22px; color: var(--muted); }
 .setup li + li { margin-top: 8px; }
