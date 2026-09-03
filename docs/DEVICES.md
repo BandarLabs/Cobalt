@@ -36,26 +36,52 @@ short press sleeps in place and a hold of two seconds powers off. Wake returns
 to the same application. Closing a sleep cover sleeps; opening it wakes. Idle
 also sleeps in Cobalt rather than handing the panel back to Nickel, after the
 delay chosen in Settings (1, 5, 10 or 30 minutes, or never). Five minutes is
-the default. Sleep keeps the current screen and writes "Sleeping" in the
-status strip; it does not replace the panel with a splash. The radio is
-powered down for sleep and brought back on wake when it was up. If it is
-still down when an application fetches, and the firmware supplicant still
-has a remembered network, Cobalt turns the radio on, asks it to reconnect,
-and waits for a default route. Nickel is not running to hold that
-association, so Cobalt does: while the session is awake and still wants
-the radio, a link that comes back and then dies is put back, the lease is
-renewed rather than bouncing a handshake in flight, and chip power-save is
-turned off so the driver does not idle the radio out from under the panel.
+the default. Sleep paints a full-screen "Sleeping" notice that says how to
+wake; touching the panel is not one of the ways, exactly as on the stock
+firmware, so a reader asleep in a bag stays asleep. The radio is powered
+down for sleep and brought back on wake when it was up. If it is still down
+when an application fetches, and the firmware supplicant still has a
+remembered network, Cobalt turns the radio on, asks it to reconnect, and
+waits for a default route. Nickel is not running to hold that association,
+so Cobalt does: while the session is awake and still wants the radio, a link
+that comes back and then dies is put back, the lease is renewed rather than
+bouncing a handshake in flight, and chip power-save is turned off so the
+driver does not idle the radio out from under the panel.
+
+Before `mem` is written the panel is allowed to finish every update in
+flight, the radio is taken as far down as the stock reader takes it, and
+the kernel is asked to flag its subsystems. On MediaTek boards "as far down"
+means the chip's wireless function is switched off through the vendor
+kernel's switch node, which removes `wlan0`; the firmware supplicant is left
+running and re-attaches when wake switches the function back on. That switch
+is only ever written back on by the session that wrote it off: a radio the
+stock reader never initialised is never touched, because powering a function
+the firmware has not brought up is the documented way to reboot an Elipsa 2E.
+i.MX boards have no such switch; the link is taken down and the kernel is
+left to power the SDIO radio. After every resume the hardware watchdog is
+read back and slackened again if the resume path re-armed it.
 
 On MediaTek boards the power button is the `bd71828-pwrkey` input node, not
 `gpio-keys` (that node is only the sleep-cover hall sensor). i.MX boards
 (Clara HD, Libra 2) still report power on `gpio-keys`.
 
-MediaTek boards (Clara BW, Clara Colour, Elipsa 2E, Libra Colour) do not write
-`mem` while a charger is attached: that combination hangs the kernel. They stay
-on the sleep screen until the charger is removed or the owner wakes the device.
-If charging cannot be read, those boards skip `mem` as well. i.MX boards
-(Clara HD, Libra 2) suspend while charging.
+A sleeping session stays on the sleep screen rather than writing `mem` when:
+
+- **anything but the battery is powering a MediaTek board** (Clara BW, Clara
+  Colour, Elipsa 2E, Libra Colour). Suspend with a cable attached hangs that
+  kernel. The test is not "charging": a full battery on a cable reports
+  `Not charging`, and any supply that is not the battery and reports itself
+  online counts. If the gauge cannot be read, the cable is assumed. i.MX
+  boards (Clara HD, Libra 2) suspend while charging;
+- **the radio would not settle**: the interface would not go down, or the
+  wireless function would not switch off;
+- **Bluetooth was used on a chip that has to be rebooted afterwards**. The
+  wireless and Bluetooth functions share that chip, and suspending it in
+  that state is the same question the reboot exists to avoid asking.
+
+Every one of those is re-examined every thirty seconds, so a charger
+unplugged from a reader left on its sleep screen gets it into `mem` without
+anybody touching it.
 
 In-session sleep is new. The Elipsa 2E suspend/resume evidence above is for a
 session that had already ended. Libra Colour still has no attended sleep/wake

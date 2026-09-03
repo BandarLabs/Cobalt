@@ -55,6 +55,132 @@ const SUPPLICANT_WAIT: Duration = Duration::from_secs(5);
 /// without waiting out the whole association allowance.
 const ROUTE_POLL: Duration = Duration::from_millis(250);
 
+/// Where the kernel exposes the wireless interface, when it exists at all.
+const WIRELESS_NODE: &str = "/sys/class/net/wlan0";
+
+/// The combo chip's wireless function switch, on boards that have one.
+///
+/// The `MediaTek` readers put Wi-Fi and Bluetooth on one chip behind one
+/// vendor driver, and this character device is how the firmware turns the
+/// wireless half of it on and off: writing `1` powers the function and
+/// creates `wlan0`, writing `0` powers it down and removes the node. The
+/// stock reader does that before every suspend, so the driver's own suspend
+/// callbacks only ever run against a function that is already off. Taking
+/// the link down leaves the function powered, which is a path the stock
+/// firmware never takes into `mem`. i.MX boards have no such device and their
+/// SDIO radio is left to the kernel.
+const FUNCTION_SWITCH: &str = "/dev/wmtWifi";
+
+/// How long the interface is given to disappear after the function is switched
+/// off. The driver unregisters the netdev synchronously in practice; three
+/// seconds is a ceiling, not an expectation.
+const FUNCTION_OFF_WAIT: Duration = Duration::from_secs(3);
+
+/// Set while this session has the wireless function switched off for sleep.
+///
+/// Wake switches the function back on only when this is set. A radio that the
+/// stock reader never initialised must stay untouched: powering the function
+/// on a chip the firmware has not brought up is the documented way to reboot
+/// an Elipsa 2E, and nothing here can tell that state from "off for sleep"
+/// except by remembering which one it made.
+static FUNCTION_OFF_FOR_SLEEP: AtomicBool = AtomicBool::new(false);
+
+/// How far sleep managed to quiet the radio.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Quiet {
+    /// There was no interface to take down; nothing was touched.
+    AlreadyOff,
+    /// `wlan0` is administratively down. On a board without a function switch
+    /// that is as quiet as the radio gets from user space.
+    LinkDown,
+    /// The wireless function is switched off and `wlan0` is gone.
+    FunctionOff,
+    /// The link is down but the function switch would not take the write or
+    /// the node did not go away. The chip is in a state suspend was never
+    /// tested against.
+    FunctionStuckOn,
+    /// The interface would not go down.
+    StillUp,
+}
+
+impl Quiet {
+    /// Whether the radio is as quiet as the stock firmware leaves it before
+    /// writing `mem`, so suspend can proceed.
+    #[must_use]
+    pub fn is_settled(self) -> bool {
+        !matches!(self, Self::FunctionStuckOn | Self::StillUp)
+    }
+}
+
+/// Whether this board has a wireless function switch.
+#[must_use]
+pub fn has_function_switch() -> bool {
+    Path::new(FUNCTION_SWITCH).exists()
+}
+
+fn wireless_node_present() -> bool {
+    Path::new(WIRELESS_NODE).exists()
+}
+
+/// Takes the radio as far down as the stock reader does before it suspends.
+///
+/// Disconnects through the supplicant when there is one to ask, takes the
+/// link down, and on a board with a function switch powers the function off
+/// and waits for `wlan0` to go. The supplicant is left running throughout:
+/// it is the firmware's, it survives its interface being removed, and it
+/// re-attaches by name when wake creates the interface again.
+#[must_use]
+pub fn quiet_for_sleep(wifi: Option<&Wifi>) -> Quiet {
+    if !wireless_node_present() {
+        return Quiet::AlreadyOff;
+    }
+    if let Some(wifi) = wifi {
+        let _ignored = wifi.command(["disconnect"]);
+    }
+    if !set_interface(false) && interface_enabled() {
+        return Quiet::StillUp;
+    }
+    if !has_function_switch() {
+        return Quiet::LinkDown;
+    }
+    if std::fs::write(FUNCTION_SWITCH, b"0").is_err() {
+        return Quiet::FunctionStuckOn;
+    }
+    FUNCTION_OFF_FOR_SLEEP.store(true, Ordering::SeqCst);
+    let deadline = Instant::now() + FUNCTION_OFF_WAIT;
+    while wireless_node_present() {
+        if Instant::now() >= deadline {
+            return Quiet::FunctionStuckOn;
+        }
+        thread::sleep(ROUTE_POLL);
+    }
+    Quiet::FunctionOff
+}
+
+/// Puts the chip back the way sleep found it, without bringing the link up.
+///
+/// Wake calls this whether or not the session was using the network: the
+/// function was switched off for every sleep, so it comes back for every
+/// wake, and a fetch or the reader then finds the node it expects. A board
+/// whose function this session never switched off is left alone.
+pub fn wake_radio_function() {
+    let _ignored = restore_function_after_sleep();
+}
+
+/// Powers the wireless function back on if sleep switched it off, and only
+/// then. Returns whether a write was made, so a caller that needs `wlan0`
+/// knows to wait for it. The flag is cleared here rather than when the node
+/// appears: a switch that was written is a switch that was written.
+fn restore_function_after_sleep() -> bool {
+    if !FUNCTION_OFF_FOR_SLEEP.swap(false, Ordering::SeqCst) {
+        return false;
+    }
+    if wireless_node_present() {
+        return false;
+    }
+    std::fs::write(FUNCTION_SWITCH, b"1").is_ok()
+}
+
 /// Whether this session still wants a remembered network on the air.
 ///
 /// Nickel holds the association while it is awake. Cobalt has to do the same:
@@ -107,6 +233,17 @@ pub fn wanted() -> bool {
 /// associate on. This is not owning the radio: Nickel still starts the only
 /// supplicant and still chooses whether to reconnect.
 pub fn leave_link_up() {
+    if restore_function_after_sleep() {
+        // A session that ended asleep hands back a chip whose wireless
+        // function is off. The reader can cope with that (it is the state
+        // every boot starts in) but the node it is about to be given should
+        // be the one this session found, so the function goes back on and
+        // the link is put up once the node is there.
+        let deadline = Instant::now() + INTERFACE_WAIT;
+        while !wireless_node_present() && Instant::now() < deadline {
+            thread::sleep(ROUTE_POLL);
+        }
+    }
     let _ignored = set_interface(true);
 }
 
@@ -179,7 +316,7 @@ impl Wifi {
 
     #[must_use]
     pub fn open() -> Option<Self> {
-        if !Path::new("/sys/class/net/wlan0").exists() {
+        if !wireless_node_present() {
             return None;
         }
         Self::from_cli()
@@ -486,12 +623,20 @@ impl Wifi {
         } else {
             INTERFACE_WAIT
         };
+        if !awake() {
+            return false;
+        }
+        // Whichever of the wake restore and a fetch gets here first switches
+        // the function back on; the other finds the node already coming up.
+        // Nothing is written on a board whose function this session never
+        // switched off.
+        restore_function_after_sleep();
         let deadline = Instant::now() + wait;
         loop {
             if !awake() {
                 return false;
             }
-            if Path::new("/sys/class/net/wlan0").exists() && set_interface(true) {
+            if wireless_node_present() && set_interface(true) {
                 disable_power_save();
                 return self.wait_for_supplicant(SUPPLICANT_WAIT);
             }
@@ -784,8 +929,28 @@ fn quote(value: &str) -> String {
 mod tests {
     use super::{
         handshake_in_progress, has_saved_network, parse_scan_results, quote, reconnect_saved_with,
-        valid_credentials, value,
+        valid_credentials, value, Quiet,
     };
+
+    #[test]
+    fn suspend_may_proceed_only_when_the_radio_is_as_quiet_as_stock_leaves_it() {
+        assert!(Quiet::AlreadyOff.is_settled());
+        assert!(Quiet::LinkDown.is_settled());
+        assert!(Quiet::FunctionOff.is_settled());
+        assert!(
+            !Quiet::FunctionStuckOn.is_settled(),
+            "a powered function behind a down link is the state suspend was never tested against"
+        );
+        assert!(!Quiet::StillUp.is_settled());
+    }
+
+    #[test]
+    fn a_function_this_session_never_switched_off_is_never_switched_on() {
+        // The flag is the only memory of who turned the function off, and a
+        // wake on a board whose radio the stock reader never initialised
+        // must find nothing to do.
+        assert!(!super::restore_function_after_sleep());
+    }
 
     #[test]
     fn sleep_makes_a_surviving_route_untrusted_until_a_join() {

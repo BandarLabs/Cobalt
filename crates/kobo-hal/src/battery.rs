@@ -130,9 +130,52 @@ fn read_charging(path: &Path) -> bool {
     })
 }
 
+/// Whether anything other than the battery is powering the device.
+///
+/// This is the question suspend asks, and it is the opposite bias from
+/// [`Battery::charging`]. Policy wants to be sure before it grants; suspend
+/// wants to be sure before it *proceeds*, because on some boards writing `mem`
+/// with a cable attached hangs the kernel. So a gauge saying anything but
+/// `Discharging` counts as external power: `Not charging` is what a full
+/// battery on a cable reports, and `Unknown` is not a reason to gamble. Any
+/// supply that is not the battery and reports itself `online` counts as well,
+/// because a charger the gauge has not noticed yet is still a charger.
+///
+/// `None` when there is nothing here to read at all.
+#[must_use]
+pub fn external_power() -> Option<bool> {
+    external_power_from(Path::new(SUPPLIES))
+}
+
+/// The same, against an arbitrary root, so it is testable without a charger.
+#[must_use]
+pub fn external_power_from(supplies: &Path) -> Option<bool> {
+    let mut saw_a_supply = false;
+    let mut powered = false;
+    for path in fs::read_dir(supplies)
+        .ok()?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+    {
+        let Ok(kind) = fs::read_to_string(path.join("type")) else {
+            continue;
+        };
+        saw_a_supply = true;
+        if kind.trim().eq_ignore_ascii_case("Battery") {
+            powered |= fs::read_to_string(path.join("status")).map_or(true, |status| {
+                !status.trim().eq_ignore_ascii_case("Discharging")
+            });
+        } else {
+            powered |=
+                fs::read_to_string(path.join("online")).is_ok_and(|online| online.trim() != "0");
+        }
+    }
+    saw_a_supply.then_some(powered)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{read_from, Battery};
+    use super::{external_power_from, read_from, Battery};
     use std::fs;
     use std::path::{Path, PathBuf};
 
@@ -216,5 +259,50 @@ mod tests {
         supply(&root, "bat", "Battery", "not a number", "Discharging");
         assert_eq!(read_from(&root), None);
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn external_power_is_anything_the_gauge_does_not_call_discharging() {
+        // A full battery on a cable: the gauge stops charging and says so in
+        // words that are not "Charging". The cable is still attached, and
+        // that is what suspend needs to know.
+        let dir = root("not-charging");
+        supply(&dir, "bat", "Battery", "100", "Not charging");
+        assert_eq!(external_power_from(&dir), Some(true));
+        let _ = fs::remove_dir_all(&dir);
+
+        let dir = root("unknown");
+        supply(&dir, "bat", "Battery", "50", "Unknown");
+        assert_eq!(external_power_from(&dir), Some(true));
+        let _ = fs::remove_dir_all(&dir);
+
+        let dir = root("discharging");
+        supply(&dir, "ac", "Mains", "", "");
+        fs::write(dir.join("ac").join("online"), "0\n").expect("an online flag");
+        supply(&dir, "bat", "Battery", "50", "Discharging");
+        assert_eq!(external_power_from(&dir), Some(false));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_online_charger_counts_even_when_the_gauge_has_not_noticed() {
+        let dir = root("online");
+        supply(&dir, "usb", "USB", "", "");
+        fs::write(dir.join("usb").join("online"), "1\n").expect("an online flag");
+        supply(&dir, "bat", "Battery", "50", "Discharging");
+        assert_eq!(external_power_from(&dir), Some(true));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_gauge_without_a_status_file_is_not_assumed_unplugged() {
+        let dir = root("no-status");
+        supply(&dir, "bat", "Battery", "50", "");
+        assert_eq!(external_power_from(&dir), Some(true));
+        let _ = fs::remove_dir_all(&dir);
+
+        let dir = root("nothing");
+        assert_eq!(external_power_from(&dir), None);
+        let _ = fs::remove_dir_all(&dir);
     }
 }

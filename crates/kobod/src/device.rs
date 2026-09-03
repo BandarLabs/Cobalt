@@ -683,6 +683,7 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
         limits,
         forward_is_194,
         &watchdog,
+        &slack,
     );
     // No panel work may outlive Cobalt's ownership of the display. This is an
     // explicit lifecycle fence rather than a timing assumption: the stock
@@ -993,9 +994,56 @@ fn paint_sleep(
 /// What a session put down in order to sleep, so a wake can put it back.
 struct Sleeping {
     wifi_was_on: bool,
+    /// How far the radio was taken down. Suspend needs it as quiet as the
+    /// stock reader leaves it; anything less and the session sleeps in place.
+    radio: kobo_hal::wifi::Quiet,
     light: Option<u8>,
     mem_at: Option<Instant>,
     resleep_at: Option<Instant>,
+    /// A touch has already been reported ignored during this sleep, so the
+    /// rest are not traced one by one.
+    touch_reported: bool,
+}
+
+/// Why a sleeping session is staying on the sleep screen rather than
+/// writing `mem`. Each is re-examined on a timer, because most of them
+/// clear on their own: a charger is unplugged, a radio settles.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum MemRefusal {
+    /// The kernel does not list `mem`, or there is no kernel power node.
+    Unavailable,
+    /// Something other than the battery is powering a board whose kernel
+    /// hangs if it suspends in that state.
+    ExternalPower,
+    /// The radio is not as quiet as the stock reader leaves it before it
+    /// suspends.
+    RadioAwake,
+    /// Bluetooth was used on a chip that has to be rebooted afterwards.
+    /// Suspending that chip mid-session is the same question with worse
+    /// consequences, so it is not asked.
+    RadioNeedsReboot,
+}
+
+/// Decides whether a sleeping session may write `mem` right now.
+fn mem_refusal(
+    allows_mem: bool,
+    external_power_blocks: bool,
+    radio: kobo_hal::wifi::Quiet,
+    bluetooth_needs_reboot: bool,
+) -> Option<MemRefusal> {
+    if !allows_mem {
+        return Some(MemRefusal::Unavailable);
+    }
+    if external_power_blocks {
+        return Some(MemRefusal::ExternalPower);
+    }
+    if bluetooth_needs_reboot {
+        return Some(MemRefusal::RadioNeedsReboot);
+    }
+    if !radio.is_settled() {
+        return Some(MemRefusal::RadioAwake);
+    }
+    None
 }
 
 fn wifi_enabled(wifi: &kobo_hal::wifi::Wifi) -> bool {
@@ -1090,14 +1138,17 @@ fn watch_saved_wifi(wifi: kobo_hal::wifi::Wifi) {
 fn charger_blocks_mem(display: &DisplaySession) -> bool {
     charger_blocks_mem_with(
         display.profile().kernel_suspend_hangs_while_charging(),
-        kobo_hal::battery::read().map(|battery| battery.charging),
+        kobo_hal::battery::external_power(),
     )
 }
 
-/// `MediaTek` boards hang if we write `mem` while charging. Unknown charging
-/// is treated as charging: a missed battery read must not enable a hang.
-fn charger_blocks_mem_with(hangs_while_charging: bool, charging: Option<bool>) -> bool {
-    hangs_while_charging && charging.unwrap_or(true)
+/// `MediaTek` boards hang if we write `mem` with a cable attached. The
+/// question asked of the gauge is therefore "is anything but the battery
+/// powering this", not "is it charging": a full battery on a cable reports
+/// `Not charging`, and that cable hangs the kernel just as well. Unknown is
+/// treated as attached, because a missed read must not enable a hang.
+fn charger_blocks_mem_with(hangs_while_charging: bool, external_power: Option<bool>) -> bool {
+    hangs_while_charging && external_power.unwrap_or(true)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1124,32 +1175,65 @@ fn enter_sleep(
     let wifi_was_on = kobo_hal::wifi::wanted() || wifi.is_some_and(wifi_enabled);
     kobo_hal::wifi::set_awake(false);
     kobo_net::forget_idle();
-    if let Some(wifi) = wifi {
-        if wifi_was_on {
-            let _ignored = wifi.set_enabled(false);
-        }
-    }
     let mut sleeping = Sleeping {
         wifi_was_on,
+        radio: kobo_hal::wifi::Quiet::StillUp,
         light: saved_light,
         mem_at: None,
         resleep_at: None,
+        touch_reported: false,
     };
-    schedule_mem(&mut sleeping, kernel, display);
+    schedule_mem(&mut sleeping, kernel, wifi, display);
     Ok(sleeping)
 }
 
+/// Quiets the radio and arms `mem`, or records why not and when to ask again.
+///
+/// The radio is taken down here rather than in [`enter_sleep`], and on every
+/// visit, because this is also where the loop comes after a kernel wake that
+/// nobody asked for, and a resume path is free to have powered the chip back
+/// up in the meantime. It is taken down whether or not the session was using
+/// it: a link that is administratively down still leaves the chip's wireless
+/// function powered, and it is the function the stock reader switches off
+/// before it suspends.
+///
+/// A refusal is not final. A charger gets unplugged, a radio that would not
+/// settle the first time settles the second, so every refusal except a kernel
+/// that has no `mem` at all sets `resleep_at` and the loop comes back here.
 fn schedule_mem(
     sleeping: &mut Sleeping,
     kernel: Option<&kobo_hal::power::Power>,
+    wifi: Option<&kobo_hal::wifi::Wifi>,
     display: &DisplaySession,
 ) {
     sleeping.mem_at = None;
     sleeping.resleep_at = None;
+    sleeping.radio = kobo_hal::wifi::quiet_for_sleep(wifi);
+    trace(&format!("radio for sleep: {:?}", sleeping.radio));
     let Some(kernel) = kernel else {
         return;
     };
-    if !kernel.allows_mem() || charger_blocks_mem(display) {
+    let refusal = mem_refusal(
+        kernel.allows_mem(),
+        charger_blocks_mem(display),
+        sleeping.radio,
+        kobo_hal::bluetooth::requires_reboot_after_use(),
+    );
+    match refusal {
+        None => {}
+        Some(MemRefusal::Unavailable) => return,
+        Some(reason) => {
+            trace(&format!("staying on the sleep screen: {reason:?}"));
+            sleeping.resleep_at = Some(Instant::now() + MEM_RECHECK);
+            return;
+        }
+    }
+    // Nothing may be in flight on the panel when the subsystems are flagged:
+    // the controller is one of them, and an update still marching when its
+    // power is pulled is the classic way to lose the next wake.
+    if let Err(error) = display.finish_pending() {
+        trace(&format!("panel would not settle before suspend: {error}"));
+        sleeping.resleep_at = Some(Instant::now() + MEM_RECHECK);
         return;
     }
     match kernel.flag_subsystems() {
@@ -1158,7 +1242,18 @@ fn schedule_mem(
     }
 }
 
-fn try_mem(kernel: &kobo_hal::power::Power, watchdog: &Watchdog) -> bool {
+fn try_mem(
+    display: &DisplaySession,
+    kernel: &kobo_hal::power::Power,
+    watchdog: &Watchdog,
+    slack: &kobo_hal::soc_watchdog::Slack,
+) -> bool {
+    // The settle window is long enough for something to have been drawn
+    // (a status band tick, a late frame from an application). Wait it out
+    // rather than suspending under it.
+    if let Err(error) = display.finish_pending() {
+        trace(&format!("panel busy at suspend: {error}"));
+    }
     let _ignored = Command::new("sync").status();
     let resumed = match kernel.enter_mem() {
         Ok(()) => {
@@ -1173,6 +1268,19 @@ fn try_mem(kernel: &kobo_hal::power::Power, watchdog: &Watchdog) -> bool {
     };
     watchdog.beat();
     let _ignored = kernel.unflag_subsystems();
+    if resumed {
+        // The resume path belongs to the watchdog driver, and whether it
+        // honours a counter that was slackened from user space is its
+        // business. Asking costs a read; not asking costs a reboot ten
+        // seconds after the panel goes back if the answer was no.
+        match slack.reassert() {
+            Ok(true) => trace("the hardware watchdog was re-armed by resume; slackened again"),
+            Ok(false) => {}
+            Err(error) => trace(&format!(
+                "could not check the hardware watchdog after resume: {error}"
+            )),
+        }
+    }
     resumed
 }
 
@@ -1196,6 +1304,10 @@ fn leave_sleep(
         }
     }
     kobo_hal::wifi::set_awake(true);
+    // The function comes back for every wake, because it went off for every
+    // sleep. Only the association is conditional on what the session was
+    // doing before.
+    kobo_hal::wifi::wake_radio_function();
     if sleeping.wifi_was_on {
         restore_wifi_after_wake(wifi);
     }
@@ -1275,6 +1387,11 @@ const SUBSYSTEM_SETTLE: Duration = Duration::from_secs(2);
 /// After a kernel wake that was not a button or the cover, wait this long
 /// for the owner to do something before going back to sleep.
 const UNEXPECTED_WAKE: Duration = Duration::from_secs(15);
+/// How often a sleeping session that could not write `mem` asks again.
+/// Long enough not to matter for battery, short enough that a charger
+/// unplugged from a reader left on its sleep screen gets it into `mem`
+/// before the owner has walked away.
+const MEM_RECHECK: Duration = Duration::from_secs(30);
 /// Ignore a power tap that arrives in the same moment as wake. Restoring
 /// Wi-Fi used to block the loop; extra taps queued and slept the session
 /// again the instant the overlay could have cleared.
@@ -1518,6 +1635,7 @@ impl Hosted {
 /// keep arriving; and what it draws is kept rather than shown. Coming back is
 /// one repaint of a screen the runtime already has.
 #[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_arguments)]
 fn host_applications(
     application: &Path,
     display: &DisplaySession,
@@ -1526,6 +1644,7 @@ fn host_applications(
     limits: Limits,
     forward_is_194: bool,
     watchdog: &Arc<Watchdog>,
+    slack: &kobo_hal::soc_watchdog::Slack,
 ) -> Result<String, String> {
     let session_ceiling = limits.ceiling.min(MAX_SESSION);
     let mut idle_sleep = load_idle_sleep_from(&idle_sleep_path());
@@ -1723,11 +1842,11 @@ fn host_applications(
                 if sleeping.mem_at.is_some_and(|at| now >= at) {
                     sleeping.mem_at = None;
                     if let Some(kernel) = kernel.as_ref() {
-                        resumed_from_mem = try_mem(kernel, watchdog);
+                        resumed_from_mem = try_mem(display, kernel, watchdog, slack);
                     }
                     sleeping.resleep_at = Some(Instant::now() + UNEXPECTED_WAKE);
                 } else if sleeping.resleep_at.is_some_and(|at| now >= at) {
-                    schedule_mem(sleeping, kernel.as_ref(), display);
+                    schedule_mem(sleeping, kernel.as_ref(), wifi.as_ref(), display);
                 }
             }
             if resumed_from_mem {
@@ -2081,28 +2200,21 @@ fn host_applications(
                     }
                 }
                 Ok(Event::Touch(event)) => {
-                    last_activity = Instant::now();
-                    if let Some(sleeping) = asleep.take() {
-                        leave_sleep(
-                            &sleeping,
-                            kernel.as_ref(),
-                            wifi.as_ref(),
-                            frontlight.as_ref(),
-                            &mut panel,
-                        );
-                        wake_grace_until = Some(Instant::now() + WAKE_GRACE);
-                        repaint(
-                            &mut apps,
-                            front,
-                            display,
-                            whole_screen,
-                            &mut surface,
-                            &mut panel,
-                            &home,
-                            &mut status,
-                        )?;
+                    // The sleep screen says how to wake, and the panel is not
+                    // on the list. A reader asleep in a bag is touched all the
+                    // time; the stock firmware does not wake for it and
+                    // neither does this. Under `mem` the touch controller is
+                    // off anyway, so anything arriving here is either a
+                    // session sleeping in place or the window after a kernel
+                    // wake nobody asked for, and both should stay asleep.
+                    if let Some(sleeping) = asleep.as_mut() {
+                        if !sleeping.touch_reported {
+                            sleeping.touch_reported = true;
+                            trace("touch while asleep; ignored");
+                        }
                         continue;
                     }
+                    last_activity = Instant::now();
                     let Some(index) = index_of(&apps, front) else {
                         return Ok(finish(&apps, &visited, "nothing is on the panel"));
                     };
@@ -4831,6 +4943,35 @@ mod hosting_tests {
         assert!(!super::charger_blocks_mem_with(true, Some(false)));
         assert!(!super::charger_blocks_mem_with(false, None));
         assert!(!super::charger_blocks_mem_with(false, Some(true)));
+    }
+
+    #[test]
+    fn mem_is_refused_for_the_first_reason_that_applies_and_nothing_else() {
+        use super::{mem_refusal, MemRefusal};
+        use kobo_hal::wifi::Quiet;
+        assert_eq!(
+            mem_refusal(false, false, Quiet::FunctionOff, false),
+            Some(MemRefusal::Unavailable)
+        );
+        assert_eq!(
+            mem_refusal(true, true, Quiet::FunctionOff, false),
+            Some(MemRefusal::ExternalPower)
+        );
+        assert_eq!(
+            mem_refusal(true, false, Quiet::FunctionOff, true),
+            Some(MemRefusal::RadioNeedsReboot)
+        );
+        assert_eq!(
+            mem_refusal(true, false, Quiet::FunctionStuckOn, false),
+            Some(MemRefusal::RadioAwake)
+        );
+        assert_eq!(
+            mem_refusal(true, false, Quiet::StillUp, false),
+            Some(MemRefusal::RadioAwake)
+        );
+        assert_eq!(mem_refusal(true, false, Quiet::FunctionOff, false), None);
+        assert_eq!(mem_refusal(true, false, Quiet::LinkDown, false), None);
+        assert_eq!(mem_refusal(true, false, Quiet::AlreadyOff, false), None);
     }
 
     #[test]

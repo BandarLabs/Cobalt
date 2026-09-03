@@ -225,6 +225,40 @@ impl Slack {
         self.restore.is_some()
     }
 
+    /// Puts the slack back if something armed the counter behind the guard.
+    ///
+    /// A resume from suspend-to-RAM runs the watchdog driver's own restore
+    /// path, and whether that path honours a counter that was disabled from
+    /// user space is a property of the driver, not of this guard. Reading the
+    /// node again after every wake and writing the slack back when it has
+    /// gone costs two small file operations and removes the question. Returns
+    /// whether a write was needed, so the caller can record that it was.
+    ///
+    /// # Errors
+    ///
+    /// Whatever reading or writing the node produced.
+    pub fn reassert(&self) -> Result<bool, WatchdogError> {
+        let Some(restore) = self.restore else {
+            return Ok(false);
+        };
+        let state = match SocWatchdog::at(&self.node).state() {
+            Ok(state) => state,
+            Err(WatchdogError::Absent) => return Ok(false),
+            Err(error) => return Err(error),
+        };
+        if !state.armed {
+            return Ok(false);
+        }
+        write(
+            &self.node,
+            State {
+                armed: false,
+                timeout: restore.timeout,
+            },
+        )?;
+        Ok(true)
+    }
+
     /// Arms the counter again, reporting whether the write landed.
     ///
     /// # Errors
@@ -379,6 +413,35 @@ mod tests {
             fs::read_to_string(&node).expect("read"),
             "enabled timeout\n0    31      \n",
             "nothing was written, so nothing was restored"
+        );
+    }
+
+    #[test]
+    fn slack_that_was_taken_away_behind_the_guard_is_put_back() {
+        // What a resume path that re-arms the counter would leave behind.
+        let node = scratch("reassert");
+        fs::write(&node, "enabled timeout\n1    31      \n").expect("seed");
+        let slack = SocWatchdog::at(&node).slacken().expect("slacken");
+        assert!(
+            !slack.reassert().expect("reassert"),
+            "still slack, so nothing to do"
+        );
+        fs::write(&node, "enabled timeout\n1    31      \n").expect("re-arm behind our back");
+        assert!(slack.reassert().expect("reassert"));
+        assert_eq!(fs::read_to_string(&node).expect("read"), "0 31\n");
+    }
+
+    #[test]
+    fn a_guard_that_holds_nothing_never_reasserts() {
+        let node = scratch("reassert-nothing");
+        fs::write(&node, "enabled timeout\n0    31      \n").expect("seed");
+        let slack = SocWatchdog::at(&node).slacken().expect("slacken");
+        fs::write(&node, "enabled timeout\n1    31      \n").expect("armed by someone else");
+        assert!(!slack.reassert().expect("reassert"));
+        assert_eq!(
+            fs::read_to_string(&node).expect("read"),
+            "enabled timeout\n1    31      \n",
+            "a counter we never slackened is not ours to slacken now"
         );
     }
 
