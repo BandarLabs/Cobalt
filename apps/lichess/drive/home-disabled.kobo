@@ -1,4 +1,4 @@
-expect Pairing unavailable
+expect Connect in Account/Games
 expect Account/Games
 expect Puzzles
 expect 3+0
@@ -6,6 +6,5 @@ expect Blitz
 shot unavailable-home
 tap 3+0
 wait 300
-expect Pairing unavailable
-expect-missing Pairing is unavailable
+expect Connect in Account/Games
 shot unavailable-still

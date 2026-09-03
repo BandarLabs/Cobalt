@@ -386,32 +386,26 @@ impl Lichess {
 
     fn pairing_status(&self) -> String {
         if self.seek_ready() {
-            return "Ready · rated games · random color".to_owned();
+            return "Ready".to_owned();
         }
         if let Some(remaining) = self
             .seek_rate_remaining()
             .filter(|remaining| *remaining > 0)
         {
-            return format!("Pairing unavailable · retry in {remaining}s");
+            return format!("Retry in {remaining}s");
         }
         match self.account {
             AccountState::Unknown | AccountState::Missing | AccountState::Invalid => {
-                "Pairing unavailable · open Account/Games to connect".to_owned()
+                "Connect in Account/Games".to_owned()
             }
-            AccountState::Checking => "Pairing unavailable · checking account".to_owned(),
-            AccountState::Failed(_) => {
-                "Pairing unavailable · check Account/Games status".to_owned()
-            }
-            AccountState::Ready(_) if !self.event_open => {
-                "Pairing unavailable · preparing event stream".to_owned()
-            }
-            AccountState::Ready(_) if !self.playing_ready => {
-                "Pairing unavailable · refreshing current games".to_owned()
-            }
+            AccountState::Checking => "Checking account".to_owned(),
+            AccountState::Failed(_) => "Check Account/Games".to_owned(),
+            AccountState::Ready(_) if !self.event_open => "Connecting".to_owned(),
+            AccountState::Ready(_) if !self.playing_ready => "Refreshing games".to_owned(),
             AccountState::Ready(_) if self.game.as_ref().is_some_and(Game::active) => {
-                "Pairing unavailable · a board is active".to_owned()
+                "Board active".to_owned()
             }
-            AccountState::Ready(_) => "Pairing unavailable · request in progress".to_owned(),
+            AccountState::Ready(_) => "Pairing in progress".to_owned(),
         }
     }
 
@@ -1614,9 +1608,7 @@ impl Lichess {
             self.clear_seek_rate_limit(context);
         }
         if !self.seek_ready() {
-            self.notice = Some(
-                "Pairing is unavailable. Open Account/Games for status or refresh.".to_owned(),
-            );
+            self.notice = Some("Connect in Account/Games.".to_owned());
             return;
         }
         self.seek_generation = self.seek_generation.wrapping_add(1);
@@ -4073,6 +4065,27 @@ mod tests {
         declared
     }
 
+    fn tile_copy(nodes: &[Node]) -> Vec<(ActionId, String, String)> {
+        let mut copy = Vec::new();
+        for node in nodes {
+            match node {
+                Node::TileGrid { tiles, .. } => copy.extend(
+                    tiles
+                        .iter()
+                        .map(|tile| (tile.action, tile.label.clone(), tile.subtitle.clone())),
+                ),
+                Node::Band { slots, .. } => {
+                    for slot in slots {
+                        copy.extend(tile_copy(&slot.nodes));
+                    }
+                }
+                Node::Card { children, .. } => copy.extend(tile_copy(children)),
+                _ => {}
+            }
+        }
+        copy
+    }
+
     fn pixel(surface: &Surface, metrics: &DisplayMetrics, x: i32, y: i32) -> u8 {
         let x = usize::try_from(x).expect("pixel x");
         let y = usize::try_from(y).expect("pixel y");
@@ -4218,7 +4231,7 @@ mod tests {
     fn unready_home_uses_one_status_and_safe_tiles_without_close_accessories() {
         let mut runner = AppRunner::new(Lichess::default());
         let screen = painted(runner.start()).expect("home");
-        assert!(format!("{screen:?}").contains("Pairing unavailable"));
+        assert!(format!("{screen:?}").contains("Connect in Account/Games"));
         let tiles = declared_tiles(&screen.nodes);
         assert!(tiles.iter().all(|(action, _, state, badge_empty)| {
             let utility = *action == action_id("play") || *action == action_id("puzzles");
@@ -4294,6 +4307,39 @@ mod tests {
             ),
             None
         );
+    }
+
+    #[test]
+    fn home_copy_is_only_destination_or_time_and_speed() {
+        let context = Context::default();
+        let mut app = ready_app();
+        for page in 0..app.home_pages(&context).len() {
+            app.home_page = page;
+            let screen = app.home(&context);
+            let rendered = format!("{screen:?}");
+            for forbidden in ["Rated", "random color", "protocol", "API"] {
+                assert!(
+                    !rendered.contains(forbidden),
+                    "{forbidden} appeared on home"
+                );
+            }
+            for (action, label, subtitle) in tile_copy(&screen.nodes) {
+                if action == action_id("play") {
+                    assert_eq!(label, "Account/Games");
+                    assert_eq!(subtitle, "Challenges · boards");
+                } else if action == action_id("puzzles") {
+                    assert_eq!(label, "Puzzles");
+                    assert_eq!(subtitle, "Offline training");
+                } else {
+                    let preset = api::SeekPreset::ALL
+                        .into_iter()
+                        .find(|preset| action == action_id(preset.action()))
+                        .expect("preset action");
+                    assert_eq!(label, preset.label());
+                    assert_eq!(subtitle, preset.speed_label());
+                }
+            }
+        }
     }
 
     #[test]
