@@ -46,10 +46,12 @@ restart with a minimal environment and fixed system-tool path, discover ARM
 tools only from fixed directories and name allowlists, clear Rust
 compiler/wrapper/flag overrides, and pin the active toolchain's real
 `cargo`, `rustc`, and `rust-lld` executables. Cargo runs with a clean
-configuration home backed only by its checksum/pin-verified registry and Git
-caches, rejects toolchain configuration above the audited repository, and
-forces empty wrapper/rustflag overrides. Python validation runs in isolated
-mode. The fixed validation
+configuration home. Only registry archives/indexes and Git object databases
+are shared as cache inputs; Cargo rematerializes all compiled source trees for
+each build and audit. The scripts reject toolchain configuration above the
+audited repository, force empty wrapper/rustflag overrides, pin cargo-about
+0.6.4 at its fixed tool path, and run Python validation in isolated mode. The
+fixed validation
 signing material is public, removed immediately, and derives the fixed audit
 public key
 `d759793bbc13a2819a827c76adb6fba8a49aee007f49f2d0992d99b825ad2c48`.

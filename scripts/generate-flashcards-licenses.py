@@ -29,6 +29,9 @@ TARGETS = [
 if len(sys.argv) > 2 or (len(sys.argv) == 2 and sys.argv[1] != "--check"):
     raise SystemExit("usage: scripts/generate-flashcards-licenses.py [--check]")
 CHECK = sys.argv[1:] == ["--check"]
+CARGO_ABOUT = os.environ.get("CARGO_ABOUT") or shutil.which("cargo-about")
+if not CARGO_ABOUT or not Path(CARGO_ABOUT).is_absolute():
+    raise SystemExit("CARGO_ABOUT must resolve to an absolute cargo-about executable")
 
 
 def generate(manifest: Path, output: Path, title: str) -> None:
@@ -46,8 +49,7 @@ def generate(manifest: Path, output: Path, title: str) -> None:
     )
     subprocess.run(
         [
-            "cargo",
-            "about",
+            CARGO_ABOUT,
             "generate",
             "--format",
             "json",

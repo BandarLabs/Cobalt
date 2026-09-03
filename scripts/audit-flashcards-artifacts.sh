@@ -123,6 +123,13 @@ if [ ! -x "$RUSTC" ] || [ ! -x "$CARGO" ]; then
 fi
 PATH="$rust_sysroot/bin:$PATH"
 export PATH RUSTC
+CARGO_ABOUT="$HOME/.cargo/bin/cargo-about"
+if [ ! -x "$CARGO_ABOUT" ] ||
+  [ "$("$CARGO_ABOUT" --version)" != "cargo-about 0.6.4" ]; then
+  echo "cargo-about 0.6.4 was not found at the fixed Cargo tool path" >&2
+  exit 1
+fi
+export CARGO_ABOUT
 
 case $1 in
   /*) target_root=$1 ;;
@@ -189,9 +196,10 @@ expected_validation_key=d759793bbc13a2819a827c76adb6fba8a49aee007f49f2d0992d99b8
 rm -f "$audit_report"
 cargo_home="$target_root/cargo-home"
 rm -rf "$cargo_home"
-mkdir -p "$cargo_home"
-for cache in registry git; do
+mkdir -p "$cargo_home/registry" "$cargo_home/git"
+for cache in registry/index registry/cache git/db; do
   if [ -d "$HOME/.cargo/$cache" ]; then
+    mkdir -p "$cargo_home/${cache%/*}"
     ln -s "$HOME/.cargo/$cache" "$cargo_home/$cache"
   fi
 done

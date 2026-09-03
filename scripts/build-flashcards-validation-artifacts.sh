@@ -167,9 +167,10 @@ find "$target_root" -mindepth 1 -maxdepth 1 \
 mkdir -p "$artifacts/catalog" "$target_root/build-tmp"
 export TMPDIR="$target_root/build-tmp"
 cargo_home="$target_root/cargo-home"
-mkdir -p "$cargo_home"
-for cache in registry git; do
+mkdir -p "$cargo_home/registry" "$cargo_home/git"
+for cache in registry/index registry/cache git/db; do
   if [ -d "$HOME/.cargo/$cache" ]; then
+    mkdir -p "$cargo_home/${cache%/*}"
     ln -s "$HOME/.cargo/$cache" "$cargo_home/$cache"
   fi
 done
