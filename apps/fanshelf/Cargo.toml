@@ -1,13 +1,16 @@
 [package]
 name = "kobo-fanshelf"
-version = "0.1.0"
+version = "0.2.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 publish = false
 
 [dependencies]
+kobo-bookview = { path = "../../crates/kobo-bookview" }
+kobo-read = { path = "../../crates/kobo-read" }
 kobo-sdk = { path = "../../crates/kobo-sdk" }
+kobo-xml = { path = "../../crates/kobo-xml" }
 
 [dev-dependencies]
 kobo-ui = { path = "../../crates/kobo-ui" }

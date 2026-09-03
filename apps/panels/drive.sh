@@ -1,5 +1,7 @@
 #!/bin/sh
 set -eu
+: "${CARGO_TARGET_DIR:=/Volumes/Untitled 1/cobalt-targets/batch-01}"
+export CARGO_TARGET_DIR
 cd "$(dirname "$0")/../.."
 cargo run -q -p kobo-cli -- run --sim --app panels
 python3 - <<'PY'

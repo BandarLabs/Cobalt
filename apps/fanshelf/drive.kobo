@@ -1,7 +1,34 @@
+# Run the browser simulator with FANSHELF_DEMO=1. All visible works are synthetic.
 wait 500
 expect Fanshelf
+expect The Clockwork Garden
+expect Лунная библиотека
 clean
 shot shelf
-tap Followed tags
-expect Followed tags
+
+tap The Clockwork Garden
+expect Rating: Teen And Up Audiences
+expect Archive warnings: No Archive Warnings Apply
+expect Re-download
 clean
+shot work
+
+tap Shelf
+tap Updates
+expect Manual updates
+expect Unread update
+clean
+shot updates
+
+tap Shelf
+tap Followed tags
+expect Public Domain Fairy Tales
+expect Synthetic Library Stories
+clean
+shot followed-tags
+
+tap Public Domain Fairy Tales
+expect AO3 Atom feed
+expect A Map Made of Starlight
+clean
+shot tag-feed
