@@ -416,15 +416,22 @@ impl KoboApp for Paperterm {
             match outcome {
                 TaskOutcome::Completed(bytes) => {
                     if self.session.is_none() {
+                        let previous_input = self.input;
                         match self.parse_hello(&bytes) {
                             Hello::Ready => {
-                                self.clear_failure();
-                                self.show(context);
+                                if self.clear_failure() || self.input != previous_input {
+                                    self.show(context);
+                                }
                                 if self.view != View::Ended {
                                     self.poll(context);
                                 }
                             }
-                            Hello::Resize => self.hello(context),
+                            Hello::Resize => {
+                                if self.clear_failure() || self.input != previous_input {
+                                    self.show(context);
+                                }
+                                self.hello(context);
+                            }
                             Hello::Invalid => {
                                 if self.set_failure(PAIRING_REFUSED) {
                                     self.show(context);
@@ -653,6 +660,60 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn successful_resize_hello_clears_offline_state_before_renegotiating() {
+        let mut app = Paperterm {
+            view: View::Watching,
+            address: "host:9332".to_owned(),
+            code: "abc123".to_owned(),
+            failure: Some(OFF_AIR.to_owned()),
+            poll: Some(TaskId(9)),
+            ..Paperterm::default()
+        };
+        let mut context = Context::default();
+        app.on_task(
+            &mut context,
+            TaskId(9),
+            TaskOutcome::Completed(br#"{"session":4,"input":"controls"}"#.to_vec()),
+        );
+        assert_eq!(app.failure, None);
+        assert_eq!(app.session, None);
+        assert_eq!(
+            context
+                .commands()
+                .iter()
+                .filter(|command| matches!(command, Command::SetScreen(_)))
+                .count(),
+            1
+        );
+        assert!(context.commands().iter().any(
+            |command| matches!(command, Command::Spawn { work: Task::Fetch { url, .. }, .. } if url.contains("/hello?"))
+        ));
+    }
+
+    #[test]
+    fn unchanged_successful_hello_does_not_repaint() {
+        let mut app = Paperterm {
+            view: View::Watching,
+            address: "host:9332".to_owned(),
+            code: "abc123".to_owned(),
+            input: Input::Full,
+            grid_input: Input::Full,
+            poll: Some(TaskId(9)),
+            ..Paperterm::default()
+        };
+        let mut context = Context::default();
+        app.on_task(
+            &mut context,
+            TaskId(9),
+            TaskOutcome::Completed(br#"{"session":4,"input":"full"}"#.to_vec()),
+        );
+        assert!(!context
+            .commands()
+            .iter()
+            .any(|command| matches!(command, Command::SetScreen(_))));
     }
 
     #[test]
