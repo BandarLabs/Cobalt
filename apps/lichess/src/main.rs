@@ -3296,7 +3296,7 @@ impl Lichess {
                 self.seek_task = Some(TaskId(999));
                 self.seek_waiting = true;
                 self.seek_generation = 1;
-                self.selected_preset = Some(SeekPreset::Blitz5_3);
+                self.selected_preset = Some(SeekPreset::Rapid10_5);
                 self.route = Route::Pairing;
             }
             "candidate" => {
@@ -4262,7 +4262,7 @@ mod tests {
             .find(|node| {
                 node.kind
                     == LayoutKind::Tile(
-                        action_id(api::SeekPreset::Blitz3_0.action()),
+                        action_id(api::SeekPreset::Rapid10_0.action()),
                         ControlState::Disabled,
                     )
             })
@@ -4316,7 +4316,7 @@ mod tests {
     )]
     fn clara_home_is_dense_in_portrait_and_landscape() {
         for (name, metrics, minimum) in [
-            ("portrait", CLARA_BW_METRICS, 9),
+            ("portrait", CLARA_BW_METRICS, HOME_TILE_COUNT),
             (
                 "landscape",
                 DisplayMetrics {
@@ -4839,15 +4839,15 @@ mod tests {
         let mut app = ready_app();
         app.route = Route::Play;
         let mut context = Context::default();
-        app.start_seek(&mut context, api::SeekPreset::Blitz5_3);
+        app.start_seek(&mut context, api::SeekPreset::Rapid10_5);
         app.handle_event(
             &mut context,
-            Event::GameStart(summary("wrongTime", api::SeekPreset::Rapid10_0)),
+            Event::GameStart(summary("wrongTime", api::SeekPreset::Rapid15_10)),
         );
         assert!(app.seek_candidate.is_none());
         app.handle_event(
             &mut context,
-            Event::GameStart(summary("rightClk", api::SeekPreset::Blitz5_3)),
+            Event::GameStart(summary("rightClk", api::SeekPreset::Rapid10_5)),
         );
         assert_eq!(
             app.seek_candidate.as_ref().map(|game| game.id.as_str()),
@@ -4856,7 +4856,7 @@ mod tests {
         app.open_seek_candidate(&mut context);
         assert_eq!(
             app.expected_seek_game,
-            Some(("rightClk".to_owned(), api::SeekPreset::Blitz5_3))
+            Some(("rightClk".to_owned(), api::SeekPreset::Rapid10_5))
         );
         app.handle_board(
             &mut context,
@@ -4897,7 +4897,7 @@ mod tests {
             .notice
             .as_deref()
             .unwrap_or_default()
-            .contains("not the selected 5+3 Blitz clock"));
+            .contains("not the selected 10+5 Rapid clock"));
     }
 
     #[test]
@@ -5484,7 +5484,7 @@ mod tests {
     fn cancelled_ended_seek_cannot_be_reconciled_or_replayed() {
         let mut app = ready_app();
         let mut context = Context::default();
-        app.start_seek(&mut context, api::SeekPreset::Blitz3_2);
+        app.start_seek(&mut context, api::SeekPreset::Rapid10_5);
         let seek = app.seek_task.expect("seek");
         app.on_task(&mut context, seek, TaskOutcome::Completed(Vec::new()));
         let grace = app

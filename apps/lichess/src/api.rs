@@ -21,10 +21,6 @@ const RATE_HEADER: &str = "X-Cobalt-Rate-Limit";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SeekPreset {
-    Blitz3_0,
-    Blitz3_2,
-    Blitz5_0,
-    Blitz5_3,
     Rapid10_0,
     Rapid10_5,
     Rapid15_10,
@@ -33,11 +29,7 @@ pub enum SeekPreset {
 }
 
 impl SeekPreset {
-    pub const ALL: [Self; 9] = [
-        Self::Blitz3_0,
-        Self::Blitz3_2,
-        Self::Blitz5_0,
-        Self::Blitz5_3,
+    pub const ALL: [Self; 5] = [
         Self::Rapid10_0,
         Self::Rapid10_5,
         Self::Rapid15_10,
@@ -47,8 +39,6 @@ impl SeekPreset {
 
     pub const fn minutes(self) -> u16 {
         match self {
-            Self::Blitz3_0 | Self::Blitz3_2 => 3,
-            Self::Blitz5_0 | Self::Blitz5_3 => 5,
             Self::Rapid10_0 | Self::Rapid10_5 => 10,
             Self::Rapid15_10 => 15,
             Self::Classical30_0 | Self::Classical30_20 => 30,
@@ -57,9 +47,7 @@ impl SeekPreset {
 
     pub const fn increment(self) -> u16 {
         match self {
-            Self::Blitz3_0 | Self::Blitz5_0 | Self::Rapid10_0 | Self::Classical30_0 => 0,
-            Self::Blitz3_2 => 2,
-            Self::Blitz5_3 => 3,
+            Self::Rapid10_0 | Self::Classical30_0 => 0,
             Self::Rapid10_5 => 5,
             Self::Rapid15_10 => 10,
             Self::Classical30_20 => 20,
@@ -68,7 +56,6 @@ impl SeekPreset {
 
     pub const fn speed(self) -> &'static str {
         match self {
-            Self::Blitz3_0 | Self::Blitz3_2 | Self::Blitz5_0 | Self::Blitz5_3 => "blitz",
             Self::Rapid10_0 | Self::Rapid10_5 | Self::Rapid15_10 => "rapid",
             Self::Classical30_0 | Self::Classical30_20 => "classical",
         }
@@ -76,7 +63,6 @@ impl SeekPreset {
 
     pub const fn speed_label(self) -> &'static str {
         match self {
-            Self::Blitz3_0 | Self::Blitz3_2 | Self::Blitz5_0 | Self::Blitz5_3 => "Blitz",
             Self::Rapid10_0 | Self::Rapid10_5 | Self::Rapid15_10 => "Rapid",
             Self::Classical30_0 | Self::Classical30_20 => "Classical",
         }
@@ -84,10 +70,6 @@ impl SeekPreset {
 
     pub const fn action(self) -> &'static str {
         match self {
-            Self::Blitz3_0 => "seek-3-0",
-            Self::Blitz3_2 => "seek-3-2",
-            Self::Blitz5_0 => "seek-5-0",
-            Self::Blitz5_3 => "seek-5-3",
             Self::Rapid10_0 => "seek-10-0",
             Self::Rapid10_5 => "seek-10-5",
             Self::Rapid15_10 => "seek-15-10",
@@ -611,10 +593,6 @@ mod tests {
     #[test]
     fn every_seek_preset_has_the_exact_rated_random_standard_body() {
         let expected = [
-            ("3", "0"),
-            ("3", "2"),
-            ("5", "0"),
-            ("5", "3"),
             ("10", "0"),
             ("10", "5"),
             ("15", "10"),
