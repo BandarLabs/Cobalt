@@ -221,6 +221,7 @@ pub fn run(arguments: &[String]) -> Result<(), String> {
         return Ok(());
     }
     let options = parse(arguments)?;
+    validate_output_paths(&options.report, &options.screenshots)?;
     let packages = packages();
     if !options.skip_build {
         build(&packages)?;
@@ -601,6 +602,56 @@ fn parse(arguments: &[String]) -> Result<Options, String> {
 }
 
 const USAGE: &str = "usage: kobo matrix --report PATH --screenshots DIR [--skip-build]";
+
+fn validate_output_paths(report: &Path, screenshots: &Path) -> Result<(), String> {
+    let report = resolved_path(report)?;
+    let screenshots = resolved_path(screenshots)?;
+    if report.starts_with(&screenshots) {
+        return Err(format!(
+            "matrix report {} must be outside screenshot directory {}",
+            report.display(),
+            screenshots.display()
+        ));
+    }
+    Ok(())
+}
+
+fn resolved_path(path: &Path) -> Result<PathBuf, String> {
+    let absolute = if path.is_absolute() {
+        path.to_owned()
+    } else {
+        std::env::current_dir()
+            .map_err(|error| format!("locate current directory: {error}"))?
+            .join(path)
+    };
+    for existing in absolute.ancestors() {
+        match fs::canonicalize(existing) {
+            Ok(canonical) => {
+                let missing = absolute
+                    .strip_prefix(existing)
+                    .map_err(|error| format!("resolve output path {}: {error}", path.display()))?;
+                return Ok(normalize_path(&canonical.join(missing)));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(format!("resolve output path {}: {error}", path.display())),
+        }
+    }
+    Err(format!("resolve output path {}", path.display()))
+}
+
+fn normalize_path(path: &Path) -> PathBuf {
+    path.components()
+        .fold(PathBuf::new(), |mut path, component| {
+            match component {
+                std::path::Component::CurDir => {}
+                std::path::Component::ParentDir => {
+                    path.pop();
+                }
+                component => path.push(component.as_os_str()),
+            }
+            path
+        })
+}
 
 fn prepare_screenshot_directory(path: &Path) -> Result<(), String> {
     match fs::read_dir(path) {
@@ -1173,8 +1224,8 @@ fn quote(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        packages, prepare_screenshot_directory, report_json, scenario_expected, scenario_operation,
-        Counts, Screenshot,
+        packages, prepare_screenshot_directory, report_json, run, scenario_expected,
+        scenario_operation, validate_output_paths, Counts, Screenshot,
     };
     use std::collections::BTreeMap;
     use std::fs;
@@ -1253,5 +1304,51 @@ mod tests {
         fs::write(directory.join("stale.png"), b"stale").expect("write stale artifact");
         assert!(prepare_screenshot_directory(&directory).is_err());
         fs::remove_dir_all(directory).expect("remove test directory");
+    }
+
+    #[test]
+    fn nested_report_path_is_rejected_before_generating_anything() {
+        let screenshots = std::env::temp_dir().join(format!(
+            "km-nested-{}-{}",
+            std::process::id(),
+            NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed)
+        ));
+        let report = screenshots.join("nested").join("..").join("matrix.json");
+        let _ = fs::remove_dir_all(&screenshots);
+        let arguments = vec![
+            "--report".to_owned(),
+            report.to_string_lossy().into_owned(),
+            "--screenshots".to_owned(),
+            screenshots.to_string_lossy().into_owned(),
+            "--skip-build".to_owned(),
+        ];
+        assert!(run(&arguments)
+            .expect_err("nested report must be refused")
+            .contains("must be outside screenshot directory"));
+        assert!(!screenshots.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn canonical_equivalent_report_path_is_rejected() {
+        use std::os::unix::fs::symlink;
+
+        let root = std::env::temp_dir().join(format!(
+            "km-canonical-{}-{}",
+            std::process::id(),
+            NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed)
+        ));
+        let actual = root.join("actual");
+        let screenshots = actual.join("screenshots");
+        fs::create_dir_all(&screenshots).expect("create screenshot directory");
+        let alias = root.join("alias");
+        symlink(&actual, &alias).expect("create path alias");
+        assert!(validate_output_paths(
+            &screenshots.join("matrix.json"),
+            &alias.join("screenshots")
+        )
+        .expect_err("canonical equivalent report must be refused")
+        .contains("must be outside screenshot directory"));
+        fs::remove_dir_all(root).expect("remove test directory");
     }
 }
