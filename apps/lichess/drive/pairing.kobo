@@ -1,7 +1,7 @@
-expect Rated 5+3 Blitz
-expect event stream was opened before this seek
+expect 10+5 Rapid · Rated
+expect Waiting
 expect Cancel pairing
 shot waiting
 tap Cancel pairing
-wait-for Cancelling the pending seek
+wait-for Cancelling
 shot cancellation-requested

@@ -5,19 +5,9 @@ responsive Folio time-control presets, incoming standard-clock challenges,
 live games, legal move entry, promotion, clocks, reconnect, draw actions,
 resign, conservative abort, and opponent-gone victory claims.
 
-| Responsive presets | Live board | Correct seek lifecycle |
+| Responsive presets | Live board | Pairing |
 | --- | --- | --- |
-| ![The responsive Folio home showing rated time-control and puzzle tiles](screenshots/home.png) | ![A black-oriented live Lichess board with two clocks, last move, and draw control](screenshots/game.png) | ![A rated pairing screen explaining the event-stream and reconciliation lifecycle](screenshots/pairing.png) |
-
-Account-global starts are confirmed explicitly before opening:
-![A confirmation screen for a selected-preset game recovered from the global account state](screenshots/candidate.png)
-
-Before account and stream readiness, the same dense chooser remains safe and
-uses one concise page status instead of per-tile failure marks:
-![The Lichess chooser with Account/Games and Puzzles first and a single pairing-unavailable status](screenshots/readiness.png)
-
-An ended seek enters an explicit current-game reconciliation state:
-![The selected preset waiting while current games are checked after the seek transport ended](screenshots/reconciling.png)
+| ![Responsive time controls and puzzles](screenshots/home.png) | ![Live Lichess board](screenshots/game.png) | ![Rated pairing](screenshots/pairing.png) |
 
 ## Requirements
 
@@ -43,16 +33,12 @@ broadening credential authority.
 
 ## Supported
 
-- Account validation and clear missing/invalid/expired-token guidance
-- Lichess Board API rated, random-color 3+0, 3+2, 5+0, and 5+3 Blitz seeks,
-  plus 10+0, 10+5, 15+10, 30+0, and 30+20. Blitz is supported by the Board
-  API; Bullet 1+0 and 2+1 are omitted only because e-ink latency makes them
-  unsuitable
+- Account validation and live detection of CLI-installed token changes
+- Rated random-color 10+0, 10+5, 15+10, 30+0, and 30+20 seeks
 - One selected seek at a time, opened only after the event stream and
   current-game snapshot are ready
-- Account-global game starts require on-device confirmation before the seek is
-  closed; an ended seek is reconciled against a fresh current-game snapshot
-  and is never replayed automatically
+- A uniquely matching new game opens immediately
+- Ended seeks reconcile once and are never replayed automatically
 - `gameStart`, `gameFinish`, and incoming challenge events
 - Board stream reconstruction from server-acknowledged UCI moves
 - White/black orientation, castling, en passant, and four promotion choices

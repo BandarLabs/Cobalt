@@ -1,3 +1,3 @@
-expect No secret named lichess
-expect shown on this screen
+expect Offline
+expect Refresh
 shot credential

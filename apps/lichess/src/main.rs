@@ -41,6 +41,8 @@ struct HomeTile {
     enabled: bool,
 }
 
+type HomeSlot = (SlotWidth, Box<dyn FnOnce(ScreenBuilder) -> ScreenBuilder>);
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 enum Route {
     #[default]
@@ -478,10 +480,10 @@ impl Lichess {
         }
     }
 
-    fn home_card_row(screen: ScreenBuilder, tiles: Vec<HomeTile>) -> ScreenBuilder {
-        screen.band(
-            BandAlign::Top,
-            tiles.into_iter().map(|tile| {
+    fn home_card_row(screen: ScreenBuilder, tiles: Vec<HomeTile>, columns: usize) -> ScreenBuilder {
+        let mut slots: Vec<HomeSlot> = tiles
+            .into_iter()
+            .map(|tile| {
                 (
                     SlotWidth::Fill,
                     Box::new(move |slot: ScreenBuilder| {
@@ -499,8 +501,12 @@ impl Lichess {
                         )
                     }) as Box<dyn FnOnce(ScreenBuilder) -> ScreenBuilder>,
                 )
-            }),
-        )
+            })
+            .collect();
+        while slots.len() < columns {
+            slots.push((SlotWidth::Fill, Box::new(|slot| slot)));
+        }
+        screen.band(BandAlign::Top, slots)
     }
 
     fn home(&mut self, context: &Context) -> Screen {
@@ -521,7 +527,7 @@ impl Lichess {
                 .iter()
                 .map(|index| Self::home_tile(*index, ready))
                 .collect();
-            screen = Self::home_card_row(screen, tiles);
+            screen = Self::home_card_row(screen, tiles, columns);
         }
         screen
             .page_turns("home-previous", "home-next")
@@ -915,13 +921,13 @@ impl Lichess {
             screen = match confirmation {
                 Confirmation::Resign => screen.confirm(
                     "Resign game?",
-                    "This immediately concedes the rated game.",
+                    "This ends the game.",
                     ("resign", "Resign"),
                     ("cancel-confirm", "Keep playing"),
                 ),
                 Confirmation::Abort => screen.confirm(
                     "Abort game?",
-                    "Abort is offered only before both players have moved; Lichess makes the final decision.",
+                    "Only before both players move.",
                     ("abort", "Abort"),
                     ("cancel-confirm", "Keep playing"),
                 ),
@@ -1631,11 +1637,11 @@ impl Lichess {
         }
         if let Some(task) = self.seek_task {
             context.cancel(task);
-            self.notice = Some("Cancelling the pending seek.".to_owned());
+            self.notice = Some("Cancelling.".to_owned());
         } else if self.route == Route::Pairing {
             self.clock.stop(context);
             self.route = Route::Play;
-            self.notice = Some("Pairing cancelled. No duplicate seek was created.".to_owned());
+            self.notice = Some("Cancelled.".to_owned());
         }
     }
 
@@ -3092,8 +3098,7 @@ impl Lichess {
                 if self.route == Route::Pairing {
                     self.clock.stop(context);
                     self.route = Route::Play;
-                    self.notice =
-                        Some("Pairing cancelled. No duplicate seek was created.".to_owned());
+                    self.notice = Some("Cancelled.".to_owned());
                 }
             }
             Pending::EventNext | Pending::EventOpen => self.event_open = false,
@@ -4351,6 +4356,16 @@ mod tests {
             assert!(visible.contains(&action_id("play")));
             assert!(visible.contains(&action_id("puzzles")));
             assert_eq!(outlines.len(), tiles.len());
+            let widths = outlines
+                .iter()
+                .map(|outline| outline.rect.width)
+                .collect::<BTreeSet<_>>();
+            assert!(
+                widths.iter().next_back().expect("widest card")
+                    - widths.iter().next().expect("narrowest card")
+                    <= 2,
+                "Clara {name} card widths were {widths:?}"
+            );
             assert!(tiles
                 .iter()
                 .all(|tile| outlines.iter().any(|outline| outline.rect == tile.rect)));

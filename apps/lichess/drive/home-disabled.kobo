@@ -1,10 +1,10 @@
-expect Connect in Account/Games
+expect Offline
 expect Account/Games
 expect Puzzles
-expect 3+0
-expect Blitz
+expect 10+0
+expect Rapid
 shot unavailable-home
-tap 3+0
+tap 10+0
 wait 300
-expect Connect in Account/Games
+expect Offline
 shot unavailable-still
