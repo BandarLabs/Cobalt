@@ -289,12 +289,36 @@ fi
 
 rm -rf "$audit_tools" "$fresh_device_root" "$target_root/build-tmp"
 
-for directory in "$target_root"/*; do
-  [ -d "$directory" ] || continue
-  case $(basename "$directory") in
-    armv7-unknown-linux-musleabihf | artifacts | audit-unstripped | host-target) ;;
+find "$target_root" -mindepth 1 -print | while IFS= read -r path; do
+  if [ -L "$path" ]; then
+    echo "symlink remains in audited target root: $path" >&2
+    exit 1
+  fi
+  relative=${path#"$target_root"/}
+  case $relative in
+    armv7-unknown-linux-musleabihf | \
+      armv7-unknown-linux-musleabihf/release | \
+      armv7-unknown-linux-musleabihf/release/kobo-flashcards | \
+      audit-unstripped | \
+      audit-unstripped/armv7-unknown-linux-musleabihf | \
+      audit-unstripped/armv7-unknown-linux-musleabihf/release | \
+      audit-unstripped/armv7-unknown-linux-musleabihf/release/kobo-flashcards | \
+      host-target | \
+      host-target/release | \
+      host-target/release/flashcards-import | \
+      artifacts | \
+      artifacts/catalog | \
+      artifacts/catalog/catalog.json | \
+      artifacts/catalog/catalog.sig | \
+      artifacts/flashcards-validation.cobalt-app | \
+      artifacts/flashcards.manifest.json | \
+      artifacts/validation-public-key.txt | \
+      artifacts/flashcards-import.source-commit.txt | \
+      artifacts/flashcards-import.notice.txt | \
+      artifacts/flashcards-import.licenses.txt | \
+      artifacts/ARTIFACT-AUDIT.txt) ;;
     *)
-      echo "unexpected unaudited directory remains in target root: $directory" >&2
+      echo "unexpected unaudited path remains in target root: $path" >&2
       exit 1
       ;;
   esac

@@ -69,7 +69,8 @@ notice/licence sidecars. Host binary byte reproducibility is not claimed.
 Production and unstripped device ELFs are rebuilt in fresh target directories
 and must be byte-identical to the packaged artifact inputs. Fresh reference
 build directories and the packaging-only host CLI are removed before the audit
-succeeds.
+succeeds. Cargo intermediates are pruned and the audit recursively rejects
+every undeclared file, directory, dotfile, or symlink in the target root.
 
 ## Exact supported package boundary
 

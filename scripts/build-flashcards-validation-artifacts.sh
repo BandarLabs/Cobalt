@@ -25,6 +25,7 @@ audit_device="$target_root/audit-unstripped/armv7-unknown-linux-musleabihf/relea
 host="$target_root/host-target/release/flashcards-import"
 cli="$target_root/host-tools/release/kobo"
 
+rm -rf "$artifacts"
 mkdir -p "$artifacts/catalog" "$target_root/build-tmp"
 export TMPDIR="$target_root/build-tmp"
 export CC_armv7_unknown_linux_musleabihf="${CC_armv7_unknown_linux_musleabihf:-armv7-unknown-linux-musleabihf-gcc}"
@@ -40,7 +41,6 @@ rm -rf \
   "$target_root/audit-submitted-host" \
   "$target_root/release" \
   "$target_root/cargo-home"
-rm -f "$artifacts/SHA256SUMS" "$artifacts/ARTIFACT-AUDIT.txt"
 
 (
   cd "$repo"
@@ -143,8 +143,22 @@ fi
 "$host" --licenses > "$artifacts/flashcards-import.licenses.txt"
 printf '%s\n' "$source_commit" > "$artifacts/flashcards-import.source-commit.txt"
 
+production_copy="$artifacts/.kobo-flashcards.production"
+audit_copy="$artifacts/.kobo-flashcards.unstripped"
+cp "$device" "$production_copy"
+cp "$audit_device" "$audit_copy"
+rm -rf \
+  "$target_root/armv7-unknown-linux-musleabihf" \
+  "$target_root/audit-unstripped"
+mkdir -p \
+  "$(dirname "$device")" \
+  "$(dirname "$audit_device")"
+mv "$production_copy" "$device"
+mv "$audit_copy" "$audit_device"
+
 rm -f "$seed" "$artifacts/.flashcards-validation-second.cobalt-app"
 trap - EXIT
 rm -rf "$target_root/host-tools" "$target_root/build-tmp" "$target_root/release"
+rm -f "$target_root/.rustc_info.json" "$target_root/CACHEDIR.TAG"
 
 echo "built validation-only Flashcards artifacts under $target_root"
