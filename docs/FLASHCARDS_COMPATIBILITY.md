@@ -44,8 +44,9 @@ The build script varies only symbol stripping between production and audit
 device builds. Both scripts ignore caller compiler/archiver/linker overrides,
 restart with a minimal environment and fixed system-tool path, discover ARM
 tools only from fixed directories and name allowlists, clear Rust
-compiler/wrapper/flag overrides, and pin the active toolchain's real
-`cargo`, `rustc`, and `rust-lld` executables. Cargo runs with a clean
+compiler/wrapper/flag overrides, reject rustup directory overrides, and pin the
+account-default toolchain's real `cargo`, `rustc`, and `rust-lld` executables.
+Cargo runs with a clean
 configuration home. Only registry archives/indexes and Git object databases
 are shared as cache inputs; Cargo rematerializes all compiled source trees for
 each build and audit. The scripts reject toolchain configuration above the

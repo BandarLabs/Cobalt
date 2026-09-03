@@ -104,18 +104,30 @@ find_rust_lld() {
   return 1
 }
 
-rust_driver=
-for candidate in "$HOME/.cargo/bin/rustc" /usr/bin/rustc /opt/homebrew/bin/rustc; do
-  if [ -x "$candidate" ] && "$candidate" --version >/dev/null 2>&1; then
-    rust_driver=$candidate
-    break
+if [ -x "$HOME/.cargo/bin/rustup" ]; then
+  RUSTUP="$HOME/.cargo/bin/rustup"
+  default_toolchain=$("$RUSTUP" default)
+  active_toolchain=$(CDPATH= cd -- "$repo" && "$RUSTUP" show active-toolchain)
+  if [ "$active_toolchain" != "$default_toolchain" ]; then
+    echo "repository inherits a non-default rustup toolchain override" >&2
+    exit 1
   fi
-done
-if [ -z "$rust_driver" ]; then
-  echo "no trusted Rust toolchain driver was found" >&2
-  exit 1
+  toolchain_name=${default_toolchain%% *}
+  rust_sysroot=$("$RUSTUP" run "$toolchain_name" rustc --print sysroot)
+else
+  rust_driver=
+  for candidate in /usr/bin/rustc /opt/homebrew/bin/rustc; do
+    if [ -x "$candidate" ] && "$candidate" --version >/dev/null 2>&1; then
+      rust_driver=$candidate
+      break
+    fi
+  done
+  if [ -z "$rust_driver" ]; then
+    echo "no trusted Rust toolchain driver was found" >&2
+    exit 1
+  fi
+  rust_sysroot=$(CDPATH= cd -- "$repo" && "$rust_driver" --print sysroot)
 fi
-rust_sysroot=$(CDPATH= cd -- "$repo" && "$rust_driver" --print sysroot)
 RUSTC="$rust_sysroot/bin/rustc"
 CARGO="$rust_sysroot/bin/cargo"
 if [ ! -x "$RUSTC" ] || [ ! -x "$CARGO" ]; then
