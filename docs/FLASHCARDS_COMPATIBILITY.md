@@ -73,6 +73,9 @@ succeeds. Cargo intermediates are pruned and the audit recursively rejects
 every undeclared file, directory, dotfile, or symlink with a newline-safe
 Python path inventory. The build starts by removing every existing child of
 the dedicated target root.
+The audit also checks all four linked Anki crates against the exact Cargo
+metadata Git revision and regenerates both dependency notice bundles in
+`--check` mode.
 It writes the verified summary and hashes itself to
 `artifacts/ARTIFACT-AUDIT.txt`; callers do not supply or redirect that report.
 

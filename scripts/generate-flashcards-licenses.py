@@ -3,7 +3,9 @@
 import hashlib
 import json
 import os
+import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 
@@ -23,6 +25,10 @@ TARGETS = [
         "Flashcards host helper non-Anki dependency notices",
     ),
 ]
+
+if len(sys.argv) > 2 or (len(sys.argv) == 2 and sys.argv[1] != "--check"):
+    raise SystemExit("usage: scripts/generate-flashcards-licenses.py [--check]")
+CHECK = sys.argv[1:] == ["--check"]
 
 
 def generate(manifest: Path, output: Path, title: str) -> None:
@@ -95,8 +101,16 @@ def generate(manifest: Path, output: Path, title: str) -> None:
                 text + "\n",
             ]
         )
-    output.write_text("".join(sections))
+    generated = "".join(sections)
+    if CHECK:
+        if output.read_text() != generated:
+            raise SystemExit(f"{output.relative_to(ROOT)} is stale")
+    else:
+        output.write_text(generated)
 
 
 for manifest, output, title in TARGETS:
     generate(manifest, output, title)
+
+if CHECK:
+    shutil.rmtree(WORK, ignore_errors=True)

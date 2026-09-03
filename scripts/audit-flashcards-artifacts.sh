@@ -94,8 +94,12 @@ cp "$trusted_host" "$audited_host"
 rm -rf "$target_root/host-target"
 mkdir -p "$(dirname "$host")"
 mv "$audited_host" "$host"
-"$trusted_host" --notice > "$host_notice_file"
-"$trusted_host" --licenses > "$host_licenses_file"
+if ! cmp "$trusted_host" "$host" >/dev/null; then
+  echo "finalized host helper differs from the fresh reference build" >&2
+  exit 1
+fi
+"$host" --notice > "$host_notice_file"
+"$host" --licenses > "$host_licenses_file"
 
 device_tree=$(
   cd "$repo"
@@ -118,6 +122,46 @@ for package_name in anki anki_i18n anki_io anki_proto; do
     exit 1
   fi
 done
+
+python3 - "$repo" <<'PY'
+import json
+import subprocess
+import sys
+
+revision = "9e32ad8849068510a82273889c21b22e1acf0949"
+metadata = json.loads(
+    subprocess.run(
+        [
+            "cargo",
+            "metadata",
+            "--format-version",
+            "1",
+            "--locked",
+            "--offline",
+            "--manifest-path",
+            "crates/kobo-flashcards-import/Cargo.toml",
+        ],
+        cwd=sys.argv[1],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+)
+expected = {"anki", "anki_i18n", "anki_io", "anki_proto"}
+sources = {
+    package["name"]: package.get("source") or ""
+    for package in metadata["packages"]
+    if package["name"] in expected
+}
+if set(sources) != expected:
+    raise SystemExit("host Anki package inventory is incomplete")
+for name, source in sources.items():
+    if f"rev={revision}" not in source or not source.endswith(f"#{revision}"):
+        raise SystemExit(f"{name} is not pinned to the required Anki revision")
+PY
+
+TMPDIR="$target_root/build-tmp" \
+  "$repo/scripts/generate-flashcards-licenses.py" --check
 
 if ! device_headers=$("$readelf" -lW "$device"); then
   echo "production device artifact is not a readable ELF" >&2
@@ -267,22 +311,22 @@ for required in \
   fi
 done
 
-if ! "$trusted_host" --licenses |
+if ! "$host" --licenses |
   grep -F 'Corresponding source for the Flashcards host converter' >/dev/null; then
   echo "host helper does not expose corresponding-source instructions" >&2
   exit 1
 fi
-if ! "$trusted_host" --licenses | grep -F "$source_commit" >/dev/null; then
+if ! "$host" --licenses | grep -F "$source_commit" >/dev/null; then
   echo "host helper does not expose its exact Cobalt source commit" >&2
   exit 1
 fi
-notice_hash=$("$trusted_host" --notice | shasum -a 256 | awk '{print $1}')
+notice_hash=$("$host" --notice | shasum -a 256 | awk '{print $1}')
 notice_file_hash=$(shasum -a 256 "$host_notice_file" | awk '{print $1}')
 if [ "$notice_hash" != "$notice_file_hash" ]; then
   echo "host notice sidecar differs from helper output" >&2
   exit 1
 fi
-licenses_hash=$("$trusted_host" --licenses | shasum -a 256 | awk '{print $1}')
+licenses_hash=$("$host" --licenses | shasum -a 256 | awk '{print $1}')
 licenses_file_hash=$(shasum -a 256 "$host_licenses_file" | awk '{print $1}')
 if [ "$licenses_hash" != "$licenses_file_hash" ]; then
   echo "host licence/source sidecar differs from helper output" >&2
