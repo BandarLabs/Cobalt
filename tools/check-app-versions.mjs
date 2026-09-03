@@ -32,8 +32,12 @@ const COMPATIBLE_RELEASE_PATHS = new Set([
   "crates/kobo-text/src/lib.rs",
   "crates/kobo-ui/Cargo.toml",
   "crates/kobo-ui/src/lib.rs",
+  "crates/kobo-ui/src/vector.rs",
+  "crates/kobo-ui/src/vector/tabler.rs",
+  "crates/kobod/src/app_store.rs",
   "examples/gutenbird/Cargo.toml",
-  "examples/gutenbird/src/main.rs"
+  "examples/gutenbird/src/main.rs",
+  "tools/icon-import/icons.txt"
 ]);
 
 // Store packages are built from the current SDK and therefore speak its exact
