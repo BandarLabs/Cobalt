@@ -1897,7 +1897,12 @@ fn simulated_platform_request_allowed(
     caller: &str,
     request: &kobo_protocol::DeviceRequest,
 ) -> bool {
-    !matches!(request, kobo_protocol::DeviceRequest::Update { .. }) || caller == "settings"
+    match request {
+        kobo_protocol::DeviceRequest::Update { .. }
+        | kobo_protocol::DeviceRequest::ReadIdleSleep
+        | kobo_protocol::DeviceRequest::SetIdleSleep(_) => caller == "settings",
+        _ => true,
+    }
 }
 
 fn simulated_app_request(
@@ -2638,6 +2643,14 @@ mod tests {
         assert!(simulated_platform_request_allowed(
             "store",
             &kobo_protocol::DeviceRequest::RefreshAppCatalog
+        ));
+        assert!(simulated_platform_request_allowed(
+            "settings",
+            &kobo_protocol::DeviceRequest::ReadIdleSleep
+        ));
+        assert!(!simulated_platform_request_allowed(
+            "store",
+            &kobo_protocol::DeviceRequest::SetIdleSleep(kobo_protocol::IdleSleep::Never)
         ));
     }
 

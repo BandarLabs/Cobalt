@@ -193,7 +193,9 @@ Post one evidence block on the porting issue and link it from the pull request:
   [attended display stages](DEVICES.md#attended-display-smoke-tests);
 - a physical touch sample and an end-to-end tap;
 - guardian restoration and a clean return to the stock reader;
-- suspend/resume results when the port changes session or power behavior;
+- suspend/resume results when the port changes session or power behavior,
+  including a short power-button sleep that wakes back into the same Cobalt
+  application (see `kobo-hal` power);
 - sandbox results when the kernel needs a different isolation path;
 - known gaps, including buttons, stylus support, driver quirks, firmware
   coverage, or hardware revisions.

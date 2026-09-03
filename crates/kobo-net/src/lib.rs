@@ -37,6 +37,13 @@ use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
+/// Optional work to do before any socket is opened.
+///
+/// The panel session installs a hook that brings a saved Wi-Fi network up.
+/// Tests and the simulator leave this unset, so a request on a host that is
+/// already on a network does not grow a radio dance it does not have.
+static PREPARE: OnceLock<fn()> = OnceLock::new();
+
 /// How long opening a connection may take before the host is called
 /// unreachable.
 ///
@@ -113,6 +120,36 @@ fn could_not_connect() -> TaskError {
         TaskError::Offline
     } else {
         TaskError::Unreachable
+    }
+}
+
+/// Installs work to run before any socket is opened.
+///
+/// The panel session uses this to bring a saved Wi-Fi network up, so a catalog
+/// refresh, a book fetch and a chat post all share one radio path. The first
+/// caller wins; later calls are ignored. Tests leave this unset.
+pub fn on_prepare(hook: fn()) {
+    let _ignored = PREPARE.set(hook);
+}
+
+/// Runs the host's network-prepare hook, if one was installed.
+///
+/// Public so a caller that opens its own socket, such as the install relay,
+/// still goes through the same radio path as [`fetch`].
+pub fn prepare() {
+    if let Some(hook) = PREPARE.get() {
+        hook();
+    }
+}
+
+/// Drops a kept TLS connection so the next request opens a new socket.
+///
+/// Sleep takes the radio down. A connection that was idle then is dead, and
+/// writing to it after a wake waits out the response deadline instead of
+/// failing as stale. Called from the session when it sleeps.
+pub fn forget_idle() {
+    if let Ok(mut idle) = IDLE.lock() {
+        *idle = None;
     }
 }
 
@@ -929,6 +966,10 @@ enum Failed {
 }
 
 fn request(address: &Address, method: &Method<'_>, max_bytes: u32) -> Result<Vec<u8>, TaskError> {
+    prepare();
+    // The requested host may be reachable through a subnet-specific route
+    // even when no default route exists. Try the socket first; route state is
+    // only used to sharpen an error after the connection itself fails.
     // Only a GET is replayed. A POST that failed after leaving this machine
     // may have been acted on by the far end, and asking a model to answer
     // twice or a daemon to run a command twice is a worse failure than the one
@@ -1161,6 +1202,20 @@ mod tests {
     /// enough that nothing in this module ever reaches it.
     const CEILING: u32 = 64 * 1024;
 
+    #[test]
+    fn preparing_without_a_hook_does_nothing() {
+        super::prepare();
+    }
+
+    #[test]
+    fn forgetting_an_idle_socket_does_not_require_one() {
+        super::forget_idle();
+        super::forget_idle();
+    }
+
+    /// The policy is one function for both runtimes, so the tests that pin
+    /// it live beside it rather than in whichever runtime happened to own it
+    /// first. In the device runtime they only ran under a feature flag.
     #[test]
     fn runtime_credentials_are_refused_on_any_redirect() {
         let zotero_current =

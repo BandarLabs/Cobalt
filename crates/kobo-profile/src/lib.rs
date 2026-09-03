@@ -288,7 +288,11 @@ pub const CLARA_BW_391: DeviceProfile = DeviceProfile {
     firmware_versions: &["4.45.23697"],
     kernel_release: "4.9.77",
     write_ready: true,
-    reap_nickel_supplicant: false,
+    // Leftover Nickel `wpa_supplicant` survives a Cobalt session on this
+    // MediaTek radio too. Without the reap, handing back leaves Wi-Fi down
+    // until a reboot or a manual reconnect; stopping it before Nickel
+    // restarts lets the reader's own supplicant take `wlan0` alone.
+    reap_nickel_supplicant: true,
 };
 
 /// The 2025 P365 hardware refresh of the Clara BW. Kobo lists N365 and P365
@@ -354,7 +358,9 @@ pub const CLARA_BW_395: DeviceProfile = DeviceProfile {
     firmware_versions: &["4.45.23697"],
     kernel_release: "4.9.77",
     write_ready: true,
-    reap_nickel_supplicant: false,
+    // Same MediaTek radio family as N365; the N365 hand-back measurement
+    // covers this refresh.
+    reap_nickel_supplicant: true,
 };
 
 /// The Kobo Clara HD, added upstream without i.MX6 hardware to test on.
@@ -932,18 +938,16 @@ pub struct DeviceProfile {
     ///
     /// Nickel launches its supplicant detached (`-B`, parented to init), so
     /// stopping the reader never takes it down and it survives the whole
-    /// Cobalt session. On the Libra 2 the restarted Nickel then starts a
-    /// supplicant of its own, two of them fight over `wlan0`, and Wi-Fi stays
-    /// down until a reboot. Measured on the device: killing the leftover
+    /// Cobalt session. The restarted Nickel then starts a supplicant of its
+    /// own, two of them fight over `wlan0`, and Wi-Fi stays down until a
+    /// reboot. Measured on the Libra 2 and the Clara BW: killing the leftover
     /// supplicant before the hand-back gives a clean recovery, every time,
     /// and leaving it gives the retry loop, every time.
     ///
-    /// Per profile rather than unconditional for the usual reason: the
-    /// evidence is from one radio, a Realtek `8723ds` on i.MX6SLL, and the
-    /// `MediaTek` devices share their Wi-Fi stack with Bluetooth and are known
-    /// to behave differently. Do not silently change a device nobody here
-    /// can test; enable this per device once the symptom and the fix are
-    /// observed on it.
+    /// Per profile rather than unconditional for the usual reason: radios
+    /// differ, and the `MediaTek` devices share their Wi-Fi stack with
+    /// Bluetooth. Do not silently change a device nobody here can test;
+    /// enable this per device once the symptom and the fix are observed on it.
     pub reap_nickel_supplicant: bool,
 }
 
@@ -980,6 +984,16 @@ pub struct ValidationReport {
 }
 
 impl DeviceProfile {
+    /// `MediaTek` kernels on the Clara BW/Colour, Elipsa 2E and Libra Colour
+    /// hang if suspend-to-RAM is requested while a charger is attached.
+    /// The i.MX6SLL boards (Clara HD, Libra 2) do not.
+    #[must_use]
+    pub fn kernel_suspend_hangs_while_charging(&self) -> bool {
+        self.compatible_fragments
+            .iter()
+            .any(|fragment| fragment.contains("mediatek"))
+    }
+
     #[must_use]
     pub fn validate(&self, snapshot: &DeviceSnapshot) -> ValidationReport {
         let mut mismatches = Vec::new();
@@ -1725,8 +1739,8 @@ mod tests {
         );
     }
 
-    /// The supplicant reap is declared, not guessed. The Libra 2 is the one
-    /// device where both halves were measured: the two-supplicant collision
+    /// The supplicant reap is declared, not guessed. Both halves were
+    /// measured on the Libra 2 and the Clara BW: the two-supplicant collision
     /// after a normal hand-back, and the clean recovery once the leftover one
     /// was killed. Every other profile keeps its current behaviour until the
     /// same evidence exists for it, so a change to one of these values is a
@@ -1740,8 +1754,8 @@ mod tests {
         assert_eq!(
             declared,
             [
-                ("clara-bw-391", false),
-                ("clara-bw-395", false),
+                ("clara-bw-391", true),
+                ("clara-bw-395", true),
                 ("clara-hd-376", false),
                 ("clara-colour-393", false),
                 ("elipsa-2e-389", false),
@@ -2668,6 +2682,17 @@ mod tests {
         assert!(!CLARA_COLOUR_393
             .write_identity_blockers(&clara_bw)
             .is_empty());
+    }
+
+    #[test]
+    fn media_tek_boards_skip_kernel_suspend_while_charging_and_imx_boards_do_not() {
+        assert!(CLARA_BW_391.kernel_suspend_hangs_while_charging());
+        assert!(CLARA_BW_395.kernel_suspend_hangs_while_charging());
+        assert!(CLARA_COLOUR_393.kernel_suspend_hangs_while_charging());
+        assert!(ELIPSA_2E_389.kernel_suspend_hangs_while_charging());
+        assert!(LIBRA_COLOUR_390.kernel_suspend_hangs_while_charging());
+        assert!(!CLARA_HD_376.kernel_suspend_hangs_while_charging());
+        assert!(!LIBRA_2_388.kernel_suspend_hangs_while_charging());
     }
 
     #[test]

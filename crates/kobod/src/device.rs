@@ -36,13 +36,14 @@ use crate::blackbox::{self, trace};
 use kobo_hal::display::{DisplaySession, OWNER_UNLOCK_PHRASE};
 use kobo_hal::gpio::{self, GpioEvent, GpioSession};
 use kobo_hal::input::TouchSession;
+use kobo_hal::power::{ButtonAction, PowerButton};
 use kobo_hal::reader::{Reader, Watchdog, WATCHDOG_CHECK};
 use kobo_hal::soc_watchdog::SocWatchdog;
 use kobo_hal::supervisor::Suspended;
 use kobo_hal::touch::TouchEvent;
 use kobo_hal::{Rect, RefreshIntent, RefreshPlan, RegionSnapshot};
 use kobo_policy::{Backends, Capability, Declared, DeviceServices, PowerPolicy, TaskRunner};
-use kobo_protocol::{Frame, Lifecycle, Message, TaskError, TaskOutcome};
+use kobo_protocol::{Frame, IdleSleep, Lifecycle, Message, TaskError, TaskOutcome};
 use kobo_ui::{
     render_all, ActionId, CellStyle, Chrome, FontHandle, FramePlanner, Layout, LayoutKind,
     PanelWaveform, PictureCache, Screen, Surface,
@@ -159,22 +160,9 @@ const START_GRACE: Duration = Duration::from_secs(45);
 /// This used to be half an hour and used to be the *only* way a session ended,
 /// which meant the panel was taken away from somebody in the middle of using
 /// it. It is now a backstop rather than a policy: a session ends when the
-/// reader asks to go back, or when nothing has happened for [`IDLE_LIMIT`].
+/// reader asks to go back, or when nothing has happened for the idle delay
+/// chosen in Settings.
 const MAX_SESSION: Duration = Duration::from_secs(2 * 60 * 60);
-/// How long the panel may sit with nothing happening before the reader gets it
-/// back.
-///
-/// Every tap and every repaint restarts this, so it measures genuine
-/// abandonment rather than the pace of use. A device left on a screen nobody
-/// is looking at should be an e-reader again, because that is what somebody
-/// picking it up will expect it to be.
-///
-/// An hour rather than the fifteen minutes this started as. Fifteen sounds
-/// generous and is not: a panel session is something the owner starts and then
-/// puts down, and a session that had never been touched ended itself while its
-/// owner was still deciding what to open. The point of this limit is a device
-/// left behind, not a device being thought about.
-const IDLE_LIMIT: Duration = Duration::from_secs(60 * 60);
 /// The longest the loop waits between passes even when nothing is happening,
 /// which bounds how stale the recovery watchdog's heartbeat can get.
 const BEAT_INTERVAL: Duration = Duration::from_secs(10);
@@ -461,26 +449,61 @@ enum Event {
     AutoUpdate(crate::autoupdate::Plan),
 }
 
+/// Where the idle-sleep preference lives, beside other owner-visible Cobalt
+/// state on the book partition.
+fn idle_sleep_path() -> PathBuf {
+    Path::new(COBALT_ROOT).join("idle-sleep")
+}
+
+fn load_idle_sleep_from(path: &Path) -> IdleSleep {
+    fs::read_to_string(path)
+        .map(|text| IdleSleep::from_stored(&text))
+        .unwrap_or_default()
+}
+
+fn save_idle_sleep_to(path: &Path, choice: IdleSleep) -> Result<(), String> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| "idle-sleep path has no directory".to_owned())?;
+    fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    let tmp = parent.join(".idle-sleep.tmp");
+    fs::write(&tmp, format!("{}\n", choice.as_stored())).map_err(|error| error.to_string())?;
+    fs::rename(&tmp, path).map_err(|error| error.to_string())?;
+    Ok(())
+}
+
 /// How long a session may run, and how long it may be ignored.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Limits {
-    /// Ends the session when nothing has happened for this long.
-    pub idle: Duration,
+    /// How long nothing may happen before the session sleeps.
+    pub idle: IdleLimit,
     /// Ends the session however busy it is.
     pub ceiling: Duration,
+}
+
+/// Where the idle delay comes from at the start of a session.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum IdleLimit {
+    /// Use the value stored from Settings, defaulting to five minutes.
+    FromSettings,
+    /// Sleep after this long, ignoring the stored preference until Settings
+    /// changes it.
+    After(Duration),
+    /// Do not sleep from idleness.
+    Never,
 }
 
 impl Default for Limits {
     fn default() -> Self {
         Self {
-            idle: IDLE_LIMIT,
+            idle: IdleLimit::FromSettings,
             ceiling: MAX_SESSION,
         }
     }
 }
 
-/// Runs `application` on the panel until it asks to leave, is left alone for
-/// `limits.idle`, or reaches `limits.ceiling`.
+/// Runs `application` on the panel until it asks to leave, is left idle long
+/// enough to sleep, or reaches `limits.ceiling`.
 ///
 /// Deliberately one function. Every step here takes something away from the
 /// device and has to give it back in the exact reverse order, and that
@@ -492,11 +515,6 @@ impl Default for Limits {
 /// was left in.
 #[allow(clippy::too_many_lines)]
 pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
-    let limits = Limits {
-        idle: limits.idle.min(MAX_SESSION),
-        ceiling: limits.ceiling.min(MAX_SESSION),
-    };
-
     // Checked here, before anything is taken over. Stopping the reader costs
     // the owner half a minute and the network connection, so discovering only
     // afterwards that there was nothing to run is the worst possible order.
@@ -614,7 +632,8 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
     // The buttons and the orientation channel, on hardware that has them.
     // Absence is not a failure: not every supported device has page keys,
     // and a session without buttons is the state every session was in
-    // before this existed.
+    // before this existed. `MediaTek` boards report the power button on a
+    // separate `pwrkey` node, so that is opened as well as `gpio-keys`.
     let mut buttons =
         gpio::discover_buttons_path().and_then(|path| match GpioSession::acquire(&path) {
             Ok(session) => Some(session),
@@ -623,7 +642,24 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
                 None
             }
         });
+    let mut power_keys =
+        gpio::discover_power_path().and_then(|path| match GpioSession::acquire(&path) {
+            Ok(session) => {
+                trace(&format!("power button on {}", path.display()));
+                Some(session)
+            }
+            Err(error) => {
+                trace(&format!("power button unavailable: {error}"));
+                None
+            }
+        });
+    if power_keys.is_none() && buttons.is_some() {
+        trace("power button on gpio-keys");
+    }
     if let Some(session) = buttons.as_mut() {
+        pump_gpio(session, &taps);
+    }
+    if let Some(session) = power_keys.as_mut() {
         pump_gpio(session, &taps);
     }
 
@@ -647,6 +683,7 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
         limits,
         forward_is_194,
         &watchdog,
+        &slack,
     );
     // No panel work may outlive Cobalt's ownership of the display. This is an
     // explicit lifecycle fence rather than a timing assumption: the stock
@@ -672,7 +709,8 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
     // whether the owner is owed an explanation and the display is gone by the
     // time the reboot itself is requested.
     let rebooting = kobo_hal::bluetooth::requires_reboot_after_use();
-    if rebooting {
+    let reader_was_running = reader_owns_panel();
+    if rebooting && !reader_was_running {
         if let Err(error) = announce_reboot(&display, whole_screen) {
             // Not fatal. Failing to explain the reboot is worse than not
             // rebooting, but it is not a reason to leave the radio broken.
@@ -680,7 +718,15 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
         }
     }
     // Reverse order, on every path.
-    let restored = restore_screen(&display, &backup, whole_screen);
+    let restored = if reader_was_running {
+        // Nickel may already have restored and refreshed its own framebuffer.
+        // Writing either Cobalt's backup or a reboot notice here would put
+        // both owners on the panel again.
+        trace("reader already owns the panel; skipping Cobalt screen restore");
+        Ok(())
+    } else {
+        restore_screen(&display, &backup, whole_screen)
+    };
     let _ignored = touch.release();
     // The panel and the touch descriptor are given up *before* the reader is
     // started, not after it. Holding the display open while the reader brings
@@ -723,7 +769,7 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
     // Nothing here is fatal. A supplicant that is absent, ambiguous, or will
     // not die leaves the owner exactly where every session left them before
     // this existed: reconnecting by hand or rebooting.
-    if profile.reap_nickel_supplicant {
+    if !reader_was_running && profile.reap_nickel_supplicant {
         match Reader::find_running(kobo_hal::network::SUPPLICANT_EXECUTABLE) {
             Ok(supplicant) => {
                 trace("stopping the leftover supplicant before the reader returns");
@@ -734,8 +780,21 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
             Err(error) => trace(&format!("no leftover supplicant to stop: {error}")),
         }
     }
-    trace("panel and touch released, restarting the reader");
-    println!("panel released, restarting the reader");
+    // Sleep takes `wlan0` down. Leaving it down means a restarted Nickel has
+    // no node to associate on, even after the leftover supplicant is gone.
+    // Putting the link up is not a second owner: no supplicant, no DHCP.
+    if !reader_was_running && kobo_hal::wifi::wanted() {
+        kobo_hal::wifi::leave_link_up();
+        trace("left wlan0 up for the reader");
+        println!("left wlan0 up for the reader");
+    }
+    if reader_was_running {
+        trace("panel and touch released to the reader that is already running");
+        println!("panel released to the reader already running");
+    } else {
+        trace("panel and touch released, restarting the reader");
+        println!("panel released, restarting the reader");
+    }
     let restarted = reader.start(START_GRACE);
     // The connection is never put back, and there is no longer a way to ask
     // for it. Restoring it meant starting a supplicant and a DHCP client on
@@ -849,17 +908,39 @@ fn describe(limit: Duration) -> String {
 /// on a developer's terminal, so from the owner's chair a Bluetooth connection
 /// simply killed the device, which is exactly how it was reported.
 fn announce_reboot(display: &DisplaySession, whole_screen: Rect) -> Result<(), String> {
+    paint_notice(
+        display,
+        whole_screen,
+        kobo_ui::Glyph::Bluetooth,
+        "Restarting your reader",
+        "Bluetooth shares one radio with Wi-Fi here, and that radio can only be \
+         started once per boot. Restarting is the only way to hand it back working. \
+         This is expected, it is not a crash, and everything you have saved is \
+         already on the disk.",
+    )?;
+    // Long enough to be read by someone who has just looked down at a reader
+    // that appeared to be doing nothing. The reboot that follows costs far
+    // more than this, so the wait is not what makes the wait long.
+    thread::sleep(NOTICE_DWELL);
+    Ok(())
+}
+
+/// A full-screen notice with a fresh planner, so it is not diffed against
+/// whatever the session last drew.
+fn paint_notice(
+    display: &DisplaySession,
+    whole_screen: Rect,
+    glyph: kobo_ui::Glyph,
+    title: &str,
+    summary: &str,
+) -> Result<(), String> {
     let screen = Screen::new(
         0,
         vec![kobo_ui::Node::Splash {
             id: kobo_ui::NodeId(1),
-            glyph: Some(kobo_ui::Glyph::Bluetooth),
-            title: "Restarting your reader".to_owned(),
-            summary: "Bluetooth shares one radio with Wi-Fi here, and that radio can only be \
-                      started once per boot. Restarting is the only way to hand it back working. \
-                      This is expected, it is not a crash, and everything you have saved is \
-                      already on the disk."
-                .to_owned(),
+            glyph: Some(glyph),
+            title: title.to_owned(),
+            summary: summary.to_owned(),
         }],
     );
     let mut surface = Surface::new(
@@ -874,19 +955,447 @@ fn announce_reboot(display: &DisplaySession, whole_screen: Rect) -> Result<(), S
         &mut surface,
         None,
     );
-    // A fresh planner, so its idea of what is already on the panel is blank and
-    // the whole notice is drawn rather than diffed against the session's last
-    // frame.
-    Painter::new(surface.width, surface.height).paint(display, whole_screen, &surface)?;
-    // Long enough to be read by someone who has just looked down at a reader
-    // that appeared to be doing nothing. The reboot that follows costs far
-    // more than this, so the wait is not what makes the wait long.
-    thread::sleep(NOTICE_DWELL);
-    Ok(())
+    Painter::new(surface.width, surface.height).paint(display, whole_screen, &surface)
+}
+
+/// Claims the whole panel with a sleep frame owned by this session.
+///
+/// The kernel can restore an older framebuffer while returning from RAM, so
+/// this always invalidates the planner. Diffing an unchanged in-memory sleep
+/// surface against its stale history would otherwise write only a few Cobalt
+/// pixels over Nickel's restored screen.
+fn paint_sleep(
+    display: &DisplaySession,
+    whole_screen: Rect,
+    surface: &mut Surface,
+    panel: &mut Painter,
+) -> Result<(), String> {
+    let screen = Screen::new(
+        0,
+        vec![kobo_ui::Node::Splash {
+            id: kobo_ui::NodeId(1),
+            glyph: Some(kobo_ui::Glyph::Clock),
+            title: "Sleeping".to_owned(),
+            summary: "Press the power button or open the cover to wake.".to_owned(),
+        }],
+    );
+    render_all(
+        &screen,
+        &metrics_for(&screen),
+        &Chrome::with_back(false),
+        &(),
+        surface,
+        None,
+    );
+    panel.invalidate();
+    panel.paint(display, whole_screen, surface)
+}
+
+/// What a session put down in order to sleep, so a wake can put it back.
+struct Sleeping {
+    wifi_was_on: bool,
+    /// How far the radio was taken down. Suspend needs it as quiet as the
+    /// stock reader leaves it; anything less and the session sleeps in place.
+    radio: kobo_hal::wifi::Quiet,
+    light: Option<u8>,
+    mem_at: Option<Instant>,
+    resleep_at: Option<Instant>,
+    /// A touch has already been reported ignored during this sleep, so the
+    /// rest are not traced one by one.
+    touch_reported: bool,
+}
+
+/// Why a sleeping session is staying on the sleep screen rather than
+/// writing `mem`. Each is re-examined on a timer, because most of them
+/// clear on their own: a charger is unplugged, a radio settles.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum MemRefusal {
+    /// The kernel does not list `mem`, or there is no kernel power node.
+    Unavailable,
+    /// Something other than the battery is powering a board whose kernel
+    /// hangs if it suspends in that state.
+    ExternalPower,
+    /// The radio is not as quiet as the stock reader leaves it before it
+    /// suspends.
+    RadioAwake,
+    /// Bluetooth was used on a chip that has to be rebooted afterwards.
+    /// Suspending that chip mid-session is the same question with worse
+    /// consequences, so it is not asked.
+    RadioNeedsReboot,
+}
+
+/// Decides whether a sleeping session may write `mem` right now.
+fn mem_refusal(
+    allows_mem: bool,
+    external_power_blocks: bool,
+    radio: kobo_hal::wifi::Quiet,
+    bluetooth_needs_reboot: bool,
+) -> Option<MemRefusal> {
+    if !allows_mem {
+        return Some(MemRefusal::Unavailable);
+    }
+    if external_power_blocks {
+        return Some(MemRefusal::ExternalPower);
+    }
+    if bluetooth_needs_reboot {
+        return Some(MemRefusal::RadioNeedsReboot);
+    }
+    if !radio.is_settled() {
+        return Some(MemRefusal::RadioAwake);
+    }
+    None
+}
+
+fn wifi_enabled(wifi: &kobo_hal::wifi::Wifi) -> bool {
+    wifi.is_enabled()
+        || matches!(
+            wifi.state(),
+            kobo_protocol::DeviceResult::Wifi { enabled: true, .. }
+        )
+}
+
+/// Wake puts the radio back only when sleep took it down.
+fn wifi_needs_restore(was_on: bool, now_on: bool) -> bool {
+    was_on && !now_on
+}
+
+/// Whether Cobalt must stop writing the display because Nickel may own it.
+///
+/// A failed `/proc` scan is treated as occupied. At a panel boundary, an
+/// unnecessary hand-off is recoverable; painting over an owner we failed to
+/// identify is not.
+fn reader_owns_panel() -> bool {
+    match Reader::any_running() {
+        Ok(running) => running,
+        Err(error) => {
+            trace(&format!("could not verify reader panel ownership: {error}"));
+            true
+        }
+    }
+}
+
+fn screen_may_reach_panel(is_front: bool, sleeping: bool) -> bool {
+    is_front && !sleeping
+}
+
+/// Nickel brings the radio up when something needs the network. Cobalt does
+/// the same, on the task thread, so a fetch is not told the reader is
+/// offline while a remembered network is sitting in the firmware
+/// supplicant. Already-online is silent; the other outcomes are traced
+/// because a radio that will not come back is the thing to look for when
+/// an application shows the Join Wi-Fi screen it should not have reached.
+fn bring_saved_wifi() {
+    let Some(wifi) = kobo_hal::wifi::Wifi::from_cli() else {
+        println!("wifi: no wpa_cli; fetch proceeding offline");
+        return;
+    };
+    match wifi.ensure_online() {
+        kobo_hal::wifi::BringUp::AlreadyOnline => {}
+        kobo_hal::wifi::BringUp::Associated => {
+            trace("wifi joined a saved network");
+            println!("wifi joined a saved network");
+        }
+        kobo_hal::wifi::BringUp::NoSavedNetwork => {
+            trace("wifi down; no saved network");
+            println!("wifi down; no saved network");
+        }
+        kobo_hal::wifi::BringUp::StillDown => {
+            trace("wifi did not come back");
+            println!("wifi did not come back");
+        }
+    }
+}
+
+/// Nickel holds the association while it is awake. Cobalt has to, because
+/// the stock wifi manager is stopped for the session: a link that comes
+/// back after sleep and then dies is the usual outcome when nothing puts
+/// it back. Looks every ten seconds, and only while the session is awake
+/// and still wants the radio.
+fn watch_saved_wifi(wifi: kobo_hal::wifi::Wifi) {
+    let _ignored = thread::Builder::new()
+        .name("kobo-wifi".into())
+        .spawn(move || loop {
+            thread::sleep(BEAT_INTERVAL);
+            if !kobo_hal::wifi::should_keep() {
+                continue;
+            }
+            if kobo_hal::network::is_online(WIFI_LINK) {
+                continue;
+            }
+            match wifi.ensure_online() {
+                kobo_hal::wifi::BringUp::AlreadyOnline
+                | kobo_hal::wifi::BringUp::NoSavedNetwork => {}
+                kobo_hal::wifi::BringUp::Associated => {
+                    trace("wifi kept a saved network");
+                }
+                kobo_hal::wifi::BringUp::StillDown => {
+                    trace("wifi dropped and did not come back");
+                }
+            }
+        });
+}
+
+fn charger_blocks_mem(display: &DisplaySession) -> bool {
+    charger_blocks_mem_with(
+        display.profile().kernel_suspend_hangs_while_charging(),
+        kobo_hal::battery::external_power(),
+    )
+}
+
+/// `MediaTek` boards hang if we write `mem` with a cable attached. The
+/// question asked of the gauge is therefore "is anything but the battery
+/// powering this", not "is it charging": a full battery on a cable reports
+/// `Not charging`, and that cable hangs the kernel just as well. Unknown is
+/// treated as attached, because a missed read must not enable a hang.
+fn charger_blocks_mem_with(hangs_while_charging: bool, external_power: Option<bool>) -> bool {
+    hangs_while_charging && external_power.unwrap_or(true)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn enter_sleep(
+    display: &DisplaySession,
+    whole_screen: Rect,
+    kernel: Option<&kobo_hal::power::Power>,
+    wifi: Option<&kobo_hal::wifi::Wifi>,
+    light: Option<&kobo_hal::frontlight::Frontlight>,
+    audio: Option<&kobo_hal::audio::Audio>,
+    surface: &mut Surface,
+    panel: &mut Painter,
+) -> Result<Sleeping, String> {
+    paint_sleep(display, whole_screen, surface, panel)?;
+    if let Some(audio) = audio {
+        let _ignored = audio.pause();
+    }
+    let saved_light = light.and_then(kobo_hal::frontlight::Frontlight::percent);
+    if let Some(light) = light {
+        if let Err(error) = light.set(0) {
+            trace(&format!("frontlight off for sleep: {error}"));
+        }
+    }
+    let wifi_was_on = kobo_hal::wifi::wanted() || wifi.is_some_and(wifi_enabled);
+    kobo_hal::wifi::set_awake(false);
+    kobo_net::forget_idle();
+    let mut sleeping = Sleeping {
+        wifi_was_on,
+        radio: kobo_hal::wifi::Quiet::StillUp,
+        light: saved_light,
+        mem_at: None,
+        resleep_at: None,
+        touch_reported: false,
+    };
+    schedule_mem(&mut sleeping, kernel, wifi, display);
+    Ok(sleeping)
+}
+
+/// Quiets the radio and arms `mem`, or records why not and when to ask again.
+///
+/// The radio is taken down here rather than in [`enter_sleep`], and on every
+/// visit, because this is also where the loop comes after a kernel wake that
+/// nobody asked for, and a resume path is free to have powered the chip back
+/// up in the meantime. It is taken down whether or not the session was using
+/// it: a link that is administratively down still leaves the chip's wireless
+/// function powered, and it is the function the stock reader switches off
+/// before it suspends.
+///
+/// A refusal is not final. A charger gets unplugged, a radio that would not
+/// settle the first time settles the second, so every refusal except a kernel
+/// that has no `mem` at all sets `resleep_at` and the loop comes back here.
+fn schedule_mem(
+    sleeping: &mut Sleeping,
+    kernel: Option<&kobo_hal::power::Power>,
+    wifi: Option<&kobo_hal::wifi::Wifi>,
+    display: &DisplaySession,
+) {
+    sleeping.mem_at = None;
+    sleeping.resleep_at = None;
+    sleeping.radio = kobo_hal::wifi::quiet_for_sleep(wifi);
+    trace(&format!("radio for sleep: {:?}", sleeping.radio));
+    let Some(kernel) = kernel else {
+        return;
+    };
+    let refusal = mem_refusal(
+        kernel.allows_mem(),
+        charger_blocks_mem(display),
+        sleeping.radio,
+        kobo_hal::bluetooth::requires_reboot_after_use(),
+    );
+    match refusal {
+        None => {}
+        Some(MemRefusal::Unavailable) => return,
+        Some(reason) => {
+            trace(&format!("staying on the sleep screen: {reason:?}"));
+            sleeping.resleep_at = Some(Instant::now() + MEM_RECHECK);
+            return;
+        }
+    }
+    // Nothing may be in flight on the panel when the subsystems are flagged:
+    // the controller is one of them, and an update still marching when its
+    // power is pulled is the classic way to lose the next wake.
+    if let Err(error) = display.finish_pending() {
+        trace(&format!("panel would not settle before suspend: {error}"));
+        sleeping.resleep_at = Some(Instant::now() + MEM_RECHECK);
+        return;
+    }
+    match kernel.flag_subsystems() {
+        Ok(()) => sleeping.mem_at = Some(Instant::now() + SUBSYSTEM_SETTLE),
+        Err(error) => trace(&format!("could not flag subsystems for suspend: {error}")),
+    }
+}
+
+fn try_mem(
+    display: &DisplaySession,
+    kernel: &kobo_hal::power::Power,
+    watchdog: &Watchdog,
+    slack: &kobo_hal::soc_watchdog::Slack,
+) -> bool {
+    // The settle window is long enough for something to have been drawn
+    // (a status band tick, a late frame from an application). Wait it out
+    // rather than suspending under it.
+    if let Err(error) = display.finish_pending() {
+        trace(&format!("panel busy at suspend: {error}"));
+    }
+    let _ignored = Command::new("sync").status();
+    let resumed = match kernel.enter_mem() {
+        Ok(()) => {
+            trace("woke from suspend-to-RAM");
+            true
+        }
+        Err(error) => {
+            trace(&format!("kernel refused mem: {error}"));
+            let _ignored = kernel.unflag_subsystems();
+            false
+        }
+    };
+    watchdog.beat();
+    let _ignored = kernel.unflag_subsystems();
+    if resumed {
+        // The resume path belongs to the watchdog driver, and whether it
+        // honours a counter that was slackened from user space is its
+        // business. Asking costs a read; not asking costs a reboot ten
+        // seconds after the panel goes back if the answer was no.
+        match slack.reassert() {
+            Ok(true) => trace("the hardware watchdog was re-armed by resume; slackened again"),
+            Ok(false) => {}
+            Err(error) => trace(&format!(
+                "could not check the hardware watchdog after resume: {error}"
+            )),
+        }
+    }
+    resumed
+}
+
+fn leave_sleep(
+    sleeping: &Sleeping,
+    kernel: Option<&kobo_hal::power::Power>,
+    wifi: Option<&kobo_hal::wifi::Wifi>,
+    light: Option<&kobo_hal::frontlight::Frontlight>,
+    panel: &mut Painter,
+) {
+    // The physical framebuffer may have changed during suspend. Wake must
+    // repaint the foreground application in full even when its in-memory
+    // pixels match the last application frame committed before sleep.
+    panel.invalidate();
+    if let Some(kernel) = kernel {
+        let _ignored = kernel.unflag_subsystems();
+    }
+    if let (Some(light), Some(percent)) = (light, sleeping.light) {
+        if let Err(error) = light.set(percent) {
+            trace(&format!("frontlight after wake: {error}"));
+        }
+    }
+    kobo_hal::wifi::set_awake(true);
+    // The function comes back for every wake, because it went off for every
+    // sleep. Only the association is conditional on what the session was
+    // doing before.
+    kobo_hal::wifi::wake_radio_function();
+    if sleeping.wifi_was_on {
+        restore_wifi_after_wake(wifi);
+    }
+}
+
+/// Puts a saved network back on the air after sleep, off the panel loop.
+///
+/// Association and a DHCP lease can take tens of seconds after `mem`. Doing
+/// that in [`leave_sleep`] left the Sleeping overlay up and ate the power
+/// button until it finished; a second tap then queued and put the session
+/// straight back to sleep.
+fn restore_wifi_after_wake(wifi: Option<&kobo_hal::wifi::Wifi>) {
+    kobo_hal::wifi::set_wanted(true);
+    let wifi = wifi.cloned().or_else(kobo_hal::wifi::Wifi::from_cli);
+    let Some(wifi) = wifi else {
+        trace("wifi was on before sleep; no wpa_cli after wake");
+        println!("wifi was on before sleep; no wpa_cli after wake");
+        return;
+    };
+    let _ignored = thread::Builder::new()
+        .name("kobo-wifi-wake".into())
+        .spawn(move || {
+            if wifi_needs_restore(true, wifi.is_enabled()) {
+                trace("wifi was on before sleep; turning it back on");
+                println!("wifi was on before sleep; turning it back on");
+            }
+            match wifi.restore_after_sleep() {
+                kobo_hal::wifi::BringUp::AlreadyOnline | kobo_hal::wifi::BringUp::Associated => {
+                    trace("wifi back after sleep");
+                    println!("wifi back after sleep");
+                }
+                kobo_hal::wifi::BringUp::NoSavedNetwork => {
+                    trace("wifi was on before sleep; no saved network after");
+                    println!("wifi was on before sleep; no saved network after");
+                }
+                kobo_hal::wifi::BringUp::StillDown => {
+                    if wifi.is_enabled() {
+                        trace("wifi radio on after sleep; no route yet");
+                        println!("wifi radio on after sleep; no route yet");
+                    } else {
+                        trace("wifi did not come back after sleep");
+                        println!("wifi did not come back after sleep");
+                    }
+                }
+            }
+        });
+}
+
+fn request_power_off() -> Result<(), String> {
+    let sync = Command::new("sync")
+        .status()
+        .map_err(|error| format!("sync before power off: {error}"))?;
+    if !sync.success() {
+        return Err("sync failed before power off".to_owned());
+    }
+    for tool in ["/sbin/poweroff", "/bin/poweroff", "/sbin/halt"] {
+        if Path::new(tool).is_file() {
+            return Command::new(tool)
+                .status()
+                .map_err(|error| format!("request power off with {tool}: {error}"))
+                .and_then(|status| {
+                    status
+                        .success()
+                        .then_some(())
+                        .ok_or_else(|| format!("{tool} refused to power off"))
+                });
+        }
+    }
+    Err("the firmware has no poweroff command".to_owned())
 }
 
 /// How long the restart notice stays up before the screen is put back.
 const NOTICE_DWELL: Duration = Duration::from_secs(5);
+/// Gap between flagging subsystems and writing `mem`. The kernel needs it;
+/// the loop keeps running so a second press can still abort.
+const SUBSYSTEM_SETTLE: Duration = Duration::from_secs(2);
+/// After a kernel wake that was not a button or the cover, wait this long
+/// for the owner to do something before going back to sleep.
+const UNEXPECTED_WAKE: Duration = Duration::from_secs(15);
+/// How often a sleeping session that could not write `mem` asks again.
+/// Long enough not to matter for battery, short enough that a charger
+/// unplugged from a reader left on its sleep screen gets it into `mem`
+/// before the owner has walked away.
+const MEM_RECHECK: Duration = Duration::from_secs(30);
+/// Ignore a power tap that arrives in the same moment as wake. Restoring
+/// Wi-Fi used to block the loop; extra taps queued and slept the session
+/// again the instant the overlay could have cleared.
+const WAKE_GRACE: Duration = Duration::from_secs(1);
 
 fn restore_screen(
     display: &DisplaySession,
@@ -1126,6 +1635,7 @@ impl Hosted {
 /// keep arriving; and what it draws is kept rather than shown. Coming back is
 /// one repaint of a screen the runtime already has.
 #[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_arguments)]
 fn host_applications(
     application: &Path,
     display: &DisplaySession,
@@ -1134,7 +1644,15 @@ fn host_applications(
     limits: Limits,
     forward_is_194: bool,
     watchdog: &Arc<Watchdog>,
+    slack: &kobo_hal::soc_watchdog::Slack,
 ) -> Result<String, String> {
+    let session_ceiling = limits.ceiling.min(MAX_SESSION);
+    let mut idle_sleep = load_idle_sleep_from(&idle_sleep_path());
+    let mut idle_after = match limits.idle {
+        IdleLimit::FromSettings => idle_sleep.duration(),
+        IdleLimit::After(duration) => Some(duration.min(MAX_SESSION)),
+        IdleLimit::Never => None,
+    };
     // Kept current by the orientation channel: a reader flipped mid-session
     // keeps "forward" pointing forward even though the image does not rotate
     // yet.
@@ -1172,9 +1690,13 @@ fn host_applications(
         backends.push(Capability::BluetoothControl);
     }
     let wifi = kobo_hal::wifi::Wifi::open();
-    if wifi.is_some() {
+    if let Some(wifi) = &wifi {
         backends.push(Capability::WifiControl);
         backends.push(Capability::Network);
+        kobo_hal::wifi::set_awake(true);
+        kobo_hal::wifi::set_wanted(wifi_enabled(wifi));
+        kobo_net::on_prepare(bring_saved_wifi);
+        watch_saved_wifi(wifi.clone());
     }
     // Opened once for the whole session rather than per request, because the
     // sensor's value is in the edges and a reader that is only open while
@@ -1265,8 +1787,12 @@ fn host_applications(
         // otherwise install a different version than the one the user saw.
         let mut store_channel = crate::autoupdate::preferences(Path::new(COBALT_ROOT)).channel;
         let mut visited: Vec<String> = Vec::new();
-        let ceiling = Instant::now() + limits.ceiling;
+        let ceiling = Instant::now() + session_ceiling;
         let mut last_activity = Instant::now();
+        let mut power_button = PowerButton::default();
+        let kernel = kobo_hal::power::Power::open();
+        let mut asleep: Option<Sleeping> = None;
+        let mut wake_grace_until: Option<Instant> = None;
         // Set when Back has been handed to an application that asked for it,
         // and cleared by the next screen that application draws. The reader's
         // way out is never left waiting on an application: if this is still
@@ -1299,12 +1825,55 @@ fn host_applications(
                 panel.paint(display, whole_screen, &surface)?;
                 release_due = None;
             }
+            if let Some(ButtonAction::Shutdown) = power_button.poll_hold(now) {
+                paint_notice(
+                    display,
+                    whole_screen,
+                    kobo_ui::Glyph::Power,
+                    "Powering off",
+                    "Hold the power button a moment longer if it does not go off.",
+                )?;
+                if let Err(error) = request_power_off() {
+                    trace(&format!("power off refused: {error}"));
+                }
+            }
+            let mut resumed_from_mem = false;
+            if let Some(sleeping) = asleep.as_mut() {
+                if sleeping.mem_at.is_some_and(|at| now >= at) {
+                    sleeping.mem_at = None;
+                    if let Some(kernel) = kernel.as_ref() {
+                        resumed_from_mem = try_mem(display, kernel, watchdog, slack);
+                    }
+                    sleeping.resleep_at = Some(Instant::now() + UNEXPECTED_WAKE);
+                } else if sleeping.resleep_at.is_some_and(|at| now >= at) {
+                    schedule_mem(sleeping, kernel.as_ref(), wifi.as_ref(), display);
+                }
+            }
+            if resumed_from_mem {
+                // A recovery path or firmware service may have brought Nickel
+                // back while the machine was asleep. It then owns the panel;
+                // no Cobalt frame may be written after this observation.
+                if reader_owns_panel() {
+                    trace("the stock reader resumed during suspend; yielding the panel");
+                    return Ok(finish(
+                        &apps,
+                        &visited,
+                        "the stock reader resumed during suspend",
+                    ));
+                }
+                // Even without a live Nickel process, firmware may have
+                // restored its old framebuffer. Reclaim every pixel before
+                // waiting for the real wake event.
+                paint_sleep(display, whole_screen, &mut surface, &mut panel)?;
+            }
             // The band is the only thing on the panel that changes without
             // anybody touching it, so the loop has to notice it on its own.
             // Repainting is conditional on the reading having moved, and the
             // frame planner declines an identical frame anyway, so a session
             // sitting still costs nothing beyond reading four small files.
-            if status.poll() {
+            // A sleep screen is not the application's, and must not be
+            // replaced by a status-band refresh of whatever was underneath.
+            if status.poll() && asleep.is_none() {
                 repaint(
                     &mut apps,
                     front,
@@ -1321,30 +1890,74 @@ fn host_applications(
             // background application has no standing to react to it.
             if let Some(sensor) = cover.as_mut() {
                 if let Some(magnet) = sensor.poll() {
+                    let present = magnet == kobo_hal::cover::Magnet::Present;
                     if let Some(index) = index_of(&apps, front) {
                         apps[index].send(kobo_protocol::Message::CoverChanged {
-                            magnet_present: magnet == kobo_hal::cover::Magnet::Present,
+                            magnet_present: present,
                         })?;
+                    }
+                    if present && asleep.is_none() {
+                        asleep = Some(enter_sleep(
+                            display,
+                            whole_screen,
+                            kernel.as_ref(),
+                            wifi.as_ref(),
+                            frontlight.as_ref(),
+                            audio.as_ref(),
+                            &mut surface,
+                            &mut panel,
+                        )?);
+                        last_activity = Instant::now();
+                    } else if !present {
+                        if let Some(sleeping) = asleep.take() {
+                            leave_sleep(
+                                &sleeping,
+                                kernel.as_ref(),
+                                wifi.as_ref(),
+                                frontlight.as_ref(),
+                                &mut panel,
+                            );
+                            last_activity = Instant::now();
+                            wake_grace_until = Some(Instant::now() + WAKE_GRACE);
+                            repaint(
+                                &mut apps,
+                                front,
+                                display,
+                                whole_screen,
+                                &mut surface,
+                                &mut panel,
+                                &home,
+                                &mut status,
+                            )?;
+                        }
                     }
                 }
             }
-            if now >= ceiling {
-                return Ok(finish(
-                    &apps,
-                    &visited,
-                    &format!("the {} session limit was reached", describe(limits.ceiling)),
-                ));
-            }
-            let idle_at = last_activity + limits.idle;
-            if now >= idle_at {
+            if now >= ceiling && asleep.is_none() {
                 return Ok(finish(
                     &apps,
                     &visited,
                     &format!(
-                        "nothing was touched for {}, so the reader has it back",
-                        describe(limits.idle)
+                        "the {} session limit was reached",
+                        describe(session_ceiling)
                     ),
                 ));
+            }
+            if let Some(idle) = idle_after {
+                if now >= last_activity + idle && asleep.is_none() && services.wake_hold().is_none()
+                {
+                    asleep = Some(enter_sleep(
+                        display,
+                        whole_screen,
+                        kernel.as_ref(),
+                        wifi.as_ref(),
+                        frontlight.as_ref(),
+                        audio.as_ref(),
+                        &mut surface,
+                        &mut panel,
+                    )?);
+                    last_activity = Instant::now();
+                }
             }
             // Updates found in the background are applied only to a panel
             // nobody is using: enough quiet has passed since the last touch,
@@ -1386,6 +1999,7 @@ fn host_applications(
             }
             // Whichever comes first, and never longer than one heartbeat, so a
             // session nobody is touching still proves it is alive.
+            let idle_at = idle_after.map_or(ceiling, |idle| last_activity + idle);
             let wait = ceiling
                 .saturating_duration_since(now)
                 .min(idle_at.saturating_duration_since(now))
@@ -1396,6 +2010,23 @@ fn host_applications(
                 .min(back_offered.map_or(BEAT_INTERVAL, |(_, offered_at)| {
                     (offered_at + BACK_GRACE).saturating_duration_since(now)
                 }))
+                .min(if power_button.is_down() {
+                    Duration::from_millis(100)
+                } else {
+                    BEAT_INTERVAL
+                })
+                .min(
+                    asleep
+                        .as_ref()
+                        .and_then(|sleeping| sleeping.mem_at)
+                        .map_or(BEAT_INTERVAL, |at| at.saturating_duration_since(now)),
+                )
+                .min(
+                    asleep
+                        .as_ref()
+                        .and_then(|sleeping| sleeping.resleep_at)
+                        .map_or(BEAT_INTERVAL, |at| at.saturating_duration_since(now)),
+                )
                 .min(release_due.map_or(BEAT_INTERVAL, |deadline| {
                     deadline.saturating_duration_since(now)
                 }));
@@ -1472,7 +2103,7 @@ fn host_applications(
                         GpioEvent::Button {
                             button: button @ (gpio::Button::Page193 | gpio::Button::Page194),
                             pressed: true,
-                        } => {
+                        } if asleep.is_none() => {
                             let forward = (button == gpio::Button::Page194) == forward_is_194;
                             if let Some(index) = index_of(&apps, front) {
                                 let at_home = apps[index].path == home;
@@ -1500,10 +2131,57 @@ fn host_applications(
                             button: gpio::Button::Power,
                             pressed,
                         } => {
-                            // Meaning arrives with the power sub-feature:
-                            // short press sleep, long press shutdown. Until
-                            // then the press is at least on the record.
-                            trace(&format!("power button pressed={pressed}"));
+                            if pressed {
+                                trace("power button down");
+                                power_button.press(Instant::now());
+                            } else {
+                                match power_button.release(asleep.is_some()) {
+                                    Some(ButtonAction::Sleep) if asleep.is_none() => {
+                                        if wake_grace_until
+                                            .is_some_and(|until| Instant::now() < until)
+                                        {
+                                            trace("power tap ignored just after wake");
+                                        } else {
+                                            trace("sleep from power button");
+                                            asleep = Some(enter_sleep(
+                                                display,
+                                                whole_screen,
+                                                kernel.as_ref(),
+                                                wifi.as_ref(),
+                                                frontlight.as_ref(),
+                                                audio.as_ref(),
+                                                &mut surface,
+                                                &mut panel,
+                                            )?);
+                                            last_activity = Instant::now();
+                                        }
+                                    }
+                                    Some(ButtonAction::Wake) => {
+                                        if let Some(sleeping) = asleep.take() {
+                                            leave_sleep(
+                                                &sleeping,
+                                                kernel.as_ref(),
+                                                wifi.as_ref(),
+                                                frontlight.as_ref(),
+                                                &mut panel,
+                                            );
+                                            last_activity = Instant::now();
+                                            wake_grace_until = Some(Instant::now() + WAKE_GRACE);
+                                            repaint(
+                                                &mut apps,
+                                                front,
+                                                display,
+                                                whole_screen,
+                                                &mut surface,
+                                                &mut panel,
+                                                &home,
+                                                &mut status,
+                                            )?;
+                                        }
+                                    }
+                                    Some(ButtonAction::Sleep | ButtonAction::Shutdown) | None => {}
+                                }
+                            }
                         }
                         // The kernel's digested accelerometer verdict. Only
                         // the two portrait poses move the key mapping; the
@@ -1522,6 +2200,20 @@ fn host_applications(
                     }
                 }
                 Ok(Event::Touch(event)) => {
+                    // The sleep screen says how to wake, and the panel is not
+                    // on the list. A reader asleep in a bag is touched all the
+                    // time; the stock firmware does not wake for it and
+                    // neither does this. Under `mem` the touch controller is
+                    // off anyway, so anything arriving here is either a
+                    // session sleeping in place or the window after a kernel
+                    // wake nobody asked for, and both should stay asleep.
+                    if let Some(sleeping) = asleep.as_mut() {
+                        if !sleeping.touch_reported {
+                            sleeping.touch_reported = true;
+                            trace("touch while asleep; ignored");
+                        }
+                        continue;
+                    }
                     last_activity = Instant::now();
                     let Some(index) = index_of(&apps, front) else {
                         return Ok(finish(&apps, &visited, "nothing is on the panel"));
@@ -1671,7 +2363,8 @@ fn host_applications(
                                 screen.reading_font = apps[index].fonts.get(&local).copied();
                             }
                             let is_front = id == front;
-                            if is_front {
+                            let can_paint = screen_may_reach_panel(is_front, asleep.is_some());
+                            if can_paint {
                                 last_activity = Instant::now();
                             }
                             // The answer to a Back that was handed over, if
@@ -1685,7 +2378,7 @@ fn host_applications(
                             let chrome = chrome_for(&screen, apps[index].path == home, &mut status);
                             let screen =
                                 kobo_ui::ensure_way_back(screen, &chrome, &apps[index].name);
-                            if is_front {
+                            if can_paint {
                                 trace(&format!("screen {} received", screen.id));
                                 println!("screen {}", screen.id);
                                 // The surface is about to be drawn afresh, so
@@ -1704,6 +2397,11 @@ fn host_applications(
                                 );
                                 panel.paint(display, whole_screen, &surface)?;
                                 apps[index].painted += 1;
+                            } else if is_front {
+                                trace(&format!(
+                                    "screen {} cached while the panel sleeps",
+                                    screen.id
+                                ));
                             }
                             // Kept either way. A background application that
                             // finished its work has a finished screen waiting,
@@ -1931,7 +2629,15 @@ fn host_applications(
                                         ),
                                         kobo_hal::wifi::Wifi::state,
                                     ),
+                                    kobo_protocol::DeviceRequest::HoldWifi { .. } => {
+                                        if let Some(wifi) = &wifi {
+                                            kobo_hal::wifi::set_wanted(true);
+                                            let _ignored = wifi.set_enabled(true);
+                                        }
+                                        services.handle(request.clone())
+                                    }
                                     kobo_protocol::DeviceRequest::SetWifi { enabled } => {
+                                        kobo_hal::wifi::set_wanted(*enabled);
                                         wifi.as_ref().map_or(
                                             kobo_protocol::DeviceResult::Denied(
                                                 kobo_protocol::DenyReason::Unsupported,
@@ -1946,6 +2652,7 @@ fn host_applications(
                                         kobo_hal::wifi::Wifi::scan,
                                     ),
                                     kobo_protocol::DeviceRequest::JoinWifi { ssid, password } => {
+                                        kobo_hal::wifi::set_wanted(true);
                                         wifi.as_ref().map_or(
                                             kobo_protocol::DeviceResult::Denied(
                                                 kobo_protocol::DenyReason::Unsupported,
@@ -1954,6 +2661,7 @@ fn host_applications(
                                         )
                                     }
                                     kobo_protocol::DeviceRequest::DisconnectWifi => {
+                                        kobo_hal::wifi::set_wanted(false);
                                         wifi.as_ref().map_or(
                                             kobo_protocol::DeviceResult::Denied(
                                                 kobo_protocol::DenyReason::Unsupported,
@@ -2151,6 +2859,27 @@ fn host_applications(
                                         app_link_result(crate::app_link::disconnect(Path::new(
                                             COBALT_ROOT,
                                         )))
+                                    }
+                                    kobo_protocol::DeviceRequest::ReadIdleSleep => {
+                                        kobo_protocol::DeviceResult::IdleSleep(idle_sleep)
+                                    }
+                                    kobo_protocol::DeviceRequest::SetIdleSleep(timeout) => {
+                                        let wanted = *timeout;
+                                        match save_idle_sleep_to(&idle_sleep_path(), wanted) {
+                                            Ok(()) => {
+                                                idle_sleep = wanted;
+                                                idle_after = wanted
+                                                    .duration()
+                                                    .map(|duration| duration.min(MAX_SESSION));
+                                                kobo_protocol::DeviceResult::IdleSleep(idle_sleep)
+                                            }
+                                            Err(error) => {
+                                                trace(&format!("idle-sleep not stored: {error}"));
+                                                kobo_protocol::DeviceResult::Failed(
+                                                    kobo_protocol::DeviceError::Backend,
+                                                )
+                                            }
+                                        }
                                     }
                                     kobo_protocol::DeviceRequest::ReadAutoUpdate => {
                                         auto_update_result(crate::autoupdate::preferences(
@@ -2492,6 +3221,29 @@ fn repaint(
     home: &Path,
     status: &mut StatusSource,
 ) -> Result<(), String> {
+    paint_front(
+        apps,
+        id,
+        display,
+        whole_screen,
+        surface,
+        panel,
+        home,
+        status,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn paint_front(
+    apps: &mut [Hosted],
+    id: u64,
+    display: &DisplaySession,
+    whole_screen: Rect,
+    surface: &mut Surface,
+    panel: &mut Painter,
+    home: &Path,
+    status: &mut StatusSource,
+) -> Result<(), String> {
     let Some(index) = index_of(apps, id) else {
         return Ok(());
     };
@@ -2517,6 +3269,8 @@ fn repaint(
 fn system_request_allowed(app: &str, request: &kobo_protocol::DeviceRequest) -> bool {
     match request {
         kobo_protocol::DeviceRequest::Update { .. }
+        | kobo_protocol::DeviceRequest::ReadIdleSleep
+        | kobo_protocol::DeviceRequest::SetIdleSleep(_)
         | kobo_protocol::DeviceRequest::ReadAutoUpdate
         | kobo_protocol::DeviceRequest::SetAutoUpdate { .. }
         | kobo_protocol::DeviceRequest::ReadUpdateChannel
@@ -3415,6 +4169,10 @@ impl Painter {
         }
     }
 
+    fn invalidate(&mut self) {
+        self.frames.invalidate();
+    }
+
     fn paint(
         &mut self,
         display: &DisplaySession,
@@ -4179,6 +4937,60 @@ mod hosting_tests {
     }
 
     #[test]
+    fn unknown_charging_on_mediatek_blocks_mem() {
+        assert!(super::charger_blocks_mem_with(true, None));
+        assert!(super::charger_blocks_mem_with(true, Some(true)));
+        assert!(!super::charger_blocks_mem_with(true, Some(false)));
+        assert!(!super::charger_blocks_mem_with(false, None));
+        assert!(!super::charger_blocks_mem_with(false, Some(true)));
+    }
+
+    #[test]
+    fn mem_is_refused_for_the_first_reason_that_applies_and_nothing_else() {
+        use super::{mem_refusal, MemRefusal};
+        use kobo_hal::wifi::Quiet;
+        assert_eq!(
+            mem_refusal(false, false, Quiet::FunctionOff, false),
+            Some(MemRefusal::Unavailable)
+        );
+        assert_eq!(
+            mem_refusal(true, true, Quiet::FunctionOff, false),
+            Some(MemRefusal::ExternalPower)
+        );
+        assert_eq!(
+            mem_refusal(true, false, Quiet::FunctionOff, true),
+            Some(MemRefusal::RadioNeedsReboot)
+        );
+        assert_eq!(
+            mem_refusal(true, false, Quiet::FunctionStuckOn, false),
+            Some(MemRefusal::RadioAwake)
+        );
+        assert_eq!(
+            mem_refusal(true, false, Quiet::StillUp, false),
+            Some(MemRefusal::RadioAwake)
+        );
+        assert_eq!(mem_refusal(true, false, Quiet::FunctionOff, false), None);
+        assert_eq!(mem_refusal(true, false, Quiet::LinkDown, false), None);
+        assert_eq!(mem_refusal(true, false, Quiet::AlreadyOff, false), None);
+    }
+
+    #[test]
+    fn wake_turns_wifi_on_only_when_sleep_took_it_down() {
+        assert!(super::wifi_needs_restore(true, false));
+        assert!(!super::wifi_needs_restore(true, true));
+        assert!(!super::wifi_needs_restore(false, false));
+        assert!(!super::wifi_needs_restore(false, true));
+    }
+
+    #[test]
+    fn application_frames_cannot_replace_the_sleep_screen() {
+        assert!(super::screen_may_reach_panel(true, false));
+        assert!(!super::screen_may_reach_panel(true, true));
+        assert!(!super::screen_may_reach_panel(false, false));
+        assert!(!super::screen_may_reach_panel(false, true));
+    }
+
+    #[test]
     fn platform_and_app_updates_have_separate_builtin_authorities() {
         use kobo_protocol::DeviceRequest;
 
@@ -4231,6 +5043,58 @@ mod hosting_tests {
             assert!(!super::system_request_allowed("settings", &request));
             assert!(!super::system_request_allowed("todo", &request));
         }
+        assert!(super::system_request_allowed(
+            "settings",
+            &DeviceRequest::ReadIdleSleep
+        ));
+        assert!(super::system_request_allowed(
+            "settings",
+            &DeviceRequest::SetIdleSleep(kobo_protocol::IdleSleep::Never)
+        ));
+        assert!(!super::system_request_allowed(
+            "store",
+            &DeviceRequest::ReadIdleSleep
+        ));
+        assert!(!super::system_request_allowed(
+            "todo",
+            &DeviceRequest::SetIdleSleep(kobo_protocol::IdleSleep::FiveMinutes)
+        ));
+    }
+
+    #[test]
+    fn a_missing_or_unknown_idle_sleep_file_is_five_minutes() {
+        let path =
+            std::env::temp_dir().join(format!("kobo-idle-sleep-missing-{}", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(
+            super::load_idle_sleep_from(&path),
+            kobo_protocol::IdleSleep::FiveMinutes
+        );
+        std::fs::write(&path, "15\n").expect("write");
+        assert_eq!(
+            super::load_idle_sleep_from(&path),
+            kobo_protocol::IdleSleep::FiveMinutes
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn idle_sleep_round_trips_through_the_preference_file() {
+        let dir = std::env::temp_dir().join(format!("kobo-idle-sleep-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("dir");
+        let path = dir.join("idle-sleep");
+        super::save_idle_sleep_to(&path, kobo_protocol::IdleSleep::Never).expect("save");
+        assert_eq!(
+            super::load_idle_sleep_from(&path),
+            kobo_protocol::IdleSleep::Never
+        );
+        super::save_idle_sleep_to(&path, kobo_protocol::IdleSleep::ThirtyMinutes).expect("save");
+        assert_eq!(
+            super::load_idle_sleep_from(&path),
+            kobo_protocol::IdleSleep::ThirtyMinutes
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

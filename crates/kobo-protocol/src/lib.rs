@@ -4,6 +4,7 @@
 
 use std::fmt;
 use std::io::{self, Read, Write};
+use std::time::Duration;
 
 use kobo_ui::{
     ActionId, BannerLevel, BarAction, BarStyle, BottomAction, Caret, Cell, ControlState,
@@ -45,8 +46,9 @@ pub const MAGIC: [u8; 4] = *b"KOBO";
 /// adds bounded rich EPUB text and runtime-held publisher-font handles.
 /// Version 10 adds exact text-hold coordinates and typed offline dictionary
 /// requests/results. Version 11 adds the identity request and its result,
-/// both tags an older side has no reading for. Update-channel requests were
-/// later added on new tags without changing the shapes of existing frames.
+/// both tags an older side has no reading for. Update-channel and idle-sleep
+/// requests were later added on new tags without changing the shapes of
+/// existing frames.
 pub const VERSION: u8 = 11;
 pub const HEADER_LEN: usize = 14;
 /// The largest single frame either side will read.
@@ -951,6 +953,108 @@ pub fn is_cache_key(key: &str) -> bool {
     key.starts_with(CACHE_PREFIX)
 }
 
+/// How long Cobalt waits with nothing happening before it sleeps in session.
+///
+/// Chosen in Settings. Five minutes is the default. [`Self::Never`] leaves the
+/// panel on until the power button, the cover, or the session ceiling.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum IdleSleep {
+    OneMinute,
+    #[default]
+    FiveMinutes,
+    TenMinutes,
+    ThirtyMinutes,
+    Never,
+}
+
+impl IdleSleep {
+    /// The choices Settings offers, in the order they appear.
+    pub const ALL: [Self; 5] = [
+        Self::OneMinute,
+        Self::FiveMinutes,
+        Self::TenMinutes,
+        Self::ThirtyMinutes,
+        Self::Never,
+    ];
+
+    /// Whole minutes, or `None` when the panel should not sleep from idleness.
+    #[must_use]
+    pub const fn minutes(self) -> Option<u8> {
+        match self {
+            Self::OneMinute => Some(1),
+            Self::FiveMinutes => Some(5),
+            Self::TenMinutes => Some(10),
+            Self::ThirtyMinutes => Some(30),
+            Self::Never => None,
+        }
+    }
+
+    /// How long the session loop waits, or `None` for [`Self::Never`].
+    #[must_use]
+    pub fn duration(self) -> Option<Duration> {
+        self.minutes()
+            .map(|minutes| Duration::from_secs(u64::from(minutes) * 60))
+    }
+
+    /// The phrase Settings shows for this choice.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::OneMinute => "1 minute",
+            Self::FiveMinutes => "5 minutes",
+            Self::TenMinutes => "10 minutes",
+            Self::ThirtyMinutes => "30 minutes",
+            Self::Never => "Never",
+        }
+    }
+
+    /// The token written to the on-disk preference.
+    #[must_use]
+    pub const fn as_stored(self) -> &'static str {
+        match self {
+            Self::OneMinute => "1",
+            Self::FiveMinutes => "5",
+            Self::TenMinutes => "10",
+            Self::ThirtyMinutes => "30",
+            Self::Never => "never",
+        }
+    }
+
+    /// Reads a stored token. Anything unknown becomes the five-minute default.
+    #[must_use]
+    pub fn from_stored(text: &str) -> Self {
+        match text.trim() {
+            "1" => Self::OneMinute,
+            "5" => Self::FiveMinutes,
+            "10" => Self::TenMinutes,
+            "30" => Self::ThirtyMinutes,
+            "never" => Self::Never,
+            _ => Self::default(),
+        }
+    }
+
+    const fn to_wire(self) -> u8 {
+        match self {
+            Self::Never => 0,
+            Self::OneMinute => 1,
+            Self::FiveMinutes => 2,
+            Self::TenMinutes => 3,
+            Self::ThirtyMinutes => 4,
+        }
+    }
+
+    const fn from_wire(tag: u8) -> Option<Self> {
+        match tag {
+            0 => Some(Self::Never),
+            1 => Some(Self::OneMinute),
+            2 => Some(Self::FiveMinutes),
+            3 => Some(Self::TenMinutes),
+            4 => Some(Self::ThirtyMinutes),
+            _ => None,
+        }
+    }
+}
+
 /// Every hardware operation an application can ask for.
 ///
 /// Applications never open a device node. They describe an intent, the runtime
@@ -1101,6 +1205,10 @@ pub enum DeviceRequest {
     ReadUpdateChannel,
     /// Select the published update stream used for platform and app updates.
     SetUpdateChannel { channel: UpdateChannel },
+    /// Report how long the session waits idle before sleeping.
+    ReadIdleSleep,
+    /// Set how long the session waits idle before sleeping.
+    SetIdleSleep(IdleSleep),
 }
 
 /// Current state of the runtime-owned App Store browser link.
@@ -1348,6 +1456,8 @@ pub enum DeviceResult {
     AutoUpdate { cobalt: bool, apps: bool },
     /// What this runtime is and what it is running on. See [`DeviceIdentity`].
     Identity(DeviceIdentity),
+    /// How long the session waits idle before sleeping.
+    IdleSleep(IdleSleep),
     /// The backend exists, but the requested operation failed.
     Failed(DeviceError),
     /// The request was refused, with the exact reason.
@@ -2505,6 +2615,10 @@ fn encode_device_request(
         DeviceRequest::SetUpdateChannel { channel } => {
             output.extend_from_slice(&[46, channel.wire()]);
         }
+        DeviceRequest::ReadIdleSleep => output.push(47),
+        DeviceRequest::SetIdleSleep(timeout) => {
+            output.extend_from_slice(&[48, timeout.to_wire()]);
+        }
     }
     Ok(())
 }
@@ -2804,6 +2918,10 @@ fn decode_device_request(reader: &mut Reader<'_>) -> Result<DeviceRequest, Proto
         46 => Ok(DeviceRequest::SetUpdateChannel {
             channel: UpdateChannel::from_wire(reader.u8()?)?,
         }),
+        47 => Ok(DeviceRequest::ReadIdleSleep),
+        48 => IdleSleep::from_wire(reader.u8()?)
+            .map(DeviceRequest::SetIdleSleep)
+            .ok_or(ProtocolError::InvalidValue("idle sleep")),
         _ => Err(ProtocolError::InvalidValue("device request")),
     }
 }
@@ -2991,6 +3109,9 @@ fn encode_device_result(output: &mut Vec<u8>, result: &DeviceResult) -> Result<(
             output.extend_from_slice(&[17, radio_flags(*cobalt, *apps)]);
         }
         DeviceResult::UpdateChannel(channel) => output.extend_from_slice(&[18, channel.wire()]),
+        DeviceResult::IdleSleep(timeout) => {
+            output.extend_from_slice(&[19, timeout.to_wire()]);
+        }
     }
     Ok(())
 }
@@ -3133,6 +3254,10 @@ fn valid_cobalt_version(version: &str) -> bool {
             .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "one explicit bounded result tag table"
+)]
 fn decode_device_result(reader: &mut Reader<'_>) -> Result<DeviceResult, ProtocolError> {
     match reader.u8()? {
         1 => Ok(DeviceResult::Done),
@@ -3193,6 +3318,9 @@ fn decode_device_result(reader: &mut Reader<'_>) -> Result<DeviceResult, Protoco
         16 => identity(reader).map(DeviceResult::Identity),
         17 => decode_auto_update(reader),
         18 => UpdateChannel::from_wire(reader.u8()?).map(DeviceResult::UpdateChannel),
+        19 => IdleSleep::from_wire(reader.u8()?)
+            .map(DeviceResult::IdleSleep)
+            .ok_or(ProtocolError::InvalidValue("idle sleep")),
         _ => Err(ProtocolError::InvalidValue("device result")),
     }
 }
@@ -6555,6 +6683,9 @@ mod tests {
             DeviceRequest::SetUpdateChannel {
                 channel: UpdateChannel::Beta,
             },
+            DeviceRequest::ReadIdleSleep,
+            DeviceRequest::SetIdleSleep(IdleSleep::FiveMinutes),
+            DeviceRequest::SetIdleSleep(IdleSleep::Never),
         ];
         for request in requests {
             let frame = Frame {
@@ -6564,6 +6695,20 @@ mod tests {
             let bytes = encode(&frame).expect("encode");
             assert_eq!(decode(&bytes).expect("decode"), frame);
         }
+    }
+
+    #[test]
+    fn idle_sleep_tokens_that_are_not_a_choice_become_five_minutes() {
+        assert_eq!(IdleSleep::from_stored("5"), IdleSleep::FiveMinutes);
+        assert_eq!(IdleSleep::from_stored(" 10 \n"), IdleSleep::TenMinutes);
+        assert_eq!(IdleSleep::from_stored("never"), IdleSleep::Never);
+        assert_eq!(IdleSleep::from_stored("1"), IdleSleep::OneMinute);
+        assert_eq!(IdleSleep::from_stored("30"), IdleSleep::ThirtyMinutes);
+        assert_eq!(IdleSleep::from_stored(""), IdleSleep::FiveMinutes);
+        assert_eq!(IdleSleep::from_stored("15"), IdleSleep::FiveMinutes);
+        assert_eq!(IdleSleep::Never.minutes(), None);
+        assert_eq!(IdleSleep::FiveMinutes.minutes(), Some(5));
+        assert_eq!(IdleSleep::default(), IdleSleep::FiveMinutes);
     }
 
     #[test]
@@ -6669,6 +6814,8 @@ mod tests {
                 available: false,
                 magnet_present: false,
             },
+            DeviceResult::IdleSleep(IdleSleep::FiveMinutes),
+            DeviceResult::IdleSleep(IdleSleep::Never),
             DeviceResult::Apps {
                 entries: vec![AppInfo {
                     id: "word-count".to_owned(),
