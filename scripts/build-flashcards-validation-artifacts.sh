@@ -29,15 +29,41 @@ case $1 in
   /*) target_root=$1 ;;
   *) target_root=$(pwd)/$1 ;;
 esac
-mkdir -p "$target_root"
-target_root=$(CDPATH= cd -- "$target_root" && pwd)
+target_root=$(python3 - "$target_root" "$repo" <<'PY'
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1]).expanduser()
+root.mkdir(parents=True, exist_ok=True)
+root = root.resolve()
+repo = Path(sys.argv[2]).resolve()
+home = Path.home().resolve()
+if root == Path("/") or root == home or root == repo:
+    raise SystemExit("refusing dangerous validation target root")
+if root in repo.parents or repo in root.parents:
+    raise SystemExit("validation target root must not contain or sit inside the repository")
+sentinel = root / ".cobalt-flashcards-validation-root"
+entries = list(root.iterdir())
+if entries and not sentinel.is_file():
+    raise SystemExit("non-empty validation target root lacks the Cobalt sentinel")
+expected = "Cobalt Flashcards validation root v1\n"
+if sentinel.exists():
+    if sentinel.is_symlink() or sentinel.read_text() != expected:
+        raise SystemExit("validation target sentinel is invalid")
+else:
+    sentinel.write_text(expected)
+print(root)
+PY
+)
 artifacts="$target_root/artifacts"
 device="$target_root/armv7-unknown-linux-musleabihf/release/kobo-flashcards"
 audit_device="$target_root/audit-unstripped/armv7-unknown-linux-musleabihf/release/kobo-flashcards"
 host="$target_root/host-target/release/flashcards-import"
 cli="$target_root/host-tools/release/kobo"
 
-find "$target_root" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
+find "$target_root" -mindepth 1 -maxdepth 1 \
+  ! -name '.cobalt-flashcards-validation-root' \
+  -exec rm -rf -- {} +
 mkdir -p "$artifacts/catalog" "$target_root/build-tmp"
 export TMPDIR="$target_root/build-tmp"
 if [ -z "${CC_armv7_unknown_linux_musleabihf:-}" ]; then

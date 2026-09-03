@@ -41,6 +41,7 @@ source_commit_file="$target_root/artifacts/flashcards-import.source-commit.txt"
 host_notice_file="$target_root/artifacts/flashcards-import.notice.txt"
 host_licenses_file="$target_root/artifacts/flashcards-import.licenses.txt"
 audit_report="$target_root/artifacts/ARTIFACT-AUDIT.txt"
+sentinel="$target_root/.cobalt-flashcards-validation-root"
 readelf=
 for candidate in \
   armv7-unknown-linux-musleabihf-readelf \
@@ -83,18 +84,31 @@ fi
 expected_validation_key=d759793bbc13a2819a827c76adb6fba8a49aee007f49f2d0992d99b825ad2c48
 rm -f "$audit_report"
 
-for path in "$device" "$audit_device" "$package" "$manifest" "$public_key" "$catalog" "$catalog_signature" "$source_commit_file"; do
+for path in "$device" "$audit_device" "$package" "$manifest" "$public_key" "$catalog" "$catalog_signature" "$source_commit_file" "$sentinel"; do
   if [ ! -f "$path" ]; then
     echo "missing artifact: $path" >&2
     exit 1
   fi
 done
+if [ -L "$sentinel" ] ||
+  [ "$(cat "$sentinel")" != "Cobalt Flashcards validation root v1" ]; then
+  echo "validation target sentinel is invalid" >&2
+  exit 1
+fi
 
 source_commit=$(tr -d '\n' < "$source_commit_file")
 if [ "$source_commit" != "$(git -C "$repo" rev-parse HEAD)" ]; then
   echo "artifact source commit does not match this checkout" >&2
   exit 1
 fi
+
+assert_source_unchanged() {
+  if [ -n "$(git -C "$repo" status --porcelain --untracked-files=normal)" ] ||
+    [ "$source_commit" != "$(git -C "$repo" rev-parse HEAD)" ]; then
+    echo "source tree changed during artifact audit" >&2
+    exit 1
+  fi
+}
 
 if [ "$(tr -d '\n' < "$public_key")" != "$expected_validation_key" ]; then
   echo "validation package public key is not the fixed audit key" >&2
@@ -115,6 +129,7 @@ mkdir -p "$fresh_device_root/production" "$fresh_device_root/unstripped" "$targe
     cargo build --quiet --locked --release \
     --target armv7-unknown-linux-musleabihf -p kobo-flashcards
 )
+assert_source_unchanged
 fresh_device="$fresh_device_root/production/armv7-unknown-linux-musleabihf/release/kobo-flashcards"
 fresh_audit_device="$fresh_device_root/unstripped/armv7-unknown-linux-musleabihf/release/kobo-flashcards"
 if ! cmp "$fresh_device" "$device" >/dev/null; then
@@ -137,6 +152,7 @@ mkdir -p "$audit_tools"
   CARGO_TARGET_DIR="$audit_tools" \
     cargo build --quiet --locked --release -p kobo-cli -p kobo-flashcards-import
 )
+assert_source_unchanged
 trusted_cli="$audit_tools/release/kobo"
 trusted_host="$audit_tools/release/flashcards-import"
 audited_host="$target_root/artifacts/.flashcards-import.audited"
@@ -211,6 +227,7 @@ PY
 
 TMPDIR="$target_root/build-tmp" \
   "$repo/scripts/generate-flashcards-licenses.py" --check
+assert_source_unchanged
 
 if ! device_headers=$("$readelf" -lW "$device"); then
   echo "production device artifact is not a readable ELF" >&2
@@ -383,6 +400,7 @@ if [ "$licenses_hash" != "$licenses_file_hash" ]; then
 fi
 
 rm -rf "$audit_tools" "$fresh_device_root" "$target_root/build-tmp"
+assert_source_unchanged
 
 python3 - "$target_root" <<'PY'
 import sys
@@ -390,6 +408,7 @@ from pathlib import Path
 
 root = Path(sys.argv[1])
 expected = {
+    ".cobalt-flashcards-validation-root",
     "armv7-unknown-linux-musleabihf",
     "armv7-unknown-linux-musleabihf/release",
     "armv7-unknown-linux-musleabihf/release/kobo-flashcards",

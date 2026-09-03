@@ -72,10 +72,14 @@ build directories and the packaging-only host CLI are removed before the audit
 succeeds. Cargo intermediates are pruned and the audit recursively rejects
 every undeclared file, directory, dotfile, or symlink with a newline-safe
 Python path inventory. The build starts by removing every existing child of
-the dedicated target root.
+the dedicated target root except
+`.cobalt-flashcards-validation-root`. A non-empty directory without that
+sentinel is refused, as are `/`, the home directory, the repository, and paths
+that contain or sit inside the repository.
 The audit also checks all four linked Anki crates against the exact Cargo
 metadata Git revision and regenerates both dependency notice bundles in
-`--check` mode.
+`--check` mode. Source cleanliness and `HEAD` are rechecked after each trusted
+build and before the final report.
 It writes the verified summary and hashes itself to
 `artifacts/ARTIFACT-AUDIT.txt`; callers do not supply or redirect that report.
 
