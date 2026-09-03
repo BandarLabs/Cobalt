@@ -20,8 +20,12 @@ cannot be reached. The banner paints once on the offline transition; unchanged
 retries do not repaint, and the first successful response clears it once.
 Read-only sessions show no terminal input. Controls mode
 offers only arrows, Enter, Esc, y, n, and Ctrl-C; full mode also exposes the
-platform terminal keyboard. The host accepts at most 64 input bytes per
-request and checks that control-mode input is in this same closed list.
+platform terminal keyboard. Full sessions start with the keyboard hidden so
+the terminal uses the whole content area; **Keyboard** in the top bar opens it,
+and **Close keys** puts it away without replacing the session. Paperterm
+renegotiates the terminal grid in place, using the compact four-row keyboard
+in landscape. The host accepts at most 64 input bytes per request and checks
+that control-mode input is in this same closed list.
 
 The mirror uses the platform terminal node and its measured grid. Received
 deltas update only changed rows; an empty poll paints nothing. Text styling is
