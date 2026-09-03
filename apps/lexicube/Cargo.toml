@@ -1,0 +1,18 @@
+[package]
+name = "kobo-lexicube"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+fontdue = "0.9"
+kobo-sdk = { path = "../../crates/kobo-sdk" }
+kobo-text = { path = "../../crates/kobo-text" }
+
+[dev-dependencies]
+kobo-ui = { path = "../../crates/kobo-ui" }
+
+[lints]
+workspace = true
