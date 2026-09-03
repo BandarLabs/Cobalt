@@ -21,12 +21,12 @@ pub use kobo_ui::{
     terminal_grid, terminal_grid_for, typographic_cover, ActionId, BandAlign, BandSlot,
     BannerLevel, BarAction, BarStyle, BottomAction, Caret, Cell, Chip, Chrome, ControlState,
     DiagnosticSeverity, DisplayMetrics, Emphasis, Fold, FontHandle, Freeform, Glyph, InlineFormula,
-    LayoutIssue, LayoutIssueKind, NavBar, Node, NodeId, Overlay, OverlayKind, ParagraphAlignment,
-    ParagraphPresentation, Percent, PictureHandle, ProseArea, RichTextSpan, Row, RowLead, RowState,
-    Screen, SlotWidth, Space, TextHit, TextPresentation, TextSelection, Tile, TilePicture,
-    TileShape, TileState, TopBar, TransferFailure, CLARA_BW_METRICS, MAX_BAND_SLOTS, MAX_CELLS,
-    MAX_CHIPS, MAX_CHOICE_OPTIONS, MAX_COLUMNS, MAX_INLINE_FORMULAE, MAX_QUOTE_DEPTH, MAX_ROWS,
-    MAX_TABS, MAX_TERMINAL_COLUMNS, MAX_TERMINAL_ROWS, TILE_BADGE_LIMIT,
+    LayoutIssue, LayoutIssueKind, NavBar, Node, NodeId, Orientation, Overlay, OverlayKind,
+    ParagraphAlignment, ParagraphPresentation, Percent, PictureHandle, ProseArea, RichTextSpan,
+    Row, RowLead, RowState, Screen, SlotWidth, Space, TextHit, TextPresentation, TextSelection,
+    Tile, TilePicture, TileShape, TileState, TopBar, TransferFailure, CLARA_BW_METRICS,
+    MAX_BAND_SLOTS, MAX_CELLS, MAX_CHIPS, MAX_CHOICE_OPTIONS, MAX_COLUMNS, MAX_INLINE_FORMULAE,
+    MAX_QUOTE_DEPTH, MAX_ROWS, MAX_TABS, MAX_TERMINAL_COLUMNS, MAX_TERMINAL_ROWS, TILE_BADGE_LIMIT,
 };
 use std::collections::BTreeMap;
 use std::collections::VecDeque;
@@ -293,7 +293,7 @@ impl Failure {
             },
             TaskError::Denied => Self {
                 state: StandardState::PermissionDenied,
-                advice: "This application is not allowed to do that.",
+                advice: "This action isn't available.",
                 retryable: false,
             },
             // The host's refusal rather than this device's, so the advice
@@ -302,7 +302,7 @@ impl Failure {
             // would send them round the same loop.
             TaskError::Unauthorized => Self {
                 state: StandardState::PermissionDenied,
-                advice: "This service will not answer without an account.",
+                advice: "Sign in again on your computer.",
                 retryable: false,
             },
             // Names the supported way to fix it rather than a path. The path
@@ -311,19 +311,23 @@ impl Failure {
             // there is a command that does it over Wi-Fi.
             TaskError::NoCredential => Self {
                 state: StandardState::PermissionDenied,
-                advice: "This reader has no API key for that service. \
-                         Install one with kobo secret set.",
+                advice: "Finish account setup on your computer.",
                 retryable: false,
             },
             TaskError::TooLarge => Self {
                 state: StandardState::Error,
-                advice: "The reply was too large to read on this device.",
+                advice: "This item is too large to open.",
                 retryable: false,
             },
             TaskError::NotFound => Self {
                 state: StandardState::Empty,
-                advice: "The service had nothing to return.",
+                advice: "Nothing is available right now.",
                 retryable: false,
+            },
+            TaskError::RateLimited(_) => Self {
+                state: StandardState::Error,
+                advice: "The service asked this reader to slow down.",
+                retryable: true,
             },
         }
     }
@@ -334,27 +338,9 @@ impl Failure {
         self.state.title()
     }
 
-    /// The advice, naming the credential the work asked for.
-    ///
-    /// [`Failure::of`] is const and its advice is a `&'static str`, so it can
-    /// only say "that service". An application that runs against three
-    /// providers then tells whoever is holding the reader to install a key
-    /// without saying which one, and they have to guess or go and read the
-    /// source. The application knows the name, because it named the secret
-    /// when it spawned the work, so it is the one that can say it.
-    ///
-    /// Every other failure is unchanged: a slow network and a refused request
-    /// have nothing to do with which key was asked for.
+    /// Returns consumer-facing advice without exposing credential identifiers.
     #[must_use]
-    pub fn naming(self, secret: &str) -> String {
-        if self.state == StandardState::PermissionDenied
-            && self.advice.starts_with("This reader has no API key")
-        {
-            return format!(
-                "This reader has no API key called {secret}. \
-                 Install one with kobo secret set {secret}."
-            );
-        }
+    pub fn naming(self, _secret: &str) -> String {
         self.advice.to_owned()
     }
 }
@@ -2683,6 +2669,8 @@ fn stable_id(value: &str) -> u32 {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Command {
     SetScreen(Screen),
+    /// Requests a logical viewport direction for this app session.
+    SetOrientation(Orientation),
     Log {
         level: LogLevel,
         message: String,
@@ -2734,6 +2722,14 @@ pub struct Context {
 }
 
 impl Context {
+    /// Requests landscape or portrait for this app session.
+    ///
+    /// Portrait is the default and is restored automatically when the runtime
+    /// returns to the reader. Apps should lay out with
+    /// [`DisplayMetrics::for_orientation`] for the direction they request.
+    pub fn set_orientation(&mut self, orientation: Orientation) {
+        self.commands.push(Command::SetOrientation(orientation));
+    }
     /// The panel this application is drawing to.
     ///
     /// An application never positions anything, so this is not for layout. It
@@ -5010,6 +5006,7 @@ impl Client {
             };
             let message = match command {
                 Command::SetScreen(screen) => Message::SetScreen(screen),
+                Command::SetOrientation(orientation) => Message::SetOrientation(orientation),
                 Command::Log { level, message } => Message::Log { level, message },
                 Command::Device(request) => Message::DeviceRequest(request),
                 Command::Spawn { task, work } => Message::Spawn { task, work },
@@ -5490,12 +5487,10 @@ mod tests {
     /// naps went out in the half minute this was live, and the application
     /// that held the clock never showed a single tick.
     #[test]
-    fn a_missing_key_can_be_named() {
+    fn a_missing_key_keeps_the_customer_facing_remedy() {
         let missing = Failure::of(TaskError::NoCredential);
         let said = missing.naming("elevenlabs");
-        assert!(said.contains("called elevenlabs"), "{said}");
-        assert!(said.contains("kobo secret set elevenlabs"), "{said}");
-        assert!(!said.contains("that service"), "{said}");
+        assert_eq!(said, "Finish account setup on your computer.");
 
         // Naming a key is meaningless for a failure that had nothing to do
         // with one, so the sentence is left exactly as it was.

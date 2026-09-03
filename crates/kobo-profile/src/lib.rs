@@ -288,7 +288,11 @@ pub const CLARA_BW_391: DeviceProfile = DeviceProfile {
     firmware_versions: &["4.45.23697"],
     kernel_release: "4.9.77",
     write_ready: true,
-    reap_nickel_supplicant: false,
+    // Measured on the N365 on firmware 4.45.23697 on 2026-09-01. A normal
+    // hand-back briefly produced two supplicants, then lost the default route
+    // and stopped both Wi-Fi daemons for several minutes. Reaping the detached
+    // session owner lets the restarted Nickel become the sole radio owner.
+    reap_nickel_supplicant: true,
 };
 
 /// The 2025 P365 hardware refresh of the Clara BW. Kobo lists N365 and P365
@@ -1728,7 +1732,7 @@ mod tests {
         assert_eq!(
             declared,
             [
-                ("clara-bw-391", false),
+                ("clara-bw-391", true),
                 ("clara-bw-395", false),
                 ("clara-hd-376", false),
                 ("clara-colour-393", false),

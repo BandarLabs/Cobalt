@@ -579,6 +579,12 @@ impl AppServer {
                 "SDK must send Hello before other messages",
             ));
         };
+        if !valid_app_name(&name) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "SDK application name is not a safe data directory name",
+            ));
+        }
         write_protocol_frame(
             stream,
             &Frame {
@@ -813,6 +819,7 @@ fn is_picture_message(message: &Message) -> bool {
 #[derive(Debug)]
 struct AppState {
     screen: Screen,
+    orientation: kobo_ui::Orientation,
     /// How many screens the application has painted since it started.
     ///
     /// A driver posts a tap to this process and the application answers it in
@@ -847,6 +854,7 @@ impl AppState {
     fn with_apps(apps: Arc<Mutex<SimulatedApps>>) -> Self {
         Self {
             screen: Screen::new(0, Vec::new()),
+            orientation: kobo_ui::Orientation::Portrait,
             paints: 0,
             logs: Vec::new(),
             pictures: kobo_ui::PictureCache::default(),
@@ -1108,13 +1116,14 @@ impl AppSession {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut surface = Surface::new(PROFILE.width as usize, PROFILE.height as usize);
-        kobo_ui::render_all(
+        kobo_ui::render_oriented(
             &state.screen,
             &profile_metrics(),
             &kobo_ui::Chrome::default(),
             state.active_pictures(),
             &mut surface,
             None,
+            state.orientation,
         );
         state.panel.update(&surface);
         state.panel.frame(ideal).to_vec()
@@ -1148,9 +1157,19 @@ impl AppSession {
             display: mapped,
             raw,
         });
+        let (x, y) = kobo_ui::logical_touch(
+            state.orientation,
+            i32::try_from(PROFILE.width).ok()?,
+            i32::try_from(mapped.0).ok()?,
+            i32::try_from(mapped.1).ok()?,
+        );
         state
             .screen
-            .hit_test(i32::try_from(mapped.0).ok()?, i32::try_from(mapped.1).ok()?)
+            .layout_with(
+                &profile_metrics().for_orientation(state.orientation),
+                &kobo_ui::Chrome::default(),
+            )
+            .hit_test(x, y)
     }
 
     #[allow(clippy::too_many_lines, reason = "one explicit route table")]
@@ -1766,7 +1785,7 @@ fn read_app_messages(
     // to be developed off the device -- the ones that take four minutes and a
     // dozen network calls to produce a file -- was the one class that could
     // not be run in the simulator at all.
-    let shelf = Shelf::new(std::env::temp_dir().join("cobalt-sim-data").join(name));
+    let shelf = Shelf::new(simulated_data_root(name));
     let shells = simulated_shells(writer);
     loop {
         let frame = read_protocol_frame(&mut stream)?;
@@ -1778,6 +1797,12 @@ fn read_app_messages(
                     .map_err(|_| io::Error::other("app state lock poisoned"))?;
                 state.screen = screen;
                 state.paints = state.paints.saturating_add(1);
+            }
+            Message::SetOrientation(orientation) => {
+                let mut state = state
+                    .lock()
+                    .map_err(|_| io::Error::other("app state lock poisoned"))?;
+                state.orientation = orientation;
             }
             // The simulator hosts exactly one application, so a launch is
             // reported rather than performed. Pretending it worked would hide
@@ -2113,7 +2138,7 @@ fn simulated_tasks(name: &str) -> TaskRunner {
         );
         let _ = kobo_net::trust_owner_roots_from_dir(&directory);
     });
-    let runner = TaskRunner::simulated(std::env::temp_dir())
+    let runner = TaskRunner::simulated(simulated_data_root(name))
         .with_secrets(std::env::temp_dir().join(SIM_SECRETS));
     if std::env::var_os(OFFLINE).is_some() {
         return runner;
@@ -2131,6 +2156,18 @@ fn simulated_tasks(name: &str) -> TaskRunner {
             kobo_policy::credentials::allowed(&app, credential, url, usage)
         }))
         .with_capabilities([kobo_policy::Capability::Network])
+}
+
+fn simulated_data_root(name: &str) -> std::path::PathBuf {
+    std::env::temp_dir().join("cobalt-sim-data").join(name)
+}
+
+fn valid_app_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 32
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
 }
 
 /// Gives the simulator the same type the panel gets.
@@ -2439,6 +2476,15 @@ frame().catch(error=>status.textContent=error.message);
 mod tests {
     use super::*;
     use std::io::{Read, Write};
+
+    #[test]
+    fn simulated_app_data_is_private_to_each_app() {
+        let nonograms = simulated_data_root("nonograms");
+        let panels = simulated_data_root("panels");
+        assert_ne!(nonograms, panels);
+        assert!(nonograms.ends_with("cobalt-sim-data/nonograms"));
+        assert!(panels.ends_with("cobalt-sim-data/panels"));
+    }
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::mpsc;
     use std::time::Duration;
@@ -2454,6 +2500,14 @@ mod tests {
         simulated_app_request(state, caller, scenario, request)
             .expect("simulate request")
             .expect("app-store request")
+    }
+
+    #[test]
+    fn simulated_app_names_cannot_escape_their_data_root() {
+        for name in ["../outside", "/absolute", "two/parts", "", "UPPER"] {
+            assert!(!valid_app_name(name), "{name:?} was accepted");
+        }
+        assert!(valid_app_name("nonograms"));
     }
 
     #[test]
@@ -2984,7 +3038,7 @@ mod tests {
                 &Frame {
                     request_id: 7,
                     message: Message::Hello {
-                        name: "test app".into(),
+                        name: "test-app".into(),
                     },
                 },
             )?;
@@ -3071,5 +3125,13 @@ mod tests {
         );
         fs::remove_file(socket_path).expect("remove replacement");
         fs::remove_dir(root).expect("remove private directory");
+    }
+
+    #[test]
+    fn each_simulated_app_session_starts_in_portrait() {
+        assert_eq!(
+            AppState::default().orientation,
+            kobo_ui::Orientation::Portrait
+        );
     }
 }
