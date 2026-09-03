@@ -113,7 +113,19 @@ pub fn permits_input(mode: InputMode, bytes: &[u8]) -> bool {
     bytes.len() <= MAX_KEY_BYTES
         && match mode {
             InputMode::None => false,
-            InputMode::Controls => CONTROL_BYTES.contains(&bytes),
+            InputMode::Controls => {
+                let mut remaining = bytes;
+                while !remaining.is_empty() {
+                    let Some(control) = CONTROL_BYTES
+                        .iter()
+                        .find(|control| remaining.starts_with(control))
+                    else {
+                        return false;
+                    };
+                    remaining = &remaining[control.len()..];
+                }
+                true
+            }
             InputMode::Full => true,
         }
 }
@@ -121,6 +133,7 @@ pub fn permits_input(mode: InputMode, bytes: &[u8]) -> bool {
 struct Terminal {
     parser: vt100::Parser,
     grid: Grid,
+    generation: u64,
     previous: Vec<String>,
     previous_cursor: Option<(u16, u16)>,
     seq: u64,
@@ -134,6 +147,7 @@ impl Terminal {
         Self {
             parser: vt100::Parser::new(grid.rows, grid.columns, 0),
             grid,
+            generation: 0,
             previous: Vec::new(),
             previous_cursor: None,
             seq: 0,
@@ -152,6 +166,9 @@ impl Terminal {
 
     fn finish(&mut self, status: i32) {
         self.ended = Some(status);
+        self.last_snapshot = Instant::now()
+            .checked_sub(SNAPSHOT_INTERVAL)
+            .unwrap_or_else(Instant::now);
         self.dirty = true;
     }
 
@@ -167,6 +184,19 @@ impl Terminal {
             .checked_sub(SNAPSHOT_INTERVAL)
             .unwrap_or_else(Instant::now);
         self.dirty = true;
+    }
+
+    fn resize_for(&mut self, grid: Grid, generation: u64) -> bool {
+        if generation < self.generation {
+            return false;
+        }
+        self.generation = generation;
+        self.resize(grid);
+        true
+    }
+
+    fn screen_for(&mut self, since: u64, generation: u64) -> Option<Screen> {
+        (generation == self.generation).then(|| self.screen(since))
     }
 
     fn screen(&mut self, since: u64) -> Screen {
@@ -260,6 +290,32 @@ impl Session {
         }
     }
 
+    fn resize_for(
+        &self,
+        grid: Grid,
+        generation: u64,
+        resize_pty: impl FnOnce() -> Result<(), String>,
+    ) -> Result<bool, String> {
+        let mut terminal = self
+            .terminal
+            .lock()
+            .map_err(|_| "terminal screen lock failed")?;
+        if generation < terminal.generation {
+            return Ok(false);
+        }
+        resize_pty()?;
+        let accepted = terminal.resize_for(grid, generation);
+        self.changed.notify_all();
+        Ok(accepted)
+    }
+
+    fn screen_for(&self, since: u64, generation: u64) -> Option<Screen> {
+        self.terminal
+            .lock()
+            .ok()
+            .and_then(|mut terminal| terminal.screen_for(since, generation))
+    }
+
     #[must_use]
     pub fn screen(&self, since: u64) -> Screen {
         self.terminal.lock().map_or_else(
@@ -333,18 +389,23 @@ pub fn run(options: Options) -> Result<i32, String> {
     let session_id = random_session()?;
     let title = options.command[0].clone();
     let mode = options.input_mode();
+    let mut exit_code = None;
     let mut ended_at = None;
     let readers = Arc::new(AtomicUsize::new(0));
     loop {
         if ended_at.is_none() {
-            drain_pty(&input, &session);
-            if let Some(code) = input
-                .lock()
-                .map_err(|_| "terminal lock failed")?
-                .finished()
-                .map_err(|error| format!("wait for command: {error}"))?
-            {
-                drop(raw_stdin.take());
+            let output_eof = drain_pty(&input, &session);
+            if exit_code.is_none() {
+                exit_code = input
+                    .lock()
+                    .map_err(|_| "terminal lock failed")?
+                    .finished()
+                    .map_err(|error| format!("wait for command: {error}"))?;
+                if exit_code.is_some() {
+                    drop(raw_stdin.take());
+                }
+            }
+            if let Some(code) = exit_code.filter(|_| output_eof) {
                 session.finish(code);
                 ended_at = Some(Instant::now());
             }
@@ -488,12 +549,25 @@ fn forward_stdin(pty: Arc<Mutex<kobo_abi::pty::Pty>>) {
 /// Drains whatever the PTY reader has already delivered without holding the
 /// input lock while waiting. Device key writes therefore never wait behind
 /// output from a noisy full-screen application.
-fn drain_pty(pty: &Mutex<kobo_abi::pty::Pty>, session: &Session) {
-    let Ok(terminal) = pty.lock() else { return };
-    while let Ok(bytes) = terminal.output().try_recv() {
+fn drain_pty(pty: &Mutex<kobo_abi::pty::Pty>, session: &Session) -> bool {
+    let mut drained = Vec::new();
+    let disconnected = {
+        let Ok(terminal) = pty.lock() else {
+            return false;
+        };
+        loop {
+            match terminal.output().try_recv() {
+                Ok(bytes) => drained.push(bytes),
+                Err(std::sync::mpsc::TryRecvError::Empty) => break false,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => break true,
+            }
+        }
+    };
+    for bytes in drained {
         let _ = std::io::stdout().write_all(&bytes);
         session.feed(&bytes);
     }
+    disconnected
 }
 
 /// A stream identity, intentionally separate from Sidekick's identity.
@@ -694,12 +768,19 @@ fn route(
             let grid = query(&request.target, "grid")
                 .ok_or_else(|| "hello omitted the terminal grid".to_owned())
                 .and_then(|value| Grid::parse(&value))?;
-            input
-                .lock()
-                .map_err(|_| "terminal input lock failed")?
-                .resize(grid.columns, grid.rows)
-                .map_err(|error| format!("resize terminal: {error}"))?;
-            session.resize(grid);
+            let generation = query(&request.target, "generation")
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(0);
+            let accepted = session.resize_for(grid, generation, || {
+                input
+                    .lock()
+                    .map_err(|_| "terminal input lock failed")?
+                    .resize(grid.columns, grid.rows)
+                    .map_err(|error| format!("resize terminal: {error}"))
+            })?;
+            if !accepted {
+                return respond(stream, 409, r#"{"stale":true}"#);
+            }
             respond(
                 stream,
                 200,
@@ -719,11 +800,19 @@ fn route(
             let since = query(&request.target, "seq")
                 .and_then(|value| value.parse().ok())
                 .unwrap_or(0);
+            let generation = query(&request.target, "generation")
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(0);
             let started = Instant::now();
-            let mut screen = session.screen(since);
+            let Some(mut screen) = session.screen_for(since, generation) else {
+                return respond(stream, 409, r#"{"stale":true}"#);
+            };
             while screen.rows.is_empty() && !screen.ended && started.elapsed() < LONGEST_POLL {
                 std::thread::sleep(Duration::from_millis(100));
-                screen = session.screen(since);
+                let Some(current) = session.screen_for(since, generation) else {
+                    return respond(stream, 409, r#"{"stale":true}"#);
+                };
+                screen = current;
             }
             respond(stream, 200, &screen_json(&screen))
         }
@@ -945,6 +1034,7 @@ mod tests {
     fn controls_are_a_closed_whitelist() {
         assert!(permits_input(InputMode::Controls, b"\x1b[A"));
         assert!(permits_input(InputMode::Controls, b"\x03"));
+        assert!(permits_input(InputMode::Controls, b"\x1b[A\r\x03yn"));
         assert!(!permits_input(InputMode::Controls, b"rm -rf /"));
         assert!(!permits_input(InputMode::None, b"y"));
     }
@@ -1091,6 +1181,44 @@ mod tests {
     }
 
     #[test]
+    fn obsolete_poll_generation_cannot_consume_the_post_resize_snapshot() {
+        let session = Session::new(Grid {
+            columns: 12,
+            rows: 2,
+        });
+        session.feed(b"before");
+        let before = session.screen(0);
+        let resized = session
+            .resize_for(
+                Grid {
+                    columns: 20,
+                    rows: 3,
+                },
+                1,
+                || Ok(()),
+            )
+            .expect("resize");
+        assert!(resized);
+        assert!(session.screen_for(before.seq, 0).is_none());
+
+        let current = session
+            .screen_for(before.seq, 1)
+            .expect("current generation snapshot");
+        assert_eq!(current.rows.len(), 3);
+        assert_eq!(current.rows[0].cells.trim(), "before");
+        assert!(!session
+            .resize_for(
+                Grid {
+                    columns: 12,
+                    rows: 2,
+                },
+                0,
+                || panic!("stale resize reached the PTY"),
+            )
+            .expect("stale resize verdict"));
+    }
+
+    #[test]
     fn hidden_open_closed_resize_emits_one_coherent_full_tui_frame_each_time() {
         let hidden = Grid {
             columns: 40,
@@ -1171,6 +1299,57 @@ mod tests {
         assert_eq!(session.screen(0).rows[0].cells.trim(), "ready");
         let _ = pty.finished().expect("reap PTY command");
     }
+
+    #[test]
+    fn child_exit_drains_pty_eof_and_exposes_uncapped_final_output() {
+        let pty = kobo_abi::pty::Pty::spawn(
+            "/bin/sh",
+            &["-c", "printf first; sleep 1; printf final"],
+            &[("TERM", "xterm-256color")],
+            20,
+            2,
+        )
+        .expect("start final-output command");
+        let input = Mutex::new(pty);
+        let session = Session::new(Grid {
+            columns: 20,
+            rows: 2,
+        });
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let mut before = None;
+        let mut exit = None;
+        loop {
+            let eof = drain_pty(&input, &session);
+            if before.is_none() {
+                let screen = session.screen(0);
+                if screen.rows.iter().any(|row| row.cells.contains("first")) {
+                    before = Some(screen.seq);
+                }
+            }
+            if exit.is_none() {
+                exit = input
+                    .lock()
+                    .expect("terminal lock")
+                    .finished()
+                    .expect("wait for command");
+            }
+            if let Some(code) = exit.filter(|_| eof) {
+                session.finish(code);
+                break;
+            }
+            assert!(Instant::now() < deadline, "PTY did not reach EOF");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        let final_screen = session.screen(before.expect("initial output snapshot"));
+        assert!(final_screen.ended);
+        assert_eq!(final_screen.exit, Some(0));
+        assert!(final_screen
+            .rows
+            .iter()
+            .any(|row| row.cells.contains("firstfinal")));
+    }
+
     #[test]
     fn pty_accepts_control_input_without_waiting_for_a_snapshot() {
         let mut pty = kobo_abi::pty::Pty::spawn(
