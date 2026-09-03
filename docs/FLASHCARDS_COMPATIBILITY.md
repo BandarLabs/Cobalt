@@ -47,7 +47,9 @@ tools only from fixed directories and name allowlists, clear Rust
 compiler/wrapper/flag overrides, and pin the active toolchain's real
 `cargo`, `rustc`, and `rust-lld` executables. Cargo runs with a clean
 configuration home backed only by its checksum/pin-verified registry and Git
-caches, and Python validation runs in isolated mode. The fixed validation
+caches, rejects toolchain configuration above the audited repository, and
+forces empty wrapper/rustflag overrides. Python validation runs in isolated
+mode. The fixed validation
 signing material is public, removed immediately, and derives the fixed audit
 public key
 `d759793bbc13a2819a827c76adb6fba8a49aee007f49f2d0992d99b825ad2c48`.

@@ -48,6 +48,27 @@ repo=$1
 PYTHON3=$2
 shift 2
 
+ancestor=${repo%/*}
+while :; do
+  for config in \
+    "$ancestor/.cargo/config.toml" \
+    "$ancestor/.cargo/config" \
+    "$ancestor/rust-toolchain.toml" \
+    "$ancestor/rust-toolchain"; do
+    if [ -e "$config" ]; then
+      echo "refusing untracked parent toolchain configuration: $config" >&2
+      exit 1
+    fi
+  done
+  if [ "$ancestor" = / ]; then
+    break
+  fi
+  ancestor=${ancestor%/*}
+  if [ -z "$ancestor" ]; then
+    ancestor=/
+  fi
+done
+
 if [ "$#" -ne 1 ]; then
   echo "usage: scripts/build-flashcards-validation-artifacts.sh TARGET_ROOT" >&2
   exit 2
@@ -94,7 +115,7 @@ if [ -z "$rust_driver" ]; then
   echo "no trusted Rust toolchain driver was found" >&2
   exit 1
 fi
-rust_sysroot=$("$rust_driver" --print sysroot)
+rust_sysroot=$(CDPATH= cd -- "$repo" && "$rust_driver" --print sysroot)
 RUSTC="$rust_sysroot/bin/rustc"
 CARGO="$rust_sysroot/bin/cargo"
 if [ ! -x "$RUSTC" ] || [ ! -x "$CARGO" ]; then
@@ -176,10 +197,14 @@ CARGO_TARGET_ARMV7_UNKNOWN_LINUX_MUSLEABIHF_LINKER=$(find_rust_lld) || {
 export CC_armv7_unknown_linux_musleabihf
 export AR_armv7_unknown_linux_musleabihf
 export CARGO_TARGET_ARMV7_UNKNOWN_LINUX_MUSLEABIHF_LINKER
-unset \
-  RUSTFLAGS \
+unset RUSTFLAGS CARGO_BUILD_RUSTFLAGS
+CARGO_ENCODED_RUSTFLAGS=
+RUSTC_WRAPPER=
+RUSTC_WORKSPACE_WRAPPER=
+CARGO_BUILD_RUSTC_WRAPPER=
+CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER=
+export \
   CARGO_ENCODED_RUSTFLAGS \
-  CARGO_BUILD_RUSTFLAGS \
   RUSTC_WRAPPER \
   RUSTC_WORKSPACE_WRAPPER \
   CARGO_BUILD_RUSTC_WRAPPER \
