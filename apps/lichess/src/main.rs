@@ -221,7 +221,7 @@ struct Lichess {
     game: Option<Game>,
     challenge: Option<Challenge>,
     tasks: BTreeMap<TaskId, Pending>,
-    retired_tasks: BTreeSet<TaskId>,
+    retired_tasks: BTreeMap<TaskId, Pending>,
     event_open: bool,
     event_rate_limit: Option<u64>,
     board_open: Option<String>,
@@ -270,7 +270,7 @@ impl Default for Lichess {
             game: None,
             challenge: None,
             tasks: BTreeMap::new(),
-            retired_tasks: BTreeSet::new(),
+            retired_tasks: BTreeMap::new(),
             event_open: false,
             event_rate_limit: None,
             board_open: None,
@@ -898,6 +898,10 @@ impl Lichess {
             || self.event_open
             || self
                 .has_pending(|pending| matches!(pending, Pending::EventOpen | Pending::EventClose))
+            || self
+                .retired_tasks
+                .values()
+                .any(|pending| matches!(pending, Pending::EventClose))
             || !matches!(self.account, AccountState::Ready(_))
         {
             return;
@@ -1001,7 +1005,7 @@ impl Lichess {
                 ) {
                     context.cancel(task);
                     self.tasks.remove(&task);
-                    self.retired_tasks.insert(task);
+                    self.retired_tasks.insert(task, pending);
                 }
             }
             if let Some(work) = api::board_stream(&previous, "close") {
@@ -1033,7 +1037,11 @@ impl Lichess {
         }
         if self.has_pending(
             |pending| matches!(pending, Pending::BoardClose(closing) if closing == &id),
-        ) {
+        ) || self
+            .retired_tasks
+            .values()
+            .any(|pending| matches!(pending, Pending::BoardClose(closing) if closing == &id))
+        {
             self.deferred_board_open = self.session.clone();
             return;
         }
@@ -1112,7 +1120,7 @@ impl Lichess {
             ) {
                 context.cancel(task);
                 self.tasks.remove(&task);
-                self.retired_tasks.insert(task);
+                self.retired_tasks.insert(task, pending);
             }
         }
         self.close_board(context, game_id);
@@ -2020,7 +2028,7 @@ impl Lichess {
         let matched = self
             .summaries
             .iter()
-            .find(|summary| accepted.matches_game_start(summary))
+            .find(|summary| accepted.matches_playing_game(summary))
             .cloned();
         if self
             .challenge
@@ -2593,7 +2601,7 @@ impl Lichess {
             ) {
                 context.cancel(task);
                 self.tasks.remove(&task);
-                self.retired_tasks.insert(task);
+                self.retired_tasks.insert(task, pending);
             }
         }
         self.seek_task = None;
@@ -2993,7 +3001,7 @@ impl KoboApp for Lichess {
             return;
         }
         let Some(pending) = self.tasks.remove(&task) else {
-            if self.retired_tasks.remove(&task) && !self.suspended {
+            if self.retired_tasks.remove(&task).is_some() && !self.suspended {
                 if matches!(self.account, AccountState::Unknown)
                     && !self.has_pending(|pending| matches!(pending, Pending::Account))
                 {
@@ -3629,7 +3637,7 @@ mod tests {
         app.handle_completed(
             &mut context,
             Pending::Playing,
-            br#"{"nowPlaying":[{"gameId":"match123","color":"black","rated":false,"source":"friend","speed":"rapid","variant":{"key":"standard"},"secondsLeft":600,"isMyTurn":false,"lastMove":"","opponent":{"username":"ReaderTwo"}}]}"#,
+            br#"{"nowPlaying":[{"gameId":"match123","color":"black","rated":false,"source":"friend","speed":"rapid","variant":{"key":"standard"},"secondsLeft":480,"isMyTurn":false,"lastMove":"","opponent":{"username":"ReaderTwo"}}]}"#,
         );
         assert!(app.accepted_challenge.is_none());
         assert_eq!(app.route, Route::Game);
@@ -4075,7 +4083,7 @@ mod tests {
             ..Lichess::default()
         };
         let retired = kobo_sdk::TaskId(88);
-        app.retired_tasks.insert(retired);
+        app.retired_tasks.insert(retired, Pending::Playing);
         app.on_task(&mut Context::default(), retired, TaskOutcome::Cancelled);
         assert!(app.has_pending(|pending| matches!(pending, Pending::Playing)));
     }
@@ -4084,7 +4092,7 @@ mod tests {
     fn retired_task_completion_retries_deferred_account_validation() {
         let mut app = Lichess::default();
         let retired = kobo_sdk::TaskId(89);
-        app.retired_tasks.insert(retired);
+        app.retired_tasks.insert(retired, Pending::Account);
         app.on_task(&mut Context::default(), retired, TaskOutcome::Cancelled);
         assert!(matches!(app.account, AccountState::Checking));
         assert!(app.has_pending(|pending| matches!(pending, Pending::Account)));

@@ -167,13 +167,7 @@ impl Challenge {
     }
 
     pub fn matches_game_start(&self, game: &GameSummary) -> bool {
-        if !self.supported()
-            || !self.challenger.eq_ignore_ascii_case(&game.opponent)
-            || self.rated != game.rated
-            || game.source.as_deref() != Some("friend")
-            || game.variant.as_deref() != Some("standard")
-            || game.speed.as_deref() != Some(self.speed.as_str())
-        {
+        if !self.matches_game(game) {
             return false;
         }
         let ChallengeTime::Clock {
@@ -185,6 +179,19 @@ impl Challenge {
         };
         game.seconds_left
             .is_some_and(|seconds| seconds <= *initial && initial.saturating_sub(seconds) <= 60)
+    }
+
+    pub fn matches_playing_game(&self, game: &GameSummary) -> bool {
+        self.matches_game(game)
+    }
+
+    fn matches_game(&self, game: &GameSummary) -> bool {
+        self.supported()
+            && self.challenger.eq_ignore_ascii_case(&game.opponent)
+            && self.rated == game.rated
+            && game.source.as_deref() == Some("friend")
+            && game.variant.as_deref() == Some("standard")
+            && game.speed.as_deref() == Some(self.speed.as_str())
     }
 }
 

@@ -75,10 +75,7 @@ impl LineStreams {
                 self.open(url, max_bytes, credential, headers, options, cancel)
             }
             LineStreamAction::Next => self.next(url, max_bytes, credential, headers, cancel),
-            LineStreamAction::Close => {
-                self.close(url);
-                Ok(Vec::new())
-            }
+            LineStreamAction::Close => self.close_controlled(url, cancel),
         }
     }
 
@@ -87,6 +84,15 @@ impl LineStreams {
         if let Ok(mut streams) = self.streams.lock() {
             streams.remove(url);
         }
+    }
+
+    fn close_controlled(&self, url: &str, cancel: &AtomicBool) -> Result<Vec<u8>, TaskError> {
+        let mut streams = self.streams.lock().map_err(|_| TaskError::Unreachable)?;
+        if cancel.load(Ordering::SeqCst) {
+            return Err(TaskError::TimedOut);
+        }
+        streams.remove(url);
+        Ok(Vec::new())
     }
 
     /// Drops every retained socket owned by this application runner.
