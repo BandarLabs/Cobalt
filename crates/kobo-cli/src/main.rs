@@ -4424,16 +4424,21 @@ fn shot_command(arguments: &[String]) -> Result<(), String> {
         }
         index += 1;
     }
-    let (width, height, grey) = if let Some(host) = host {
+    let (width, height, pixels, color) = if let Some(host) = host {
         let transcript = capture_remote_fixed_artifact(&host, &RemoteArtifact::capture())?;
-        drive::decode_capture(&transcript)?
+        let capture = drive::decode_capture_frame(&transcript)?;
+        (capture.width, capture.height, capture.pixels, capture.color)
     } else {
         let driver = drive::Driver::new(&address, Path::new(".")).ideal(ideal);
         let (width, height) = drive::SIMULATED_PANEL;
-        (width, height, driver.frame()?)
+        (width, height, driver.color_frame()?, true)
     };
-    let png = kobo_image::encode_png_grey(width, height, &grey)
-        .map_err(|error| format!("encode the panel: {error}"))?;
+    let png = if color {
+        kobo_image::encode_png_rgb(width, height, &pixels)
+    } else {
+        kobo_image::encode_png_grey(width, height, &pixels)
+    }
+    .map_err(|error| format!("encode the panel: {error}"))?;
     fs::write(&output, png).map_err(|error| format!("write {}: {error}", output.display()))?;
     println!("shot {} ({width}x{height})", output.display());
     Ok(())

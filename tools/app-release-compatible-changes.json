@@ -3,12 +3,12 @@
   "changes": [
     {
       "protocol_version": 11,
-      "reason": "Additive protocol-11 update-channel settings used only by the bundled runtime and Settings app",
+      "reason": "Additive protocol-11 update-channel settings and colour-picture support; existing Store apps retain the legacy picture frames",
       "files": [
         {
           "path": "crates/kobo-protocol/src/lib.rs",
           "base_blob": "8c30366191af89abc121075544635bf871fdfac4",
-          "compatible_blob": "f34528d7b407e542a7836b0348b91de043822274"
+          "compatible_blob": "101b59d92cc98176b1c8c51b75f42538cb5ae802"
         },
         {
           "path": "crates/kobo-policy/src/services.rs",
@@ -18,7 +18,7 @@
         {
           "path": "crates/kobo-sdk/src/lib.rs",
           "base_blob": "52bd17b242beee85f691ebefdd0083fdabbd4550",
-          "compatible_blob": "9a645f3f3d9c8746dda47d858bb3fcd744621df8"
+          "compatible_blob": "cbf828c46df7fcc783288facb7edf308b2b7eea2"
         }
       ]
     }

@@ -676,12 +676,19 @@ impl BookView {
             // The second half: the greys.
             picture.dither(kobo_image::PANEL_GREYS);
             let (drawn_width, drawn_height) = (picture.width(), picture.height());
+            let (grey, rgb) = picture.into_planes();
             if let Some(reserved) = self.handed(&name) {
-                if context
-                    .put_picture(reserved, drawn_width, drawn_height, picture.into_grey())
-                    .is_some()
-                    && showing.contains(&name)
-                {
+                let delivered = match rgb {
+                    Some(rgb) => context.put_color_picture_with_fallback(
+                        reserved,
+                        drawn_width,
+                        drawn_height,
+                        grey,
+                        rgb,
+                    ),
+                    None => context.put_picture(reserved, drawn_width, drawn_height, grey),
+                };
+                if delivered.is_some() && showing.contains(&name) {
                     on_this_page = true;
                 }
             }
@@ -1048,6 +1055,12 @@ mod tests {
             .iter()
             .filter_map(|command| match command {
                 Command::PutPicture {
+                    handle,
+                    width,
+                    height,
+                    ..
+                }
+                | Command::PutColorPicture {
                     handle,
                     width,
                     height,

@@ -646,6 +646,7 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
         &taps,
         limits,
         forward_is_194,
+        profile.supports_color(),
         &watchdog,
     );
     // No panel work may outlive Cobalt's ownership of the display. This is an
@@ -1125,7 +1126,7 @@ impl Hosted {
 /// is told, so it can save; its work in flight keeps running and its answers
 /// keep arriving; and what it draws is kept rather than shown. Coming back is
 /// one repaint of a screen the runtime already has.
-#[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn host_applications(
     application: &Path,
     display: &DisplaySession,
@@ -1133,6 +1134,7 @@ fn host_applications(
     touch: &TouchSink,
     limits: Limits,
     forward_is_194: bool,
+    supports_color: bool,
     watchdog: &Arc<Watchdog>,
 ) -> Result<String, String> {
     // Kept current by the orientation channel: a reader flipped mid-session
@@ -1148,7 +1150,11 @@ fn host_applications(
 
     let mut apps: Vec<Hosted> = Vec::new();
     let mut next_id = 1_u64;
-    let mut surface = Surface::new(whole_screen.width as usize, whole_screen.height as usize);
+    let mut surface = if supports_color {
+        Surface::new_color(whole_screen.width as usize, whole_screen.height as usize)
+    } else {
+        Surface::new(whole_screen.width as usize, whole_screen.height as usize)
+    };
     let mut panel = Painter::new(surface.width, surface.height);
     // Not `simulated()`. On the real panel that answered every battery read
     // with the same invented 72 percent, which is worse than refusing: an
@@ -1719,6 +1725,27 @@ fn host_applications(
                             None => trace(&format!("picture {} refused", handle.0)),
                             Some(evicted) => trace_picture_evictions(handle, &evicted),
                         },
+                        Message::PutColorPicture {
+                            handle,
+                            width,
+                            height,
+                            grey,
+                            rgb,
+                        } => {
+                            let stored = if supports_color {
+                                apps[index]
+                                    .pictures
+                                    .put_color_with_fallback(handle, width, height, grey, rgb)
+                            } else {
+                                apps[index]
+                                    .pictures
+                                    .put_report(handle, width, height, grey)
+                                    .is_some()
+                            };
+                            if !stored {
+                                trace(&format!("color picture {} refused", handle.0));
+                            }
+                        }
                         Message::BeginPicture {
                             handle,
                             width,
@@ -3436,6 +3463,7 @@ impl Painter {
             PanelWaveform::Du => RefreshIntent::FastFeedback,
             PanelWaveform::Gl16 => RefreshIntent::TextContent,
             PanelWaveform::Gc16 => RefreshIntent::QualityContent,
+            PanelWaveform::Color => RefreshIntent::ColorContent,
         };
 
         let started = Instant::now();
@@ -3457,8 +3485,33 @@ impl Painter {
             }
             gray
         };
-        let frame = RegionSnapshot::from_grayscale(display.geometry(), region, &region_gray)
-            .map_err(|error| format!("prepare the frame: {error}"))?;
+        let frame = if matches!(transition.waveform, PanelWaveform::Color) {
+            let rgb = surface
+                .rgb
+                .as_ref()
+                .ok_or_else(|| "the color transition has no RGB surface".to_owned())?;
+            let x = usize::try_from(transition.region.x)
+                .map_err(|_| "the transition region is not inside the surface".to_owned())?;
+            let y = usize::try_from(transition.region.y)
+                .map_err(|_| "the transition region is not inside the surface".to_owned())?;
+            let width = usize::try_from(transition.region.width)
+                .map_err(|_| "the transition region is not inside the surface".to_owned())?;
+            let height = usize::try_from(transition.region.height)
+                .map_err(|_| "the transition region is not inside the surface".to_owned())?;
+            let mut region_rgb = Vec::with_capacity(width.saturating_mul(height).saturating_mul(3));
+            for row in 0..height {
+                let start = ((y + row) * surface.width + x).saturating_mul(3);
+                let end = start + width.saturating_mul(3);
+                region_rgb.extend_from_slice(
+                    rgb.get(start..end)
+                        .ok_or_else(|| "the color region is not inside the surface".to_owned())?,
+                );
+            }
+            RegionSnapshot::from_rgb(display.geometry(), region, &region_rgb)
+        } else {
+            RegionSnapshot::from_grayscale(display.geometry(), region, &region_gray)
+        }
+        .map_err(|error| format!("prepare the frame: {error}"))?;
         let converted = started.elapsed();
         let fence = display
             .restore_timed(&frame)

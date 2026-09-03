@@ -312,8 +312,8 @@ impl Driver {
 
     /// Writes the panel out as a PNG and returns where it went.
     fn shot(&mut self, name: &str) -> Result<PathBuf, String> {
-        let frame = self.frame()?;
-        let png = kobo_image::encode_png_grey(FRAME_WIDTH, FRAME_HEIGHT, &frame)
+        let frame = self.color_frame()?;
+        let png = kobo_image::encode_png_rgb(FRAME_WIDTH, FRAME_HEIGHT, &frame)
             .map_err(|error| format!("encode the frame: {error}"))?;
         self.taken += 1;
         let name = if name.is_empty() {
@@ -336,16 +336,36 @@ impl Driver {
             .find(|control| control.says(label)))
     }
 
-    /// The raw grey bytes of the panel as the simulator has it.
+    /// The raw RGB bytes of the panel as the simulator has it.
+    pub fn color_frame(&self) -> Result<Vec<u8>, String> {
+        let frame = self.get(if self.ideal {
+            "/ideal-frame-rgb"
+        } else {
+            "/frame-rgb"
+        })?;
+        let expected = (FRAME_WIDTH as usize)
+            .saturating_mul(FRAME_HEIGHT as usize)
+            .saturating_mul(3);
+        if frame.len() != expected {
+            return Err(format!(
+                "the simulator sent {} bytes for a {FRAME_WIDTH}x{FRAME_HEIGHT} RGB panel, not {expected}",
+                frame.len()
+            ));
+        }
+        Ok(frame)
+    }
+
+    /// The raw grayscale bytes of the panel as the simulator has it.
     ///
-    /// # Errors
-    ///
-    /// Returns an error when the simulator cannot be reached, or answers with
-    /// a frame that is not the size of the panel -- which would silently come
-    /// out as a picture skewed one pixel further with every row.
+    /// Kept for existing driver clients. The RGB endpoint is used for PNG
+    /// captures so verified colour profiles retain their channels.
+    #[allow(
+        dead_code,
+        reason = "a public compatibility method is not called by the CLI itself"
+    )]
     pub fn frame(&self) -> Result<Vec<u8>, String> {
         let frame = self.get(if self.ideal { "/ideal-frame" } else { "/frame" })?;
-        let expected = (FRAME_WIDTH as usize) * (FRAME_HEIGHT as usize);
+        let expected = (FRAME_WIDTH as usize).saturating_mul(FRAME_HEIGHT as usize);
         if frame.len() != expected {
             return Err(format!(
                 "the simulator sent {} bytes for a {FRAME_WIDTH}x{FRAME_HEIGHT} panel, not {expected}",
@@ -469,7 +489,27 @@ impl Driver {
 ///
 /// Returns an error when there is no capture in the transcript, when its
 /// header is malformed, or when fewer bytes arrived than were announced.
+#[allow(
+    dead_code,
+    reason = "a public compatibility function is not called by the CLI itself"
+)]
 pub fn decode_capture(transcript: &str) -> Result<(u32, u32, Vec<u8>), String> {
+    let capture = decode_capture_frame(transcript)?;
+    Ok((capture.width, capture.height, capture.pixels))
+}
+
+/// A framebuffer capture decoded from a `kobo-doctor` transcript.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Capture {
+    pub width: u32,
+    pub height: u32,
+    pub pixels: Vec<u8>,
+    pub color: bool,
+}
+
+/// Decodes either a legacy grayscale capture or an RGB capture from a
+/// verified Kobo Colour profile.
+pub fn decode_capture_frame(transcript: &str) -> Result<Capture, String> {
     let mut lines = transcript.lines();
     let header = lines
         .find(|line| line.starts_with(CAPTURE_HEADER))
@@ -477,10 +517,16 @@ pub fn decode_capture(transcript: &str) -> Result<(u32, u32, Vec<u8>), String> {
             "the device sent no capture; is this build of kobo-doctor current?".to_owned()
         })?;
     let fields: Vec<&str> = header.split_whitespace().collect();
-    let [_, width, height, length] = fields.as_slice() else {
-        return Err(format!(
-            "the device sent a capture header we cannot read: {header:?}"
-        ));
+    let (width, height, length, color) = match fields.as_slice() {
+        [_, width, height, length] | [_, width, height, length, "grey"] => {
+            (*width, *height, *length, false)
+        }
+        [_, width, height, length, "rgb"] => (*width, *height, *length, true),
+        _ => {
+            return Err(format!(
+                "the device sent a capture header we cannot read: {header:?}"
+            ));
+        }
     };
     let parse = |value: &str, what: &str| -> Result<u32, String> {
         value
@@ -490,21 +536,36 @@ pub fn decode_capture(transcript: &str) -> Result<(u32, u32, Vec<u8>), String> {
     let width = parse(width, "the panel width")?;
     let height = parse(height, "the panel height")?;
     let announced = parse(length, "the capture length")? as usize;
-    let mut grey = Vec::with_capacity(announced);
+    let expected = (width as usize)
+        .checked_mul(height as usize)
+        .and_then(|pixels| pixels.checked_mul(if color { 3 } else { 1 }))
+        .ok_or_else(|| "the device reported a capture too large to index".to_owned())?;
+    if announced != expected {
+        return Err(format!(
+            "the device announced {announced} bytes for a {width}x{height} {} capture, not {expected}",
+            if color { "RGB" } else { "grayscale" }
+        ));
+    }
+    let mut pixels = Vec::with_capacity(announced);
     for line in lines {
         if line.starts_with(CAPTURE_FOOTER) {
             break;
         }
-        grey.extend(base64_decode(line.trim())?);
+        pixels.extend(base64_decode(line.trim())?);
     }
-    if grey.len() != announced {
+    if pixels.len() != announced {
         return Err(format!(
             "the device announced {announced} bytes of screen and {} arrived; \
              the transfer was cut short",
-            grey.len()
+            pixels.len()
         ));
     }
-    Ok((width, height, grey))
+    Ok(Capture {
+        width,
+        height,
+        pixels,
+        color,
+    })
 }
 
 /// Standard base64, padded.
@@ -744,8 +805,8 @@ fn parse_point(text: &str) -> Result<(i32, i32), String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        base64_decode, decode_capture, json_array, json_field, json_number, json_objects,
-        json_point, split_response,
+        base64_decode, decode_capture, decode_capture_frame, json_array, json_field, json_number,
+        json_objects, json_point, split_response,
     };
 
     const BODY: &str = r#"{"nodes":[{"kind":"Button","x":10,"y":20,"width":30,"height":40,"centre":{"x":25,"y":40},"action":77,"lines":["Search","for a \"book\""]},{"kind":"Divider","x":0,"y":1,"width":2,"height":3,"centre":{"x":1,"y":2},"action":null,"lines":[]}]}"#;
@@ -830,6 +891,24 @@ mod tests {
         assert_eq!(
             decode_capture(transcript),
             Ok((2, 3, vec![0, 1, 2, 3, 4, 5]))
+        );
+    }
+
+    #[test]
+    fn a_colour_capture_retains_its_format_and_channels() {
+        let transcript = "capture-begin 2 1 6 rgb\n/wAAgDJA\ncapture-end\n";
+        assert_eq!(
+            decode_capture_frame(transcript),
+            Ok(super::Capture {
+                width: 2,
+                height: 1,
+                pixels: vec![255, 0, 0, 128, 50, 64],
+                color: true,
+            })
+        );
+        assert_eq!(
+            decode_capture(transcript),
+            Ok((2, 1, vec![255, 0, 0, 128, 50, 64]))
         );
     }
 

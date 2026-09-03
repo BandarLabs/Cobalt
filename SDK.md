@@ -745,11 +745,13 @@ is made. `dither(PANEL_GREYS)` then reduces the result to the sixteen greys the
 panel resolves using two scanline error buffers rather than another full-image
 allocation.
 
-Pass the prepared pixels to `context.put_picture`. The SDK sends small images
-inline and automatically streams large or full-panel images in bounded chunks.
-The runtime publishes a picture to the cache only after the final complete,
-ordered chunk commits, so a partially transferred photograph can never flash
-onto the panel. The application API is the same at either size.
+Pass grayscale pixels to `context.put_picture`, or opaque RGB pixels to
+`context.put_color_picture`. Color pictures retain a perceptual grayscale
+fallback, so the same application binary renders on monochrome and color Kobo
+panels. The SDK automatically streams large grayscale images in bounded chunks;
+RGB pictures use one bounded frame sized for the largest supported color panel.
+The runtime refuses incomplete or mis-sized pictures rather than displaying
+partial image data.
 
 ---
 
@@ -1383,6 +1385,10 @@ injected into the application would be exercising a path no reader can take.
 Each character is a key that has to be on the screen; if it is not, that is a
 finding.
 
+`kobo shot --address <simulator>` saves an RGB PNG from the simulator. Color
+pictures remain colored in that capture, while ordinary monochrome UI pixels
+are expanded to equal RGB channels.
+
 For the real panel:
 
 ```sh
@@ -1397,9 +1403,10 @@ cargo run -p kobo-cli --features device-write -- tap --device <address> 536,900
 and closes it. Nothing is grabbed, nothing is refreshed and no pixel is
 written, so it is safe to point at a device with the stock reader in the
 foreground, which matters, because the screen worth photographing is usually
-the one that has just gone wrong and must not be disturbed to be seen. The
-panel comes back as base64 grey with its measured width, height and length, so
-a transfer cut short is refused rather than saved as half a picture.
+the one that has just gone wrong and must not be disturbed to be seen. Verified
+Kobo Colour profiles return RGB; other profiles return grayscale. The measured
+width, height, length, and format make a truncated transfer fail rather than
+be saved as half a picture.
 
 `tap --device` writes real evdev records to the real touch node, so the
 digitiser's coordinate space, the profile's `display_to_touch` transform, the

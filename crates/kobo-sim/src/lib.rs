@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 use kobo_policy::{shelf::Shelf, store::Store, DeviceServices, TaskRunner};
-use kobo_profile::{DeviceProfile, PanelPose, CLARA_BW_391};
+use kobo_profile::{DeviceProfile, PanelPose, CLARA_COLOUR_393};
 use kobo_protocol::{read_from, write_to, Frame, Lifecycle, Message};
 use kobo_ui::{
     ActionId, DisplayMetrics, FramePlanner, FrameTransition, Node, NodeId, PanelWaveform, Screen,
@@ -21,10 +21,10 @@ use kobo_ui::{
 };
 
 const MAX_HTTP_HEADER: usize = 8 * 1024;
-const PROFILE: &DeviceProfile = &CLARA_BW_391;
+const PROFILE: &DeviceProfile = &CLARA_COLOUR_393;
 /// The simulator asserts an orientation rather than observing one, because it
 /// has no device. That is legitimate here and nowhere near a real framebuffer:
-/// it means the browser exercises exactly the transform the Clara BW profile
+/// it means the browser exercises exactly the transform the Clara Colour profile
 /// was measured at.
 const POSE: PanelPose<'static> = PanelPose::reference(PROFILE);
 
@@ -106,6 +106,8 @@ struct PanelPreview {
     planner: FramePlanner,
     ideal: Vec<u8>,
     visible: Vec<u8>,
+    ideal_rgb: Vec<u8>,
+    visible_rgb: Vec<u8>,
     last: Option<FrameTransition>,
 }
 
@@ -118,6 +120,8 @@ impl PanelPreview {
             planner: FramePlanner::new(width, height),
             ideal: vec![kobo_ui::tone::PAPER; pixels],
             visible: vec![kobo_ui::tone::INK; pixels],
+            ideal_rgb: vec![kobo_ui::tone::PAPER; pixels.saturating_mul(3)],
+            visible_rgb: vec![kobo_ui::tone::INK; pixels.saturating_mul(3)],
             last: None,
         }
     }
@@ -125,12 +129,20 @@ impl PanelPreview {
     fn update(&mut self, surface: &Surface) {
         self.ideal.clear();
         self.ideal.extend_from_slice(&surface.pixels);
+        self.ideal_rgb.clear();
+        if let Some(rgb) = &surface.rgb {
+            self.ideal_rgb.extend_from_slice(rgb);
+        } else {
+            self.ideal_rgb
+                .extend(surface.pixels.iter().flat_map(|grey| [*grey; 3]));
+        }
         let Some(transition) = self.planner.plan(surface) else {
             self.last = None;
             return;
         };
         if transition.full {
             self.visible.copy_from_slice(&surface.pixels);
+            self.visible_rgb.copy_from_slice(&self.ideal_rgb);
         } else {
             self.apply_partial(surface, transition);
         }
@@ -170,13 +182,29 @@ impl PanelPreview {
                             kobo_ui::tone::PAPER
                         }
                     }
-                    PanelWaveform::Gl16 | PanelWaveform::Gc16 => target,
+                    PanelWaveform::Gl16 | PanelWaveform::Gc16 | PanelWaveform::Color => target,
                 };
                 // An LCD cannot reproduce electrophoretic residue. Retaining
                 // one sixteenth of the previous displayed value makes stale
                 // edges visible without claiming hardware-measured physics.
                 *visible = u8::try_from((u16::from(target) * 15 + u16::from(*visible)) / 16)
                     .unwrap_or(target);
+                let rgb_index = index.saturating_mul(3);
+                for channel in 0..3 {
+                    let target = if matches!(transition.waveform, PanelWaveform::Du) {
+                        target
+                    } else {
+                        self.ideal_rgb
+                            .get(rgb_index + channel)
+                            .copied()
+                            .unwrap_or(target)
+                    };
+                    let Some(visible) = self.visible_rgb.get_mut(rgb_index + channel) else {
+                        continue;
+                    };
+                    *visible = u8::try_from((u16::from(target) * 15 + u16::from(*visible)) / 16)
+                        .unwrap_or(target);
+                }
             }
         }
     }
@@ -186,6 +214,14 @@ impl PanelPreview {
             &self.ideal
         } else {
             &self.visible
+        }
+    }
+
+    fn frame_rgb(&self, ideal: bool) -> &[u8] {
+        if ideal {
+            &self.ideal_rgb
+        } else {
+            &self.visible_rgb
         }
     }
 }
@@ -243,7 +279,7 @@ impl Simulator {
     }
 
     fn render_frame(&mut self, ideal: bool) -> Vec<u8> {
-        let mut surface = Surface::new(PROFILE.width as usize, PROFILE.height as usize);
+        let mut surface = Surface::new_color(PROFILE.width as usize, PROFILE.height as usize);
         kobo_ui::render_with(
             &self.screen,
             &profile_metrics(),
@@ -253,6 +289,19 @@ impl Simulator {
         );
         self.panel.update(&surface);
         self.panel.frame(ideal).to_vec()
+    }
+
+    fn render_frame_rgb(&mut self, ideal: bool) -> Vec<u8> {
+        let mut surface = Surface::new_color(PROFILE.width as usize, PROFILE.height as usize);
+        kobo_ui::render_with(
+            &self.screen,
+            &profile_metrics(),
+            &kobo_ui::Chrome::default(),
+            &mut surface,
+            None,
+        );
+        self.panel.update(&surface);
+        self.panel.frame_rgb(ideal).to_vec()
     }
 
     pub fn touch(&mut self, x: i32, y: i32) -> Option<ActionId> {
@@ -374,6 +423,14 @@ impl Server {
             }
             ("GET", "/ideal-frame") => {
                 let frame = self.simulator.ideal_frame();
+                write_response(&mut stream, 200, "application/octet-stream", &frame)
+            }
+            ("GET", "/frame-rgb") => {
+                let frame = self.simulator.render_frame_rgb(false);
+                write_response(&mut stream, 200, "application/octet-stream", &frame)
+            }
+            ("GET", "/ideal-frame-rgb") => {
+                let frame = self.simulator.render_frame_rgb(true);
                 write_response(&mut stream, 200, "application/octet-stream", &frame)
             }
             ("GET", "/simulation") => {
@@ -729,6 +786,14 @@ fn hold_picture(state: &Arc<Mutex<AppState>>, message: Message) -> io::Result<()
                 height,
                 grey,
             } => picture_result(handle, pictures.put_report(handle, width, height, grey)),
+            Message::PutColorPicture {
+                handle,
+                width,
+                height,
+                grey,
+                rgb,
+            } => (!pictures.put_color_with_fallback(handle, width, height, grey, rgb))
+                .then(|| format!("color picture {} refused", handle.0)),
             Message::BeginPicture {
                 handle,
                 width,
@@ -785,6 +850,7 @@ fn is_picture_message(message: &Message) -> bool {
     matches!(
         message,
         Message::PutPicture { .. }
+            | Message::PutColorPicture { .. }
             | Message::BeginPicture { .. }
             | Message::PictureChunk { .. }
             | Message::CommitPicture { .. }
@@ -1091,7 +1157,7 @@ impl AppSession {
             .state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let mut surface = Surface::new(PROFILE.width as usize, PROFILE.height as usize);
+        let mut surface = Surface::new_color(PROFILE.width as usize, PROFILE.height as usize);
         kobo_ui::render_all(
             &state.screen,
             &profile_metrics(),
@@ -1102,6 +1168,24 @@ impl AppSession {
         );
         state.panel.update(&surface);
         state.panel.frame(ideal).to_vec()
+    }
+
+    fn render_frame_rgb(&self, ideal: bool) -> Vec<u8> {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut surface = Surface::new_color(PROFILE.width as usize, PROFILE.height as usize);
+        kobo_ui::render_all(
+            &state.screen,
+            &profile_metrics(),
+            &kobo_ui::Chrome::default(),
+            state.active_pictures(),
+            &mut surface,
+            None,
+        );
+        state.panel.update(&surface);
+        state.panel.frame_rgb(ideal).to_vec()
     }
 
     fn set_scenario(&self, scenario: Scenario) -> io::Result<()> {
@@ -1153,6 +1237,14 @@ impl AppSession {
             }
             ("GET", "/ideal-frame") => {
                 let frame = self.render_frame(true);
+                write_response(&mut stream, 200, "application/octet-stream", &frame)
+            }
+            ("GET", "/frame-rgb") => {
+                let frame = self.render_frame_rgb(false);
+                write_response(&mut stream, 200, "application/octet-stream", &frame)
+            }
+            ("GET", "/ideal-frame-rgb") => {
+                let frame = self.render_frame_rgb(true);
                 write_response(&mut stream, 200, "application/octet-stream", &frame)
             }
             ("GET", "/simulation") => {
@@ -2283,7 +2375,7 @@ const SHELL: &str = r##"<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Kobo Clara BW simulator</title>
+<title>Kobo simulator</title>
 <style>
 :root { color-scheme:dark; --workspace:#151515; --panel:#222; --raised:#2b2b2b; --border:#5c5c5c; --text:#f7f7f7; --muted:#c6c6c6; --paper:#f8f8f8; --focus:#fff; --accent:#9fd4ff; --warning:#ffd18b; --error:#ffb4ab; --space-1:8px; --space-2:16px; --space-3:24px; }
 * { box-sizing:border-box; }
@@ -2332,15 +2424,15 @@ figcaption { margin-top:12px; color:var(--muted); font-size:.875rem; }
 <body>
 <header class="toolbar">
   <h1>Kobo simulator</h1>
-  <span class="badge" id="profile-badge">clara-bw-391</span>
+  <span class="badge" id="profile-badge">clara-colour-393</span>
   <p>Shared renderer, touch transform and refresh planner</p>
   <button class="primary" type="button" id="refresh">Refresh frame</button>
 </header>
 <main>
 <div class="workspace">
   <figure class="device">
-    <div class="screen"><canvas id="display" width="1072" height="1448" tabindex="0" role="application" aria-label="Kobo grayscale display" aria-describedby="instructions"></canvas></div>
-    <figcaption id="instructions">Kobo Clara BW panel preview. Click or tap to exercise the measured controller transform and SDK hit testing.</figcaption>
+    <div class="screen"><canvas id="display" width="1072" height="1448" tabindex="0" role="application" aria-label="Kobo display" aria-describedby="instructions"></canvas></div>
+    <figcaption id="instructions">Kobo panel preview. Click or tap to exercise the measured controller transform and SDK hit testing.</figcaption>
   </figure>
   <aside class="inspector" aria-label="Simulator inspector">
     <section class="card">
@@ -2377,7 +2469,7 @@ figcaption { margin-top:12px; color:var(--muted); font-size:.875rem; }
       <p class="note">Residue is an explicit visual approximation. Pixel output and refresh selection are exact.</p>
     </section>
     <section class="card">
-      <h2>Clara BW profile</h2>
+      <h2>Clara Colour profile</h2>
       <dl class="facts">
         <dt>Panel</dt><dd id="geometry">1072 × 1448</dd>
         <dt>Density</dt><dd id="density">300 PPI</dd>
@@ -2405,9 +2497,9 @@ function showDiagnostics(){list.replaceChildren();if(!issues.length){const item=
 function outline(rect,color,width){if(!rect)return;ctx.save();ctx.lineWidth=width;ctx.strokeStyle=color;ctx.strokeRect(rect.x+width/2,rect.y+width/2,Math.max(0,rect.width-width),Math.max(0,rect.height-width));ctx.restore();}
 function drawOverlays(){if(refreshRegion.checked&&transition)outline(transition.region,"#006fbb",6);if(!overlay.checked)return;for(const issue of issues){outline(issue.rect,issue.severity==="error"?"#d00000":"#b56a00",5);}}
 function showSimulation(sim){profile=sim.profile;transition=sim.transition;scenario.value=sim.scenario;document.getElementById("profile-badge").textContent=profile.id;document.getElementById("geometry").textContent=profile.width+" × "+profile.height;document.getElementById("density").textContent=profile.pixelsPerInch+" PPI";document.getElementById("rotation").textContent=profile.rotation;document.getElementById("lifecycle").textContent=sim.lifecycle;const touch=sim.touch;document.getElementById("display-touch").textContent=touch?touch.display.x+", "+touch.display.y:"—";document.getElementById("raw-touch").textContent=touch?touch.raw.x+", "+touch.raw.y:"—";document.getElementById("waveform").textContent=transition?transition.waveform:"—";document.getElementById("update-kind").textContent=transition?(transition.full?"full / cleaning":"partial"):"unchanged";document.getElementById("region").textContent=transition?transition.region.width+"×"+transition.region.height+" @ "+transition.region.x+","+transition.region.y:"—";document.getElementById("refresh-count").textContent=sim.refreshCount;document.getElementById("partial-count").textContent=sim.partialsSinceClean+" / 8";}
-async function frame(){const path=ideal.checked?"/ideal-frame":"/frame";const response=checked(await fetch(path,{cache:"no-store"}));const raw=new Uint8Array(await response.arrayBuffer());const [diagnostics,simulation]=await Promise.all([fetch("/diagnostics",{cache:"no-store"}).then(checked).then(r=>r.json()),fetch("/simulation",{cache:"no-store"}).then(checked).then(r=>r.json())]);issues=diagnostics.issues;showSimulation(simulation);if(raw.length!==profile.width*profile.height)throw Error("Invalid "+profile.id+" frame");if(canvas.width!==profile.width||canvas.height!==profile.height){canvas.width=profile.width;canvas.height=profile.height;}const image=ctx.createImageData(profile.width,profile.height);for(let i=0;i<raw.length;i++){const p=i*4;image.data[p]=image.data[p+1]=image.data[p+2]=raw[i];image.data[p+3]=255;}ctx.putImageData(image,0,0);showDiagnostics();drawOverlays();if(!ideal.checked&&transition&&transition.full&&transition.refresh!==lastFlash){lastFlash=transition.refresh;canvas.classList.remove("clean-flash");void canvas.offsetWidth;canvas.classList.add("clean-flash");}status.textContent=issues.length?"Frame loaded with "+issues.length+" diagnostic"+(issues.length===1?"":"s")+".":"Frame loaded; layout clean.";}
+async function frame(){const path=ideal.checked?"/ideal-frame-rgb":"/frame-rgb";const response=checked(await fetch(path,{cache:"no-store"}));const raw=new Uint8Array(await response.arrayBuffer());const [diagnostics,simulation]=await Promise.all([fetch("/diagnostics",{cache:"no-store"}).then(checked).then(r=>r.json()),fetch("/simulation",{cache:"no-store"}).then(checked).then(r=>r.json())]);issues=diagnostics.issues;showSimulation(simulation);if(raw.length!==profile.width*profile.height*3)throw Error("Invalid "+profile.id+" color frame");if(canvas.width!==profile.width||canvas.height!==profile.height){canvas.width=profile.width;canvas.height=profile.height;}const image=ctx.createImageData(profile.width,profile.height);for(let i=0;i<profile.width*profile.height;i++){const source=i*3,p=i*4;image.data[p]=raw[source];image.data[p+1]=raw[source+1];image.data[p+2]=raw[source+2];image.data[p+3]=255;}ctx.putImageData(image,0,0);showDiagnostics();drawOverlays();if(!ideal.checked&&transition&&transition.full&&transition.refresh!==lastFlash){lastFlash=transition.refresh;canvas.classList.remove("clean-flash");void canvas.offsetWidth;canvas.classList.add("clean-flash");}status.textContent=issues.length?"Frame loaded with "+issues.length+" diagnostic"+(issues.length===1?"":"s")+".":"Frame loaded; layout clean.";}
 function touchLocation(event){const rect=canvas.getBoundingClientRect();return{x:Math.floor((event.clientX-rect.left)*profile.width/rect.width),y:Math.floor((event.clientY-rect.top)*profile.height/rect.height)};}
-async function touch(next){point=next;checked(await fetch("/touch",{method:"POST",headers:{"Content-Type":"text/plain"},body:"x="+point.x+"&y="+point.y}));await frame();status.textContent="Touch delivered through the Clara BW transform.";}
+async function touch(next){point=next;checked(await fetch("/touch",{method:"POST",headers:{"Content-Type":"text/plain"},body:"x="+point.x+"&y="+point.y}));await frame();status.textContent="Touch delivered through the Clara Colour transform.";}
 async function post(path,body){checked(await fetch(path,{method:"POST",headers:{"Content-Type":"text/plain"},body}));await frame();}
 canvas.addEventListener("pointerup",event=>{event.preventDefault();touch(touchLocation(event)).catch(error=>status.textContent=error.message);});
 canvas.addEventListener("keydown",event=>{if(event.key==="Enter"||event.key===" "){event.preventDefault();touch(point).catch(error=>status.textContent=error.message);}});
@@ -2770,7 +2862,7 @@ mod tests {
                 u32::try_from(y).expect("positive display y"),
             )
             .expect("display point maps to the touch controller");
-        assert!(payload.contains("\"id\":\"clara-bw-391\""));
+        assert!(payload.contains("\"id\":\"clara-colour-393\""));
         assert!(payload.contains("\"width\":1072"));
         assert!(payload.contains("\"height\":1448"));
         assert!(payload.contains("\"pixelsPerInch\":300"));
@@ -2782,8 +2874,16 @@ mod tests {
     #[test]
     fn unchanged_frames_do_not_replay_the_previous_transition() {
         let mut simulator = Simulator::new();
-        let _ = simulator.frame();
-        let _ = simulator.frame();
+        // Warm shared font state before the panel baseline is established;
+        // other simulator tests exercise that cache concurrently.
+        let _ = simulator.render_frame_rgb(false);
+        simulator.panel = PanelPreview::new();
+        let first = simulator.render_frame_rgb(false);
+        let second = simulator.render_frame_rgb(false);
+        assert!(
+            first.iter().zip(&second).all(|(left, right)| left == right),
+            "identical renders changed their RGB pixels"
+        );
 
         let payload = simulator.simulation_json();
         assert!(payload.contains("\"transition\":null"));

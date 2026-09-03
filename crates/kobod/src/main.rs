@@ -565,6 +565,17 @@ fn serve_application(
                 }
                 Some(_) => {}
             },
+            Message::PutColorPicture {
+                handle,
+                width,
+                height,
+                grey,
+                rgb,
+            } => {
+                if !pictures.put_color_with_fallback(handle, width, height, grey, rgb) {
+                    println!("color picture {} refused", handle.0);
+                }
+            }
             Message::BeginPicture {
                 handle,
                 width,

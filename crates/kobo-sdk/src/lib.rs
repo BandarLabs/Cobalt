@@ -11,10 +11,11 @@ pub use kobo_protocol::{
     DeviceRequest, DeviceResult, DictionaryEntry, Frame, Header, Lifecycle, LogLevel, Message,
     RemoteInstallOutcome, SecretHeader, ShellError, ShellEvent, ShellRequest, StoreError,
     StoreRequest, StoreResult, StreamError, Task, TaskError, TaskId, TaskOutcome, UpdateChannel,
-    WifiNetwork, CACHE_PREFIX, MAX_CACHE_KEYS, MAX_FONT_BYTES, MAX_HEADERS, MAX_HEADER_NAME,
-    MAX_HEADER_VALUE, MAX_INLINE_PICTURE_BYTES, MAX_LOOKUP_WORD_BYTES, MAX_PICTURE_BYTES,
-    MAX_PICTURE_CHUNK_BYTES, MAX_RADIO_DEVICES, MAX_RADIO_NAME, MAX_SHELF_CHUNK, MAX_SHELL_CHUNK,
-    MAX_STORE_KEYS, MAX_STORE_VALUE, MAX_TASK_BYTES, MAX_URL_LEN,
+    WifiNetwork, CACHE_PREFIX, MAX_CACHE_KEYS, MAX_COLOR_PICTURE_BYTES, MAX_FONT_BYTES,
+    MAX_HEADERS, MAX_HEADER_NAME, MAX_HEADER_VALUE, MAX_INLINE_PICTURE_BYTES,
+    MAX_LOOKUP_WORD_BYTES, MAX_PICTURE_BYTES, MAX_PICTURE_CHUNK_BYTES, MAX_RADIO_DEVICES,
+    MAX_RADIO_NAME, MAX_SHELF_CHUNK, MAX_SHELL_CHUNK, MAX_STORE_KEYS, MAX_STORE_VALUE,
+    MAX_TASK_BYTES, MAX_URL_LEN,
 };
 pub use kobo_ui::QuoteRole;
 pub use kobo_ui::{
@@ -2707,6 +2708,13 @@ pub enum Command {
         height: u32,
         grey: Vec<u8>,
     },
+    PutColorPicture {
+        handle: PictureHandle,
+        width: u32,
+        height: u32,
+        grey: Vec<u8>,
+        rgb: Vec<u8>,
+    },
     /// Release a picture the runtime is holding.
     DropPicture(PictureHandle),
     /// Give the runtime a publisher font to hold for reading screens.
@@ -3225,6 +3233,73 @@ impl Context {
             width,
             height,
             grey,
+        });
+        Some(TilePicture::new(handle, width, height))
+    }
+
+    /// Gives the runtime one opaque RGB picture.
+    ///
+    /// Color Kobo panels retain the channels. Monochrome panels use a
+    /// perceptual grayscale fallback derived here.
+    pub fn put_color_picture(
+        &mut self,
+        handle: PictureHandle,
+        width: u32,
+        height: u32,
+        rgb: Vec<u8>,
+    ) -> Option<TilePicture> {
+        let pixels = usize::try_from(width)
+            .ok()
+            .and_then(|width| width.checked_mul(usize::try_from(height).ok()?))?;
+        let expected = pixels.checked_mul(3)?;
+        if pixels == 0 || rgb.len() != expected || expected > MAX_COLOR_PICTURE_BYTES {
+            return None;
+        }
+        let grey = rgb
+            .chunks_exact(3)
+            .map(|pixel| {
+                u8::try_from(
+                    (2126 * u32::from(pixel[0])
+                        + 7152 * u32::from(pixel[1])
+                        + 722 * u32::from(pixel[2])
+                        + 5000)
+                        / 10_000,
+                )
+                .unwrap_or(u8::MAX)
+            })
+            .collect();
+        self.put_color_picture_with_fallback(handle, width, height, grey, rgb)
+    }
+
+    /// Gives the runtime RGB pixels and an application-prepared BW fallback.
+    pub fn put_color_picture_with_fallback(
+        &mut self,
+        handle: PictureHandle,
+        width: u32,
+        height: u32,
+        grey: Vec<u8>,
+        rgb: Vec<u8>,
+    ) -> Option<TilePicture> {
+        let pixels = usize::try_from(width)
+            .ok()
+            .and_then(|width| width.checked_mul(usize::try_from(height).ok()?))?;
+        let expected = usize::try_from(width)
+            .ok()
+            .and_then(|width| width.checked_mul(usize::try_from(height).ok()?))
+            .and_then(|pixels| pixels.checked_mul(3))?;
+        if pixels == 0
+            || grey.len() != pixels
+            || expected != rgb.len()
+            || expected > MAX_COLOR_PICTURE_BYTES
+        {
+            return None;
+        }
+        self.commands.push(Command::PutColorPicture {
+            handle,
+            width,
+            height,
+            grey,
+            rgb,
         });
         Some(TilePicture::new(handle, width, height))
     }
@@ -4819,7 +4894,10 @@ impl<A: KoboApp> AppRunner<A> {
             // unrelated happened to redraw the page, because every repaint
             // the pipeline asked for was thrown away here for being identical
             // to the one already displayed.
-            Command::Launch(_) | Command::Exit | Command::PutPicture { .. } => {
+            Command::Launch(_)
+            | Command::Exit
+            | Command::PutPicture { .. }
+            | Command::PutColorPicture { .. } => {
                 self.displayed = None;
                 true
             }
@@ -5020,6 +5098,22 @@ impl Client {
                     }
                     continue;
                 }
+                Command::PutColorPicture {
+                    handle,
+                    width,
+                    height,
+                    grey,
+                    rgb,
+                } => {
+                    self.send(Message::PutColorPicture {
+                        handle,
+                        width,
+                        height,
+                        grey,
+                        rgb,
+                    })?;
+                    continue;
+                }
                 other => other,
             };
             let message = match command {
@@ -5032,7 +5126,9 @@ impl Client {
                 Command::Shell(request) => Message::ShellRequest(request),
                 Command::Exit => Message::Exit,
                 Command::Launch(name) => Message::Launch { name },
-                Command::PutPicture { .. } => unreachable!("handled above"),
+                Command::PutPicture { .. } | Command::PutColorPicture { .. } => {
+                    unreachable!("handled above")
+                }
                 Command::DropPicture(handle) => Message::DropPicture { handle },
                 Command::PutFont {
                     handle,

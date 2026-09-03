@@ -8711,6 +8711,7 @@ pub struct Surface {
     pub width: usize,
     pub height: usize,
     pub pixels: Vec<u8>,
+    pub rgb: Option<Vec<u8>>,
 }
 
 impl Surface {
@@ -8720,11 +8721,28 @@ impl Surface {
             width,
             height,
             pixels: vec![tone::PAPER; width.saturating_mul(height)],
+            rgb: None,
+        }
+    }
+
+    /// Creates a surface that retains color while preserving a grayscale
+    /// fallback for monochrome planning and screenshots.
+    #[must_use]
+    pub fn new_color(width: usize, height: usize) -> Self {
+        let pixels = width.saturating_mul(height);
+        Self {
+            width,
+            height,
+            pixels: vec![tone::PAPER; pixels],
+            rgb: Some(vec![tone::PAPER; pixels.saturating_mul(3)]),
         }
     }
 
     pub fn clear(&mut self, value: u8) {
         self.pixels.fill(value);
+        if let Some(rgb) = &mut self.rgb {
+            rgb.fill(value);
+        }
     }
 
     pub fn fill_rect(&mut self, rect: Rect, value: u8) {
@@ -8742,6 +8760,7 @@ impl Surface {
                     if let Some(pixel) = self.pixels.get_mut(index) {
                         *pixel = value;
                     }
+                    self.set_rgb(index, [value; 3]);
                 }
             }
         }
@@ -8769,6 +8788,7 @@ impl Surface {
                     if let Some(pixel) = self.pixels.get_mut(index) {
                         *pixel = u8::MAX - *pixel;
                     }
+                    self.invert_rgb(index);
                 }
             }
         }
@@ -8807,6 +8827,7 @@ impl Surface {
                 if let Some(pixel) = self.pixels.get_mut(index) {
                     *pixel = u8::MAX - *pixel;
                 }
+                self.invert_rgb(index);
             }
         }
     }
@@ -8876,6 +8897,77 @@ impl Surface {
             let mixed = destination + (ink - destination) * i32::from(coverage) / 255;
             *pixel = u8::try_from(mixed.clamp(0, 255)).unwrap_or(*pixel);
         }
+        self.blend_rgb(index, [value; 3], coverage);
+    }
+
+    /// Mixes an RGB source into one pixel while updating its perceptual
+    /// grayscale fallback.
+    pub fn blend_color(&mut self, x: i32, y: i32, value: [u8; 3], coverage: u8) {
+        self.blend_picture(
+            x,
+            y,
+            perceptual_grey(value[0], value[1], value[2]),
+            value,
+            coverage,
+        );
+    }
+
+    fn blend_picture(&mut self, x: i32, y: i32, grey: u8, value: [u8; 3], coverage: u8) {
+        if x < 0 || y < 0 {
+            return;
+        }
+        let (Ok(x), Ok(y)) = (usize::try_from(x), usize::try_from(y)) else {
+            return;
+        };
+        let Some(index) = y.checked_mul(self.width).and_then(|row| row.checked_add(x)) else {
+            return;
+        };
+        if x >= self.width || index >= self.pixels.len() {
+            return;
+        }
+        if let Some(pixel) = self.pixels.get_mut(index) {
+            let destination = i32::from(*pixel);
+            let mixed = destination + (i32::from(grey) - destination) * i32::from(coverage) / 255;
+            *pixel = u8::try_from(mixed.clamp(0, 255)).unwrap_or(*pixel);
+        }
+        self.blend_rgb(index, value, coverage);
+    }
+
+    fn set_rgb(&mut self, index: usize, value: [u8; 3]) {
+        let Some(rgb) = &mut self.rgb else {
+            return;
+        };
+        let start = index.saturating_mul(3);
+        if let Some(pixel) = rgb.get_mut(start..start.saturating_add(3)) {
+            pixel.copy_from_slice(&value);
+        }
+    }
+
+    fn invert_rgb(&mut self, index: usize) {
+        let Some(rgb) = &mut self.rgb else {
+            return;
+        };
+        let start = index.saturating_mul(3);
+        if let Some(pixel) = rgb.get_mut(start..start.saturating_add(3)) {
+            for channel in pixel {
+                *channel = u8::MAX - *channel;
+            }
+        }
+    }
+
+    fn blend_rgb(&mut self, index: usize, value: [u8; 3], coverage: u8) {
+        let Some(rgb) = &mut self.rgb else {
+            return;
+        };
+        let start = index.saturating_mul(3);
+        let Some(pixel) = rgb.get_mut(start..start.saturating_add(3)) else {
+            return;
+        };
+        for (destination, source) in pixel.iter_mut().zip(value) {
+            let mixed = i32::from(*destination)
+                + (i32::from(source) - i32::from(*destination)) * i32::from(coverage) / 255;
+            *destination = u8::try_from(mixed.clamp(0, 255)).unwrap_or(*destination);
+        }
     }
 
     pub fn stroke_rect(&mut self, rect: Rect, value: u8) {
@@ -8940,6 +9032,8 @@ pub enum PanelWaveform {
     Gl16,
     /// Full sixteen-level refresh that clears accumulated residue.
     Gc16,
+    /// Color image content on a Kaleido panel.
+    Color,
 }
 
 impl PanelWaveform {
@@ -8949,6 +9043,7 @@ impl PanelWaveform {
             Self::Du => "DU",
             Self::Gl16 => "GL16",
             Self::Gc16 => "GC16",
+            Self::Color => "GCC16",
         }
     }
 }
@@ -8976,6 +9071,7 @@ pub struct FramePlanner {
     width: usize,
     height: usize,
     previous: Vec<u8>,
+    previous_rgb: Option<Vec<u8>>,
     dirty: u64,
     refreshes: u64,
     started: bool,
@@ -8988,6 +9084,7 @@ impl FramePlanner {
             width,
             height,
             previous: vec![tone::INK; width.saturating_mul(height)],
+            previous_rgb: None,
             dirty: 0,
             refreshes: 0,
             started: false,
@@ -9013,13 +9110,28 @@ impl FramePlanner {
             height: i32::try_from(self.height).ok()?,
         };
         let (region, waveform, dirty) = if self.started {
-            let (changed, flipped) = self.changed(surface)?;
+            let (changed, flipped, changed_color) = self.changed(surface)?;
+            let changed_region_has_color = Self::has_color(surface, changed);
             // The budget is checked before this update is added to it, so that
             // a full panel's worth of repainting still buys exactly
             // PANEL_CLEAN_INTERVAL updates before anything flashes, as it did
             // when updates rather than pixels were being counted.
-            if self.dirty >= self.clean_after() {
-                (whole, PanelWaveform::Gc16, 0)
+            if changed_color || changed_region_has_color {
+                (
+                    changed,
+                    PanelWaveform::Color,
+                    self.dirty.saturating_add(flipped),
+                )
+            } else if self.dirty >= self.clean_after() {
+                (
+                    whole,
+                    if Self::has_color(surface, whole) {
+                        PanelWaveform::Color
+                    } else {
+                        PanelWaveform::Gc16
+                    },
+                    0,
+                )
             } else if Self::has_grey(surface, changed) {
                 (
                     changed,
@@ -9034,12 +9146,20 @@ impl FramePlanner {
                 )
             }
         } else {
-            (whole, PanelWaveform::Gc16, 0)
+            (
+                whole,
+                if Self::has_color(surface, whole) {
+                    PanelWaveform::Color
+                } else {
+                    PanelWaveform::Gc16
+                },
+                0,
+            )
         };
         Some(FrameTransition {
             region,
             waveform,
-            full: waveform == PanelWaveform::Gc16,
+            full: matches!(waveform, PanelWaveform::Gc16 | PanelWaveform::Color),
             refresh: self.refreshes.saturating_add(1),
             dirty,
         })
@@ -9055,6 +9175,7 @@ impl FramePlanner {
             return false;
         }
         self.previous.copy_from_slice(&surface.pixels);
+        self.previous_rgb.clone_from(&surface.rgb);
         self.dirty = transition.dirty;
         self.refreshes = transition.refresh;
         self.started = true;
@@ -9080,23 +9201,54 @@ impl FramePlanner {
     /// at the top and a key at the bottom, so the box between them is most of
     /// the panel while the pixels that moved are a rounding error. Charging the
     /// box would put typing back where it started.
-    fn changed(&self, surface: &Surface) -> Option<(Rect, u64)> {
+    fn changed(&self, surface: &Surface) -> Option<(Rect, u64, bool)> {
         let (mut left, mut right) = (usize::MAX, 0usize);
         let (mut top, mut bottom) = (usize::MAX, 0usize);
         let mut flipped = 0_u64;
-        for (index, _) in surface
-            .pixels
-            .iter()
-            .zip(self.previous.iter())
-            .enumerate()
-            .filter(|(_, (current, previous))| current != previous)
-        {
+        let mut changed_color = false;
+        for index in 0..surface.pixels.len() {
+            let grey_changed = surface.pixels[index] != self.previous[index];
+            let (color_changed, pixel_has_color) = match (&surface.rgb, &self.previous_rgb) {
+                (Some(current), Some(previous)) => {
+                    let start = index.saturating_mul(3);
+                    let current = current.get(start..start + 3);
+                    let previous = previous.get(start..start + 3);
+                    (
+                        current != previous,
+                        current.is_some_and(Self::pixel_has_color)
+                            || previous.is_some_and(Self::pixel_has_color),
+                    )
+                }
+                (Some(current), None) => {
+                    let start = index.saturating_mul(3);
+                    (
+                        true,
+                        current
+                            .get(start..start + 3)
+                            .is_some_and(Self::pixel_has_color),
+                    )
+                }
+                (None, Some(previous)) => {
+                    let start = index.saturating_mul(3);
+                    (
+                        true,
+                        previous
+                            .get(start..start + 3)
+                            .is_some_and(Self::pixel_has_color),
+                    )
+                }
+                (None, None) => (false, false),
+            };
+            if !grey_changed && !color_changed {
+                continue;
+            }
             let (x, y) = (index % self.width, index / self.width);
             left = left.min(x);
             right = right.max(x);
             top = top.min(y);
             bottom = bottom.max(y);
             flipped = flipped.saturating_add(1);
+            changed_color |= color_changed && pixel_has_color;
         }
         (left <= right).then(|| {
             (
@@ -9107,8 +9259,13 @@ impl FramePlanner {
                     height: i32::try_from(bottom - top + 1).unwrap_or(i32::MAX),
                 },
                 flipped,
+                changed_color,
             )
         })
+    }
+
+    fn pixel_has_color(pixel: &[u8]) -> bool {
+        pixel.len() == 3 && (pixel[0] != pixel[1] || pixel[1] != pixel[2])
     }
 
     /// Changed pixels that may accumulate before the panel is cleaned.
@@ -9142,14 +9299,40 @@ impl FramePlanner {
                 .any(|tone| *tone != tone::INK && *tone != tone::PAPER)
         })
     }
+
+    fn has_color(surface: &Surface, region: Rect) -> bool {
+        let Some(rgb) = &surface.rgb else {
+            return false;
+        };
+        let Ok(left) = usize::try_from(region.x) else {
+            return false;
+        };
+        let Ok(top) = usize::try_from(region.y) else {
+            return false;
+        };
+        let Ok(width) = usize::try_from(region.width) else {
+            return false;
+        };
+        let Ok(height) = usize::try_from(region.height) else {
+            return false;
+        };
+        (top..top.saturating_add(height)).any(|y| {
+            (left..left.saturating_add(width)).any(|x| {
+                let start = (y.saturating_mul(surface.width).saturating_add(x)).saturating_mul(3);
+                rgb.get(start..start.saturating_add(3))
+                    .is_some_and(|pixel| pixel[0] != pixel[1] || pixel[1] != pixel[2])
+            })
+        })
+    }
 }
 
-/// Eight-bit grey pixels, row major, `width * height` of them.
+/// Picture pixels with a required grayscale fallback and optional RGB.
 #[derive(Clone, Copy, Debug)]
 pub struct PicturePixels<'a> {
     pub width: u32,
     pub height: u32,
     pub grey: &'a [u8],
+    pub rgb: Option<&'a [u8]>,
 }
 
 /// Where the renderer finds the pictures an application handed over.
@@ -9959,20 +10142,35 @@ const fn rect_is_inside(rect: Rect, bounds: Rect) -> bool {
         && rect.y.saturating_add(rect.height) <= bounds.y.saturating_add(bounds.height)
 }
 
-/// Eight megabytes, which is a shelf of about seventy covers.
+/// Twelve megabytes, enough for one full Libra Colour panel and its
+/// grayscale fallback.
 ///
 /// The bound is on bytes rather than on a count, because a count would let one
 /// application holding a few large pictures use far more memory than another
 /// holding many small ones. This device has 512 MB and no swap, so an unbounded
 /// cache is a way to have the kernel kill the runtime.
-pub const DEFAULT_PICTURE_BUDGET: usize = 8 * 1024 * 1024;
+pub const DEFAULT_PICTURE_BUDGET: usize = 12 * 1024 * 1024;
+
+fn perceptual_grey(red: u8, green: u8, blue: u8) -> u8 {
+    ((2126 * u32::from(red) + 7152 * u32::from(green) + 722 * u32::from(blue) + 5000) / 10_000)
+        as u8
+}
 
 struct HeldPicture {
     handle: PictureHandle,
     width: u32,
     height: u32,
     grey: Vec<u8>,
+    rgb: Option<Vec<u8>>,
     used: std::cell::Cell<u64>,
+}
+
+impl HeldPicture {
+    fn byte_len(&self) -> usize {
+        self.grey
+            .len()
+            .saturating_add(self.rgb.as_ref().map_or(0, Vec::len))
+    }
 }
 
 struct PendingPicture {
@@ -10035,6 +10233,72 @@ impl PictureCache {
         self.put_report(handle, width, height, grey).is_some()
     }
 
+    /// Accepts an RGB picture with an explicit grayscale fallback.
+    pub fn put_color(
+        &mut self,
+        handle: PictureHandle,
+        width: u32,
+        height: u32,
+        rgb: Vec<u8>,
+    ) -> bool {
+        let grey = rgb
+            .chunks_exact(3)
+            .map(|pixel| perceptual_grey(pixel[0], pixel[1], pixel[2]))
+            .collect::<Vec<_>>();
+        self.put_color_with_fallback(handle, width, height, grey, rgb)
+    }
+
+    /// Accepts an RGB picture and its already-prepared monochrome rendering.
+    pub fn put_color_with_fallback(
+        &mut self,
+        handle: PictureHandle,
+        width: u32,
+        height: u32,
+        grey: Vec<u8>,
+        rgb: Vec<u8>,
+    ) -> bool {
+        let pixels = usize::try_from(width).ok().and_then(|width| {
+            usize::try_from(height)
+                .ok()
+                .and_then(|height| width.checked_mul(height))
+        });
+        let Some(pixels) = pixels else {
+            return false;
+        };
+        if grey.len() != pixels || rgb.len() != pixels.saturating_mul(3) {
+            return false;
+        }
+        let size = grey.len().saturating_add(rgb.len());
+        if size > self.budget {
+            return false;
+        }
+        self.remove(handle);
+        while self.held.saturating_add(size) > self.budget {
+            let Some(oldest) = self
+                .entries
+                .iter()
+                .enumerate()
+                .min_by_key(|(_, entry)| entry.used.get())
+                .map(|(index, _)| index)
+            else {
+                return false;
+            };
+            self.held = self.held.saturating_sub(self.entries[oldest].byte_len());
+            self.entries.remove(oldest);
+        }
+        self.held = self.held.saturating_add(size);
+        self.clock.set(self.clock.get().saturating_add(1));
+        self.entries.push(HeldPicture {
+            handle,
+            width,
+            height,
+            grey,
+            rgb: Some(rgb),
+            used: std::cell::Cell::new(self.clock.get()),
+        });
+        true
+    }
+
     /// Stores a complete picture and reports any handles evicted to make room.
     ///
     /// `None` means the picture was refused. An empty vector means it fitted
@@ -10069,7 +10333,7 @@ impl PictureCache {
                 break;
             };
             evicted.push(self.entries[oldest].handle);
-            self.held -= self.entries[oldest].grey.len();
+            self.held -= self.entries[oldest].byte_len();
             self.entries.remove(oldest);
         }
         self.held += grey.len();
@@ -10079,6 +10343,7 @@ impl PictureCache {
             width,
             height,
             grey,
+            rgb: None,
             used: std::cell::Cell::new(self.clock.get()),
         });
         Some(evicted)
@@ -10142,7 +10407,7 @@ impl PictureCache {
 
     pub fn remove(&mut self, handle: PictureHandle) {
         if let Some(index) = self.entries.iter().position(|entry| entry.handle == handle) {
-            self.held -= self.entries[index].grey.len();
+            self.held -= self.entries[index].byte_len();
             self.entries.remove(index);
         }
     }
@@ -10180,6 +10445,7 @@ impl Pictures for PictureCache {
             width: entry.width,
             height: entry.height,
             grey: &entry.grey,
+            rgb: entry.rgb.as_deref(),
         })
     }
 
@@ -10218,6 +10484,10 @@ fn draw_picture(surface: &mut Surface, rect: Rect, pixels: PicturePixels<'_>, cl
     if pixels.grey.len() < source_width * source_height {
         return;
     }
+    let source_rgb_len = source_width.saturating_mul(source_height).saturating_mul(3);
+    if pixels.rgb.is_some_and(|rgb| rgb.len() < source_rgb_len) {
+        return;
+    }
     let target_width = rect.width as usize;
     let target_height = rect.height as usize;
     for y in visible.y..visible.y + visible.height {
@@ -10238,7 +10508,31 @@ fn draw_picture(surface: &mut Surface, rect: Rect, pixels: PicturePixels<'_>, cl
                 }
             }
             if let Some(mean) = total.checked_div(counted) {
-                surface.blend(x, y, u8::try_from(mean).unwrap_or(u8::MAX), 255);
+                if let Some(rgb) = pixels.rgb {
+                    let mut channels = [0_u32; 3];
+                    for sample_y in from_y..to_y.min(source_height) {
+                        let base = sample_y * source_width;
+                        for sample_x in from_x..to_x.min(source_width) {
+                            let start = (base + sample_x) * 3;
+                            for channel in 0..3 {
+                                channels[channel] += u32::from(rgb[start + channel]);
+                            }
+                        }
+                    }
+                    surface.blend_picture(
+                        x,
+                        y,
+                        u8::try_from(mean).unwrap_or(u8::MAX),
+                        [
+                            u8::try_from(channels[0] / counted).unwrap_or(u8::MAX),
+                            u8::try_from(channels[1] / counted).unwrap_or(u8::MAX),
+                            u8::try_from(channels[2] / counted).unwrap_or(u8::MAX),
+                        ],
+                        255,
+                    );
+                } else {
+                    surface.blend(x, y, u8::try_from(mean).unwrap_or(u8::MAX), 255);
+                }
             }
         }
     }
@@ -13203,6 +13497,46 @@ mod tests {
     }
 
     #[test]
+    fn equal_luminance_color_changes_still_refresh() {
+        let mut planner = FramePlanner::new(1, 1);
+        let mut frame = Surface::new_color(1, 1);
+        let first = planner.plan(&frame).expect("first frame");
+        assert!(planner.commit(&frame, first));
+
+        frame.pixels[0] = 54;
+        frame.rgb.as_mut().expect("rgb")[..3].copy_from_slice(&[255, 0, 0]);
+        let red = planner.plan(&frame).expect("red");
+        assert_eq!(red.waveform, PanelWaveform::Color);
+        assert!(planner.commit(&frame, red));
+
+        frame.rgb.as_mut().expect("rgb")[..3].copy_from_slice(&[0, 75, 0]);
+        let green = planner.plan(&frame).expect("equal-luminance green");
+        assert_eq!(green.waveform, PanelWaveform::Color);
+        assert_eq!(green.region.width, 1);
+    }
+
+    #[test]
+    fn unchanged_color_inside_a_dirty_box_is_preserved_by_a_color_refresh() {
+        let mut planner = FramePlanner::new(3, 1);
+        let mut frame = Surface::new_color(3, 1);
+        let first = planner.plan(&frame).expect("first frame");
+        assert!(planner.commit(&frame, first));
+
+        frame.pixels[1] = 54;
+        frame.rgb.as_mut().expect("rgb")[3..6].copy_from_slice(&[255, 0, 0]);
+        let color = planner.plan(&frame).expect("color");
+        assert!(planner.commit(&frame, color));
+
+        frame.pixels[0] = tone::INK;
+        frame.pixels[2] = tone::INK;
+        frame.rgb.as_mut().expect("rgb")[..3].fill(tone::INK);
+        frame.rgb.as_mut().expect("rgb")[6..9].fill(tone::INK);
+        let monochrome = planner.plan(&frame).expect("two monochrome changes");
+        assert_eq!(monochrome.region.width, 3);
+        assert_eq!(monochrome.waveform, PanelWaveform::Color);
+    }
+
+    #[test]
     fn frame_planner_cleans_after_eight_panels_worth_of_repainting() {
         // Eight full-panel repaints still clean on the eighth, which is what a
         // run of page turns does. That behaviour is the one being preserved.
@@ -15730,6 +16064,40 @@ mod prose_tests {
         assert!(cache.get(PictureHandle(1)).is_none());
         assert!(cache.put(PictureHandle(1), 10, 10, vec![0; 100]));
         assert_eq!(cache.get(PictureHandle(1)).map(|p| p.width), Some(10));
+    }
+
+    #[test]
+    fn a_color_picture_keeps_its_channels_through_cache_and_rendering() {
+        let mut cache = PictureCache::default();
+        assert!(cache.put_color_with_fallback(
+            PictureHandle(1),
+            2,
+            1,
+            vec![17, 231],
+            vec![255, 0, 0, 0, 75, 0]
+        ));
+        let mut surface = Surface::new_color(2, 1);
+        draw_picture(
+            &mut surface,
+            Rect {
+                x: 0,
+                y: 0,
+                width: 2,
+                height: 1,
+            },
+            cache.get(PictureHandle(1)).expect("held"),
+            Rect {
+                x: 0,
+                y: 0,
+                width: 2,
+                height: 1,
+            },
+        );
+        assert_eq!(
+            surface.rgb.as_deref(),
+            Some([255, 0, 0, 0, 75, 0].as_slice())
+        );
+        assert_eq!(surface.pixels, vec![17, 231]);
     }
 
     #[test]

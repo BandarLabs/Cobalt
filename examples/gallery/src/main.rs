@@ -48,15 +48,21 @@ const WEDGE_WIDTH: u32 = 320;
 const WEDGE_HEIGHT: u32 = 96;
 
 fn wedge() -> Vec<u8> {
-    let mut grey = Vec::with_capacity((WEDGE_WIDTH * WEDGE_HEIGHT) as usize);
+    let mut rgb = Vec::with_capacity((WEDGE_WIDTH * WEDGE_HEIGHT * 3) as usize);
     for _ in 0..WEDGE_HEIGHT {
         for x in 0..WEDGE_WIDTH {
-            let step = x * 16 / WEDGE_WIDTH;
-            // 0, 17, 34 ... 255: the sixteen levels, evenly spaced.
-            grey.push(u8::try_from(step * 17).unwrap_or(u8::MAX));
+            let red = u8::try_from(x.saturating_mul(255) / (WEDGE_WIDTH - 1)).unwrap_or(u8::MAX);
+            let blue = u8::MAX.saturating_sub(red);
+            let green = u8::try_from(
+                x.min(WEDGE_WIDTH - 1 - x)
+                    .saturating_mul(510)
+                    .saturating_div(WEDGE_WIDTH),
+            )
+            .unwrap_or(u8::MAX);
+            rgb.extend_from_slice(&[red, green, blue]);
         }
     }
-    grey
+    rgb
 }
 
 /// Something cover-shaped, for the portrait tile beside it.
@@ -64,21 +70,22 @@ const CARD_WIDTH: u32 = 190;
 const CARD_HEIGHT: u32 = 300;
 
 fn card() -> Vec<u8> {
-    let mut grey = Vec::with_capacity((CARD_WIDTH * CARD_HEIGHT) as usize);
+    let mut rgb = Vec::with_capacity((CARD_WIDTH * CARD_HEIGHT * 3) as usize);
     for y in 0..CARD_HEIGHT {
         for x in 0..CARD_WIDTH {
             let border = x < 8 || y < 8 || x >= CARD_WIDTH - 8 || y >= CARD_HEIGHT - 8;
             let band = (y / 24) % 2 == 0;
-            grey.push(if border {
-                0
+            let color = if border {
+                [35, 35, 45]
             } else if band {
-                0xEE
+                [246, 208, 92]
             } else {
-                0x66
-            });
+                [66, 112, 190]
+            };
+            rgb.extend_from_slice(&color);
         }
     }
-    grey
+    rgb
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -830,8 +837,8 @@ impl Gallery {
     /// held by the runtime under its handle, and re-sending it on each paint
     /// would put the whole image back on the wire every time a tab was tapped.
     fn put_pictures(&mut self, context: &mut Context) {
-        self.card = context.put_picture(PictureHandle(1), WEDGE_WIDTH, WEDGE_HEIGHT, wedge());
-        self.swatch = context.put_picture(PictureHandle(2), CARD_WIDTH, CARD_HEIGHT, card());
+        self.card = context.put_color_picture(PictureHandle(1), WEDGE_WIDTH, WEDGE_HEIGHT, wedge());
+        self.swatch = context.put_color_picture(PictureHandle(2), CARD_WIDTH, CARD_HEIGHT, card());
     }
 }
 
@@ -1306,16 +1313,20 @@ mod tests {
         // and refuses it silently, because a missing picture is a normal
         // condition here. So a mistake in this arithmetic would show up as a
         // page that is simply always empty.
-        assert_eq!(wedge().len(), (WEDGE_WIDTH * WEDGE_HEIGHT) as usize);
-        assert_eq!(card().len(), (CARD_WIDTH * CARD_HEIGHT) as usize);
-        let mut levels = wedge()
-            .into_iter()
+        assert_eq!(wedge().len(), (WEDGE_WIDTH * WEDGE_HEIGHT * 3) as usize);
+        assert_eq!(card().len(), (CARD_WIDTH * CARD_HEIGHT * 3) as usize);
+        let wedge = wedge();
+        let mut colors = wedge
+            .chunks_exact(3)
             .take(WEDGE_WIDTH as usize)
             .collect::<Vec<_>>();
-        levels.dedup();
-        assert_eq!(levels.len(), 16, "the wedge is not one band per grey");
-        assert_eq!(levels.first(), Some(&0));
-        assert_eq!(levels.last(), Some(&255));
+        colors.dedup();
+        assert!(
+            colors.len() > 300,
+            "the gradient collapsed into broad bands"
+        );
+        assert_eq!(colors.first().copied(), Some([0, 0, 255].as_slice()));
+        assert_eq!(colors.last().copied(), Some([255, 0, 0].as_slice()));
     }
 
     #[test]
@@ -1326,7 +1337,7 @@ mod tests {
         let commands = context.take_commands();
         let given = commands
             .iter()
-            .filter(|command| matches!(command, Command::PutPicture { .. }))
+            .filter(|command| matches!(command, Command::PutColorPicture { .. }))
             .count();
         assert_eq!(given, 2, "the pictures were not handed over on start");
 
@@ -1338,7 +1349,7 @@ mod tests {
             !context
                 .take_commands()
                 .iter()
-                .any(|command| matches!(command, Command::PutPicture { .. })),
+                .any(|command| matches!(command, Command::PutColorPicture { .. })),
             "a repaint put the whole image back on the wire"
         );
         assert!(

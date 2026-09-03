@@ -67,12 +67,22 @@ const MAXIMUM_RECORD_SECONDS: u64 = 600;
 /// competes with the reader for the memory bus.
 const MAXIMUM_RECORD_FPS: u32 = 5;
 
-/// Grey is worth the conversion cost here. The panel is 32-bit in memory and
-/// single-channel in reality, so sending all four bytes would quadruple a
-/// transfer that has to cross a USB-network link, to carry three copies of the
-/// same number and an alpha byte that is always opaque.
+/// Grey is worth the conversion cost on monochrome panels. Their framebuffer
+/// is 32-bit in memory but single-channel in reality, so sending all four
+/// bytes would quadruple a transfer that has to cross a USB-network link.
 fn grey_of(pixels: &[u8]) -> Vec<u8> {
     pixels.chunks_exact(4).map(|pixel| pixel[1]).collect()
+}
+
+/// Copies the red, green, and blue channels of a verified colour framebuffer.
+///
+/// The colour profiles record this byte order and the alpha channel is opaque,
+/// so a capture retains what the panel can show without transmitting padding.
+fn rgb_of(pixels: &[u8]) -> Vec<u8> {
+    pixels
+        .chunks_exact(4)
+        .flat_map(|pixel| [pixel[0], pixel[1], pixel[2]])
+        .collect()
 }
 
 fn announce_profile(profile: Option<&DeviceProfile>) -> Option<&DeviceProfile> {
@@ -202,7 +212,7 @@ fn main() -> ExitCode {
             eprintln!("capture failed: no framebuffer was discovered");
             return ExitCode::FAILURE;
         };
-        if let Err(error) = capture(framebuffer) {
+        if let Err(error) = capture(framebuffer, matched_profile.supports_color()) {
             eprintln!("capture failed: {error}");
             return ExitCode::FAILURE;
         }
@@ -211,14 +221,14 @@ fn main() -> ExitCode {
     ExitCode::SUCCESS
 }
 
-/// Prints the whole panel as base64 grey, one byte per pixel.
+/// Prints the whole panel as base64 pixels.
 ///
 /// Base64 rather than raw because this comes home down an SSH pipe alongside
 /// human-readable output, and a megabyte and a half of arbitrary bytes in the
 /// middle of a transcript will find every terminal and every pipe that is not
 /// binary-clean. The width and height are printed with it so the host never
 /// has to assume a panel size it did not measure.
-fn capture(framebuffer: &FramebufferSnapshot) -> Result<(), String> {
+fn capture(framebuffer: &FramebufferSnapshot, color: bool) -> Result<(), String> {
     let geometry = SurfaceGeometry {
         width: framebuffer.width,
         height: framebuffer.height,
@@ -238,19 +248,34 @@ fn capture(framebuffer: &FramebufferSnapshot) -> Result<(), String> {
     };
     let snapshot =
         read_region(&file, geometry, whole).map_err(|error| format!("read the panel: {error}"))?;
-    let grey = grey_of(snapshot.pixels());
-    println!(
-        "{CAPTURE_HEADER} {} {} {}",
-        framebuffer.width,
-        framebuffer.height,
-        grey.len()
-    );
+    let pixels = if color {
+        rgb_of(snapshot.pixels())
+    } else {
+        grey_of(snapshot.pixels())
+    };
+    if color {
+        println!(
+            "{CAPTURE_HEADER} {} {} {} rgb",
+            framebuffer.width,
+            framebuffer.height,
+            pixels.len()
+        );
+    } else {
+        // The grayscale transcript is a public diagnostic format. Keep its
+        // established four-field header so existing host CLIs keep working.
+        println!(
+            "{CAPTURE_HEADER} {} {} {}",
+            framebuffer.width,
+            framebuffer.height,
+            pixels.len()
+        );
+    }
     // Written straight out in chunks: one 2 MB String would be the largest
     // allocation this binary ever made, on a device with 512 MB and a reader
     // already in it.
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
-    for chunk in grey.chunks(48) {
+    for chunk in pixels.chunks(48) {
         let mut line = base64_line(chunk);
         line.push('\n');
         out.write_all(line.as_bytes())
@@ -263,11 +288,9 @@ fn capture(framebuffer: &FramebufferSnapshot) -> Result<(), String> {
 
 /// Copies the panel repeatedly into a file, skipping frames that did not move.
 ///
-/// Every pixel is kept. The panel is greyscale and the framebuffer is 32-bit,
-/// so one byte per pixel is already a four-fold saving with nothing lost;
-/// going further, to one bit, would throw away the anti-aliasing on every
-/// glyph and the dithering on every cover, and a recording made to check how
-/// something looks must not be the thing that changed how it looks.
+/// Every pixel is kept. The recording format remains greyscale: it is an
+/// existing diagnostic artifact and changing its layout would invalidate
+/// readers of saved captures. A colour still capture is available separately.
 ///
 /// What makes it small instead is that e-ink barely moves. A minute of a
 /// reader looking at a page is one frame, not sixty, so identical frames are
@@ -513,7 +536,7 @@ mod tests {
         assert!(super::parse_record_request("soon:2").is_err());
     }
 
-    use super::{base64_line, grey_of};
+    use super::{base64_line, grey_of, rgb_of};
 
     #[test]
     fn the_encoder_agrees_with_the_standard_at_every_remainder() {
@@ -533,5 +556,11 @@ mod tests {
             vec![20, 50],
             "the panel is single-channel, so the three colour bytes agree and any one of them is the grey"
         );
+    }
+
+    #[test]
+    fn a_colour_pixel_retains_each_channel_and_drops_alpha() {
+        let pixels = [10, 20, 30, 255, 40, 50, 60, 255];
+        assert_eq!(rgb_of(&pixels), vec![10, 20, 30, 40, 50, 60]);
     }
 }

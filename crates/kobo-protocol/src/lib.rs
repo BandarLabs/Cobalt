@@ -47,6 +47,8 @@ pub const MAGIC: [u8; 4] = *b"KOBO";
 /// requests/results. Version 11 adds the identity request and its result,
 /// both tags an older side has no reading for. Update-channel requests were
 /// later added on new tags without changing the shapes of existing frames.
+/// RGB pictures likewise use a new tag and carry an explicit monochrome
+/// fallback, so they do not change the protocol version.
 pub const VERSION: u8 = 11;
 pub const HEADER_LEN: usize = 14;
 /// The largest single frame either side will read.
@@ -54,14 +56,16 @@ pub const HEADER_LEN: usize = 14;
 /// Was one megabyte until narrated audio began arriving as task replies: a
 /// minute of 128 kbps MP3 is about a megabyte on its own, and a frame budget
 /// the same size as the payload it carries leaves no room for the envelope.
-/// Eight megabytes bounds a runaway peer just as well and costs nothing when
-/// frames stay small, which every frame except an audio reply does.
-pub const MAX_FRAME_LEN: usize = 8 * 1_048_576;
+/// Twelve megabytes also carries one full color panel plus its monochrome
+/// fallback while keeping a runaway peer tightly bounded.
+pub const MAX_FRAME_LEN: usize = 12 * 1_048_576;
 /// The largest decoded picture accepted from one application.
 ///
 /// Four Clara panels is the same bound used by `kobo-image`: enough headroom
 /// for a high-resolution source while remaining below the per-app cache.
 pub const MAX_PICTURE_BYTES: usize = 4 * 1072 * 1448;
+/// Largest inline RGB picture: one full Libra Colour panel.
+pub const MAX_COLOR_PICTURE_BYTES: usize = 3 * 1264 * 1680;
 /// Largest picture sent as one legacy `PutPicture` frame.
 pub const MAX_INLINE_PICTURE_BYTES: usize = 768 * 1024;
 /// Largest piece of a chunked upload. Small enough to bound transient copies
@@ -662,6 +666,19 @@ pub enum Message {
         height: u32,
         /// Eight-bit grey, row major, exactly `width * height` bytes.
         grey: Vec<u8>,
+    },
+    /// Opaque red, green, and blue pixels for a color-capable panel.
+    ///
+    /// The sender also supplies the exact monochrome fallback so prepared
+    /// dithering is not discarded on a black-and-white panel.
+    PutColorPicture {
+        handle: PictureHandle,
+        width: u32,
+        height: u32,
+        /// Eight-bit monochrome fallback, exactly `width * height` bytes.
+        grey: Vec<u8>,
+        /// Opaque RGB, row major, exactly `width * height * 3` bytes.
+        rgb: Vec<u8>,
     },
     /// Starts an atomic picture upload larger than one protocol frame.
     BeginPicture {
@@ -1759,6 +1776,19 @@ pub fn encode(frame: &Frame) -> Result<Vec<u8>, ProtocolError> {
             push_u32(&mut payload, *height);
             payload.extend_from_slice(grey);
         }
+        Message::PutColorPicture {
+            handle,
+            width,
+            height,
+            grey,
+            rgb,
+        } => {
+            push_u32(&mut payload, handle.0);
+            push_u32(&mut payload, *width);
+            push_u32(&mut payload, *height);
+            payload.extend_from_slice(grey);
+            payload.extend_from_slice(rgb);
+        }
         Message::BeginPicture {
             handle,
             width,
@@ -2314,19 +2344,14 @@ fn encoded_message_layout(message: &Message) -> Result<(u8, usize), ProtocolErro
             height,
             grey,
             ..
-        } => {
-            // The declared size and the bytes must agree before anything is
-            // allocated on the strength of either, or a decoder reading by
-            // dimension would run off the end of a short payload.
-            let expected = picture_len(*width, *height)?;
-            if expected != grey.len() {
-                return Err(ProtocolError::InvalidValue("picture size"));
-            }
-            if grey.len() > MAX_INLINE_PICTURE_BYTES {
-                return Err(ProtocolError::FrameTooLarge);
-            }
-            Ok((18, 12 + grey.len()))
-        }
+        } => inline_picture_layout(18, *width, *height, 1, grey, MAX_INLINE_PICTURE_BYTES),
+        Message::PutColorPicture {
+            width,
+            height,
+            grey,
+            rgb,
+            ..
+        } => color_picture_layout(*width, *height, grey, rgb),
         Message::DropPicture { .. } => Ok((19, 4)),
         Message::BeginPicture { width, height, .. } => {
             let expected = picture_len(*width, *height)?;
@@ -2368,6 +2393,43 @@ fn picture_len(width: u32, height: u32) -> Result<usize, ProtocolError> {
         .ok()
         .and_then(|width| width.checked_mul(usize::try_from(height).ok()?))
         .ok_or(ProtocolError::FrameTooLarge)
+}
+
+fn inline_picture_layout(
+    tag: u8,
+    width: u32,
+    height: u32,
+    channels: usize,
+    bytes: &[u8],
+    maximum: usize,
+) -> Result<(u8, usize), ProtocolError> {
+    // Dimensions and bytes agree before either side allocates from them.
+    let expected = picture_len(width, height)?
+        .checked_mul(channels)
+        .ok_or(ProtocolError::FrameTooLarge)?;
+    if expected != bytes.len() {
+        return Err(ProtocolError::InvalidValue("picture size"));
+    }
+    if bytes.len() > maximum {
+        return Err(ProtocolError::FrameTooLarge);
+    }
+    Ok((tag, 12 + bytes.len()))
+}
+
+fn color_picture_layout(
+    width: u32,
+    height: u32,
+    grey: &[u8],
+    rgb: &[u8],
+) -> Result<(u8, usize), ProtocolError> {
+    let pixels = picture_len(width, height)?;
+    if grey.len() != pixels || rgb.len() != pixels.saturating_mul(3) {
+        return Err(ProtocolError::InvalidValue("color picture size"));
+    }
+    if rgb.len() > MAX_COLOR_PICTURE_BYTES {
+        return Err(ProtocolError::FrameTooLarge);
+    }
+    Ok((28, 12 + grey.len() + rgb.len()))
 }
 
 #[allow(
@@ -4254,6 +4316,23 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, ProtocolError> {
         27 => Message::PageTurn {
             forward: read_boolean(&mut reader, "page turn direction")?,
         },
+        28 => {
+            let handle = PictureHandle(reader.u32()?);
+            let width = reader.u32()?;
+            let height = reader.u32()?;
+            let pixels = picture_len(width, height)?;
+            let expected_rgb = pixels.checked_mul(3).ok_or(ProtocolError::FrameTooLarge)?;
+            if expected_rgb > MAX_COLOR_PICTURE_BYTES {
+                return Err(ProtocolError::FrameTooLarge);
+            }
+            Message::PutColorPicture {
+                handle,
+                width,
+                height,
+                grey: reader.take(pixels)?.to_vec(),
+                rgb: reader.take(expected_rgb)?.to_vec(),
+            }
+        }
         24 => {
             let handle = FontHandle(reader.u32()?);
             let name = reader.string()?;
@@ -7382,10 +7461,9 @@ mod tests {
     }
 
     #[test]
-    fn encoder_preflights_payload_limit() {
-        // The full node budget with the longest string each node may carry:
-        // 512 × 16 KiB is the frame limit exactly, and the envelope around
-        // the strings takes it over.
+    fn expanded_color_frame_still_carries_the_full_node_budget() {
+        // The color frame ceiling is larger than the old eight-megabyte screen
+        // ceiling, but node and string limits remain independently bounded.
         let nodes = (0..512)
             .map(|id| Node::Text {
                 id: NodeId(id),
@@ -7393,13 +7471,11 @@ mod tests {
                 links: Vec::new(),
             })
             .collect();
-        assert_eq!(
-            encode(&Frame {
-                request_id: 3,
-                message: Message::SetScreen(Screen::new(3, nodes)),
-            }),
-            Err(ProtocolError::FrameTooLarge)
-        );
+        assert!(encode(&Frame {
+            request_id: 3,
+            message: Message::SetScreen(Screen::new(3, nodes)),
+        })
+        .is_ok());
     }
 }
 
@@ -8186,6 +8262,18 @@ mod store_tests {
             context: u64::MAX - 1,
             start: 41,
             end: 48,
+        };
+        assert_eq!(message_round_trip(message.clone()), message);
+    }
+
+    #[test]
+    fn a_color_picture_survives_the_wire_without_losing_channels() {
+        let message = Message::PutColorPicture {
+            handle: PictureHandle(7),
+            width: 2,
+            height: 1,
+            grey: vec![54, 110],
+            rgb: vec![255, 0, 0, 0, 128, 255],
         };
         assert_eq!(message_round_trip(message.clone()), message);
     }
