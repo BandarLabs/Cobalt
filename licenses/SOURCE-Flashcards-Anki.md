@@ -32,10 +32,10 @@ in `flashcards-import --licenses` and writes the same value to
 to match the checkout being audited.
 
 `Cargo.lock` records the same immutable Anki Git revision and all resolved Rust
-dependencies. The host dependency notice lists their exact package versions
-and licences; `cargo vendor --locked vendor` materializes their corresponding
-registry/Git source into one local directory when an offline source archive is
-required.
+dependencies. The host dependency notice lists exact non-Anki package versions
+and licences; the Anki packages and licence are listed explicitly above.
+`cargo vendor --locked vendor` materializes corresponding registry/Git source
+into one local directory when an offline source archive is required.
 
 To use the documented artifact-audit layout, build the host helper from the
 full repository checkout with:

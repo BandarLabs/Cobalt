@@ -80,11 +80,14 @@ Full Anki terms and corresponding-source instructions are in
 
 The Kobo app consumes a Cobalt-owned neutral bundle and links no Anki code.
 Consequently its package intentionally omits the Anki source/licence notice.
-Exact resolved dependency notices for the host helper and device app are in
+Resolved non-Anki dependency notices for the host helper and complete resolved
+dependency notices for the device app are in
 `licenses/LICENSE-Flashcards-host-dependencies.txt` and
-`licenses/LICENSE-Flashcards-device-dependencies.txt`. These texts are embedded
-only in the corresponding artifacts; the app exposes its device notices as
-paged text and the host helper prints its host notices with `--licenses`.
+`licenses/LICENSE-Flashcards-device-dependencies.txt`. The host's linked Anki
+packages are noticed separately in the Anki notice/licence/source files. These
+texts are embedded only in the corresponding artifacts; the app exposes its
+device notices as paged text and the host helper prints its host notices with
+`--licenses`.
 Regenerate both deterministically with
 `scripts/generate-flashcards-licenses.py`; its accepted SPDX policy is scoped
 in `licenses/flashcards-about.toml`.

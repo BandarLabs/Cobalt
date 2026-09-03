@@ -21,13 +21,15 @@ audit_device="$target_root/audit-unstripped/armv7-unknown-linux-musleabihf/relea
 package="$target_root/artifacts/flashcards-validation.cobalt-app"
 manifest="$target_root/artifacts/flashcards.manifest.json"
 public_key="$target_root/artifacts/validation-public-key.txt"
+catalog="$target_root/artifacts/catalog/catalog.json"
+catalog_signature="$target_root/artifacts/catalog/catalog.sig"
 host="$target_root/host-target/release/flashcards-import"
 cli="$target_root/host-tools/release/kobo"
 source_commit_file="$target_root/artifacts/flashcards-import.source-commit.txt"
 readelf=${READELF:-armv7-unknown-linux-musleabihf-readelf}
 expected_validation_key=d759793bbc13a2819a827c76adb6fba8a49aee007f49f2d0992d99b825ad2c48
 
-for path in "$device" "$audit_device" "$package" "$manifest" "$public_key" "$host" "$cli" "$source_commit_file"; do
+for path in "$device" "$audit_device" "$package" "$manifest" "$public_key" "$catalog" "$catalog_signature" "$host" "$cli" "$source_commit_file"; do
   if [ ! -f "$path" ]; then
     echo "missing artifact: $path" >&2
     exit 1
@@ -104,7 +106,7 @@ if printf '%s\n' "$audit_symbols" |
   exit 1
 fi
 
-python3 - "$repo/apps/catalog.json" "$device" "$manifest" <<'PY'
+python3 - "$repo/apps/catalog.json" "$device" "$manifest" "$catalog" "$package" <<'PY'
 import hashlib
 import json
 import sys
@@ -114,6 +116,8 @@ catalog = json.loads(Path(sys.argv[1]).read_text())
 app = next(app for app in catalog["apps"] if app["id"] == "flashcards")
 device = Path(sys.argv[2]).read_bytes()
 actual = Path(sys.argv[3]).read_bytes()
+validation_catalog = json.loads(Path(sys.argv[4]).read_text())
+package = Path(sys.argv[5]).read_bytes()
 manifest = {
     "format_version": 1,
     "id": app["id"],
@@ -152,6 +156,18 @@ expected = (
 ).encode()
 if actual != expected:
     raise SystemExit("artifact manifest differs from apps/catalog.json and device ELF")
+entries = validation_catalog.get("entries", [])
+if len(entries) != 1:
+    raise SystemExit("validation catalog must contain exactly one entry")
+entry = entries[0]
+if entry.get("manifest") != manifest:
+    raise SystemExit("validation catalog manifest differs from source metadata")
+if entry.get("package_sha256") != hashlib.sha256(package).hexdigest():
+    raise SystemExit("validation catalog package digest differs")
+if entry.get("package_bytes") != len(package):
+    raise SystemExit("validation catalog package length differs")
+if entry.get("package_url") != "https://example.invalid/flashcards-validation.cobalt-app":
+    raise SystemExit("validation catalog package URL differs")
 PY
 
 "$cli" app-verify \
@@ -159,6 +175,11 @@ PY
   --public-key "$public_key" \
   --manifest "$manifest" \
   --binary "$device" >/dev/null
+"$cli" app-catalog-verify \
+  --catalog "$catalog" \
+  --signature "$catalog_signature" \
+  --public-key "$public_key" \
+  --package "$package" >/dev/null
 
 for path in "$device" "$package"; do
   if strings "$path" |
@@ -188,7 +209,7 @@ for required in \
   "$source_commit" \
   'GNU AFFERO GENERAL PUBLIC LICENSE' \
   'Corresponding source for the Flashcards host converter' \
-  'Flashcards host helper dependency notices'; do
+  'Flashcards host helper non-Anki dependency notices'; do
   if ! strings "$host" | grep -F "$required" >/dev/null; then
     echo "host helper is missing required Anki source/licence material" >&2
     exit 1
@@ -211,6 +232,7 @@ echo "device production/audit ELFs: static, with no declared remote-network capa
 echo "device symbols: no known high-level remote-network implementation"
 echo "device local transport: generic socket primitives remain for required Cobalt Unix-domain IPC"
 echo "device package: signature/canonical manifest verified against catalog and standalone ELF"
+echo "validation catalog: signature and sole package entry verified"
 echo "host helper: pinned Anki rslib/i18n, AGPL notice, source pin, and source instructions present"
 (
   cd "$target_root"
@@ -220,6 +242,8 @@ echo "host helper: pinned Anki rslib/i18n, AGPL notice, source pin, and source i
     artifacts/flashcards-validation.cobalt-app \
     artifacts/flashcards.manifest.json \
     artifacts/validation-public-key.txt \
+    artifacts/catalog/catalog.json \
+    artifacts/catalog/catalog.sig \
     artifacts/flashcards-import.source-commit.txt \
     host-target/release/flashcards-import
 )

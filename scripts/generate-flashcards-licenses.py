@@ -20,7 +20,7 @@ TARGETS = [
     (
         ROOT / "crates" / "kobo-flashcards-import" / "Cargo.toml",
         ROOT / "licenses" / "LICENSE-Flashcards-host-dependencies.txt",
-        "Flashcards host helper dependency notices",
+        "Flashcards host helper non-Anki dependency notices",
     ),
 ]
 

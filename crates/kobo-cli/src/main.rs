@@ -411,6 +411,7 @@ fn run(arguments: &[String]) -> Result<(), String> {
         "app-bundle" => app_bundle(&arguments[1..]),
         "app-verify" => app_verify(&arguments[1..]),
         "app-catalog" => app_catalog(&arguments[1..]),
+        "app-catalog-verify" => app_catalog_verify(&arguments[1..]),
         "app-list" => app_list(&arguments[1..]),
         "app-check" => app_check(&arguments[1..]),
         "app-release" => app_release(&arguments[1..]),
@@ -487,11 +488,7 @@ fn app_verify(arguments: &[String]) -> Result<(), String> {
         USAGE,
     )?;
 
-    let public_key = fs::read_to_string(&public_key_path)
-        .map_err(|error| format!("read {}: {error}", public_key_path.display()))?
-        .trim()
-        .parse::<kobo_app_store::Ed25519PublicKey>()
-        .map_err(|error| format!("invalid public key: {error}"))?;
+    let public_key = read_app_public_key(&public_key_path)?;
     let package = fs::read(&package_path)
         .map_err(|error| format!("read {}: {error}", package_path.display()))?;
     let parsed = kobo_app_store::parse_public_bundle(&package, &public_key)
@@ -509,6 +506,57 @@ fn app_verify(arguments: &[String]) -> Result<(), String> {
     }
     println!("verified {}", package_path.display());
     Ok(())
+}
+
+fn app_catalog_verify(arguments: &[String]) -> Result<(), String> {
+    const USAGE: &str =
+        "usage: kobo app-catalog-verify --catalog PATH --signature PATH --public-key PATH --package PATH";
+    let catalog_path = single_path_flag(arguments, "--catalog", USAGE)?;
+    let signature_path = single_path_flag(arguments, "--signature", USAGE)?;
+    let public_key_path = single_path_flag(arguments, "--public-key", USAGE)?;
+    let package_path = single_path_flag(arguments, "--package", USAGE)?;
+    ensure_only_flags(
+        arguments,
+        &["--catalog", "--signature", "--public-key", "--package"],
+        USAGE,
+    )?;
+
+    let public_key = read_app_public_key(&public_key_path)?;
+    let catalog_bytes = fs::read(&catalog_path)
+        .map_err(|error| format!("read {}: {error}", catalog_path.display()))?;
+    let signature = fs::read_to_string(&signature_path)
+        .map_err(|error| format!("read {}: {error}", signature_path.display()))?;
+    let signature = kobo_app_store::DetachedSignature::from_hex(signature.trim())
+        .map_err(|error| format!("invalid catalog signature: {error}"))?;
+    kobo_app_store::verify(&catalog_bytes, &signature, &public_key)
+        .map_err(|error| format!("verify catalog signature: {error}"))?;
+    let catalog = kobo_app_store::Catalog::parse_public(&catalog_bytes)
+        .map_err(|error| format!("parse catalog: {error}"))?;
+    let package = fs::read(&package_path)
+        .map_err(|error| format!("read {}: {error}", package_path.display()))?;
+    let parsed = kobo_app_store::parse_public_bundle(&package, &public_key)
+        .map_err(|error| format!("verify package: {error}"))?;
+    let entry = catalog
+        .entries()
+        .iter()
+        .find(|entry| entry.manifest().id() == parsed.manifest().id())
+        .ok_or_else(|| "catalog has no entry for the package".to_owned())?;
+    if entry.manifest() != parsed.manifest()
+        || entry.package_sha256().as_str() != kobo_net::sha256::hex_digest(&package)
+        || entry.package_bytes() != u64::try_from(package.len()).unwrap_or(u64::MAX)
+    {
+        return Err("catalog entry does not match the signed package".to_owned());
+    }
+    println!("verified {}", catalog_path.display());
+    Ok(())
+}
+
+fn read_app_public_key(path: &Path) -> Result<kobo_app_store::Ed25519PublicKey, String> {
+    fs::read_to_string(path)
+        .map_err(|error| format!("read {}: {error}", path.display()))?
+        .trim()
+        .parse()
+        .map_err(|error| format!("invalid public key: {error}"))
 }
 
 fn app_catalog(arguments: &[String]) -> Result<(), String> {
@@ -5355,6 +5403,8 @@ fn print_help() {
                                    Build one signed, pathless .cobalt-app package\n\
            app-verify --package PATH --public-key PATH --manifest PATH --binary PATH\n\
                                    Verify package signature, canonical manifest, and ARM binary\n\
+           app-catalog-verify --catalog PATH --signature PATH --public-key PATH --package PATH\n\
+                                   Verify signed catalog and its package entry\n\
            app-catalog --seed PATH --out PATH --signature PATH --entry PACKAGE HTTPS_URL ...\n\
                                    Build and sign the public app catalog\n\
            app-list --registry PATH\n\
@@ -5538,6 +5588,17 @@ mod tests {
             "https://example.test/word-count.cobalt-app".to_owned(),
         ])
         .expect("build catalog");
+        super::app_catalog_verify(&[
+            "--catalog".to_owned(),
+            catalog_path.display().to_string(),
+            "--signature".to_owned(),
+            signature_path.display().to_string(),
+            "--public-key".to_owned(),
+            public_key_path.display().to_string(),
+            "--package".to_owned(),
+            bundle_path.display().to_string(),
+        ])
+        .expect("verify catalog command");
 
         let bundle = fs::read(&bundle_path).expect("read bundle");
         assert_eq!(

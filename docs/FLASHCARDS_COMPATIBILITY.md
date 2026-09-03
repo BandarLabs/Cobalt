@@ -57,7 +57,10 @@ required by Cobalt's Unix-domain runtime transport and cannot identify an
 address family by symbol name alone. The empty signed capability list is the
 enforced remote-network boundary. The audit separately proves the host helper
 contains pinned Anki rslib/i18n plus the complete AGPL notice, source revision,
-and corresponding-source instructions.
+and corresponding-source instructions. The validation `.cobalt-app` and
+single-entry catalog are verified with Cobalt's real Ed25519/canonical parsers,
+bound back to `apps/catalog.json`, and checked against the exact standalone
+ARM ELF.
 
 ## Exact supported package boundary
 

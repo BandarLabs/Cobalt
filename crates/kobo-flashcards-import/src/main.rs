@@ -26,7 +26,7 @@ const HOST_DISTRIBUTION_DOCUMENTS: [(&str, &str); 8] = [
     ("Atkinson Hyperlegible licence", ATKINSON_LICENSE),
     ("DejaVu licence", DEJAVU_LICENSE),
     (
-        "Flashcards host helper dependency licences",
+        "Flashcards host helper non-Anki dependency licences",
         HOST_DEPENDENCY_LICENSES,
     ),
 ];

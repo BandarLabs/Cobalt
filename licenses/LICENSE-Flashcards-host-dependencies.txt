@@ -1,4 +1,4 @@
-Flashcards host helper dependency notices
+Flashcards host helper non-Anki dependency notices
 Generated from Cargo.lock with cargo-about 0.6.4 for crates/kobo-flashcards-import/Cargo.toml.
 
 ===============================================================================

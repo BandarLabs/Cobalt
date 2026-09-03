@@ -13,11 +13,12 @@ and upstream library only. No upstream logo or artwork is included.
 | resvg/usvg 0.45.1 | <https://github.com/linebender/resvg/tree/1b6c2fddbcbeffa8135df4323b02aaae84890907> | The host helper rasterizes accepted SVG media with all file/data/network image resolvers disabled and only bundled fonts. At admission the Kobo app uses the same bounded path only to verify due-card source/raster equality, then displays the PNG. | Apache-2.0 OR MIT; see `LICENSE-resvg.txt` |
 
 Corresponding-source retrieval and build instructions are in
-`SOURCE-Flashcards-Anki.md`. The host helper's complete resolved dependency notices are in
-`LICENSE-Flashcards-host-dependencies.txt`. The device application's resolved
-dependency notices are in `LICENSE-Flashcards-device-dependencies.txt`.
-Atkinson Hyperlegible and DejaVu font terms are in the `kobo-text/fonts`
-licence files.
+`SOURCE-Flashcards-Anki.md`. Non-Anki Rust dependency notices for the host
+helper are in `LICENSE-Flashcards-host-dependencies.txt`; the linked Anki
+packages are covered separately by this notice, `LICENSE-Anki.txt`, and the
+source instructions. The device application's resolved dependency notices are
+in `LICENSE-Flashcards-device-dependencies.txt`. Atkinson Hyperlegible and
+DejaVu font terms are in the `kobo-text/fonts` licence files.
 
 `LICENSE-Anki.txt` reproduces Anki's upstream notice verbatim before the AGPL
 text. References to other projects inside that upstream notice are retained
