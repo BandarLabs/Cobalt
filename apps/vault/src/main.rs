@@ -60,7 +60,7 @@ impl Vault {
                     s.splash(
                         Some(Glyph::Note),
                         "No vault yet",
-                        "Run kobo vault init, then kobo vault push ~/Notes.",
+                        "Open Cobalt on your computer and choose a notes folder to add.",
                     )
                     .build()
                 } else {

@@ -59,10 +59,9 @@ impl Reader {
         let screen = match view {
             View::Shelf if !self.configured() => ScreenBuilder::new("rss-miniflux")
                 .top_bar("RSS Reader")
-                .heading("Setup needed")
-                .text("Set a Miniflux server before the first sync.")
-                .secondary("kobo secret set miniflux")
-                .buttons([("settings", "Settings"), ("directory", "Starter directory")])
+                .heading("Connect Miniflux")
+                .text("Add your Miniflux address after finishing account setup on your computer.")
+                .buttons([("settings", "Settings"), ("directory", "Suggested feeds")])
                 .build(),
             View::Shelf => {
                 let mut page = ScreenBuilder::new("rss-miniflux")
@@ -80,7 +79,11 @@ impl Reader {
                     page = page.banner(BannerLevel::Attention, notice);
                 }
                 if self.articles.is_empty() {
-                    page.empty_state("Unread articles appear here after Sync.")
+                    page.splash(
+                        Some(Glyph::Rss),
+                        "No unread articles",
+                        "Sync Miniflux to check again.",
+                    )
                         .button("sync", "Sync")
                         .build()
                 } else {
@@ -106,7 +109,7 @@ impl Reader {
                     .heading(&article.title)
                     .secondary(&article.feed)
                     .text(if article.content.is_empty() {
-                        "This feed did not supply article content. Use Load full article when Miniflux can fetch it."
+                        "This feed only included a summary. Choose Load full article to read the rest."
                     } else {
                         &article.content
                     })
@@ -118,18 +121,21 @@ impl Reader {
                     .build(),
                 None => ScreenBuilder::new("rss-miniflux")
                     .top_bar("RSS Reader")
-                    .empty_state("Choose an article from the unread list.")
+                    .splash(
+                        Some(Glyph::Rss),
+                        "Choose an article",
+                        "Open one from Unread.",
+                    )
                     .build(),
             },
             View::Settings => ScreenBuilder::new("rss-miniflux")
                 .top_bar("RSS Reader settings")
                 .field("server", &self.server, "https://miniflux.example")
-                .field("credential", &self.credential, "miniflux")
-                .secondary("The token stays in kobod as X-Auth-Token.")
+                .secondary("Finish Miniflux setup on your computer.")
                 .button("back", "Back")
                 .build(),
             View::Directory => ScreenBuilder::new("rss-miniflux")
-                .top_bar("Starter directory")
+                .top_bar("Suggested feeds")
                 .rows([
                     (
                         "science",
@@ -304,9 +310,9 @@ mod tests {
     fn setup_actions_are_reachable() {
         let layout = ScreenBuilder::new("rss")
             .top_bar("RSS Reader")
-            .permission_denied_state("Set a Miniflux server, then run `kobo secret set miniflux`.")
+            .permission_denied_state("Add your Miniflux address and finish setup on your computer.")
             .button("settings", "Settings")
-            .button("directory", "Starter directory")
+            .button("directory", "Suggested feeds")
             .build()
             .layout_with(&CLARA_BW_METRICS, &Chrome::default());
         assert!(layout.rect_of_action(action_id("settings")).is_some());

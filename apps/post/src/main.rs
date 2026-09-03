@@ -2,7 +2,7 @@ mod protocol;
 use kobo_sdk::keyboard::{Keyboard, Pressed};
 use kobo_sdk::{
     action_id, ActionId, BannerLevel, Context, Failure, Glyph, KoboApp, Screen, ScreenBuilder,
-    Space, StoreResult, TaskId, TaskOutcome,
+    Space, StoreResult, TaskError, TaskId, TaskOutcome,
 };
 use std::process::ExitCode;
 
@@ -50,9 +50,7 @@ impl Post {
         let mut screen = ScreenBuilder::new("post-setup")
             .top_bar("Post")
             .heading("Connect a Hermes gateway")
-            .text(
-                "Use your HTTPS gateway URL. Install its bearer token with kobo secret set hermes-post --device <ip>.",
-            )
+            .text("Enter your Hermes address after finishing account setup on your computer.")
             .field(
                 "gateway-url",
                 self.keyboard.text(),
@@ -201,7 +199,7 @@ impl KoboApp for Post {
                             self.show(c);
                             self.check(c);
                         } else {
-                            self.notice = Some("Use an https:// gateway URL.".into());
+                            self.notice = Some("Enter a secure Hermes address.".into());
                             self.show(c);
                         }
                     } else if let Some((id, _, _)) = self.letters.get(self.open) {
@@ -255,10 +253,15 @@ impl KoboApp for Post {
                 self.view = View::Letter;
                 self.show(c);
             }
+            TaskOutcome::Failed(TaskError::NoCredential) => {
+                self.posting = false;
+                self.notice = Some("Finish Hermes setup on your computer.".into());
+                self.show(c);
+            }
             TaskOutcome::Failed(e) => {
                 self.posting = false;
                 self.notice = Some(format!(
-                    "Off the air — {}. Check Wi-Fi or kobo secret set hermes-post.",
+                    "Couldn't connect — {}. Check Wi-Fi and your account settings.",
                     Failure::of(e).advice
                 ));
                 self.show(c);

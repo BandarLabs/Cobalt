@@ -173,7 +173,7 @@ impl Kitchen {
             .is_none()
         {
             self.syncing = false;
-            self.note = Some("The device is busy. Try sync again.".into());
+            self.note = Some("Recipes are already updating.".into());
         }
     }
     fn show(&self, context: &mut Context) {
@@ -279,7 +279,7 @@ fn screen(app: &Kitchen) -> Screen {
             .top_bar("Kitchen Card")
             .heading("About")
             .text("Unofficial read-only companion for Mealie. Mealie is AGPL-3.0.")
-            .text("Set the server URL and token with kobo secret set mealie.")
+            .text("Add your Mealie address after finishing account setup on your computer.")
             .button("tonight", "Tonight")
             .build(),
     }
@@ -316,7 +316,7 @@ impl KoboApp for Kitchen {
                     Some("Mealie list updated. Pick a recipe to replace tonight's card.".into());
             }
             TaskOutcome::Failed(kobo_sdk::TaskError::NoCredential) => {
-                self.note = Some("Install the Mealie token with kobo secret set mealie.".into());
+                self.note = Some("Finish Mealie setup on your computer.".into());
             }
             TaskOutcome::Failed(kobo_sdk::TaskError::Offline) => {
                 self.offline = true;

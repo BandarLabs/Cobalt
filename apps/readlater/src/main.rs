@@ -61,9 +61,8 @@ impl ReadLater {
         let screen = match view {
             View::Queue if !self.ready() => ScreenBuilder::new("readlater")
                 .top_bar("Read Later")
-                .heading("Setup needed")
-                .text("Set a Wallabag server before the first sync.")
-                .secondary("kobo secret set wallabag")
+                .heading("Connect Wallabag")
+                .text("Add your Wallabag address after finishing account setup on your computer.")
                 .bottom_action("settings", "Settings")
                 .build(),
             View::Queue => {
@@ -82,9 +81,13 @@ impl ReadLater {
                     page = page.banner(BannerLevel::Attention, note);
                 }
                 if self.entries.is_empty() {
-                    page.empty_state("Saved articles appear here after Sync.")
-                        .button("sync", "Sync")
-                        .build()
+                    page.splash(
+                        Some(Glyph::Bookmark),
+                        "No saved articles",
+                        "Sync Wallabag to add some.",
+                    )
+                    .button("sync", "Sync")
+                    .build()
                 } else {
                     page.rows(self.entries.iter().enumerate().map(|(i, e)| {
                         (
@@ -107,16 +110,15 @@ impl ReadLater {
                 match entry {
                     Some(e) if !e.content.is_empty() => ScreenBuilder::new("readlater").top_bar("Read Later").heading(&e.title).secondary(&e.site).text(&e.content).action_bar([("archive", "Archive"), ("star", "Star"), ("delete", "Delete")]).build(),
                     Some(e) => ScreenBuilder::new("readlater").top_bar("Read Later").heading(&e.title).text("Wallabag couldn't extract this one. Open the original URL in Wallabag.").action_bar([("archive", "Archive"), ("back", "Back")]).build(),
-                    None => ScreenBuilder::new("readlater").top_bar("Read Later").empty_state("Choose an article from the queue.").build(),
+                    None => ScreenBuilder::new("readlater").top_bar("Read Later").splash(Some(Glyph::Bookmark), "Choose an article", "Open one from your reading list.").build(),
                 }
             }
             View::Settings => ScreenBuilder::new("readlater")
                 .top_bar("Read Later settings")
                 .field("server", &self.server, "https://wallabag.example")
-                .field("credential", &self.credential, "wallabag")
-                .secondary("Credential values stay in kobod. Run `kobo secret set wallabag`.")
+                .secondary("Finish Wallabag setup on your computer.")
                 .choose(
-                    "Sync depth",
+                    "Articles to keep",
                     [
                         ("depth-20", "20 newest"),
                         ("depth-50", "50 newest"),
@@ -330,14 +332,18 @@ mod tests {
             let screen = if self.ready() {
                 ScreenBuilder::new("test")
                     .top_bar("Read Later")
-                    .empty_state("Saved articles appear here after Sync.")
+                    .splash(
+                        Some(Glyph::Bookmark),
+                        "No saved articles",
+                        "Sync Wallabag to add some.",
+                    )
                     .button("sync", "Sync")
                     .build()
             } else {
                 ScreenBuilder::new("test")
                     .top_bar("Read Later")
-                    .heading("Setup needed")
-                    .secondary("kobo secret set wallabag")
+                    .heading("Connect Wallabag")
+                    .secondary("Finish Wallabag setup on your computer.")
                     .bottom_action("settings", "Settings")
                     .build()
             };

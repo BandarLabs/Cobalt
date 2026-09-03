@@ -55,8 +55,10 @@ impl Calibre {
                 if !self.loaded {
                     s = s.secondary("Loading libraries…");
                 } else if self.url.is_empty() {
-                    s = s.empty_state(
-                        "Your calibre-web libraries appear here after you add an HTTPS address.",
+                    s = s.splash(
+                        Some(kobo_sdk::Glyph::Book),
+                        "No libraries",
+                        "Add your calibre-web library.",
                     );
                 } else {
                     s = s.rows([(
@@ -66,7 +68,7 @@ impl Calibre {
                             if n.is_empty() {
                                 "Open catalog"
                             } else {
-                                "Uses named credential"
+                                "Account connected"
                             }
                         }),
                         kobo_sdk::Glyph::Book,
@@ -76,26 +78,24 @@ impl Calibre {
             }
             View::Url => ScreenBuilder::new("calibre-url")
                 .top_bar("Library address")
-                .heading("HTTPS address")
-                .secondary("Use the root address of your calibre-web library. HTTP is refused.")
+                .heading("Library address")
+                .secondary("Enter the secure web address for your calibre-web library.")
                 .keyboard(&self.keyboard, "Continue")
                 .owns_back(true)
                 .build(),
             View::Credential => ScreenBuilder::new("calibre-credential")
-                .top_bar("Credential name")
-                .heading("Optional credential name")
-                .secondary(
-                    "The password stays in the runtime. Leave this empty for anonymous libraries.",
-                )
+                .top_bar("Sign in")
+                .heading("Optional account")
+                .secondary("Enter the account name you set up on your computer, or leave blank for a public library.")
                 .keyboard(&self.keyboard, "Add library")
                 .owns_back(true)
                 .build(),
             View::Library => ScreenBuilder::new("calibre-library")
                 .top_bar("Library")
                 .secondary(if self.task.is_some() {
-                    "working…"
+                    "Opening…"
                 } else {
-                    "OPDS catalog ready"
+                    "Library ready"
                 })
                 .rows([
                     (
@@ -122,10 +122,9 @@ impl Calibre {
             View::Failure => {
                 let advice = self.credential.as_deref().map_or_else(
                     || {
-                        "This library wants a sign-in. Add it again with a credential name."
-                            .to_owned()
+                        "This library needs an account. Finish setup on your computer, then add the library again.".to_owned()
                     },
-                    |name| format!("The key was refused. Run kobo secret set {name}."),
+                    |_| "The connected account was refused. Check its setup on your computer.".to_owned(),
                 );
                 ScreenBuilder::new("calibre-failure")
                     .top_bar("Library")

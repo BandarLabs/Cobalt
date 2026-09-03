@@ -163,10 +163,7 @@ impl Sidekick {
         let mut screen = ScreenBuilder::new("sidekick-address")
             .top_bar(TITLE)
             .heading("Pair with your computer")
-            .text(
-                "Run kobo-sidekickd init there, then type the address it \
-                 prints. The port is filled in if you leave it off.",
-            );
+            .text("Open Sidekick in the Cobalt desktop app, then enter the address shown.");
         if let Some(trouble) = &self.trouble {
             screen = screen.banner(BannerLevel::Attention, trouble.clone());
         }
@@ -183,9 +180,8 @@ impl Sidekick {
             .top_bar(TITLE)
             .heading("Now the pairing code")
             .text(format!(
-                "The six characters kobo-sidekickd init printed beside \
-                 {}. They keep anyone else on the network from answering \
-                 for you.",
+                "Enter the six-character code shown beside {}. This keeps \
+                 your answers private.",
                 self.address
             ));
         if let Some(trouble) = &self.trouble {
@@ -489,7 +485,7 @@ impl Sidekick {
             self.trouble = None;
             Some(address)
         } else {
-            self.trouble = Some("That does not look like host:port.".to_owned());
+            self.trouble = Some("Enter the address shown on your computer.".to_owned());
             None
         }
     }
@@ -1112,9 +1108,7 @@ mod tests {
         assert!(fetched(&commands).is_none(), "polled before pairing");
         let lines = shown(&painted(&commands).expect("a screen"));
         assert!(
-            lines
-                .iter()
-                .any(|line| line.contains("kobo-sidekickd init")),
+            lines.iter().any(|line| line.contains("Cobalt desktop app")),
             "the screen never says where the address comes from: {lines:?}"
         );
     }
@@ -1246,7 +1240,9 @@ mod tests {
         assert_eq!(app.view, View::Address, "a nonsense address moved on");
         let lines = shown(&painted(&commands).expect("a repaint with the reason"));
         assert!(
-            lines.iter().any(|line| line.contains("host:port")),
+            lines
+                .iter()
+                .any(|line| line.contains("address shown on your computer")),
             "no reason shown: {lines:?}"
         );
     }

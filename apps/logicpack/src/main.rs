@@ -11,7 +11,6 @@ enum Kind {
 }
 struct Game {
     kind: Kind,
-    seed: u32,
     cells: [u8; 16],
     notice: String,
 }
@@ -19,9 +18,8 @@ impl Default for Game {
     fn default() -> Self {
         Self {
             kind: Kind::Home,
-            seed: 20_260_901,
             cells: [0; 16],
-            notice: "Today’s deterministic set. Choose a puzzle.".into(),
+            notice: "Today’s puzzles. Choose one.".into(),
         }
     }
 }
@@ -34,7 +32,7 @@ impl Game {
             Kind::Hashi => "Join matching islands. Tap a route: 0, 1, 2 bridges.",
             Kind::Kakuro => "Fill a sum run. Tap a cell to cycle digits.",
             Kind::Mines => "Reveal safe cells. First reveal is safe.",
-            Kind::Home => "Today’s deterministic set. Choose a puzzle.",
+            Kind::Home => "Today’s puzzles. Choose one.",
         }
         .into();
     }
@@ -42,7 +40,7 @@ impl Game {
         match self.kind {
             Kind::Home => ScreenBuilder::new("logicpack")
                 .top_bar("Logic Pack")
-                .section(format!("Daily set {}", self.seed))
+                .section("Daily puzzles")
                 .secondary(&self.notice)
                 .rows([
                     (
@@ -165,10 +163,6 @@ mod tests {
             g.tap(0);
             assert_ne!(g.cells, before);
         }
-    }
-    #[test]
-    fn daily_seed_is_fixed() {
-        assert_eq!(Game::default().seed, 20_260_901);
     }
     #[test]
     fn clara_screens_fit() {

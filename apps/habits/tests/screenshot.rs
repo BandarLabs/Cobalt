@@ -1,5 +1,5 @@
 use kobo_image::encode_png_grey;
-use kobo_sdk::{Glyph, ScreenBuilder};
+use kobo_sdk::ScreenBuilder;
 use kobo_ui::{render, Surface, CLARA_BW_METRICS};
 #[test]
 fn renders_clean_clara_bw_capture() {
@@ -12,13 +12,12 @@ fn renders_clean_clara_bw_capture() {
                 ("streaks", "Streaks"),
                 ("manage", "Manage"),
                 ("stats", "Stats"),
-                ("settings", "Settings"),
             ],
         )
-        .rows([
-            ("done-read", "Read", "daily", Glyph::Circle),
-            ("done-walk", "Walk", "weekdays", Glyph::Check),
-            ("done-write", "Write", "daily", Glyph::Circle),
+        .checklist([
+            ("done-read", "Read", "daily", false),
+            ("done-walk", "Walk", "weekdays", true),
+            ("done-write", "Write", "daily", false),
         ])
         .build();
     let mut surface = Surface::new(

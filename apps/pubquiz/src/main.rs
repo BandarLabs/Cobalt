@@ -115,7 +115,7 @@ impl Quiz {
             .is_none()
         {
             self.syncing = false;
-            self.note = Some("The device is busy. Try sync again.".into());
+            self.note = Some("Trivia packs are already updating.".into());
         }
     }
     fn show(&self, context: &mut Context) {
@@ -141,8 +141,10 @@ fn screen(quiz: &Quiz) -> Screen {
                 b = b.banner(BannerLevel::Info, note);
             }
             if quiz.packs == 0 {
-                b = b.empty_state(
-                    "No packs yet. Sync question packs while online, then play anywhere.",
+                b = b.splash(
+                    Some(Glyph::Grid),
+                    "No question packs",
+                    "Connect to Wi-Fi and sync.",
                 );
             }
             b.primary_button("party", "Start pass-around")

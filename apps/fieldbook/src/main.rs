@@ -54,23 +54,84 @@ impl Fieldbook {
         }
         match self.view {
             View::Nearby => {
-                let status=if self.synced {"Cache: county pack, 3 hotspots, 14 days."} else {"No field pack yet. Sync before leaving the air."};
-                s.secondary(status).rows(SPECIES.iter().enumerate().map(|(i,x)|(format!("bird-{i}"),x.0,format!("{} · {}",x.2,x.1),Glyph::Search)))
-                 .buttons([("sync","Sync pack"),("log","Log a sighting")]).nav_bar(Some(0),[("nearby","Nearby"),("life","Life list"),("export","Export")]).build()
+                let status = if self.synced {
+                    "Cache: county pack, 3 hotspots, 14 days."
+                } else {
+                    "No field pack yet. Sync before leaving the air."
+                };
+                s.secondary(status)
+                    .rows(SPECIES.iter().enumerate().map(|(i, x)| {
+                        (
+                            format!("bird-{i}"),
+                            x.0,
+                            format!("{} · {}", x.2, x.1),
+                            Glyph::Search,
+                        )
+                    }))
+                    .buttons([("sync", "Sync pack"), ("log", "Log a sighting")])
+                    .nav_bar(
+                        Some(0),
+                        [
+                            ("nearby", "Nearby"),
+                            ("life", "Life list"),
+                            ("export", "Export"),
+                        ],
+                    )
+                    .build()
             }
             View::Log => {
-                let bird=SPECIES[self.selected];
+                let bird = SPECIES[self.selected];
                 s.secondary("Species picker accepts common name, scientific name, or banding code.")
-                  .rows(SPECIES.iter().enumerate().map(|(i,x)|(format!("pick-{i}"),x.0,format!("{} · {}",x.2,x.1),Glyph::Search)))
-                  .section(format!("Selected: {}  ·  count {}",bird.0,self.count))
-                  .buttons([("less","− count"),("more","+ count")]).primary_button("tally","TALLY").build()
+                    .rows(SPECIES.iter().enumerate().map(|(i, x)| {
+                        (
+                            format!("pick-{i}"),
+                            x.0,
+                            format!("{} · {}", x.2, x.1),
+                            Glyph::Search,
+                        )
+                    }))
+                    .section(format!("Selected: {}  ·  count {}", bird.0, self.count))
+                    .buttons([("less", "− count"), ("more", "+ count")])
+                    .primary_button("tally", "TALLY")
+                    .build()
             }
             View::Life => {
-                if self.sightings.is_empty() { s.splash(Some(Glyph::Search),"No birds logged","Log a sighting to begin this life list.").build() }
-                else { s.secondary(format!("{} species on this device.",self.sightings.len())).rows(self.sightings.iter().enumerate().map(|(i,(bird,count))|(format!("life-{i}"),SPECIES[*bird].0,format!("{} sighting{}",count,if *count==1 {""} else {"s"}),Glyph::Search))).build() }
+                if self.sightings.is_empty() {
+                    s.splash(
+                        Some(Glyph::Search),
+                        "No birds logged",
+                        "Log a sighting to begin this life list.",
+                    )
+                    .build()
+                } else {
+                    s.secondary(format!(
+                        "{} species in your life list.",
+                        self.sightings.len()
+                    ))
+                    .rows(self.sightings.iter().enumerate().map(|(i, (bird, count))| {
+                        (
+                            format!("life-{i}"),
+                            SPECIES[*bird].0,
+                            format!("{} sighting{}", count, if *count == 1 { "" } else { "s" }),
+                            Glyph::Search,
+                        )
+                    }))
+                    .build()
+                }
             }
-            View::Export => s.text("Checklist submission is not available: Cornell provides no public write API.\n\nConnect to desktop, run `kobo fieldbook export`, then import the CSV in eBird’s Record Format importer.").button("export","Prepare CSV export").build(),
-            View::Detail => s.text(format!("{}\n{}\nBanding code: {}\n\nRecent in the synced field pack.",SPECIES[self.selected].0,SPECIES[self.selected].1,SPECIES[self.selected].2)).bottom_action("back","Back").build(),
+            View::Export => s
+                .text(
+                    "Prepare a checklist file here, then import it into eBird from your computer.",
+                )
+                .button("export", "Prepare checklist")
+                .build(),
+            View::Detail => s
+                .text(format!(
+                    "{}\n{}\nBanding code: {}\n\nRecent in the synced field pack.",
+                    SPECIES[self.selected].0, SPECIES[self.selected].1, SPECIES[self.selected].2
+                ))
+                .bottom_action("back", "Back")
+                .build(),
         }
     }
     fn save(&self, c: &mut Context) {

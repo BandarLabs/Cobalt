@@ -71,8 +71,8 @@ impl Stand {
 fn screen(stand: &Stand) -> Screen {
     match stand.view {
         View::Library => ScreenBuilder::new("music-library").top_bar("Music Stand").heading("Library")
-            .rows([("open", "Cello Suite No. 1", "J. S. Bach · 3 converted score pages", Glyph::Note)])
-            .button("setlist", "Evening rehearsal setlist").button("about", "About transfer").build(),
+            .rows([("open", "Cello Suite No. 1", "J. S. Bach · 3 pages", Glyph::Note)])
+            .button("setlist", "Evening rehearsal setlist").button("about", "Add scores").build(),
         View::Stand => {
             let half = if stand.top_half { "top half" } else { "bottom half" };
             ScreenBuilder::new("music-score").top_bar(format!("Cello Suite No. 1 · {} of {}", stand.page + 1, PAGES.len()))
@@ -84,8 +84,8 @@ fn screen(stand: &Stand) -> Screen {
             .rows([("open", "1. Cello Suite No. 1", "Start page 1 · crop: automatic", Glyph::Note)])
             .secondary("Setlists keep their order for rehearsal and gigs.").button("library", "Library").build(),
         View::About => ScreenBuilder::new("music-about").top_bar("Music Stand").heading("Transfer")
-            .text("Push a score from the host with kobo scores push concerto.pdf. The host classifies born-digital pages for SVG and scans for grey raster pages.")
-            .text("MuPDF is AGPL-3.0. IMSLP scores are public domain or Creative Commons per work; download on the computer before transfer.")
+            .text("Add scores from the Cobalt desktop app. Pages are prepared automatically for clear E Ink reading.")
+            .text("Only transfer scores you have the right to use. MuPDF is available under the AGPL-3.0 license.")
             .button("library", "Library").build(),
     }
 }

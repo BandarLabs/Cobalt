@@ -1,3 +1,5 @@
+pub const MAX_HABIT_NAME_CHARS: usize = 48;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Schedule {
     Daily,
@@ -32,35 +34,35 @@ impl Habit {
             Schedule::Every(n) => day % u32::from(n.max(1)) == 0,
         }
     }
-    pub fn complete(&mut self, day: u32) -> bool {
-        if !self.due(day) || self.done.contains(&day) {
+    pub fn toggle_complete(&mut self, day: u32) -> bool {
+        if !self.due(day) {
             return false;
         }
-        self.skipped.retain(|saved| *saved != day);
-        self.done.push(day);
+        if let Ok(index) = self.done.binary_search(&day) {
+            self.done.remove(index);
+            remove_day(&mut self.skipped, day);
+            return true;
+        }
+        remove_day(&mut self.skipped, day);
+        insert_day(&mut self.done, day);
         true
     }
     pub fn skip(&mut self, day: u32) -> bool {
-        if !self.due(day) || self.done.contains(&day) || self.skipped.contains(&day) {
+        if !self.due(day) || self.skipped.binary_search(&day).is_ok() {
             return false;
         }
-        self.skipped.push(day);
+        remove_day(&mut self.done, day);
+        insert_day(&mut self.skipped, day);
         true
     }
     pub fn current_streak(&self, today: u32) -> u32 {
         let mut day = today;
-        while self.due(day) && !self.done.contains(&day) && !self.skipped.contains(&day) {
-            if day == 0 {
-                return 0;
-            }
-            day -= 1;
-        }
         let mut count = 0;
         loop {
             if self.due(day) {
-                if self.done.contains(&day) {
+                if has_day(&self.done, day) {
                     count += 1;
-                } else if !self.skipped.contains(&day) {
+                } else if !has_day(&self.skipped, day) && day != today {
                     break;
                 }
             }
@@ -78,10 +80,10 @@ impl Habit {
             if !self.due(day) {
                 continue;
             }
-            if self.done.contains(&day) {
+            if has_day(&self.done, day) {
                 run += 1;
                 best = best.max(run);
-            } else if !self.skipped.contains(&day) {
+            } else if !has_day(&self.skipped, day) {
                 run = 0;
             }
         }
@@ -93,6 +95,27 @@ impl Habit {
             Schedule::Weekdays => "weekdays".into(),
             Schedule::Every(days) => format!("every {days} days"),
         }
+    }
+}
+
+pub fn canonical_name(name: &str) -> Option<String> {
+    (!name.trim().is_empty() && name == name.trim() && name.chars().count() <= MAX_HABIT_NAME_CHARS)
+        .then(|| name.to_owned())
+}
+
+fn has_day(days: &[u32], day: u32) -> bool {
+    days.binary_search(&day).is_ok()
+}
+
+fn insert_day(days: &mut Vec<u32>, day: u32) {
+    if let Err(index) = days.binary_search(&day) {
+        days.insert(index, day);
+    }
+}
+
+fn remove_day(days: &mut Vec<u32>, day: u32) {
+    if let Ok(index) = days.binary_search(&day) {
+        days.remove(index);
     }
 }
 
@@ -126,31 +149,60 @@ fn days(days: &[u32]) -> String {
         .join(",")
 }
 fn decode_days(text: &str) -> Vec<u32> {
-    text.split(',')
+    let mut days: Vec<_> = text
+        .split(',')
         .filter_map(|value| value.parse().ok())
-        .collect()
+        .collect();
+    days.sort_unstable();
+    days.dedup();
+    days
 }
-pub fn decode(bytes: &[u8]) -> Vec<Habit> {
-    std::str::from_utf8(bytes)
+pub fn decode_with_blank_names(bytes: &[u8]) -> (Vec<Habit>, usize) {
+    let mut blank_names = 0;
+    let habits = std::str::from_utf8(bytes)
         .unwrap_or("")
         .lines()
         .filter_map(|line| {
             let fields: Vec<_> = line.split('\t').collect();
-            if fields.len() != 5 || fields[2].is_empty() {
+            if fields.len() != 5 {
                 return None;
             }
+            if fields[2].trim().is_empty() {
+                blank_names += 1;
+                return None;
+            }
+            let archived = match fields[0] {
+                "0" => false,
+                "1" => true,
+                _ => return None,
+            };
             let schedule = match fields[1] {
                 "d" => Schedule::Daily,
                 "w" => Schedule::Weekdays,
-                value => Schedule::Every(value.strip_prefix('e')?.parse().ok()?),
+                value => Schedule::Every(
+                    value
+                        .strip_prefix('e')?
+                        .parse::<u8>()
+                        .ok()
+                        .filter(|days| *days > 0)?,
+                ),
             };
+            let done = decode_days(fields[3]);
+            let mut skipped = decode_days(fields[4]);
+            skipped.retain(|day| done.binary_search(day).is_err());
             Some(Habit {
-                archived: fields[0] == "1",
-                schedule,
                 name: fields[2].to_owned(),
-                done: decode_days(fields[3]),
-                skipped: decode_days(fields[4]),
+                schedule,
+                archived,
+                done,
+                skipped,
             })
         })
-        .collect()
+        .collect();
+    (habits, blank_names)
+}
+
+#[cfg(test)]
+pub fn decode(bytes: &[u8]) -> Vec<Habit> {
+    decode_with_blank_names(bytes).0
 }
