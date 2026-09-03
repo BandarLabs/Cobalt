@@ -30,6 +30,10 @@ export TMPDIR="$target_root/build-tmp"
 export CC_armv7_unknown_linux_musleabihf="${CC_armv7_unknown_linux_musleabihf:-armv7-unknown-linux-musleabihf-gcc}"
 export AR_armv7_unknown_linux_musleabihf="${AR_armv7_unknown_linux_musleabihf:-armv7-unknown-linux-musleabihf-ar}"
 
+rm -rf \
+  "$target_root/armv7-unknown-linux-musleabihf" \
+  "$target_root/audit-unstripped"
+
 (
   cd "$repo"
   CARGO_TARGET_DIR="$target_root" \

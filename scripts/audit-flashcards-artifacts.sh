@@ -57,7 +57,34 @@ trusted_cli="$audit_tools/release/kobo"
 trusted_host="$audit_tools/release/flashcards-import"
 cp "$trusted_host" "$host"
 if [ "$(tr -d '\n' < "$public_key")" != "$expected_validation_key" ]; then
-  echo "validation package public key is not the fixed audit key" >&2
+  echo "validation package public key is not the   fi
+
+  fresh_device_root="$target_root/audit-device-fresh"
+  rm -rf "$fresh_device_root"
+  mkdir -p "$fresh_device_root/production" "$fresh_device_root/unstripped" "$target_root/build-tmp"
+  (
+    cd "$repo"
+    export TMPDIR="$target_root/build-tmp"
+    export CC_armv7_unknown_linux_musleabihf="${CC_armv7_unknown_linux_musleabihf:-armv7-unknown-linux-musleabihf-gcc}"
+    export AR_armv7_unknown_linux_musleabihf="${AR_armv7_unknown_linux_musleabihf:-armv7-unknown-linux-musleabihf-ar}"
+    CARGO_TARGET_DIR="$fresh_device_root/production" \
+      cargo build --quiet --locked --release \
+      --target armv7-unknown-linux-musleabihf -p kobo-flashcards
+    CARGO_TARGET_DIR="$fresh_device_root/unstripped" \
+    CARGO_PROFILE_RELEASE_STRIP=none \
+      cargo build --quiet --locked --release \
+      --target armv7-unknown-linux-musleabihf -p kobo-flashcards
+  )
+  fresh_device="$fresh_device_root/production/armv7-unknown-linux-musleabihf/release/kobo-flashcards"
+  fresh_audit_device="$fresh_device_root/unstripped/armv7-unknown-linux-musleabihf/release/kobo-flashcards"
+  if ! cmp "$fresh_device" "$device" >/dev/null; then
+    echo "production device ELF differs from the fresh audited-source build" >&2
+    exit 1
+  fi
+  if ! cmp "$fresh_audit_device" "$audit_device" >/dev/null; then
+    echo "unstripped device ELF differs from the fresh audited-source build" >&2
+    exit 1
+  fixed audit key" >&2
   exit 1
 fi
 
@@ -260,6 +287,7 @@ echo "device symbols: no known high-level remote-network implementation"
 echo "device local transport: generic socket primitives remain for required Cobalt Unix-domain IPC"
 echo "device package: signature/canonical manifest verified against catalog and standalone ELF"
 echo "validation catalog: signature and sole package entry verified"
+echo "device ELFs: byte-identical to fresh audited-source builds"
 echo "host verifier/helper: rebuilt from audited source in a fresh target directory"
 echo "host helper: pinned Anki rslib/i18n/io/proto, AGPL notice, source pin, and source instructions present"
 echo "host notice sidecars: exact copies of helper notice/licence output"
