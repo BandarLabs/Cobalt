@@ -1033,13 +1033,12 @@ impl Feeds {
         };
         let mut screen = ScreenBuilder::new("rss-settings")
             .top_bar("Feeds settings")
-            .field("mode", mode, "Standalone or Miniflux")
-            .secondary("Standalone uses Feedsearch. Miniflux uses its dedicated API token.");
+            .field("mode", mode, "Standalone or Miniflux");
         if self.backend == Backend::Miniflux {
             screen = screen
                 .field("server", &self.server, "https://miniflux.example")
                 .field("flux-discover", "Add a Miniflux feed", "")
-                .secondary("Install secret miniflux; kobod sends it as X-Auth-Token.");
+                .secondary("Token: kobo secret set miniflux");
         }
         screen.build()
     }
@@ -1060,9 +1059,9 @@ impl Feeds {
         if !self.miniflux_configured() {
             return ScreenBuilder::new("rss-flux")
                 .top_bar("Feeds")
-                .heading("Miniflux setup needed")
-                .text("Set an HTTPS server in Settings.")
-                .secondary("Install the token with kobo secret set miniflux.")
+                .heading("Miniflux")
+                .text("Server not set.")
+                .secondary("Token: kobo secret set miniflux")
                 .buttons([("settings", "Settings"), ("flux-discover", "Add a feed")])
                 .build();
         }
