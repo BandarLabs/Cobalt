@@ -1,6 +1,8 @@
 expect Nonograms
-tap 02
-expect Free marks
+tap Harbor dawn
+expect Harbor dawn · free mode
 tap Free
-expect Guided
+expect guided mode
+tap Run entry: off
+expect Run entry: on
 shot nonograms-play
