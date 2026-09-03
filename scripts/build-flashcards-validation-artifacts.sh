@@ -13,47 +13,45 @@ if [ -z "$bootstrap_python" ]; then
   exit 1
 fi
 
-if [ "${COBALT_FLASHCARDS_SANITIZED_PID:-}" != "$$" ]; then
-  script_dir=${0%/*}
-  script_name=${0##*/}
-  if [ "$script_dir" = "$0" ]; then
-    script_dir=.
-  fi
-  script_dir=$(CDPATH= cd -- "$script_dir" && /bin/pwd -P)
-  script_path=$script_dir/$script_name
-  account_home=$("$bootstrap_python" -I -c \
-    'import os, pwd; print(pwd.getpwuid(os.getuid()).pw_dir)')
-  account_user=$("$bootstrap_python" -I -c \
-    'import os, pwd; print(pwd.getpwuid(os.getuid()).pw_name)')
-  case $account_home in
-    /*) ;;
-    *) echo "could not determine an absolute account home" >&2; exit 1 ;;
-  esac
-  case $account_home in
-    *:*) echo "account home cannot be represented safely in PATH" >&2; exit 1 ;;
-  esac
-  trusted_path="/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/opt/homebrew/opt/llvm/bin:$account_home/.cargo/bin"
-  exec /usr/bin/env -i \
-    HOME="$account_home" \
-    USER="$account_user" \
-    LOGNAME="$account_user" \
-    PATH="$trusted_path" \
-    LANG=C \
-    LC_ALL=C \
-    TZ=UTC \
-    GIT_CONFIG_NOSYSTEM=1 \
-    GIT_CONFIG_GLOBAL=/dev/null \
-    CARGO_TERM_COLOR=never \
-    COBALT_FLASHCARDS_SANITIZED_PID="$$" \
-    /bin/sh "$script_path" "$@"
+script_dir=${0%/*}
+if [ "$script_dir" = "$0" ]; then
+  script_dir=.
 fi
+repo=$(CDPATH= cd -- "$script_dir/.." && /bin/pwd -P)
+account_home=$("$bootstrap_python" -I -c \
+  'import os, pwd; print(pwd.getpwuid(os.getuid()).pw_dir)')
+account_user=$("$bootstrap_python" -I -c \
+  'import os, pwd; print(pwd.getpwuid(os.getuid()).pw_name)')
+case $account_home in
+  /*) ;;
+  *) echo "could not determine an absolute account home" >&2; exit 1 ;;
+esac
+case $account_home in
+  *:*) echo "account home cannot be represented safely in PATH" >&2; exit 1 ;;
+esac
+trusted_path="/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/opt/homebrew/opt/llvm/bin:$account_home/.cargo/bin"
+exec /usr/bin/env -i \
+  HOME="$account_home" \
+  USER="$account_user" \
+  LOGNAME="$account_user" \
+  PATH="$trusted_path" \
+  LANG=C \
+  LC_ALL=C \
+  TZ=UTC \
+  GIT_CONFIG_NOSYSTEM=1 \
+  GIT_CONFIG_GLOBAL=/dev/null \
+  CARGO_TERM_COLOR=never \
+  /bin/sh -s -- "$repo" "$@" <<'COBALT_FLASHCARDS_CLEAN_SCRIPT'
+set -eu
+
+repo=$1
+shift
 
 if [ "$#" -ne 1 ]; then
   echo "usage: scripts/build-flashcards-validation-artifacts.sh TARGET_ROOT" >&2
   exit 2
 fi
 
-repo=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 if [ -n "$(git -C "$repo" status --porcelain --untracked-files=normal)" ]; then
   echo "artifact builds require a clean committed source tree" >&2
   exit 1
@@ -298,3 +296,4 @@ rm -rf "$target_root/host-tools" "$target_root/build-tmp" "$target_root/release"
 rm -f "$target_root/.rustc_info.json" "$target_root/CACHEDIR.TAG"
 
 echo "built validation-only Flashcards artifacts under $target_root"
+COBALT_FLASHCARDS_CLEAN_SCRIPT
