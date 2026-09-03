@@ -48,6 +48,7 @@ members = [
     "examples/store",
     "apps/arxiv",
     "apps/backgammon",
+    "apps/lichess",
     "apps/morse",
     "apps/sudoku",
     "apps/zotero-reader",

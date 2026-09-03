@@ -752,6 +752,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "kobo-lichess"
+version = "1.0.2"
+dependencies = [
+ "kobo-json",
+ "kobo-profile",
+ "kobo-sdk",
+ "kobo-ui",
+ "shakmaty",
+]
+
+[[package]]
 name = "kobo-magnet"
 version = "0.3.5"
 dependencies = [
