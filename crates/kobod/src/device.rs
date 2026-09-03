@@ -4772,7 +4772,7 @@ mod tests {
         );
         let (version, frame) =
             kobo_protocol::read_from_versioned(&mut app).expect("the application is told");
-        assert_eq!(version, kobo_protocol::LEGACY_VERSION);
+        assert_eq!(version, kobo_protocol::VERSION);
         assert!(matches!(
             frame.message,
             Message::Action {
