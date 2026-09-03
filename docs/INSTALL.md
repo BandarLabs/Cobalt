@@ -10,7 +10,7 @@ code 389), firmware 4.38.23697**, the **Kobo Clara HD N249 (device code
 376), firmware 4.38.23684 or 4.38.23697**, the **Kobo Libra 2 N418 (device
 code 388), firmware 4.38.23697**, the **Kobo Clara Colour N367 (device code
 393), firmware 4.45.23697**, and the **Kobo Libra Colour N428 (device code
-390), firmware 4.45.23697**. Support remains tied to the exact
+390), firmware 4.45.23697 or 4.46.23836**. Support remains tied to the exact
 firmware, kernel, framebuffer, touch, and identity combination in the
 [device support matrix](DEVICES.md#device-support-matrix).
 
