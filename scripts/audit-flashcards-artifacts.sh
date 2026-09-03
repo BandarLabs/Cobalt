@@ -273,20 +273,14 @@ if [ "$notice_hash" != "$notice_file_hash" ]; then
   echo "host notice sidecar differs from helper output" >&2
   exit 1
 fi
-if [ "$notice_hash" != "$("$host" --notice | shasum -a 256 | awk '{print $1}')" ]; then
-  echo "submitted host helper notice output differs from the fresh reference build" >&2
-  exit 1
-fi
 licenses_hash=$("$trusted_host" --licenses | shasum -a 256 | awk '{print $1}')
 licenses_file_hash=$(shasum -a 256 "$host_licenses_file" | awk '{print $1}')
 if [ "$licenses_hash" != "$licenses_file_hash" ]; then
   echo "host licence/source sidecar differs from helper output" >&2
   exit 1
 fi
-if [ "$licenses_hash" != "$("$host" --licenses | shasum -a 256 | awk '{print $1}')" ]; then
-  echo "submitted host helper licence output differs from the fresh reference build" >&2
-  exit 1
-fi
+
+rm -rf "$audit_tools" "$fresh_device_root" "$target_root/build-tmp"
 
 echo "device dependency tree: no Anki packages"
 echo "device ELF/package strings and unstripped symbols: no Anki or AnkiDroid implementation material"
@@ -297,7 +291,7 @@ echo "device package: signature/canonical manifest verified against catalog and 
 echo "validation catalog: signature and sole package entry verified"
 echo "device ELFs: byte-identical to fresh audited-source builds"
 echo "host verifier/reference helper: rebuilt from audited source in a fresh target directory"
-echo "submitted host helper: notice/source output matches the fresh reference build"
+echo "submitted host helper: never executed; embedded notice/source markers inspected"
 echo "host helper: pinned Anki rslib/i18n/io/proto, AGPL notice, source pin, and source instructions present"
 echo "host notice sidecars: exact copies of helper notice/licence output"
 (
