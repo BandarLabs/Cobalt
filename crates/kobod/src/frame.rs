@@ -66,6 +66,15 @@ const MAX_FRAME_REGIONS: usize = 8;
 /// region keeps both sides at least this long, growing over neighbouring
 /// unchanged pixels when the damage itself is thinner.
 const MIN_REGION_SIDE: i32 = 2;
+/// Every planned region starts and ends on this pixel grid.
+///
+/// Panel controllers work on pixel groups rather than single pixels, and a
+/// region whose edge falls inside a group has been seen to come up one pixel
+/// short of the requested edge, leaving a stale seam. Snapping both axes to
+/// the grid removes the seam whichever way the panel is rotated, and makes
+/// neighbouring regions overlap so they merge into one update instead of two
+/// updates the controller has to serialise.
+const REGION_ALIGNMENT: i32 = 8;
 
 /// Shared state machine for choosing Kobo panel transitions.
 ///
@@ -125,10 +134,10 @@ impl FramePlanner {
                         .into_iter()
                         .map(|region| FrameRegion {
                             region,
-                            waveform: if Self::has_grey(surface, region) {
-                                PanelWaveform::Gl16
-                            } else {
+                            waveform: if self.two_level_transition(surface, region) {
                                 PanelWaveform::Du
+                            } else {
+                                PanelWaveform::Gl16
                             },
                         })
                         .collect(),
@@ -175,16 +184,17 @@ impl FramePlanner {
                 false,
             );
         }
-        let region = Self::widen_to_minimum(damage.intersection(whole)?, whole);
+        let region = Self::align_to_panel(damage.intersection(whole)?, whole);
         // The waveform still follows the pixels themselves. A two-level
         // waveform over antialiased grey would crush edges that no later
         // frame comparison could repair, because committing this update
         // marks the rectangle current.
-        let waveform = if waveform == PanelWaveform::Du && Self::has_grey(surface, region) {
-            PanelWaveform::Gl16
-        } else {
-            waveform
-        };
+        let waveform =
+            if waveform == PanelWaveform::Du && !self.two_level_transition(surface, region) {
+                PanelWaveform::Gl16
+            } else {
+                waveform
+            };
         let area = u64::try_from(region.width)
             .ok()?
             .saturating_mul(u64::try_from(region.height).ok()?);
@@ -337,11 +347,48 @@ impl FramePlanner {
         }
         Self::limit_regions(&mut regions);
         let whole = self.whole()?;
-        for region in &mut regions {
-            *region = Self::widen_to_minimum(*region, whole);
+        // Snapping to the grid can make regions touch that were apart before,
+        // so they are merged once more rather than submitted overlapping.
+        let mut aligned = Vec::with_capacity(regions.len());
+        for region in regions {
+            Self::merge_region(&mut aligned, Self::align_to_panel(region, whole));
         }
-        regions.sort_by_key(|region| (region.y, region.x));
-        Some((regions, flipped))
+        aligned.sort_by_key(|region| (region.y, region.x));
+        Some((aligned, flipped))
+    }
+
+    /// Snaps a region's edges outward to the [`REGION_ALIGNMENT`] grid and
+    /// grows it to [`MIN_REGION_SIDE`], staying inside `whole`. The extra
+    /// pixels are unchanged and merely repainted.
+    fn align_to_panel(region: Rect, whole: Rect) -> Rect {
+        let far_x = whole.x.saturating_add(whole.width);
+        let far_y = whole.y.saturating_add(whole.height);
+        let left = Self::snap_down(region.x).max(whole.x);
+        let top = Self::snap_down(region.y).max(whole.y);
+        let right = Self::snap_up(region.x.saturating_add(region.width)).min(far_x);
+        let bottom = Self::snap_up(region.y.saturating_add(region.height)).min(far_y);
+        Self::widen_to_minimum(
+            Rect {
+                x: left,
+                y: top,
+                width: right.saturating_sub(left),
+                height: bottom.saturating_sub(top),
+            },
+            whole,
+        )
+    }
+
+    fn snap_down(edge: i32) -> i32 {
+        edge.saturating_sub(edge.rem_euclid(REGION_ALIGNMENT))
+    }
+
+    fn snap_up(edge: i32) -> i32 {
+        let over = edge.rem_euclid(REGION_ALIGNMENT);
+        if over == 0 {
+            edge
+        } else {
+            edge.saturating_add(REGION_ALIGNMENT - over)
+        }
     }
 
     /// Grows a thin region to [`MIN_REGION_SIDE`] on each side, staying
@@ -492,24 +539,36 @@ impl FramePlanner {
             .saturating_mul(u64::from(PANEL_CLEAN_INTERVAL))
     }
 
-    fn has_grey(surface: &Surface, region: Rect) -> bool {
+    /// Whether every pixel in `region` is black or white both before and
+    /// after this frame.
+    ///
+    /// A two-level waveform is only clean for a two-level transition. Its
+    /// drive is tuned for black-to-white and white-to-black; started from a
+    /// grey it stops short and leaves the grey's outline behind, which is how
+    /// erased antialiased text reads as a faint copy of the old screen.
+    /// Checking only the new pixels missed exactly that case.
+    fn two_level_transition(&self, surface: &Surface, region: Rect) -> bool {
+        !Self::has_grey_in(&self.previous, self.width, region)
+            && !Self::has_grey_in(&surface.pixels, surface.width, region)
+    }
+
+    fn has_grey_in(pixels: &[u8], width: usize, region: Rect) -> bool {
         let Ok(left) = usize::try_from(region.x) else {
             return false;
         };
         let Ok(top) = usize::try_from(region.y) else {
             return false;
         };
-        let Ok(width) = usize::try_from(region.width) else {
+        let Ok(region_width) = usize::try_from(region.width) else {
             return false;
         };
         let Ok(height) = usize::try_from(region.height) else {
             return false;
         };
         (top..top.saturating_add(height)).any(|y| {
-            let start = y.saturating_mul(surface.width).saturating_add(left);
-            let end = start.saturating_add(width);
-            surface
-                .pixels
+            let start = y.saturating_mul(width).saturating_add(left);
+            let end = start.saturating_add(region_width);
+            pixels
                 .get(start..end)
                 .unwrap_or(&[])
                 .iter()
@@ -530,6 +589,59 @@ mod tests {
         assert!(first.full);
         assert!(planner.commit(&frame, &first));
         (planner, frame)
+    }
+
+    #[test]
+    fn erasing_grey_is_not_driven_two_level() {
+        // Antialiased text on the panel, then the same area cleared to paper.
+        // The new pixels are pure paper, but the transition starts from grey,
+        // and a two-level waveform from grey leaves the old text behind.
+        let (mut planner, mut frame) = started(32, 32);
+        for x in 4..12 {
+            frame.pixels[8 * 32 + x] = 128;
+        }
+        let text = planner.plan(&frame).expect("text appears");
+        assert_eq!(text.regions[0].waveform, PanelWaveform::Gl16);
+        assert!(planner.commit(&frame, &text));
+
+        for x in 4..12 {
+            frame.pixels[8 * 32 + x] = tone::PAPER;
+        }
+        let erased = planner.plan(&frame).expect("text erased");
+        assert_eq!(erased.regions.len(), 1);
+        assert_eq!(
+            erased.regions[0].waveform,
+            PanelWaveform::Gl16,
+            "clearing grey must use a sixteen-level waveform"
+        );
+
+        // Known damage takes the same rule: an inverted control whose old
+        // pixels held grey is not driven two-level on release.
+        let feedback = planner
+            .plan_damage(
+                &frame,
+                Rect {
+                    x: 4,
+                    y: 8,
+                    width: 8,
+                    height: 1,
+                },
+                PanelWaveform::Du,
+            )
+            .expect("feedback over previously grey pixels");
+        assert_eq!(feedback.regions[0].waveform, PanelWaveform::Gl16);
+    }
+
+    #[test]
+    fn a_black_and_white_transition_stays_two_level() {
+        let (mut planner, mut frame) = started(32, 32);
+        frame.pixels[8 * 32 + 8] = tone::INK;
+        let drawn = planner.plan(&frame).expect("ink appears");
+        assert_eq!(drawn.regions[0].waveform, PanelWaveform::Du);
+        assert!(planner.commit(&frame, &drawn));
+        frame.pixels[8 * 32 + 8] = tone::PAPER;
+        let cleared = planner.plan(&frame).expect("ink erased");
+        assert_eq!(cleared.regions[0].waveform, PanelWaveform::Du);
     }
 
     #[test]
@@ -562,7 +674,7 @@ mod tests {
             )
             .expect("feedback");
         assert!(planner.commit(&frame, &feedback));
-        assert_eq!(planner.plan(&frame).expect("remaining").region.x, 28);
+        assert_eq!(planner.plan(&frame).expect("remaining").region.x, 24);
     }
 
     #[test]
@@ -630,7 +742,7 @@ mod tests {
     }
 
     #[test]
-    fn a_widened_region_stays_inside_the_screen() {
+    fn an_aligned_region_stays_inside_the_screen() {
         let (planner, mut frame) = started(32, 32);
         frame.pixels[32 * 32 - 1] = tone::INK;
         let update = planner.plan(&frame).expect("corner pixel");
@@ -638,11 +750,79 @@ mod tests {
         assert_eq!(
             region,
             Rect {
-                x: 30,
-                y: 30,
-                width: 2,
-                height: 2,
+                x: 24,
+                y: 24,
+                width: 8,
+                height: 8,
             }
         );
+
+        // A panel whose size is not a grid multiple clamps the last region
+        // to the edge instead of running past it.
+        let (planner, mut frame) = started(30, 30);
+        frame.pixels[30 * 30 - 1] = tone::INK;
+        let update = planner.plan(&frame).expect("corner pixel");
+        let region = update.regions[0].region;
+        assert_eq!(
+            region,
+            Rect {
+                x: 24,
+                y: 24,
+                width: 6,
+                height: 6,
+            }
+        );
+    }
+
+    #[test]
+    fn regions_start_and_end_on_the_panel_grid() {
+        let (planner, mut frame) = started(64, 64);
+        frame.pixels[21 * 64 + 13] = tone::INK;
+        let update = planner.plan(&frame).expect("one pixel");
+        assert_eq!(
+            update.regions[0].region,
+            Rect {
+                x: 8,
+                y: 16,
+                width: 8,
+                height: 8,
+            }
+        );
+
+        let feedback = planner
+            .plan_damage(
+                &frame,
+                Rect {
+                    x: 3,
+                    y: 5,
+                    width: 10,
+                    height: 20,
+                },
+                PanelWaveform::Du,
+            )
+            .expect("known damage");
+        assert_eq!(
+            feedback.regions[0].region,
+            Rect {
+                x: 0,
+                y: 0,
+                width: 16,
+                height: 32,
+            }
+        );
+    }
+
+    #[test]
+    fn regions_that_touch_after_alignment_become_one_update() {
+        // Two changes a little over the join gap apart stay separate as raw
+        // damage, but snapping each to the grid makes them meet.
+        let (planner, mut frame) = started(64, 16);
+        frame.pixels[4 * 64 + 7] = tone::INK;
+        frame.pixels[4 * 64 + 17] = tone::INK;
+        let update = planner.plan(&frame).expect("two pixels");
+        assert_eq!(update.regions.len(), 1);
+        assert_eq!(update.regions[0].region.x, 0);
+        assert_eq!(update.regions[0].region.width, 24);
+        assert_eq!(update.dirty, 2);
     }
 }
