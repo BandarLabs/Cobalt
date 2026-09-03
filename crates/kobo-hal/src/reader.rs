@@ -55,6 +55,10 @@ pub const SUPERVISOR_EXECUTABLE: &str = "/usr/local/Kobo/sickel";
 /// How often to check whether a stopped reader has actually exited.
 const POLL_INTERVAL: Duration = Duration::from_millis(100);
 
+/// A daemon launched with `-B` briefly leaves its pre-fork process visible.
+/// Requiring an unchanged process set avoids capturing that transient parent.
+const START_CAPTURE_SETTLE: Duration = Duration::from_millis(500);
+
 #[derive(Debug)]
 pub enum ReaderError {
     /// No process is running the reader executable.
@@ -224,13 +228,30 @@ impl Reader {
         executable: &str,
         identity: Identity,
     ) -> Result<Self, ReaderError> {
-        let matches = matching_pids(proc_root, executable, identity)?;
+        let matches = matching_pids_in(proc_root, executable, identity)?;
         let pid = match matches.as_slice() {
             [] => return Err(ReaderError::NotRunning),
             [only] => *only,
             several => return Err(ReaderError::Ambiguous(several.to_vec())),
         };
+        Self::capture_pid_in(proc_root, executable, pid, identity)
+    }
 
+    fn capture_pid_in(
+        proc_root: &Path,
+        executable: &str,
+        pid: i32,
+        identity: Identity,
+    ) -> Result<Self, ReaderError> {
+        let identified = match identity {
+            Identity::ZerothArgument => read_argv(proc_root, pid)
+                .is_some_and(|argv| argv.first().is_some_and(|first| first == executable)),
+            Identity::Executable => fs::read_link(proc_root.join(pid.to_string()).join("exe"))
+                .is_ok_and(|target| target == Path::new(executable)),
+        };
+        if !identified {
+            return Err(ReaderError::IdentityChanged(pid));
+        }
         let argv = read_argv(proc_root, pid).ok_or(ReaderError::IdentityChanged(pid))?;
         let arguments = argv
             .into_iter()
@@ -342,9 +363,11 @@ impl Reader {
     /// Returns an error when the reader cannot be spawned or never appears in
     /// the process table.
     pub fn start(&self, appear_within: Duration) -> Result<i32, ReaderError> {
-        match resume_plan(Self::find_executable_in(
-            Path::new("/proc"),
+        let proc_root = Path::new("/proc");
+        match resume_plan(Self::find_matching_in(
+            proc_root,
             &self.executable,
+            self.identity,
         )) {
             Ok(Resume::Use(pid)) => return Ok(pid),
             Ok(Resume::Spawn) => {}
@@ -353,14 +376,46 @@ impl Reader {
             }
             Err(error) => return Err(error),
         }
+        self.start_captured(appear_within).map(|reader| reader.pid)
+    }
+
+    /// Starts an identical process and returns its newly captured identity.
+    ///
+    /// Unlike [`Self::start`] this always spawns: callers that need the new
+    /// identity have already decided nothing of theirs is running.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the process cannot be spawned or never appears
+    /// with the same identity mode that originally found it.
+    pub fn start_captured(&self, appear_within: Duration) -> Result<Self, ReaderError> {
+        let proc_root = Path::new("/proc");
+        let before = matching_pids_in(proc_root, &self.executable, self.identity)?;
         let status = self.start_command().status()?;
         if !status.success() {
             return Err(ReaderError::DidNotStart);
         }
         let deadline = Instant::now() + appear_within;
+        let mut last_started = Vec::new();
+        let mut unchanged_since = Instant::now();
         loop {
-            if let Ok(reader) = Self::find_executable_in(Path::new("/proc"), &self.executable) {
-                return Ok(reader.pid);
+            let running = matching_pids_in(proc_root, &self.executable, self.identity)?;
+            let started = newly_started_pids(&before, &running);
+            if started != last_started {
+                last_started = started;
+                unchanged_since = Instant::now();
+            } else if !started.is_empty() && unchanged_since.elapsed() >= START_CAPTURE_SETTLE {
+                match started.as_slice() {
+                    [pid] => {
+                        return Self::capture_pid_in(
+                            proc_root,
+                            &self.executable,
+                            *pid,
+                            self.identity,
+                        );
+                    }
+                    several => return Err(ReaderError::Ambiguous(several.to_vec())),
+                }
             }
             if Instant::now() >= deadline {
                 return Err(ReaderError::DidNotStart);
@@ -449,7 +504,7 @@ impl Reader {
     }
 }
 
-fn matching_pids(
+fn matching_pids_in(
     proc_root: &Path,
     executable: &str,
     identity: Identity,
@@ -528,6 +583,14 @@ fn stop_matching(executable: &str, pids: &[i32], grace: Duration) {
             let _ignored = signal(pid, SIGKILL);
         }
     }
+}
+
+fn newly_started_pids(before: &[i32], running: &[i32]) -> Vec<i32> {
+    running
+        .iter()
+        .copied()
+        .filter(|pid| !before.contains(pid))
+        .collect()
 }
 
 /// A detached process that restarts the reader if we do not.
@@ -718,8 +781,8 @@ fn read_environment(proc_root: &Path, pid: i32) -> io::Result<BTreeMap<OsString,
 #[cfg(test)]
 mod tests {
     use super::{
-        read_argv, read_environment, resume_plan, sibling, watchdog_script, Identity, Reader,
-        ReaderError, Resume, READER_EXECUTABLE,
+        newly_started_pids, read_argv, read_environment, resume_plan, sibling, watchdog_script,
+        Identity, Reader, ReaderError, Resume, READER_EXECUTABLE,
     };
     use std::collections::BTreeMap;
     use std::ffi::OsString;
@@ -896,6 +959,12 @@ mod tests {
         fs::remove_file(root.join("500").join("exe")).expect("remove exe link");
         assert!(!daemon.still_running_in(&root));
         let _ignored = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn detached_start_capture_ignores_processes_that_predate_the_launch() {
+        assert_eq!(newly_started_pids(&[400], &[400, 402]), vec![402]);
+        assert_eq!(newly_started_pids(&[400], &[402, 403]), vec![402, 403]);
     }
 
     #[test]

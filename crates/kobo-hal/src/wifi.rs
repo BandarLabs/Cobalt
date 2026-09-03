@@ -339,6 +339,49 @@ impl Wifi {
         }
     }
 
+    /// Returns whether the firmware supplicant has completed association.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the supplicant control socket cannot be queried.
+    pub fn associated(&self) -> Result<bool, DeviceError> {
+        self.command(["status"])
+            .map(|status| value(&status, "wpa_state").is_some_and(|state| state == "COMPLETED"))
+    }
+
+    /// Asks the existing firmware supplicant to reconnect.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the control socket rejects or cannot receive the
+    /// request.
+    pub fn reconnect(&self) -> Result<(), DeviceError> {
+        self.command(["reconnect"]).map(|_| ())
+    }
+
+    /// Reproduces the stock reader's network-screen recovery without changing
+    /// saved networks or starting another supplicant.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the interface cannot be raised or the existing
+    /// firmware supplicant rejects one of the recovery commands.
+    pub fn recover_association(&self) -> Result<(), DeviceError> {
+        if !set_interface(true) {
+            return Err(DeviceError::Backend);
+        }
+        if self.associated()? {
+            return Ok(());
+        }
+        for command in association_recovery_commands() {
+            self.command(command)?;
+            if self.associated()? {
+                return Ok(());
+            }
+        }
+        Ok(())
+    }
+
     #[must_use]
     pub fn set_enabled(&self, enabled: bool) -> DeviceResult {
         if enabled {
@@ -786,6 +829,7 @@ fn set_interface(enabled: bool) -> bool {
     false
 }
 
+<<<<<<< HEAD
 /// Stops the chip from dropping an association the session still wants.
 ///
 /// Nickel keeps the radio from power-saving while it is awake. Without that,
@@ -806,6 +850,10 @@ fn disable_power_save() {
             return;
         }
     }
+=======
+fn association_recovery_commands() -> [[&'static str; 1]; 3] {
+    [["scan"], ["reassociate"], ["reconnect"]]
+>>>>>>> origin/beta
 }
 
 fn parse_scan_results(output: &str, connected: Option<&str>) -> Vec<WifiNetwork> {
@@ -928,6 +976,7 @@ fn quote(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
+<<<<<<< HEAD
         handshake_in_progress, has_saved_network, parse_scan_results, quote, reconnect_saved_with,
         valid_credentials, value, Quiet,
     };
@@ -962,6 +1011,17 @@ mod tests {
         assert!(!super::stale());
         super::set_awake(true);
         assert!(!super::stale(), "a second wake without sleep is not stale");
+=======
+        association_recovery_commands, parse_scan_results, quote, valid_credentials, value,
+    };
+
+    #[test]
+    fn association_recovery_matches_the_stock_network_screen_sequence() {
+        assert_eq!(
+            association_recovery_commands(),
+            [["scan"], ["reassociate"], ["reconnect"]]
+        );
+>>>>>>> origin/beta
     }
 
     #[test]

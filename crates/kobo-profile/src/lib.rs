@@ -288,10 +288,19 @@ pub const CLARA_BW_391: DeviceProfile = DeviceProfile {
     firmware_versions: &["4.45.23697"],
     kernel_release: "4.9.77",
     write_ready: true,
+<<<<<<< HEAD
     // Leftover Nickel `wpa_supplicant` survives a Cobalt session on this
     // MediaTek radio too. Without the reap, handing back leaves Wi-Fi down
     // until a reboot or a manual reconnect; stopping it before Nickel
     // restarts lets the reader's own supplicant take `wlan0` alone.
+=======
+    // Measured on the device on 2026-09-02: preserving Nickel's detached
+    // supplicant kept SSH alive throughout Cobalt's panel session, but the
+    // restarted reader launched a replacement. Reaping the exact captured
+    // process prevents the two-owner handoff; the runtime then reproduces the
+    // stock network screen's scan/reassociate sequence and waits for the
+    // replacement to complete association because a stale route can linger.
+>>>>>>> origin/beta
     reap_nickel_supplicant: true,
 };
 
@@ -1755,7 +1764,11 @@ mod tests {
             declared,
             [
                 ("clara-bw-391", true),
+<<<<<<< HEAD
                 ("clara-bw-395", true),
+=======
+                ("clara-bw-395", false),
+>>>>>>> origin/beta
                 ("clara-hd-376", false),
                 ("clara-colour-393", false),
                 ("elipsa-2e-389", false),

@@ -543,6 +543,7 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
 
     // Everything that can fail happens before the reader is stopped.
     let reader = Reader::find().map_err(|error| error.to_string())?;
+    let network = kobo_hal::network::Connection::capture();
     let state = PathBuf::from(format!("/tmp/kobo-session-{}", std::process::id()));
     reader
         .save(&state)
@@ -623,6 +624,26 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
     reader
         .stop(STOP_GRACE)
         .map_err(|error| format!("stop the reader: {error}"))?;
+
+    // Nickel owns Wi-Fi while it runs, but its supplicant and DHCP client are
+    // detached processes. Capture them before the handoff and restore exactly
+    // those processes if stopping Nickel drops the route. Cobalt never invents
+    // a network or starts a daemon that was not already serving the owner.
+    if network.was_online() {
+        if let Some(wifi) = kobo_hal::wifi::Wifi::open() {
+            let reconnected = wifi.set_enabled(true);
+            trace(&format!(
+                "asked the captured Wi-Fi owner to reconnect: {reconnected:?}"
+            ));
+        }
+    }
+    let session_network = network.restore_for_session(Duration::from_secs(30));
+    trace(&format!(
+        "session network: {:?}; uncertain captures: {:?}; start errors: {:?}",
+        session_network.outcome(),
+        session_network.uncertain_executables(),
+        session_network.start_errors()
+    ));
 
     // One reader thread on the touch descriptor for the whole panel session,
     // started here rather than per application.
@@ -705,13 +726,68 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
     // Without this the recovery watchdog would conclude the runtime had died
     // and restart a reader that is already starting.
     let teardown = KeepBeating::start(&watchdog);
+    let captured_supplicant_release_failed = if profile.reap_nickel_supplicant {
+        trace("stopping the captured leftover supplicant before the reader returns");
+        if let Err(error) =
+            network.release_captured(kobo_hal::network::SUPPLICANT_EXECUTABLE, STOP_GRACE)
+        {
+            trace(&format!("the leftover supplicant would not stop: {error}"));
+            true
+        } else {
+            false
+        }
+    } else {
+        false
+    };
+    let network_start_uncertain = !session_network.start_errors().is_empty()
+        || !session_network.uncertain_executables().is_empty();
+    let network_release_failed = match session_network.release(STOP_GRACE) {
+        Ok(()) => false,
+        Err(errors) => {
+            trace(&format!(
+                "session network would not stop cleanly: {errors:?}"
+            ));
+            true
+        }
+    };
     // Asked once, before the panel is given up, because the answer decides
     // whether the owner is owed an explanation and the display is gone by the
     // time the reboot itself is requested.
+<<<<<<< HEAD
     let rebooting = kobo_hal::bluetooth::requires_reboot_after_use();
     let reader_was_running = reader_owns_panel();
     if rebooting && !reader_was_running {
         if let Err(error) = announce_reboot(&display, whole_screen) {
+=======
+    let bluetooth_reboot = kobo_hal::bluetooth::requires_reboot_after_use();
+    let reboot_reason = if bluetooth_reboot {
+        Some((
+            kobo_ui::Glyph::Bluetooth,
+            "Bluetooth shares one radio with Wi-Fi here, and that radio can only be \
+             started once per boot. Restarting is the only way to hand it back working. \
+             This is expected, it is not a crash, and everything you have saved is \
+             already on the disk.",
+            "Bluetooth used the shared MediaTek radio",
+        ))
+    } else if network_start_uncertain
+        || network_release_failed
+        || captured_supplicant_release_failed
+    {
+        Some((
+            kobo_ui::Glyph::Wifi,
+            "Cobalt could not prove that Wi-Fi has exactly one owner. Restarting avoids \
+             handing the radio to competing processes. This is expected, it is not a \
+             crash, and everything you have saved is already on the disk.",
+            "Wi-Fi ownership could not be handed back safely",
+        ))
+    } else {
+        None
+    };
+    let rebooting = reboot_reason.is_some();
+    if rebooting {
+        let (glyph, summary, _) = reboot_reason.expect("reboot reason");
+        if let Err(error) = announce_reboot(&display, whole_screen, glyph, summary) {
+>>>>>>> origin/beta
             // Not fatal. Failing to explain the reboot is worse than not
             // rebooting, but it is not a reason to leave the radio broken.
             trace(&format!("could not show the restart notice: {error}"));
@@ -745,18 +821,22 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
     // the only proven hand-back: it returns directly to the stock reader with
     // a pristine shared Wi-Fi/Bluetooth driver state.
     if rebooting {
-        trace("MediaTek Bluetooth was used; rebooting cleanly instead of restarting the reader");
-        println!("Bluetooth changed; rebooting cleanly back to the reader");
+        let (_, _, detail) = reboot_reason.expect("reboot reason");
+        trace(&format!(
+            "{detail}; rebooting cleanly instead of restarting the reader"
+        ));
+        println!("shared hardware needs a clean handoff; rebooting back to the reader");
         watchdog.disarm();
         drop(teardown);
         let _ignored = fs::remove_dir_all(&state);
         let summary = outcome.unwrap_or_else(|error| format!("application ended: {error}"));
         return request_clean_reboot().map(|()| {
             format!(
-                "{summary}; typeface {typeface}; Bluetooth used the shared MediaTek radio, so a clean reboot was requested before returning to the stock reader"
+                "{summary}; typeface {typeface}; {detail}, so a clean reboot was requested before returning to the stock reader"
             )
         });
     }
+<<<<<<< HEAD
     // Nickel launches its supplicant detached, so stopping the reader never
     // took it down and it has been running for the whole session. A restarted
     // Nickel starts a supplicant of its own on top of it, the two fight over
@@ -811,8 +891,45 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
     // fixed in `resume_once_fed`, which now arms nothing without evidence, but
     // a developer's reboot was never worth being one fault away from a
     // stranger's library.
+=======
+    trace("panel and touch released, restarting the reader");
+    println!("panel released, restarting the reader");
+    let restarted = match reader.start(START_GRACE) {
+        Ok(pid) => pid,
+        Err(error) => {
+            trace(&format!(
+                "the reader did not restart ({error}); requesting a clean reboot"
+            ));
+            watchdog.disarm();
+            drop(teardown);
+            let _ignored = fs::remove_dir_all(&state);
+            let summary = outcome.unwrap_or_else(|error| format!("application ended: {error}"));
+            return request_clean_reboot().map(|()| {
+                format!(
+                    "{summary}; typeface {typeface}; the reader did not restart ({error}), so a clean reboot was requested"
+                )
+            });
+        }
+    };
+    // Any daemon Cobalt started for the session was stopped by exact captured
+    // identity above. A stop or capture uncertainty takes the clean-reboot
+    // path, so Nickel is never started on top of an unproven network owner.
+>>>>>>> origin/beta
     trace("reader restart returned, waiting for it to feed the freeze watchdog");
     println!("waiting for the reader to feed the freeze watchdog");
+    let reader_wifi = restore_reader_wifi(network.was_online(), Duration::from_secs(45));
+    if !reader_wifi {
+        trace("the reader did not complete Wi-Fi association; requesting a clean reboot");
+        watchdog.disarm();
+        drop(teardown);
+        let _ignored = fs::remove_dir_all(&state);
+        let summary = outcome.unwrap_or_else(|error| format!("application ended: {error}"));
+        return request_clean_reboot().map(|()| {
+            format!(
+                "{summary}; typeface {typeface}; the reader did not reclaim Wi-Fi, so a clean reboot was requested"
+            )
+        });
+    }
     // Resumed only once the reader is feeding it again. Resuming the moment
     // the process exists lights a ten second fuse that a still-starting reader
     // cannot feed, which is what rebooted the device at the end of a session.
@@ -826,15 +943,12 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
     drop(teardown);
     let _ignored = fs::remove_dir_all(&state);
 
-    let reader_state = match (restarted, resumed) {
-        (Ok(pid), Ok(after)) => {
-            format!("the reader is running again as pid {pid}, and the freeze watchdog was resumed {after}")
+    let reader_state = match resumed {
+        Ok(after) => {
+            format!("the reader is running again as pid {restarted}, and the freeze watchdog was resumed {after}")
         }
-        (Ok(pid), Err(error)) => format!(
-            "the reader is running again as pid {pid}, but the freeze watchdog could not be resumed ({error}); it returns on the next reboot"
-        ),
-        (Err(error), _) => format!(
-            "THE READER DID NOT COME BACK ({error}). Power cycle the device; it always boots the stock reader"
+        Err(error) => format!(
+            "the reader is running again as pid {restarted}, but the freeze watchdog could not be resumed ({error}); it returns on the next reboot"
         ),
     };
     let reader_state =
@@ -854,6 +968,44 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
             "{summary}; typeface {typeface}; the screen could not be restored ({error}), but {reader_state} and repaints its own screen"
         )),
         (Err(error), _) => Err(format!("{error}; {reader_state}")),
+    }
+}
+
+fn restore_reader_wifi(was_online: bool, within: Duration) -> bool {
+    if !was_online {
+        return true;
+    }
+    let deadline = Instant::now() + within;
+    let mut retry_at = Instant::now();
+    let mut healthy_since = None;
+    loop {
+        if let Some(wifi) = kobo_hal::wifi::Wifi::open() {
+            let associated = wifi.associated().unwrap_or(false);
+            let healthy =
+                associated && kobo_hal::network::is_online(kobo_hal::network::WIRELESS_LINK);
+            if healthy {
+                let since = healthy_since.get_or_insert_with(Instant::now);
+                if since.elapsed() >= Duration::from_secs(10) {
+                    return true;
+                }
+            } else {
+                healthy_since = None;
+                if !associated && Instant::now() >= retry_at {
+                    if let Err(error) = wifi.recover_association() {
+                        trace(&format!(
+                            "the reader Wi-Fi recovery sequence was not accepted: {error:?}"
+                        ));
+                    }
+                    retry_at = Instant::now() + Duration::from_secs(5);
+                }
+            }
+        } else {
+            healthy_since = None;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        thread::sleep(Duration::from_millis(500));
     }
 }
 
@@ -907,6 +1059,7 @@ fn describe(limit: Duration) -> String {
 /// It exists because the reboot below was silent. The only warning was a line
 /// on a developer's terminal, so from the owner's chair a Bluetooth connection
 /// simply killed the device, which is exactly how it was reported.
+<<<<<<< HEAD
 fn announce_reboot(display: &DisplaySession, whole_screen: Rect) -> Result<(), String> {
     paint_notice(
         display,
@@ -932,6 +1085,12 @@ fn paint_notice(
     whole_screen: Rect,
     glyph: kobo_ui::Glyph,
     title: &str,
+=======
+fn announce_reboot(
+    display: &DisplaySession,
+    whole_screen: Rect,
+    glyph: kobo_ui::Glyph,
+>>>>>>> origin/beta
     summary: &str,
 ) -> Result<(), String> {
     let screen = Screen::new(
@@ -939,7 +1098,11 @@ fn paint_notice(
         vec![kobo_ui::Node::Splash {
             id: kobo_ui::NodeId(1),
             glyph: Some(glyph),
+<<<<<<< HEAD
             title: title.to_owned(),
+=======
+            title: "Restarting your reader".to_owned(),
+>>>>>>> origin/beta
             summary: summary.to_owned(),
         }],
     );
