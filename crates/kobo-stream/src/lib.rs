@@ -133,6 +133,8 @@ pub fn permits_input(mode: InputMode, bytes: &[u8]) -> bool {
 struct Terminal {
     parser: vt100::Parser,
     grid: Grid,
+    next_lease: u64,
+    lease: u64,
     generation: u64,
     previous: Vec<String>,
     previous_cursor: Option<(u16, u16)>,
@@ -147,6 +149,8 @@ impl Terminal {
         Self {
             parser: vt100::Parser::new(grid.rows, grid.columns, 0),
             grid,
+            next_lease: 0,
+            lease: 0,
             generation: 0,
             previous: Vec::new(),
             previous_cursor: None,
@@ -186,17 +190,30 @@ impl Terminal {
         self.dirty = true;
     }
 
-    fn resize_for(&mut self, grid: Grid, generation: u64) -> bool {
-        if generation < self.generation {
+    fn issue_lease(&mut self) -> u64 {
+        self.next_lease = self.next_lease.saturating_add(1).max(1);
+        self.next_lease
+    }
+
+    fn resize_for(&mut self, grid: Grid, lease: u64, generation: u64) -> bool {
+        let lease_is_current = lease == self.lease;
+        let lease_is_new = lease > self.lease && lease <= self.next_lease;
+        if (!lease_is_current && !lease_is_new)
+            || (lease_is_current && generation < self.generation)
+        {
             return false;
+        }
+        if lease_is_new {
+            self.lease = lease;
+            self.generation = 0;
         }
         self.generation = generation;
         self.resize(grid);
         true
     }
 
-    fn screen_for(&mut self, since: u64, generation: u64) -> Option<Screen> {
-        (generation == self.generation).then(|| self.screen(since))
+    fn screen_for(&mut self, since: u64, lease: u64, generation: u64) -> Option<Screen> {
+        (lease == self.lease && generation == self.generation).then(|| self.screen(since))
     }
 
     fn screen(&mut self, since: u64) -> Screen {
@@ -290,9 +307,17 @@ impl Session {
         }
     }
 
+    fn issue_lease(&self) -> Option<u64> {
+        self.terminal
+            .lock()
+            .ok()
+            .map(|mut terminal| terminal.issue_lease())
+    }
+
     fn resize_for(
         &self,
         grid: Grid,
+        lease: u64,
         generation: u64,
         resize_pty: impl FnOnce() -> Result<(), String>,
     ) -> Result<bool, String> {
@@ -300,20 +325,30 @@ impl Session {
             .terminal
             .lock()
             .map_err(|_| "terminal screen lock failed")?;
-        if generation < terminal.generation {
+        let lease_is_current = lease == terminal.lease;
+        let lease_is_new = lease > terminal.lease && lease <= terminal.next_lease;
+        if (!lease_is_current && !lease_is_new)
+            || (lease_is_current && generation < terminal.generation)
+        {
             return Ok(false);
         }
         resize_pty()?;
-        let accepted = terminal.resize_for(grid, generation);
+        let accepted = terminal.resize_for(grid, lease, generation);
         self.changed.notify_all();
         Ok(accepted)
     }
 
-    fn screen_for(&self, since: u64, generation: u64) -> Option<Screen> {
+    fn screen_for(&self, since: u64, lease: u64, generation: u64) -> Option<Screen> {
         self.terminal
             .lock()
             .ok()
-            .and_then(|mut terminal| terminal.screen_for(since, generation))
+            .and_then(|mut terminal| terminal.screen_for(since, lease, generation))
+    }
+
+    fn accepts_lease(&self, lease: u64) -> bool {
+        self.terminal
+            .lock()
+            .is_ok_and(|terminal| terminal.lease == lease)
     }
 
     #[must_use]
@@ -764,6 +799,10 @@ fn route(
         return respond(stream, 403, "{}");
     }
     match (request.method.as_str(), request.path()) {
+        ("GET", "/lease") => {
+            let lease = session.issue_lease().ok_or("terminal screen lock failed")?;
+            respond(stream, 200, &format!(r#"{{"lease":{lease}}}"#))
+        }
         ("GET", "/hello") => {
             let grid = query(&request.target, "grid")
                 .ok_or_else(|| "hello omitted the terminal grid".to_owned())
@@ -771,7 +810,10 @@ fn route(
             let generation = query(&request.target, "generation")
                 .and_then(|value| value.parse().ok())
                 .unwrap_or(0);
-            let accepted = session.resize_for(grid, generation, || {
+            let lease = query(&request.target, "lease")
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(0);
+            let accepted = session.resize_for(grid, lease, generation, || {
                 input
                     .lock()
                     .map_err(|_| "terminal input lock failed")?
@@ -803,13 +845,16 @@ fn route(
             let generation = query(&request.target, "generation")
                 .and_then(|value| value.parse().ok())
                 .unwrap_or(0);
+            let lease = query(&request.target, "lease")
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(0);
             let started = Instant::now();
-            let Some(mut screen) = session.screen_for(since, generation) else {
+            let Some(mut screen) = session.screen_for(since, lease, generation) else {
                 return respond(stream, 409, r#"{"stale":true}"#);
             };
             while screen.rows.is_empty() && !screen.ended && started.elapsed() < LONGEST_POLL {
                 std::thread::sleep(Duration::from_millis(100));
-                let Some(current) = session.screen_for(since, generation) else {
+                let Some(current) = session.screen_for(since, lease, generation) else {
                     return respond(stream, 409, r#"{"stale":true}"#);
                 };
                 screen = current;
@@ -817,6 +862,12 @@ fn route(
             respond(stream, 200, &screen_json(&screen))
         }
         ("POST", "/keys") => {
+            let lease = query(&request.target, "lease")
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(0);
+            if !session.accepts_lease(lease) {
+                return respond(stream, 409, r#"{"stale":true}"#);
+            }
             let body = String::from_utf8_lossy(&request.body);
             let parsed = kobo_json::parse(&body).map_err(|_| "invalid keys JSON")?;
             if parsed.get("session").and_then(kobo_json::Value::as_i64) != Some(session_id as i64) {
@@ -1194,15 +1245,16 @@ mod tests {
                     columns: 20,
                     rows: 3,
                 },
+                0,
                 1,
                 || Ok(()),
             )
             .expect("resize");
         assert!(resized);
-        assert!(session.screen_for(before.seq, 0).is_none());
+        assert!(session.screen_for(before.seq, 0, 0).is_none());
 
         let current = session
-            .screen_for(before.seq, 1)
+            .screen_for(before.seq, 0, 1)
             .expect("current generation snapshot");
         assert_eq!(current.rows.len(), 3);
         assert_eq!(current.rows[0].cells.trim(), "before");
@@ -1213,9 +1265,59 @@ mod tests {
                     rows: 2,
                 },
                 0,
+                0,
                 || panic!("stale resize reached the PTY"),
             )
             .expect("stale resize verdict"));
+    }
+
+    #[test]
+    fn fresh_lease_resets_generations_and_rejects_delayed_old_epoch_resize() {
+        let session = Session::new(Grid {
+            columns: 12,
+            rows: 2,
+        });
+        let first = session.issue_lease().expect("first lease");
+        assert!(session
+            .resize_for(
+                Grid {
+                    columns: 20,
+                    rows: 3,
+                },
+                first,
+                9,
+                || Ok(()),
+            )
+            .expect("first resize"));
+        let relaunched = session.issue_lease().expect("relaunch lease");
+        assert!(relaunched > first);
+        assert!(session
+            .resize_for(
+                Grid {
+                    columns: 30,
+                    rows: 4,
+                },
+                relaunched,
+                0,
+                || Ok(()),
+            )
+            .expect("relaunch resize"));
+        assert!(!session
+            .resize_for(
+                Grid {
+                    columns: 10,
+                    rows: 1,
+                },
+                first,
+                u64::MAX,
+                || panic!("old epoch reached the PTY"),
+            )
+            .expect("old epoch verdict"));
+        assert!(session.screen_for(0, first, u64::MAX).is_none());
+        let current = session
+            .screen_for(0, relaunched, 0)
+            .expect("relaunched screen");
+        assert_eq!(current.rows.len(), 4);
     }
 
     #[test]
