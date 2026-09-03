@@ -291,39 +291,42 @@ fi
 
 rm -rf "$audit_tools" "$fresh_device_root" "$target_root/build-tmp"
 
-find "$target_root" -mindepth 1 -print | while IFS= read -r path; do
-  if [ -L "$path" ]; then
-    echo "symlink remains in audited target root: $path" >&2
-    exit 1
-  fi
-  relative=${path#"$target_root"/}
-  case $relative in
-    armv7-unknown-linux-musleabihf | \
-      armv7-unknown-linux-musleabihf/release | \
-      armv7-unknown-linux-musleabihf/release/kobo-flashcards | \
-      audit-unstripped | \
-      audit-unstripped/armv7-unknown-linux-musleabihf | \
-      audit-unstripped/armv7-unknown-linux-musleabihf/release | \
-      audit-unstripped/armv7-unknown-linux-musleabihf/release/kobo-flashcards | \
-      host-target | \
-      host-target/release | \
-      host-target/release/flashcards-import | \
-      artifacts | \
-      artifacts/catalog | \
-      artifacts/catalog/catalog.json | \
-      artifacts/catalog/catalog.sig | \
-      artifacts/flashcards-validation.cobalt-app | \
-      artifacts/flashcards.manifest.json | \
-      artifacts/validation-public-key.txt | \
-      artifacts/flashcards-import.source-commit.txt | \
-      artifacts/flashcards-import.notice.txt | \
-      artifacts/flashcards-import.licenses.txt) ;;
-    *)
-      echo "unexpected unaudited path remains in target root: $path" >&2
-      exit 1
-      ;;
-  esac
-done
+python3 - "$target_root" <<'PY'
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+expected = {
+    "armv7-unknown-linux-musleabihf",
+    "armv7-unknown-linux-musleabihf/release",
+    "armv7-unknown-linux-musleabihf/release/kobo-flashcards",
+    "audit-unstripped",
+    "audit-unstripped/armv7-unknown-linux-musleabihf",
+    "audit-unstripped/armv7-unknown-linux-musleabihf/release",
+    "audit-unstripped/armv7-unknown-linux-musleabihf/release/kobo-flashcards",
+    "host-target",
+    "host-target/release",
+    "host-target/release/flashcards-import",
+    "artifacts",
+    "artifacts/catalog",
+    "artifacts/catalog/catalog.json",
+    "artifacts/catalog/catalog.sig",
+    "artifacts/flashcards-validation.cobalt-app",
+    "artifacts/flashcards.manifest.json",
+    "artifacts/validation-public-key.txt",
+    "artifacts/flashcards-import.source-commit.txt",
+    "artifacts/flashcards-import.notice.txt",
+    "artifacts/flashcards-import.licenses.txt",
+}
+for path in root.rglob("*"):
+    relative = path.relative_to(root).as_posix()
+    if path.is_symlink():
+        raise SystemExit(f"symlink remains in audited target root: {relative!r}")
+    if relative not in expected:
+        raise SystemExit(f"unexpected unaudited path remains in target root: {relative!r}")
+if {path.relative_to(root).as_posix() for path in root.rglob("*")} != expected:
+    raise SystemExit("audited target root is missing an expected path")
+PY
 
 {
   echo "device dependency tree: no Anki packages"

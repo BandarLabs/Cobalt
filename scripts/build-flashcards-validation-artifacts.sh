@@ -25,22 +25,11 @@ audit_device="$target_root/audit-unstripped/armv7-unknown-linux-musleabihf/relea
 host="$target_root/host-target/release/flashcards-import"
 cli="$target_root/host-tools/release/kobo"
 
-rm -rf "$artifacts"
+find "$target_root" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
 mkdir -p "$artifacts/catalog" "$target_root/build-tmp"
 export TMPDIR="$target_root/build-tmp"
 export CC_armv7_unknown_linux_musleabihf="${CC_armv7_unknown_linux_musleabihf:-armv7-unknown-linux-musleabihf-gcc}"
 export AR_armv7_unknown_linux_musleabihf="${AR_armv7_unknown_linux_musleabihf:-armv7-unknown-linux-musleabihf-ar}"
-
-rm -rf \
-  "$target_root/armv7-unknown-linux-musleabihf" \
-  "$target_root/audit-unstripped" \
-  "$target_root/host-target" \
-  "$target_root/host-tools" \
-  "$target_root/audit-tools" \
-  "$target_root/audit-device-fresh" \
-  "$target_root/audit-submitted-host" \
-  "$target_root/release" \
-  "$target_root/cargo-home"
 
 (
   cd "$repo"
