@@ -5853,7 +5853,12 @@ impl Layout {
     /// the button.
     #[must_use]
     pub fn pressed_control(&self, x: i32, y: i32) -> Option<Rect> {
-        self.nodes
+        let visible_start = self
+            .nodes
+            .iter()
+            .rposition(|node| matches!(node.kind, LayoutKind::Scrim { .. }))
+            .map_or(0, |index| index + 1);
+        self.nodes[visible_start..]
             .iter()
             .filter(|node| node.rect.contains(x, y))
             .filter(|node| {
@@ -5861,6 +5866,7 @@ impl Layout {
                     node.kind,
                     LayoutKind::Button(_, ControlState::Enabled, _)
                         | LayoutKind::Back
+                        | LayoutKind::OverlayClose
                         | LayoutKind::BarAction(_)
                         | LayoutKind::BarGlyph(..)
                         | LayoutKind::NavDestination(..)
@@ -18996,6 +19002,14 @@ mod prose_tests {
                     ),
                     Some(ActionId::BACK),
                     "{name}: the cross does not answer"
+                );
+                assert_eq!(
+                    layout.pressed_control(
+                        cross.rect.x + cross.rect.width / 2,
+                        cross.rect.y + cross.rect.height / 2
+                    ),
+                    Some(cross.rect),
+                    "{name}: pressing the cross marked a control behind the modal"
                 );
                 let target = metrics.touch_target_default();
                 assert!(

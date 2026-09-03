@@ -3862,9 +3862,12 @@ impl Lichess {
 impl KoboApp for Lichess {
     fn on_start(&mut self, context: &mut Context) {
         context.set_orientation(Orientation::Portrait);
-        if std::env::var("KOBO_LICHESS_DEMO")
-            .ok()
-            .is_some_and(|scenario| self.install_demo(&scenario))
+        let demo = std::env::var("KOBO_LICHESS_DEMO").ok();
+        #[cfg(debug_assertions)]
+        let demo = demo.or_else(|| option_env!("KOBO_LICHESS_DEMO_BUILD").map(str::to_owned));
+        if demo
+            .as_deref()
+            .is_some_and(|scenario| self.install_demo(scenario))
         {
             if self.game.as_ref().is_some_and(Game::active) || self.route == Route::Pairing {
                 self.reset_clock(context, true);
