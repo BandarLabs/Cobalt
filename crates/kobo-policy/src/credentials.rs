@@ -261,10 +261,6 @@ fn lichess_credential_allowed(
 fn lichess_post(path: &str, body: &str) -> bool {
     if path == "/api/board/seek" {
         return [
-            "rated=true&time=3&increment=0&variant=standard&color=random",
-            "rated=true&time=3&increment=2&variant=standard&color=random",
-            "rated=true&time=5&increment=0&variant=standard&color=random",
-            "rated=true&time=5&increment=3&variant=standard&color=random",
             "rated=true&time=10&increment=0&variant=standard&color=random",
             "rated=true&time=10&increment=5&variant=standard&color=random",
             "rated=true&time=15&increment=10&variant=standard&color=random",
@@ -540,10 +536,6 @@ mod tests {
             );
         }
         for body in [
-            "rated=true&time=3&increment=0&variant=standard&color=random",
-            "rated=true&time=3&increment=2&variant=standard&color=random",
-            "rated=true&time=5&increment=0&variant=standard&color=random",
-            "rated=true&time=5&increment=3&variant=standard&color=random",
             "rated=true&time=10&increment=0&variant=standard&color=random",
             "rated=true&time=10&increment=5&variant=standard&color=random",
             "rated=true&time=15&increment=10&variant=standard&color=random",
