@@ -16,6 +16,7 @@ mod connect;
 mod devsession;
 mod drive;
 mod host_release;
+mod matrix;
 mod menu;
 mod package;
 // Only the `device-write` build dispatches to this, but its tests decide what
@@ -435,6 +436,7 @@ fn run(arguments: &[String]) -> Result<(), String> {
         "trust" => trust_command(&arguments[1..]),
         "inspect" => inspect_package(&arguments[1..]),
         "verify" => verify_command(&arguments[1..]),
+        "matrix" => matrix::run(&arguments[1..]),
         "run" if arguments.get(1).is_some_and(|value| value == "--sim") => {
             run_simulation(&arguments[2..])
         }
@@ -1281,17 +1283,46 @@ fn generated_app_source() -> String {
 }
 
 fn dev(arguments: &[String]) -> Result<(), String> {
-    let (built_in, address) = match arguments {
-        [] => (false, "127.0.0.1:8787"),
-        [address] if address == "--builtin" => (true, "127.0.0.1:8787"),
-        [address] => (false, address.as_str()),
-        [flag, address] if flag == "--builtin" => (true, address.as_str()),
-        _ => return Err("usage: kobo dev [--builtin] [address]".to_owned()),
-    };
-    if built_in || !current_manifest_uses_sdk()? {
-        return kobo_sim::run_server(address).map_err(|error| error.to_string());
+    let mut built_in = false;
+    let mut address = "127.0.0.1:8787";
+    let mut profile = kobo_profile::CLARA_BW_391.id;
+    let mut rotation = None;
+    let mut index = 0;
+    while index < arguments.len() {
+        match arguments[index].as_str() {
+            "--builtin" => built_in = true,
+            "--profile" => {
+                profile = arguments
+                    .get(index + 1)
+                    .ok_or("--profile needs a supported profile id")?;
+                index += 1;
+            }
+            "--rotation" => {
+                rotation = Some(
+                    arguments
+                        .get(index + 1)
+                        .ok_or("--rotation needs 0, 1, 2, or 3")?
+                        .parse::<u32>()
+                        .map_err(|_| "--rotation needs 0, 1, 2, or 3")?,
+                );
+                index += 1;
+            }
+            value if !value.starts_with('-') && address == "127.0.0.1:8787" => address = value,
+            other => {
+                return Err(format!(
+                    "unknown option '{other}'\n\
+                     usage: kobo dev [--builtin] [--profile ID] [--rotation N] [address]"
+                ));
+            }
+        }
+        index += 1;
     }
-    dev_sdk_app(address)
+    let config = kobo_sim::SimulationConfig::select(profile, rotation)?;
+    if built_in || !current_manifest_uses_sdk()? {
+        return kobo_sim::run_server_with_config(address, config)
+            .map_err(|error| error.to_string());
+    }
+    dev_sdk_app(address, config)
 }
 
 fn current_manifest_uses_sdk() -> Result<bool, String> {
@@ -1310,9 +1341,9 @@ fn manifest_uses_sdk(manifest: &str) -> bool {
     })
 }
 
-fn dev_sdk_app(address: &str) -> Result<(), String> {
+fn dev_sdk_app(address: &str, config: kobo_sim::SimulationConfig) -> Result<(), String> {
     let dev_session = DevSessionGuard::new()?;
-    let server = kobo_sim::AppServer::bind(address, &dev_session.socket)
+    let server = kobo_sim::AppServer::bind_with_config(address, &dev_session.socket, config)
         .map_err(|error| format!("start app simulator: {error}"))?;
     server
         .set_nonblocking(true)
@@ -1321,10 +1352,12 @@ fn dev_sdk_app(address: &str) -> Result<(), String> {
     let mut app = AppChild::spawn(&executable, &dev_session.socket)?;
     let session = wait_for_app(&server, &mut app)?;
     println!(
-        "Kobo app simulator: http://{}",
+        "Kobo app simulator: http://{} ({} rotation {})",
         server
             .local_addr()
-            .map_err(|error| format!("read simulator address: {error}"))?
+            .map_err(|error| format!("read simulator address: {error}"))?,
+        config.profile().id,
+        config.pose().rotation(),
     );
     serve_app(&server, &session, &mut app)
 }
@@ -1339,7 +1372,9 @@ impl DevSessionGuard {
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_or(0, |duration| duration.as_nanos());
-        Self::new_at(env::temp_dir().join(format!("kobo-dev-{}-{unique}", std::process::id())))
+        // `sockaddr_un.sun_path` is only 104 bytes on macOS. Keep the private
+        // directory name short so a caller can still use a dedicated TMPDIR.
+        Self::new_at(env::temp_dir().join(format!("kd-{:x}-{unique:x}", std::process::id())))
     }
 
     fn new_at(root: PathBuf) -> Result<Self, String> {
@@ -4469,13 +4504,13 @@ fn pipe_through(command: &mut Command, input: &[u8]) -> Result<Vec<u8>, String> 
 }
 
 fn run_simulation(arguments: &[String]) -> Result<(), String> {
-    let package = simulated_package(arguments)?;
+    let (package, config) = simulated_package(arguments)?;
     let mut build = Command::new("cargo");
     build.args(["build", "-p", "kobod", "-p", package]);
     run_status(&mut build, "build host simulation")?;
 
     let mut simulation = SimulationGuard::new()?;
-    simulation.spawn_daemon()?;
+    simulation.spawn_daemon(config)?;
     let ready_deadline = Instant::now() + Duration::from_secs(5);
     while !simulation.socket.exists() {
         if Instant::now() >= ready_deadline {
@@ -4505,7 +4540,14 @@ fn run_simulation(arguments: &[String]) -> Result<(), String> {
             "simulation failed: app={app_status}, daemon={daemon_status}"
         ));
     }
-    let expected = 1072_usize * 1448;
+    let expected = usize::try_from(config.pose().width())
+        .ok()
+        .and_then(|width| {
+            usize::try_from(config.pose().height())
+                .ok()
+                .and_then(|height| width.checked_mul(height))
+        })
+        .ok_or("selected simulator panel is too large")?;
     let actual = fs::metadata(&simulation.frame)
         .map_err(|error| format!("inspect rendered frame: {error}"))?
         .len();
@@ -4517,8 +4559,10 @@ fn run_simulation(arguments: &[String]) -> Result<(), String> {
     let output = Path::new("target/kobo-sim-last.raw");
     fs::copy(&simulation.frame, output).map_err(|error| format!("save rendered frame: {error}"))?;
     println!(
-        "host runtime completed for {package}; frame: {}",
-        output.display()
+        "host runtime completed for {package} on {} rotation {}; frame: {}",
+        config.profile().id,
+        config.pose().rotation(),
+        output.display(),
     );
     Ok(())
 }
@@ -4530,8 +4574,12 @@ fn run_simulation(arguments: &[String]) -> Result<(), String> {
 /// a typo is worth a list of what exists rather than a build failure four
 /// minutes later. `kobod` is on that list and is not an application: it is the
 /// runtime the simulation is already starting.
-fn simulated_package(arguments: &[String]) -> Result<&'static str, String> {
+fn simulated_package(
+    arguments: &[String],
+) -> Result<(&'static str, kobo_sim::SimulationConfig), String> {
     let mut wanted = "todo";
+    let mut profile = kobo_profile::CLARA_BW_391.id;
+    let mut rotation = None;
     let mut index = 0;
     while index < arguments.len() {
         match arguments[index].as_str() {
@@ -4541,9 +4589,26 @@ fn simulated_package(arguments: &[String]) -> Result<&'static str, String> {
                     .ok_or_else(|| format!("--app needs a name; one of {}", simulatable()))?;
                 index += 1;
             }
+            "--profile" => {
+                profile = arguments
+                    .get(index + 1)
+                    .ok_or("--profile needs a supported profile id")?;
+                index += 1;
+            }
+            "--rotation" => {
+                rotation = Some(
+                    arguments
+                        .get(index + 1)
+                        .ok_or("--rotation needs 0, 1, 2, or 3")?
+                        .parse::<u32>()
+                        .map_err(|_| "--rotation needs 0, 1, 2, or 3")?,
+                );
+                index += 1;
+            }
             other => {
                 return Err(format!(
-                    "unknown option '{other}'\nusage: kobo run --sim [--app NAME]"
+                    "unknown option '{other}'\n\
+                     usage: kobo run --sim [--app NAME] [--profile ID] [--rotation N]"
                 ));
             }
         }
@@ -4551,7 +4616,7 @@ fn simulated_package(arguments: &[String]) -> Result<&'static str, String> {
     }
     // Both spellings work, because the launcher calls it 'rss' and cargo calls
     // it 'kobo-rss', and somebody reading either should not have to know.
-    INSTALLED_PACKAGES
+    let package = INSTALLED_PACKAGES
         .iter()
         .map(|(package, _)| *package)
         .chain(STORE_PACKAGES.iter().copied())
@@ -4559,7 +4624,11 @@ fn simulated_package(arguments: &[String]) -> Result<&'static str, String> {
             *package != "kobod"
                 && (*package == wanted || package.strip_prefix("kobo-") == Some(wanted))
         })
-        .ok_or_else(|| format!("no application called '{wanted}'; one of {}", simulatable()))
+        .ok_or_else(|| format!("no application called '{wanted}'; one of {}", simulatable()))?;
+    Ok((
+        package,
+        kobo_sim::SimulationConfig::select(profile, rotation)?,
+    ))
 }
 
 /// The application names `--app` accepts, for an error message to list.
@@ -4606,8 +4675,10 @@ impl SimulationGuard {
         Ok(guard)
     }
 
-    fn spawn_daemon(&mut self) -> Result<(), String> {
+    fn spawn_daemon(&mut self, config: kobo_sim::SimulationConfig) -> Result<(), String> {
         let daemon = Command::new(workspace_host_binary("kobod"))
+            .env("KOBO_SIM_PROFILE", config.profile().id)
+            .env("KOBO_SIM_ROTATION", config.pose().rotation().to_string())
             .args(["--sim-socket"])
             .arg(&self.socket)
             .arg("--frame")
@@ -5891,7 +5962,10 @@ fn print_help() {
          Usage: kobo <command>\n\n\
          Commands:\n\
            new <name>             Create a Rust application\n\
-           dev [--builtin] [address]  Run this SDK app in the browser simulator\n\
+           dev [--builtin] [--profile ID] [--rotation N] [address]\n\
+                                   Run this SDK app in the browser simulator\n\
+           matrix --report PATH --screenshots DIR\n\
+                                   Validate every app, profile, pose, and scenario\n\
            drive --script PATH    Drive a running simulator and save PNG screenshots\n\
            shot [--device HOST]   Save a PNG of the panel (device or simulator)\n\
            record --device IP [--seconds N] [--fps F] [--out DIR]  Film the panel, read-only\n\
@@ -5941,7 +6015,8 @@ fn print_help() {
            trust remove <name> --device IP   Take one trust root off the reader\n\
            inspect <package>       List a package and prove it writes nothing to the rootfs\n\
            verify <arm-binary>     Verify static ARM hard-float format\n\
-           run --sim [--app NAME]  Run SDK, IPC, daemon and one app on host\n\
+           run --sim [--app NAME] [--profile ID] [--rotation N]\n\
+                                   Run SDK, IPC, daemon and one app on host\n\
            run                    Device execution remains safety-gated\n\
            version                Print version\n\n\
          Every command that takes --device also takes -s, and these names\n\
@@ -7319,46 +7394,37 @@ mod tests {
             values.iter().map(|value| (*value).to_owned()).collect()
         }
 
+        fn package(values: &[&str]) -> Result<&'static str, String> {
+            simulated_package(&arguments(values)).map(|(package, _)| package)
+        }
+
         #[test]
         fn without_an_app_it_runs_the_one_it_always_ran() {
-            assert_eq!(simulated_package(&arguments(&[])), Ok("kobo-todo"));
+            assert_eq!(package(&[]), Ok("kobo-todo"));
         }
 
         #[test]
         fn an_app_can_be_named_the_way_the_launcher_names_it() {
-            assert_eq!(
-                simulated_package(&arguments(&["--app", "rss"])),
-                Ok("kobo-rss")
-            );
-            assert_eq!(
-                simulated_package(&arguments(&["-a", "gutenbird"])),
-                Ok("kobo-gutenbird")
-            );
-            assert_eq!(
-                simulated_package(&arguments(&["--app", "sudoku"])),
-                Ok("kobo-sudoku")
-            );
+            assert_eq!(package(&["--app", "rss"]), Ok("kobo-rss"));
+            assert_eq!(package(&["-a", "gutenbird"]), Ok("kobo-gutenbird"));
+            assert_eq!(package(&["--app", "sudoku"]), Ok("kobo-sudoku"));
         }
 
         #[test]
         fn an_app_can_also_be_named_the_way_cargo_names_it() {
-            assert_eq!(
-                simulated_package(&arguments(&["--app", "kobo-hn"])),
-                Ok("kobo-hn")
-            );
+            assert_eq!(package(&["--app", "kobo-hn"]), Ok("kobo-hn"));
         }
 
         #[test]
         fn the_runtime_is_not_an_application_to_run_against_itself() {
             // kobod is on the packages list and is the thing already being
             // started; asking for it would start two of them.
-            assert!(simulated_package(&arguments(&["--app", "kobod"])).is_err());
+            assert!(package(&["--app", "kobod"]).is_err());
         }
 
         #[test]
         fn a_name_that_is_not_an_app_is_refused_with_the_ones_that_are() {
-            let error =
-                simulated_package(&arguments(&["--app", "../../etc/passwd"])).expect_err("refused");
+            let error = package(&["--app", "../../etc/passwd"]).expect_err("refused");
             assert!(error.contains("rss"), "{error}");
             assert!(error.contains("todo"), "{error}");
             let missing = simulated_package(&arguments(&["--app"])).expect_err("refused");

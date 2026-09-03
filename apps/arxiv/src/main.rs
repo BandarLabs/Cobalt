@@ -576,9 +576,9 @@ impl Arxiv {
                 })
             }))
             .top_bar_glyph(LIBRARY, "Library", Glyph::Bookmark)
+            .top_bar_glyph(SEARCH, "Search arXiv", Glyph::Search)
             .page_turns(SUBJECTS_BACK, SUBJECTS_NEXT)
             .page_position(page_number(page), page_total(pages.len()))
-            .bottom_action_marked(SEARCH, "Search arXiv", Glyph::Search)
             .build()
     }
 

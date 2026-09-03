@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 
-//! Localhost-only browser simulator for Kobo grayscale screens.
+//! Localhost-only browser simulator for measured Kobo profiles.
 
 use std::fs;
 use std::io::{self, Read, Write};
@@ -9,11 +9,18 @@ use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-use kobo_policy::{shelf::Shelf, store::Store, DeviceServices, TaskRunner};
-use kobo_profile::{DeviceProfile, PanelPose, CLARA_BW_391};
+use kobo_policy::{
+    shelf::Shelf, store::Store, Backends, Capability, Declared, DeviceServices, PowerPolicy,
+    TaskRunner,
+};
+use kobo_profile::{
+    supported_profile, DeviceProfile, FactStatus, FramebufferPacking, NetworkPlatform, PageButtons,
+    PanelColor, PanelPose, WifiHandoff, CLARA_BW_391,
+};
 use kobo_protocol::{read_from, write_to, Frame, Lifecycle, Message};
 use kobo_ui::{
     ActionId, DisplayMetrics, FramePlanner, FrameTransition, Node, NodeId, PanelWaveform, Screen,
@@ -21,25 +28,100 @@ use kobo_ui::{
 };
 
 const MAX_HTTP_HEADER: usize = 8 * 1024;
-const PROFILE: &DeviceProfile = &CLARA_BW_391;
-/// The simulator asserts an orientation rather than observing one, because it
-/// has no device. That is legitimate here and nowhere near a real framebuffer:
-/// it means the browser exercises exactly the transform the Clara BW profile
-/// was measured at.
-const POSE: PanelPose<'static> = PanelPose::reference(PROFILE);
+const DEFAULT_PROFILE: &DeviceProfile = &CLARA_BW_391;
 
-fn profile_metrics() -> DisplayMetrics {
-    DisplayMetrics {
-        width: i32::try_from(PROFILE.width).unwrap_or(i32::MAX),
-        height: i32::try_from(PROFILE.height).unwrap_or(i32::MAX),
-        pixels_per_inch: i32::from(PROFILE.pixels_per_inch),
-        text_scale: kobo_ui::display_metrics_from_env().text_scale,
+/// One exact simulator profile and one of its verified poses.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SimulationConfig {
+    profile: &'static DeviceProfile,
+    pose: PanelPose<'static>,
+    scenario: Scenario,
+}
+
+impl Default for SimulationConfig {
+    fn default() -> Self {
+        Self {
+            profile: DEFAULT_PROFILE,
+            pose: PanelPose::reference(DEFAULT_PROFILE),
+            scenario: Scenario::Normal,
+        }
+    }
+}
+
+impl SimulationConfig {
+    /// Selects a supported profile and one explicitly verified rotation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an unknown profile or an unverified pose.
+    pub fn select(profile_id: &str, rotation: Option<u32>) -> Result<Self, String> {
+        let profile = supported_profile(profile_id)
+            .ok_or_else(|| format!("unknown Kobo profile {profile_id:?}"))?;
+        let rotation = rotation.unwrap_or(profile.reference_rotation);
+        let pose = PanelPose::simulated(profile, rotation).map_err(|error| error.to_string())?;
+        Ok(Self {
+            profile,
+            pose,
+            scenario: Scenario::Normal,
+        })
+    }
+
+    #[must_use]
+    pub const fn profile(self) -> &'static DeviceProfile {
+        self.profile
+    }
+
+    #[must_use]
+    pub const fn pose(self) -> PanelPose<'static> {
+        self.pose
+    }
+
+    #[must_use]
+    pub const fn scenario(self) -> Scenario {
+        self.scenario
+    }
+
+    #[must_use]
+    pub const fn with_scenario(mut self, scenario: Scenario) -> Self {
+        self.scenario = scenario;
+        self
+    }
+
+    #[must_use]
+    pub fn metrics(self) -> DisplayMetrics {
+        DisplayMetrics {
+            width: i32::try_from(self.pose.width()).unwrap_or(i32::MAX),
+            height: i32::try_from(self.pose.height()).unwrap_or(i32::MAX),
+            pixels_per_inch: i32::from(self.profile.pixels_per_inch),
+            text_scale: kobo_ui::display_metrics_from_env().text_scale,
+        }
+    }
+
+    pub fn supported() -> impl Iterator<Item = Self> {
+        kobo_profile::SUPPORTED_PROFILES
+            .iter()
+            .copied()
+            .flat_map(|profile| {
+                profile
+                    .verified_rotations
+                    .iter()
+                    .copied()
+                    .filter_map(move |rotation| {
+                        PanelPose::simulated(profile, rotation)
+                            .ok()
+                            .map(|pose| Self {
+                                profile,
+                                pose,
+                                scenario: Scenario::Normal,
+                            })
+                    })
+            })
     }
 }
 
 /// A deterministic failure mode selected from the simulator controls.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-enum Scenario {
+pub enum Scenario {
     #[default]
     Normal,
     /// The reader has no network at all.
@@ -59,7 +141,7 @@ enum Scenario {
 }
 
 impl Scenario {
-    const ALL: [Self; 9] = [
+    pub const ALL: [Self; 9] = [
         Self::Normal,
         Self::Offline,
         Self::HostDown,
@@ -71,7 +153,8 @@ impl Scenario {
         Self::CachePressure,
     ];
 
-    const fn name(self) -> &'static str {
+    #[must_use]
+    pub const fn name(self) -> &'static str {
         match self {
             Self::Normal => "normal",
             Self::Offline => "offline",
@@ -85,7 +168,8 @@ impl Scenario {
         }
     }
 
-    fn parse(bytes: &[u8]) -> Option<Self> {
+    #[must_use]
+    pub fn parse(bytes: &[u8]) -> Option<Self> {
         let name = std::str::from_utf8(bytes).ok()?.trim();
         Self::ALL
             .into_iter()
@@ -110,9 +194,9 @@ struct PanelPreview {
 }
 
 impl PanelPreview {
-    fn new() -> Self {
-        let width = PROFILE.width as usize;
-        let height = PROFILE.height as usize;
+    fn new(config: SimulationConfig) -> Self {
+        let width = config.pose.width() as usize;
+        let height = config.pose.height() as usize;
         let pixels = width.saturating_mul(height);
         Self {
             planner: FramePlanner::new(width, height),
@@ -193,6 +277,7 @@ impl PanelPreview {
 /// A deterministic interactive counter used to exercise rendering and hit testing.
 #[derive(Debug)]
 pub struct Simulator {
+    config: SimulationConfig,
     counter: u32,
     screen: Screen,
     panel: PanelPreview,
@@ -210,11 +295,18 @@ impl Default for Simulator {
 impl Simulator {
     #[must_use]
     pub fn new() -> Self {
+        Self::with_config(SimulationConfig::default())
+    }
+
+    #[must_use]
+    pub fn with_config(config: SimulationConfig) -> Self {
+        install_typeface(config);
         let mut simulator = Self {
+            config,
             counter: 0,
             screen: Screen::new(1, Vec::new()),
-            panel: PanelPreview::new(),
-            scenario: Scenario::Normal,
+            panel: PanelPreview::new(config),
+            scenario: config.scenario,
             lifecycle: Lifecycle::Foreground,
             last_touch: None,
         };
@@ -232,6 +324,13 @@ impl Simulator {
         &self.screen
     }
 
+    /// Diagnostics for the built-in screen at the selected profile and pose.
+    #[must_use]
+    pub fn diagnostics(&self) -> kobo_ui::LayoutDiagnostics {
+        self.screen
+            .diagnostics(&self.config.metrics(), &kobo_ui::Chrome::default())
+    }
+
     #[must_use]
     pub fn frame(&mut self) -> Vec<u8> {
         self.render_frame(false)
@@ -242,11 +341,24 @@ impl Simulator {
         self.render_frame(true)
     }
 
+    /// Serializes presentation pixels into the measured 32-bit channel layout.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the doctor snapshot does not identify a channel
+    /// layout. No generic RGBA fallback is used.
+    pub fn framebuffer_frame(&mut self, ideal: bool) -> Result<Vec<u8>, String> {
+        pack_framebuffer(self.config.profile, &self.render_frame(ideal))
+    }
+
     fn render_frame(&mut self, ideal: bool) -> Vec<u8> {
-        let mut surface = Surface::new(PROFILE.width as usize, PROFILE.height as usize);
+        let mut surface = Surface::new(
+            self.config.pose.width() as usize,
+            self.config.pose.height() as usize,
+        );
         kobo_ui::render_with(
             &self.screen,
-            &profile_metrics(),
+            &self.config.metrics(),
             &kobo_ui::Chrome::default(),
             &mut surface,
             None,
@@ -257,8 +369,8 @@ impl Simulator {
 
     pub fn touch(&mut self, x: i32, y: i32) -> Option<ActionId> {
         let (display_x, display_y) = (u32::try_from(x).ok()?, u32::try_from(y).ok()?);
-        let raw = POSE.display_to_touch(display_x, display_y)?;
-        let display = POSE.touch_to_display(raw.0, raw.1)?;
+        let raw = self.config.pose.display_to_touch(display_x, display_y)?;
+        let display = self.config.pose.touch_to_display(raw.0, raw.1)?;
         self.last_touch = Some(SimulatedTouch { display, raw });
         let action = self.screen.hit_test(
             i32::try_from(display.0).ok()?,
@@ -272,7 +384,13 @@ impl Simulator {
     }
 
     fn simulation_json(&self) -> String {
-        simulation_json(&self.panel, self.scenario, self.lifecycle, self.last_touch)
+        simulation_json(
+            self.config,
+            &self.panel,
+            self.scenario,
+            self.lifecycle,
+            self.last_touch,
+        )
     }
 
     fn rebuild_screen(&mut self) {
@@ -323,11 +441,20 @@ impl Server {
     ///
     /// Returns an error for a non-loopback address, invalid port, or bind failure.
     pub fn bind_address(address: &str) -> io::Result<Self> {
-        install_typeface();
+        Self::bind_with_config(address, SimulationConfig::default())
+    }
+
+    /// Binds a browser simulator for one exact profile and verified pose.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a non-loopback address or bind failure.
+    pub fn bind_with_config(address: &str, config: SimulationConfig) -> io::Result<Self> {
+        install_typeface(config);
         let listener = TcpListener::bind(parse_local_address(address)?)?;
         Ok(Self {
             listener,
-            simulator: Simulator::new(),
+            simulator: Simulator::with_config(config),
         })
     }
 
@@ -359,6 +486,7 @@ impl Server {
         }
     }
 
+    #[allow(clippy::too_many_lines)]
     fn handle(&mut self, mut stream: TcpStream) -> io::Result<()> {
         let request = read_request(&mut stream)?;
         match (request.method.as_str(), request.path.as_str()) {
@@ -376,6 +504,15 @@ impl Server {
                 let frame = self.simulator.ideal_frame();
                 write_response(&mut stream, 200, "application/octet-stream", &frame)
             }
+            ("GET", "/framebuffer") => match self.simulator.framebuffer_frame(false) {
+                Ok(frame) => write_response(&mut stream, 200, "application/octet-stream", &frame),
+                Err(error) => write_response(
+                    &mut stream,
+                    409,
+                    "text/plain; charset=utf-8",
+                    error.as_bytes(),
+                ),
+            },
             ("GET", "/simulation") => {
                 let body = self.simulator.simulation_json();
                 write_response(
@@ -386,7 +523,12 @@ impl Server {
                 )
             }
             ("GET", "/layout") => {
-                let body = layout_json(self.simulator.screen(), 0);
+                let body = layout_json(
+                    self.simulator.config,
+                    &kobo_ui::Chrome::default(),
+                    self.simulator.screen(),
+                    0,
+                );
                 write_response(
                     &mut stream,
                     200,
@@ -395,8 +537,12 @@ impl Server {
                 )
             }
             ("GET", "/diagnostics") => {
-                let body =
-                    diagnostics_json(self.simulator.screen(), &kobo_ui::PictureCache::default());
+                let body = diagnostics_json(
+                    self.simulator.config,
+                    &kobo_ui::Chrome::default(),
+                    self.simulator.screen(),
+                    &kobo_ui::PictureCache::default(),
+                );
                 write_response(
                     &mut stream,
                     200,
@@ -417,6 +563,12 @@ impl Server {
                     )
                 }
             }
+            ("POST", "/button") => write_response(
+                &mut stream,
+                409,
+                "text/plain; charset=utf-8",
+                b"page-button delivery requires an SDK application",
+            ),
             ("POST", "/scenario") => match Scenario::parse(&request.body) {
                 Some(scenario) => {
                     self.simulator.scenario = scenario;
@@ -455,6 +607,7 @@ pub struct AppServer {
     http: TcpListener,
     app: UnixListener,
     apps: Arc<Mutex<SimulatedApps>>,
+    config: SimulationConfig,
     socket_path: PathBuf,
     socket_identity: (u64, u64),
 }
@@ -467,7 +620,20 @@ impl AppServer {
     /// Returns an error for a non-loopback HTTP address, an existing socket
     /// path, an unsafe socket parent, or a listener binding failure.
     pub fn bind(address: &str, socket_path: impl AsRef<Path>) -> io::Result<Self> {
-        install_typeface();
+        Self::bind_with_config(address, socket_path, SimulationConfig::default())
+    }
+
+    /// Creates both listeners for one exact profile and verified pose.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for unsafe paths, an invalid address, or bind failure.
+    pub fn bind_with_config(
+        address: &str,
+        socket_path: impl AsRef<Path>,
+        config: SimulationConfig,
+    ) -> io::Result<Self> {
+        install_typeface(config);
         let socket_path = socket_path.as_ref().to_path_buf();
         validate_socket_parent(&socket_path)?;
         match fs::symlink_metadata(&socket_path) {
@@ -496,6 +662,7 @@ impl AppServer {
             http,
             app,
             apps: Arc::new(Mutex::new(SimulatedApps::default())),
+            config,
             socket_path,
             socket_identity: (metadata.dev(), metadata.ino()),
         })
@@ -569,15 +736,23 @@ impl AppServer {
                 version: hello.version,
                 request_id: hello.request_id,
                 message: Message::Welcome {
-                    width: u16::try_from(PROFILE.width).unwrap_or(u16::MAX),
-                    height: u16::try_from(PROFILE.height).unwrap_or(u16::MAX),
-                    pixels_per_inch: PROFILE.pixels_per_inch,
-                    text_scale: profile_metrics().text_scale,
+                    width: u16::try_from(self.config.pose.width()).unwrap_or(u16::MAX),
+                    height: u16::try_from(self.config.pose.height()).unwrap_or(u16::MAX),
+                    pixels_per_inch: self.config.profile.pixels_per_inch,
+                    text_scale: self.config.metrics().text_scale,
                 },
             },
         )?;
         let reader = stream.try_clone()?;
-        let state = Arc::new(Mutex::new(AppState::with_apps(Arc::clone(&self.apps))));
+        let state = Arc::new(Mutex::new(AppState::with_config_and_apps(
+            self.config,
+            Arc::clone(&self.apps),
+        )));
+        state
+            .lock()
+            .map_err(|_| io::Error::other("app state lock poisoned"))?
+            .app_name
+            .clone_from(&name);
         let reader_state = Arc::clone(&state);
         // One writer for the whole session, shared by every thread that has
         // something to say to the application: taps from the browser, replies
@@ -586,16 +761,24 @@ impl AppServer {
         // frames, they make one unreadable stream.
         let writer = AppWriter::spawn_for(stream.try_clone()?, hello.version);
         let reader_writer = Arc::clone(&writer);
+        let closing = Arc::new(AtomicBool::new(false));
+        let reader_closing = Arc::clone(&closing);
         thread::spawn(move || {
             // A malformed frame ends the session rather than being skipped,
             // and the developer is told which one: a reader that dies quietly
             // leaves an application talking to nobody, with a panel that keeps
             // showing the last good screen and ignores every tap.
             if let Err(error) = read_app_messages(reader, &name, &reader_writer, &reader_state) {
-                eprintln!("the application's connection ended: {error}");
+                if !reader_closing.load(Ordering::Acquire) {
+                    eprintln!("the application's connection ended: {error}");
+                }
             }
         });
-        Ok(AppSession { state, writer })
+        Ok(AppSession {
+            state,
+            writer,
+            closing,
+        })
     }
 
     /// Accepts the SDK app and serves browser requests until an I/O error.
@@ -697,12 +880,17 @@ fn current_user_id() -> io::Result<u32> {
 /// Split out only so the message loop stays readable; the cache is the same
 /// one the device runtime uses.
 fn hold(state: &Arc<Mutex<AppState>>, message: Message) -> io::Result<()> {
+    let metrics = state
+        .lock()
+        .map_err(|_| io::Error::other("app state lock poisoned"))?
+        .config
+        .metrics();
     match message {
         Message::PutFont {
             handle,
             name,
             bytes,
-        } => match kobo_text::BookFont::from_bytes(&bytes, &name, profile_metrics()) {
+        } => match kobo_text::BookFont::from_bytes(&bytes, &name, metrics) {
             Ok(font) => {
                 kobo_ui::put_book_typesetter(handle, Box::new(font));
                 Ok(())
@@ -797,6 +985,8 @@ fn is_picture_message(message: &Message) -> bool {
 
 #[derive(Debug)]
 struct AppState {
+    config: SimulationConfig,
+    app_name: String,
     screen: Screen,
     /// How many screens the application has painted since it started.
     ///
@@ -830,19 +1020,39 @@ impl Default for AppState {
 
 impl AppState {
     fn with_apps(apps: Arc<Mutex<SimulatedApps>>) -> Self {
+        Self::with_config_and_apps(SimulationConfig::default(), apps)
+    }
+
+    fn with_config_and_apps(config: SimulationConfig, apps: Arc<Mutex<SimulatedApps>>) -> Self {
         Self {
+            config,
+            app_name: String::new(),
             screen: Screen::new(0, Vec::new()),
             paints: 0,
             logs: Vec::new(),
             pictures: kobo_ui::PictureCache::default(),
             pressure_pictures: kobo_ui::PictureCache::new(256 * 1024),
-            panel: PanelPreview::new(),
-            scenario: Scenario::Normal,
+            panel: PanelPreview::new(config),
+            scenario: config.scenario,
             lifecycle: Lifecycle::Foreground,
             last_touch: None,
             apps,
         }
     }
+}
+
+fn simulated_chrome(name: &str, screen: &Screen) -> kobo_ui::Chrome {
+    let chrome = kobo_ui::Chrome::with_back(name != "launcher");
+    if screen.reading {
+        return chrome;
+    }
+    chrome.with_status(kobo_ui::Status {
+        clock: "09:41".to_owned(),
+        signal: kobo_ui::Signal::Strong,
+        battery: Some(kobo_ui::Percent::new(72)),
+        charging: false,
+        bluetooth: true,
+    })
 }
 
 #[derive(Debug)]
@@ -1042,6 +1252,7 @@ impl AppState {
 pub struct AppSession {
     state: Arc<Mutex<AppState>>,
     writer: Arc<AppWriter>,
+    closing: Arc<AtomicBool>,
 }
 
 impl AppSession {
@@ -1052,6 +1263,157 @@ impl AppSession {
             |poisoned| poisoned.into_inner().screen.clone(),
             |state| state.screen.clone(),
         )
+    }
+
+    /// Number of screens received from the application.
+    #[must_use]
+    pub fn paints(&self) -> u64 {
+        self.state.lock().map_or_else(
+            |poisoned| poisoned.into_inner().paints,
+            |state| state.paints,
+        )
+    }
+
+    /// Metrics the application received in its Welcome frame.
+    #[must_use]
+    pub fn metrics(&self) -> DisplayMetrics {
+        self.state.lock().map_or_else(
+            |poisoned| poisoned.into_inner().config.metrics(),
+            |state| state.config.metrics(),
+        )
+    }
+
+    /// Exact selected profile and verified pose.
+    #[must_use]
+    pub fn config(&self) -> SimulationConfig {
+        self.state.lock().map_or_else(
+            |poisoned| poisoned.into_inner().config,
+            |state| state.config,
+        )
+    }
+
+    /// Current layout with the same chrome the renderer uses.
+    #[must_use]
+    pub fn layout(&self) -> kobo_ui::Layout {
+        self.state.lock().map_or_else(
+            |poisoned| {
+                let state = poisoned.into_inner();
+                state.screen.layout_with(
+                    &state.config.metrics(),
+                    &simulated_chrome(&state.app_name, &state.screen),
+                )
+            },
+            |state| {
+                state.screen.layout_with(
+                    &state.config.metrics(),
+                    &simulated_chrome(&state.app_name, &state.screen),
+                )
+            },
+        )
+    }
+
+    /// Layout and diagnostics from the exact selected profile.
+    #[must_use]
+    pub fn diagnostics(&self) -> kobo_ui::LayoutDiagnostics {
+        self.state.lock().map_or_else(
+            |poisoned| {
+                let state = poisoned.into_inner();
+                let chrome = simulated_chrome(&state.app_name, &state.screen);
+                state.screen.diagnostics_with_pictures(
+                    &state.config.metrics(),
+                    &chrome,
+                    state.active_pictures(),
+                )
+            },
+            |state| {
+                let chrome = simulated_chrome(&state.app_name, &state.screen);
+                state.screen.diagnostics_with_pictures(
+                    &state.config.metrics(),
+                    &chrome,
+                    state.active_pictures(),
+                )
+            },
+        )
+    }
+
+    /// Delivers a display-space touch through the selected pose transform.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if no enabled action is reachable at that point or the
+    /// SDK connection has closed.
+    pub fn touch(&self, x: i32, y: i32) -> io::Result<ActionId> {
+        let action = self
+            .touch_action(x, y)
+            .ok_or_else(|| io::Error::other("no enabled action at that touch point"))?;
+        self.send_action(action)?;
+        Ok(action)
+    }
+
+    /// Delivers one measured upper/lower page-key press.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Unsupported` when page keys are unverified for this profile,
+    /// and propagates a closed SDK connection.
+    pub fn page_button(&self, upper: bool) -> io::Result<()> {
+        let message = {
+            let state = self
+                .state
+                .lock()
+                .map_err(|_| io::Error::other("app state lock poisoned"))?;
+            if state.config.profile.hardware.page_buttons != PageButtons::Measured193Back194Forward
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "page buttons are not verified for this profile",
+                ));
+            }
+            let code_is_194 = !upper;
+            let forward_is_194 =
+                state.config.pose.rotation() % 4 == state.config.profile.reference_rotation % 4;
+            let forward = code_is_194 == forward_is_194;
+            let chrome = simulated_chrome(&state.app_name, &state.screen);
+            match state
+                .screen
+                .layout_with(&state.config.metrics(), &chrome)
+                .page_turns
+            {
+                kobo_ui::PagingState::Declared(turns) => Message::Action {
+                    action: if forward { turns.next } else { turns.previous },
+                },
+                kobo_ui::PagingState::None => Message::PageTurn { forward },
+                kobo_ui::PagingState::SuppressedByOverlay => return Ok(()),
+            }
+        };
+        write_shared(
+            &self.writer,
+            &Frame {
+                version: kobo_protocol::VERSION,
+                request_id: 0,
+                message,
+            },
+        )
+    }
+
+    /// Residue-free greyscale presentation pixels for screenshots and audits.
+    #[must_use]
+    pub fn ideal_frame(&self) -> Vec<u8> {
+        self.render_frame(true)
+    }
+
+    /// Measured 32-bit framebuffer bytes, or a fail-closed format error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the profile's channel fields do not identify a
+    /// supported packing.
+    pub fn framebuffer_frame(&self, ideal: bool) -> Result<Vec<u8>, String> {
+        let profile = self.state.lock().map_or_else(
+            |poisoned| poisoned.into_inner().config.profile,
+            |state| state.config.profile,
+        );
+        pack_framebuffer(profile, &self.render_frame(ideal))
     }
 
     /// Sends an action to the SDK app. Writes are serialized with a mutex so
@@ -1067,6 +1429,23 @@ impl AppSession {
                 version: kobo_protocol::VERSION,
                 request_id: 0,
                 message: Message::Action { action },
+            },
+        )
+    }
+
+    /// Requests a clean SDK exit and suppresses the expected socket EOF.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the SDK connection is already closed.
+    pub fn close(&self) -> io::Result<()> {
+        self.closing.store(true, Ordering::Release);
+        write_shared(
+            &self.writer,
+            &Frame {
+                version: kobo_protocol::VERSION,
+                request_id: 0,
+                message: Message::Exit,
             },
         )
     }
@@ -1094,11 +1473,13 @@ impl AppSession {
             .state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let mut surface = Surface::new(PROFILE.width as usize, PROFILE.height as usize);
+        let config = state.config;
+        let chrome = simulated_chrome(&state.app_name, &state.screen);
+        let mut surface = Surface::new(config.pose.width() as usize, config.pose.height() as usize);
         kobo_ui::render_all(
             &state.screen,
-            &profile_metrics(),
-            &kobo_ui::Chrome::default(),
+            &config.metrics(),
+            &chrome,
             state.active_pictures(),
             &mut surface,
             None,
@@ -1124,9 +1505,13 @@ impl AppSession {
     }
 
     fn touch_action(&self, x: i32, y: i32) -> Option<ActionId> {
+        let config = self.state.lock().map_or_else(
+            |poisoned| poisoned.into_inner().config,
+            |state| state.config,
+        );
         let display = (u32::try_from(x).ok()?, u32::try_from(y).ok()?);
-        let raw = POSE.display_to_touch(display.0, display.1)?;
-        let mapped = POSE.touch_to_display(raw.0, raw.1)?;
+        let raw = config.pose.display_to_touch(display.0, display.1)?;
+        let mapped = config.pose.touch_to_display(raw.0, raw.1)?;
         let mut state = self
             .state
             .lock()
@@ -1137,6 +1522,10 @@ impl AppSession {
         });
         state
             .screen
+            .layout_with(
+                &state.config.metrics(),
+                &simulated_chrome(&state.app_name, &state.screen),
+            )
             .hit_test(i32::try_from(mapped.0).ok()?, i32::try_from(mapped.1).ok()?)
     }
 
@@ -1158,6 +1547,15 @@ impl AppSession {
                 let frame = self.render_frame(true);
                 write_response(&mut stream, 200, "application/octet-stream", &frame)
             }
+            ("GET", "/framebuffer") => match self.framebuffer_frame(false) {
+                Ok(frame) => write_response(&mut stream, 200, "application/octet-stream", &frame),
+                Err(error) => write_response(
+                    &mut stream,
+                    409,
+                    "text/plain; charset=utf-8",
+                    error.as_bytes(),
+                ),
+            },
             ("GET", "/simulation") => {
                 let body = {
                     let state = self
@@ -1165,6 +1563,7 @@ impl AppSession {
                         .lock()
                         .unwrap_or_else(std::sync::PoisonError::into_inner);
                     simulation_json(
+                        state.config,
                         &state.panel,
                         state.scenario,
                         state.lifecycle,
@@ -1184,7 +1583,12 @@ impl AppSession {
                         .state
                         .lock()
                         .unwrap_or_else(std::sync::PoisonError::into_inner);
-                    layout_json(&state.screen, state.paints)
+                    layout_json(
+                        state.config,
+                        &simulated_chrome(&state.app_name, &state.screen),
+                        &state.screen,
+                        state.paints,
+                    )
                 };
                 write_response(
                     &mut stream,
@@ -1199,7 +1603,12 @@ impl AppSession {
                         .state
                         .lock()
                         .unwrap_or_else(std::sync::PoisonError::into_inner);
-                    diagnostics_json(&state.screen, state.active_pictures())
+                    diagnostics_json(
+                        state.config,
+                        &simulated_chrome(&state.app_name, &state.screen),
+                        &state.screen,
+                        state.active_pictures(),
+                    )
                 };
                 write_response(
                     &mut stream,
@@ -1219,6 +1628,38 @@ impl AppSession {
                         503,
                         "text/plain; charset=utf-8",
                         b"SDK unavailable",
+                    ),
+                }
+            }
+            ("POST", "/button") => {
+                let upper = match std::str::from_utf8(&request.body).map(str::trim) {
+                    Ok("upper") => Some(true),
+                    Ok("lower") => Some(false),
+                    _ => None,
+                };
+                match upper {
+                    Some(upper) => match self.page_button(upper) {
+                        Ok(()) => {
+                            write_response(&mut stream, 204, "text/plain; charset=utf-8", b"")
+                        }
+                        Err(error) if error.kind() == io::ErrorKind::Unsupported => write_response(
+                            &mut stream,
+                            409,
+                            "text/plain; charset=utf-8",
+                            error.to_string().as_bytes(),
+                        ),
+                        Err(_) => write_response(
+                            &mut stream,
+                            503,
+                            "text/plain; charset=utf-8",
+                            b"SDK unavailable",
+                        ),
+                    },
+                    None => write_response(
+                        &mut stream,
+                        400,
+                        "text/plain; charset=utf-8",
+                        b"button must be upper or lower",
                     ),
                 }
             }
@@ -1261,9 +1702,13 @@ impl AppSession {
     }
 }
 
-fn diagnostics_json(screen: &Screen, pictures: &kobo_ui::PictureCache) -> String {
-    let diagnostics =
-        screen.diagnostics_with_pictures(&profile_metrics(), &kobo_ui::Chrome::default(), pictures);
+fn diagnostics_json(
+    config: SimulationConfig,
+    chrome: &kobo_ui::Chrome,
+    screen: &Screen,
+    pictures: &kobo_ui::PictureCache,
+) -> String {
+    let diagnostics = screen.diagnostics_with_pictures(&config.metrics(), chrome, pictures);
     let mut json = String::from("{\"issues\":[");
     for (index, issue) in diagnostics.issues.iter().enumerate() {
         if index > 0 {
@@ -1297,12 +1742,15 @@ fn diagnostics_json(screen: &Screen, pictures: &kobo_ui::PictureCache) -> String
     json
 }
 
+#[allow(clippy::too_many_lines)]
 fn simulation_json(
+    config: SimulationConfig,
     panel: &PanelPreview,
     scenario: Scenario,
     lifecycle: Lifecycle,
     touch: Option<SimulatedTouch>,
 ) -> String {
+    let profile = config.profile;
     let transition = panel.last.map_or_else(
         || "null".to_owned(),
         |transition| {
@@ -1339,27 +1787,104 @@ fn simulation_json(
         Lifecycle::Foreground => "foreground",
         Lifecycle::Background => "background",
     };
+    let packing = match profile.framebuffer_packing() {
+        Some(FramebufferPacking::Rgba8888) => "\"rgba8888\"",
+        Some(FramebufferPacking::Bgra8888) => "\"bgra8888\"",
+        None => "null",
+    };
+    let panel_color = match profile.hardware.panel_color {
+        PanelColor::Monochrome => "monochrome",
+        PanelColor::Kaleido3 => "kaleido-3",
+    };
+    let page_buttons = match profile.hardware.page_buttons {
+        PageButtons::Unknown => "unknown",
+        PageButtons::Measured193Back194Forward => "193-back-194-forward",
+    };
+    let orientation_sensor = fact_name(profile.hardware.orientation_sensor);
+    let wifi = fact_name(profile.hardware.wifi);
+    let network_platform = match profile.hardware.network_platform {
+        NetworkPlatform::MediaTekSharedRadio => "mediatek-shared-radio",
+        NetworkPlatform::Realtek8723ds => "realtek-8723ds",
+        NetworkPlatform::Unknown => "unknown",
+    };
+    let wifi_handoff = match profile.hardware.wifi_handoff {
+        WifiHandoff::ReapMeasured => "reap-measured",
+        WifiHandoff::UnverifiedNoReap => "unverified-no-reap",
+    };
+    let frontlight = profile.hardware.frontlight.brightness.map_or_else(
+        || "null".to_owned(),
+        |(minimum, maximum)| format!("{{\"minimum\":{minimum},\"maximum\":{maximum}}}"),
+    );
+    let warmth = profile.hardware.frontlight.warmth.map_or_else(
+        || "null".to_owned(),
+        |(minimum, maximum)| format!("{{\"minimum\":{minimum},\"maximum\":{maximum}}}"),
+    );
     format!(
         concat!(
             "{{\"profile\":{{\"id\":{},\"model\":{},\"width\":{},",
             "\"height\":{},\"pixelsPerInch\":{},\"rotation\":{},",
+            "\"verifiedRotations\":{:?},\"physical\":{{\"widthTenthMm\":{},",
+            "\"heightTenthMm\":{},\"source\":\"derived\"}},",
+            "\"framebuffer\":{{\"bitsPerPixel\":{},\"grayscale\":{},",
+            "\"stride\":{},\"visual\":{},\"packing\":{},",
+            "\"channels\":{{\"red\":[{},{},{}],\"green\":[{},{},{}],",
+            "\"blue\":[{},{},{}],\"alpha\":[{},{},{}]}},",
+            "\"chromaticRenderer\":false,\"colorApproximation\":{}}},",
+            "\"hardware\":{{\"panelColor\":{},\"pageButtons\":{},",
+            "\"orientationSensor\":{},\"frontlight\":{},\"warmth\":{},",
+            "\"wifi\":{},\"networkPlatform\":{},\"wifiHandoff\":{}}},",
             "\"touch\":{{\"name\":{},\"xMin\":{},\"xMax\":{},",
-            "\"yMin\":{},\"yMax\":{}}}}},\"scenario\":{},",
+            "\"yMin\":{},\"yMax\":{},\"minimumTargetPixels\":{}}}}},",
+            "\"scenario\":{},",
             "\"lifecycle\":{},\"transition\":{},\"refreshCount\":{},",
             "\"partialsSinceClean\":{},\"touch\":{},",
             "\"panelApproximation\":true}}"
         ),
-        json_string(PROFILE.id),
-        json_string(PROFILE.model),
-        PROFILE.width,
-        PROFILE.height,
-        PROFILE.pixels_per_inch,
-        PROFILE.rotation,
-        json_string(PROFILE.touch_name),
-        PROFILE.touch_x_min,
-        PROFILE.touch_x_max,
-        PROFILE.touch_y_min,
-        PROFILE.touch_y_max,
+        json_string(profile.id),
+        json_string(profile.model),
+        config.pose.width(),
+        config.pose.height(),
+        profile.pixels_per_inch,
+        config.pose.rotation(),
+        profile.verified_rotations,
+        profile.width_tenth_mm(),
+        profile.height_tenth_mm(),
+        profile.bits_per_pixel,
+        profile.grayscale,
+        profile.stride,
+        profile.framebuffer_visual,
+        packing,
+        profile.red.offset,
+        profile.red.length,
+        profile.red.msb_right,
+        profile.green.offset,
+        profile.green.length,
+        profile.green.msb_right,
+        profile.blue.offset,
+        profile.blue.length,
+        profile.blue.msb_right,
+        profile.alpha.offset,
+        profile.alpha.length,
+        profile.alpha.msb_right,
+        if profile.hardware.panel_color.is_color() {
+            "\"unavailable\""
+        } else {
+            "null"
+        },
+        json_string(panel_color),
+        json_string(page_buttons),
+        json_string(orientation_sensor),
+        frontlight,
+        warmth,
+        json_string(wifi),
+        json_string(network_platform),
+        json_string(wifi_handoff),
+        json_string(profile.touch_name),
+        profile.touch_x_min,
+        profile.touch_x_max,
+        profile.touch_y_min,
+        profile.touch_y_max,
+        profile.minimum_touch_target_pixels(),
         json_string(scenario.name()),
         json_string(lifecycle),
         transition,
@@ -1367,6 +1892,14 @@ fn simulation_json(
         panel.planner.dirty(),
         touch,
     )
+}
+
+const fn fact_name(status: FactStatus) -> &'static str {
+    match status {
+        FactStatus::Measured => "measured",
+        FactStatus::Derived => "derived",
+        FactStatus::Unknown => "unknown",
+    }
 }
 
 fn parse_lifecycle(bytes: &[u8]) -> Option<Lifecycle> {
@@ -1390,9 +1923,14 @@ fn parse_lifecycle(bytes: &[u8]) -> Option<Lifecycle> {
 /// actions directly would pass happily on a screen whose button had been laid
 /// out three millimetres off the bottom of the panel, which is exactly the
 /// class of fault worth catching.
-fn layout_json(screen: &Screen, paints: u64) -> String {
-    let metrics = profile_metrics();
-    let layout = screen.layout_with(&metrics, &kobo_ui::Chrome::default());
+fn layout_json(
+    config: SimulationConfig,
+    chrome: &kobo_ui::Chrome,
+    screen: &Screen,
+    paints: u64,
+) -> String {
+    let metrics = config.metrics();
+    let layout = screen.layout_with(&metrics, chrome);
     let mut json = format!("{{\"paints\":{paints},\"nodes\":[");
     for (index, node) in layout.nodes.iter().enumerate() {
         if index > 0 {
@@ -1744,7 +2282,27 @@ fn read_app_messages(
 ) -> io::Result<()> {
     // The simulator owns no hardware, so it answers state queries from a
     // believable model and refuses everything that would change a real device.
-    let mut services = DeviceServices::simulated();
+    let config = state
+        .lock()
+        .map_err(|_| io::Error::other("app state lock poisoned"))?
+        .config;
+    let backends = Capability::ALL
+        .into_iter()
+        .filter(|capability| match capability {
+            Capability::FrontlightControl => {
+                config.profile.hardware.frontlight.brightness.is_some()
+            }
+            Capability::Network
+            | Capability::BackgroundNetwork
+            | Capability::HoldWifi
+            | Capability::WifiControl => config.profile.hardware.wifi == FactStatus::Measured,
+            _ => true,
+        });
+    let mut services = DeviceServices::new(
+        Declared::all(),
+        PowerPolicy::DEFAULT,
+        Backends::with(backends),
+    );
     // There is no bezel here to hold a magnet against, so the state the hall
     // sensor reports is set on the way in. Without this the second half of
     // every cover-aware screen is unreachable off hardware.
@@ -1786,7 +2344,8 @@ fn read_app_messages(
                 let mut state = state
                     .lock()
                     .map_err(|_| io::Error::other("app state lock poisoned"))?;
-                state.screen = screen;
+                let chrome = simulated_chrome(name, &screen);
+                state.screen = kobo_ui::ensure_way_back(screen, &chrome, name);
                 state.paints = state.paints.saturating_add(1);
             }
             // The simulator hosts exactly one application, so a launch is
@@ -2089,7 +2648,7 @@ fn write_protocol_frame(stream: &mut UnixStream, frame: &Frame) -> io::Result<()
 ///
 /// Returns an error if the localhost listener cannot be bound or served.
 pub fn run_server(address: &str) -> io::Result<()> {
-    run_server_at(address)
+    run_server_with_config(address, SimulationConfig::default())
 }
 
 /// Starts the counter simulator at a requested IPv4 loopback address or port.
@@ -2101,7 +2660,16 @@ pub fn run_server(address: &str) -> io::Result<()> {
 ///
 /// Returns an error for an invalid/non-loopback address or listener failure.
 pub fn run_server_at(address: &str) -> io::Result<()> {
-    Server::bind_address(address)?.serve()
+    run_server(address)
+}
+
+/// Starts the counter simulator for one exact profile and verified pose.
+///
+/// # Errors
+///
+/// Returns an error for an invalid/non-loopback address or listener failure.
+pub fn run_server_with_config(address: &str, config: SimulationConfig) -> io::Result<()> {
+    Server::bind_with_config(address, config)?.serve()
 }
 
 /// Where the simulator looks for the named credentials an application asks
@@ -2170,8 +2738,8 @@ fn simulated_tasks(name: &str) -> TaskRunner {
 ///
 /// A failure is not fatal: `kobo-ui` keeps its bitmap, so the worst case is a
 /// preview that looks like the old one.
-fn install_typeface() {
-    let _ = kobo_text::install(kobo_ui::display_metrics_from_env());
+fn install_typeface(config: SimulationConfig) {
+    let _ = kobo_text::install(config.metrics());
 }
 
 fn parse_local_address(address: &str) -> io::Result<SocketAddr> {
@@ -2310,6 +2878,7 @@ fn write_response(
         200 => "OK",
         204 => "No Content",
         400 => "Bad Request",
+        409 => "Conflict",
         404 => "Not Found",
         _ => "Internal Server Error",
     };
@@ -2321,12 +2890,67 @@ fn write_response(
     stream.write_all(body)
 }
 
+fn pack_framebuffer(profile: &DeviceProfile, grey: &[u8]) -> Result<Vec<u8>, String> {
+    let packing = profile.framebuffer_packing().ok_or_else(|| {
+        format!(
+            "{} reports framebuffer channel fields the simulator cannot serialize; \
+             raw framebuffer output is refused",
+            profile.id
+        )
+    })?;
+    let width = usize::try_from(profile.width)
+        .map_err(|_| format!("{} panel width is not representable", profile.id))?;
+    let height = usize::try_from(profile.height)
+        .map_err(|_| format!("{} panel height is not representable", profile.id))?;
+    let expected = width
+        .checked_mul(height)
+        .ok_or_else(|| format!("{} panel size is not representable", profile.id))?;
+    if grey.len() != expected {
+        return Err(format!(
+            "{} presentation frame has {} bytes, expected {expected}",
+            profile.id,
+            grey.len()
+        ));
+    }
+    let stride = usize::try_from(profile.stride)
+        .map_err(|_| format!("{} framebuffer stride is not representable", profile.id))?;
+    let row_bytes = width
+        .checked_mul(4)
+        .ok_or_else(|| format!("{} framebuffer row is too large", profile.id))?;
+    if stride < row_bytes {
+        return Err(format!(
+            "{} framebuffer stride {stride} is shorter than its {row_bytes}-byte row",
+            profile.id
+        ));
+    }
+    let mut packed = Vec::with_capacity(
+        stride
+            .checked_mul(height)
+            .ok_or_else(|| format!("{} framebuffer is too large", profile.id))?,
+    );
+    for row in grey.chunks_exact(width) {
+        for tone in row {
+            match packing {
+                // The current UI palette is greyscale, so RGB are intentionally
+                // equal. Keeping the measured byte order here makes chromatic
+                // UI additions fail tests rather than inheriting a
+                // Clara-specific assumption.
+                FramebufferPacking::Rgba8888 | FramebufferPacking::Bgra8888 => {
+                    packed.extend_from_slice(&[*tone, *tone, *tone, u8::MAX]);
+                }
+            }
+        }
+        packed.resize(packed.len() + stride - row_bytes, 0);
+    }
+    Ok(packed)
+}
+
 const SHELL: &str = r##"<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Kobo Clara BW simulator</title>
+<title>Kobo profile simulator</title>
 <style>
 :root { color-scheme:dark; --workspace:#151515; --panel:#222; --raised:#2b2b2b; --border:#5c5c5c; --text:#f7f7f7; --muted:#c6c6c6; --paper:#f8f8f8; --focus:#fff; --accent:#9fd4ff; --warning:#ffd18b; --error:#ffb4ab; --space-1:8px; --space-2:16px; --space-3:24px; }
 * { box-sizing:border-box; }
@@ -2383,7 +3007,7 @@ figcaption { margin-top:12px; color:var(--muted); font-size:.875rem; }
 <div class="workspace">
   <figure class="device">
     <div class="screen"><canvas id="display" width="1072" height="1448" tabindex="0" role="application" aria-label="Kobo grayscale display" aria-describedby="instructions"></canvas></div>
-    <figcaption id="instructions">Kobo Clara BW panel preview. Click or tap to exercise the measured controller transform and SDK hit testing.</figcaption>
+    <figcaption id="instructions">Selected Kobo profile preview. Click or tap to exercise its measured controller transform and SDK hit testing.</figcaption>
   </figure>
   <aside class="inspector" aria-label="Simulator inspector">
     <section class="card">
@@ -2417,18 +3041,36 @@ figcaption { margin-top:12px; color:var(--muted); font-size:.875rem; }
       </dl>
       <label class="check"><input type="checkbox" id="ideal"> Show ideal pixels</label>
       <label class="check"><input type="checkbox" id="refresh-region" checked> Outline refresh region</label>
-      <p class="note">Residue is an explicit visual approximation. Pixel output and refresh selection are exact.</p>
+      <p class="note">Residue is a visual approximation. Greyscale bytes and refresh selection are exact; colour profiles explicitly report that chromatic rendering is unavailable.</p>
     </section>
     <section class="card">
-      <h2>Clara BW profile</h2>
+      <h2>Profile facts</h2>
       <dl class="facts">
         <dt>Panel</dt><dd id="geometry">1072 × 1448</dd>
+        <dt>Physical size</dt><dd id="physical-size">—</dd>
         <dt>Density</dt><dd id="density">300 PPI</dd>
         <dt>Framebuffer rotation</dt><dd id="rotation">3</dd>
+        <dt>Verified rotations</dt><dd id="verified-rotations">3</dd>
+        <dt>Framebuffer</dt><dd id="framebuffer">—</dd>
+        <dt>Channel fields</dt><dd id="channels">—</dd>
+        <dt>Panel colour</dt><dd id="panel-color">—</dd>
+        <dt>Chromatic renderer</dt><dd id="chromatic-renderer">—</dd>
+        <dt>Page buttons</dt><dd id="page-buttons">—</dd>
+        <dt>Orientation sensor</dt><dd id="orientation-sensor">—</dd>
+        <dt>Frontlight</dt><dd id="frontlight">—</dd>
+        <dt>Warm light</dt><dd id="warm-light">—</dd>
+        <dt>Wi-Fi</dt><dd id="wifi">—</dd>
+        <dt>Network platform</dt><dd id="network-platform">—</dd>
+        <dt>Wi-Fi handoff</dt><dd id="wifi-handoff">—</dd>
         <dt>Lifecycle</dt><dd id="lifecycle">foreground</dd>
         <dt>Display touch</dt><dd id="display-touch">—</dd>
         <dt>Raw touch</dt><dd id="raw-touch">—</dd>
       </dl>
+      <div class="buttons">
+        <button type="button" data-page-button="upper" disabled>Upper page key</button>
+        <button type="button" data-page-button="lower" disabled>Lower page key</button>
+      </div>
+      <p class="note">Unknown hardware stays disabled. The profile and pose are selected when the simulator starts.</p>
     </section>
     <section class="card">
       <h2>Layout diagnostics</h2>
@@ -2447,10 +3089,11 @@ function checked(response){if(!response.ok)throw Error("Simulator request failed
 function showDiagnostics(){list.replaceChildren();if(!issues.length){const item=document.createElement("li");item.textContent="No layout issues.";list.append(item);return;}for(const issue of issues){const item=document.createElement("li");item.className=issue.severity;item.textContent=issue.message;list.append(item);}}
 function outline(rect,color,width){if(!rect)return;ctx.save();ctx.lineWidth=width;ctx.strokeStyle=color;ctx.strokeRect(rect.x+width/2,rect.y+width/2,Math.max(0,rect.width-width),Math.max(0,rect.height-width));ctx.restore();}
 function drawOverlays(){if(refreshRegion.checked&&transition)outline(transition.region,"#006fbb",6);if(!overlay.checked)return;for(const issue of issues){outline(issue.rect,issue.severity==="error"?"#d00000":"#b56a00",5);}}
-function showSimulation(sim){profile=sim.profile;transition=sim.transition;scenario.value=sim.scenario;document.getElementById("profile-badge").textContent=profile.id;document.getElementById("geometry").textContent=profile.width+" × "+profile.height;document.getElementById("density").textContent=profile.pixelsPerInch+" PPI";document.getElementById("rotation").textContent=profile.rotation;document.getElementById("lifecycle").textContent=sim.lifecycle;const touch=sim.touch;document.getElementById("display-touch").textContent=touch?touch.display.x+", "+touch.display.y:"—";document.getElementById("raw-touch").textContent=touch?touch.raw.x+", "+touch.raw.y:"—";document.getElementById("waveform").textContent=transition?transition.waveform:"—";document.getElementById("update-kind").textContent=transition?(transition.full?"full / cleaning":"partial"):"unchanged";document.getElementById("region").textContent=transition?transition.region.width+"×"+transition.region.height+" @ "+transition.region.x+","+transition.region.y:"—";document.getElementById("refresh-count").textContent=sim.refreshCount;document.getElementById("partial-count").textContent=sim.partialsSinceClean+" / 8";}
+function range(value,suffix){return value?value.minimum+"–"+value.maximum+suffix:"unknown";}
+function showSimulation(sim){profile=sim.profile;transition=sim.transition;scenario.value=sim.scenario;document.getElementById("profile-badge").textContent=profile.id;document.querySelector(".screen").style.maxWidth=profile.width+"px";document.getElementById("geometry").textContent=profile.width+" × "+profile.height;document.getElementById("physical-size").textContent=(profile.physical.widthTenthMm/10).toFixed(1)+" × "+(profile.physical.heightTenthMm/10).toFixed(1)+" mm (derived)";document.getElementById("density").textContent=profile.pixelsPerInch+" PPI";document.getElementById("rotation").textContent=profile.rotation;document.getElementById("verified-rotations").textContent=profile.verifiedRotations.join(", ");document.getElementById("framebuffer").textContent=profile.framebuffer.bitsPerPixel+" bpp / "+(profile.framebuffer.packing||"packing unavailable");const c=profile.framebuffer.channels;document.getElementById("channels").textContent="R "+c.red.join("/")+" · G "+c.green.join("/")+" · B "+c.blue.join("/")+" · A "+c.alpha.join("/");document.getElementById("panel-color").textContent=profile.hardware.panelColor;document.getElementById("chromatic-renderer").textContent=profile.framebuffer.chromaticRenderer?"available":(profile.framebuffer.colorApproximation||"not applicable");document.getElementById("page-buttons").textContent=profile.hardware.pageButtons;document.getElementById("orientation-sensor").textContent=profile.hardware.orientationSensor;document.getElementById("frontlight").textContent=range(profile.hardware.frontlight,"%");document.getElementById("warm-light").textContent=range(profile.hardware.warmth," raw");document.getElementById("wifi").textContent=profile.hardware.wifi;document.getElementById("network-platform").textContent=profile.hardware.networkPlatform;document.getElementById("wifi-handoff").textContent=profile.hardware.wifiHandoff;for(const button of document.querySelectorAll("[data-page-button]"))button.disabled=profile.hardware.pageButtons==="unknown";document.getElementById("lifecycle").textContent=sim.lifecycle;const touch=sim.touch;document.getElementById("display-touch").textContent=touch?touch.display.x+", "+touch.display.y:"—";document.getElementById("raw-touch").textContent=touch?touch.raw.x+", "+touch.raw.y:"—";document.getElementById("waveform").textContent=transition?transition.waveform:"—";document.getElementById("update-kind").textContent=transition?(transition.full?"full / cleaning":"partial"):"unchanged";document.getElementById("region").textContent=transition?transition.region.width+"×"+transition.region.height+" @ "+transition.region.x+","+transition.region.y:"—";document.getElementById("refresh-count").textContent=sim.refreshCount;document.getElementById("partial-count").textContent=sim.partialsSinceClean+" / 8";}
 async function frame(){const path=ideal.checked?"/ideal-frame":"/frame";const response=checked(await fetch(path,{cache:"no-store"}));const raw=new Uint8Array(await response.arrayBuffer());const [diagnostics,simulation]=await Promise.all([fetch("/diagnostics",{cache:"no-store"}).then(checked).then(r=>r.json()),fetch("/simulation",{cache:"no-store"}).then(checked).then(r=>r.json())]);issues=diagnostics.issues;showSimulation(simulation);if(raw.length!==profile.width*profile.height)throw Error("Invalid "+profile.id+" frame");if(canvas.width!==profile.width||canvas.height!==profile.height){canvas.width=profile.width;canvas.height=profile.height;}const image=ctx.createImageData(profile.width,profile.height);for(let i=0;i<raw.length;i++){const p=i*4;image.data[p]=image.data[p+1]=image.data[p+2]=raw[i];image.data[p+3]=255;}ctx.putImageData(image,0,0);showDiagnostics();drawOverlays();if(!ideal.checked&&transition&&transition.full&&transition.refresh!==lastFlash){lastFlash=transition.refresh;canvas.classList.remove("clean-flash");void canvas.offsetWidth;canvas.classList.add("clean-flash");}status.textContent=issues.length?"Frame loaded with "+issues.length+" diagnostic"+(issues.length===1?"":"s")+".":"Frame loaded; layout clean.";}
 function touchLocation(event){const rect=canvas.getBoundingClientRect();return{x:Math.floor((event.clientX-rect.left)*profile.width/rect.width),y:Math.floor((event.clientY-rect.top)*profile.height/rect.height)};}
-async function touch(next){point=next;checked(await fetch("/touch",{method:"POST",headers:{"Content-Type":"text/plain"},body:"x="+point.x+"&y="+point.y}));await frame();status.textContent="Touch delivered through the Clara BW transform.";}
+async function touch(next){point=next;checked(await fetch("/touch",{method:"POST",headers:{"Content-Type":"text/plain"},body:"x="+point.x+"&y="+point.y}));await frame();status.textContent="Touch delivered through the selected profile transform.";}
 async function post(path,body){checked(await fetch(path,{method:"POST",headers:{"Content-Type":"text/plain"},body}));await frame();}
 canvas.addEventListener("pointerup",event=>{event.preventDefault();touch(touchLocation(event)).catch(error=>status.textContent=error.message);});
 canvas.addEventListener("keydown",event=>{if(event.key==="Enter"||event.key===" "){event.preventDefault();touch(point).catch(error=>status.textContent=error.message);}});
@@ -2458,6 +3101,7 @@ document.getElementById("refresh").addEventListener("click",()=>frame().catch(er
 for(const control of [overlay,ideal,refreshRegion])control.addEventListener("change",()=>frame().catch(error=>status.textContent=error.message));
 scenario.addEventListener("change",()=>post("/scenario",scenario.value).catch(error=>status.textContent=error.message));
 for(const button of document.querySelectorAll("[data-lifecycle]"))button.addEventListener("click",()=>post("/lifecycle",button.dataset.lifecycle).catch(error=>status.textContent=error.message));
+for(const button of document.querySelectorAll("[data-page-button]"))button.addEventListener("click",()=>post("/button",button.dataset.pageButton).catch(error=>status.textContent=error.message));
 frame().catch(error=>status.textContent=error.message);
 </script>
 </body></html>"##;
@@ -2816,7 +3460,7 @@ mod tests {
         let mut simulator = Simulator::new();
         assert_eq!(
             simulator.frame().len(),
-            (PROFILE.width * PROFILE.height) as usize
+            (DEFAULT_PROFILE.width * DEFAULT_PROFILE.height) as usize
         );
         let button = simulator.screen().layout().nodes[2].rect;
         assert_eq!(
@@ -2836,7 +3480,7 @@ mod tests {
         simulator.touch(x, y).expect("button is touchable");
 
         let payload = simulator.simulation_json();
-        let raw = POSE
+        let raw = PanelPose::reference(DEFAULT_PROFILE)
             .display_to_touch(
                 u32::try_from(x).expect("positive display x"),
                 u32::try_from(y).expect("positive display y"),
@@ -2849,6 +3493,77 @@ mod tests {
         assert!(payload.contains("\"waveform\":\"GC16\""));
         assert!(payload.contains(&format!("\"raw\":{{\"x\":{},\"y\":{}}}", raw.0, raw.1)));
         assert!(payload.contains("\"panelApproximation\":true"));
+    }
+
+    #[test]
+    fn every_supported_pose_uses_its_profile_metrics() {
+        let configs = SimulationConfig::supported().collect::<Vec<_>>();
+        assert_eq!(configs.len(), 8);
+        for config in configs {
+            let metrics = config.metrics();
+            assert_eq!(
+                metrics.width,
+                i32::try_from(config.pose().width()).expect("profile width fits i32")
+            );
+            assert_eq!(
+                metrics.height,
+                i32::try_from(config.pose().height()).expect("profile height fits i32")
+            );
+            assert_eq!(
+                metrics.pixels_per_inch,
+                i32::from(config.profile().pixels_per_inch)
+            );
+            assert!(config
+                .profile()
+                .verified_rotations
+                .contains(&config.pose().rotation()));
+        }
+    }
+
+    #[test]
+    fn selection_refuses_unknown_profiles_and_unverified_rotations() {
+        assert!(SimulationConfig::select("clara-bw", None).is_err());
+        assert!(SimulationConfig::select("clara-bw-391", Some(1)).is_err());
+        assert!(SimulationConfig::select("libra-2-388", Some(3)).is_ok());
+    }
+
+    #[test]
+    fn color_and_unknown_packing_are_reported_without_invention() {
+        let colour = SimulationConfig::select("clara-colour-393", None).expect("colour profile");
+        let payload = simulation_json(
+            colour,
+            &PanelPreview::new(colour),
+            Scenario::Normal,
+            Lifecycle::Foreground,
+            None,
+        );
+        assert!(payload.contains("\"panelColor\":\"kaleido-3\""));
+        assert!(payload.contains("\"chromaticRenderer\":false"));
+        assert!(payload.contains("\"colorApproximation\":\"unavailable\""));
+        assert!(payload.contains("\"red\":[0,8,0]"));
+
+        let elipsa = SimulationConfig::select("elipsa-2e-389", None).expect("Elipsa profile");
+        let frame = vec![0_u8; (elipsa.pose().width() * elipsa.pose().height()) as usize];
+        assert!(pack_framebuffer(elipsa.profile(), &frame).is_err());
+    }
+
+    #[test]
+    fn framebuffer_serialization_preserves_measured_line_padding() {
+        let config = SimulationConfig::select("clara-hd-376", None).expect("Clara HD profile");
+        let width = config.pose().width() as usize;
+        let height = config.pose().height() as usize;
+        let stride = config.profile().stride as usize;
+        let mut frame = vec![0_u8; width * height];
+        frame[width - 1] = 0x11;
+        frame[width] = 0x22;
+        let packed = pack_framebuffer(config.profile(), &frame).expect("known BGRA packing");
+        assert_eq!(packed.len(), stride * height);
+        assert_eq!(
+            &packed[(width - 1) * 4..width * 4],
+            &[0x11, 0x11, 0x11, 255]
+        );
+        assert!(packed[width * 4..stride].iter().all(|byte| *byte == 0));
+        assert_eq!(&packed[stride..stride + 4], &[0x22, 0x22, 0x22, 255]);
     }
 
     #[test]
@@ -2949,6 +3664,7 @@ mod tests {
         let session = AppSession {
             state: Arc::new(Mutex::new(AppState::default())),
             writer: AppWriter::spawn_for(server, kobo_protocol::VERSION),
+            closing: Arc::new(AtomicBool::new(false)),
         };
 
         session
@@ -2974,7 +3690,12 @@ mod tests {
                 })
                 .collect(),
         );
-        let payload = diagnostics_json(&screen, &kobo_ui::PictureCache::default());
+        let payload = diagnostics_json(
+            SimulationConfig::default(),
+            &simulated_chrome("test", &screen),
+            &screen,
+            &kobo_ui::PictureCache::default(),
+        );
         assert!(payload.starts_with("{\"issues\":["));
         assert!(payload.contains("below the content area"));
         assert!(payload.contains("\"severity\":\"error\""));
@@ -2993,7 +3714,12 @@ mod tests {
                     .collect(),
             }],
         );
-        let payload = diagnostics_json(&screen, &kobo_ui::PictureCache::default());
+        let payload = diagnostics_json(
+            SimulationConfig::default(),
+            &simulated_chrome("test", &screen),
+            &screen,
+            &kobo_ui::PictureCache::default(),
+        );
         assert!(
             payload.contains("interactive control is outside the visible panel"),
             "{payload}"
@@ -3072,9 +3798,9 @@ mod tests {
             assert_eq!(
                 welcome.message,
                 Message::Welcome {
-                    width: u16::try_from(PROFILE.width).expect("profile width"),
-                    height: u16::try_from(PROFILE.height).expect("profile height"),
-                    pixels_per_inch: PROFILE.pixels_per_inch,
+                    width: u16::try_from(DEFAULT_PROFILE.width).expect("profile width"),
+                    height: u16::try_from(DEFAULT_PROFILE.height).expect("profile height"),
+                    pixels_per_inch: DEFAULT_PROFILE.pixels_per_inch,
                     text_scale: kobo_ui::TextScale::Default,
                 }
             );

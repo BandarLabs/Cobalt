@@ -15,6 +15,102 @@ pub enum FramebufferController {
     MxcfbV2,
 }
 
+/// Whether a hardware fact has direct evidence behind it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FactStatus {
+    /// Read from a device or confirmed in an owner-attended hardware run.
+    Measured,
+    /// Computed from measured fields by a documented rule.
+    Derived,
+    /// No reviewed evidence exists. Simulation must refuse dependent controls.
+    Unknown,
+}
+
+/// The panel technology established for a supported profile.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PanelColor {
+    Monochrome,
+    /// A colour filter array over a 300 PPI greyscale panel.
+    Kaleido3,
+}
+
+/// Byte packing identified by the measured framebuffer channel fields.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FramebufferPacking {
+    Rgba8888,
+    Bgra8888,
+}
+
+impl PanelColor {
+    #[must_use]
+    pub const fn is_color(self) -> bool {
+        matches!(self, Self::Kaleido3)
+    }
+}
+
+/// Page keys whose codes and reference-pose meaning were measured.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PageButtons {
+    Unknown,
+    /// At the reference pose, 193 goes back and 194 goes forward.
+    Measured193Back194Forward,
+}
+
+/// Exact front-light controls established for a profile.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LightCapabilities {
+    /// Inclusive brightness range in the percentage applications use.
+    pub brightness: Option<(u8, u8)>,
+    /// Raw inclusive warm/cool balance range. `None` means unknown, not absent.
+    pub warmth: Option<(u8, u8)>,
+}
+
+/// Radio/platform behavior relevant to safe simulation and hand-back.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NetworkPlatform {
+    /// `MediaTek` Wi-Fi and Bluetooth share one stack.
+    MediaTekSharedRadio,
+    /// Realtek 8723ds on i.MX6SLL, measured on Libra 2.
+    Realtek8723ds,
+    Unknown,
+}
+
+/// What is known about the stock reader's supplicant after a panel session.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WifiHandoff {
+    /// The leftover process was measured to collide with Nickel's replacement.
+    ReapMeasured,
+    /// No per-profile hand-back result has been measured.
+    UnverifiedNoReap,
+}
+
+/// Hardware support facts that cannot be inferred from framebuffer geometry.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct HardwareCapabilities {
+    pub panel_color: PanelColor,
+    pub touch: FactStatus,
+    pub page_buttons: PageButtons,
+    pub orientation_sensor: FactStatus,
+    pub frontlight: LightCapabilities,
+    pub wifi: FactStatus,
+    pub network_platform: NetworkPlatform,
+    pub wifi_handoff: WifiHandoff,
+}
+
+const MONO_UNKNOWN_HARDWARE: HardwareCapabilities = HardwareCapabilities {
+    panel_color: PanelColor::Monochrome,
+    touch: FactStatus::Measured,
+    page_buttons: PageButtons::Unknown,
+    orientation_sensor: FactStatus::Unknown,
+    frontlight: LightCapabilities {
+        brightness: None,
+        warmth: None,
+    },
+    wifi: FactStatus::Unknown,
+    network_platform: NetworkPlatform::Unknown,
+    wifi_handoff: WifiHandoff::UnverifiedNoReap,
+};
+
 /// How a device's touch controller reports position relative to the display.
 ///
 /// This used to be inferred from the framebuffer's `rotation`. It cannot be:
@@ -287,6 +383,16 @@ pub const CLARA_BW_391: DeviceProfile = DeviceProfile {
     serial_prefix: "N365",
     firmware_versions: &["4.45.23697"],
     kernel_release: "4.9.77",
+    hardware: HardwareCapabilities {
+        frontlight: LightCapabilities {
+            brightness: Some((0, 100)),
+            warmth: Some((0, 10)),
+        },
+        wifi: FactStatus::Measured,
+        network_platform: NetworkPlatform::MediaTekSharedRadio,
+        wifi_handoff: WifiHandoff::ReapMeasured,
+        ..MONO_UNKNOWN_HARDWARE
+    },
     write_ready: true,
     // Measured on the device on 2026-09-02: preserving Nickel's detached
     // supplicant kept SSH alive throughout Cobalt's panel session, but the
@@ -359,6 +465,10 @@ pub const CLARA_BW_395: DeviceProfile = DeviceProfile {
     serial_prefix: "P365",
     firmware_versions: &["4.45.23697"],
     kernel_release: "4.9.77",
+    hardware: HardwareCapabilities {
+        network_platform: NetworkPlatform::MediaTekSharedRadio,
+        ..MONO_UNKNOWN_HARDWARE
+    },
     write_ready: true,
     reap_nickel_supplicant: false,
 };
@@ -426,6 +536,7 @@ pub const CLARA_HD_376: DeviceProfile = DeviceProfile {
     serial_prefix: "N249",
     firmware_versions: &["4.38.23684", "4.38.23697"],
     kernel_release: "4.1.15-00136-g12655eaaef89",
+    hardware: MONO_UNKNOWN_HARDWARE,
     write_ready: true,
     reap_nickel_supplicant: false,
 };
@@ -444,6 +555,11 @@ pub const CLARA_COLOUR_393: DeviceProfile = DeviceProfile {
     model: "Kobo Clara Colour",
     device_code: 393,
     serial_prefix: "N367",
+    hardware: HardwareCapabilities {
+        panel_color: PanelColor::Kaleido3,
+        network_platform: NetworkPlatform::MediaTekSharedRadio,
+        ..MONO_UNKNOWN_HARDWARE
+    },
     write_ready: true,
     reap_nickel_supplicant: false,
     ..CLARA_BW_391
@@ -503,6 +619,10 @@ pub const ELIPSA_2E_389: DeviceProfile = DeviceProfile {
     serial_prefix: "N605",
     firmware_versions: &["4.38.23697"],
     kernel_release: "4.9.77",
+    hardware: HardwareCapabilities {
+        network_platform: NetworkPlatform::MediaTekSharedRadio,
+        ..MONO_UNKNOWN_HARDWARE
+    },
     write_ready: true,
     reap_nickel_supplicant: false,
 };
@@ -591,6 +711,14 @@ pub const LIBRA_2_388: DeviceProfile = DeviceProfile {
     serial_prefix: "N418",
     firmware_versions: &["4.38.23697"],
     kernel_release: "4.1.15-00868-g58a2758be07",
+    hardware: HardwareCapabilities {
+        page_buttons: PageButtons::Measured193Back194Forward,
+        orientation_sensor: FactStatus::Measured,
+        wifi: FactStatus::Measured,
+        network_platform: NetworkPlatform::Realtek8723ds,
+        wifi_handoff: WifiHandoff::ReapMeasured,
+        ..MONO_UNKNOWN_HARDWARE
+    },
     // Owner-attended display, touch, exit and recovery evidence was filmed on
     // the device and reviewed upstream before this was set.
     write_ready: true,
@@ -687,6 +815,12 @@ pub const LIBRA_COLOUR_390: DeviceProfile = DeviceProfile {
     serial_prefix: "N428",
     firmware_versions: &["4.45.23697"],
     kernel_release: "4.9.77",
+    hardware: HardwareCapabilities {
+        panel_color: PanelColor::Kaleido3,
+        page_buttons: PageButtons::Measured193Back194Forward,
+        network_platform: NetworkPlatform::MediaTekSharedRadio,
+        ..MONO_UNKNOWN_HARDWARE
+    },
     write_ready: true,
     // Off until measured here. The evidence behind the reap is from a Realtek
     // radio on i.MX6SLL; this is a MediaTek device whose Wi-Fi stack is shared
@@ -703,6 +837,15 @@ pub const SUPPORTED_PROFILES: &[&DeviceProfile] = &[
     &LIBRA_2_388,
     &LIBRA_COLOUR_390,
 ];
+
+/// Finds one exact supported profile by its stable profile id.
+#[must_use]
+pub fn supported_profile(id: &str) -> Option<&'static DeviceProfile> {
+    SUPPORTED_PROFILES
+        .iter()
+        .copied()
+        .find(|profile| profile.id == id)
+}
 
 pub const WRITE_EVIDENCE_PENDING: &str =
     "owner-attended display, touch, exit, and recovery evidence is incomplete";
@@ -920,6 +1063,8 @@ pub struct DeviceProfile {
     /// Exact firmware releases covered by owner-attended evidence.
     pub firmware_versions: &'static [&'static str],
     pub kernel_release: &'static str,
+    /// Capabilities backed by evidence outside the framebuffer snapshot.
+    pub hardware: HardwareCapabilities,
     /// True only after owner-attended hardware evidence has been reviewed.
     pub write_ready: bool,
     /// Whether the hand-back must stop Nickel's leftover `wpa_supplicant`
@@ -975,6 +1120,54 @@ pub struct ValidationReport {
 }
 
 impl DeviceProfile {
+    /// Physical panel width derived from measured pixels and density.
+    #[must_use]
+    pub const fn width_tenth_mm(&self) -> u32 {
+        self.width.saturating_mul(254) / self.pixels_per_inch as u32
+    }
+
+    /// Physical panel height derived from measured pixels and density.
+    #[must_use]
+    pub const fn height_tenth_mm(&self) -> u32 {
+        self.height.saturating_mul(254) / self.pixels_per_inch as u32
+    }
+
+    /// Minimum seven-millimetre physical touch target, derived for this panel.
+    #[must_use]
+    pub const fn minimum_touch_target_pixels(&self) -> u32 {
+        (70_u32.saturating_mul(self.pixels_per_inch as u32) + 127) / 254
+    }
+
+    /// The measured 32-bit channel layout when it identifies a byte order.
+    ///
+    /// `None` is fail-closed. Elipsa 2E reports zero-length channel fields, so
+    /// no byte order can truthfully be inferred from its doctor snapshot.
+    #[must_use]
+    pub const fn framebuffer_packing(&self) -> Option<FramebufferPacking> {
+        if self.bits_per_pixel != 32
+            || self.red.length != 8
+            || self.green.length != 8
+            || self.blue.length != 8
+            || self.alpha.length != 8
+            || self.red.msb_right != 0
+            || self.green.msb_right != 0
+            || self.blue.msb_right != 0
+            || self.alpha.msb_right != 0
+        {
+            return None;
+        }
+        match (
+            self.red.offset,
+            self.green.offset,
+            self.blue.offset,
+            self.alpha.offset,
+        ) {
+            (0, 8, 16, 24) => Some(FramebufferPacking::Rgba8888),
+            (16, 8, 0, 24) => Some(FramebufferPacking::Bgra8888),
+            _ => None,
+        }
+    }
+
     #[must_use]
     pub fn validate(&self, snapshot: &DeviceSnapshot) -> ValidationReport {
         let mut mismatches = Vec::new();
@@ -1202,6 +1395,31 @@ impl<'a> PanelPose<'a> {
             height: profile.height,
             mapping: profile.touch_transform.lower(),
         }
+    }
+
+    /// Builds a simulator pose only when the profile has verified it.
+    ///
+    /// Unlike a device pose there is no live framebuffer to inspect. The
+    /// simulator takes an explicit rotation but applies the same verified-set
+    /// and composition gates as [`Self::resolve`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PoseError`] for an unverified or uncomposable rotation.
+    pub fn simulated(profile: &'a DeviceProfile, rotation: u32) -> Result<Self, PoseError> {
+        if !profile.verified_rotations.contains(&rotation) {
+            return Err(PoseError::UnverifiedRotation {
+                observed: rotation,
+                verified: profile.verified_rotations,
+            });
+        }
+        Ok(Self {
+            profile,
+            rotation,
+            width: profile.width,
+            height: profile.height,
+            mapping: Self::compose(profile, rotation)?,
+        })
     }
 
     /// Composes the digitiser mapping against an orientation.
@@ -1645,10 +1863,148 @@ mod tests {
     const CLARA_HD_POSE: PanelPose<'static> = PanelPose::reference(&CLARA_HD_376);
 
     use super::{
-        identify_profile, Bitfield, DeviceProfile, DeviceSnapshot, FramebufferSnapshot,
-        IdentitySnapshot, Readiness, TouchSnapshot, CLARA_BW_391, CLARA_BW_395, CLARA_COLOUR_393,
+        identify_profile, supported_profile, Bitfield, DeviceProfile, DeviceSnapshot, FactStatus,
+        FramebufferPacking, FramebufferSnapshot, IdentitySnapshot, PageButtons, PanelColor,
+        Readiness, TouchSnapshot, WifiHandoff, CLARA_BW_391, CLARA_BW_395, CLARA_COLOUR_393,
         CLARA_HD_376, ELIPSA_2E_389, LIBRA_2_388, LIBRA_COLOUR_390, WRITE_EVIDENCE_PENDING,
     };
+
+    #[test]
+    fn simulator_inventory_is_the_exact_supported_profile_set() {
+        assert_eq!(
+            SUPPORTED_PROFILES
+                .iter()
+                .map(|profile| profile.id)
+                .collect::<Vec<_>>(),
+            vec![
+                "clara-bw-391",
+                "clara-bw-395",
+                "clara-hd-376",
+                "clara-colour-393",
+                "elipsa-2e-389",
+                "libra-2-388",
+                "libra-colour-390",
+            ]
+        );
+        for profile in SUPPORTED_PROFILES {
+            assert_eq!(supported_profile(profile.id), Some(*profile));
+        }
+        assert!(supported_profile("clara-bw").is_none());
+    }
+
+    #[test]
+    fn simulator_poses_are_only_the_measured_rotations() {
+        for profile in SUPPORTED_PROFILES {
+            for rotation in 0..=3 {
+                assert_eq!(
+                    PanelPose::simulated(profile, rotation).is_ok(),
+                    profile.verified_rotations.contains(&rotation),
+                    "{} rotation {rotation}",
+                    profile.id
+                );
+            }
+        }
+        assert_eq!(LIBRA_2_388.verified_rotations, &[1, 3]);
+        assert!(SUPPORTED_PROFILES
+            .iter()
+            .filter(|profile| profile.id != LIBRA_2_388.id)
+            .all(|profile| profile.verified_rotations == [profile.reference_rotation]));
+    }
+
+    #[test]
+    fn physical_metrics_are_derived_from_measured_pixels_and_density() {
+        assert_eq!(
+            (
+                CLARA_BW_391.width_tenth_mm(),
+                CLARA_BW_391.height_tenth_mm(),
+                CLARA_BW_391.minimum_touch_target_pixels(),
+            ),
+            (907, 1_225, 83)
+        );
+        assert_eq!(
+            (
+                ELIPSA_2E_389.width_tenth_mm(),
+                ELIPSA_2E_389.height_tenth_mm(),
+                ELIPSA_2E_389.minimum_touch_target_pixels(),
+            ),
+            (1_570, 2_094, 63)
+        );
+        assert_eq!(
+            (
+                LIBRA_2_388.width_tenth_mm(),
+                LIBRA_2_388.height_tenth_mm(),
+                LIBRA_2_388.minimum_touch_target_pixels(),
+            ),
+            (1_070, 1_422, 83)
+        );
+    }
+
+    #[test]
+    fn framebuffer_packing_is_measured_or_refused() {
+        for profile in [
+            &CLARA_BW_391,
+            &CLARA_BW_395,
+            &CLARA_COLOUR_393,
+            &LIBRA_COLOUR_390,
+        ] {
+            assert_eq!(
+                profile.framebuffer_packing(),
+                Some(FramebufferPacking::Rgba8888),
+                "{}",
+                profile.id
+            );
+        }
+        for profile in [&CLARA_HD_376, &LIBRA_2_388] {
+            assert_eq!(
+                profile.framebuffer_packing(),
+                Some(FramebufferPacking::Bgra8888),
+                "{}",
+                profile.id
+            );
+        }
+        assert_eq!(ELIPSA_2E_389.framebuffer_packing(), None);
+    }
+
+    #[test]
+    fn non_framebuffer_capabilities_keep_unknowns_explicit() {
+        assert_eq!(CLARA_BW_391.hardware.frontlight.brightness, Some((0, 100)));
+        assert_eq!(CLARA_BW_391.hardware.frontlight.warmth, Some((0, 10)));
+        assert_eq!(
+            LIBRA_2_388.hardware.page_buttons,
+            PageButtons::Measured193Back194Forward
+        );
+        assert_eq!(
+            LIBRA_COLOUR_390.hardware.page_buttons,
+            PageButtons::Measured193Back194Forward
+        );
+        assert_eq!(
+            LIBRA_2_388.hardware.orientation_sensor,
+            FactStatus::Measured
+        );
+        assert_eq!(
+            LIBRA_COLOUR_390.hardware.orientation_sensor,
+            FactStatus::Unknown
+        );
+        assert_eq!(CLARA_COLOUR_393.hardware.panel_color, PanelColor::Kaleido3);
+        assert_eq!(LIBRA_COLOUR_390.hardware.panel_color, PanelColor::Kaleido3);
+        assert_eq!(
+            CLARA_BW_391.hardware.wifi_handoff,
+            WifiHandoff::ReapMeasured
+        );
+        assert_eq!(LIBRA_2_388.hardware.wifi_handoff, WifiHandoff::ReapMeasured);
+        assert!(SUPPORTED_PROFILES
+            .iter()
+            .filter(|profile| matches!(profile.id, "clara-bw-391" | "libra-2-388"))
+            .all(|profile| profile.hardware.wifi == FactStatus::Measured));
+        assert!(SUPPORTED_PROFILES
+            .iter()
+            .filter(|profile| !matches!(profile.id, "clara-bw-391" | "libra-2-388"))
+            .all(|profile| profile.hardware.wifi == FactStatus::Unknown));
+        assert!(SUPPORTED_PROFILES
+            .iter()
+            .filter(|profile| !matches!(profile.id, "clara-bw-391" | "libra-2-388"))
+            .all(|profile| profile.hardware.wifi_handoff == WifiHandoff::UnverifiedNoReap));
+    }
 
     /// The Libra 2 as `kobo doctor` read it from a cold boot into Nickel, in
     /// portrait. `rotation` picks the orientation: 1 as measured in portrait,

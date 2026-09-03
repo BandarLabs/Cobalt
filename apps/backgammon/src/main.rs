@@ -1365,7 +1365,7 @@ fn playing_screen(game: &Game, picture: Option<TilePicture>) -> Screen {
     } else {
         bar
     };
-    screen = screen.grid(
+    let screen = screen.grid(
         2,
         false,
         [
@@ -1373,8 +1373,13 @@ fn playing_screen(game: &Game, picture: Option<TilePicture>) -> Screen {
             ("off", checker_counter("Off", game.position.off)),
         ],
     );
+    let points = point_controls(game);
+    let screen = if points.is_empty() {
+        screen
+    } else {
+        screen.grid(8, true, points)
+    };
     screen
-        .grid(8, true, point_controls(game))
         .chips([
             ("mode", game.mode.label().to_owned(), false),
             ("match", format!("To {}", game.match_to), false),

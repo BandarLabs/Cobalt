@@ -169,10 +169,10 @@ impl Launcher {
             )
     }
 
-    fn featured_entries(&self, excluding: usize) -> Vec<(DisplayEntry, bool)> {
+    fn featured_entries(&self, excluding: usize, limit: usize) -> Vec<(DisplayEntry, bool)> {
         (0..self.entry_count())
             .filter(|index| *index != excluding)
-            .take(4)
+            .take(limit)
             .map(|index| (self.entry(index), self.working == Some(index)))
             .collect()
     }
@@ -233,7 +233,13 @@ impl Launcher {
             .heading("COBALT")
             .secondary("Your Folio desk")
             .divider();
-        let featured = self.featured_entries(continue_index);
+        let metrics = context.metrics();
+        let featured_limit = if metrics.height <= metrics.tenth_mm(1_600) {
+            2
+        } else {
+            4
+        };
+        let featured = self.featured_entries(continue_index, featured_limit);
         let screen = if context.metrics().width > context.metrics().height {
             let continuation = continue_entry.clone();
             screen.band(
@@ -256,9 +262,13 @@ impl Launcher {
             let screen =
                 Self::continue_panel(screen, continue_entry.clone(), continue_caption, continuing);
             Self::featured_panel(screen, featured)
-        }
-        .secondary(self.folio_line())
-        .nav_bar_marked(
+        };
+        let screen = if metrics.height <= metrics.tenth_mm(1_300) {
+            screen
+        } else {
+            screen.secondary(self.folio_line())
+        };
+        let screen = screen.nav_bar_marked(
             0,
             [
                 ("home", "Home", Glyph::App),

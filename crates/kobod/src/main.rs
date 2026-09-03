@@ -431,6 +431,26 @@ fn print_safety_state() {
     }
 }
 
+fn simulation_metrics_from_env() -> Result<Option<kobo_ui::DisplayMetrics>, String> {
+    let Some(profile_id) = env::var_os("KOBO_SIM_PROFILE") else {
+        return Ok(None);
+    };
+    let profile_id = profile_id.to_str().ok_or("KOBO_SIM_PROFILE is not UTF-8")?;
+    let profile = kobo_profile::supported_profile(profile_id)
+        .ok_or_else(|| format!("unknown simulator profile {profile_id:?}"))?;
+    let rotation = env::var("KOBO_SIM_ROTATION")
+        .ok()
+        .map(|value| {
+            value
+                .parse::<u32>()
+                .map_err(|_| "KOBO_SIM_ROTATION must be 0, 1, 2, or 3".to_owned())
+        })
+        .transpose()?
+        .unwrap_or(profile.reference_rotation);
+    kobo_profile::PanelPose::simulated(profile, rotation).map_err(|error| error.to_string())?;
+    metrics_for_profile(profile, display_metrics_from_env()).map(Some)
+}
+
 fn serve_simulation(socket_path: &Path, frame_path: &Path) -> Result<(), Box<dyn Error>> {
     validate_simulation_paths(socket_path, frame_path)?;
     // Without this the preview renders in the built-in bitmap fallback, which
@@ -438,7 +458,7 @@ fn serve_simulation(socket_path: &Path, frame_path: &Path) -> Result<(), Box<dyn
     // paragraph height in the picture belongs to a panel nobody has. The
     // preview exists to be looked at; a preview drawn in the wrong face is
     // worse than none, because it is believed.
-    let metrics = crate::device_metrics();
+    let metrics = simulation_metrics_from_env()?.unwrap_or_else(crate::device_metrics);
     let _ = kobo_text::install(metrics);
     // The same owner trust roots the device loads, from the host's own
     // directory, so an application developed against a local daemon works

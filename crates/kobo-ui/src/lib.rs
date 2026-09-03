@@ -5371,6 +5371,9 @@ pub enum LayoutIssueKind {
     },
     Clipped,
     InteractiveOffscreen,
+    InteractiveOverlap {
+        other: NodeId,
+    },
     TouchTargetTooSmall {
         minimum: i32,
     },
@@ -5465,6 +5468,11 @@ impl std::fmt::Display for LayoutIssue {
             LayoutIssueKind::InteractiveOffscreen => {
                 write!(formatter, "{node}: interactive control is outside the visible panel")
             }
+            LayoutIssueKind::InteractiveOverlap { other } => write!(
+                formatter,
+                "{node}: enabled action overlaps node {}",
+                other.0
+            ),
             LayoutIssueKind::TouchTargetTooSmall { minimum } => write!(
                 formatter,
                 "{node}: touch target is smaller than the {minimum}px minimum"
@@ -11555,6 +11563,36 @@ fn validate_layout_nodes(layout: &Layout, metrics: &DisplayMetrics, issues: &mut
             });
         }
     }
+    // Controls before the last scrim are behind a modal or popover. They are
+    // neither visible nor reachable: hit testing stops at the scrim.
+    let active_start = layout
+        .nodes
+        .iter()
+        .rposition(|node| matches!(node.kind, LayoutKind::Scrim { .. }))
+        .map_or(0, |index| index + 1);
+    let interactive = layout.nodes[active_start..]
+        .iter()
+        .filter(|node| is_enabled_interactive(node.kind))
+        .collect::<Vec<_>>();
+    for (index, node) in interactive.iter().enumerate() {
+        for other in &interactive[index + 1..] {
+            // Compound controls intentionally share one semantic node: for
+            // example a row and its trailing menu, or a field and its clear
+            // mark. The later, smaller target wins exactly as hit testing
+            // specifies, so there is no ambiguous enabled region.
+            if node.id == other.id {
+                continue;
+            }
+            if node.rect.intersection(other.rect).is_some() {
+                issues.push(LayoutIssue {
+                    severity: DiagnosticSeverity::Error,
+                    node: Some(node.id),
+                    kind: LayoutIssueKind::InteractiveOverlap { other: other.id },
+                    rect: node.rect.intersection(other.rect),
+                });
+            }
+        }
+    }
 }
 
 /// Which kinds are held to the minimum a finger can reliably hit.
@@ -14355,6 +14393,100 @@ mod tests {
         assert!(!issues
             .iter()
             .any(|issue| matches!(issue.kind, LayoutIssueKind::TouchTargetTooSmall { .. })));
+    }
+
+    #[test]
+    fn validation_reports_overlapping_enabled_actions() {
+        let rect = Rect {
+            x: 100,
+            y: 100,
+            width: 200,
+            height: 100,
+        };
+        let layout = Layout {
+            nodes: vec![
+                LayoutNode {
+                    id: NodeId(1),
+                    rect,
+                    kind: LayoutKind::Button(ActionId(1), ControlState::Enabled, Emphasis::Normal),
+                    text_lines: vec!["One".into()],
+                },
+                LayoutNode {
+                    id: NodeId(2),
+                    rect,
+                    kind: LayoutKind::Button(ActionId(2), ControlState::Enabled, Emphasis::Normal),
+                    text_lines: vec!["Two".into()],
+                },
+            ],
+            ..Layout::default()
+        };
+        let mut issues = Vec::new();
+        validate_layout_nodes(&layout, &CLARA_BW_METRICS, &mut issues);
+        assert!(issues.iter().any(|issue| matches!(
+            issue.kind,
+            LayoutIssueKind::InteractiveOverlap { other: NodeId(2) }
+        )));
+    }
+
+    #[test]
+    fn validation_ignores_compound_and_scrimmed_controls() {
+        let rect = Rect {
+            x: 100,
+            y: 100,
+            width: 200,
+            height: 100,
+        };
+        let compound = Layout {
+            nodes: vec![
+                LayoutNode {
+                    id: NodeId(1),
+                    rect,
+                    kind: LayoutKind::Row(ActionId(1)),
+                    text_lines: Vec::new(),
+                },
+                LayoutNode {
+                    id: NodeId(1),
+                    rect,
+                    kind: LayoutKind::RowMenu(ActionId(2)),
+                    text_lines: Vec::new(),
+                },
+            ],
+            ..Layout::default()
+        };
+        let mut issues = Vec::new();
+        validate_layout_nodes(&compound, &CLARA_BW_METRICS, &mut issues);
+        assert!(!issues
+            .iter()
+            .any(|issue| matches!(issue.kind, LayoutIssueKind::InteractiveOverlap { .. })));
+
+        let scrimmed = Layout {
+            nodes: vec![
+                LayoutNode {
+                    id: NodeId(2),
+                    rect,
+                    kind: LayoutKind::Button(ActionId(3), ControlState::Enabled, Emphasis::Normal),
+                    text_lines: vec!["Underlay".into()],
+                },
+                LayoutNode {
+                    id: NodeId(3),
+                    rect,
+                    kind: LayoutKind::Scrim { dismisses: false },
+                    text_lines: Vec::new(),
+                },
+                LayoutNode {
+                    id: NodeId(4),
+                    rect,
+                    kind: LayoutKind::Button(ActionId(4), ControlState::Enabled, Emphasis::Normal),
+                    text_lines: vec!["Overlay".into()],
+                },
+            ],
+            ..Layout::default()
+        };
+        let mut issues = Vec::new();
+        validate_layout_nodes(&scrimmed, &CLARA_BW_METRICS, &mut issues);
+        assert!(!issues
+            .iter()
+            .any(|issue| matches!(issue.kind, LayoutIssueKind::InteractiveOverlap { .. })));
     }
 
     /// A formula set into a sentence is drawn where its words were, at the
