@@ -139,6 +139,54 @@ test("catalog removal still requires publication without a build", () => {
   assert.equal(releaseNeeded(values.registry, values.published, new Set()), true);
 });
 
+// A new app reaches the stable catalog one promotion after it reaches beta.
+// While the two disagree, checking a beta-bound change against stable waves the
+// app through, and the very next publication to beta rejects it.
+test("a new app is version-checked only against a catalog that already lists it", () => {
+  const values = fixture();
+  const app = {
+    package: "kobo-backgammon",
+    id: "backgammon",
+    display_name: "Backgammon",
+    short_label: "Backgammon",
+    summary: "Play backgammon",
+    version: "0.1.0",
+    minimum_cobalt_version: "0.3.1",
+    glyph: "dice",
+    capabilities: []
+  };
+  values.registry.apps.push(app);
+  const stable = values.published;
+  const beta = {
+    format_version: 1,
+    entries: [
+      ...stable.entries,
+      {
+        manifest: {
+          format_version: 1,
+          id: app.id,
+          display_name: app.display_name,
+          short_label: app.short_label,
+          summary: app.summary,
+          version: app.version,
+          minimum_cobalt_version: app.minimum_cobalt_version,
+          glyph: app.glyph,
+          capabilities: app.capabilities,
+          binary_sha256: "1".repeat(64),
+          binary_bytes: 5
+        }
+      }
+    ]
+  };
+  const affected = new Set([app.package]);
+
+  assert.doesNotThrow(() => checkEntries(values.registry, stable, affected));
+  assert.throws(
+    () => checkEntries(values.registry, beta, affected),
+    /backgammon: package inputs changed \(release inputs\).*version 0\.1\.0 is not newer than 0\.1\.0/s
+  );
+});
+
 test("changing an app ID to a different Cargo package is a release input", () => {
   const previous = {
     format_version: 1,
