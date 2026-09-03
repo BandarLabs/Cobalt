@@ -27,8 +27,10 @@ host="$target_root/host-target/release/flashcards-import"
 source_commit_file="$target_root/artifacts/flashcards-import.source-commit.txt"
 host_notice_file="$target_root/artifacts/flashcards-import.notice.txt"
 host_licenses_file="$target_root/artifacts/flashcards-import.licenses.txt"
+audit_report="$target_root/artifacts/ARTIFACT-AUDIT.txt"
 readelf=${READELF:-armv7-unknown-linux-musleabihf-readelf}
 expected_validation_key=d759793bbc13a2819a827c76adb6fba8a49aee007f49f2d0992d99b825ad2c48
+rm -f "$audit_report"
 
 for path in "$device" "$audit_device" "$package" "$manifest" "$public_key" "$catalog" "$catalog_signature" "$source_commit_file"; do
   if [ ! -f "$path" ]; then
@@ -315,8 +317,7 @@ find "$target_root" -mindepth 1 -print | while IFS= read -r path; do
       artifacts/validation-public-key.txt | \
       artifacts/flashcards-import.source-commit.txt | \
       artifacts/flashcards-import.notice.txt | \
-      artifacts/flashcards-import.licenses.txt | \
-      artifacts/ARTIFACT-AUDIT.txt) ;;
+      artifacts/flashcards-import.licenses.txt) ;;
     *)
       echo "unexpected unaudited path remains in target root: $path" >&2
       exit 1
@@ -324,30 +325,33 @@ find "$target_root" -mindepth 1 -print | while IFS= read -r path; do
   esac
 done
 
-echo "device dependency tree: no Anki packages"
-echo "device ELF/package strings and unstripped symbols: no Anki or AnkiDroid implementation material"
-echo "device production/audit ELFs: static, with no declared remote-network capability"
-echo "device symbols: no known high-level remote-network implementation"
-echo "device local transport: generic socket primitives remain for required Cobalt Unix-domain IPC"
-echo "device package: signature/canonical manifest verified against catalog and standalone ELF"
-echo "validation catalog: signature and sole package entry verified"
-echo "device ELFs: byte-identical to fresh audited-source builds"
-echo "host verifier/reference helper: rebuilt from audited source in a fresh target directory"
-echo "host helper artifact: finalized from the fresh audited-source build"
-echo "host helper: pinned Anki rslib/i18n/io/proto, AGPL notice, source pin, and source instructions present"
-echo "host notice sidecars: exact copies of helper notice/licence output"
-(
-  cd "$target_root"
-  shasum -a 256 \
-    armv7-unknown-linux-musleabihf/release/kobo-flashcards \
-    audit-unstripped/armv7-unknown-linux-musleabihf/release/kobo-flashcards \
-    artifacts/flashcards-validation.cobalt-app \
-    artifacts/flashcards.manifest.json \
-    artifacts/validation-public-key.txt \
-    artifacts/catalog/catalog.json \
-    artifacts/catalog/catalog.sig \
-    artifacts/flashcards-import.source-commit.txt \
-    artifacts/flashcards-import.notice.txt \
-    artifacts/flashcards-import.licenses.txt \
-    host-target/release/flashcards-import
-)
+{
+  echo "device dependency tree: no Anki packages"
+  echo "device ELF/package strings and unstripped symbols: no Anki or AnkiDroid implementation material"
+  echo "device production/audit ELFs: static, with no declared remote-network capability"
+  echo "device symbols: no known high-level remote-network implementation"
+  echo "device local transport: generic socket primitives remain for required Cobalt Unix-domain IPC"
+  echo "device package: signature/canonical manifest verified against catalog and standalone ELF"
+  echo "validation catalog: signature and sole package entry verified"
+  echo "device ELFs: byte-identical to fresh audited-source builds"
+  echo "host verifier/reference helper: rebuilt from audited source in a fresh target directory"
+  echo "host helper artifact: finalized from the fresh audited-source build"
+  echo "host helper: pinned Anki rslib/i18n/io/proto, AGPL notice, source pin, and source instructions present"
+  echo "host notice sidecars: exact copies of helper notice/licence output"
+  (
+    cd "$target_root"
+    shasum -a 256 \
+      armv7-unknown-linux-musleabihf/release/kobo-flashcards \
+      audit-unstripped/armv7-unknown-linux-musleabihf/release/kobo-flashcards \
+      artifacts/flashcards-validation.cobalt-app \
+      artifacts/flashcards.manifest.json \
+      artifacts/validation-public-key.txt \
+      artifacts/catalog/catalog.json \
+      artifacts/catalog/catalog.sig \
+      artifacts/flashcards-import.source-commit.txt \
+      artifacts/flashcards-import.notice.txt \
+      artifacts/flashcards-import.licenses.txt \
+      host-target/release/flashcards-import
+  )
+} > "$audit_report"
+cat "$audit_report"
