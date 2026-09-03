@@ -15,8 +15,18 @@
 //! This is the one thing in the CLI that writes to the root filesystem. The
 //! Cobalt payload deliberately cannot: [`crate::package::check`] refuses any
 //! path outside the install folder. So this module is separate, is named for
-//! what it does, ships nothing but this machine's public key, and says so in
-//! the report.
+//! what it does, ships nothing but this machine's public key and the
+//! firmware's own first-login marker, and says so in the report.
+//!
+//! The marker exists because of what the firmware does on the first SSH login.
+//! `sshd_config` forces root through a setup script that runs an interactive
+//! `passwd` until `/.login_pass_set` exists, and only then hands over the
+//! shell. A key authenticates fine, and then the very first non-interactive
+//! `kobo deploy` feeds its script into that `passwd` and fails in a way that
+//! looks like the device is broken (observed on a Libra Colour on 4.45.23697,
+//! Cobalt#49). Root already carries a password hash and access is by key, so
+//! the marker gates only the interactive reset, not authentication; creating
+//! it empty is exactly what the firmware's own `touch ${PASS_SET}` does.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -32,6 +42,10 @@ const AUTHORIZED_KEYS: &[&str] = &["root/.ssh/authorized_keys", ".ssh/authorized
 /// The directories those files live in, with the mode sshd requires.
 const KEY_DIRS: &[(&str, u32)] = &[("root/.ssh", 0o700), (".ssh", 0o700)];
 
+/// The firmware's first-login marker: while it is absent, the forced SSH
+/// setup script runs an interactive `passwd` that eats a piped script.
+const LOGIN_PASS_SET: &str = ".login_pass_set";
+
 /// Every path this module ever stages, for the undo to recognise its own work.
 ///
 /// The directories are listed too, because an archive lists the folders it
@@ -42,6 +56,7 @@ pub const STAGED_MEMBERS: &[&str] = &[
     "root/.ssh/authorized_keys",
     ".ssh",
     ".ssh/authorized_keys",
+    ".login_pass_set",
 ];
 
 /// What the archive is staged as, the single slot the firmware looks at.
@@ -168,10 +183,13 @@ fn entries(public_key: &str) -> Result<(Vec<Folder<'_>>, Vec<File>), String> {
     // both.
     let contents = format!("{line}\n");
     let folders = KEY_DIRS.to_vec();
-    let files = AUTHORIZED_KEYS
+    let mut files: Vec<File> = AUTHORIZED_KEYS
         .iter()
         .map(|path| ((*path).to_owned(), contents.clone().into_bytes(), 0o600))
         .collect();
+    // Empty, and the mode `touch` gives it, because that is byte for byte what
+    // the firmware's own setup script would have created.
+    files.push((LOGIN_PASS_SET.to_owned(), Vec::new(), 0o644));
     Ok((folders, files))
 }
 
@@ -294,10 +312,27 @@ mod tests {
             .filter(|entry| entry.kind == b'0')
             .map(|entry| entry.path.as_str())
             .collect();
-        assert_eq!(files.len(), AUTHORIZED_KEYS.len(), "{listed:?}");
+        // The key at each location, plus the first-login marker.
+        assert_eq!(files.len(), AUTHORIZED_KEYS.len() + 1, "{listed:?}");
         for path in AUTHORIZED_KEYS {
             assert!(files.contains(path), "{path} missing from {files:?}");
         }
+    }
+
+    /// The firmware's first-login `passwd` loop is gated on this file, and a
+    /// piped `kobo deploy` on a fresh reader lands in that loop and fails, so
+    /// the archive creates the marker the way the firmware itself would:
+    /// empty, at the filesystem root, with `touch`'s mode.
+    #[test]
+    fn the_archive_marks_the_first_login_as_done() {
+        let built = archive(SAMPLE).expect("an archive");
+        let listed = list(&built).expect("a readable archive");
+        let marker = listed
+            .iter()
+            .find(|entry| entry.path == super::LOGIN_PASS_SET)
+            .expect("the first-login marker");
+        assert_eq!(marker.size, 0, "the marker must be empty");
+        assert_eq!(marker.mode, 0o644, "was mode {:o}", marker.mode);
     }
 
     #[test]
@@ -329,12 +364,14 @@ mod tests {
     }
 
     #[test]
-    fn the_archive_writes_nothing_but_the_key() {
+    fn the_archive_writes_nothing_but_the_key_and_the_marker() {
         let built = archive(SAMPLE).expect("an archive");
         for entry in list(&built).expect("a readable archive") {
             assert!(
-                entry.path.starts_with("root/.ssh") || entry.path.starts_with(".ssh"),
-                "{} is outside the ssh folders",
+                entry.path.starts_with("root/.ssh")
+                    || entry.path.starts_with(".ssh")
+                    || entry.path == super::LOGIN_PASS_SET,
+                "{} is outside the ssh folders and is not the first-login marker",
                 entry.path
             );
         }

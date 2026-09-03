@@ -191,4 +191,6 @@ cargo run -p kobo-cli -- setup --undo
 
 Or, with no tooling at all, plug the reader in and delete `.adds/cobalt` from
 it. That is the entire uninstall. If you used `--enable-ssh`, `--undo` also
-switches the SSH server back off.
+switches the SSH server back off, and takes the key-only login block back out
+of the server's configuration when it can reach the reader over Wi-Fi (a block
+it cannot reach is inert once the server is off).

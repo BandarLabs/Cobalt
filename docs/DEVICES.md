@@ -159,6 +159,17 @@ on port 22 before the wait, and only ones that were not answering and now are
 candidates. It then authenticates with the new dedicated key and asks the same
 read-only identity script every other device command uses.
 
+That first key login is also when the setup closes password login for root.
+The firmware leaves its server accepting root's factory credential; once the
+new key has proven itself, the setup appends a marked key-only block to the
+server's `sshd_config`, gated on `sshd -t` and on the effective configuration
+actually reporting the change. The reader restores its own configuration a few
+minutes later unless a second, fresh key login (made by the same command)
+confirms that keys still work against the hardened server, so a change that
+would have locked anybody out undoes itself. `kobo setup --undo` removes the
+block the way it went in, over SSH, and it is inert either way once the undo
+has switched the server off.
+
 Change alone was not enough. A laptop waking from sleep mid-wait was reported
 as the reader, and a confident wrong address is worse than none. The obvious
 second test was the SSH banner, and it was wrong: this firmware runs
