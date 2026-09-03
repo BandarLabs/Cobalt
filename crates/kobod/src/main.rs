@@ -568,12 +568,22 @@ fn serve_application(
     let credential_app = name.to_owned();
     let tasks = std::sync::Arc::new(std::sync::Mutex::new(
         TaskRunner::simulated(std::env::temp_dir())
-            .with_fetch(std::sync::Arc::new(kobo_net::fetch_from))
-            .with_post(std::sync::Arc::new(kobo_net::post))
+            .with_fetch(std::sync::Arc::new(kobo_net::fetch_from_controlled))
+            .with_post(std::sync::Arc::new(kobo_net::post_controlled))
+            .with_line_streams(std::sync::Arc::new(kobo_net::LineStreams::default()))
             .with_app_secrets(&secrets, name)
-            .with_credential_policy(std::sync::Arc::new(move |credential, url, usage| {
-                kobo_policy::credentials::allowed(&credential_app, credential, url, usage)
-            }))
+            .with_credential_policy(std::sync::Arc::new(
+                move |credential, url, usage, body, content_type| {
+                    kobo_policy::credentials::allowed_request(
+                        &credential_app,
+                        credential,
+                        url,
+                        usage,
+                        body,
+                        content_type,
+                    )
+                },
+            ))
             .with_capabilities([kobo_policy::Capability::Network]),
     ));
     // Outcomes are delivered from their own thread. This loop blocks on the
