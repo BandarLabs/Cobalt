@@ -2296,3 +2296,5 @@ mod tests {
         assert!(pixels.contains(&248));
     }
 }
+
+// Scratch second change to an app that landed on beta.
