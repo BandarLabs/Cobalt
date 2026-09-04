@@ -33,6 +33,7 @@
 //! spread across returns.
 
 use crate::blackbox::{self, trace};
+use crate::frame::{FramePlanner, FrameRegion, FrameTransition, PanelWaveform};
 use kobo_hal::display::{DisplaySession, OWNER_UNLOCK_PHRASE};
 use kobo_hal::gpio::{self, GpioEvent, GpioSession};
 use kobo_hal::input::TouchSession;
@@ -44,8 +45,7 @@ use kobo_hal::{Rect, RefreshIntent, RefreshPlan, RegionSnapshot};
 use kobo_policy::{Backends, Capability, Declared, DeviceServices, PowerPolicy, TaskRunner};
 use kobo_protocol::{Frame, Lifecycle, Message, TaskError, TaskOutcome};
 use kobo_ui::{
-    ActionId, CellStyle, Chrome, FontHandle, FramePlanner, Layout, LayoutKind, PanelWaveform,
-    PictureCache, Screen, Surface,
+    ActionId, CellStyle, Chrome, FontHandle, Layout, LayoutKind, PictureCache, Screen, Surface,
 };
 use std::collections::BTreeMap;
 use std::fs;
@@ -1394,7 +1394,7 @@ fn host_applications(
         // that answer arrives promptly. If it does not, this deadline makes
         // the release visible on its own instead of leaving a key held down
         // while an application works or fails.
-        let mut release_due: Option<Instant> = None;
+        let mut release_due: Option<(Instant, kobo_ui::Rect)> = None;
         // When and where the finger landed, for telling a tap from a hold.
         let mut landed: Option<(Instant, i32, i32)> = None;
         // Updates the background checker found, held until the panel has been
@@ -1408,9 +1408,9 @@ fn host_applications(
             // the runtime is still serving the panel rather than merely that
             // the process has not been reaped.
             watchdog.beat();
-            if release_due.is_some_and(|deadline| now >= deadline) {
-                panel.paint(display, whole_screen, &surface)?;
-                release_due = None;
+            if release_due.is_some_and(|(deadline, _)| now >= deadline) {
+                let (_, damage) = release_due.take().expect("release deadline existed");
+                panel.paint_feedback(display, whole_screen, &surface, damage)?;
             }
             // The band is the only thing on the panel that changes without
             // anybody touching it, so the loop has to notice it on its own.
@@ -1509,7 +1509,7 @@ fn host_applications(
                 .min(back_offered.map_or(BEAT_INTERVAL, |(_, offered_at)| {
                     (offered_at + BACK_GRACE).saturating_duration_since(now)
                 }))
-                .min(release_due.map_or(BEAT_INTERVAL, |deadline| {
+                .min(release_due.map_or(BEAT_INTERVAL, |(deadline, _)| {
                     deadline.saturating_duration_since(now)
                 }));
             match events.recv_timeout(wait) {
@@ -1700,14 +1700,29 @@ fn host_applications(
                                         current.layout_with(&metrics_for(current), &chrome);
                                     if let Some(rect) = layout.pressed_control(x, y) {
                                         let metrics = metrics_for(current);
+                                        // An exact-damage feedback frame does
+                                        // not carry pixels outside its own
+                                        // rectangle, so an older deferred
+                                        // release is painted with its damage
+                                        // before its fallback is retired. A
+                                        // press outside every control paints
+                                        // nothing and leaves the deadline
+                                        // armed.
+                                        if let Some((_, damage)) = release_due.take() {
+                                            panel.paint_feedback(
+                                                display,
+                                                whole_screen,
+                                                &surface,
+                                                damage,
+                                            )?;
+                                        }
                                         surface.invert_press(rect, &metrics);
-                                        panel.paint(display, whole_screen, &surface)?;
-                                        // This feedback frame also carried any
-                                        // older deferred release, so its
-                                        // fallback is no longer needed. A press
-                                        // outside every control paints nothing
-                                        // and must leave the deadline armed.
-                                        release_due = None;
+                                        panel.paint_feedback(
+                                            display,
+                                            whole_screen,
+                                            &surface,
+                                            rect,
+                                        )?;
                                         pressed =
                                             Some((rect, metrics, feedback_kind(&layout, rect)));
                                     }
@@ -1721,7 +1736,7 @@ fn host_applications(
                                 // screen in one update.
                                 if let Some((rect, metrics, class)) = pressed.take() {
                                     surface.invert_press(rect, &metrics);
-                                    released = Some(class);
+                                    released = Some((class, rect));
                                 }
                             }
                             TouchEvent::Move { x, y } => {
@@ -1750,7 +1765,12 @@ fn host_applications(
                                 if off {
                                     if let Some((rect, metrics, _)) = pressed.take() {
                                         surface.invert_press(rect, &metrics);
-                                        panel.paint(display, whole_screen, &surface)?;
+                                        panel.paint_feedback(
+                                            display,
+                                            whole_screen,
+                                            &surface,
+                                            rect,
+                                        )?;
                                     }
                                 }
                             }
@@ -1801,9 +1821,9 @@ fn host_applications(
                             )?;
                         }
                     }
-                    if let Some(class) = released {
+                    if let Some((class, damage)) = released {
                         release_due = (disposition != Tap::Leave)
-                            .then(|| Instant::now() + release_grace(class));
+                            .then(|| (Instant::now() + release_grace(class), damage));
                     }
                 }
                 Ok(Event::App(id, frame)) => {
@@ -3696,13 +3716,51 @@ impl Painter {
             // some battery to show exactly the same picture.
             return Ok(());
         };
-        let region = Rect {
-            x: u32::try_from(transition.region.x).unwrap_or(0),
-            y: u32::try_from(transition.region.y).unwrap_or(0),
-            width: u32::try_from(transition.region.width).unwrap_or(0),
-            height: u32::try_from(transition.region.height).unwrap_or(0),
+        self.apply(display, whole_screen, surface, &transition)
+    }
+
+    fn paint_feedback(
+        &mut self,
+        display: &DisplaySession,
+        whole_screen: Rect,
+        surface: &Surface,
+        damage: kobo_ui::Rect,
+    ) -> Result<(), String> {
+        let Some(transition) = self.frames.plan_damage(surface, damage, PanelWaveform::Du) else {
+            return Ok(());
         };
-        let intent = match transition.waveform {
+        self.apply(display, whole_screen, surface, &transition)
+    }
+
+    fn apply(
+        &mut self,
+        display: &DisplaySession,
+        whole_screen: Rect,
+        surface: &Surface,
+        transition: &FrameTransition,
+    ) -> Result<(), String> {
+        for update in &transition.regions {
+            Self::apply_region(display, whole_screen, surface, *update)?;
+        }
+        if !self.frames.commit(surface, transition) {
+            return Err("the frame planner rejected a completed refresh".to_owned());
+        }
+        Ok(())
+    }
+
+    fn apply_region(
+        display: &DisplaySession,
+        whole_screen: Rect,
+        surface: &Surface,
+        update: FrameRegion,
+    ) -> Result<(), String> {
+        let region = Rect {
+            x: u32::try_from(update.region.x).unwrap_or(0),
+            y: u32::try_from(update.region.y).unwrap_or(0),
+            width: u32::try_from(update.region.width).unwrap_or(0),
+            height: u32::try_from(update.region.height).unwrap_or(0),
+        };
+        let intent = match update.waveform {
             PanelWaveform::Du => RefreshIntent::FastFeedback,
             PanelWaveform::Gl16 => RefreshIntent::TextContent,
             PanelWaveform::Gc16 => RefreshIntent::QualityContent,
@@ -3715,10 +3773,10 @@ impl Painter {
         // 1.6 seconds per tap regardless of how small the change was.
         let region_gray = {
             let out_of_surface = || "the transition region is not inside the surface".to_owned();
-            let x = usize::try_from(transition.region.x).map_err(|_| out_of_surface())?;
-            let y = usize::try_from(transition.region.y).map_err(|_| out_of_surface())?;
-            let width = usize::try_from(transition.region.width).map_err(|_| out_of_surface())?;
-            let height = usize::try_from(transition.region.height).map_err(|_| out_of_surface())?;
+            let x = usize::try_from(update.region.x).map_err(|_| out_of_surface())?;
+            let y = usize::try_from(update.region.y).map_err(|_| out_of_surface())?;
+            let width = usize::try_from(update.region.width).map_err(|_| out_of_surface())?;
+            let height = usize::try_from(update.region.height).map_err(|_| out_of_surface())?;
             let mut gray = Vec::with_capacity(width.saturating_mul(height));
             for row in 0..height {
                 let start = (y + row) * surface.width + x;
@@ -3737,7 +3795,7 @@ impl Painter {
         let plan = RefreshPlan::new(
             region,
             intent,
-            transition.full,
+            update.waveform == PanelWaveform::Gc16,
             whole_screen.width,
             whole_screen.height,
         )
@@ -3767,9 +3825,6 @@ impl Painter {
             );
         }
 
-        if !self.frames.commit(surface, transition) {
-            return Err("the frame planner rejected a completed refresh".to_owned());
-        }
         Ok(())
     }
 }
