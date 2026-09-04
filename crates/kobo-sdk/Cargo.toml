@@ -29,10 +29,10 @@ text = ["dep:kobo-text"]
 runtime-settings = []
 
 [dependencies]
-kobo-policy = { version = "0.3.1", path = "../kobo-policy" }
-kobo-protocol = { version = "0.3.1", path = "../kobo-protocol" }
-kobo-text = { version = "0.3.1", path = "../kobo-text", optional = true }
-kobo-ui = { version = "0.3.1", path = "../kobo-ui" }
+kobo-policy = { version = "0.3.2", path = "../kobo-policy" }
+kobo-protocol = { version = "0.3.2", path = "../kobo-protocol" }
+kobo-text = { version = "0.3.2", path = "../kobo-text", optional = true }
+kobo-ui = { version = "0.3.2", path = "../kobo-ui" }
 
 [lints]
 workspace = true

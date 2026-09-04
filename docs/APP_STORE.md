@@ -8,10 +8,17 @@ Cobalt platform releases and Store app releases are separate:
 - Every changed app package requires a new app version, including changes from
   a shared SDK or protocol dependency.
 
-Installed readers use the fixed app channel:
+Readers on the default **Stable** update channel use:
 
 - `https://github.com/BandarLabs/Cobalt/releases/download/app-catalog/cobalt-app-catalog.json`
 - `https://github.com/BandarLabs/Cobalt/releases/download/app-catalog/cobalt-app-catalog.json.sig`
+
+Readers whose owner enables **Beta updates** use the isolated
+`app-catalog-beta` release instead. Its catalog and detached signature are
+cached separately from Stable, and both channels are verified with the same
+public Ed25519 release key. Switching back to Stable changes future refreshes
+only: installed apps are not removed or downgraded. A higher beta app version
+remains installed until Stable publishes a strictly newer version.
 
 ## Install links
 
@@ -60,7 +67,7 @@ registry supplies public metadata; binary size and SHA-256 are calculated from
 the exact ARM release binary during publishing.
 
 `minimum_cobalt_version` must cover both the SDK wire protocol and the runtime
-services used by the app. Current SDK builds require Cobalt 0.2.4 or newer.
+services used by the app. Protocol 11 SDK builds require Cobalt 0.3.1 or newer.
 The publishing check rejects a lower value, and a future protocol version
 cannot publish until its first compatible Cobalt release is recorded.
 
@@ -74,19 +81,31 @@ See [CONTRIBUTING_APPS.md](CONTRIBUTING_APPS.md) for the contribution format.
 
 ## Publishing workflow
 
-`.github/workflows/apps.yml` runs on every push to `main`. It:
+`.github/workflows/apps.yml` runs on every push to `main` and `beta`. Main
+publishes the Stable `app-catalog` release; beta publishes the isolated
+`app-catalog-beta` release with separate concurrency, URLs and same-branch
+version baselines. It:
 
-1. Validates the registry and creates a package matrix.
-2. Builds each registered Cargo package on a separate runner.
+1. Validates the registry and creates a matrix only for new or affected
+   packages by comparing with the previous successful run on the same branch.
+   If neither app release inputs nor catalog entries changed, later jobs are
+   skipped successfully and the fixed release is untouched.
+2. Builds each selected Cargo package on a separate runner and reuses
+   unchanged verified binaries from that previous channel run. If the complete
+   reusable set is unavailable for a required publication, it safely falls
+   back to rebuilding all apps.
 3. Rejects binaries that are not static ARM hard-float executables with a real
    executable load segment.
 4. Uploads exactly one immutable artifact from each app runner.
 5. Downloads those artifacts on a fresh runner that has not executed app code.
 6. Compares each app's code, local dependencies and public manifest with the
    last successfully published catalog, and requires a new app version for any
-   change.
+   change. A wire-compatible platform-only change can be excluded only by an
+   exact old/new Git blob pair in `tools/app-release-compatible-changes.json`;
+   any later edit stops matching and is treated as an app release input.
 7. Builds and signs the packages and catalog only after that isolation.
-8. Replaces the assets on the fixed `app-catalog` GitHub release.
+8. Replaces only changed app bundles plus the catalog, signature, and
+   publication provenance on the fixed release for the branch's channel.
 
 The workflow uses the protected `COBALT_APP_SIGNING_SEED` secret. Publishing
 fails if the seed does not derive the public key pinned in released runtimes.
@@ -116,6 +135,9 @@ A local Clara BW can run the complete flow without a tagged Cobalt release:
 This does not create a `v*` platform tag. Updating `app-catalog` affects every
 reader already running a Store-capable development build, so use it only with
 reviewed assets signed by the production app key.
+
+Use `app-catalog-beta` for beta testing instead; it cannot overwrite the
+Stable catalog.
 
 ## Runtime verification
 

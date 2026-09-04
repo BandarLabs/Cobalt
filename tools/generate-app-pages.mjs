@@ -75,7 +75,8 @@ const screenshots = {
   tictactoe: ["tictactoe.png", "A completed game of tic-tac-toe on a Kobo"],
   todo: ["todo.png", "A to-do list with completed items on a Kobo"],
   vault: ["vault.png", "Vault first-run screen on a Kobo Clara BW, showing the commands to push a note vault."],
-  verses: ["verses.png", "Verses displaying a public-domain daily poem in a spacious Kobo reading layout."]
+  verses: ["verses.png", "Verses displaying a public-domain daily poem in a spacious Kobo reading layout."],
+  "zotero-reader": ["zotero-reader.png", "Reading a paper with structured layout and Zotero metadata on a Kobo"]
 };
 const screenshotFor = app => {
   const screenshot = screenshots[app.id];

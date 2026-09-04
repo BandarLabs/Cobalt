@@ -16,7 +16,9 @@ kobo-sim = { path = "../kobo-sim" }
 kobo-image = { path = "../kobo-image" }
 kobo-json = { path = "../kobo-json" }
 kobo-net = { path = "../kobo-net" }
+kobo-profile = { path = "../kobo-profile" }
 kobo-stream = { path = "../kobo-stream" }
+ring = "0.17"
 
 [features]
 default = []
