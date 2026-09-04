@@ -21,6 +21,8 @@ const TOGGLE: &str = "toggle";
 const AUTO_COBALT: &str = "auto-cobalt";
 const AUTO_APPS: &str = "auto-apps";
 const BETA_UPDATES: &str = "beta-updates";
+const CONFIRM_CHANNEL: &str = "confirm-channel";
+const CANCEL_CHANNEL: &str = "cancel-channel";
 const RESCAN: &str = "rescan";
 const MORE: &str = "more";
 const PREVIOUS: &str = "previous";
@@ -40,6 +42,20 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 const RELEASES: &str = "https://api.github.com/repos/BandarLabs/Cobalt/releases/latest";
 const BETA_RELEASES: &str = "https://api.github.com/repos/BandarLabs/Cobalt/releases?per_page=100";
 
+const fn channel_name(channel: UpdateChannel) -> &'static str {
+    match channel {
+        UpdateChannel::Stable => "Stable",
+        UpdateChannel::Beta => "Beta",
+    }
+}
+
+const fn opposite_channel(channel: UpdateChannel) -> UpdateChannel {
+    match channel {
+        UpdateChannel::Stable => UpdateChannel::Beta,
+        UpdateChannel::Beta => UpdateChannel::Stable,
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 enum View {
     #[default]
@@ -50,6 +66,7 @@ enum View {
     Battery,
     About,
     Update,
+    UpdateChannelConfirm,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -82,7 +99,7 @@ enum Pending {
 }
 
 /// Where the software update stands. One journey, told left to right:
-/// nothing asked, asking GitHub, reading the digest file, ready to install,
+/// nothing asked, asking GitHub, verifying signed metadata, ready to install,
 /// installing, installed, or stopped with a reason.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 enum UpdateFlow {
@@ -97,11 +114,14 @@ enum UpdateFlow {
     Ahead {
         latest: String,
     },
-    /// The release is newer; its digest file is being fetched so the
-    /// download can be verified before it is installed.
-    Digest {
-        version: String,
-        url: String,
+    /// The release is newer; its signed canonical manifest is being fetched.
+    Manifest {
+        release: Release,
+    },
+    /// The manifest bytes are held while their detached signature is fetched.
+    ManifestSignature {
+        release: Release,
+        manifest: Vec<u8>,
     },
     Ready {
         version: String,
@@ -212,6 +232,7 @@ impl Settings {
             View::Battery => self.battery(),
             View::About => self.about(),
             View::Update => self.update(),
+            View::UpdateChannelConfirm => self.update_channel_confirmation(),
         };
         context.set_screen(screen);
     }
@@ -304,7 +325,9 @@ impl Settings {
     fn update_summary(&self) -> String {
         match &self.update {
             UpdateFlow::Idle => format!("Cobalt {VERSION}"),
-            UpdateFlow::Checking { .. } | UpdateFlow::Digest { .. } => "Checking".to_owned(),
+            UpdateFlow::Checking { .. }
+            | UpdateFlow::Manifest { .. }
+            | UpdateFlow::ManifestSignature { .. } => "Checking".to_owned(),
             UpdateFlow::UpToDate { .. } => "Up to date".to_owned(),
             UpdateFlow::Ahead { .. } => "Newer than this channel".to_owned(),
             UpdateFlow::Ready { version, .. } => format!("{version} available"),
@@ -325,7 +348,9 @@ impl Settings {
                     .text("Checking asks GitHub for the newest published release. Nothing is downloaded until you choose to install it.")
                     .button(CHECK, "Check for updates");
             }
-            UpdateFlow::Checking { .. } | UpdateFlow::Digest { .. } => {
+            UpdateFlow::Checking { .. }
+            | UpdateFlow::Manifest { .. }
+            | UpdateFlow::ManifestSignature { .. } => {
                 screen = screen
                     .section_with_value("Installed", VERSION)
                     .text("Checking for the newest release.");
@@ -398,20 +423,16 @@ impl Settings {
         };
         screen = screen
             .section_with_value(
-                "Beta updates",
-                if channel == UpdateChannel::Beta {
-                    "On"
-                } else {
-                    "Off"
-                },
+                "Update channel",
+                format!("{} · Cobalt {VERSION}", channel_name(channel)),
             )
-            .text("Gets prerelease Cobalt and Store app updates. Turning it off uses stable for future checks; installed apps stay and nothing is downgraded.")
+            .text("Beta is selected only here, after stable installation. Changing back to Stable needs no USB cable and preserves installed apps, state, and secrets.")
             .button(
                 BETA_UPDATES,
                 if channel == UpdateChannel::Beta {
-                    "Use stable updates"
+                    "Change to Stable"
                 } else {
-                    "Get beta updates"
+                    "Change to Beta"
                 },
             )
             .section_with_value(
@@ -439,6 +460,34 @@ impl Settings {
                 },
             );
         screen
+    }
+
+    fn update_channel_confirmation(&self) -> Screen {
+        let current = self.update_channel.unwrap_or_default();
+        let chosen = opposite_channel(current);
+        let explanation = match chosen {
+            UpdateChannel::Beta => {
+                "Beta checks signed prerelease platform metadata and the signed Beta Store catalog. It may be less stable. Apps, state, and secrets are preserved."
+            }
+            UpdateChannel::Stable => {
+                "Stable becomes the source for future platform and Store checks. Nothing is downgraded, and apps, state, and secrets are preserved."
+            }
+        };
+        ScreenBuilder::new("settings-update-channel-confirm")
+            .top_bar("Confirm update channel")
+            .owns_back(true)
+            .facts([
+                ("Installed", format!("Cobalt {VERSION}")),
+                ("Current channel", channel_name(current).to_owned()),
+                ("New channel", channel_name(chosen).to_owned()),
+            ])
+            .text(explanation)
+            .primary_button(
+                CONFIRM_CHANNEL,
+                format!("Use {} updates", channel_name(chosen)),
+            )
+            .button(CANCEL_CHANNEL, "Cancel")
+            .build()
     }
 
     fn bluetooth(&self) -> Screen {
@@ -794,17 +843,35 @@ impl Settings {
             match choice {
                 AUTO_COBALT => context.device().set_auto_update(!cobalt, apps),
                 AUTO_APPS => context.device().set_auto_update(cobalt, !apps),
-                BETA_UPDATES => {
-                    if let Some(channel) = self.update_channel {
-                        context.device().set_update_channel(match channel {
-                            UpdateChannel::Stable => UpdateChannel::Beta,
-                            UpdateChannel::Beta => UpdateChannel::Stable,
-                        });
-                    }
-                }
                 _ => {}
             }
         }
+    }
+
+    fn update_channel_action(&mut self, context: &mut Context, action: ActionId) -> bool {
+        if action == action_id(BETA_UPDATES) {
+            if self.update_channel.is_some() {
+                self.view = View::UpdateChannelConfirm;
+                self.show(context);
+            }
+            return true;
+        }
+        if action == action_id(CONFIRM_CHANNEL) && self.view == View::UpdateChannelConfirm {
+            if let Some(channel) = self.update_channel {
+                self.view = View::Update;
+                context
+                    .device()
+                    .set_update_channel(opposite_channel(channel));
+                self.show(context);
+            }
+            return true;
+        }
+        if action == action_id(CANCEL_CHANNEL) && self.view == View::UpdateChannelConfirm {
+            self.view = View::Update;
+            self.show(context);
+            return true;
+        }
+        false
     }
 
     fn install_update(&mut self, context: &mut Context) {
@@ -830,8 +897,7 @@ impl Settings {
     }
 
     /// Takes the reply to whichever update fetch was in flight: the release
-    /// description first, then the digest file that lets the download be
-    /// verified.
+    /// description, signed manifest, then detached signature.
     fn took_update_reply(&mut self, context: &mut Context, bytes: &[u8]) {
         let body = String::from_utf8_lossy(bytes);
         match self.update.clone() {
@@ -839,19 +905,16 @@ impl Settings {
                 Err(reason) => self.update = UpdateFlow::Failed(reason),
                 Ok(release) if release.newer_than(VERSION) => {
                     self.update_task = context.spawn(Task::Fetch {
-                        url: release.digest,
+                        url: release.manifest.clone(),
                         offset: 0,
-                        max_bytes: 16 * 1024,
+                        max_bytes: 64 * 1024,
                         credential: None,
                         headers: Vec::new(),
                     });
                     self.update = if self.update_task.is_none() {
                         UpdateFlow::Failed("This build was refused the network.".to_owned())
                     } else {
-                        UpdateFlow::Digest {
-                            version: release.version,
-                            url: release.archive,
-                        }
+                        UpdateFlow::Manifest { release }
                     };
                 }
                 Ok(release) if release.older_than(VERSION) => {
@@ -865,15 +928,32 @@ impl Settings {
                     };
                 }
             },
-            UpdateFlow::Digest { version, url } => {
-                self.update = match digest_for(&body, &archive_name(&version)) {
+            UpdateFlow::Manifest { release } => {
+                self.update_task = context.spawn(Task::Fetch {
+                    url: release.signature.clone(),
+                    offset: 0,
+                    max_bytes: 1024,
+                    credential: None,
+                    headers: Vec::new(),
+                });
+                self.update = if self.update_task.is_none() {
+                    UpdateFlow::Failed("This build was refused the network.".to_owned())
+                } else {
+                    UpdateFlow::ManifestSignature {
+                        release,
+                        manifest: bytes.to_vec(),
+                    }
+                };
+            }
+            UpdateFlow::ManifestSignature { release, manifest } => {
+                self.update = match verified_device_digest(&release, &manifest, &body) {
                     Some(sha256) => UpdateFlow::Ready {
-                        version,
-                        url,
+                        version: release.version,
+                        url: release.archive,
                         sha256,
                     },
                     None => UpdateFlow::Failed(
-                        "The release does not publish a digest for this reader's download."
+                        "The release metadata signature or device package entry is invalid."
                             .to_owned(),
                     ),
                 };
@@ -911,7 +991,12 @@ impl Settings {
         let (page, pages) = match self.view {
             View::Bluetooth => (&mut self.bluetooth_page, page_count(self.devices.len())),
             View::Wifi => (&mut self.wifi_page, page_count(self.networks.len())),
-            View::Home | View::WifiPassword | View::Battery | View::About | View::Update => return,
+            View::Home
+            | View::WifiPassword
+            | View::Battery
+            | View::About
+            | View::Update
+            | View::UpdateChannelConfirm => return,
         };
         *page = if forward {
             (*page + 1).min(pages - 1)
@@ -1005,8 +1090,15 @@ impl KoboApp for Settings {
             self.password_action(context, action);
             return;
         }
+        if self.update_channel_action(context, action) {
+            return;
+        }
         if action == ActionId::BACK {
-            self.view = View::Home;
+            self.view = if self.view == View::UpdateChannelConfirm {
+                View::Update
+            } else {
+                View::Home
+            };
             self.show(context);
         } else if action == action_id(BLUETOOTH) {
             self.view = View::Bluetooth;
@@ -1036,8 +1128,6 @@ impl KoboApp for Settings {
             self.flip_auto_update(context, AUTO_COBALT);
         } else if action == action_id(AUTO_APPS) {
             self.flip_auto_update(context, AUTO_APPS);
-        } else if action == action_id(BETA_UPDATES) {
-            self.flip_auto_update(context, BETA_UPDATES);
         } else if action == action_id(CLOSE) && matches!(self.update, UpdateFlow::Installed { .. })
         {
             context.exit();
@@ -1047,7 +1137,12 @@ impl KoboApp for Settings {
                     .device()
                     .set_bluetooth(!self.bluetooth_state.enabled()),
                 View::Wifi => context.device().set_wifi(!self.wifi_state.enabled()),
-                View::Home | View::WifiPassword | View::Battery | View::About | View::Update => {}
+                View::Home
+                | View::WifiPassword
+                | View::Battery
+                | View::About
+                | View::Update
+                | View::UpdateChannelConfirm => {}
             }
         } else if action == action_id(RESCAN) {
             match self.view {
@@ -1063,7 +1158,7 @@ impl KoboApp for Settings {
                 }
                 View::Battery => context.device().read_battery_detail(),
                 View::About => context.device().read_identity(),
-                View::Home | View::WifiPassword | View::Update => {}
+                View::Home | View::WifiPassword | View::Update | View::UpdateChannelConfirm => {}
             }
             self.show(context);
         } else if action == action_id(MORE) {
@@ -1259,13 +1354,15 @@ fn page_count(items: usize) -> usize {
 }
 
 /// The newest published release, as its assets name this device's download.
-#[derive(Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct Release {
     version: String,
     /// Where the installable archive is.
     archive: String,
-    /// Where the digest file that vouches for it is.
-    digest: String,
+    /// Where the signed canonical release manifest is.
+    manifest: String,
+    /// Where the manifest's raw detached Ed25519 signature is.
+    signature: String,
 }
 
 impl Release {
@@ -1343,12 +1440,15 @@ fn stable_release(value: &Value) -> Result<Release, String> {
     };
     let archive = url_of(&archive_name(&version))
         .ok_or_else(|| "The newest release has no download for this reader.".to_owned())?;
-    let digest = url_of(&format!("cobalt-{version}.sha256"))
-        .ok_or_else(|| "The newest release publishes no digest to verify against.".to_owned())?;
+    let manifest = url_of("cobalt-host-manifest.txt")
+        .ok_or_else(|| "The newest release publishes no signed metadata.".to_owned())?;
+    let signature = url_of("cobalt-host-manifest.txt.sig")
+        .ok_or_else(|| "The newest release publishes no metadata signature.".to_owned())?;
     Ok(Release {
         version,
         archive,
-        digest,
+        manifest,
+        signature,
     })
 }
 
@@ -1380,7 +1480,8 @@ fn release_value(value: &Value, tag_prefix: &str, prerelease: bool) -> Option<Re
     };
     Some(Release {
         archive: url_of(&archive_name(&version))?,
-        digest: url_of(&format!("cobalt-{version}.sha256"))?,
+        manifest: url_of("cobalt-host-manifest.txt")?,
+        signature: url_of("cobalt-host-manifest.txt.sig")?,
         version,
     })
 }
@@ -1389,18 +1490,20 @@ fn valid_release_url(url: &str) -> bool {
     url.starts_with("https://") && url.len() <= kobo_sdk::MAX_URL_LEN
 }
 
-/// Finds the digest vouching for `asset` in a `sha256sum` style listing:
-/// sixty-four hex characters, whitespace, a file name per line.
-fn digest_for(listing: &str, asset: &str) -> Option<String> {
-    listing.lines().find_map(|line| {
-        let (digest, name) = line.split_once(char::is_whitespace)?;
-        let named = name.trim_start().trim_start_matches('*') == asset;
-        let plausible = digest.len() == 64
-            && digest
-                .bytes()
-                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte));
-        (named && plausible).then(|| digest.to_owned())
-    })
+fn verified_device_digest(release: &Release, manifest: &[u8], signature: &str) -> Option<String> {
+    let manifest = kobo_app_store::verify_release_manifest(manifest, signature).ok()?;
+    device_digest_from_manifest(release, &manifest)
+}
+
+fn device_digest_from_manifest(
+    release: &Release,
+    manifest: &kobo_app_store::ReleaseManifest,
+) -> Option<String> {
+    if manifest.version != release.version {
+        return None;
+    }
+    let device = manifest.device()?;
+    (device.name == archive_name(&release.version)).then(|| device.sha256.clone())
 }
 
 /// Hours and minutes, because "412 minutes" is arithmetic a reader should not
@@ -1452,8 +1555,8 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::{
-        RadioState, Settings, View, AUTO_APPS, AUTO_COBALT, BETA_UPDATES, DEVICE_ACTIONS, MORE,
-        NETWORK_ACTIONS, PREVIOUS, RESCAN,
+        RadioState, Settings, View, AUTO_APPS, AUTO_COBALT, BETA_UPDATES, CANCEL_CHANNEL,
+        CONFIRM_CHANNEL, DEVICE_ACTIONS, MORE, NETWORK_ACTIONS, PREVIOUS, RESCAN, VERSION,
     };
     use kobo_sdk::{
         action_id, BannerLevel, BatteryDetail, BluetoothDevice, BluetoothDeviceKind, Chrome,
@@ -1487,8 +1590,37 @@ mod tests {
         assert!(layout.rect_of_action(action_id(AUTO_APPS)).is_some());
         assert!(layout.rect_of_action(action_id(BETA_UPDATES)).is_some());
         let text = text_of(&screen);
-        assert!(text.contains("prerelease Cobalt and Store app updates"));
-        assert!(text.contains("nothing is downgraded"));
+        assert!(
+            facts_of(&screen).contains(&format!("Beta · Cobalt {VERSION}")),
+            "{:?}",
+            screen.nodes
+        );
+        assert!(text.contains("selected only here"), "{text}");
+        assert!(text.contains("preserves installed apps, state, and secrets"));
+    }
+
+    #[test]
+    fn changing_update_channels_has_an_explicit_confirmation_screen() {
+        for (current, chosen) in [
+            (UpdateChannel::Stable, "Beta"),
+            (UpdateChannel::Beta, "Stable"),
+        ] {
+            let settings = Settings {
+                view: View::UpdateChannelConfirm,
+                update_channel: Some(current),
+                ..Settings::default()
+            };
+            let screen = settings.update_channel_confirmation();
+            let issues = screen.validate(&CLARA_BW_METRICS);
+            assert!(issues.is_empty(), "{issues:?}");
+            let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::with_back(true));
+            assert!(layout.rect_of_action(action_id(CONFIRM_CHANNEL)).is_some());
+            assert!(layout.rect_of_action(action_id(CANCEL_CHANNEL)).is_some());
+            let text = text_of(&screen);
+            assert!(facts_of(&screen).contains(&format!("Cobalt {VERSION}")));
+            assert!(text.contains(chosen), "{text}");
+            assert!(text.contains("preserved"), "{text}");
+        }
     }
 
     #[test]
@@ -1639,6 +1771,29 @@ mod tests {
             .iter()
             .filter_map(|node| match node {
                 kobo_sdk::Node::Text { text, .. } => Some(text.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    fn facts_of(screen: &kobo_sdk::Screen) -> String {
+        screen
+            .nodes
+            .iter()
+            .filter_map(|node| match node {
+                kobo_sdk::Node::Facts { entries, .. } => Some(
+                    entries
+                        .iter()
+                        .flat_map(|(label, value)| [label.as_str(), value.as_str()])
+                        .collect::<Vec<_>>()
+                        .join(" "),
+                ),
+                kobo_sdk::Node::Section { title, value, .. } => Some(format!(
+                    "{} {}",
+                    title,
+                    value.as_deref().unwrap_or_default()
+                )),
                 _ => None,
             })
             .collect::<Vec<_>>()
@@ -1837,27 +1992,28 @@ mod tests {
         );
     }
 
-    fn release_json(version: &str, with_digest: bool) -> String {
+    fn release_json(version: &str, with_metadata: bool) -> String {
         let archive = format!(
             r#"{{"name":"cobalt-{version}-KoboRoot.tgz","browser_download_url":"https://example.test/{version}/KoboRoot.tgz"}}"#
         );
-        let digest = if with_digest {
+        let metadata = if with_metadata {
             format!(
-                r#",{{"name":"cobalt-{version}.sha256","browser_download_url":"https://example.test/{version}/checksums"}}"#
+                r#",{{"name":"cobalt-host-manifest.txt","browser_download_url":"https://example.test/{version}/manifest"}},{{"name":"cobalt-host-manifest.txt.sig","browser_download_url":"https://example.test/{version}/manifest.sig"}}"#
             )
         } else {
             String::new()
         };
-        format!(r#"{{"tag_name":"v{version}","assets":[{archive}{digest}]}}"#)
+        format!(r#"{{"tag_name":"v{version}","assets":[{archive}{metadata}]}}"#)
     }
 
     #[test]
-    fn a_release_is_read_down_to_the_two_urls_this_reader_needs() {
+    fn a_release_is_read_down_to_the_signed_metadata_urls_this_reader_needs() {
         let release = super::latest_release(&release_json("9.9.9", true), UpdateChannel::Stable)
             .expect("a full release");
         assert_eq!(release.version, "9.9.9");
         assert_eq!(release.archive, "https://example.test/9.9.9/KoboRoot.tgz");
-        assert_eq!(release.digest, "https://example.test/9.9.9/checksums");
+        assert_eq!(release.manifest, "https://example.test/9.9.9/manifest");
+        assert_eq!(release.signature, "https://example.test/9.9.9/manifest.sig");
         assert!(release.newer_than(super::VERSION));
     }
 
@@ -1867,11 +2023,11 @@ mod tests {
     }
 
     #[test]
-    fn a_release_without_a_digest_to_verify_against_is_not_offered() {
+    fn a_release_without_signed_metadata_is_not_offered() {
         assert!(
             super::latest_release(&release_json("9.9.9", false), UpdateChannel::Stable)
-                .expect_err("no digest, no offer")
-                .contains("digest")
+                .expect_err("no signed metadata, no offer")
+                .contains("signed metadata")
         );
     }
 
@@ -1880,14 +2036,17 @@ mod tests {
         let body = r#"[
           {"tag_name":"beta-v9.8.0","draft":false,"prerelease":true,"assets":[
             {"name":"cobalt-9.8.0-KoboRoot.tgz","browser_download_url":"https://example.test/9.8.0.tgz"},
-            {"name":"cobalt-9.8.0.sha256","browser_download_url":"https://example.test/9.8.0.sha256"}]},
+            {"name":"cobalt-host-manifest.txt","browser_download_url":"https://example.test/9.8.0.manifest"},
+            {"name":"cobalt-host-manifest.txt.sig","browser_download_url":"https://example.test/9.8.0.sig"}]},
           {"tag_name":"beta-v9.9.0","draft":true,"prerelease":true,"assets":[
             {"name":"cobalt-9.9.0-KoboRoot.tgz","browser_download_url":"https://example.test/draft.tgz"},
-            {"name":"cobalt-9.9.0.sha256","browser_download_url":"https://example.test/draft.sha256"}]},
+            {"name":"cobalt-host-manifest.txt","browser_download_url":"https://example.test/draft.manifest"},
+            {"name":"cobalt-host-manifest.txt.sig","browser_download_url":"https://example.test/draft.sig"}]},
           {"tag_name":"v10.0.0","draft":false,"prerelease":false,"assets":[]},
           {"tag_name":"beta-v9.7.0","draft":false,"prerelease":true,"assets":[
             {"name":"wrong.tgz","browser_download_url":"https://example.test/wrong.tgz"},
-            {"name":"cobalt-9.7.0.sha256","browser_download_url":"https://example.test/9.7.0.sha256"}]}
+            {"name":"cobalt-host-manifest.txt","browser_download_url":"https://example.test/9.7.0.manifest"},
+            {"name":"cobalt-host-manifest.txt.sig","browser_download_url":"https://example.test/9.7.0.sig"}]}
         ]"#;
         let release = super::latest_release(body, UpdateChannel::Beta).expect("highest valid beta");
         assert_eq!(release.version, "9.8.0");
@@ -1904,7 +2063,8 @@ mod tests {
         let strange = super::Release {
             version: "nightly".to_owned(),
             archive: String::new(),
-            digest: String::new(),
+            manifest: String::new(),
+            signature: String::new(),
         };
         assert!(
             !strange.newer_than(super::VERSION),
@@ -1913,30 +2073,37 @@ mod tests {
         let older = super::Release {
             version: "0.1.0".to_owned(),
             archive: String::new(),
-            digest: String::new(),
+            manifest: String::new(),
+            signature: String::new(),
         };
         assert!(older.older_than(super::VERSION));
     }
 
     #[test]
-    fn the_digest_is_found_beside_the_other_files_in_the_listing() {
-        let digest = "a".repeat(64);
-        let listing = format!(
-            "{}  THIRD-PARTY.md\n{digest}  cobalt-9.9.9-KoboRoot.tgz\n",
-            "b".repeat(64)
-        );
+    fn verified_metadata_binds_the_version_and_device_archive_digest() {
+        let release = super::latest_release(&release_json("9.9.9", true), UpdateChannel::Stable)
+            .expect("release");
+        let manifest = kobo_app_store::ReleaseManifest {
+            version: "9.9.9".to_owned(),
+            channels: vec!["stable".to_owned(), "beta".to_owned()],
+            source: "0123456789abcdef0123456789abcdef01234567".to_owned(),
+            assets: vec![kobo_app_store::ReleaseAsset {
+                kind: "device".to_owned(),
+                platform: None,
+                name: "cobalt-9.9.9-KoboRoot.tgz".to_owned(),
+                bytes: 123,
+                sha256: "a".repeat(64),
+            }],
+        };
         assert_eq!(
-            super::digest_for(&listing, "cobalt-9.9.9-KoboRoot.tgz"),
-            Some(digest)
+            super::device_digest_from_manifest(&release, &manifest),
+            Some("a".repeat(64))
         );
-        assert_eq!(
-            super::digest_for(&listing, "cobalt-9.9.9-ClaraBW-KoboRoot.tgz"),
-            None,
-            "a digest for a different file vouches for nothing"
-        );
-        assert_eq!(
-            super::digest_for("not a listing", "cobalt-9.9.9-KoboRoot.tgz"),
-            None
+        let mut wrong = manifest;
+        wrong.version = "9.9.8".to_owned();
+        assert_eq!(super::device_digest_from_manifest(&release, &wrong), None);
+        assert!(
+            super::verified_device_digest(&release, b"not a manifest", &"0".repeat(128)).is_none()
         );
     }
 
@@ -1946,6 +2113,15 @@ mod tests {
             super::UpdateFlow::Idle,
             super::UpdateFlow::Checking {
                 channel: UpdateChannel::Stable,
+            },
+            super::UpdateFlow::Manifest {
+                release: super::latest_release(&release_json("9.9.9", true), UpdateChannel::Stable)
+                    .expect("release"),
+            },
+            super::UpdateFlow::ManifestSignature {
+                release: super::latest_release(&release_json("9.9.9", true), UpdateChannel::Stable)
+                    .expect("release"),
+                manifest: b"manifest".to_vec(),
             },
             super::UpdateFlow::UpToDate {
                 latest: "0.1.0".to_owned(),

@@ -13,231 +13,310 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  package:
-    if: github.ref == 'refs/heads/beta'
+  prepare:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      publish: ${{ steps.release.outputs.publish }}
     steps:
+      # Every job used to be gated on the branch, so dispatching this workflow
+      # anywhere else skipped all of them and reported success.
+      - name: Refuse to publish the beta channel from another branch
+        if: github.ref != 'refs/heads/beta'
+        run: |
+          echo "This workflow publishes the beta channel and only runs on refs/heads/beta." >&2
+          echo "It was started on ${GITHUB_REF}; re-run it with the beta branch selected." >&2
+          exit 1
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
-        with:
-          toolchain: 1.85.1
-          targets: armv7-unknown-linux-musleabihf
-      - name: Install the ring C cross-compiler
-        run: sudo apt-get update && sudo apt-get install --yes gcc-arm-linux-gnueabihf
       - name: Read the workspace version
         id: version
         run: |
           version="$(sed -n 's/^version = "\([0-9][0-9.]*\)"$/\1/p' Cargo.toml)"
-          test -n "$version"
-          test "$(printf '%s\n' "$version" | wc -l)" -eq 1
+          printf '%s\n' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'
           echo "version=$version" >> "$GITHUB_OUTPUT"
-      - name: Decide whether this version needs publishing
+      - name: Enforce immutable beta versions
         id: release
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -o pipefail
-          api_get() {
-            output="$1"
-            endpoint="$2"
-            if ! status="$(curl --silent --show-error --location \
-              --retry 3 --retry-all-errors \
-              --header "Authorization: Bearer $GH_TOKEN" \
-              --header "Accept: application/vnd.github+json" \
-              --header "X-GitHub-Api-Version: 2022-11-28" \
-              --output "$output" --write-out '%{http_code}' \
-              "https://api.github.com/${endpoint}")"
-            then
-              echo "GitHub API request failed for $endpoint" >&2
-              return 2
-            fi
-            case "$status" in
-              200) return 0 ;;
-              404)
-                rm -f "$output"
-                return 1
-                ;;
-              *)
-                echo "GitHub API request for $endpoint returned HTTP $status" >&2
-                return 2
-                ;;
-            esac
-          }
           tag="beta-v${VERSION}"
-          tag_present=false
-          release_present=false
-          if api_get "$RUNNER_TEMP/tag.json" \
-            "repos/${GITHUB_REPOSITORY}/git/ref/tags/${tag}"
-          then
-            tag_present=true
-          else
-            status=$?
-            test "$status" -eq 1
-          fi
-          if api_get "$RUNNER_TEMP/release.json" \
-            "repos/${GITHUB_REPOSITORY}/releases/tags/${tag}"
-          then
-            release_present=true
-          else
-            status=$?
-            test "$status" -eq 1
-          fi
-          if [ "$tag_present" != "$release_present" ]; then
+          tag_count="$(git ls-remote --tags origin "refs/tags/$tag" | wc -l)"
+          release_count="$(gh release list --limit 100 --json tagName \
+            --jq '[.[] | select(.tagName == "'"$tag"'")] | length')"
+          if [ "$tag_count" != "$release_count" ]; then
             echo "$tag has an incomplete tag/release pair; refusing to continue" >&2
             exit 1
           fi
-          if [ "$tag_present" = true ]; then
-            # shellcheck disable=SC2016
-            node -e '
-              const release = require(process.argv[1]);
-              const expected = [
-                `cobalt-${process.argv[3]}-ClaraBW-KoboRoot.tgz`,
-                `cobalt-${process.argv[3]}-ClaraBW.sha256`,
-                `cobalt-${process.argv[3]}-KoboRoot.tgz`,
-                `cobalt-${process.argv[3]}.sha256`,
-                "THIRD-PARTY.md",
-              ].sort();
-              const assets = release.assets.map(asset => asset.name).sort();
-              if (
-                release.tag_name !== process.argv[2] ||
-                release.draft !== false ||
-                release.prerelease !== true ||
-                JSON.stringify(assets) !== JSON.stringify(expected)
-              ) process.exit(1);
-            ' "$RUNNER_TEMP/release.json" "$tag" "$VERSION"
-            tag_sha="$(
-              # shellcheck disable=SC2016
-              node -e '
-                const tag = require(process.argv[1]);
-                if (
-                  tag.object.type !== "commit" ||
-                  !/^[0-9a-f]{40}$/.test(tag.object.sha)
-                ) process.exit(1);
-                process.stdout.write(tag.object.sha);
-              ' "$RUNNER_TEMP/tag.json"
-            )"
+          if [ "$tag_count" -eq 1 ]; then
+            release="$RUNNER_TEMP/release.json"
+            # The release is created against an existing tag, so GitHub fills
+            # targetCommitish with the default branch and it says nothing about
+            # what was published. The tag ref below is the authority.
+            gh release view "$tag" --json tagName,isDraft,isPrerelease,assets \
+              > "$release"
+            node - "$release" "$tag" "$VERSION" <<'NODE'
+          const fs = require("fs");
+          const release = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const version = process.argv[4];
+          const expected = [
+            `cobalt-${version}-ClaraBW-KoboRoot.tgz`,
+            `cobalt-${version}-ClaraBW.sha256`,
+            `cobalt-${version}-KoboRoot.tgz`,
+            `cobalt-${version}.sha256`,
+            "THIRD-PARTY.md",
+            "cobalt-host-manifest.txt",
+            "cobalt-host-manifest.txt.sig",
+            "cobalt-host-manifest.txt.sshsig",
+            ...["macos-x86_64", "macos-arm64", "linux-x86_64", "linux-arm64"]
+              .map(platform => `kobo-${version}-${platform}.tar.gz`),
+          ].sort();
+          const assets = release.assets.map(asset => asset.name).sort();
+          if (
+            release.tagName !== process.argv[3] ||
+            release.isDraft ||
+            !release.isPrerelease ||
+            JSON.stringify(assets) !== JSON.stringify(expected)
+          ) process.exit(1);
+          NODE
+            tag_sha="$(git ls-remote --tags origin "refs/tags/$tag" | awk '{print $1}')"
             git cat-file -e "${tag_sha}^{commit}"
             git merge-base --is-ancestor "$tag_sha" "$GITHUB_SHA"
             published="$RUNNER_TEMP/published-$tag"
-            mkdir -p "$published"
+            bootstrap="$RUNNER_TEMP/install-$tag.sh"
+            git show "${tag_sha}:install.sh" > "$bootstrap"
+            mkdir "$published"
             gh release download "$tag" --dir "$published"
-            test "$(find "$published" -maxdepth 1 -type f | wc -l)" -eq 5
             cd "$published"
-            cmp \
-              "cobalt-${VERSION}.sha256" \
-              "cobalt-${VERSION}-ClaraBW.sha256"
-            cmp \
-              "cobalt-${VERSION}-KoboRoot.tgz" \
-              "cobalt-${VERSION}-ClaraBW-KoboRoot.tgz"
             sha256sum --check "cobalt-${VERSION}.sha256"
+            cmp "cobalt-${VERSION}.sha256" "cobalt-${VERSION}-ClaraBW.sha256"
+            cmp "cobalt-${VERSION}-KoboRoot.tgz" \
+              "cobalt-${VERSION}-ClaraBW-KoboRoot.tgz"
+            grep -Fx "version ${VERSION}" cobalt-host-manifest.txt
+            grep -Fx "channels stable,beta" cobalt-host-manifest.txt
+            grep -Fx "source ${tag_sha}" cobalt-host-manifest.txt
+            printf '%s\n' \
+              'cobalt-release ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIL7XUR3p+tvPgftO/kRbigc8gagzP2RBDG3tWIu/1KXe' \
+              > allowed_signers
+            ssh-keygen -Y verify -q \
+              -f allowed_signers -I cobalt-release -n cobalt-host-release \
+              -s cobalt-host-manifest.txt.sshsig < cobalt-host-manifest.txt
+            node - <<'NODE'
+          const crypto = require("crypto");
+          const fs = require("fs");
+          const publicKey = Buffer.from(
+            "302a300506032b6570032100bed7511de9fadbcf81fb4efe445b8a073c81a8333f64410c6ded588bbfd4a5de",
+            "hex",
+          );
+          const signature = Buffer.from(
+            fs.readFileSync("cobalt-host-manifest.txt.sig", "utf8").trim(),
+            "hex",
+          );
+          if (
+            signature.length !== 64 ||
+            !crypto.verify(
+              null,
+              fs.readFileSync("cobalt-host-manifest.txt"),
+              {key: publicKey, format: "der", type: "spki"},
+              signature,
+            )
+          ) process.exit(1);
+          NODE
+            while read -r kind first second third fourth; do
+              case "$kind" in
+                device)
+                  name=$first
+                  bytes=$second
+                  checksum=$third
+                  test -z "${fourth:-}"
+                  ;;
+                bootstrap)
+                  test "$first" = install.sh
+                  name=$bootstrap
+                  bytes=$second
+                  checksum=$third
+                  test -z "${fourth:-}"
+                  ;;
+                host)
+                  name=$second
+                  bytes=$third
+                  checksum=$fourth
+                  ;;
+                *) continue ;;
+              esac
+              test -f "$name"
+              test "$(wc -c < "$name" | tr -d ' ')" = "$bytes"
+              test "$(sha256sum "$name" | cut -d' ' -f1)" = "$checksum"
+            done < cobalt-host-manifest.txt
             cd "$GITHUB_WORKSPACE"
+            # The tag being an ancestor of this commit only proves beta has not
+            # rewritten history. Beta can still have moved on with packaged
+            # changes the published tag does not carry, and skipping the build
+            # then reports success while no reader receives them.
+            changed="$RUNNER_TEMP/changed-since-$tag"
+            git diff --name-only --diff-filter=ACDMRT "$tag_sha" "$GITHUB_SHA" > "$changed"
+            node tools/device-package-changes.mjs --tag "$tag" --version "$VERSION" \
+              < "$changed"
             echo "publish=false" >> "$GITHUB_OUTPUT"
-            echo "$tag is already immutable; this beta push does not need a platform release."
             exit 0
           fi
-          latest="$(gh api --paginate \
-            "repos/${GITHUB_REPOSITORY}/git/matching-refs/tags/beta-v?per_page=100" \
-            --jq '.[].ref' |
+          latest="$(git ls-remote --tags origin 'refs/tags/beta-v*' |
             sed -n 's#.*refs/tags/beta-v\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)$#\1#p' |
-            sort -V |
-            tail -n 1)"
+            sort -V | tail -n 1)"
           if [ -n "$latest" ]; then
-            node -e '
-              const current = process.argv[1].split(".").map(Number);
-              const latest = process.argv[2].split(".").map(Number);
-              for (let index = 0; index < 3; index += 1) {
-                if (current[index] > latest[index]) process.exit(0);
-                if (current[index] < latest[index]) process.exit(1);
-              }
-              process.exit(1);
-            ' "$VERSION" "$latest" || {
-              echo "beta-v${VERSION} is not newer than beta-v${latest}. Bump the workspace version." >&2
-              exit 1
-            }
+            test "$(printf '%s\n%s\n' "$latest" "$VERSION" | sort -V | tail -n 1)" = "$VERSION"
+            test "$latest" != "$VERSION"
           fi
           echo "publish=true" >> "$GITHUB_OUTPUT"
-      - name: Build the device package once
-        if: steps.release.outputs.publish == 'true'
-        run: cargo run --locked -p kobo-cli -- package --out dist/KoboRoot.tgz
+
+  device:
+    needs: prepare
+    if: needs.prepare.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: 1.85.1
+          targets: armv7-unknown-linux-musleabihf
+      - name: Install the ARM cross-compiler
+        run: sudo apt-get update && sudo apt-get install --yes gcc-arm-linux-gnueabihf
+      - name: Build the deterministic device package
         env:
+          VERSION: ${{ needs.prepare.outputs.version }}
           CC_armv7_unknown_linux_musleabihf: arm-linux-gnueabihf-gcc
           CFLAGS_armv7_unknown_linux_musleabihf: -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0
-      - name: Name deterministic assets and checksums
-        if: steps.release.outputs.publish == 'true'
+        run: cargo run --locked -p kobo-cli -- package --out "dist/cobalt-${VERSION}-KoboRoot.tgz"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: device-package
+          path: dist/cobalt-*-KoboRoot.tgz
+          if-no-files-found: error
+
+  host:
+    needs: prepare
+    if: needs.prepare.outputs.publish == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-x86_64
+            runner: macos-15-intel
+            target: x86_64-apple-darwin
+            cc: ""
+          - platform: macos-arm64
+            runner: macos-14
+            target: aarch64-apple-darwin
+            cc: ""
+          - platform: linux-x86_64
+            runner: ubuntu-22.04
+            target: x86_64-unknown-linux-musl
+            cc: musl-gcc
+          - platform: linux-arm64
+            runner: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-musl
+            cc: musl-gcc
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: 1.85.1
+          targets: ${{ matrix.target }}
+      - name: Install Linux cross tools
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install --yes musl-tools
+      - name: Build the host kobo command
         env:
-          VERSION: ${{ steps.version.outputs.version }}
+          CC_x86_64_unknown_linux_musl: ${{ matrix.cc }}
+          CC_aarch64_unknown_linux_musl: ${{ matrix.cc }}
+        run: cargo build --locked --release -p kobo-cli --target "${{ matrix.target }}"
+      - name: Stage the host binary
         run: |
-          asset="cobalt-${VERSION}-KoboRoot.tgz"
-          legacy_asset="cobalt-${VERSION}-ClaraBW-KoboRoot.tgz"
-          digest="cobalt-${VERSION}.sha256"
-          legacy_digest="cobalt-${VERSION}-ClaraBW.sha256"
-          mv dist/KoboRoot.tgz "dist/$asset"
-          cp "dist/$asset" "dist/$legacy_asset"
+          mkdir -p host
+          cp "target/${{ matrix.target }}/release/kobo" host/kobo
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: host-${{ matrix.platform }}
+          path: host/kobo
+          if-no-files-found: error
+
+  publish:
+    needs: [prepare, device, host]
+    if: needs.prepare.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: 1.85.1
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: device-package
+          path: dist
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: host-*
+          path: dist/host-binaries
+      - name: Arrange matrix artifacts
+        run: |
+          for platform in macos-x86_64 macos-arm64 linux-x86_64 linux-arm64; do
+            test -f "dist/host-binaries/host-${platform}/kobo"
+            mkdir -p "dist/host-binaries/${platform}"
+            mv "dist/host-binaries/host-${platform}/kobo" \
+              "dist/host-binaries/${platform}/kobo"
+          done
+      - name: Build deterministic host release assets
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          chmod +x tools/build-host-release.sh
+          tools/build-host-release.sh "$VERSION" beta "$GITHUB_SHA" dist
+          cp "dist/cobalt-${VERSION}-KoboRoot.tgz" \
+            "dist/cobalt-${VERSION}-ClaraBW-KoboRoot.tgz"
           cp THIRD-PARTY.md dist/
           cd dist
-          sha256sum THIRD-PARTY.md "$asset" "$legacy_asset" > "$digest"
-          cp "$digest" "$legacy_digest"
+          sha256sum THIRD-PARTY.md \
+            "cobalt-${VERSION}-KoboRoot.tgz" \
+            "cobalt-${VERSION}-ClaraBW-KoboRoot.tgz" > "cobalt-${VERSION}.sha256"
+          cp "cobalt-${VERSION}.sha256" "cobalt-${VERSION}-ClaraBW.sha256"
+      - name: Sign the release manifest
+        env:
+          COBALT_APP_SIGNING_SEED: ${{ secrets.COBALT_APP_SIGNING_SEED }}
+        run: |
+          test -n "$COBALT_APP_SIGNING_SEED" || {
+            echo "COBALT_APP_SIGNING_SEED is not configured" >&2
+            exit 1
+          }
+          seed="$RUNNER_TEMP/cobalt-release-seed"
+          trap 'rm -f "$seed"' EXIT
+          printf '%s' "$COBALT_APP_SIGNING_SEED" > "$seed"
+          chmod 600 "$seed"
+          cargo run --locked -p kobo-cli -- host-release-sign \
+            --manifest dist/cobalt-host-manifest.txt \
+            --seed "$seed" \
+            --signature dist/cobalt-host-manifest.txt.sig \
+            --ssh-signature dist/cobalt-host-manifest.txt.sshsig
+          rm dist/install.sh
       - name: Create the immutable isolated prerelease
-        if: steps.release.outputs.publish == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ steps.version.outputs.version }}
+          VERSION: ${{ needs.prepare.outputs.version }}
         run: |
-          api_get() {
-            output="$1"
-            endpoint="$2"
-            if ! status="$(curl --silent --show-error --location \
-              --retry 3 --retry-all-errors \
-              --header "Authorization: Bearer $GH_TOKEN" \
-              --header "Accept: application/vnd.github+json" \
-              --header "X-GitHub-Api-Version: 2022-11-28" \
-              --output "$output" --write-out '%{http_code}' \
-              "https://api.github.com/${endpoint}")"
-            then
-              echo "GitHub API request failed for $endpoint" >&2
-              return 2
-            fi
-            case "$status" in
-              200) return 0 ;;
-              404)
-                rm -f "$output"
-                return 1
-                ;;
-              *)
-                echo "GitHub API request for $endpoint returned HTTP $status" >&2
-                return 2
-                ;;
-            esac
-          }
-          require_absent() {
-            label="$1"
-            endpoint="$2"
-            state="$RUNNER_TEMP/${label}.json"
-            if api_get "$state" "$endpoint"; then
-              echo "$label already exists. Refusing to publish assets for an existing beta version." >&2
-              exit 1
-            else
-              lookup_status=$?
-              if [ "$lookup_status" -ne 1 ]; then
-                exit 1
-              fi
-            fi
-          }
           tag="beta-v${VERSION}"
-          require_absent "$tag tag" \
-            "repos/${GITHUB_REPOSITORY}/git/ref/tags/${tag}"
-          require_absent "$tag release" \
-            "repos/${GITHUB_REPOSITORY}/releases/tags/${tag}"
-          created_sha="$(gh api \
-            --method POST \
-            "repos/${GITHUB_REPOSITORY}/git/refs" \
-            --field "ref=refs/tags/${tag}" \
-            --field "sha=${GITHUB_SHA}" \
-            --jq '.object.sha')"
-          test "$created_sha" = "$GITHUB_SHA"
+          test -z "$(git ls-remote --tags origin "refs/tags/$tag")"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "$tag already exists; refusing replacement" >&2
+            exit 1
+          fi
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/git/refs" \
+            --field "ref=refs/tags/${tag}" --field "sha=${GITHUB_SHA}" \
+            --jq '.object.sha' | grep -Fx "$GITHUB_SHA"
+          find dist -mindepth 1 -maxdepth 1 -type d -exec rm -rf {} +
+          test "$(find dist -maxdepth 1 -type f | wc -l)" -eq 12
           gh release create "$tag" dist/* \
             --title "Cobalt ${VERSION} beta" \
             --notes "Immutable prerelease built from the beta branch at ${GITHUB_SHA}." \
