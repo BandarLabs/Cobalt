@@ -1,1 +1,1 @@
-{"id":"hn","display_name":"Hacker News","short_label":"Hacker News","summary":"Read Top, New, Ask, and Show stories with complete comment threads.","version":"1.0.6","glyph":"news","capabilities":["network"]}
+{"id":"hn","display_name":"Hacker News","short_label":"Hacker News","summary":"Read Top, New, Ask, and Show stories with complete comment threads.","version":"1.0.7","glyph":"news","capabilities":["network"],"release_notes":"Rebuild after shared workspace changes on the current Cobalt release."}

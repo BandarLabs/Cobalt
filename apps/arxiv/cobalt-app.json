@@ -1,9 +1,1 @@
-{
-  "id": "arxiv",
-  "display_name": "arXiv",
-  "short_label": "arXiv",
-  "summary": "Browse and search arXiv, keep preprints, and read their HTML versions on your Kobo.",
-  "version": "1.3.6",
-  "glyph": "note",
-  "capabilities": ["network"]
-}
+{"id":"arxiv","display_name":"arXiv","short_label":"arXiv","summary":"Browse and search arXiv, keep preprints, and read their HTML versions on your Kobo.","version":"1.3.7","glyph":"note","capabilities":["network"],"release_notes":"Rebuild after shared workspace changes on the current Cobalt release."}

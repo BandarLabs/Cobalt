@@ -9,6 +9,8 @@ import {
   unpublishedStoreChangeReport
 } from "./store-catalog-changes.mjs";
 
+const COMMAND_MAX_BUFFER = 16 * 1024 * 1024;
+
 const MANIFEST_FIELDS = [
   "id",
   "display_name",
@@ -247,7 +249,10 @@ function currentProtocolVersion() {
 
 function command(name, arguments_) {
   try {
-    return execFileSync(name, arguments_, { encoding: "utf8" }).trim();
+    return execFileSync(name, arguments_, {
+      encoding: "utf8",
+      maxBuffer: COMMAND_MAX_BUFFER
+    }).trim();
   } catch (error) {
     throw new Error(`${name} ${arguments_.join(" ")} failed: ${error.message}`);
   }

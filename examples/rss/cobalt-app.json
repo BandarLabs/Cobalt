@@ -1,1 +1,1 @@
-{"id":"rss","display_name":"Feeds","short_label":"Feeds","summary":"Follow website feeds and read their articles without the web page around them.","version":"1.0.6","glyph":"rss","capabilities":["network"]}
+{"id":"rss","display_name":"Feeds","short_label":"Feeds","summary":"Follow website feeds and read their articles without the web page around them.","version":"1.0.7","glyph":"rss","capabilities":["network"],"release_notes":"Rebuild after shared workspace changes on the current Cobalt release."}
