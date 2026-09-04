@@ -17,6 +17,9 @@ const USAGE: &str = "usage: kobo frame init --device IP\n\
                      \x20      kobo frame rm ID --device IP";
 
 pub fn command(arguments: &[String]) -> Result<(), String> {
+    if super::wants_help(arguments) {
+        return super::print_command_help(USAGE);
+    }
     match arguments.first().map(String::as_str) {
         Some("init") => init(&arguments[1..]),
         Some("push") => push(&arguments[1..]),
@@ -406,6 +409,11 @@ mod tests {
         };
         let current = BTreeMap::from([(old.id, 64)]);
         assert_eq!(capacity_bytes(&push, &current).expect("capacity"), 96);
+    }
+
+    #[test]
+    fn help_succeeds() {
+        super::command(&["--help".into()]).expect("help");
     }
 
     fn photo(id: &str) -> Photo {

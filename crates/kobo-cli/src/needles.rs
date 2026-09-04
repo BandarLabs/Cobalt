@@ -15,6 +15,9 @@ const USAGE: &str = "usage: kobo needles prepare PATTERN.pdf --out PATTERN.md\n\
                      \x20      kobo needles push PATTERN.(pdf|md|txt) --device IP";
 
 pub fn command(arguments: &[String]) -> Result<(), String> {
+    if super::wants_help(arguments) {
+        return super::print_command_help(USAGE);
+    }
     match arguments {
         [verb, input, flag, output] if verb == "prepare" && flag == "--out" => {
             let markdown = prepare(Path::new(input))?;
@@ -200,6 +203,11 @@ mod tests {
     use super::{has_extension, has_text_extension, read_limited, read_pattern, BLOB};
     use std::io::Cursor;
     use std::path::Path;
+
+    #[test]
+    fn help_succeeds() {
+        super::command(&["--help".into()]).expect("help");
+    }
 
     #[test]
     fn accepts_only_declared_input_extensions() {

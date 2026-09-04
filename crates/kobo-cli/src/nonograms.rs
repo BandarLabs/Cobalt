@@ -26,6 +26,9 @@ struct Push<'a> {
 }
 
 pub fn command(arguments: &[String]) -> Result<(), String> {
+    if super::wants_help(arguments) {
+        return super::print_command_help(USAGE);
+    }
     let push = parse_push(arguments)?;
     let source = read_image(Path::new(push.input))?;
     let png = prepare(&source, push.side)?;
@@ -342,7 +345,8 @@ mod tests {
 
     #[test]
     fn main_dispatches_to_nonograms_command() {
-        let error = super::super::run(&["nonograms".to_owned()]).expect_err("usage");
+        super::super::run(&["nonograms".to_owned(), "--help".to_owned()]).expect("help");
+        let error = super::super::run(&["nonograms".to_owned(), "look".to_owned()]).expect_err("usage");
         assert!(error.starts_with("usage: kobo nonograms push"));
     }
 
@@ -380,6 +384,11 @@ mod tests {
         assert!(!script.contains(".photo.png.writing"));
         assert!(script.contains("KOBO_NONOGRAMS_PHOTO"));
         assert_eq!(BLOB, "photo.png");
+    }
+
+    #[test]
+    fn help_succeeds() {
+        super::command(&["--help".into()]).expect("help");
     }
 
     fn grey_png(width: u32, height: u32, grey: &[u8]) -> Vec<u8> {

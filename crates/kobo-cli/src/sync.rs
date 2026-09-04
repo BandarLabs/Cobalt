@@ -43,6 +43,9 @@ struct State {
 }
 
 pub fn command(arguments: &[String]) -> Result<(), String> {
+    if super::wants_help(arguments) {
+        return super::print_command_help(USAGE);
+    }
     match arguments.first().map(String::as_str) {
         Some("setup") => setup(&arguments[1..]),
         Some("run") => run(&arguments[1..]),
@@ -1176,6 +1179,11 @@ mod tests {
         let _ignored = fs::remove_dir_all(&path);
         fs::create_dir_all(&path).expect("test root");
         path
+    }
+
+    #[test]
+    fn help_succeeds() {
+        super::command(&["--help".into()]).expect("help");
     }
 
     #[test]

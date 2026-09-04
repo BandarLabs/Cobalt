@@ -16,12 +16,19 @@ pub fn import(_input: &Path, _output: &Path) -> Result<(), String> {
     Err(UNSUPPORTED.to_owned())
 }
 
+const USAGE: &str = "usage: kobo flashcards import DECK.apkg --out DECK.flashcards\n\
+                     Host-only. Anki APKG/COLPKG import is refused until Cobalt uses Anki's\n\
+                     rslib renderer. No bundle is written, so templates and media are not lost.";
+
 pub fn command(arguments: &[String]) -> Result<(), String> {
+    if super::wants_help(arguments) {
+        return super::print_command_help(USAGE);
+    }
     let [verb, input, flag, output] = arguments else {
-        return Err("usage: kobo flashcards import DECK.apkg --out DECK.flashcards".to_owned());
+        return Err(USAGE.to_owned());
     };
     if verb != "import" || flag != "--out" {
-        return Err("usage: kobo flashcards import DECK.apkg --out DECK.flashcards".to_owned());
+        return Err(USAGE.to_owned());
     }
     import(Path::new(input), Path::new(output))
 }
@@ -108,5 +115,11 @@ mod tests {
         assert!(!output.exists(), "a failed import must be atomic");
 
         std::fs::remove_dir_all(base).expect("cleanup fixture");
+    }
+
+    #[test]
+    fn help_succeeds() {
+        command(&["--help".into()]).expect("help");
+        command(&[]).expect("empty is help");
     }
 }

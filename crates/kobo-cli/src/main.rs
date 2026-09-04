@@ -392,6 +392,19 @@ fn is_device_flag(argument: &str) -> bool {
     argument == "--device" || argument == "-s"
 }
 
+/// Whether a companion command should print its usage and exit successfully.
+fn wants_help(arguments: &[String]) -> bool {
+    arguments.is_empty()
+        || arguments
+            .iter()
+            .any(|argument| argument == "--help" || argument == "-h")
+}
+
+fn print_command_help(usage: &str) -> Result<(), String> {
+    println!("{usage}");
+    Ok(())
+}
+
 /// Resolves an alias to the command it stands for.
 fn canonical(command: &str) -> &str {
     ALIASES
@@ -489,11 +502,32 @@ fn run(arguments: &[String]) -> Result<(), String> {
 }
 
 fn parser_command(arguments: &[String]) -> Result<(), String> {
+    const USAGE: &str = "usage: kobo parser check FILE\n\
+                         \x20      kobo parser push FILE --device IP\n\
+                         check validates a .z3, .z5 or .z8 story on the host.\n\
+                         push transfers a checked story to the reader's Parser shelf.";
+    if wants_help(arguments) {
+        return print_command_help(USAGE);
+    }
+    if let [verb, file] = arguments {
+        if verb == "check" {
+            let path = Path::new(file);
+            let bytes = fs::read(path)
+                .map_err(|error| format!("could not read {}: {error}", path.display()))?;
+            validate_parser_story(&bytes)?;
+            println!(
+                "Parser story is a Z-machine v{} file ({} bytes).",
+                bytes[0],
+                bytes.len()
+            );
+            return Ok(());
+        }
+    }
     let [verb, file, device, host] = arguments else {
-        return Err("usage: kobo parser push FILE --device IP".to_owned());
+        return Err(USAGE.to_owned());
     };
     if verb != "push" || !is_device_flag(device) {
-        return Err("usage: kobo parser push FILE --device IP".to_owned());
+        return Err(USAGE.to_owned());
     }
     let path = Path::new(file);
     let bytes =
@@ -566,7 +600,11 @@ fn validate_parser_story(bytes: &[u8]) -> Result<(), String> {
 fn stream_command(arguments: &[String]) -> Result<(), String> {
     const USAGE: &str = "usage: kobo stream init [--host ADDRESS ...]\n\
                          \x20      kobo stream [--grid COLSxROWS] [--controls | --interactive] \
-                         [--read-only] [--port PORT] -- COMMAND [ARG ...]";
+                         [--read-only] [--port PORT] -- COMMAND [ARG ...]\n\
+                         Host-only. The reader never opens a shell; it paints rows this command serves.";
+    if wants_help(arguments) {
+        return print_command_help(USAGE);
+    }
     if arguments.first().is_some_and(|argument| argument == "init") {
         return kobo_stream::init(&arguments[1..]);
     }
@@ -5543,7 +5581,10 @@ fn print_help() {
            needles push FILE --device IP        Transfer a prepared pattern to Needles\n\
            nonograms push IMAGE --size 5|7|9 (--device IP | --out photo.png)\n\
                                              Prepare and atomically transfer a photo puzzle\n\
-           parser push FILE --device IP  Transfer a .z3/.z5/.z8 story to Parser\n\
+           parser check FILE             Validate a .z3/.z5/.z8 story on the host\n\
+           parser push FILE --device IP  Transfer a checked story to Parser\n\
+           stream init [--host ADDRESS]  Create Paperterm pairing material on this computer\n\
+           stream [--grid CxR] -- COMMAND   Serve host rows to Paperterm; the reader has no shell\n\
            shot [--device HOST]   Save a PNG of the panel (device or simulator)\n\
            record --device IP [--seconds N] [--fps F] [--out DIR]  Film the panel, read-only\n\
            present <app> --device IP [--seconds N]  Run one app on the panel\n\
@@ -5597,6 +5638,33 @@ fn print_help() {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn companion_help_exits_successfully() {
+        super::parser_command(&["--help".into()]).expect("parser help");
+        super::stream_command(&["--help".into()]).expect("stream help");
+        super::flashcards::command(&["--help".into()]).expect("flashcards help");
+    }
+
+    #[test]
+    fn parser_check_accepts_a_minimal_v5_header() {
+        let mut bytes = vec![0_u8; 64];
+        bytes[0] = 5;
+        let path = std::env::temp_dir().join(format!("parser-check-{}.z5", std::process::id()));
+        std::fs::write(&path, &bytes).expect("fixture");
+        super::parser_command(&["check".into(), path.display().to_string()]).expect("check");
+        std::fs::remove_file(path).expect("cleanup");
+    }
+
+    #[test]
+    fn parser_check_refuses_glulx() {
+        let path = std::env::temp_dir().join(format!("parser-glulx-{}.ulx", std::process::id()));
+        std::fs::write(&path, b"Glul\0\0\0\0").expect("fixture");
+        let error = super::parser_command(&["check".into(), path.display().to_string()])
+            .expect_err("glulx");
+        std::fs::remove_file(path).expect("cleanup");
+        assert!(error.contains("Glulx"));
+    }
+
     /// Builds a recording the way the device writes one.
     fn recording(width: u32, height: u32, frames: &[(u32, u8)]) -> Vec<u8> {
         let mut raw = b"KOBOCST1".to_vec();
