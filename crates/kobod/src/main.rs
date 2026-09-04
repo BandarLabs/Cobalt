@@ -59,7 +59,6 @@ fn remember_device_profile(profile: &kobo_profile::DeviceProfile) -> Result<(), 
 use std::process::ExitCode;
 
 mod app_link;
-mod app_store;
 mod autoupdate;
 #[cfg(feature = "device-write")]
 mod blackbox;
@@ -67,6 +66,8 @@ mod blackbox;
 mod device;
 mod frame;
 mod update;
+
+pub(crate) use kobod::app_store;
 
 fn main() -> ExitCode {
     let arguments = env::args().skip(1).collect::<Vec<_>>();
@@ -127,7 +128,121 @@ fn run(arguments: &[String]) -> Result<(), Box<dyn Error>> {
         );
         return Ok(());
     }
-    Err("usage: kobod [--sim-socket PATH --frame PATH] [--present APP] [--fetch URL BYTES] [--key-test SECONDS] [--app-link status|unpair]".into())
+    if arguments
+        .first()
+        .is_some_and(|argument| argument == "--beta-store")
+    {
+        return beta_store_maintenance(&arguments[1..]);
+    }
+    if arguments.len() == 2 && arguments[0] == "--resolve-app" {
+        let path = app_store::resolve_launch(Path::new("/mnt/onboard/.adds/cobalt"), &arguments[1])
+            .map_err(|error| format!("resolve application: {error}"))?;
+        println!("path={}", path.display());
+        return Ok(());
+    }
+    Err("usage: kobod [--sim-socket PATH --frame PATH] [--present APP] [--fetch URL BYTES] [--key-test SECONDS] [--app-link status|unpair] [--resolve-app APP] [--beta-store identity|status APP|catalog-digest|refresh|install APP|uninstall APP]".into())
+}
+
+/// A narrow device-side surface for the host acceptance harness.
+///
+/// Every mutating action is hard-wired to Beta and requires an exact attended
+/// unlock. Stable is not an accepted argument and no network or owner setting
+/// is changed.
+fn beta_store_maintenance(arguments: &[String]) -> Result<(), Box<dyn Error>> {
+    const ROOT: &str = "/mnt/onboard/.adds/cobalt";
+    const UNLOCK: &str = "OWNER_ATTENDED_BETA_STORE_ACCEPTANCE";
+    match arguments {
+        [action] if action == "identity" => {
+            let snapshot = kobo_hal::probe_device()?;
+            let profile = kobo_profile::identify_profile(&snapshot)
+                .ok_or("the device does not exactly match a supported profile")?;
+            println!("profile={}", profile.id);
+            println!(
+                "firmware={}",
+                snapshot.identity.firmware_version.unwrap_or_default()
+            );
+            println!("cobalt={}", env!("CARGO_PKG_VERSION"));
+            println!("protocol={}", kobo_protocol::VERSION);
+            println!("panel_width={}", profile.width);
+            println!("panel_height={}", profile.height);
+            let channel = match autoupdate::preferences(Path::new(ROOT)).channel {
+                kobo_protocol::UpdateChannel::Stable => "stable",
+                kobo_protocol::UpdateChannel::Beta => "beta",
+            };
+            println!("channel={channel}");
+            Ok(())
+        }
+        [action, id] if action == "status" => {
+            if !kobo_protocol::valid_app_id(id) {
+                return Err("invalid application identity".into());
+            }
+            let installed = app_store::installed(Path::new(ROOT))
+                .map_err(|error| format!("read installed applications: {error}"))?;
+            let Some(app) = installed.iter().find(|app| app.id == *id) else {
+                println!("installed=false");
+                return Ok(());
+            };
+            let binary = app_store::resolve(Path::new(ROOT), id)
+                .map_err(|error| format!("resolve installed application: {error}"))?;
+            let bytes = fs::read(binary)?;
+            println!("installed=true");
+            println!(
+                "version={}",
+                app.installed_version.as_deref().unwrap_or_default()
+            );
+            println!("binary_sha256={}", kobo_net::sha256::hex_digest(&bytes));
+            Ok(())
+        }
+        [action] if action == "catalog-digest" => {
+            app_store::catalog(Path::new(ROOT), kobo_protocol::UpdateChannel::Beta)
+                .map_err(|error| format!("verify cached Beta catalog: {error}"))?;
+            let cache = Path::new(ROOT).join("store/catalog-beta");
+            let catalog = fs::read(cache.join("catalog.json"))?;
+            let signature = fs::read(cache.join("catalog.json.sig"))?;
+            println!(
+                "catalog_sha256={}",
+                kobo_net::sha256::hex_digest(&catalog)
+            );
+            println!(
+                "signature_sha256={}",
+                kobo_net::sha256::hex_digest(&signature)
+            );
+            Ok(())
+        }
+        [action] if action == "refresh" => {
+            require_beta_store_unlock(UNLOCK)?;
+            let entries = app_store::refresh(Path::new(ROOT), kobo_protocol::UpdateChannel::Beta)
+                .map_err(|error| format!("refresh Beta catalog: {error}"))?;
+            println!("entries={}", entries.len());
+            Ok(())
+        }
+        [action, id] if action == "install" => {
+            require_beta_store_unlock(UNLOCK)?;
+            app_store::install(Path::new(ROOT), id, kobo_protocol::UpdateChannel::Beta)
+                .map_err(|error| format!("install Beta application: {error}"))?;
+            println!("installed={id}");
+            Ok(())
+        }
+        [action, id] if action == "uninstall" => {
+            require_beta_store_unlock(UNLOCK)?;
+            app_store::uninstall(Path::new(ROOT), id)
+                .map_err(|error| format!("uninstall Beta application: {error}"))?;
+            println!("uninstalled={id}");
+            Ok(())
+        }
+        _ => Err(
+            "usage: kobod --beta-store identity|status APP|catalog-digest|refresh|install APP|uninstall APP"
+                .into(),
+        ),
+    }
+}
+
+fn require_beta_store_unlock(expected: &str) -> Result<(), Box<dyn Error>> {
+    if env::var("KOBO_BETA_STORE_UNLOCK").ok().as_deref() == Some(expected) {
+        Ok(())
+    } else {
+        Err("owner-attended beta Store acceptance unlock is missing or incorrect".into())
+    }
 }
 
 #[cfg(feature = "device-write")]

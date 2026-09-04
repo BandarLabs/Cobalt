@@ -1,0 +1,1 @@
+{"id":"chat","display_name":"AI Command Center","short_label":"AI Chat","summary":"Ask a question, then read and navigate the answer with touch controls.","version":"1.0.7","glyph":"chat","capabilities":["network"],"release_notes":"Rebuild Chat for the current Store catalog after its derived Cobalt minimum diverged from the published listing."}

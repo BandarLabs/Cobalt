@@ -1,0 +1,9 @@
+{
+  "id": "morse",
+  "display_name": "Morse",
+  "short_label": "Morse",
+  "summary": "Type a message and send it in Morse code with the front light.",
+  "version": "1.0.8",
+  "glyph": "light",
+  "capabilities": ["frontlight-control", "keep-awake"]
+}
