@@ -13,6 +13,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
+// Panel policy belongs to the runtime, but the simulator compiles the same
+// source so region and waveform decisions cannot drift.
+#[path = "../../kobod/src/frame.rs"]
+mod frame;
+use frame::{FramePlanner, FrameTransition, PanelWaveform};
 use kobo_policy::{
     shelf::Shelf, store::Store, Backends, Capability, Declared, DeviceServices, PowerPolicy,
     TaskRunner,
@@ -22,10 +27,7 @@ use kobo_profile::{
     PanelColor, PanelPose, WifiHandoff, CLARA_BW_391,
 };
 use kobo_protocol::{read_from, write_to, Frame, Lifecycle, Message};
-use kobo_ui::{
-    ActionId, DisplayMetrics, FramePlanner, FrameTransition, Node, NodeId, PanelWaveform, Screen,
-    Surface,
-};
+use kobo_ui::{ActionId, DisplayMetrics, Node, NodeId, Screen, Surface};
 
 const MAX_HTTP_HEADER: usize = 8 * 1024;
 const DEFAULT_PROFILE: &DeviceProfile = &CLARA_BW_391;
@@ -216,51 +218,49 @@ impl PanelPreview {
         if transition.full {
             self.visible.copy_from_slice(&surface.pixels);
         } else {
-            self.apply_partial(surface, transition);
+            self.apply_partial(surface, &transition);
         }
-        if self.planner.commit(surface, transition) {
+        if self.planner.commit(surface, &transition) {
             self.last = Some(transition);
         }
     }
 
-    fn apply_partial(&mut self, surface: &Surface, transition: FrameTransition) {
-        let Ok(left) = usize::try_from(transition.region.x) else {
-            return;
-        };
-        let Ok(top) = usize::try_from(transition.region.y) else {
-            return;
-        };
-        let Ok(width) = usize::try_from(transition.region.width) else {
-            return;
-        };
-        let Ok(height) = usize::try_from(transition.region.height) else {
-            return;
-        };
-        for y in top..top.saturating_add(height) {
-            let row = y.saturating_mul(surface.width);
-            for x in left..left.saturating_add(width) {
-                let index = row.saturating_add(x);
-                let Some(target) = surface.pixels.get(index).copied() else {
-                    continue;
-                };
-                let Some(visible) = self.visible.get_mut(index) else {
-                    continue;
-                };
-                let target = match transition.waveform {
-                    PanelWaveform::Du => {
-                        if target < 128 {
-                            kobo_ui::tone::INK
-                        } else {
-                            kobo_ui::tone::PAPER
+    fn apply_partial(&mut self, surface: &Surface, transition: &FrameTransition) {
+        for update in &transition.regions {
+            let (Ok(left), Ok(top), Ok(width), Ok(height)) = (
+                usize::try_from(update.region.x),
+                usize::try_from(update.region.y),
+                usize::try_from(update.region.width),
+                usize::try_from(update.region.height),
+            ) else {
+                continue;
+            };
+            for y in top..top.saturating_add(height) {
+                let row = y.saturating_mul(surface.width);
+                for x in left..left.saturating_add(width) {
+                    let index = row.saturating_add(x);
+                    let Some(target) = surface.pixels.get(index).copied() else {
+                        continue;
+                    };
+                    let Some(visible) = self.visible.get_mut(index) else {
+                        continue;
+                    };
+                    let target = match update.waveform {
+                        PanelWaveform::Du => {
+                            if target < 128 {
+                                kobo_ui::tone::INK
+                            } else {
+                                kobo_ui::tone::PAPER
+                            }
                         }
-                    }
-                    PanelWaveform::Gl16 | PanelWaveform::Gc16 => target,
-                };
-                // An LCD cannot reproduce electrophoretic residue. Retaining
-                // one sixteenth of the previous displayed value makes stale
-                // edges visible without claiming hardware-measured physics.
-                *visible = u8::try_from((u16::from(target) * 15 + u16::from(*visible)) / 16)
-                    .unwrap_or(target);
+                        PanelWaveform::Gl16 | PanelWaveform::Gc16 => target,
+                    };
+                    // An LCD cannot reproduce electrophoretic residue. Retaining
+                    // one sixteenth of the previous displayed value makes stale
+                    // edges visible without claiming hardware-measured physics.
+                    *visible = u8::try_from((u16::from(target) * 15 + u16::from(*visible)) / 16)
+                        .unwrap_or(target);
+                }
             }
         }
     }
@@ -477,12 +477,22 @@ impl Server {
 
     /// Serves requests indefinitely. The listener is bound only to IPv4 localhost.
     ///
+    /// One connection that goes wrong is reported and stepped over rather than
+    /// ending the session. A browser opening a speculative connection and
+    /// closing it unused, a port knock, or a reload abandoned halfway all
+    /// arrive here as a read error on one stream, and none of them is a reason
+    /// to take the panel away from somebody who is working.
+    ///
     /// # Errors
     ///
-    /// Returns an error if accepting, reading, or writing a request fails.
+    /// Returns an error if the listener itself stops accepting, which is not
+    /// something the next connection would recover from.
     pub fn serve(&mut self) -> io::Result<()> {
         loop {
-            self.serve_one()?;
+            let (stream, _) = self.listener.accept()?;
+            if let Err(error) = self.handle(stream) {
+                report_dropped_request(&error);
+            }
         }
     }
 
@@ -789,7 +799,10 @@ impl AppServer {
     pub fn serve(&self) -> io::Result<()> {
         let session = self.accept_app()?;
         loop {
-            self.serve_one(&session)?;
+            let (stream, _) = self.http.accept()?;
+            if let Err(error) = session.handle_http(stream) {
+                report_dropped_request(&error);
+            }
         }
     }
 
@@ -808,14 +821,20 @@ impl AppServer {
     /// Call [`Self::set_nonblocking`] with `true` first. Returns `false` when
     /// no browser request is currently pending.
     ///
+    /// A connection that fails to produce a request is reported and counted as
+    /// served, for the reason given on [`Server::serve`]: the developer whose
+    /// application is running behind this is not the one who opened it.
+    ///
     /// # Errors
     ///
-    /// Returns an error when accepting, reading, or writing the request fails.
+    /// Returns an error when the listener itself stops accepting.
     pub fn try_serve_one(&self, session: &AppSession) -> io::Result<bool> {
         match self.http.accept() {
             Ok((stream, _)) => {
                 stream.set_nonblocking(false)?;
-                session.handle_http(stream)?;
+                if let Err(error) = session.handle_http(stream) {
+                    report_dropped_request(&error);
+                }
                 Ok(true)
             }
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => Ok(false),
@@ -1777,19 +1796,35 @@ fn simulation_json(
     touch: Option<SimulatedTouch>,
 ) -> String {
     let profile = config.profile;
-    let transition = panel.last.map_or_else(
+    let transition = panel.last.as_ref().map_or_else(
         || "null".to_owned(),
         |transition| {
+            let regions = transition
+                .regions
+                .iter()
+                .map(|update| {
+                    format!(
+                        "{{\"waveform\":\"{}\",\"region\":{{\"x\":{},\"y\":{},\"width\":{},\"height\":{}}}}}",
+                        update.waveform.name(),
+                        update.region.x,
+                        update.region.y,
+                        update.region.width,
+                        update.region.height,
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(",");
             format!(
                 concat!(
                     "{{\"waveform\":\"{}\",\"full\":{},\"refresh\":{},",
-                    "\"dirty\":{},\"region\":",
+                    "\"dirty\":{},\"regions\":[{}],\"region\":",
                     "{{\"x\":{},\"y\":{},\"width\":{},\"height\":{}}}}}"
                 ),
                 transition.waveform.name(),
                 transition.full,
                 transition.refresh,
                 transition.dirty,
+                regions,
                 transition.region.x,
                 transition.region.y,
                 transition.region.width,
@@ -2787,6 +2822,14 @@ fn parse_local_address(address: &str) -> io::Result<SocketAddr> {
     Ok(SocketAddr::from(([127, 0, 0, 1], port)))
 }
 
+/// Says that one browser connection came to nothing, and carries on.
+///
+/// On stderr rather than stdout, so it cannot be mistaken for the address line
+/// the simulator prints for somebody to paste into a browser.
+fn report_dropped_request(error: &io::Error) {
+    eprintln!("kobo: dropped one browser connection: {error}");
+}
+
 #[derive(Debug, Eq, PartialEq)]
 struct HttpRequest {
     method: String,
@@ -3114,9 +3157,9 @@ let point={x:536,y:177},issues=[],profile={width:1072,height:1448},transition=nu
 function checked(response){if(!response.ok)throw Error("Simulator request failed ("+response.status+")");return response;}
 function showDiagnostics(){list.replaceChildren();if(!issues.length){const item=document.createElement("li");item.textContent="No layout issues.";list.append(item);return;}for(const issue of issues){const item=document.createElement("li");item.className=issue.severity;item.textContent=issue.message;list.append(item);}}
 function outline(rect,color,width){if(!rect)return;ctx.save();ctx.lineWidth=width;ctx.strokeStyle=color;ctx.strokeRect(rect.x+width/2,rect.y+width/2,Math.max(0,rect.width-width),Math.max(0,rect.height-width));ctx.restore();}
-function drawOverlays(){if(refreshRegion.checked&&transition)outline(transition.region,"#006fbb",6);if(!overlay.checked)return;for(const issue of issues){outline(issue.rect,issue.severity==="error"?"#d00000":"#b56a00",5);}}
+function drawOverlays(){if(refreshRegion.checked&&transition)for(const update of transition.regions)outline(update.region,"#006fbb",6);if(!overlay.checked)return;for(const issue of issues){outline(issue.rect,issue.severity==="error"?"#d00000":"#b56a00",5);}}
 function range(value,suffix){return value?value.minimum+"–"+value.maximum+suffix:"unknown";}
-function showSimulation(sim){profile=sim.profile;transition=sim.transition;scenario.value=sim.scenario;document.getElementById("profile-badge").textContent=profile.id;document.querySelector(".screen").style.maxWidth=profile.width+"px";document.getElementById("geometry").textContent=profile.width+" × "+profile.height;document.getElementById("physical-size").textContent=(profile.physical.widthTenthMm/10).toFixed(1)+" × "+(profile.physical.heightTenthMm/10).toFixed(1)+" mm (derived)";document.getElementById("density").textContent=profile.pixelsPerInch+" PPI";document.getElementById("rotation").textContent=profile.rotation;document.getElementById("verified-rotations").textContent=profile.verifiedRotations.join(", ");document.getElementById("framebuffer").textContent=profile.framebuffer.bitsPerPixel+" bpp / "+(profile.framebuffer.packing||"packing unavailable");const c=profile.framebuffer.channels;document.getElementById("channels").textContent="R "+c.red.join("/")+" · G "+c.green.join("/")+" · B "+c.blue.join("/")+" · A "+c.alpha.join("/");document.getElementById("panel-color").textContent=profile.hardware.panelColor;document.getElementById("chromatic-renderer").textContent=profile.framebuffer.chromaticRenderer?"available":(profile.framebuffer.colorApproximation||"not applicable");document.getElementById("page-buttons").textContent=profile.hardware.pageButtons;document.getElementById("orientation-sensor").textContent=profile.hardware.orientationSensor;document.getElementById("frontlight").textContent=range(profile.hardware.frontlight,"%");document.getElementById("warm-light").textContent=range(profile.hardware.warmth," raw");document.getElementById("wifi").textContent=profile.hardware.wifi;document.getElementById("network-platform").textContent=profile.hardware.networkPlatform;document.getElementById("wifi-handoff").textContent=profile.hardware.wifiHandoff;for(const button of document.querySelectorAll("[data-page-button]"))button.disabled=profile.hardware.pageButtons==="unknown";document.getElementById("lifecycle").textContent=sim.lifecycle;const touch=sim.touch;document.getElementById("display-touch").textContent=touch?touch.display.x+", "+touch.display.y:"—";document.getElementById("raw-touch").textContent=touch?touch.raw.x+", "+touch.raw.y:"—";document.getElementById("waveform").textContent=transition?transition.waveform:"—";document.getElementById("update-kind").textContent=transition?(transition.full?"full / cleaning":"partial"):"unchanged";document.getElementById("region").textContent=transition?transition.region.width+"×"+transition.region.height+" @ "+transition.region.x+","+transition.region.y:"—";document.getElementById("refresh-count").textContent=sim.refreshCount;document.getElementById("partial-count").textContent=sim.partialsSinceClean+" / 8";}
+function showSimulation(sim){profile=sim.profile;transition=sim.transition;scenario.value=sim.scenario;document.getElementById("profile-badge").textContent=profile.id;document.querySelector(".screen").style.maxWidth=profile.width+"px";document.getElementById("geometry").textContent=profile.width+" × "+profile.height;document.getElementById("physical-size").textContent=(profile.physical.widthTenthMm/10).toFixed(1)+" × "+(profile.physical.heightTenthMm/10).toFixed(1)+" mm (derived)";document.getElementById("density").textContent=profile.pixelsPerInch+" PPI";document.getElementById("rotation").textContent=profile.rotation;document.getElementById("verified-rotations").textContent=profile.verifiedRotations.join(", ");document.getElementById("framebuffer").textContent=profile.framebuffer.bitsPerPixel+" bpp / "+(profile.framebuffer.packing||"packing unavailable");const c=profile.framebuffer.channels;document.getElementById("channels").textContent="R "+c.red.join("/")+" · G "+c.green.join("/")+" · B "+c.blue.join("/")+" · A "+c.alpha.join("/");document.getElementById("panel-color").textContent=profile.hardware.panelColor;document.getElementById("chromatic-renderer").textContent=profile.framebuffer.chromaticRenderer?"available":(profile.framebuffer.colorApproximation||"not applicable");document.getElementById("page-buttons").textContent=profile.hardware.pageButtons;document.getElementById("orientation-sensor").textContent=profile.hardware.orientationSensor;document.getElementById("frontlight").textContent=range(profile.hardware.frontlight,"%");document.getElementById("warm-light").textContent=range(profile.hardware.warmth," raw");document.getElementById("wifi").textContent=profile.hardware.wifi;document.getElementById("network-platform").textContent=profile.hardware.networkPlatform;document.getElementById("wifi-handoff").textContent=profile.hardware.wifiHandoff;for(const button of document.querySelectorAll("[data-page-button]"))button.disabled=profile.hardware.pageButtons==="unknown";document.getElementById("lifecycle").textContent=sim.lifecycle;const touch=sim.touch;document.getElementById("display-touch").textContent=touch?touch.display.x+", "+touch.display.y:"—";document.getElementById("raw-touch").textContent=touch?touch.raw.x+", "+touch.raw.y:"—";document.getElementById("waveform").textContent=transition?transition.waveform:"—";document.getElementById("update-kind").textContent=transition?(transition.full?"full / cleaning":"partial"):"unchanged";document.getElementById("region").textContent=transition?(transition.regions.length===1?transition.region.width+"×"+transition.region.height+" @ "+transition.region.x+","+transition.region.y:transition.regions.length+" regions"):"—";document.getElementById("refresh-count").textContent=sim.refreshCount;document.getElementById("partial-count").textContent=sim.partialsSinceClean+" / 8";}
 async function frame(){const path=ideal.checked?"/ideal-frame":"/frame";const response=checked(await fetch(path,{cache:"no-store"}));const raw=new Uint8Array(await response.arrayBuffer());const [diagnostics,simulation]=await Promise.all([fetch("/diagnostics",{cache:"no-store"}).then(checked).then(r=>r.json()),fetch("/simulation",{cache:"no-store"}).then(checked).then(r=>r.json())]);issues=diagnostics.issues;showSimulation(simulation);if(raw.length!==profile.width*profile.height)throw Error("Invalid "+profile.id+" frame");if(canvas.width!==profile.width||canvas.height!==profile.height){canvas.width=profile.width;canvas.height=profile.height;}const image=ctx.createImageData(profile.width,profile.height);for(let i=0;i<raw.length;i++){const p=i*4;image.data[p]=image.data[p+1]=image.data[p+2]=raw[i];image.data[p+3]=255;}ctx.putImageData(image,0,0);showDiagnostics();drawOverlays();if(!ideal.checked&&transition&&transition.full&&transition.refresh!==lastFlash){lastFlash=transition.refresh;canvas.classList.remove("clean-flash");void canvas.offsetWidth;canvas.classList.add("clean-flash");}status.textContent=issues.length?"Frame loaded with "+issues.length+" diagnostic"+(issues.length===1?"":"s")+".":"Frame loaded; layout clean.";}
 function touchLocation(event){const rect=canvas.getBoundingClientRect();return{x:Math.floor((event.clientX-rect.left)*profile.width/rect.width),y:Math.floor((event.clientY-rect.top)*profile.height/rect.height)};}
 async function touch(next){point=next;checked(await fetch("/touch",{method:"POST",headers:{"Content-Type":"text/plain"},body:"x="+point.x+"&y="+point.y}));await frame();status.textContent="Touch delivered through the selected profile transform.";}
@@ -3524,7 +3567,13 @@ mod tests {
     #[test]
     fn every_supported_pose_uses_its_profile_metrics() {
         let configs = SimulationConfig::supported().collect::<Vec<_>>();
-        assert_eq!(configs.len(), 8);
+        assert_eq!(
+            configs.len(),
+            kobo_profile::SUPPORTED_PROFILES
+                .iter()
+                .map(|profile| profile.verified_rotations.len())
+                .sum::<usize>()
+        );
         for config in configs {
             let metrics = config.metrics();
             assert_eq!(
@@ -3803,6 +3852,32 @@ mod tests {
         drop(server);
         assert!(!socket_path.exists());
         fs::remove_dir(root).expect("remove private directory");
+    }
+
+    /// A dropped connection is the commonest thing a listener on a developer's
+    /// own machine sees, and it used to end the session: the browser preconnect
+    /// that is never used, whatever is watching for open ports, a reload
+    /// abandoned before the request went out. Each one arrived as an
+    /// `UnexpectedEof` from the first read and took the simulator, and the
+    /// application running behind it, down with it.
+    #[test]
+    fn a_connection_that_sends_no_request_does_not_end_the_session() {
+        let mut server = Server::bind_address("127.0.0.1:0").expect("bind simulator");
+        let address = server.local_addr().expect("simulator address");
+        thread::spawn(move || server.serve());
+
+        TcpStream::connect(address)
+            .expect("open a connection")
+            .shutdown(std::net::Shutdown::Both)
+            .expect("close it again unused");
+
+        let mut stream = TcpStream::connect(address).expect("ask for the page afterwards");
+        stream
+            .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            .expect("send the request");
+        let mut answer = [0_u8; 15];
+        stream.read_exact(&mut answer).expect("read the answer");
+        assert_eq!(&answer, b"HTTP/1.1 200 OK");
     }
 
     #[test]

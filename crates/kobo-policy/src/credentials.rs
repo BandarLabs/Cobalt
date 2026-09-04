@@ -184,7 +184,7 @@ pub fn allowed(app: &str, credential: &Credential, url: &str, usage: CredentialU
         ("gemini", SecretHeader::Named(header)) => {
             header.eq_ignore_ascii_case("x-goog-api-key")
                 && url
-                    == "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+                    == "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent"
                 && has_origin(url, "generativelanguage.googleapis.com", 443)
         }
         _ => false,
@@ -354,6 +354,32 @@ mod tests {
             ("chat", "https://attacker.invalid/collect"),
         ] {
             assert!(!allowed(app, &openai, url, CredentialUse::Fetch));
+        }
+    }
+
+    /// This is the second of two places that name Gemini's exact endpoint --
+    /// `examples/chat/src/conversation.rs` is the other -- and the two went
+    /// out of sync once already: the application moved to a current model
+    /// after Google retired `gemini-2.0-flash`, this allowlist did not, and
+    /// every Gemini request was refused as though no key were installed. This
+    /// does not close the gap (this crate cannot depend on an application to
+    /// compare against), but it does mean an edit to the URL on just one side
+    /// fails a test instead of shipping silently.
+    #[test]
+    fn gemini_credentials_are_bound_to_the_current_model_endpoint() {
+        let gemini = Credential::in_header("gemini", "x-goog-api-key");
+        assert!(allowed(
+            "chat",
+            &gemini,
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent",
+            CredentialUse::Fetch
+        ));
+        for url in [
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
+            "https://generativelanguage.googleapis.com.attacker.invalid/v1beta/models/gemini-3.6-flash:generateContent",
+            "https://attacker.invalid/collect",
+        ] {
+            assert!(!allowed("chat", &gemini, url, CredentialUse::Fetch));
         }
     }
 
