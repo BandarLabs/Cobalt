@@ -27,6 +27,53 @@ pub struct RunResult {
     pub tail: String,
 }
 
+pub const PAD_COUNT: usize = 15;
+
+pub fn pad_cells(page: &Page) -> Vec<(String, String, Option<kobo_sdk::Glyph>)> {
+    let mut cells = page
+        .keys
+        .iter()
+        .take(PAD_COUNT)
+        .map(|key| {
+            (
+                format!("press-{}", key.id),
+                pad_label(key),
+                Some(pad_glyph(key)),
+            )
+        })
+        .collect::<Vec<_>>();
+    while cells.len() < PAD_COUNT {
+        cells.push((format!("empty-{}", cells.len()), String::new(), None));
+    }
+    cells
+}
+
+fn pad_label(key: &Key) -> String {
+    let label: String = key.label.chars().take(8).collect();
+    let status = match key.state.as_str() {
+        "running" => "…",
+        "ok" => "✓",
+        "failed" => "×",
+        _ => "",
+    };
+    if status.is_empty() {
+        label
+    } else {
+        format!("{label}\n{status}")
+    }
+}
+
+fn pad_glyph(key: &Key) -> kobo_sdk::Glyph {
+    match key.state.as_str() {
+        "running" => kobo_sdk::Glyph::Refresh,
+        "ok" => kobo_sdk::Glyph::Check,
+        "failed" => kobo_sdk::Glyph::Close,
+        _ if key.detail.starts_with("launch ") => kobo_sdk::Glyph::App,
+        _ if key.detail.contains('.') => kobo_sdk::Glyph::Globe,
+        _ => kobo_sdk::Glyph::Grid,
+    }
+}
+
 impl Deck {
     pub fn fallback() -> Self {
         Self {

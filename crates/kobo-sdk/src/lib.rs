@@ -2204,6 +2204,46 @@ impl ScreenBuilder {
         self
     }
 
+    /// Fifteen recessed square keys in three rows of five.
+    ///
+    /// The shape of a hardware command deck. Assigned cells carry a short
+    /// label and an optional mark; unused slots stay as blank keys so the
+    /// grid does not collapse into a list.
+    #[must_use]
+    pub fn pads<I, N, L>(mut self, cells: I) -> Self
+    where
+        I: IntoIterator<Item = (N, L, Option<kobo_ui::Glyph>)>,
+        N: AsRef<str>,
+        L: Into<String>,
+    {
+        let id = self.next_id();
+        let mut source = cells.into_iter();
+        let mut cells = Vec::new();
+        for (name, label, glyph) in source.by_ref().take(15) {
+            let cell = Cell::new(self.register(name.as_ref()), label);
+            cells.push(match glyph {
+                Some(glyph) => cell.with_glyph(glyph),
+                None => cell,
+            });
+        }
+        if source.next().is_some() {
+            self.warn_limit(id, "grid cells", 15);
+        }
+        while cells.len() < 15 {
+            cells.push(Cell::new(
+                self.register(&format!("empty-{}", cells.len())),
+                "",
+            ));
+        }
+        self.nodes.push(Node::Grid {
+            id,
+            columns: 5,
+            square: true,
+            cells,
+        });
+        self
+    }
+
     /// A row of buttons that each have a picture as well as a word.
     ///
     /// For the handful of actions that have a drawing everybody already knows:

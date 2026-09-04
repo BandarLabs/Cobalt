@@ -1,23 +1,18 @@
 use kobo_image::encode_png_grey;
-use kobo_sdk::ScreenBuilder;
+use kobo_sdk::{Glyph, ScreenBuilder};
 use kobo_ui::{render, Surface, CLARA_BW_METRICS};
 #[test]
 fn renders_clean_clara_bw_capture() {
     let screen = ScreenBuilder::new("deck-grid")
         .top_bar("Deck")
-        .tabs(0, [("page-build", "Build")])
-        .grid(
-            2,
-            false,
-            [
-                ("test", "Test · all packages"),
-                ("format", "Format · workspace"),
-                ("status", "Status · working tree"),
-                ("docs", "Docs · local preview"),
-                ("build", "Build · release"),
-                ("deploy", "Deploy · staging"),
-            ],
-        )
+        .pads([
+            ("test", "Test", Some(Glyph::Grid)),
+            ("format", "Format", Some(Glyph::Grid)),
+            ("status", "Status", Some(Glyph::Terminal)),
+            ("docs", "Docs", Some(Glyph::Book)),
+            ("build", "Build", Some(Glyph::Folder)),
+            ("deploy", "Deploy", Some(Glyph::Download)),
+        ])
         .build();
     let mut surface = Surface::new(
         CLARA_BW_METRICS.width as usize,

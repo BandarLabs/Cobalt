@@ -1,10 +1,10 @@
 mod model;
 use kobo_sdk::keyboard::{TextEntry, Typing};
 use kobo_sdk::{
-    action_id, ActionId, BannerLevel, Context, Glyph, KoboApp, Screen, ScreenBuilder, StoreResult,
-    Task, TaskId, TaskOutcome,
+    action_id, cache_key, ActionId, BannerLevel, Context, Glyph, KoboApp, Screen, ScreenBuilder,
+    StoreResult, Task, TaskId, TaskOutcome,
 };
-use model::{decode, decode_result, Deck, RunResult};
+use model::{decode, decode_result, pad_cells, Deck, RunResult};
 use std::process::ExitCode;
 const PAIRED: &str = "paired";
 const CACHE: &str = "deck-cache";
@@ -84,50 +84,23 @@ impl App {
             .pages
             .get(self.page)
             .unwrap_or(&self.deck.pages[0]);
-        let tabs = self
-            .deck
-            .pages
-            .iter()
-            .map(|p| (format!("page-{}", p.name), p.name.clone()))
-            .collect::<Vec<_>>();
-        let mut screen = ScreenBuilder::new("deck-grid")
-            .top_bar("Deck")
-            .tabs(self.page, tabs);
+        let mut screen = ScreenBuilder::new("deck-grid").top_bar("Deck");
+        if self.deck.pages.len() > 1 {
+            let tabs = self
+                .deck
+                .pages
+                .iter()
+                .map(|p| (format!("page-{}", p.name), p.name.clone()))
+                .collect::<Vec<_>>();
+            screen = screen.tabs(self.page, tabs);
+        }
+        if self.address != "local" {
+            screen = screen.top_bar_glyph("retry", "Refresh", Glyph::Refresh);
+        }
         if let Some(note) = &self.notice {
             screen = screen.banner(BannerLevel::Attention, note);
         }
-        if self.task.is_none() {
-            screen = screen.button("retry", "Refresh");
-        }
-        if page.keys.is_empty() {
-            return screen
-                .splash(
-                    Some(Glyph::Grid),
-                    "No controls yet",
-                    "Add controls in Deck on your computer, then keep this screen open.",
-                )
-                .build();
-        }
-        screen = screen.grid(
-            2,
-            false,
-            page.keys.iter().map(|key| {
-                let status = match key.state.as_str() {
-                    "running" => "Running…",
-                    "ok" => "✓",
-                    "failed" => "×",
-                    _ => "",
-                };
-                (
-                    format!("press-{}", key.id),
-                    if key.detail.is_empty() {
-                        format!("{} {status}", key.label)
-                    } else {
-                        format!("{} · {} {status}", key.label, key.detail)
-                    },
-                )
-            }),
-        );
+        screen = screen.pads(pad_cells(page));
         if let Some(id) = &self.confirming {
             if let Some(key) = page.keys.iter().find(|key| &key.id == id) {
                 screen = screen.confirm(
@@ -168,6 +141,9 @@ impl App {
             .build()
     }
     fn poll(&mut self, cx: &mut Context) {
+        if self.address == "local" {
+            return;
+        }
         if self.task.is_none() {
             self.task = cx.spawn(Task::Fetch {
                 url: format!(
@@ -239,7 +215,7 @@ impl KoboApp for App {
                     self.view = View::Address;
                     self.entry.open();
                 }
-            } else if key == format!("cache:{CACHE}") {
+            } else if key == cache_key(CACHE) {
                 if let Some(raw) = value.and_then(|v| String::from_utf8(v).ok()) {
                     if let Some(deck) = decode(&raw) {
                         self.deck = deck;

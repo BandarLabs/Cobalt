@@ -12,6 +12,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 mod authorize;
 mod connect;
+mod deck;
 mod devsession;
 mod drive;
 mod flashcards;
@@ -423,6 +424,7 @@ fn run(arguments: &[String]) -> Result<(), String> {
         "new" => create_app(arguments.get(1).ok_or("usage: kobo new <name>")?),
         "dev" => dev(&arguments[1..]),
         "drive" => drive_command(&arguments[1..]),
+        "deck" => deck::command(&arguments[1..]),
         "flashcards" => flashcards::command(&arguments[1..]),
         "frame" => frame::command(&arguments[1..]),
         "vault" => vault::command(&arguments[1..]),
@@ -5572,6 +5574,9 @@ fn print_help() {
            new <name>             Create a Rust application\n\
            dev [--builtin] [address]  Run this SDK app in the browser simulator\n\
            drive --script PATH    Drive a running simulator and save PNG screenshots\n\
+           deck set PAD --launch APP|--url URL|--run CMD  Assign a Deck pad on this computer\n\
+           deck ls|show [--json]                 List the assigned pads, or print the layout JSON\n\
+           deck push (--sim | --device IP | --out PATH)  Publish that layout to the reader or simulator\n\
            flashcards import FILE --out BUNDLE  Prepare an Anki package for Flashcards\n\
            frame push INPUT --device IP          Prepare and atomically push Frame photos\n\
            frame ls --device IP                  List Frame shelf photos\n\
@@ -5647,6 +5652,7 @@ mod tests {
         super::parser_command(&["--help".into()]).expect("parser help");
         super::stream_command(&["--help".into()]).expect("stream help");
         super::flashcards::command(&["--help".into()]).expect("flashcards help");
+        super::deck::command(&["--help".into()]).expect("deck help");
     }
 
     #[test]

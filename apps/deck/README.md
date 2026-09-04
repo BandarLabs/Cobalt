@@ -4,11 +4,28 @@ A text-only command deck for the existing `kobo-sidekickd` pairing. It polls
 `/deck`, posts named key presses to `/deck/press`, and keeps the last good grid
 visible when the computer is off the air.
 
-<img width="300" src="screenshots/deck.png" alt="Deck on a Clara BW showing six command controls in a two-column grid">
+<img width="300" src="screenshots/deck.png" alt="Deck on a Clara BW showing a 3 by 5 grid of square command pads">
 
 ## Set up
 
-Initialize Sidekick once, then create `~/.config/kobo/sidekick/deck.toml`:
+Initialize Sidekick once, then assign pads with the host CLI. Those commands
+write `~/.config/kobo/sidekick/deck.toml` and can push the same layout into the
+simulator or reader store so Deck opens on the grid, not the pairing splash:
+
+```sh
+kobo deck init
+kobo deck set 1 --launch todo
+kobo deck set 2 --url https://example.com
+kobo deck set 3 --label Test --detail "cargo test" --run "cd ~/src/project && cargo test"
+kobo deck ls
+kobo deck push --sim          # or: kobo deck push --device IP
+```
+
+`--launch APP` becomes a platform open command (`open -a` on macOS, `gtk-launch`
+elsewhere). `--url` becomes `open` / `xdg-open`. `--run` is a raw shell command
+Sidekick executes from the owner's home directory.
+
+The same file can still be edited by hand:
 
 ```toml
 [[page]]
@@ -27,9 +44,10 @@ confirm = true
 ```
 
 Run `kobo-sidekickd run`, open Deck on the reader, and enter the same address
-and six-character pairing code used by Sidekick. Editing the file refreshes the
-open grid; a malformed edit leaves the last working grid in place and shows the
-problem.
+and six-character pairing code used by Sidekick. A layout pushed with
+`kobo deck push` skips that splash and shows the assigned pads immediately.
+Editing the file refreshes a live paired grid; a malformed edit leaves the last
+working grid in place and shows the problem.
 
 ## Security
 
