@@ -3624,7 +3624,9 @@ mod tests {
         action_id, AppRunner, Command, Context, DiagnosticSeverity, StoreRequest, StoreResult,
         Task, TaskError, TaskId, TaskOutcome,
     };
-    use kobo_ui::{Chrome, LayoutKind, PictureHandle, TilePicture, CLARA_BW_METRICS};
+    use kobo_ui::{
+        Chrome, DisplayMetrics, LayoutKind, PictureHandle, TextScale, TilePicture, CLARA_BW_METRICS,
+    };
 
     // -----------------------------------------------------------------
     // Fixture builders
@@ -5613,11 +5615,10 @@ Please read this before you distribute or use this work.\n";
         }
     }
 
-    #[test]
-    fn a_summary_under_a_cover_is_divided_rather_than_drawn_off_the_panel() {
+    fn assert_summary_under_cover_pages(name: &str, metrics: DisplayMetrics, repetitions: usize) {
         let long = "This is the summary of a book, written by whoever catalogued it, at \
                     whatever length they felt the book deserved. "
-            .repeat(12);
+            .repeat(repetitions);
         let mut book = publication(
             "Moby Dick; Or, The Whale",
             vec![text_acquisition("https://x/moby.txt")],
@@ -5630,30 +5631,78 @@ Please read this before you distribute or use this work.\n";
             ..Gutenbird::default()
         };
         app.open_cover = Some(TilePicture::new(PictureHandle(0), 306, 484));
-        let context = kobo_sdk::Context::default();
+        let runner = AppRunner::with_metrics(Gutenbird::default(), metrics);
+        let context = runner.context();
         let publication = app.open.clone().unwrap();
         let blocks = Gutenbird::detail_blocks(&publication);
         let pages = app.detail_pagination(&context, &publication, &blocks);
-        assert!(pages.len() > 1, "a summary this long should have paged");
+        assert!(pages.len() > 1, "{name}: a long summary did not page");
         assert!(
             !pages[0].is_empty(),
-            "the first page emptied, so the second inherited the cover"
+            "{name}: the first page emptied, so the second inherited the cover"
         );
         assert_eq!(
             summary_words(pages.iter().flatten()),
             summary_words(blocks.iter()),
-            "dividing the summary lost words"
+            "{name}: dividing the summary lost words"
         );
         for page in 0..pages.len() {
             app.detail_page = page;
-            let errors: Vec<_> = app
+            let diagnostics = app
                 .details_screen(&context)
-                .diagnostics(&context.metrics(), &Chrome::measuring(true))
+                .diagnostics(&metrics, &Chrome::measuring(true));
+            let errors = diagnostics
                 .issues
-                .into_iter()
+                .iter()
                 .filter(|issue| issue.severity == DiagnosticSeverity::Error)
-                .collect();
-            assert!(errors.is_empty(), "page {page} does not fit: {errors:?}");
+                .collect::<Vec<_>>();
+            assert!(
+                errors.is_empty(),
+                "{name}: page {page} does not fit: {errors:?}"
+            );
+            for text in diagnostics
+                .layout
+                .nodes
+                .iter()
+                .filter(|node| node.kind == LayoutKind::Text)
+            {
+                assert!(
+                    text.rect.width <= metrics.readable_width(),
+                    "{name}: page {page} uses a {}px summary measure",
+                    text.rect.width
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_summary_under_a_cover_is_divided_rather_than_drawn_off_the_panel() {
+        assert_summary_under_cover_pages("Clara BW", CLARA_BW_METRICS, 12);
+    }
+
+    #[test]
+    fn covered_summaries_page_safely_on_every_profile_and_orientation() {
+        for profile in kobo_profile::SUPPORTED_PROFILES {
+            let portrait = DisplayMetrics {
+                width: i32::try_from(profile.width).expect("profile width fits layout"),
+                height: i32::try_from(profile.height).expect("profile height fits layout"),
+                pixels_per_inch: i32::from(profile.pixels_per_inch),
+                text_scale: TextScale::Default,
+            };
+            for (orientation, metrics) in [
+                ("portrait", portrait),
+                (
+                    "landscape",
+                    DisplayMetrics {
+                        width: portrait.height,
+                        height: portrait.width,
+                        ..portrait
+                    },
+                ),
+            ] {
+                let name = format!("{} {orientation}", profile.id);
+                assert_summary_under_cover_pages(&name, metrics, 20);
+            }
         }
     }
 

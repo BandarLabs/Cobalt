@@ -16,8 +16,8 @@
 //! exactly where the reliability is wanted.
 
 use kobo_sdk::{
-    action_id, ActionId, AppInfo, Context, DeviceRequest, DeviceResult, Glyph, KoboApp,
-    ScreenBuilder, Tile, TileShape, TileState,
+    action_id, ActionId, AppInfo, Context, DeviceIdentity, DeviceRequest, DeviceResult, Glyph,
+    KoboApp, ScreenBuilder, Tile, TileShape,
 };
 use std::process::ExitCode;
 
@@ -43,6 +43,17 @@ struct Entry {
     glyph: Glyph,
 }
 
+/// Where Settings sits in [`ENTRIES`].
+///
+/// Named because a navigation destination starts it by position, and a bare
+/// index in that code says nothing about which application it will run.
+const SETTINGS: usize = 0;
+/// Where Books sits in [`ENTRIES`].
+///
+/// The Books tab is a launch, not a view this application draws. A missing
+/// handler left the tab on the bar as a control that answered with nothing.
+const BOOKS: usize = 1;
+
 const ENTRIES: &[Entry] = &[
     Entry {
         name: "settings",
@@ -51,6 +62,14 @@ const ENTRIES: &[Entry] = &[
         summary: "Connect Wi-Fi, headphones, speakers and keyboards.",
         needs: "Changes the device's Wi-Fi and Bluetooth radios.",
         glyph: Glyph::Settings,
+    },
+    Entry {
+        name: "books",
+        title: "Books",
+        label: "Books",
+        summary: "The documents already on this device.",
+        needs: "Reads the books already on the card. It does not write.",
+        glyph: Glyph::Book,
     },
     Entry {
         name: "store",
@@ -108,6 +127,8 @@ struct Launcher {
     working: Option<usize>,
     /// Store-installed applications discovered from verified manifests.
     installed: Vec<AppInfo>,
+    /// Runtime-owned model and version facts, absent until the daemon replies.
+    identity: Option<DeviceIdentity>,
 }
 
 impl Launcher {
@@ -134,7 +155,27 @@ impl Launcher {
         }
     }
 
-    /// The home screen: a grid of icons and names, and nothing else.
+    fn app_grid(screen: ScreenBuilder, entries: Vec<(DisplayEntry, bool)>) -> ScreenBuilder {
+        screen.tile_grid(
+            TileShape::Square,
+            entries.into_iter().map(|(entry, busy)| {
+                (
+                    opening(&entry.name),
+                    entry.label,
+                    entry.glyph,
+                    move |tile: Tile| {
+                        if busy {
+                            tile.with_caption("Resume")
+                        } else {
+                            tile
+                        }
+                    },
+                )
+            }),
+        )
+    }
+
+    /// The home screen: a compact resume target followed by app icons.
     ///
     /// Tiles rather than rows, which is a reversal. Rows were chosen because a
     /// tile said only three words while a row also carried the summary; the
@@ -152,75 +193,39 @@ impl Launcher {
     /// starting and carries the way back, so a mistaken tap is one tap to
     /// undo.
     fn home(&mut self, context: &Context) -> kobo_sdk::Screen {
+        // Home is every application on the device, paged the way the drawer
+        // is. It used to be a short row of six with the wordmark set as
+        // display type above it, which spent the top eighth of the panel on
+        // our own name and then hid most of what the reader came here to
+        // open. The name now sits in the running head at the same size every
+        // other screen titles itself with, because a launcher's subject is
+        // the applications, not the launcher.
         let pages = self.pages(context);
         self.page = self.page.min(pages.len() - 1);
-        let showing = &pages[self.page];
-        let title = if pages.len() > 1 {
-            format!("Cobalt {} of {}", self.page + 1, pages.len())
-        } else {
-            "Cobalt".to_owned()
-        };
-        let screen = ScreenBuilder::new("launcher").top_bar(title).tile_grid(
-            TileShape::Square,
-            showing.iter().map(|&index| {
-                let entry = self.entry(index);
-                let busy = self.working == Some(index);
-                (
-                    opening(&entry.name),
-                    entry.label,
-                    entry.glyph,
-                    move |tile: Tile| {
-                        if busy {
-                            tile.with_state(TileState::Busy)
-                        } else {
-                            tile
-                        }
-                    },
-                )
-            }),
-        );
-        // The way out is pinned to the panel rather than placed after the
-        // list. Layout reserves the bar before any content, so however many
-        // entries there are, the button that gives the device back is on the
-        // screen. Put at the end of the flow it would be the first thing a
-        // long catalogue pushed off the bottom.
-        if pages.len() > 1 {
-            // A turn control is offered only when there is a page on that side
-            // of this one. The bar used to show both directions on every page
-            // and wrap at the ends, on the reasoning that an inert control
-            // reads as a missed tap. That reasoning holds for a control that
-            // is present and does nothing, and not for one that is absent.
-            // Wrapping bought it at a worse price: with the two pages this
-            // catalogue actually has, "Previous" and "More apps" were two
-            // labels for one destination, and on the last page "More apps"
-            // promised applications that were not there and jumped to the
-            // first page instead.
-            //
-            // Each entry carries its mark. A bar slot is a third of the panel,
-            // and "Return to Kobo reader" set across it in caption size is a
-            // sentence where a picture would do. The word stays under the mark
-            // rather than being replaced by it.
-            let mut actions = Vec::with_capacity(3);
-            if self.page > 0 {
-                actions.push(("previous", "Previous", Some(Glyph::Previous)));
-            }
-            actions.push(("reader", "Kobo reader", Some(Glyph::Reader)));
-            if self.page + 1 < pages.len() {
-                actions.push(("next", "More apps", Some(Glyph::Next)));
-            }
-            screen.action_bar_marked(actions).build()
-        } else {
-            // One page, so there is nothing to turn and a bar would be two
-            // thirds empty. The way out becomes the one pinned control
-            // instead, which occupies exactly the band the grid was measured
-            // against. As a trailing button it did not: a rule, two gaps and a
-            // finger-high control need more room than a bar does, and the
-            // difference went over the bottom edge of the panel, where the
-            // renderer clipped it in silence.
-            screen
-                .bottom_action_marked("reader", "Return to Kobo reader", Glyph::Reader)
-                .build()
-        }
+        let page = self.page;
+        let page_count = u16::try_from(pages.len()).unwrap_or(u16::MAX);
+        let page_index = u16::try_from(page).unwrap_or(u16::MAX);
+        let page_number = u16::try_from(page.saturating_add(1)).unwrap_or(u16::MAX);
+        let entries = pages[page]
+            .iter()
+            .map(|&index| (self.entry(index), self.working == Some(index)))
+            .collect();
+        let screen = ScreenBuilder::new("launcher")
+            .top_bar("Cobalt")
+            .page_rail(page_index, page_count);
+        Self::app_grid(screen, entries)
+            .page_turns("previous", "next")
+            .page_position(page_number, page_count)
+            .nav_bar_marked(
+                0,
+                [
+                    ("home", "Apps", Glyph::App),
+                    ("books", "Books", Glyph::Book),
+                    ("settings", "Settings", Glyph::Settings),
+                    ("reader", "Kobo reader", Glyph::Reader),
+                ],
+            )
+            .build()
     }
 
     /// Painted between tapping a tile and that application appearing.
@@ -244,12 +249,14 @@ impl Launcher {
         let entry = self.entry(index);
         ScreenBuilder::new("launcher-starting")
             .top_bar("Starting")
-            .top_bar_action("back", "Back")
             .splash(
                 Some(entry.glyph),
                 entry.title,
                 format!("{} {}", entry.summary, entry.needs),
             )
+            // A normal recovery action is content-width; the persistent
+            // bottom band is reserved for destinations, not this one verb.
+            .button("back", "Back")
             .build()
     }
 
@@ -292,6 +299,7 @@ impl Launcher {
     }
 }
 
+#[derive(Clone)]
 struct DisplayEntry {
     name: String,
     title: String,
@@ -304,6 +312,7 @@ struct DisplayEntry {
 impl KoboApp for Launcher {
     fn on_start(&mut self, context: &mut Context) {
         context.applications().installed();
+        context.device().read_identity();
         self.show(context);
     }
 
@@ -328,10 +337,28 @@ impl KoboApp for Launcher {
             self.view = View::Home;
         }
         context.applications().installed();
+        context.device().read_identity();
         self.show(context);
     }
 
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
+        if action == action_id("home") {
+            self.view = View::Home;
+            self.show(context);
+            return;
+        }
+        if action == action_id("settings") {
+            self.view = View::Starting(SETTINGS);
+            self.show(context);
+            context.launch(ENTRIES[SETTINGS].name);
+            return;
+        }
+        if action == action_id("books") {
+            self.view = View::Starting(BOOKS);
+            self.show(context);
+            context.launch(ENTRIES[BOOKS].name);
+            return;
+        }
         if action == action_id("next") || action == action_id("previous") {
             let pages = self.pages(context).len();
             self.page = if action == action_id("next") {
@@ -379,19 +406,23 @@ impl KoboApp for Launcher {
         request: DeviceRequest,
         result: DeviceResult,
     ) {
-        if !matches!(request, DeviceRequest::ListInstalledApps) {
-            return;
-        }
-        if let DeviceResult::Apps { mut entries } = result {
-            entries.sort_by(|left, right| {
-                left.title
-                    .to_ascii_lowercase()
-                    .cmp(&right.title.to_ascii_lowercase())
-                    .then_with(|| left.id.cmp(&right.id))
-            });
-            self.installed = entries;
-            self.page = self.page.min(self.pages(context).len() - 1);
-            self.show(context);
+        match (request, result) {
+            (DeviceRequest::ListInstalledApps, DeviceResult::Apps { mut entries }) => {
+                entries.sort_by(|left, right| {
+                    left.title
+                        .to_ascii_lowercase()
+                        .cmp(&right.title.to_ascii_lowercase())
+                        .then_with(|| left.id.cmp(&right.id))
+                });
+                self.installed = entries;
+                self.page = self.page.min(self.pages(context).len() - 1);
+                self.show(context);
+            }
+            (DeviceRequest::ReadIdentity, DeviceResult::Identity(identity)) => {
+                self.identity = Some(identity);
+                self.show(context);
+            }
+            _ => {}
         }
     }
 }
@@ -408,35 +439,37 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::{opening, Launcher, View, ENTRIES};
+    use super::{opening, Launcher, View, BOOKS, ENTRIES};
     use kobo_sdk::{
         action_id, AppInfo, AppRunner, Command, DeviceRequest, DeviceResult, Glyph, Lifecycle,
     };
     use kobo_ui::{
-        Chrome, DisplayMetrics, LayoutKind, Node, TextScale, TileState, CLARA_BW_METRICS,
+        render_with, tone, Chrome, DisplayMetrics, LayoutKind, Node, Surface, TextScale, TileShape,
+        CLARA_BW_METRICS,
     };
 
-    const PANELS: [(&str, DisplayMetrics); 3] = [
-        ("clara-bw", CLARA_BW_METRICS),
-        (
-            "nia",
-            DisplayMetrics {
-                width: 758,
-                height: 1024,
-                pixels_per_inch: 212,
-                text_scale: TextScale::Default,
-            },
-        ),
-        (
-            "sage",
-            DisplayMetrics {
-                width: 1440,
-                height: 1920,
-                pixels_per_inch: 300,
-                text_scale: TextScale::Default,
-            },
-        ),
-    ];
+    fn panels() -> Vec<(String, DisplayMetrics)> {
+        kobo_profile::SUPPORTED_PROFILES
+            .iter()
+            .flat_map(|profile| {
+                let portrait = DisplayMetrics {
+                    width: i32::try_from(profile.width).expect("profile width fits layout"),
+                    height: i32::try_from(profile.height).expect("profile height fits layout"),
+                    pixels_per_inch: i32::from(profile.pixels_per_inch),
+                    text_scale: TextScale::Default,
+                };
+                let landscape = DisplayMetrics {
+                    width: portrait.height,
+                    height: portrait.width,
+                    ..portrait
+                };
+                [
+                    (format!("{} portrait", profile.id), portrait),
+                    (format!("{} landscape", profile.id), landscape),
+                ]
+            })
+            .collect()
+    }
 
     fn painted(commands: Vec<Command>) -> kobo_sdk::Screen {
         repainted(commands).expect("a screen was painted")
@@ -485,7 +518,7 @@ mod tests {
         // the flow it is the first thing a long catalogue pushes off the
         // bottom, and the layout engine drops what does not fit in silence,
         // so the failure would look like a launcher that cannot be left.
-        for (name, metrics) in PANELS {
+        for (name, metrics) in panels() {
             let mut runner = AppRunner::with_metrics(Launcher::default(), metrics);
             let mut seen = 0;
             let mut screen = painted(runner.start());
@@ -520,7 +553,7 @@ mod tests {
         // on every page sent "Previous" and "More apps" to the same screen,
         // and on the last page "More apps" promised applications that were not
         // there and jumped back to the first page instead.
-        for (name, metrics) in PANELS {
+        for (name, metrics) in panels() {
             let mut runner = AppRunner::with_metrics(Launcher::default(), metrics);
             let mut screen = painted(runner.start());
             let mut page = 0;
@@ -578,7 +611,7 @@ mod tests {
     fn every_entry_appears_on_exactly_one_page() {
         // An entry that lands on no page is an application that cannot be
         // started at all, and one on two pages is a list that never ends.
-        for (name, metrics) in PANELS {
+        for (name, metrics) in panels() {
             let mut runner = AppRunner::with_metrics(Launcher::default(), metrics);
             let mut runs = 0;
             let mut found = Vec::new();
@@ -619,7 +652,7 @@ mod tests {
 
     #[test]
     fn every_tile_on_a_page_is_drawn_rather_than_dropped() {
-        for (name, metrics) in PANELS {
+        for (name, metrics) in panels() {
             let mut runner = AppRunner::with_metrics(Launcher::default(), metrics);
             let screen = painted(runner.start());
             let layout = screen.layout_with(&metrics, &Chrome::with_back(false));
@@ -630,10 +663,136 @@ mod tests {
                 .collect::<Vec<_>>();
             assert!(!rows.is_empty(), "{name}: the first page drew no entries");
             let floor = metrics.height - metrics.nav_bar_height();
-            for row in rows {
+            for row in &rows {
                 assert!(
                     row.rect.y + row.rect.height <= floor,
                     "{name}: an entry ran under the pinned bar"
+                );
+            }
+            let first_y = rows[0].rect.y;
+            let columns = rows
+                .iter()
+                .take_while(|tile| tile.rect.y == first_y)
+                .count();
+            assert!(
+                (2..=4).contains(&columns),
+                "{name}: the app drawer chose {columns} columns"
+            );
+        }
+    }
+
+    #[test]
+    fn launcher_home_keeps_its_compact_grid_on_every_panel() {
+        for (name, metrics) in panels() {
+            let mut runner = AppRunner::with_metrics(Launcher::default(), metrics);
+            let screen = painted(runner.start());
+            let layout = screen.layout_with(&metrics, &Chrome::with_back(false));
+            let sections = layout
+                .nodes
+                .iter()
+                .filter(|node| node.kind == LayoutKind::Section)
+                .count();
+            let tiles = layout
+                .nodes
+                .iter()
+                .filter(|node| matches!(node.kind, LayoutKind::Tile(..)))
+                .count();
+            let destinations = layout
+                .nodes
+                .iter()
+                .filter(|node| {
+                    matches!(
+                        node.kind,
+                        LayoutKind::NavDestination(..) | LayoutKind::NavDestinationSelected(..)
+                    )
+                })
+                .count();
+            assert_eq!(sections, 0, "{name}: the compact home grid grew a section");
+            assert_eq!(tiles, ENTRIES.len(), "{name}: a home tile was dropped");
+            assert_eq!(destinations, 4, "{name}: launcher navigation changed");
+        }
+    }
+
+    #[test]
+    fn launcher_home_uses_a_compact_resume_mark() {
+        let mut runner = AppRunner::new(Launcher::default());
+        runner.start();
+        runner.action(action_id(&opening(ENTRIES[0].name)));
+        runner.lifecycle(Lifecycle::Background);
+        let screen = painted(runner.lifecycle(Lifecycle::Foreground));
+        let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::with_back(false));
+        let text = layout
+            .nodes
+            .iter()
+            .flat_map(|node| &node.text_lines)
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+
+        assert!(
+            text.contains(&"Resume"),
+            "the active app has no resume mark"
+        );
+        for retired in [
+            "Your Folio desk",
+            "Continue",
+            "Details",
+            "Featured",
+            "View all ↗",
+            "Left open · tap to return",
+        ] {
+            assert!(
+                !text.contains(&retired),
+                "{retired:?} remained visible on the home screen"
+            );
+        }
+        assert!(runner
+            .action(action_id(&opening(ENTRIES[0].name)))
+            .iter()
+            .any(|command| matches!(command, Command::Launch(name) if name == ENTRIES[0].name)));
+    }
+
+    #[test]
+    fn launcher_home_is_tappable_and_renders_on_every_panel() {
+        for (name, metrics) in panels() {
+            let mut runner = AppRunner::with_metrics(Launcher::default(), metrics);
+            let home = painted(runner.start());
+            // Apps is no longer a screen this application draws; it starts the
+            // store, which renders its own and is measured by its own tests.
+            for (view, screen) in [("home", home)] {
+                let chrome = Chrome::with_back(false);
+                let layout = screen.layout_with(&metrics, &chrome);
+                let controls = layout
+                    .nodes
+                    .iter()
+                    .filter(|node| node.kind.acts_on().is_some())
+                    .collect::<Vec<_>>();
+                for (index, control) in controls.iter().enumerate() {
+                    assert!(
+                        control.rect.width >= metrics.touch_target_minimum()
+                            && control.rect.height >= metrics.touch_target_minimum(),
+                        "{name} {view}: {:?} is smaller than a touch target",
+                        control.kind
+                    );
+                    for other in &controls[index + 1..] {
+                        if control.id != other.id {
+                            assert!(
+                                control.rect.intersection(other.rect).is_none(),
+                                "{name} {view}: {:?} overlaps {:?}",
+                                control.kind,
+                                other.kind
+                            );
+                        }
+                    }
+                }
+
+                let mut surface = Surface::new(
+                    usize::try_from(metrics.width).expect("positive profile width"),
+                    usize::try_from(metrics.height).expect("positive profile height"),
+                );
+                render_with(&screen, &metrics, &chrome, &mut surface, None);
+                assert!(
+                    surface.pixels.iter().any(|pixel| *pixel != tone::PAPER),
+                    "{name} {view}: rendering produced a blank frame"
                 );
             }
         }
@@ -679,7 +838,7 @@ mod tests {
             "the description was not shown: {words}"
         );
         // What it will reach for is the one thing worth knowing before it is
-        // running, so it does not get dropped along with the details screen.
+        // running, so it does not get dropped along with the intermediate screen.
         assert!(
             words.contains(&head(ENTRIES[0].needs)),
             "what it needs was not shown: {words}"
@@ -691,7 +850,7 @@ mod tests {
     /// panel read as a page that failed to load.
     #[test]
     fn the_splash_is_centred_on_every_panel() {
-        for (name, metrics) in PANELS {
+        for (name, metrics) in panels() {
             let mut runner = AppRunner::new(Launcher::default());
             runner.start();
             let shown = painted(runner.action(action_id(&opening(ENTRIES[0].name))));
@@ -790,33 +949,38 @@ mod tests {
     }
 
     /// An application the owner opened keeps running behind the launcher on
-    /// this platform, so the one they most recently left is marked on its tile
-    /// rather than drawn as if it were idle. The mark is a fact about the tile,
-    /// carried by the tile, so the label stays the application's own name.
+    /// this platform. Home marks it for resume while the complete Apps view
+    /// retains the busy state.
     #[test]
-    fn the_app_you_last_opened_is_marked_running() {
+    fn the_active_app_is_marked_for_resume_on_home() {
         let mut runner = AppRunner::new(Launcher::default());
         runner.start();
         runner.action(action_id(&opening(ENTRIES[0].name)));
         runner.lifecycle(Lifecycle::Background);
         let commands = runner.lifecycle(Lifecycle::Foreground);
-        let screen = commands
+        let home = commands
             .into_iter()
             .find_map(|command| match command {
                 Command::SetScreen(screen) => Some(screen),
                 _ => None,
             })
             .expect("coming back repaints the list");
-        let busy = screen.nodes.iter().any(|node| match node {
-            Node::TileGrid { tiles, .. } => tiles.iter().any(|tile| tile.state == TileState::Busy),
-            _ => false,
-        });
-        assert!(busy, "the application left running was drawn as if idle");
+        let home_layout = home.layout_with(&CLARA_BW_METRICS, &Chrome::with_back(false));
+        let home_text = home_layout
+            .nodes
+            .iter()
+            .flat_map(|node| &node.text_lines)
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        assert!(
+            home_text.contains(&"Resume"),
+            "the active app lost its Home resume marker"
+        );
     }
 
     #[test]
     fn nothing_is_drawn_past_the_edge_of_the_panel() {
-        for (name, metrics) in PANELS {
+        for (name, metrics) in panels() {
             let mut runner = AppRunner::with_metrics(Launcher::default(), metrics);
             let mut screen = painted(runner.start());
             for page in 0..=ENTRIES.len() {
@@ -844,5 +1008,51 @@ mod tests {
                 screen = painted(commands);
             }
         }
+    }
+
+    #[test]
+    fn the_grid_is_the_selected_tab_and_the_reader_exit_stays_visible() {
+        let mut runner = AppRunner::new(Launcher::default());
+        let home = painted(runner.start());
+        assert!(home.nodes.iter().any(|node| matches!(
+            node,
+            Node::TileGrid {
+                shape: TileShape::Square,
+                ..
+            }
+        )));
+        let layout = home.layout_with(&CLARA_BW_METRICS, &Chrome::with_back(false));
+        // The grid is what the Apps tab shows, so that tab is the marked one.
+        assert!(layout.nodes.iter().any(|node| {
+            matches!(node.kind, LayoutKind::NavDestinationSelected(action, _)
+                if action == action_id("home"))
+        }));
+        for tab in ["books", "settings", "reader"] {
+            assert!(
+                layout.nodes.iter().any(|node| {
+                    matches!(node.kind, LayoutKind::NavDestination(action, _)
+                        if action == action_id(tab))
+                }),
+                "the {tab} tab was not drawn"
+            );
+        }
+    }
+
+    #[test]
+    fn the_books_tab_starts_the_books_application() {
+        let mut runner = AppRunner::new(Launcher::default());
+        runner.start();
+        let commands = runner.action(action_id("books"));
+        assert!(
+            commands
+                .iter()
+                .any(|command| matches!(command, Command::Launch(name) if name == "books")),
+            "the Books tab did not start the books application: {commands:?}"
+        );
+        assert!(
+            matches!(runner.app().view, View::Starting(BOOKS)),
+            "the Books tab did not leave a starting screen"
+        );
+        assert_eq!(ENTRIES[BOOKS].name, "books");
     }
 }

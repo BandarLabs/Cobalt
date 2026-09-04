@@ -1,0 +1,5 @@
+# Empty-shelf path on the simulator. Opening Markdown is covered by tests.
+expect Books
+expect No books yet
+shot books-empty
+dump

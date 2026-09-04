@@ -12,6 +12,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 mod authorize;
 mod beta_store_smoke;
+mod bootstrap;
 mod connect;
 mod devsession;
 mod drive;
@@ -27,13 +28,7 @@ mod panel;
 mod setup;
 mod sha256;
 
-const DEVICE_PACKAGES: &[&str] = &[
-    "kobo-doctor",
-    "kobod",
-    "kobo-wifi-trace",
-    "kobo-todo",
-    "kobo-terminal",
-];
+const DEVICE_PACKAGES: &[&str] = &["kobo-doctor", "kobod", "kobo-todo", "kobo-terminal"];
 /// Everything an owner's device needs, in the order it is packaged, with the
 /// features each one has to be built with.
 ///
@@ -49,7 +44,6 @@ const DEVICE_PACKAGES: &[&str] = &[
 /// the artifact check in `build_package` both exist to keep it shipped.
 const INSTALLED_PACKAGES: &[(&str, Option<&str>)] = &[
     ("kobod", Some("device-write")),
-    ("kobo-wifi-trace", None),
     ("kobo-launcher", None),
     ("kobo-audiobook", None),
     ("kobo-terminal", None),
@@ -63,6 +57,7 @@ const INSTALLED_PACKAGES: &[(&str, Option<&str>)] = &[
     ("kobo-hn", None),
     ("kobo-rss", None),
     ("kobo-settings", None),
+    ("kobo-books", None),
     ("kobo-sidekick", None),
     ("kobo-store", None),
 ];
@@ -86,7 +81,6 @@ const STORE_PACKAGES: &[&str] = &[
     "kobo-todo",
     "kobo-zotero-reader",
 ];
-
 /// Store contributions discovered from their one checked-in manifest.
 ///
 /// Released host commands may not have a source tree beside them, so the
@@ -194,17 +188,21 @@ const INSTALL_README: &str = "\
 Cobalt
 ======
 
-Everything is in this folder, on the same partition your books are on. It is
-visible from any computer over USB.
+Everything is on the same partition your books are on and is visible from any
+computer over USB. The managed payload is in this folder; its stable launch
+entrypoint is the sibling .adds/cobalt-launch.sh.
 
-To remove it completely: delete this folder. Nothing was written to the
-system partition, no start-up script was added, and no part of the reader was
-replaced, so there is nothing else to undo.
+For a safe complete removal, run `kobo setup --undo`. It removes the managed
+cobalt/current, next, and previous trees, .adds/cobalt-launch.sh, and only the
+exact Cobalt entry from .adds/nm/cobalt or .adds/nm/menu. Owner folders are
+moved to .adds/cobalt.recovery.N first. Inspect those directories and any
+.adds/cobalt.unusable[.N] quarantine before deleting recoverable data.
+Nothing was written to the system partition and no startup script was added.
 
-To start it: run start.sh. If you have NickelMenu installed, add this one line
-to .adds/nm/menu to get an entry in the reader's own menu:
+To start it: run .adds/cobalt-launch.sh. If you have NickelMenu installed, add
+this one line to .adds/nm/menu to get an entry in the reader's own menu:
 
-  menu_item :main    :Cobalt    :cmd_spawn    :quiet:/mnt/onboard/.adds/cobalt/start.sh
+  menu_item :main    :Cobalt    :cmd_spawn    :quiet:/mnt/onboard/.adds/cobalt-launch.sh
 
 Starting Cobalt stops the stock reader for the length of the session and
 starts it again afterwards. That takes twenty to thirty seconds each way. A
@@ -221,8 +219,11 @@ To install on a device:
      that appears.
   3. Eject the drive. The device installs it at the next boot and restarts.
 
-Everything lands in .adds/cobalt on the same drive. Deleting that folder is a
-complete uninstall; nothing is written to the system partition.";
+Everything lands in .adds/cobalt plus the stable .adds/cobalt-launch.sh on the
+same drive. Use `kobo setup --undo` for a complete safe uninstall: it also
+removes the exact Cobalt NickelMenu entry and preserves owner folders under
+.adds/cobalt.recovery.N. Inspect recovery and .adds/cobalt.unusable[.N]
+directories before deleting them. Nothing is written to the system partition.";
 
 const REMOTE_CONNECT_TIMEOUT_SECONDS: u64 = 10;
 const REMOTE_COMMAND_TIMEOUT: Duration = Duration::from_secs(60);
@@ -441,7 +442,6 @@ fn run(arguments: &[String]) -> Result<(), String> {
         "session" => dev_session(&arguments[1..]),
         "wait" => wait_for_device(&arguments[1..]),
         "logs" => device_logs(&arguments[1..]),
-        "wifi-trace" => wifi_trace_command(&arguments[1..]),
         // Reached only when something other than main dispatches, which today
         // is the tests. main takes this verb first so that the reader's own
         // exit code survives.
@@ -469,7 +469,6 @@ fn run(arguments: &[String]) -> Result<(), String> {
         "app-list" => app_list(&arguments[1..]),
         "app-check" => app_check(&arguments[1..]),
         "app-release" => app_release(&arguments[1..]),
-        "beta-store-smoke" => beta_store_smoke::command(&arguments[1..]),
         "host-release-sign" => host_release_sign(&arguments[1..]),
         "host-release-verify" => host_release_verify(&arguments[1..]),
         "update" => update_host(&arguments[1..]),
@@ -1988,7 +1987,6 @@ fn device_logs(arguments: &[String]) -> Result<(), String> {
                 request.host
             )));
         }
-
         println!("cleared {DEVICE_TRACE_LOG} on {}", request.host);
         if !request.follow {
             return Ok(());
@@ -2041,56 +2039,6 @@ fn device_logs(arguments: &[String]) -> Result<(), String> {
             "reading the trace from {} failed with status {code}",
             request.host
         ))),
-    }
-}
-
-fn wifi_trace_command(arguments: &[String]) -> Result<(), String> {
-    const USAGE: &str = "usage: kobo wifi-trace summarize PATH | \
-                         kobo wifi-trace retrieve --device HOST --out PATH";
-    match arguments {
-        [action, path] if action == "summarize" => {
-            let bytes = fs::read(path).map_err(|error| format!("read {path}: {error}"))?;
-            println!("{}", kobo_wifi_trace::summarize(&bytes).render());
-            Ok(())
-        }
-        [action, device, host, out, path]
-            if action == "retrieve" && is_device_flag(device) && out == "--out" =>
-        {
-            if !valid_device_host(host) {
-                return Err("device host contains unsupported characters".to_owned());
-            }
-            let script = format!(
-                "set -e\n\
-                 dir={directory}\n\
-                 latest=$(ls -1t \"$dir\"/wifi-handoff-v1-*.jsonl 2>/dev/null | head -n 1)\n\
-                 if [ -z \"$latest\" ]; then\n\
-                   echo 'no Wi-Fi handoff trace on this device' >&2\n\
-                   exit 3\n\
-                 fi\n\
-                 cat \"$latest\"\n",
-                directory = kobo_wifi_trace::DIAGNOSTICS_DIR,
-            );
-            let remote = format!("root@{host}");
-            let output = run_remote_shell(&remote, &script, REMOTE_SESSION_TIMEOUT)
-                .map_err(unreachable_device)?;
-            if !output.status.success() {
-                return Err(match output.status.code() {
-                    Some(3) => "no Wi-Fi handoff trace to retrieve".to_owned(),
-                    _ => unreachable_device(format!(
-                        "retrieving the Wi-Fi handoff trace from {host} failed"
-                    )),
-                });
-            }
-            fs::write(path, &output.stdout)
-                .map_err(|error| format!("write retrieved trace to {path}: {error}"))?;
-            println!(
-                "saved {} bytes to {path}\n{}",
-                output.stdout.len(),
-                kobo_wifi_trace::summarize(&output.stdout).render()
-            );
-            Ok(())
-        }
-        _ => Err(USAGE.to_owned()),
     }
 }
 
@@ -2698,13 +2646,23 @@ fn workspace_manifest() -> PathBuf {
         .join("Cargo.toml")
 }
 
-/// Resolves a device binary from this workspace's configured target directory.
+/// Resolves a device binary inside this workspace's own target directory.
 ///
 /// Pinning it to this manifest means an uploaded artifact always comes from the
 /// reviewed source tree rather than whatever workspace the caller stood in.
 /// Cargo resolves a relative `CARGO_TARGET_DIR` from its invoking current
 /// directory, not from the manifest's workspace.
 fn workspace_device_binary(name: &str) -> PathBuf {
+    workspace_target_directory()
+        .join("armv7-unknown-linux-musleabihf/release")
+        .join(name)
+}
+
+fn workspace_host_binary(name: &str) -> PathBuf {
+    workspace_target_directory().join("debug").join(name)
+}
+
+fn workspace_target_directory() -> PathBuf {
     let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let invocation = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     configured_target_directory(
@@ -2712,8 +2670,6 @@ fn workspace_device_binary(name: &str) -> PathBuf {
         &invocation,
         env::var_os("CARGO_TARGET_DIR").as_deref(),
     )
-    .join("armv7-unknown-linux-musleabihf/release")
-    .join(name)
 }
 
 fn configured_target_directory(
@@ -3267,7 +3223,15 @@ impl BuiltPackage {
 /// have to be the same bytes, produced by the same checks, or one of the two
 /// paths is unreviewed.
 fn build_package_bytes() -> Result<BuiltPackage, String> {
-    let mut members = Vec::new();
+    // First on purpose. A pre-bootstrap updater such as f49b32c refuses this
+    // exact outside-tree member while unpacking and therefore fails before it
+    // can retire `cobalt`. A bootstrap-aware updater validates and skips the
+    // independently installed copy before its rename transaction.
+    let mut members = vec![package::Member {
+        path: package::LAUNCH_BOOTSTRAP.to_owned(),
+        bytes: bootstrap::CONTENT.as_bytes().to_vec(),
+        program: true,
+    }];
     for (name, features) in INSTALLED_PACKAGES {
         run_status(
             &mut device_build_command(name, *features)?,
@@ -3325,14 +3289,9 @@ fn build_package_bytes() -> Result<BuiltPackage, String> {
     // Read back rather than trusted. This archive is extracted as root by the
     // device's boot script, so the list of what it will write is checked from
     // the bytes that were produced, not from the list they were produced from.
-    let listed = package::list(&archive)?;
-    let outside = members_outside_install_root(&listed);
-    if !outside.is_empty() {
-        return Err(format!(
-            "refusing to build: {} would be written outside {}",
-            outside.join(", "),
-            package::INSTALL_ROOT
-        ));
+    let (readback_members, listed) = validated_release_archive(&archive)?;
+    if readback_members != members {
+        return Err("refusing to build: archive readback differs from its inputs".to_owned());
     }
     let compressed = gzip(&archive)?;
     // Exactly what `rcS` does before it extracts anything. A tarball that
@@ -3462,7 +3421,7 @@ fn parse_setup(arguments: &[String]) -> Result<SetupOptions, String> {
                      usage: kobo setup [--volume PATH] [--undo] [--enable-ssh] [--no-key] \
                      [--no-eject] [--no-wait] [--menu] [--no-menu] [--dry-run] [--yes] \
                      [--non-interactive] [--wait-for-reader] [--release-dir PATH] [--source]"
-                ))
+                ));
             }
         }
         index += 1;
@@ -3617,16 +3576,8 @@ fn load_release_package_from_manifest(
     }
     gzip_test(&compressed)?;
     let archive = gunzip(&compressed)?;
-    let members = package::members(&archive)?;
-    let listed = package::list(&archive)?;
-    let outside = members_outside_install_root(&listed);
-    if !outside.is_empty() {
-        return Err(format!(
-            "refusing prebuilt package: {} would be written outside {}",
-            outside.join(", "),
-            package::INSTALL_ROOT
-        ));
-    }
+    let (members, listed) = validated_release_archive(&archive)
+        .map_err(|error| format!("refusing prebuilt package: {error}"))?;
     let expected_version = format!("{}\n", manifest.version);
     let packaged_version = members
         .iter()
@@ -3704,24 +3655,24 @@ fn confirmed_setup(
     payload: &SetupPayload,
 ) -> Result<bool, String> {
     println!(
-            "\nReady to {}:\n  Model: {} (device code {}, profile {})\n  Firmware: {}\n  Mount: {}\n  Release: {}\n  Changes: {}\n",
-            if options.mode == SetupMode::Undo {
-                "remove Cobalt"
-            } else {
-                "install Cobalt"
-            },
-            profile.model,
-            profile.device_code,
-            profile.id,
-            reader.firmware,
-            reader.volume.display(),
-            payload.description(),
-            if options.mode == SetupMode::Undo {
-                "remove .adds/cobalt and revert only Cobalt-managed settings/menu/SSH markers"
-            } else {
-                "update Cobalt program files in .adds/cobalt, preserve app data, secrets, owner files and unrelated NickelMenu entries"
-            }
-        );
+        "\nReady to {}:\n  Model: {} (device code {}, profile {})\n  Firmware: {}\n  Mount: {}\n  Release: {}\n  Changes: {}\n",
+        if options.mode == SetupMode::Undo {
+            "remove Cobalt"
+        } else {
+            "install Cobalt"
+        },
+        profile.model,
+        profile.device_code,
+        profile.id,
+        reader.firmware,
+        reader.volume.display(),
+        payload.description(),
+        if options.mode == SetupMode::Undo {
+            "remove .adds/cobalt and revert only Cobalt-managed settings/menu/SSH markers"
+        } else {
+            "update Cobalt program files in .adds/cobalt, preserve app data, secrets, owner files and unrelated NickelMenu entries"
+        }
+    );
     if options.yes {
         return Ok(true);
     }
@@ -3729,10 +3680,14 @@ fn confirmed_setup(
         return Err("noninteractive setup was not explicitly confirmed with --yes".to_owned());
     }
     let tty = fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open("/dev/tty")
-            .map_err(|error| format!("open /dev/tty for confirmation: {error}; pass --yes only after reviewing --dry-run"))?;
+        .read(true)
+        .write(true)
+        .open("/dev/tty")
+        .map_err(|error| {
+            format!(
+                "open /dev/tty for confirmation: {error}; pass --yes only after reviewing --dry-run"
+            )
+        })?;
     let mut writer = &tty;
     writer
         .write_all(b"Continue? [y/N] ")
@@ -4016,7 +3971,10 @@ fn dry_run_plan(options: &SetupOptions, reader: &setup::Mounted) -> String {
         .join(", ");
     if options.mode == SetupMode::Undo {
         return format!(
-            "would remove {}/{}\n\
+            "would remove managed Cobalt trees under {}/{} after moving any owner folders\n\
+             \x20 into a free .adds/cobalt.recovery.N directory\n\
+             would remove {}/{} and the exact Cobalt line from .adds/nm/cobalt and .adds/nm/menu\n\
+             would leave any .adds/cobalt.unusable[.N] quarantine for explicit inspection\n\
              would disable the firmware's SSH server by renaming {} back\n\
              would clear {}\n\
              would remove {} and ask NickelMenu to uninstall itself, unless another\n\
@@ -4024,6 +3982,8 @@ fn dry_run_plan(options: &SetupOptions, reader: &setup::Mounted) -> String {
              nothing else on the reader is touched",
             reader.volume.display(),
             setup::INSTALL_FOLDER,
+            reader.volume.display(),
+            bootstrap::RELATIVE_PATH,
             setup::SSH_ENABLED,
             keys,
             menu::CONFIG,
@@ -4087,11 +4047,9 @@ fn dry_run_plan(options: &SetupOptions, reader: &setup::Mounted) -> String {
         } else {
             "stop, because --no-wait was given"
         },
-        match (
-            would_stage,
-            options.enable_ssh && options.authorize_key,
-        ) {
-            (true, true) => ", and nothing extracted as root but NickelMenu's own two files and one authorized_keys",
+        match (would_stage, options.enable_ssh && options.authorize_key,) {
+            (true, true) =>
+                ", and nothing extracted as root but NickelMenu's own two files and one authorized_keys",
             (true, false) => ", and nothing extracted as root but NickelMenu's own two files",
             (false, true) => ", and nothing extracted as root but one authorized_keys",
             (false, false) => ", nothing extracted as root",
@@ -4162,7 +4120,7 @@ fn describe_unmenu(removed: menu::Removed) -> String {
 
 /// Puts a reader back to how it shipped.
 fn undo_setup(reader: &setup::Mounted, eject: bool) -> Result<(), String> {
-    let removed = setup::remove_payload(&reader.volume)?;
+    let removal = setup::remove_payload(&reader.volume)?;
     let ssh = setup::disable_ssh(&reader.volume)?;
     let settings = setup::revert_settings(&reader.volume)?;
     let unmenued = menu::remove(&reader.volume)?;
@@ -4171,7 +4129,7 @@ fn undo_setup(reader: &setup::Mounted, eject: bool) -> Result<(), String> {
     println!(
         "\nUndone on {}:\n  · {}\n  · {}\n  · {}\n  · {}\n  · {}",
         reader.volume.display(),
-        if removed {
+        if removal.removed {
             "Cobalt removed"
         } else {
             "Cobalt was not installed"
@@ -4193,6 +4151,19 @@ fn undo_setup(reader: &setup::Mounted, eject: bool) -> Result<(), String> {
             "volume left mounted"
         }
     );
+    if !removal.recoveries.is_empty() {
+        println!(
+            "\nOwner data was preserved for manual backup or deletion in:\n  {}",
+            removal.recoveries.join("\n  ")
+        );
+    }
+    if !removal.quarantines.is_empty() {
+        println!(
+            "\nUnusable managed trees were not deleted because they may contain recoverable\n\
+             owner data. Inspect them before removing them:\n  {}",
+            removal.quarantines.join("\n  ")
+        );
+    }
     // Said plainly rather than left for somebody to discover. The book
     // partition is all this command can reach over USB, and a key the reader
     // has already extracted lives on the root filesystem, so an undo cannot
@@ -4235,11 +4206,11 @@ fn build_package(arguments: &[String]) -> Result<(), String> {
     fs::write(&tarball, &built.compressed)
         .map_err(|error| format!("write {}: {error}", tarball.display()))?;
     if let Some(folder) = folder {
-        package::write_folder(&built.members, &folder)?;
+        package::write_volume_layout(&built.members, &folder)?;
         println!(
-            "also written as a plain folder: {}\n\
-             copy it into .adds/ on the device and name it cobalt, or copy it over\n\
-             an existing .adds/cobalt to update in place",
+            "also written as a volume-relative folder: {}\n\
+             copy the .adds directory inside it to the root of the mounted Kobo volume;\n\
+             it contains both .adds/cobalt and .adds/cobalt-launch.sh",
             folder.display()
         );
     }
@@ -4274,8 +4245,7 @@ fn deploy_package(arguments: &[String]) -> Result<(), String> {
         validated_package(&path)?
     } else {
         let built = build_package_bytes()?;
-        let files = built.file_count();
-        (built.compressed, files)
+        deployment_package(&built.members)?
     };
     // Hash exactly the bytes that go up the pipe, so what the device verifies
     // is what this process sent rather than whatever is on disk afterwards.
@@ -4334,20 +4304,20 @@ fn validated_package(path: &Path) -> Result<(Vec<u8>, usize), String> {
     let compressed = fs::read(path).map_err(|error| format!("read {}: {error}", path.display()))?;
     gzip_test(&compressed)?;
     let archive = gunzip(&compressed)?;
-    let listed = package::list(&archive)?;
-    let outside = members_outside_install_root(&listed);
-    if !outside.is_empty() {
-        return Err(format!(
-            "refusing to upload {}: {} would be written outside {}",
-            path.display(),
-            outside.join(", "),
-            package::INSTALL_ROOT
-        ));
-    }
-    Ok((
-        compressed,
-        listed.iter().filter(|entry| entry.kind == b'0').count(),
-    ))
+    let (members, _) = validated_release_archive(&archive)
+        .map_err(|error| format!("refusing to upload {}: {error}", path.display()))?;
+    deployment_package(&members)
+}
+
+fn deployment_package(members: &[package::Member]) -> Result<(Vec<u8>, usize), String> {
+    let deploy_members: Vec<_> = members
+        .iter()
+        .filter(|member| !package::is_launch_bootstrap(member))
+        .cloned()
+        .collect();
+    let deploy_archive = package::tar(&deploy_members)?;
+    let compressed = gzip(&deploy_archive)?;
+    Ok((compressed, deploy_members.len()))
 }
 
 fn parse_deploy(arguments: &[String]) -> Result<(&str, Option<PathBuf>), String> {
@@ -4373,16 +4343,73 @@ fn parse_deploy(arguments: &[String]) -> Result<(&str, Option<PathBuf>), String>
 /// the member list they were built from, because the archive is what a device
 /// extracts as root. The directories leading down to the root are allowed,
 /// since an archive has to create them to create anything inside them.
-fn members_outside_install_root(listed: &[package::Listed]) -> Vec<String> {
+struct ReviewedLaunchBootstrap;
+
+fn members_outside_install_root(
+    listed: &[package::Listed],
+    _reviewed: &ReviewedLaunchBootstrap,
+) -> Vec<String> {
     let root = Path::new(package::INSTALL_ROOT);
     listed
         .iter()
-        .filter(|entry| {
+        .enumerate()
+        .filter(|(index, entry)| {
             let path = Path::new(entry.path.trim_end_matches('/'));
-            !(path.starts_with(root) || root.starts_with(path))
+            let reviewed_bootstrap = *index == 0
+                && entry.path == package::LAUNCH_BOOTSTRAP
+                && entry.kind == b'0'
+                && entry.mode == 0o755
+                && entry.size == bootstrap::CONTENT.len();
+            !(path.starts_with(root) || root.starts_with(path) || reviewed_bootstrap)
         })
-        .map(|entry| entry.path.clone())
+        .map(|(_, entry)| entry.path.clone())
         .collect()
+}
+
+fn validated_release_archive(
+    archive: &[u8],
+) -> Result<(Vec<package::Member>, Vec<package::Listed>), String> {
+    let listed = package::list(archive)?;
+    let first = listed
+        .first()
+        .ok_or("release archive has no standalone launch bootstrap")?;
+    if first.path != package::LAUNCH_BOOTSTRAP
+        || first.kind != b'0'
+        || first.mode != 0o755
+        || first.size != bootstrap::CONTENT.len()
+    {
+        return Err(
+            "standalone launch bootstrap must be the first regular 0755 archive member".to_owned(),
+        );
+    }
+    if listed
+        .iter()
+        .filter(|entry| entry.path == package::LAUNCH_BOOTSTRAP)
+        .count()
+        != 1
+    {
+        return Err("standalone launch bootstrap must appear exactly once".to_owned());
+    }
+    let members = package::members(archive)?;
+    let bootstrap_member = members
+        .first()
+        .ok_or("release archive has no standalone launch bootstrap")?;
+    if !package::is_launch_bootstrap(bootstrap_member)
+        || !bootstrap_member.program
+        || bootstrap_member.bytes != bootstrap::CONTENT.as_bytes()
+    {
+        return Err("standalone launch bootstrap differs from the reviewed executable".to_owned());
+    }
+    let reviewed = ReviewedLaunchBootstrap;
+    let outside = members_outside_install_root(&listed, &reviewed);
+    if !outside.is_empty() {
+        return Err(format!(
+            "{} would be written outside {}",
+            outside.join(", "),
+            package::INSTALL_ROOT
+        ));
+    }
+    Ok((members, listed))
 }
 
 /// Lists a package and proves it cannot write outside the install root.
@@ -4391,25 +4418,17 @@ fn inspect_package(arguments: &[String]) -> Result<(), String> {
     let compressed = fs::read(path).map_err(|error| format!("read {path}: {error}"))?;
     gzip_test(&compressed)?;
     let archive = gunzip(&compressed)?;
-    let listed = package::list(&archive)?;
+    let (_, listed) = validated_release_archive(&archive)?;
     for entry in &listed {
         let kind = if entry.kind == b'5' { "dir " } else { "file" };
         println!("{kind} {:o} {:>9} {}", entry.mode, entry.size, entry.path);
     }
-    let outside = members_outside_install_root(&listed);
-    if outside.is_empty() {
-        println!(
-            "nothing outside {}; this package writes no root filesystem file",
-            package::INSTALL_ROOT
-        );
-        Ok(())
-    } else {
-        Err(format!(
-            "refusing: {} would be written outside {}",
-            outside.join(", "),
-            package::INSTALL_ROOT
-        ))
-    }
+    println!(
+        "only the reviewed {} bootstrap is outside {}; this package writes no root filesystem file",
+        package::LAUNCH_BOOTSTRAP,
+        package::INSTALL_ROOT
+    );
+    Ok(())
 }
 
 fn text_member(name: &str, contents: &str, program: bool) -> package::Member {
@@ -4518,7 +4537,7 @@ fn run_simulation(arguments: &[String]) -> Result<(), String> {
         ));
     }
 
-    let app_status = Command::new(format!("target/debug/{package}"))
+    let app_status = Command::new(workspace_host_binary(package))
         .env("KOBO_SOCKET", &simulation.socket)
         .env("KOBO_SIM_ONESHOT", "1")
         .status()
@@ -4568,7 +4587,7 @@ fn simulated_package(arguments: &[String]) -> Result<&'static str, String> {
             other => {
                 return Err(format!(
                     "unknown option '{other}'\nusage: kobo run --sim [--app NAME]"
-                ))
+                ));
             }
         }
         index += 1;
@@ -4579,7 +4598,6 @@ fn simulated_package(arguments: &[String]) -> Result<&'static str, String> {
         .iter()
         .map(|(package, _)| *package)
         .chain(STORE_PACKAGES.iter().copied())
-        .chain(contributed_store_packages().iter().map(String::as_str))
         .find(|package| {
             *package != "kobod"
                 && (*package == wanted || package.strip_prefix("kobo-") == Some(wanted))
@@ -4594,11 +4612,6 @@ fn simulatable() -> String {
         .filter_map(|(package, _)| package.strip_prefix("kobo-"))
         .chain(
             STORE_PACKAGES
-                .iter()
-                .filter_map(|package| package.strip_prefix("kobo-")),
-        )
-        .chain(
-            contributed_store_packages()
                 .iter()
                 .filter_map(|package| package.strip_prefix("kobo-")),
         )
@@ -4637,7 +4650,7 @@ impl SimulationGuard {
     }
 
     fn spawn_daemon(&mut self) -> Result<(), String> {
-        let daemon = Command::new("target/debug/kobod")
+        let daemon = Command::new(workspace_host_binary("kobod"))
             .args(["--sim-socket"])
             .arg(&self.socket)
             .arg("--frame")
@@ -5701,7 +5714,9 @@ fn secret_command(arguments: &[String]) -> Result<(), String> {
                     println!("Installed '{name}' ({bytes} bytes) at {}.", path.display());
                 }
             }
-            println!("An application reaches it by naming the secret '{name}'; the value is never sent to the application itself.");
+            println!(
+                "An application reaches it by naming the secret '{name}'; the value is never sent to the application itself."
+            );
             Ok(())
         }
         (SecretAction::Remove { name }, SecretTarget::Device(host)) => {
@@ -5735,7 +5750,11 @@ fn secret_command(arguments: &[String]) -> Result<(), String> {
         (SecretAction::List, SecretTarget::Device(host)) => {
             // Names only. A command that can print a key is a command someone
             // will run over a shoulder or paste into a bug report.
-            let script = format!("ls -1 {DEVICE_SECRETS_DIRECTORY} 2>/dev/null || true\n");
+            let script = format!(
+                "for secret in {DEVICE_SECRETS_DIRECTORY}/*; do\n\
+                 \x20 [ -f \"$secret\" ] && [ ! -L \"$secret\" ] && basename \"$secret\"\n\
+                 done\n"
+            );
             let output = run_remote_shell(&format!("root@{host}"), &script, DEVICE_PROBE_TIMEOUT)?;
             if !output.status.success() {
                 return Err(remote_shell_error(
@@ -5752,7 +5771,12 @@ fn secret_command(arguments: &[String]) -> Result<(), String> {
             let mut names = Vec::new();
             if let Ok(entries) = std::fs::read_dir(&directory) {
                 for entry in entries.flatten() {
-                    names.push(entry.file_name().to_string_lossy().into_owned());
+                    if entry
+                        .file_type()
+                        .is_ok_and(|kind| kind.is_file() && !kind.is_symlink())
+                    {
+                        names.push(entry.file_name().to_string_lossy().into_owned());
+                    }
                 }
             }
             names.sort();
@@ -6051,8 +6075,6 @@ fn print_help() {
            session --device IP --hold [minutes]  Keep it reachable for unattended testing\n\
            wait --device IP       Block until a device answers again\n\
            logs --device IP [--follow] [--lines N]  Read the runtime trace from the device\n\
-           wifi-trace summarize PATH  Report handoff generations and first divergence\n\
-           wifi-trace retrieve --device IP --out PATH  Retrieve and summarize the latest trace\n\
            shell --device IP [command ...]  Run one command on the reader, or open a\n\
            \x20                             session when no command is given. Exits with\n\
            \x20                             whatever the reader exited with\n\
@@ -6070,8 +6092,6 @@ fn print_help() {
                                    Build and verify every registered Store app\n\
            app-release --registry PATH --seed PATH --out PATH --base-url HTTPS_URL [--prebuilt-dir PATH | --artifact-dir PATH]\n\
                                    Build and sign every registered Store app\n\
-           beta-store-smoke --app ID (--fixture DIR | --beta-catalog URL --device IP) --out DIR [--marketing-route PATH]\n\
-                                   Verify Beta Store lifecycle and required marketing evidence\n\
            host-release-sign --manifest PATH --seed PATH --signature PATH --ssh-signature PATH\n\
                                    Sign host release metadata for publishing\n\
            host-release-verify --manifest PATH --signature PATH\n\
@@ -6418,16 +6438,15 @@ mod tests {
         build_executables, canonical, configured_target_directory, is_device_flag,
         manifest_uses_sdk, normalise_secret_value, parse_deploy, parse_devices, parse_logs,
         parse_touch_probe, unreachable_device, valid_device_host, valid_slug, verify_arm_elf,
-        wait_for_remote_child, workspace_doctor_binary, DevSessionGuard, RemoteArtifact,
-        SimulationGuard, ALIASES, DEFAULT_TRACE_LINES, DEPLOY_TIMEOUT, DEVICE_PACKAGES,
-        TOUCH_PROBE_DEFAULT_SECONDS, TOUCH_PROBE_MAXIMUM_SECONDS,
+        wait_for_remote_child, DevSessionGuard, RemoteArtifact, SimulationGuard, ALIASES,
+        DEFAULT_TRACE_LINES, DEPLOY_TIMEOUT, DEVICE_PACKAGES, TOUCH_PROBE_DEFAULT_SECONDS,
+        TOUCH_PROBE_MAXIMUM_SECONDS,
     };
     #[cfg(feature = "device-write")]
     use super::{
-        parse_guard_test, parse_smoke_display, run, workspace_smoke_binary, RemoteArtifactSession,
-        RemoteProgram, SmokeStage, GUARD_TEST_CHILD, GUARD_TEST_CONFIRMATION,
-        REMOTE_CLEANUP_TIMEOUT, REMOTE_COMMAND_TIMEOUT, REMOTE_CONNECT_TIMEOUT_SECONDS,
-        REMOTE_SMOKE_TIMEOUT_SECONDS,
+        parse_guard_test, parse_smoke_display, run, RemoteArtifactSession, RemoteProgram,
+        SmokeStage, GUARD_TEST_CHILD, GUARD_TEST_CONFIRMATION, REMOTE_CLEANUP_TIMEOUT,
+        REMOTE_COMMAND_TIMEOUT, REMOTE_CONNECT_TIMEOUT_SECONDS, REMOTE_SMOKE_TIMEOUT_SECONDS,
     };
     use std::fs;
     use std::path::PathBuf;
@@ -6690,8 +6709,8 @@ mod tests {
     fn every_installed_package_is_a_member_of_this_workspace() {
         let manifest = fs::read_to_string(super::workspace_manifest()).expect("read the workspace");
         for (name, _) in super::INSTALLED_PACKAGES {
-            let directory = if matches!(*name, "kobod" | "kobo-wifi-trace") {
-                format!("crates/{name}")
+            let directory = if *name == "kobod" {
+                "crates/kobod".to_owned()
             } else {
                 format!("examples/{}", name.trim_start_matches("kobo-"))
             };
@@ -6748,18 +6767,129 @@ mod tests {
         // The archive is extracted as root by the device's own boot script, so
         // the check that matters is what it is *able* to write.
         let members = vec![
+            package::Member {
+                path: package::LAUNCH_BOOTSTRAP.to_owned(),
+                bytes: super::bootstrap::CONTENT.as_bytes().to_vec(),
+                program: true,
+            },
             super::text_member("start.sh", super::START_SCRIPT, true),
             super::text_member("README.txt", super::INSTALL_README, false),
         ];
         let archive = package::tar(&members).expect("build the archive");
-        let root = format!("{}/", package::INSTALL_ROOT);
-        for entry in package::list(&archive).expect("read the archive back") {
+        let (readback, listed) =
+            super::validated_release_archive(&archive).expect("high-level validation");
+        assert_eq!(readback, members);
+        assert_eq!(listed[0].path, package::LAUNCH_BOOTSTRAP);
+    }
+
+    #[test]
+    fn high_level_readback_requires_exact_first_unique_bootstrap() {
+        let reviewed = super::bootstrap::CONTENT.as_bytes().to_vec();
+        let version = (
+            format!("{}/VERSION", package::INSTALL_ROOT),
+            b"0.1.0\n".to_vec(),
+            0o644,
+        );
+        let cases = [
+            package::archive(
+                &[],
+                &[
+                    (
+                        package::LAUNCH_BOOTSTRAP.to_owned(),
+                        reviewed.clone(),
+                        0o700,
+                    ),
+                    version.clone(),
+                ],
+            ),
+            package::archive(
+                &[],
+                &[
+                    version.clone(),
+                    (
+                        package::LAUNCH_BOOTSTRAP.to_owned(),
+                        reviewed.clone(),
+                        0o755,
+                    ),
+                ],
+            ),
+            package::archive(
+                &[],
+                &[
+                    (
+                        package::LAUNCH_BOOTSTRAP.to_owned(),
+                        reviewed.clone(),
+                        0o755,
+                    ),
+                    (
+                        package::LAUNCH_BOOTSTRAP.to_owned(),
+                        reviewed.clone(),
+                        0o755,
+                    ),
+                    version.clone(),
+                ],
+            ),
+            package::archive(
+                &[],
+                &[
+                    (
+                        package::LAUNCH_BOOTSTRAP.to_owned(),
+                        b"changed".to_vec(),
+                        0o755,
+                    ),
+                    version.clone(),
+                ],
+            ),
+            package::archive(
+                &[(package::LAUNCH_BOOTSTRAP, 0o755)],
+                &[(
+                    format!("{}/VERSION", package::INSTALL_ROOT),
+                    b"0.1.0\n".to_vec(),
+                    0o644,
+                )],
+            ),
+        ];
+        for archive in cases {
             assert!(
-                entry.path.starts_with(&root) || root.starts_with(entry.path.trim_end_matches('/')),
-                "{} is outside the install root",
-                entry.path
+                super::validated_release_archive(&archive).is_err(),
+                "malformed standalone bootstrap passed high-level readback"
             );
         }
+    }
+
+    #[test]
+    fn deploy_validation_accepts_then_omits_reviewed_bootstrap() {
+        let members = vec![
+            package::Member {
+                path: package::LAUNCH_BOOTSTRAP.to_owned(),
+                bytes: super::bootstrap::CONTENT.as_bytes().to_vec(),
+                program: true,
+            },
+            super::text_member("VERSION", "0.1.0\n", false),
+        ];
+        let compressed = super::gzip(&package::tar(&members).expect("archive")).expect("gzip");
+        let folder = std::env::current_dir()
+            .expect("working directory")
+            .join("target")
+            .join(format!("deploy-validation-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(&folder).expect("scratch");
+        let path = folder.join("package.tgz");
+        std::fs::write(&path, compressed).expect("package");
+
+        let (uploaded, count) = super::validated_package(&path).expect("validated deploy package");
+        let uploaded = super::gunzip(&uploaded).expect("uploaded archive");
+        let listed = package::list(&uploaded).expect("uploaded listing");
+        assert_eq!(count, 1);
+        assert!(listed
+            .iter()
+            .all(|entry| entry.path != package::LAUNCH_BOOTSTRAP));
+        assert!(listed.iter().all(|entry| {
+            let path = std::path::Path::new(entry.path.trim_end_matches('/'));
+            let root = std::path::Path::new(package::INSTALL_ROOT);
+            path.starts_with(root) || root.starts_with(path)
+        }));
+        let _ = std::fs::remove_dir_all(folder);
     }
 
     #[test]
@@ -6901,13 +7031,7 @@ mod tests {
     fn default_device_build_excludes_guard_and_smoke() {
         assert_eq!(
             DEVICE_PACKAGES,
-            [
-                "kobo-doctor",
-                "kobod",
-                "kobo-wifi-trace",
-                "kobo-todo",
-                "kobo-terminal"
-            ]
+            ["kobo-doctor", "kobod", "kobo-todo", "kobo-terminal"]
         );
         assert!(!DEVICE_PACKAGES.contains(&"kobo-guard"));
         assert!(!DEVICE_PACKAGES.contains(&"kobo-smoke"));
@@ -6970,22 +7094,16 @@ mod tests {
     }
 
     #[test]
-    fn remote_doctor_uses_strict_hosts_and_configured_target_artifact() {
+    fn remote_doctor_uses_strict_hosts_and_workspace_artifact() {
         assert!(valid_device_host("192.0.2.1"));
         assert!(valid_device_host("kobo-reader_1"));
         assert!(!valid_device_host(""));
         assert!(!valid_device_host("reader;reboot"));
         assert!(!valid_device_host("reader name"));
-        assert!(workspace_doctor_binary()
-            .ends_with("armv7-unknown-linux-musleabihf/release/kobo-doctor"));
-        #[cfg(feature = "device-write")]
-        assert!(
-            workspace_smoke_binary().ends_with("armv7-unknown-linux-musleabihf/release/kobo-smoke")
-        );
     }
 
     #[test]
-    fn relative_cargo_target_dir_resolves_from_the_build_invocation() {
+    fn cargo_target_dir_resolves_exactly_like_the_build_invocation() {
         let workspace = PathBuf::from("/source/cobalt");
         let invocation = PathBuf::from("/runner/jobs/package");
         let relative = std::ffi::OsStr::new("../../cobalt-targets");
@@ -7450,14 +7568,11 @@ mod tests {
         }
 
         mod app_registry {
-            use super::super::super::{
-                contributed_store_packages, read_release_registry, workspace_manifest,
-                STORE_PACKAGES,
-            };
+            use super::super::super::{read_release_registry, workspace_manifest, STORE_PACKAGES};
             use std::collections::BTreeSet;
 
             #[test]
-            fn cobalt_owned_registry_entries_are_known_store_applications() {
+            fn checked_in_registry_contains_every_store_application() {
                 let registry = workspace_manifest()
                     .parent()
                     .expect("workspace root")
@@ -7489,22 +7604,6 @@ mod tests {
                     );
                 }
             }
-
-            #[test]
-            fn standalone_contributions_are_discovered_without_a_package_list_edit() {
-                let contributed = contributed_store_packages()
-                    .iter()
-                    .map(String::as_str)
-                    .collect::<BTreeSet<_>>();
-                for package in [
-                    "kobo-arxiv",
-                    "kobo-morse",
-                    "kobo-sudoku",
-                    "kobo-zotero-reader",
-                ] {
-                    assert!(contributed.contains(package), "missing {package}");
-                }
-            }
         }
     }
 
@@ -7512,7 +7611,7 @@ mod tests {
         use super::super::{
             choose_reader_list, confirmation_answer, dry_run_plan, gzip,
             load_release_package_from_manifest, parse_setup, setup, setup_device_with_confirmation,
-            SetupMode, SetupPayload,
+            undo_setup, SetupMode, SetupPayload,
         };
         use std::path::PathBuf;
 
@@ -7552,11 +7651,14 @@ mod tests {
 
         impl TempVolume {
             fn new(name: &str) -> Self {
-                let path = std::env::temp_dir().join(format!(
-                    "kobo-plan-{name}-{}-{:?}",
-                    std::process::id(),
-                    std::thread::current().id()
-                ));
+                let path = std::env::current_dir()
+                    .expect("working directory")
+                    .join("target")
+                    .join(format!(
+                        "kobo-plan-{name}-{}-{:?}",
+                        std::process::id(),
+                        std::thread::current().id()
+                    ));
                 let _ = std::fs::remove_dir_all(&path);
                 std::fs::create_dir_all(&path).expect("a volume");
                 Self { path }
@@ -7653,6 +7755,11 @@ mod tests {
             std::fs::write(release.path.join("channel"), "stable\n").expect("channel");
             let members = vec![
                 crate::package::Member {
+                    path: crate::package::LAUNCH_BOOTSTRAP.to_owned(),
+                    bytes: crate::bootstrap::CONTENT.as_bytes().to_vec(),
+                    program: true,
+                },
+                crate::package::Member {
                     path: format!("{}/bin/kobod", crate::package::INSTALL_ROOT),
                     bytes: b"prebuilt binary".to_vec(),
                     program: true,
@@ -7685,8 +7792,8 @@ mod tests {
                 panic!("bad checksum was accepted");
             };
             assert!(error.contains("checksum failed"), "{error}");
-            let payload =
-                load_release_package_from_manifest(&release.path, manifest).expect("prebuilt");
+            let payload = load_release_package_from_manifest(&release.path, manifest.clone())
+                .expect("prebuilt");
             match payload {
                 SetupPayload::Prebuilt { built, channel, .. } => {
                     assert_eq!(channel, "stable");
@@ -7694,6 +7801,38 @@ mod tests {
                 }
                 SetupPayload::Source => panic!("prebuilt became source build"),
             }
+
+            let invalid_archive = crate::package::archive(
+                &[],
+                &[
+                    (
+                        crate::package::LAUNCH_BOOTSTRAP.to_owned(),
+                        crate::bootstrap::CONTENT.as_bytes().to_vec(),
+                        0o700,
+                    ),
+                    (
+                        format!("{}/VERSION", crate::package::INSTALL_ROOT),
+                        format!("{}\n", env!("CARGO_PKG_VERSION")).into_bytes(),
+                        0o644,
+                    ),
+                ],
+            );
+            let invalid_compressed = gzip(&invalid_archive).expect("invalid gzip");
+            std::fs::write(
+                release.path.join(&manifest.assets[0].name),
+                &invalid_compressed,
+            )
+            .expect("invalid package");
+            let mut invalid_manifest = manifest.clone();
+            invalid_manifest.assets[0].bytes = invalid_compressed.len() as u64;
+            invalid_manifest.assets[0].sha256 = crate::sha256::hex_digest(&invalid_compressed);
+            let Err(error) = load_release_package_from_manifest(&release.path, invalid_manifest)
+            else {
+                panic!("wrong bootstrap mode passed prebuilt validation");
+            };
+            assert!(error.contains("first regular 0755"), "{error}");
+            std::fs::write(release.path.join(&manifest.assets[0].name), &compressed)
+                .expect("restore valid package");
 
             std::fs::write(release.path.join("channel"), "beta\n").expect("channel");
             let manifest = crate::host_release::Manifest {
@@ -7735,8 +7874,57 @@ mod tests {
             let plan = dry_run_plan(&parsed, &fresh_reader().0);
             assert!(plan.starts_with("would "), "{plan}");
             assert!(plan.contains("would remove"), "{plan}");
+            assert!(plan.contains(".adds/cobalt-launch.sh"), "{plan}");
+            assert!(plan.contains(".adds/nm/menu"), "{plan}");
+            assert!(plan.contains(".adds/cobalt.recovery.N"), "{plan}");
+            assert!(plan.contains(".adds/cobalt.unusable[.N]"), "{plan}");
             assert!(plan.contains(setup::SSH_ENABLED), "{plan}");
             assert!(!plan.contains("would install"), "{plan}");
+        }
+
+        #[test]
+        fn full_undo_preserves_mixed_nickelmenu_owner_entries() {
+            let (reader, volume) = prepared_reader();
+            std::fs::create_dir_all(volume.path.join(crate::setup::INSTALL_FOLDER))
+                .expect("managed payload");
+            crate::bootstrap::install(&volume.path).expect("bootstrap");
+            let cobalt_owner =
+                "menu_item :main :Owner tool :cmd_spawn :quiet:/mnt/onboard/owner.sh\n";
+            let shared_owner = "menu_item :main :Other :cmd_spawn :quiet:/mnt/onboard/other.sh\n";
+            std::fs::write(
+                volume.path.join(crate::menu::CONFIG),
+                format!(
+                    "{}{}",
+                    crate::menu::config(crate::setup::INSTALL_FOLDER),
+                    cobalt_owner
+                ),
+            )
+            .expect("mixed dedicated config");
+            std::fs::write(
+                volume.path.join(".adds/nm/menu"),
+                format!(
+                    "menu_item :main :Cobalt :cmd_spawn :quiet:{}\n{}",
+                    crate::bootstrap::DEVICE_PATH,
+                    shared_owner
+                ),
+            )
+            .expect("mixed shared config");
+
+            undo_setup(&reader, false).expect("full undo");
+
+            assert_eq!(
+                std::fs::read_to_string(volume.path.join(crate::menu::CONFIG))
+                    .expect("dedicated config"),
+                cobalt_owner
+            );
+            assert_eq!(
+                std::fs::read_to_string(volume.path.join(".adds/nm/menu")).expect("shared config"),
+                shared_owner
+            );
+            assert!(!volume.path.join(crate::menu::UNINSTALL_FLAG).exists());
+            assert!(volume.path.join(crate::menu::INSTALLED_MARKER).exists());
+            assert!(!volume.path.join(crate::bootstrap::RELATIVE_PATH).exists());
+            assert!(!volume.path.join(crate::setup::INSTALL_FOLDER).exists());
         }
 
         #[test]

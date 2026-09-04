@@ -2,23 +2,138 @@
   "format_version": 1,
   "changes": [
     {
-      "protocol_version": 11,
-      "reason": "Additive protocol-11 orientation command is opt-in; existing Store apps keep their existing messages and portrait rendering",
+      "protocol_version": 12,
+      "reason": "The 0.3.5 runtime retains protocol-11 rendering, responses, and Atkinson metrics for unchanged Store binaries. Responsive renderer fixes, single-source section links, SDK profile tests, Gutenbird test-only pagination coverage, and Lichess runtime transport, policy, and chess-glyph prerequisites do not alter already-published app bytes. Protocol 12 additively introduces Folio nodes, orientation, a write-only app-scoped credential request, and appended chess glyph tags that older apps cannot emit; only catalog apps changed to use the new SDK surface are rebuilt.",
       "files": [
+        {
+          "path": "Cargo.lock",
+          "base_blob": "98e86504890e59da1755181ad38d7ffaa86c635a",
+          "compatible_blob": "505ab3df44ef084bde233484591daf759db8c832"
+        },
+        {
+          "path": "crates/kobo-abi/src/lib.rs",
+          "base_blob": "2e3e88db5ba1fd08feed46fd65b0f502dd7f8dfb",
+          "compatible_blob": "3f4c4c11e78686f10dbea1456d911dcc03ce3f7f"
+        },
+        {
+          "path": "crates/kobo-net/src/lib.rs",
+          "base_blob": "ce2a45ae69445d06f0de5111aef775751ef8146e",
+          "compatible_blob": "30ce808e28b91ef7890b983ecee153fa89fa2510"
+        },
+        {
+          "path": "crates/kobo-net/src/lines.rs",
+          "base_blob": null,
+          "compatible_blob": "00f877af25028f435a77ea6c8ccbb546fcccf1ee"
+        },
+        {
+          "path": "crates/kobo-net/tests/fixtures/localhost-ca.der",
+          "base_blob": null,
+          "compatible_blob": "c94b448a7103cd723c34349c8ce25352783d41f7"
+        },
+        {
+          "path": "crates/kobo-net/tests/fixtures/localhost-cert.der",
+          "base_blob": null,
+          "compatible_blob": "34a3ae946020aed21622549fe3bd497c34bd708e"
+        },
+        {
+          "path": "crates/kobo-net/tests/fixtures/localhost-key.der",
+          "base_blob": null,
+          "compatible_blob": "05c93b80f8cfb9b032f9c10a44723ac68f54e0fb"
+        },
+        {
+          "path": "crates/kobo-net/tests/lichess_stream_mock.rs",
+          "base_blob": null,
+          "compatible_blob": "d192f04edbcc24cb14db2971d2da29fd8480444f"
+        },
+        {
+          "path": "crates/kobo-policy/src/credentials.rs",
+          "base_blob": "229061a856c96fcfbecbd264f65107f0b9d5293c",
+          "compatible_blob": "27cd53974bfc486208dc5ab1626d013aa91320da"
+        },
+        {
+          "path": "crates/kobo-policy/src/services.rs",
+          "base_blob": "e5b8617ac601332dd9b5d39c8e6ea83d613e171b",
+          "compatible_blob": "0a8dbe4c00ff5b6e03555090f0f00ca6e86fea0e"
+        },
+        {
+          "path": "crates/kobo-policy/src/tasks.rs",
+          "base_blob": "7e4448442a00d0315f9bf91d50be3eb41b707d5d",
+          "compatible_blob": "26dc68731af02e65a9a5a28dd6b90d22b38155c3"
+        },
         {
           "path": "crates/kobo-protocol/src/lib.rs",
           "base_blob": "f34528d7b407e542a7836b0348b91de043822274",
-          "compatible_blob": "50e99c1933462675c1a9f1e368023c375775d10b"
+          "compatible_blob": "cf73d3402691def397b8933ef1f4a8de265eb073"
+        },
+        {
+          "path": "crates/kobo-sdk/Cargo.toml",
+          "base_blob": "950cc4ba03f0c5743b458820f411c39f5e19cad5",
+          "compatible_blob": "1e430f2f1912c1c327b17ec7a388b934c33c6d42"
         },
         {
           "path": "crates/kobo-sdk/src/lib.rs",
           "base_blob": "9a645f3f3d9c8746dda47d858bb3fcd744621df8",
-          "compatible_blob": "1ff0ec9725746213be19556b1c035de890878c34"
+          "compatible_blob": "b6cfb2f08e91df9e9c1d05bb15b79c2d3eb098a9"
+        },
+        {
+          "path": "crates/kobo-sdk/src/credentials.rs",
+          "base_blob": null,
+          "compatible_blob": "7e3fb1a3a490a5c45358056b729182b3b38dfda6"
+        },
+        {
+          "path": "crates/kobo-sdk/src/keyboard.rs",
+          "base_blob": "6a2ced13d30bbbed83e54fa949f8362563c944e4",
+          "compatible_blob": "3ee32641ffc26a83b739463e366e72ddec4a6ee4"
+        },
+        {
+          "path": "crates/kobo-sdk/src/terminal.rs",
+          "base_blob": "016d5792d4f0c3e1d173a0509b17d2fc3b6d0dc5",
+          "compatible_blob": "6b36d662ba4699617f6b9d08eea6018c6022d551"
+        },
+        {
+          "path": "crates/kobo-text/src/lib.rs",
+          "base_blob": "229e03073b19f78f623b2ab15d183fef86c9e48f",
+          "compatible_blob": "c645479d92d9bdcc7e07a38f2e8fca591fc9cf57"
+        },
+        {
+          "path": "crates/kobo-ui/Cargo.toml",
+          "base_blob": "5ffc679b17b75bcdd7008e33569800c4bce5d979",
+          "compatible_blob": "94a904d6db2500ac354997940d20a918828523af"
         },
         {
           "path": "crates/kobo-ui/src/lib.rs",
-          "base_blob": "ce538c70b5779ee482e2b35aa83191eb06b04b4d",
-          "compatible_blob": "d6c79d5ee6e3d574b3768da3721e865688e7f657"
+          "base_blob": "b423c372440c61e785db9dd0128eac22343cb9f8",
+          "compatible_blob": "ee731d6d51abb75f980d2ccd84c4857661d06a39"
+        },
+        {
+          "path": "crates/kobo-ui/src/vector.rs",
+          "base_blob": "175f5ce49495c5f7b6bc1d165b015ae6c8143a9e",
+          "compatible_blob": "39352cd2f53c5441e1e4e1dd7f25d61f72c35acf"
+        },
+        {
+          "path": "crates/kobo-ui/src/vector/tabler.rs",
+          "base_blob": "d99cd423e7194329ddd7e4cbe3e67fa659a2705c",
+          "compatible_blob": "df9d9a3ba43900e91dd20d8a9185f2ab0cbc7562"
+        },
+        {
+          "path": "crates/kobod/src/app_store.rs",
+          "base_blob": "6e7caa312042f6927fc3da3b0cc71cf69d5be205",
+          "compatible_blob": "c353a9ae1e9b0b789a87ca88e853300a734077b7"
+        },
+        {
+          "path": "tools/icon-import/icons.txt",
+          "base_blob": "1396adcae5448f9bc9a58911c8b459a89e36c248",
+          "compatible_blob": "080090797724babdcfa42b97d20738f999755f8a"
+        },
+        {
+          "path": "examples/gutenbird/Cargo.toml",
+          "base_blob": "e0357de3f847e95cc5ecdc9bfd4f99fddf453374",
+          "compatible_blob": "abeddb5f99c0d7d8fa5f8f89cf2d56909f38a860"
+        },
+        {
+          "path": "examples/gutenbird/src/main.rs",
+          "base_blob": "d6acdfb27453085121ccfbb5efa65a38ad0cc196",
+          "compatible_blob": "7af71d574667ed54ad37b70e97a28eaba11084c3"
         }
       ]
     }

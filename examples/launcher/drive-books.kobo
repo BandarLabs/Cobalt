@@ -1,0 +1,5 @@
+# The Books tab must start the bundled application, not sit as a dead view.
+tap Books
+expect Starting
+expect Books
+shot launcher-starting-books

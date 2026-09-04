@@ -392,6 +392,10 @@ jobs:
               fi
             fi
           fi
+          node tools/check-app-versions.mjs --validate-packages \
+            --registry generated-app-registry.json \
+            --published-catalog published-app-catalog.json \
+            --packages "$packages"
           if [ "$packages" = "$all_packages" ]; then
             previous_run=
             previous_artifact=

@@ -1,9 +1,1 @@
-{
-  "id": "sudoku",
-  "display_name": "Sudoku",
-  "short_label": "Sudoku",
-  "summary": "Play touch-first Sudoku designed for an e-ink screen.",
-  "version": "1.0.7",
-  "glyph": "grid",
-  "capabilities": []
-}
+{"id":"sudoku","display_name":"Sudoku","short_label":"Sudoku","summary":"Play touch-first Sudoku designed for an e-ink screen.","version":"1.0.8","glyph":"grid","capabilities":[],"release_notes":"Rebuild for protocol 12 on Cobalt 0.3.5 after shared workspace changes."}

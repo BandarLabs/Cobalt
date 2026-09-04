@@ -1,0 +1,7 @@
+# On the simulator the card is empty; the device lists real files and
+# the stock Kobo library. This script is the empty-shelf path.
+expect Books
+expect No books yet
+expect-missing The Open Sea
+shot books-empty
+dump

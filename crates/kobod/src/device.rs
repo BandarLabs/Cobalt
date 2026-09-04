@@ -60,7 +60,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 const COBALT_ROOT: &str = "/mnt/onboard/.adds/cobalt";
-/// Where named credentials live.
+/// Where owner-managed global and app-scoped credentials live.
 ///
 /// On the book partition, because that is the one place the owner can reach
 /// over USB without a shell, and because `/tmp` is a RAM disk that every
@@ -1071,6 +1071,8 @@ struct Hosted {
     /// Identity that survives the list being reordered. An index would not:
     /// applications are removed from the middle when they end.
     id: u64,
+    /// Selected at Hello and retained for responses to this application.
+    version: u8,
     name: String,
     path: PathBuf,
     /// Root-owned filesystem visible to this application on the device.
@@ -1250,6 +1252,7 @@ impl Hosted {
         kobo_protocol::write_to(
             &mut self.stream,
             &Frame {
+                version: self.version,
                 request_id: 0,
                 message,
             },
@@ -1339,6 +1342,7 @@ fn host_applications(
             None
         }
     };
+    backends.push(Capability::Library);
     let audio_fetcher: kobo_hal::audio::StreamFetcher = Arc::new(|url, offset, max_bytes| {
         kobo_net::fetch_from(url, offset, max_bytes, None, &[]).map_err(|error| match error {
             // A reader with no route and a service that will not answer are
@@ -1823,8 +1827,10 @@ fn host_applications(
                             .is_some_and(|(at, _, _)| at.elapsed() >= HOLD_TIME),
                         _ => false,
                     };
+                    let version = apps[index].version;
                     let disposition = deliver_touch(
                         &mut apps[index].stream,
+                        version,
                         event,
                         screen.as_ref(),
                         &chrome,
@@ -2425,6 +2431,19 @@ fn host_applications(
                                             }
                                         }
                                     }
+                                    kobo_protocol::DeviceRequest::SetSecret { name, value } => {
+                                        match kobo_policy::credentials::install_app_secret(
+                                            Path::new(SECRETS),
+                                            &apps[index].name,
+                                            name,
+                                            value.as_str(),
+                                        ) {
+                                            Ok(()) => kobo_protocol::DeviceResult::Done,
+                                            Err(error) => {
+                                                kobo_protocol::DeviceResult::Failed(error)
+                                            }
+                                        }
+                                    }
                                     // Answered by probing the hardware again
                                     // rather than from anything cached, so
                                     // the screen built from it describes the
@@ -2635,6 +2654,7 @@ fn reply(app: &mut Hosted, request_id: u32, message: Message) -> Result<(), Stri
     kobo_protocol::write_to(
         &mut app.stream,
         &Frame {
+            version: app.version,
             request_id,
             message,
         },
@@ -2748,6 +2768,9 @@ fn system_request_allowed(app: &str, request: &kobo_protocol::DeviceRequest) -> 
         | kobo_protocol::DeviceRequest::SetAutoUpdate { .. }
         | kobo_protocol::DeviceRequest::ReadUpdateChannel
         | kobo_protocol::DeviceRequest::SetUpdateChannel { .. } => app == "settings",
+        kobo_protocol::DeviceRequest::SetSecret { name, .. } => {
+            kobo_policy::credentials::may_set(app, name)
+        }
         kobo_protocol::DeviceRequest::ListInstalledApps => matches!(app, "launcher" | "store"),
         kobo_protocol::DeviceRequest::ReadAppCatalog
         | kobo_protocol::DeviceRequest::RefreshAppCatalog
@@ -3051,7 +3074,7 @@ fn start_application(
     let greeting = greet(&listener, whole_screen, &expected_name);
     drop(listener);
     let _ignored = fs::remove_file(&socket_path);
-    let (stream, name) = match greeting {
+    let (stream, name, version) = match greeting {
         Ok(greeting) => greeting,
         Err(error) => {
             stop_application(&mut child, jail.as_deref());
@@ -3064,7 +3087,7 @@ fn start_application(
     };
     let id = *next_id;
     *next_id += 1;
-    if let Err(error) = pump_application(&stream, sender, id) {
+    if let Err(error) = pump_application(&stream, sender, id, version) {
         stop_application(&mut child, jail.as_deref());
         let error = with_trace_failure(error, &child);
         if let Some(root) = &jail {
@@ -3075,12 +3098,22 @@ fn start_application(
     let waker = sender.clone();
     let credential_app = name.clone();
     let tasks = TaskRunner::simulated(std::env::temp_dir())
-        .with_fetch(Arc::new(kobo_net::fetch_from))
-        .with_post(Arc::new(kobo_net::post))
-        .with_secrets(SECRETS)
-        .with_credential_policy(Arc::new(move |credential, url, usage| {
-            kobo_policy::credentials::allowed(&credential_app, credential, url, usage)
-        }))
+        .with_fetch(Arc::new(kobo_net::fetch_from_controlled))
+        .with_post(Arc::new(kobo_net::post_controlled))
+        .with_line_streams(Arc::new(kobo_net::LineStreams::default()))
+        .with_app_secrets(SECRETS, &name)
+        .with_credential_policy(Arc::new(
+            move |credential, url, usage, body, content_type| {
+                kobo_policy::credentials::allowed_request(
+                    &credential_app,
+                    credential,
+                    url,
+                    usage,
+                    body,
+                    content_type,
+                )
+            },
+        ))
         .with_wake(Arc::new(move || {
             let _ = waker.send(Event::TaskReady);
         }))
@@ -3118,6 +3151,7 @@ fn start_application(
         store: kobo_policy::store::Store::new(Path::new(STATE_ROOT).join(&name)),
         shelf: kobo_policy::shelf::Shelf::new(shelf_root),
         name,
+        version,
         path: path.to_path_buf(),
         jail,
         child,
@@ -3305,7 +3339,10 @@ fn installed_name(path: &Path) -> Result<String, String> {
 /// Half a second, which is what every touch platform settled on: shorter and
 /// an unhurried tap becomes a gesture nobody asked for, longer and the reader
 /// concludes the panel is ignoring them and lifts off.
-const HOLD_TIME: Duration = Duration::from_millis(500);
+/// Long enough to distinguish a deliberate contextual hold from the immediate
+/// tap that opens a destination, while remaining inside the observed 1–1.5 s
+/// reader comfort range.
+const HOLD_TIME: Duration = Duration::from_millis(1_100);
 
 /// Briefly holds a release so an application's next screen can carry it.
 ///
@@ -3502,11 +3539,11 @@ fn text_hold_for_oriented(
         return None;
     };
     let screen = screen?;
-    let action = screen.hold?;
     let (Ok(x), Ok(y)) = (i32::try_from(x), i32::try_from(y)) else {
         return None;
     };
     let layout = screen.layout_with(&metrics_for(screen).oriented(orientation), chrome);
+    let action = layout.hold?;
     layout.hit_text(x, y).map(|hit| (action, hit))
 }
 
@@ -3530,7 +3567,7 @@ fn greet(
     listener: &std::os::unix::net::UnixListener,
     whole_screen: Rect,
     expected_name: &str,
-) -> Result<(std::os::unix::net::UnixStream, String), String> {
+) -> Result<(std::os::unix::net::UnixStream, String, u8), String> {
     let (mut stream, _) = listener
         .accept()
         .map_err(|error| format!("application never connected: {error}"))?;
@@ -3547,6 +3584,7 @@ fn greet(
     kobo_protocol::write_to(
         &mut stream,
         &Frame {
+            version: hello.version,
             request_id: hello.request_id,
             message: Message::Welcome {
                 width: u16::try_from(whole_screen.width).unwrap_or(u16::MAX),
@@ -3561,7 +3599,7 @@ fn greet(
         },
     )
     .map_err(|error| format!("welcome: {error}"))?;
-    Ok((stream, name))
+    Ok((stream, name, hello.version))
 }
 
 /// Keeps the recovery watchdog fed from a thread, for the stretches where the
@@ -3618,8 +3656,13 @@ enum Tap {
 /// inside an application goes back to where it was reached from rather than
 /// out of the application. That is a delivery, not a transfer of ownership:
 /// the caller still leaves if no new screen follows.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "touch delivery needs the negotiated protocol, retained screen, and physical pose"
+)]
 fn deliver_touch(
     stream: &mut std::os::unix::net::UnixStream,
+    version: u8,
     event: TouchEvent,
     current: Option<&Screen>,
     chrome: &Chrome,
@@ -3654,6 +3697,7 @@ fn deliver_touch(
         kobo_protocol::write_to(
             stream,
             &Frame {
+                version,
                 request_id: 0,
                 message: Message::TextHold {
                     action,
@@ -3678,6 +3722,7 @@ fn deliver_touch(
     kobo_protocol::write_to(
         stream,
         &Frame {
+            version,
             request_id: 0,
             message: Message::Action { action },
         },
@@ -3983,6 +4028,7 @@ fn pump_application(
     stream: &std::os::unix::net::UnixStream,
     sender: &Sender<Event>,
     id: u64,
+    version: u8,
 ) -> Result<(), String> {
     let mut reader = stream
         .try_clone()
@@ -3993,6 +4039,10 @@ fn pump_application(
             let _ignored = sender.send(Event::AppGone(id));
             return;
         };
+        if frame.version != version {
+            let _ignored = sender.send(Event::AppGone(id));
+            return;
+        }
         if sender.send(Event::App(id, Box::new(frame))).is_err() {
             return;
         }
@@ -4002,6 +4052,353 @@ fn pump_application(
 
 #[cfg(test)]
 mod tests {
+    use kobo_policy::{Capability, TaskRunner};
+    use kobo_protocol::{
+        Credential, CredentialUse, Frame, Header, Message, Task, TaskId, TaskOutcome,
+    };
+    use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
+    use rustls::{ServerConfig, ServerConnection, StreamOwned};
+    use std::io::{Read, Write};
+    use std::net::{TcpListener, TcpStream};
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{mpsc, Arc, Once};
+    use std::thread;
+    use std::time::Duration;
+
+    const MOCK_CA: &[u8] = include_bytes!("../../kobo-net/tests/fixtures/localhost-ca.der");
+    const MOCK_CERTIFICATE: &[u8] =
+        include_bytes!("../../kobo-net/tests/fixtures/localhost-cert.der");
+    const MOCK_PRIVATE_KEY: &[u8] =
+        include_bytes!("../../kobo-net/tests/fixtures/localhost-key.der");
+    const SEEK_BODY: &str = "rated=true&time=10&increment=0&variant=standard&color=random";
+    const FORM: &str = "application/x-www-form-urlencoded";
+
+    fn trust_mock_root() {
+        static TRUST: Once = Once::new();
+        TRUST.call_once(|| {
+            kobo_net::trust_owner_root(MOCK_CA.to_vec()).expect("install mock root");
+        });
+    }
+
+    fn mock_server_config() -> Arc<ServerConfig> {
+        let certificate = CertificateDer::from(MOCK_CERTIFICATE.to_vec());
+        let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(MOCK_PRIVATE_KEY.to_vec()));
+        Arc::new(
+            ServerConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
+                .with_safe_default_protocol_versions()
+                .expect("protocol versions")
+                .with_no_client_auth()
+                .with_single_cert(vec![certificate], key)
+                .expect("mock certificate"),
+        )
+    }
+
+    fn accept_mock(
+        listener: &TcpListener,
+        config: Arc<ServerConfig>,
+    ) -> (StreamOwned<ServerConnection, TcpStream>, Vec<u8>) {
+        let (socket, _) = listener.accept().expect("accept mock client");
+        socket
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .expect("read timeout");
+        let connection = ServerConnection::new(config).expect("server connection");
+        let mut stream = StreamOwned::new(connection, socket);
+        let mut request = Vec::new();
+        let mut buffer = [0_u8; 2048];
+        loop {
+            let read = stream.read(&mut buffer).expect("read request");
+            assert!(read > 0, "client closed before request");
+            request.extend_from_slice(&buffer[..read]);
+            assert!(request.len() < 32 * 1024, "oversized test request");
+            let Some(head_end) = request
+                .windows(4)
+                .position(|window| window == b"\r\n\r\n")
+                .map(|position| position + 4)
+            else {
+                continue;
+            };
+            let head = std::str::from_utf8(&request[..head_end]).expect("request head");
+            let content_length = head
+                .split("\r\n")
+                .find_map(|line| {
+                    line.strip_prefix("Content-Length: ")
+                        .and_then(|value| value.parse::<usize>().ok())
+                })
+                .unwrap_or(0);
+            if request.len() >= head_end + content_length {
+                return (stream, request);
+            }
+        }
+    }
+
+    fn has_header(request: &[u8], prefix: &str) -> bool {
+        std::str::from_utf8(request)
+            .is_ok_and(|request| request.split("\r\n").any(|line| line.starts_with(prefix)))
+    }
+
+    fn request_body(request: &[u8]) -> &[u8] {
+        let start = request
+            .windows(4)
+            .position(|window| window == b"\r\n\r\n")
+            .expect("request separator")
+            + 4;
+        &request[start..]
+    }
+
+    fn test_root(name: &str) -> PathBuf {
+        let target = std::env::var_os("CARGO_TARGET_DIR").map_or_else(
+            || {
+                std::env::current_dir()
+                    .expect("current directory")
+                    .join("target")
+            },
+            PathBuf::from,
+        );
+        target
+            .join("kobod-test-state")
+            .join(format!("{name}-{}", std::process::id()))
+    }
+
+    fn through_protocol_11(task: TaskId, work: Task) -> (TaskId, Task) {
+        let mut encoded = Vec::new();
+        kobo_protocol::write_to(
+            &mut encoded,
+            &Frame {
+                version: kobo_protocol::LEGACY_VERSION,
+                request_id: task.0,
+                message: Message::Spawn { task, work },
+            },
+        )
+        .expect("encode protocol-11 task");
+        let decoded =
+            kobo_protocol::read_from(&mut std::io::Cursor::new(encoded)).expect("decode task");
+        assert_eq!(decoded.version, kobo_protocol::LEGACY_VERSION);
+        assert_eq!(decoded.request_id, task.0);
+        match decoded.message {
+            Message::Spawn { task, work } => (task, work),
+            other => panic!("decoded the wrong message: {other:?}"),
+        }
+    }
+
+    fn stream_work(url: &str, action: &str) -> Task {
+        Task::Fetch {
+            url: url.to_owned(),
+            offset: 0,
+            max_bytes: 128 * 1024,
+            credential: Some(Credential::bearer("lichess")),
+            headers: vec![
+                Header::new("Accept", "application/x-ndjson"),
+                Header::new("X-Cobalt-Line-Stream", action),
+                Header::new("X-Cobalt-Rate-Limit", "1"),
+            ],
+        }
+    }
+
+    struct EventMock {
+        url: String,
+        release: mpsc::Sender<()>,
+        server: thread::JoinHandle<()>,
+    }
+
+    fn start_event_mock(config: Arc<ServerConfig>) -> EventMock {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind event mock");
+        let port = listener.local_addr().expect("event address").port();
+        let (release, wait) = mpsc::channel();
+        let server = thread::spawn(move || {
+            let (mut stream, request) = accept_mock(&listener, config);
+            assert!(request.starts_with(b"GET /api/stream/event HTTP/1.1\r\n"));
+            assert!(has_header(&request, "Authorization: Bearer "));
+            assert!(has_header(&request, "Accept: application/x-ndjson"));
+            assert!(!has_header(&request, "X-Cobalt-"));
+            stream
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\nTransfer-Encoding: chunked\r\nConnection: keep-alive\r\n\r\n",
+                )
+                .expect("event response head");
+            stream.write_all(b"1\r\n\n\r\n").expect("event keepalive");
+            let event = br#"{"type":"gameStart","game":{"id":"abcdEF12"}}"#;
+            write!(stream, "{:x}\r\n", event.len() + 1).expect("event chunk size");
+            stream.write_all(event).expect("event record");
+            stream.write_all(b"\n\r\n").expect("event frame");
+            stream.flush().expect("flush event");
+            let _ = wait.recv_timeout(Duration::from_secs(5));
+        });
+        EventMock {
+            url: format!("https://localhost:{port}/api/stream/event"),
+            release,
+            server,
+        }
+    }
+
+    struct SeekMock {
+        url: String,
+        requests: Arc<AtomicUsize>,
+        started: mpsc::Receiver<()>,
+        release: mpsc::Sender<()>,
+        server: thread::JoinHandle<()>,
+    }
+
+    fn start_seek_mock(config: Arc<ServerConfig>) -> SeekMock {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind seek mock");
+        let port = listener.local_addr().expect("seek address").port();
+        let requests = Arc::new(AtomicUsize::new(0));
+        let observed_requests = Arc::clone(&requests);
+        let (report_start, started) = mpsc::channel();
+        let (release, wait) = mpsc::channel();
+        let server = thread::spawn(move || {
+            let (mut stream, request) = accept_mock(&listener, config);
+            observed_requests.fetch_add(1, Ordering::SeqCst);
+            assert!(request.starts_with(b"POST /api/board/seek HTTP/1.1\r\n"));
+            assert!(has_header(
+                &request,
+                "Content-Type: application/x-www-form-urlencoded"
+            ));
+            assert!(has_header(&request, "Authorization: Bearer "));
+            assert!(!has_header(&request, "X-Cobalt-"));
+            assert_eq!(request_body(&request), SEEK_BODY.as_bytes());
+            stream
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\nTransfer-Encoding: chunked\r\nConnection: keep-alive\r\n\r\n1\r\n\n\r\n",
+                )
+                .expect("seek response");
+            stream.flush().expect("flush seek response");
+            report_start.send(()).expect("report seek");
+            let _ = wait.recv_timeout(Duration::from_secs(5));
+        });
+        SeekMock {
+            url: format!("https://localhost:{port}/api/board/seek"),
+            requests,
+            started,
+            release,
+            server,
+        }
+    }
+
+    fn assert_outcome(runner: &mut TaskRunner, task: TaskId, expected: &TaskOutcome) {
+        let finished = runner
+            .wait(Duration::from_secs(5))
+            .unwrap_or_else(|| panic!("task {} did not finish", task.0));
+        assert_eq!(finished.task, task);
+        assert_eq!(&finished.outcome, expected);
+    }
+
+    #[test]
+    fn an_application_cannot_change_protocol_version_after_greeting() {
+        let (runtime, mut application) =
+            std::os::unix::net::UnixStream::pair().expect("socket pair");
+        let (sender, receiver) = std::sync::mpsc::channel();
+        super::pump_application(&runtime, &sender, 42, kobo_protocol::VERSION)
+            .expect("start application pump");
+        kobo_protocol::write_to(
+            &mut application,
+            &kobo_protocol::Frame {
+                version: kobo_protocol::LEGACY_VERSION,
+                request_id: 1,
+                message: kobo_protocol::Message::Exit,
+            },
+        )
+        .expect("send mixed-version frame");
+        assert!(matches!(
+            receiver
+                .recv_timeout(std::time::Duration::from_secs(1))
+                .expect("application rejection"),
+            super::Event::AppGone(42)
+        ));
+    }
+
+    #[test]
+    fn protocol_11_lichess_consumes_host_secret_for_stream_and_cancellable_seek() {
+        trust_mock_root();
+        let config = mock_server_config();
+        let event = start_event_mock(Arc::clone(&config));
+        let seek_mock = start_seek_mock(config);
+
+        let root = test_root("protocol-11-lichess");
+        let _ignored = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("test secret root");
+        std::fs::write(root.join("lichess"), "generated-test-credential").expect("test credential");
+        assert!(!root.join("apps/lichess/lichess").exists());
+        let allowed_event = event.url.clone();
+        let allowed_seek = seek_mock.url.clone();
+        let mut runner = TaskRunner::simulated(root.join("data"))
+            .with_fetch(Arc::new(kobo_net::fetch_from_controlled))
+            .with_post(Arc::new(kobo_net::post_controlled))
+            .with_line_streams(Arc::new(kobo_net::LineStreams::default()))
+            .with_app_secrets(&root, "lichess")
+            .with_credential_policy(Arc::new(
+                move |credential, url, usage, body, content_type| {
+                    credential == &Credential::bearer("lichess")
+                        && match usage {
+                            CredentialUse::Fetch => {
+                                url == allowed_event && body.is_none() && content_type.is_none()
+                            }
+                            CredentialUse::Post => {
+                                url == allowed_seek
+                                    && body == Some(SEEK_BODY)
+                                    && content_type == Some(FORM)
+                            }
+                        }
+                },
+            ))
+            .with_capabilities([Capability::Network]);
+
+        for (id, action, expected) in [
+            (TaskId(1), "open", TaskOutcome::Completed(Vec::new())),
+            (
+                TaskId(2),
+                "next",
+                TaskOutcome::Completed(
+                    br#"{"type":"gameStart","game":{"id":"abcdEF12"}}"#.to_vec(),
+                ),
+            ),
+        ] {
+            let (task, work) = through_protocol_11(id, stream_work(&event.url, action));
+            runner.submit(task, work).expect("submit stream task");
+            assert_outcome(&mut runner, task, &expected);
+        }
+
+        let seek = TaskId(3);
+        let (seek, work) = through_protocol_11(
+            seek,
+            Task::Post {
+                url: seek_mock.url.clone(),
+                body: SEEK_BODY.to_owned(),
+                content_type: FORM.to_owned(),
+                credential: Some(Credential::bearer("lichess")),
+                headers: vec![
+                    Header::new("X-Cobalt-Wait-Until-Cancelled", "1"),
+                    Header::new("X-Cobalt-Rate-Limit", "1"),
+                ],
+                max_bytes: 4096,
+            },
+        );
+        runner.submit(seek, work).expect("submit seek");
+        seek_mock
+            .started
+            .recv_timeout(Duration::from_secs(5))
+            .expect("seek reached mock");
+        runner.cancel(seek);
+        assert_outcome(&mut runner, seek, &TaskOutcome::Cancelled);
+        assert_eq!(
+            seek_mock.requests.load(Ordering::SeqCst),
+            1,
+            "the non-idempotent seek was replayed"
+        );
+
+        let close = TaskId(4);
+        let (close, work) = through_protocol_11(close, stream_work(&event.url, "close"));
+        runner.submit(close, work).expect("submit stream close");
+        assert_outcome(&mut runner, close, &TaskOutcome::Completed(Vec::new()));
+
+        seek_mock.release.send(()).expect("release seek mock");
+        event.release.send(()).expect("release event mock");
+        seek_mock.server.join().expect("seek mock");
+        event.server.join().expect("event mock");
+        drop(runner);
+        std::fs::remove_dir_all(root).expect("remove test state");
+    }
+
     /// `TZ` is read from the environment, which is process-global, so these
     /// are one test rather than several: two tests setting it at once would
     /// see each other's value.
@@ -4225,6 +4622,28 @@ mod tests {
             action_for(touch, Some(&no_hold), &chrome, true),
             Some(ActionId(12))
         );
+
+        let covered = screen.clone().with_overlay(kobo_ui::Overlay::modal(
+            kobo_ui::NodeId(9),
+            "Question",
+            Vec::new(),
+        ));
+        assert_eq!(
+            text_hold_for_oriented(
+                touch,
+                Some(&covered),
+                &chrome,
+                true,
+                kobo_ui::Orientation::Portrait,
+            ),
+            None,
+            "covered text received a hold through the modal"
+        );
+        assert_ne!(
+            action_for(touch, Some(&covered), &chrome, true),
+            Some(ActionId(13)),
+            "the modal leaked the page hold"
+        );
     }
 
     #[test]
@@ -4411,6 +4830,7 @@ mod tests {
         assert_eq!(
             deliver_touch(
                 &mut runtime,
+                kobo_protocol::VERSION,
                 tap,
                 Some(&screen),
                 &chrome,
@@ -4427,6 +4847,7 @@ mod tests {
         assert_eq!(
             deliver_touch(
                 &mut runtime,
+                kobo_protocol::VERSION,
                 tap,
                 Some(&owning),
                 &chrome,
@@ -4626,6 +5047,13 @@ mod hosting_tests {
             assert!(!super::system_request_allowed("todo", &request));
         }
 
+        let secret = DeviceRequest::SetSecret {
+            name: "zotero".to_owned(),
+            value: kobo_protocol::SecretValue::new("token"),
+        };
+        assert!(super::system_request_allowed("zotero-reader", &secret));
+        assert!(!super::system_request_allowed("todo", &secret));
+
         let install = DeviceRequest::InstallApp {
             id: "word-count".to_owned(),
         };
@@ -4651,6 +5079,62 @@ mod hosting_tests {
             assert!(!super::system_request_allowed("settings", &request));
             assert!(!super::system_request_allowed("todo", &request));
         }
+    }
+
+    #[test]
+    fn app_secret_installation_is_scoped_private_and_replaceable() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory =
+            std::env::temp_dir().join(format!("kobo-app-secret-{}", std::process::id()));
+        let _ignored = std::fs::remove_dir_all(&directory);
+        kobo_policy::credentials::install_app_secret(
+            &directory,
+            "zotero-reader",
+            "zotero",
+            "first",
+        )
+        .expect("install credential");
+        assert_eq!(
+            std::fs::read(directory.join("apps/zotero-reader/zotero")).expect("read credential"),
+            b"first"
+        );
+        assert_eq!(
+            std::fs::metadata(&directory)
+                .expect("secret directory")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o700
+        );
+        assert_eq!(
+            std::fs::metadata(directory.join("apps/zotero-reader/zotero"))
+                .expect("secret file")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+        kobo_policy::credentials::install_app_secret(
+            &directory,
+            "zotero-reader",
+            "zotero",
+            "second",
+        )
+        .expect("replace credential");
+        assert_eq!(
+            std::fs::read(directory.join("apps/zotero-reader/zotero")).expect("read replacement"),
+            b"second"
+        );
+        assert!(kobo_policy::credentials::install_app_secret(
+            &directory,
+            "zotero-reader",
+            "openai",
+            "not-authorized"
+        )
+        .is_err());
+        assert!(!directory.join("apps/zotero-reader/openai").exists());
+        let _ignored = std::fs::remove_dir_all(directory);
     }
 
     #[test]
