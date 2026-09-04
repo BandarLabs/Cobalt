@@ -144,6 +144,15 @@ const MANAGED_BUILTINS: &[BuiltinApp] = &[
 
 const SYSTEM_APPS: &[BuiltinApp] = &[
     BuiltinApp {
+        id: "books",
+        title: "Books",
+        label: "Books",
+        summary: "The documents already on this device.",
+        version: env!("CARGO_PKG_VERSION"),
+        glyph: Glyph::Book,
+        capabilities: &["library"],
+    },
+    BuiltinApp {
         id: "settings",
         title: "Settings",
         label: "Settings",

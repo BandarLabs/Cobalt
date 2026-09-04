@@ -48,6 +48,11 @@ struct Entry {
 /// Named because a navigation destination starts it by position, and a bare
 /// index in that code says nothing about which application it will run.
 const SETTINGS: usize = 0;
+/// Where Books sits in [`ENTRIES`].
+///
+/// The Books tab is a launch, not a view this application draws. A missing
+/// handler left the tab on the bar as a control that answered with nothing.
+const BOOKS: usize = 1;
 
 const ENTRIES: &[Entry] = &[
     Entry {
@@ -57,6 +62,14 @@ const ENTRIES: &[Entry] = &[
         summary: "Connect Wi-Fi, headphones, speakers and keyboards.",
         needs: "Changes the device's Wi-Fi and Bluetooth radios.",
         glyph: Glyph::Settings,
+    },
+    Entry {
+        name: "books",
+        title: "Books",
+        label: "Books",
+        summary: "The documents already on this device.",
+        needs: "Reads the books already on the card. It does not write.",
+        glyph: Glyph::Book,
     },
     Entry {
         name: "store",
@@ -340,6 +353,12 @@ impl KoboApp for Launcher {
             context.launch(ENTRIES[SETTINGS].name);
             return;
         }
+        if action == action_id("books") {
+            self.view = View::Starting(BOOKS);
+            self.show(context);
+            context.launch(ENTRIES[BOOKS].name);
+            return;
+        }
         if action == action_id("next") || action == action_id("previous") {
             let pages = self.pages(context).len();
             self.page = if action == action_id("next") {
@@ -420,7 +439,7 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::{opening, Launcher, View, ENTRIES};
+    use super::{opening, Launcher, View, BOOKS, ENTRIES};
     use kobo_sdk::{
         action_id, AppInfo, AppRunner, Command, DeviceRequest, DeviceResult, Glyph, Lifecycle,
     };
@@ -1017,5 +1036,23 @@ mod tests {
                 "the {tab} tab was not drawn"
             );
         }
+    }
+
+    #[test]
+    fn the_books_tab_starts_the_books_application() {
+        let mut runner = AppRunner::new(Launcher::default());
+        runner.start();
+        let commands = runner.action(action_id("books"));
+        assert!(
+            commands
+                .iter()
+                .any(|command| matches!(command, Command::Launch(name) if name == "books")),
+            "the Books tab did not start the books application: {commands:?}"
+        );
+        assert!(
+            matches!(runner.app().view, View::Starting(BOOKS)),
+            "the Books tab did not leave a starting screen"
+        );
+        assert_eq!(ENTRIES[BOOKS].name, "books");
     }
 }

@@ -593,6 +593,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "kobo-books"
+version = "0.3.5"
+dependencies = [
+ "kobo-bookview",
+ "kobo-doc",
+ "kobo-read",
+ "kobo-sdk",
+ "kobo-ui",
+]
+
+[[package]]
 name = "kobo-bookview"
 version = "0.3.5"
 dependencies = [

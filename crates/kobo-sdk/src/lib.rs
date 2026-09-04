@@ -18,7 +18,8 @@ pub use kobo_protocol::{
 };
 pub use kobo_ui::QuoteRole;
 pub use kobo_ui::{
-    terminal_grid, terminal_grid_for, typographic_cover, ActionId, BandAlign, BandSlot,
+    document_preview, stamp_format_badge, terminal_grid, terminal_grid_for, typographic_cover,
+    ActionId, BandAlign, BandSlot,
     BannerLevel, BarAction, BarStyle, BottomAction, Caret, Cell, Chip, Chrome, ControlState,
     DiagnosticSeverity, DisplayMetrics, Emphasis, Fold, FontHandle, Freeform, Glyph, InlineFormula,
     LayoutIssue, LayoutIssueKind, NavBar, Node, NodeId, Orientation, Overlay, OverlayKind,

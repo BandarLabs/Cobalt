@@ -1,0 +1,15 @@
+# Bundled Books: shelf, then the shared reader for an EPUB.
+# The simulator draws no runtime Back, so Markdown is driven from a
+# fresh start in drive-markdown.kobo rather than after a tap Back.
+expect Books
+expect The Open Sea
+expect Notes on a Rainy
+expect Timetable
+expect-missing epub
+expect-missing md
+shot books-shelf
+tap The Open Sea
+wait-for harbour
+expect The tide was already turning
+shot books-epub
+dump

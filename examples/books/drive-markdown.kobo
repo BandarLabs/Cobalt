@@ -1,0 +1,9 @@
+# Same shelf, same tap path: Markdown opens the shared reader.
+expect Books
+expect Notes on a Rainy
+expect-missing md
+tap Notes on a Rainy
+wait-for kettle
+expect The rain started
+shot books-markdown
+dump

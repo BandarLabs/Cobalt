@@ -41,6 +41,7 @@ members = [
     "examples/gutenbird",
     "examples/hello",
     "examples/hn",
+    "examples/books",
     "examples/launcher",
     "examples/magnet",
     "examples/settings",

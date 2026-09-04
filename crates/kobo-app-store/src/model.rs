@@ -28,7 +28,7 @@ const ENTRY_FIELDS: [&str; 4] = ["manifest", "package_url", "package_sha256", "p
 const MAX_CAPABILITY_NAME_BYTES: usize = 32;
 
 static PUBLIC_RESERVED_APP_IDS: &[&str] = &[
-    "cobalt", "kobod", "launcher", "settings", "store", "terminal",
+    "books", "cobalt", "kobod", "launcher", "settings", "store", "terminal",
 ];
 
 /// Platform-owned application identifiers that public packages may not use.
@@ -1017,7 +1017,9 @@ mod tests {
             Err(FormatError::ReservedAppId("private".to_owned()))
         );
         assert!(is_public_reserved_app_id("launcher"));
+        assert!(is_public_reserved_app_id("books"));
         assert!(Manifest::new_public(input("launcher", b"x")).is_err());
+        assert!(Manifest::new_public(input("books", b"x")).is_err());
     }
 
     #[test]

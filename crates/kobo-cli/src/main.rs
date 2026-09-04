@@ -56,6 +56,7 @@ const INSTALLED_PACKAGES: &[(&str, Option<&str>)] = &[
     ("kobo-hn", None),
     ("kobo-rss", None),
     ("kobo-settings", None),
+    ("kobo-books", None),
     ("kobo-sidekick", None),
     ("kobo-store", None),
 ];

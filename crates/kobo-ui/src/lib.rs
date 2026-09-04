@@ -9961,6 +9961,153 @@ pub fn typographic_cover(title: &str, author: Option<&str>, width: u32, height: 
     surface.pixels
 }
 
+/// A boxed page of a document's first lines, with the format named inside
+/// the frame at the trailing foot.
+///
+/// This is the cover a shelf draws when the document has no artwork: the
+/// words themselves, not a generic glyph. A pale empty rectangle on this
+/// panel reads as a decoding fault; a framed first page reads as a book
+/// whose jacket was never printed.
+#[must_use]
+pub fn document_preview(text: &str, badge: &str, width: u32, height: u32) -> Vec<u8> {
+    let (Ok(pixel_width), Ok(pixel_height)) = (usize::try_from(width), usize::try_from(height))
+    else {
+        return Vec::new();
+    };
+    let mut surface = Surface::new(pixel_width, pixel_height);
+    let bounds = Rect {
+        x: 0,
+        y: 0,
+        width: i32::try_from(width).unwrap_or(i32::MAX),
+        height: i32::try_from(height).unwrap_or(i32::MAX),
+    };
+    surface.clear(tone::PAPER);
+    let rule = max(1, bounds.width / 100);
+    for edge in [
+        Rect {
+            width: bounds.width,
+            height: rule,
+            ..bounds
+        },
+        Rect {
+            y: bounds.height - rule,
+            height: rule,
+            ..bounds
+        },
+        Rect {
+            width: rule,
+            ..bounds
+        },
+        Rect {
+            x: bounds.width - rule,
+            width: rule,
+            ..bounds
+        },
+    ] {
+        surface.fill_rect(edge, tone::RULE);
+    }
+    let inset = max(rule * 3, bounds.width / 12);
+    let measure = bounds.width - inset * 2;
+    if measure <= 0 {
+        stamp_format_badge_on(&mut surface, badge);
+        return surface.pixels;
+    }
+    let chip = format_badge_size(badge);
+    let text_bottom = (bounds.height - inset - chip.1 - inset / 2).max(inset);
+    let line = FontSize::Caption.line_height_in(Face::Reading);
+    let room = ((text_bottom - inset) / line).max(1);
+    let room = usize::try_from(room).unwrap_or(1);
+    let mut lines = wrap_text_in(text, measure, FontSize::Caption, Face::Reading);
+    if lines.len() > room {
+        lines.truncate(room);
+        if let Some(last) = lines.last_mut() {
+            *last = one_line(&format!("{last}…"), measure, FontSize::Caption);
+        }
+    }
+    draw_lines_in(
+        &mut surface,
+        &lines,
+        inset,
+        inset,
+        FontSize::Caption,
+        Face::Reading,
+        tone::INK,
+        bounds,
+    );
+    stamp_format_badge_on(&mut surface, badge);
+    surface.pixels
+}
+
+/// Paints a format chip in the trailing foot of an existing cover.
+///
+/// The chip lives inside the picture so a shelf does not grow a second
+/// chrome for "this is a PDF". Empty or oversized badges are ignored.
+pub fn stamp_format_badge(pixels: &mut [u8], width: u32, height: u32, badge: &str) {
+    let Ok(pixel_width) = usize::try_from(width) else {
+        return;
+    };
+    let Ok(pixel_height) = usize::try_from(height) else {
+        return;
+    };
+    if pixels.len() != pixel_width.saturating_mul(pixel_height) {
+        return;
+    }
+    let mut surface = Surface {
+        width: pixel_width,
+        height: pixel_height,
+        pixels: pixels.to_vec(),
+    };
+    stamp_format_badge_on(&mut surface, badge);
+    pixels.copy_from_slice(&surface.pixels);
+}
+
+fn format_badge_size(badge: &str) -> (i32, i32) {
+    let label: String = badge.chars().take(TILE_BADGE_LIMIT).collect();
+    let text = measure_text_in(&label, FontSize::Caption, Face::Text);
+    let pad = FontSize::Caption.line_height() / 4;
+    (
+        (text.0 + pad * 2).max(FontSize::Caption.line_height()),
+        text.1 + pad,
+    )
+}
+
+fn stamp_format_badge_on(surface: &mut Surface, badge: &str) {
+    let label: String = badge
+        .chars()
+        .take(TILE_BADGE_LIMIT)
+        .collect::<String>()
+        .to_ascii_lowercase();
+    if label.is_empty() {
+        return;
+    }
+    let bounds = Rect {
+        x: 0,
+        y: 0,
+        width: i32::try_from(surface.width).unwrap_or(i32::MAX),
+        height: i32::try_from(surface.height).unwrap_or(i32::MAX),
+    };
+    let (chip_width, chip_height) = format_badge_size(&label);
+    let inset = max(2, bounds.width / 24);
+    let rect = Rect {
+        x: bounds.width - inset - chip_width,
+        y: bounds.height - inset - chip_height,
+        width: chip_width,
+        height: chip_height,
+    };
+    surface.fill_rect(rect, tone::INK);
+    let pad = FontSize::Caption.line_height() / 4;
+    draw_text_in(
+        surface,
+        &label,
+        rect.x + pad,
+        rect.y + pad / 2,
+        FontSize::Caption,
+        Face::Text,
+        tone::PAPER,
+        bounds,
+    );
+}
+
 /// The height a [`Node::Section`] header occupies, lead and trail included.
 ///
 /// Public because pagination happens in the application, one layer above the
@@ -19756,6 +19903,36 @@ mod prose_tests {
             badge.text_lines[0].chars().count(),
             TILE_BADGE_LIMIT,
             "a badge was allowed to grow into a label"
+        );
+    }
+
+    #[test]
+    fn a_document_preview_is_a_page_of_lines_with_a_format_chip() {
+        let width = 180;
+        let height = 280;
+        let grey = document_preview(
+            "The rain started before the kettle boiled.\nI left the window open.",
+            "md",
+            width,
+            height,
+        );
+        assert_eq!(grey.len(), (width * height) as usize);
+        assert!(
+            grey.iter().any(|pixel| *pixel == tone::INK),
+            "the first lines left no ink on the page"
+        );
+        let w = width as usize;
+        let h = height as usize;
+        let foot = &grey[(h - 24) * w..];
+        assert!(
+            foot.iter().any(|pixel| *pixel == tone::INK),
+            "the format chip was not drawn in the trailing foot"
+        );
+        let with_lines = document_preview("A line of prose that should appear.", "md", width, height);
+        let no_lines = document_preview("", "md", width, height);
+        assert_ne!(
+            with_lines, no_lines,
+            "a preview without lines was indistinguishable from one with them"
         );
     }
 
