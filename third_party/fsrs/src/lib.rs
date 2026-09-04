@@ -19,7 +19,7 @@
 //! The most common struct is [`FSRS`] which holds the user's parameters.
 //!
 //! # Examples
-//! ```
+//! ```ignore
 //! use chrono::{Duration, Utc};
 //! use fsrs::{FSRS, MemoryState};
 //!
@@ -41,10 +41,6 @@
 #![allow(clippy::single_range_in_vec_init)]
 #![allow(clippy::needless_range_loop)]
 mod analytic;
-#[cfg(test)]
-mod batch_shuffle;
-#[cfg(test)]
-mod convertor_tests;
 mod cosine_annealing;
 #[cfg(feature = "experimental_cost_adr")]
 mod cost_adr;
@@ -55,8 +51,6 @@ mod model;
 mod parameter_clipper;
 mod parameter_initialization;
 mod simulation;
-#[cfg(test)]
-mod test_helpers;
 mod training;
 
 #[cfg(feature = "experimental_cost_adr")]

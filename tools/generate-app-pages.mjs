@@ -34,6 +34,7 @@ const screenshots = {
   backgammon: ["backgammon.png", "A grayscale Backgammon board with legal move markers on a Kobo"],
   brief: ["brief.png", "A numbered daily news brief on a Kobo"],
   chat: ["chat.png", "An answer displayed for touch-friendly reading on a Kobo"],
+  flashcards: ["flashcards.png", "Flashcards deck list showing four due cards, today's review count, and a Stats row."],
   gallery: ["components.png", "Cobalt typography and interface components on a Kobo"],
   gutenbird: ["gutenbird.png", "A shelf of books from an OPDS library on a Kobo"],
   hn: ["hackernews.png", "A ranked list of Hacker News stories on a Kobo"],
