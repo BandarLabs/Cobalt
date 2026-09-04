@@ -73,7 +73,7 @@
       "display_name": "Components",
       "short_label": "Components",
       "summary": "See every Cobalt UI component on the device in one reference app.",
-      "version": "1.0.6",
+      "version": "1.0.7",
       "minimum_cobalt_version": "0.3.5",
       "glyph": "chart",
       "capabilities": [
@@ -235,7 +235,7 @@
       "display_name": "Zotero Reader",
       "short_label": "Zotero",
       "summary": "Browse Zotero collections, read metadata and indexed paper text, and keep papers available offline.",
-      "version": "1.0.2",
+      "version": "1.0.3",
       "minimum_cobalt_version": "0.3.5",
       "glyph": "book",
       "capabilities": [
