@@ -76,6 +76,7 @@ const STORE_PACKAGES: &[&str] = &[
     "kobo-sudoku",
     "kobo-tictactoe",
     "kobo-todo",
+    "kobo-paperterm",
     "kobo-zotero-reader",
 ];
 /// Proof that the daemon in the package can actually take the panel. The
