@@ -7,7 +7,7 @@
       "files": [
         {
           "path": "Cargo.lock",
-          "base_blob": "98e86504890e59da1755181ad38d7ffaa86c635a",
+          "base_blob": "0ddd4fc90b82c2de367775f2bbb8bc8fb17a4a4a",
           "compatible_blob": "70b193be15767acdeedd2cbc716ef318e44314f3"
         },
         {
@@ -47,7 +47,7 @@
         },
         {
           "path": "crates/kobo-policy/src/credentials.rs",
-          "base_blob": "229061a856c96fcfbecbd264f65107f0b9d5293c",
+          "base_blob": "8cfe06762b6a039c09c1991e9ad374f3dcbb50a3",
           "compatible_blob": "c0b6d3956e16a240147cea29bb525325535fe46a"
         },
         {
@@ -102,7 +102,7 @@
         },
         {
           "path": "crates/kobo-ui/src/lib.rs",
-          "base_blob": "b423c372440c61e785db9dd0128eac22343cb9f8",
+          "base_blob": "ce538c70b5779ee482e2b35aa83191eb06b04b4d",
           "compatible_blob": "8ae15c0c4ac8b7eadba44f06d2561edd0d143cd9"
         },
         {
@@ -114,6 +114,16 @@
           "path": "examples/gutenbird/src/main.rs",
           "base_blob": "d6acdfb27453085121ccfbb5efa65a38ad0cc196",
           "compatible_blob": "7af71d574667ed54ad37b70e97a28eaba11084c3"
+        },
+        {
+          "path": "crates/kobo-ui/src/vector.rs",
+          "base_blob": "175f5ce49495c5f7b6bc1d165b015ae6c8143a9e",
+          "compatible_blob": "39352cd2f53c5441e1e4e1dd7f25d61f72c35acf"
+        },
+        {
+          "path": "crates/kobo-ui/src/vector/tabler.rs",
+          "base_blob": "d99cd423e7194329ddd7e4cbe3e67fa659a2705c",
+          "compatible_blob": "df9d9a3ba43900e91dd20d8a9185f2ab0cbc7562"
         }
       ]
     },
@@ -123,7 +133,7 @@
       "files": [
         {
           "path": "Cargo.lock",
-          "base_blob": "98e86504890e59da1755181ad38d7ffaa86c635a",
+          "base_blob": "0ddd4fc90b82c2de367775f2bbb8bc8fb17a4a4a",
           "compatible_blob": "70b193be15767acdeedd2cbc716ef318e44314f3"
         },
         {
@@ -163,7 +173,7 @@
         },
         {
           "path": "crates/kobo-policy/src/credentials.rs",
-          "base_blob": "229061a856c96fcfbecbd264f65107f0b9d5293c",
+          "base_blob": "8cfe06762b6a039c09c1991e9ad374f3dcbb50a3",
           "compatible_blob": "c0b6d3956e16a240147cea29bb525325535fe46a"
         },
         {
@@ -218,7 +228,7 @@
         },
         {
           "path": "crates/kobo-ui/src/lib.rs",
-          "base_blob": "b423c372440c61e785db9dd0128eac22343cb9f8",
+          "base_blob": "ce538c70b5779ee482e2b35aa83191eb06b04b4d",
           "compatible_blob": "8ae15c0c4ac8b7eadba44f06d2561edd0d143cd9"
         },
         {
@@ -230,6 +240,16 @@
           "path": "examples/gutenbird/src/main.rs",
           "base_blob": "d6acdfb27453085121ccfbb5efa65a38ad0cc196",
           "compatible_blob": "7af71d574667ed54ad37b70e97a28eaba11084c3"
+        },
+        {
+          "path": "crates/kobo-ui/src/vector.rs",
+          "base_blob": "175f5ce49495c5f7b6bc1d165b015ae6c8143a9e",
+          "compatible_blob": "39352cd2f53c5441e1e4e1dd7f25d61f72c35acf"
+        },
+        {
+          "path": "crates/kobo-ui/src/vector/tabler.rs",
+          "base_blob": "d99cd423e7194329ddd7e4cbe3e67fa659a2705c",
+          "compatible_blob": "df9d9a3ba43900e91dd20d8a9185f2ab0cbc7562"
         }
       ]
     }

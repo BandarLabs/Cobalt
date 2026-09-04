@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { dirname, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { compatibilityPolicy } from "./app-registry.mjs";
+import { compatibilityPolicy, deriveMinimumCobalt } from "./app-registry.mjs";
 import {
   storeCatalogChanges,
   storeWatchDirectories,
@@ -38,6 +38,8 @@ const COMPATIBLE_RELEASE_PATHS = new Set([
   "crates/kobo-text/src/lib.rs",
   "crates/kobo-ui/Cargo.toml",
   "crates/kobo-ui/src/lib.rs",
+  "crates/kobo-ui/src/vector.rs",
+  "crates/kobo-ui/src/vector/tabler.rs",
   "examples/gutenbird/Cargo.toml",
   "examples/gutenbird/src/main.rs"
 ]);
@@ -73,8 +75,17 @@ function normalizedCapabilities(value, label) {
 
 function changedManifestFields(app, previous) {
   const changed = [];
-  for (const field of [...MANIFEST_FIELDS, "version"]) {
+  for (const field of [
+    ...MANIFEST_FIELDS.filter(field => field !== "minimum_cobalt_version"),
+    "version"
+  ]) {
     if (app[field] !== previous[field]) changed.push(field);
+  }
+  if (
+    app.minimum_cobalt_version !== previous.minimum_cobalt_version &&
+    app.minimum_cobalt_version !== deriveMinimumCobalt(app.capabilities)
+  ) {
+    changed.push("minimum_cobalt_version");
   }
   const currentCapabilities = normalizedCapabilities(app.capabilities, app.id);
   const previousCapabilities = normalizedCapabilities(previous.capabilities, app.id);
@@ -778,9 +789,10 @@ export function analyzeAppReleaseInputs(baseRevision, registry, strictUnknown = 
   }
 
   if (changedPaths.includes("Cargo.lock")) {
-    const lockChanges = changedLockPackageIdentities(
+    const lockChanges = releaseLockPackageIdentities(
       command("git", ["show", `${baseRevision}:Cargo.lock`]),
-      readFileSync(resolve(workspaceRoot, "Cargo.lock"), "utf8")
+      readFileSync(resolve(workspaceRoot, "Cargo.lock"), "utf8"),
+      compatiblePaths
     );
     for (const identity of lockChanges) changedIdentities.add(identity);
   }

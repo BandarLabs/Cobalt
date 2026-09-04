@@ -1,1 +1,1 @@
-{"id":"gallery","display_name":"Components","short_label":"Components","summary":"See every Cobalt UI component on the device in one reference app.","version":"1.0.6","glyph":"chart","capabilities":["network"]}
+{"id":"gallery","display_name":"Components","short_label":"Components","summary":"See every Cobalt UI component on the device in one reference app.","version":"1.0.7","glyph":"chart","capabilities":["network"],"release_notes":"Add Folio and ghosting component demonstrations."}

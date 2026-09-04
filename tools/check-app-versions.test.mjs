@@ -72,6 +72,12 @@ test("accepts an unchanged app at the published version", () => {
   assert.doesNotThrow(() => checkEntries(values.registry, values.published, new Set()));
 });
 
+test("does not release unchanged apps for a policy-derived minimum bump", () => {
+  const values = fixture();
+  values.registry.apps[0].minimum_cobalt_version = "0.3.5";
+  assert.doesNotThrow(() => checkEntries(values.registry, values.published, new Set()));
+});
+
 test("requires a version bump when code or a dependency changes", () => {
   const values = fixture();
   assert.throws(
