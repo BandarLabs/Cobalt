@@ -172,19 +172,11 @@ fn store_app_credential_allowed(
                 && credential.header == SecretHeader::Bearer
                 && parsed_path(url).is_some_and(|path| match usage {
                     CredentialUse::Fetch => {
-                        clean_path(&path).ends_with("/api/entries.json")
-                            && path.contains("detail=metadata")
+                        (clean_path(&path).ends_with("/api/entries.json")
+                            && path.contains("detail=metadata"))
+                            || wallabag_entry_document(&path)
                     }
-                    CredentialUse::Post => {
-                        let path = clean_path(&path);
-                        path.contains("/api/entries/")
-                            && path
-                                .strip_suffix(".json")
-                                .and_then(|prefix| prefix.rsplit('/').next())
-                                .is_some_and(|id| {
-                                    !id.is_empty() && id.bytes().all(|byte| byte.is_ascii_digit())
-                                })
-                    }
+                    CredentialUse::Post => wallabag_entry_document(&path),
                 })
         }
         "rss-miniflux" => {
@@ -203,6 +195,15 @@ fn store_app_credential_allowed(
         _ => return None,
     };
     Some(allowed)
+}
+
+fn wallabag_entry_document(path: &str) -> bool {
+    let path = clean_path(path);
+    path.contains("/api/entries/")
+        && path
+            .strip_suffix(".json")
+            .and_then(|prefix| prefix.rsplit('/').next())
+            .is_some_and(|id| !id.is_empty() && id.bytes().all(|byte| byte.is_ascii_digit()))
 }
 
 fn parsed_path(url: &str) -> Option<String> {
@@ -433,6 +434,12 @@ mod tests {
                 "readlater",
                 Credential::bearer("wallabag"),
                 "https://read.example/api/entries.json?detail=metadata&perPage=50&page=1&archive=0",
+                CredentialUse::Fetch,
+            ),
+            (
+                "readlater",
+                Credential::bearer("wallabag"),
+                "https://read.example/api/entries/7.json",
                 CredentialUse::Fetch,
             ),
             (

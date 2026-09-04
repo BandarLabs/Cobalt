@@ -1,0 +1,10 @@
+{
+  "id": 7,
+  "title": "Why the Borrow Checker Exists",
+  "url": "https://example.com/borrow-checker",
+  "domain_name": "example.com",
+  "reading_time": 4,
+  "is_archived": 0,
+  "is_starred": 0,
+  "content": "<p>Rust's borrow checker exists because ownership is not optional. Two writers on one value is a bug the compiler can name before it ships.</p><p>The queue of articles you meant to read is the same kind of problem: one place, one owner, and a later moment that actually finishes the work.</p>"
+}

@@ -20,7 +20,6 @@ pub fn queue_url(server: &str, depth: u16) -> String {
     )
 }
 
-#[cfg(test)]
 pub fn entry_url(server: &str, id: u64) -> String {
     format!("{}/api/entries/{id}.json", server.trim_end_matches('/'))
 }
@@ -50,6 +49,11 @@ pub fn parse_entries(bytes: &[u8]) -> Vec<Entry> {
     entries.iter().filter_map(parse_entry).collect()
 }
 
+pub fn parse_entry_document(bytes: &[u8]) -> Option<Entry> {
+    let value = kobo_json::parse(&String::from_utf8_lossy(bytes)).ok()?;
+    parse_entry(&value)
+}
+
 pub fn parse_entry(value: &Value) -> Option<Entry> {
     Some(Entry {
         id: u64::try_from(value.get("id")?.as_i64()?).ok()?,
@@ -62,11 +66,12 @@ pub fn parse_entry(value: &Value) -> Option<Entry> {
                 .unwrap_or(0),
         )
         .unwrap_or(0),
-        content: value
-            .get("content")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_owned(),
+        content: kobo_html::to_text(
+            value
+                .get("content")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+        ),
     })
 }
 
@@ -108,5 +113,28 @@ mod tests {
         let entries = parse_entries(br#"{"_embedded":{"items":[{"id":7,"title":"A piece","domain_name":"example.org","reading_time":4}]}}"#);
         assert_eq!(entries[0].title, "A piece");
         assert_eq!(entries[0].reading_time, 4);
+    }
+
+    #[test]
+    fn metadata_queue_omits_article_bodies() {
+        let entries = parse_entries(include_bytes!("../tests/fixtures/entries-metadata.json"));
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].title, "Why the Borrow Checker Exists");
+        assert_eq!(entries[0].site, "example.com");
+        assert_eq!(entries[1].title, "Paper Notes on Local-First Software");
+        assert!(entries.iter().all(|entry| entry.content.is_empty()));
+        assert_eq!(
+            entry_url("https://bag.example/", 7),
+            "https://bag.example/api/entries/7.json"
+        );
+    }
+
+    #[test]
+    fn entry_document_carries_extracted_html() {
+        let entry = parse_entry_document(include_bytes!("../tests/fixtures/entry-7.json"))
+            .expect("one Wallabag entry");
+        assert_eq!(entry.id, 7);
+        assert_eq!(entry.title, "Why the Borrow Checker Exists");
+        assert!(entry.content.contains("ownership is not optional"));
     }
 }

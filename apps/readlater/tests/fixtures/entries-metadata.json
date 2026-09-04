@@ -1,0 +1,28 @@
+{
+  "page": 1,
+  "limit": 50,
+  "pages": 1,
+  "total": 2,
+  "_embedded": {
+    "items": [
+      {
+        "id": 7,
+        "title": "Why the Borrow Checker Exists",
+        "url": "https://example.com/borrow-checker",
+        "domain_name": "example.com",
+        "reading_time": 4,
+        "is_archived": 0,
+        "is_starred": 0
+      },
+      {
+        "id": 8,
+        "title": "Paper Notes on Local-First Software",
+        "url": "https://example.org/local-first",
+        "domain_name": "example.org",
+        "reading_time": 6,
+        "is_archived": 0,
+        "is_starred": 1
+      }
+    ]
+  }
+}

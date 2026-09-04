@@ -22,6 +22,11 @@ enum Setting {
     Server,
     Credential,
 }
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PendingTask {
+    Queue,
+    Article(usize),
+}
 
 #[derive(Default)]
 struct ReadLater {
@@ -32,7 +37,7 @@ struct ReadLater {
     open: Option<usize>,
     view: Option<View>,
     pending: Vec<u64>,
-    task: Option<TaskId>,
+    task: Option<(TaskId, PendingTask)>,
     notice: Option<String>,
     keyboard: Keyboard,
     editing: Option<Setting>,
@@ -110,8 +115,10 @@ impl ReadLater {
             }
             View::Article => {
                 let entry = self.open.and_then(|i| self.entries.get(i));
+                let loading = matches!(self.task, Some((_, PendingTask::Article(_))));
                 match entry {
                     Some(e) if !e.content.is_empty() => ScreenBuilder::new("readlater").top_bar("Read Later").heading(&e.title).secondary(&e.site).text(&e.content).action_bar([("archive", "Archive"), ("star", "Star"), ("delete", "Delete")]).build(),
+                    Some(e) if loading => ScreenBuilder::new("readlater").top_bar("Read Later").heading(&e.title).secondary(&e.site).text("Loading article…").button("back", "Back").build(),
                     Some(e) => ScreenBuilder::new("readlater").top_bar("Read Later").heading(&e.title).text("Wallabag couldn't extract this one. Open the original URL in Wallabag.").action_bar([("archive", "Archive"), ("back", "Back")]).build(),
                     None => ScreenBuilder::new("readlater").top_bar("Read Later").splash(Some(Glyph::Bookmark), "Choose an article", "Open one from your reading list.").build(),
                 }
@@ -144,13 +151,34 @@ impl ReadLater {
             return;
         }
         self.notice = Some("Syncing newest articles…".to_owned());
-        self.task = context.spawn_retrying(Task::Fetch {
+        if let Some(id) = context.spawn_retrying(Task::Fetch {
             url: wallabag::queue_url(&self.server, self.depth.max(20)),
             offset: 0,
             max_bytes: 512 * 1024,
             credential: Some(Credential::bearer(&self.credential)),
             headers: Vec::new(),
-        });
+        }) {
+            self.task = Some((id, PendingTask::Queue));
+        }
+    }
+    fn open_article(&mut self, context: &mut Context, index: usize) {
+        self.open = Some(index);
+        self.view = Some(View::Article);
+        let Some(entry) = self.entries.get(index) else {
+            return;
+        };
+        if !entry.content.is_empty() || !self.ready() {
+            return;
+        }
+        if let Some(id) = context.spawn_retrying(Task::Fetch {
+            url: wallabag::entry_url(&self.server, entry.id),
+            offset: 0,
+            max_bytes: 512 * 1024,
+            credential: Some(Credential::bearer(&self.credential)),
+            headers: Vec::new(),
+        }) {
+            self.task = Some((id, PendingTask::Article(index)));
+        }
     }
     fn persist_actions(&self, context: &mut Context) {
         context.store().save(
@@ -260,27 +288,38 @@ impl KoboApp for ReadLater {
         } else if let Some(index) =
             (0..self.entries.len()).find(|i| action == action_id(&format!("entry-{i}")))
         {
-            self.open = Some(index);
-            self.view = Some(View::Article);
+            self.open_article(context, index);
         }
         self.show(context);
     }
     fn on_task(&mut self, context: &mut Context, task: TaskId, outcome: TaskOutcome) {
-        if self.task != Some(task) {
+        let Some((id, kind)) = self.task else {
+            return;
+        };
+        if id != task {
             return;
         }
         self.task = None;
-        match outcome {
-            TaskOutcome::Completed(bytes) => {
+        match (kind, outcome) {
+            (PendingTask::Queue, TaskOutcome::Completed(bytes)) => {
                 self.entries = wallabag::parse_entries(&bytes);
                 self.notice = Some(format!("Synced {} articles.", self.entries.len()));
             }
-            TaskOutcome::Failed(_) => {
+            (PendingTask::Article(index), TaskOutcome::Completed(bytes)) => {
+                if let Some(entry) = wallabag::parse_entry_document(&bytes) {
+                    if let Some(slot) = self.entries.get_mut(index) {
+                        if slot.id == entry.id {
+                            *slot = entry;
+                        }
+                    }
+                }
+            }
+            (_, TaskOutcome::Failed(_)) => {
                 self.notice = Some(
                     "Off the air. Cached articles remain readable; join Wi-Fi to sync.".to_owned(),
                 );
             }
-            TaskOutcome::Cancelled => self.notice = Some("Sync cancelled.".to_owned()),
+            (_, TaskOutcome::Cancelled) => self.notice = Some("Sync cancelled.".to_owned()),
         }
         self.show(context);
     }
@@ -314,6 +353,31 @@ mod tests {
             assert!(app.sync_rect().width >= CLARA_BW_METRICS.touch_target_minimum());
         }
     }
+    #[test]
+    fn article_screens_fit_the_clara_panel() {
+        let with_body = ScreenBuilder::new("readlater")
+            .top_bar("Read Later")
+            .heading("Why the Borrow Checker Exists")
+            .secondary("example.com")
+            .text("ownership is not optional")
+            .action_bar([("archive", "Archive"), ("star", "Star"), ("delete", "Delete")])
+            .build();
+        let loading = ScreenBuilder::new("readlater")
+            .top_bar("Read Later")
+            .heading("Why the Borrow Checker Exists")
+            .secondary("example.com")
+            .text("Loading article…")
+            .button("back", "Back")
+            .build();
+        for screen in [with_body, loading] {
+            let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::default());
+            assert!(
+                layout.nodes.iter().any(|node| !node.text_lines.is_empty()),
+                "article screen must draw"
+            );
+        }
+    }
+
     #[test]
     fn archive_is_queued_without_a_secret() {
         let mut app = ReadLater {
