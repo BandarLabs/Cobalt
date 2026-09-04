@@ -1,6 +1,6 @@
-expect Read Later
-expect kobo secret set wallabag
-tap Settings
+expect Connect Wallabag
+expect secret set
+tap Add address
 expect Read Later settings
 clean
 shot readlater-setup

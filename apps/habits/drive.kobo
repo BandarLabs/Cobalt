@@ -1,14 +1,10 @@
 expect Habits
 tap Manage
-expect No habits yet
 tap Add
-type Read
-tap Add
-tap Add
-type Walk
+type Tea
 tap Add
 tap Today
-expect Read
-expect weekdays
+expect Tea
+expect daily
 clean
 shot today

@@ -1,7 +1,10 @@
 wait 500
 expect Libraries
+expect No libraries
 clean
 shot libraries
 tap Add
-expect HTTPS address
+expect Library address
+expect https://
 clean
+shot address

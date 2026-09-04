@@ -55,11 +55,13 @@ impl Calibre {
                 if !self.loaded {
                     s = s.secondary("Loading libraries…");
                 } else if self.url.is_empty() {
-                    s = s.splash(
-                        Some(kobo_sdk::Glyph::Book),
-                        "No libraries",
-                        "Add your calibre-web library.",
-                    );
+                    s = s
+                        .splash(
+                            Some(kobo_sdk::Glyph::Book),
+                            "No libraries",
+                            "Add the HTTPS address of your calibre-web library.",
+                        )
+                        .primary_button("add", "Add library");
                 } else {
                     s = s.rows([(
                         "library",
@@ -80,6 +82,7 @@ impl Calibre {
                 .top_bar("Library address")
                 .heading("Library address")
                 .secondary("Enter the secure web address for your calibre-web library.")
+                .typed(&self.keyboard, "https://library.example")
                 .keyboard(&self.keyboard, "Continue")
                 .owns_back(true)
                 .build(),

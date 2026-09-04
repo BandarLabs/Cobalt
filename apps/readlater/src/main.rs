@@ -61,9 +61,12 @@ impl ReadLater {
         let screen = match view {
             View::Queue if !self.ready() => ScreenBuilder::new("readlater")
                 .top_bar("Read Later")
-                .heading("Connect Wallabag")
-                .text("Add your Wallabag address after finishing account setup on your computer.")
-                .bottom_action("settings", "Settings")
+                .splash(
+                    Some(Glyph::Bookmark),
+                    "Connect Wallabag",
+                    "On your computer run `kobo secret set wallabag`, then add the HTTPS address here.",
+                )
+                .primary_button("settings", "Add address")
                 .build(),
             View::Queue => {
                 let mut page = ScreenBuilder::new("readlater")
@@ -342,9 +345,12 @@ mod tests {
             } else {
                 ScreenBuilder::new("test")
                     .top_bar("Read Later")
-                    .heading("Connect Wallabag")
-                    .secondary("Finish Wallabag setup on your computer.")
-                    .bottom_action("settings", "Settings")
+                    .splash(
+                        Some(Glyph::Bookmark),
+                        "Connect Wallabag",
+                        "On your computer run `kobo secret set wallabag`, then add the HTTPS address here.",
+                    )
+                    .primary_button("settings", "Add address")
                     .build()
             };
             screen

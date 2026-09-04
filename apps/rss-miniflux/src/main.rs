@@ -59,9 +59,13 @@ impl Reader {
         let screen = match view {
             View::Shelf if !self.configured() => ScreenBuilder::new("rss-miniflux")
                 .top_bar("RSS Reader")
-                .heading("Connect Miniflux")
-                .text("Add your Miniflux address after finishing account setup on your computer.")
-                .buttons([("settings", "Settings"), ("directory", "Suggested feeds")])
+                .splash(
+                    Some(Glyph::Rss),
+                    "Connect Miniflux",
+                    "On your computer run `kobo secret set miniflux`, then add the HTTPS address here.",
+                )
+                .primary_button("settings", "Add address")
+                .button("directory", "Suggested feeds")
                 .build(),
             View::Shelf => {
                 let mut page = ScreenBuilder::new("rss-miniflux")

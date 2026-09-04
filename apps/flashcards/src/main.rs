@@ -118,8 +118,9 @@ impl Flashcards {
                 .splash(
                     Some(Glyph::Bookmark),
                     "No cards yet",
-                    "Anki package import is paused until host compatibility support is ready.",
+                    "Host import is paused. `kobo flashcards import` refuses Anki packages rather than write a wrong deck.",
                 )
+                .primary_button("transfer", "Why import is paused")
                 .build()
         } else {
             screen
