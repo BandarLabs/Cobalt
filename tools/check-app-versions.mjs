@@ -20,7 +20,8 @@ const MANIFEST_FIELDS = [
 const COMPATIBLE_PLATFORM_PATHS = new Set([
   "crates/kobo-policy/src/services.rs",
   "crates/kobo-protocol/src/lib.rs",
-  "crates/kobo-sdk/src/lib.rs"
+  "crates/kobo-sdk/src/lib.rs",
+  "crates/kobo-ui/src/lib.rs"
 ]);
 
 // Cargo metadata grows with every workspace package. Bound it well above the
