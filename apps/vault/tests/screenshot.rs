@@ -1,16 +1,7 @@
 use kobo_image::encode_png_grey;
 use kobo_sdk::{Glyph, ScreenBuilder};
 use kobo_ui::{render, Surface, CLARA_BW_METRICS};
-#[test]
-fn renders_clean_clara_bw_capture() {
-    let screen = ScreenBuilder::new("vault-home")
-        .top_bar("Vault")
-        .splash(
-            Some(Glyph::Note),
-            "No vault yet",
-            "Run kobo vault init, then kobo vault push ~/Notes.",
-        )
-        .build();
+fn png_of(screen: kobo_sdk::Screen) -> Vec<u8> {
     let mut surface = Surface::new(
         CLARA_BW_METRICS.width as usize,
         CLARA_BW_METRICS.height as usize,
@@ -21,4 +12,30 @@ fn renders_clean_clara_bw_capture() {
     let png = encode_png_grey(width, height, &surface.pixels).expect("png");
     assert_eq!((width, height), (1072, 1448));
     assert!(png.starts_with(b"\x89PNG\r\n\x1a\n"));
+    png
+}
+#[test]
+fn renders_clean_clara_bw_capture() {
+    let screen = ScreenBuilder::new("vault-home")
+        .top_bar("Vault")
+        .splash(
+            Some(Glyph::Note),
+            "No vault yet",
+            "Run kobo vault init, then kobo vault push ~/Notes.",
+        )
+        .build();
+    let _ = png_of(screen);
+}
+#[test]
+fn renders_an_opened_note() {
+    let screen = ScreenBuilder::new("vault-note")
+        .top_bar("Welcome")
+        .reading(true)
+        .text("Welcome\n\nThis is the home note of the fixture vault.")
+        .buttons([
+            ("backlinks", "Backlinks (1)".to_owned()),
+            ("tags", "Tags".to_owned()),
+        ])
+        .build();
+    let _ = png_of(screen);
 }

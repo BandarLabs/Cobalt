@@ -1,3 +1,14 @@
-# Clean Clara BW capture of the first-run transfer instructions.
+# Seeded path: run `kobo vault push DIR --sim` before starting the simulator.
+# Unseeded store still shows the empty splash; this script requires notes.
+wait 500
 expect Vault
-shot home
+expect notes
+tap Browse
+expect Welcome
+expect Alpha
+clean
+shot browse
+tap Welcome
+expect home note of the fixture
+clean
+shot note

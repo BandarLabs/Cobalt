@@ -31,6 +31,7 @@ mod panel;
 mod setup;
 mod sha256;
 mod sync;
+mod vault;
 
 const DEVICE_PACKAGES: &[&str] = &["kobo-doctor", "kobod", "kobo-todo", "kobo-terminal"];
 const SYNCTHING_ARTIFACT_ENV: &str = "COBALT_SYNCTHING_ARTIFACT";
@@ -429,6 +430,7 @@ fn run(arguments: &[String]) -> Result<(), String> {
         "frame" => frame::command(&arguments[1..]),
         "vault" => vault::command(&arguments[1..]),
         "sync" => sync::command(&arguments[1..]),
+        "vault" => vault::command(&arguments[1..]),
         "needles" => needles::command(&arguments[1..]),
         "nonograms" => nonograms::command(&arguments[1..]),
         "parser" => parser_command(&arguments[1..]),
@@ -5581,8 +5583,8 @@ fn print_help() {
            frame push INPUT --device IP          Prepare and atomically push Frame photos\n\
            frame ls --device IP                  List Frame shelf photos\n\
            frame rm ID --device IP               Remove a Frame shelf photo\n\
-           vault init (--sim | --device IP)      Prepare the Vault store\n\
-           vault push DIR (--sim | --device IP)  Pack notes into the Vault index\n\
+           vault init (--device IP | --sim)      Prepare the Vault store on the reader or simulator\n\
+           vault push DIR (--device IP | --sim | --out INDEX)  Pack a markdown vault and publish it\n\
            sync setup DIR --folder NAME --device IP  Pair one safe fixed Sync folder\n\
            sync run [--foreground] [--seconds N] Start the private host Syncthing peer\n\
            sync status|stop                      Inspect or stop that dedicated peer\n\
@@ -5653,6 +5655,7 @@ mod tests {
         super::stream_command(&["--help".into()]).expect("stream help");
         super::flashcards::command(&["--help".into()]).expect("flashcards help");
         super::deck::command(&["--help".into()]).expect("deck help");
+        super::vault::command(&["--help".into()]).expect("vault help");
     }
 
     #[test]

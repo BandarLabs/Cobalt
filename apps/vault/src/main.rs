@@ -2,7 +2,7 @@ mod md;
 mod model;
 use kobo_sdk::keyboard::{TextEntry, Typing};
 use kobo_sdk::{action_id, ActionId, Context, Glyph, KoboApp, Screen, ScreenBuilder, StoreResult};
-use model::{backlinks, search, Note};
+use model::{backlinks, decode_index, search, Note, INDEX_KEY};
 use std::process::ExitCode;
 const INDEX: &str = "vault-index-v1";
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -60,7 +60,7 @@ impl Vault {
                     s.splash(
                         Some(Glyph::Note),
                         "No vault yet",
-                        "Open Cobalt on your computer and choose a notes folder to add.",
+                        "Run kobo vault init, then kobo vault push ~/Notes.",
                     )
                     .build()
                 } else {
@@ -147,24 +147,15 @@ impl Vault {
 }
 impl KoboApp for Vault {
     fn on_start(&mut self, cx: &mut Context) {
-        cx.store().load(INDEX);
+        cx.store().load(INDEX_KEY);
         self.show(cx);
     }
     fn on_store(&mut self, cx: &mut Context, result: StoreResult) {
         if let StoreResult::Loaded { key, value } = result {
-            if key == INDEX {
+            if key == INDEX_KEY {
                 self.notes = value
                     .and_then(|v| String::from_utf8(v).ok())
-                    .map(|raw| {
-                        raw.split("\n\n---vault-note---\n\n")
-                            .filter_map(|part| {
-                                part.split_once('\n').map(|(path, body)| Note {
-                                    path: path.to_owned(),
-                                    body: body.to_owned(),
-                                })
-                            })
-                            .collect()
-                    })
+                    .map(|raw| decode_index(&raw))
                     .unwrap_or_default();
                 self.loaded = true;
                 self.show(cx);
