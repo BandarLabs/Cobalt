@@ -3,22 +3,37 @@
   "changes": [
     {
       "protocol_version": 11,
-      "reason": "Additive protocol-11 update-channel settings used only by the bundled runtime and Settings app",
+      "reason": "Additive protocol-11 update-channel and idle-sleep settings are used only by the bundled runtime and Settings app. The accompanying network hook, suspend profile predicate, and FramePlanner invalidation method are runtime-only, so existing Store app artifacts remain valid.",
       "files": [
         {
-          "path": "crates/kobo-protocol/src/lib.rs",
-          "base_blob": "8c30366191af89abc121075544635bf871fdfac4",
-          "compatible_blob": "7a705a2ef1e4b4b7ef7b5049ace0618d0d8c6909"
+          "path": "crates/kobo-net/src/lib.rs",
+          "base_blob": "ce2a45ae69445d06f0de5111aef775751ef8146e",
+          "compatible_blob": "0520be216a1b8db0fcb49f4e591c55711bf9262c"
         },
         {
           "path": "crates/kobo-policy/src/services.rs",
-          "base_blob": "d0a852942683f396baaf3803830d9c19c9911f18",
+          "base_blob": "e5b8617ac601332dd9b5d39c8e6ea83d613e171b",
           "compatible_blob": "b99721d7840e8b2ae6c57500d56d489fcc2ef75a"
         },
         {
+          "path": "crates/kobo-profile/src/lib.rs",
+          "base_blob": "18d6d9d83a6f7580cd8d56069e034fc7c6d48977",
+          "compatible_blob": "d8adf85cdf2159038430ffa9f6a81dbd641a7fee"
+        },
+        {
+          "path": "crates/kobo-protocol/src/lib.rs",
+          "base_blob": "f34528d7b407e542a7836b0348b91de043822274",
+          "compatible_blob": "7a705a2ef1e4b4b7ef7b5049ace0618d0d8c6909"
+        },
+        {
           "path": "crates/kobo-sdk/src/lib.rs",
-          "base_blob": "52bd17b242beee85f691ebefdd0083fdabbd4550",
+          "base_blob": "9a645f3f3d9c8746dda47d858bb3fcd744621df8",
           "compatible_blob": "f16a8090e455e5f5e7932deefe7721cd69be8a82"
+        },
+        {
+          "path": "crates/kobo-ui/src/lib.rs",
+          "base_blob": "ce538c70b5779ee482e2b35aa83191eb06b04b4d",
+          "compatible_blob": "464dbbab0b5605acd42cf339f0cb9f49ab5f2aa8"
         }
       ]
     }
