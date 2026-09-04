@@ -183,6 +183,10 @@ usual names and names the package to install when there is none. Rust code is
 linked by `rust-lld`, which ships with the toolchain. The resulting binaries
 are statically linked and need no library installed on the reader.
 
+For the owner-attended Clara BW Wi-Fi handoff investigation, use the
+[bounded passive handoff trace](WIFI_HANDOFF_TRACE.md). It is opt-in, is not a
+fix, and includes the exact build, run, wait, and retrieval procedure.
+
 ## Before you commit a credential by accident
 
 A key must never reach a commit. `tools/pre-commit` refuses one, and is
