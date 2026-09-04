@@ -1,0 +1,8 @@
+expect Logic Pack
+tap Minesweeper
+expect First reveal is safe
+tap ?
+tap Check
+expect contradiction
+clean
+shot logicpack-mines

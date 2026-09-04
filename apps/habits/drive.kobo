@@ -1,12 +1,12 @@
 expect Habits
 tap Manage
-tap Add habit
+expect No habits yet
+tap Add
 type Read
 tap Add
-tap Add habit
+tap Add
 type Walk
 tap Add
-tap Walk
 tap Today
 expect Read
 expect weekdays

@@ -1,0 +1,8 @@
+# Default date is 2026-09-01; the answer for that date is caper.
+expect Inkling
+tap Enter guess
+type caper
+tap Guess
+expect Solved
+clean
+shot inkling-solved

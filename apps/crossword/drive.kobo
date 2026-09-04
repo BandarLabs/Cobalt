@@ -1,0 +1,9 @@
+expect Crossword
+tap-at 111,227
+tap letter
+tap letter
+tap enter
+expect Across
+tap clue
+clean
+shot crossword-play

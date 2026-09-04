@@ -281,26 +281,30 @@ impl Habits {
                 }
             }
             Page::Manage => {
-                let (start, end, page, pages) =
-                    Self::page_bounds(self.manage_page, self.items.len().max(1));
-                s = s.top_bar_action("add", "Add").rows(
-                    self.items[start..end.min(self.items.len())]
-                        .iter()
-                        .enumerate()
-                        .map(|(i, h)| {
-                            (
-                                format!("cycle-{}", start + i),
-                                Self::display_name(&h.name),
-                                format!(
-                                    "{}{}",
-                                    h.schedule_label(),
-                                    if h.archived { "; archived" } else { "" }
-                                ),
-                                Glyph::Settings,
-                            )
-                        }),
-                );
-                s = Self::paged(s, page, pages, "manage-prev", "manage-next");
+                s = s.top_bar_action("add", "Add");
+                if self.items.is_empty() {
+                    s = s.splash(
+                        Some(Glyph::Settings),
+                        "No habits yet",
+                        "Tap Add to name one. Completions stay on this reader.",
+                    );
+                } else {
+                    let (start, end, page, pages) =
+                        Self::page_bounds(self.manage_page, self.items.len());
+                    s = s.rows(self.items[start..end].iter().enumerate().map(|(i, h)| {
+                        (
+                            format!("cycle-{}", start + i),
+                            Self::display_name(&h.name),
+                            format!(
+                                "{}{}",
+                                h.schedule_label(),
+                                if h.archived { "; archived" } else { "" }
+                            ),
+                            Glyph::Settings,
+                        )
+                    }));
+                    s = Self::paged(s, page, pages, "manage-prev", "manage-next");
+                }
             }
             Page::Stats => {
                 let completed: usize = self.items.iter().map(|h| h.done.len()).sum();
