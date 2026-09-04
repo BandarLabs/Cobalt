@@ -631,9 +631,9 @@ dependencies = [
  "kobo-profile",
  "kobo-protocol",
  "kobo-sim",
+ "kobo-wifi-trace",
  "kobod",
  "ring",
- "kobo-wifi-trace",
 ]
 
 [[package]]
@@ -978,7 +978,7 @@ dependencies = [
 
 [[package]]
 name = "kobo-wifi-trace"
-version = "0.3.3"
+version = "0.3.6"
 dependencies = [
  "kobo-json",
  "ring",
