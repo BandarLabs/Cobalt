@@ -3,7 +3,7 @@
   "changes": [
     {
       "protocol_version": 11,
-      "reason": "Additive protocol-11 update-channel and idle-sleep settings are used only by the bundled runtime and Settings app. The accompanying network hook, suspend profile predicate, and FramePlanner invalidation method are runtime-only, so existing Store app artifacts remain valid.",
+      "reason": "Additive protocol-11 orientation, update-channel, and idle-sleep settings are opt-in or bundled-runtime-only. Existing Store apps retain their messages and portrait rendering; the network hook, suspend predicate, and FramePlanner invalidation remain runtime-only.",
       "files": [
         {
           "path": "crates/kobo-net/src/lib.rs",
@@ -23,17 +23,17 @@
         {
           "path": "crates/kobo-protocol/src/lib.rs",
           "base_blob": "f34528d7b407e542a7836b0348b91de043822274",
-          "compatible_blob": "7a705a2ef1e4b4b7ef7b5049ace0618d0d8c6909"
+          "compatible_blob": "d14047e5cb149356bad24f52bf2bc29932702b57"
         },
         {
           "path": "crates/kobo-sdk/src/lib.rs",
           "base_blob": "9a645f3f3d9c8746dda47d858bb3fcd744621df8",
-          "compatible_blob": "f16a8090e455e5f5e7932deefe7721cd69be8a82"
+          "compatible_blob": "b6c23e7e5a77d0bf2367f38a1f25f175b48f02e8"
         },
         {
           "path": "crates/kobo-ui/src/lib.rs",
           "base_blob": "ce538c70b5779ee482e2b35aa83191eb06b04b4d",
-          "compatible_blob": "464dbbab0b5605acd42cf339f0cb9f49ab5f2aa8"
+          "compatible_blob": "792f0768d9acd427f393fe576f43b597554dd31e"
         }
       ]
     }
