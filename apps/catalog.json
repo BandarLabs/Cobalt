@@ -39,7 +39,8 @@
       "version": "0.1.2",
       "minimum_cobalt_version": "0.3.5",
       "glyph": "circle",
-      "capabilities": []
+      "capabilities": [],
+      "release_notes": "Play complete solo or pass-and-play backgammon on one Kobo."
     },
     {
       "package": "kobo-brief",

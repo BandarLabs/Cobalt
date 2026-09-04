@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -51,7 +51,14 @@ export function installedPackageNames(cliSource) {
 export function workspaceMembers(rootManifest) {
   const match = /^members\s*=\s*\[([\s\S]*?)^\]/m.exec(rootManifest);
   if (!match) throw new Error("read the workspace members from Cargo.toml");
-  return [...match[1].matchAll(/"([^"]+)"/g)].map(entry => entry[1]);
+  return [...match[1].matchAll(/"([^"]+)"/g)].flatMap(entry => {
+    const member = entry[1];
+    if (!member.endsWith("/*")) return [member];
+    const directory = member.slice(0, -2);
+    return readdirSync(directory, { withFileTypes: true })
+      .filter(item => item.isDirectory())
+      .map(item => `${directory}/${item.name}`);
+  });
 }
 
 // A packaged application added somewhere this gate does not watch would be a

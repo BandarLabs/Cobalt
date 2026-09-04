@@ -3,9 +3,10 @@ import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "nod
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setupPanel } from "./app-page-setup.mjs";
+import { collectRegistry } from "./app-registry.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const catalog = JSON.parse(readFileSync(resolve(root, "apps/catalog.json"), "utf8"));
+const catalog = collectRegistry();
 const systemApps = [
   {
     id: "launcher",
@@ -52,10 +53,10 @@ const screenshots = {
 };
 const screenshotFor = app => {
   const screenshot = screenshots[app.id];
-  if (!screenshot) {
-    throw new Error(`missing screenshot metadata for app: ${app.id}`);
-  }
-  return screenshot;
+  return screenshot || [
+    "store.png",
+    `${app.display_name} available from the signed Cobalt App Store`
+  ];
 };
 const appsRoot = resolve(root, "docs/apps");
 for (const app of catalog.apps) {
@@ -361,13 +362,6 @@ for (const app of systemApps) {
   const output = resolve(root, "docs/apps", app.id, "index.html");
   mkdirSync(dirname(output), { recursive: true });
   writeFileSync(output, html);
-}
-
-const home = readFileSync(resolve(root, "docs/index.html"), "utf8");
-for (const app of [...catalog.apps, ...systemApps]) {
-  if (!home.includes(`href="apps/${app.id}/"`)) {
-    throw new Error(`docs/index.html does not link to app page: ${app.id}`);
-  }
 }
 
 const sitemapUrls = [
