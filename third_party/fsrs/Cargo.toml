@@ -8,6 +8,10 @@ homepage = "https://github.com/open-spaced-repetition"
 license = "BSD-3-Clause"
 repository = "https://github.com/open-spaced-repetition/fsrs-rs"
 publish = false
+autotests = false
+autobenches = false
+autobins = false
+autoexamples = false
 
 [features]
 default = []
@@ -16,6 +20,8 @@ experimental_cost_adr = ["dep:rand_distr"]
 [lib]
 name = "fsrs"
 path = "src/lib.rs"
+test = false
+doctest = false
 
 [dependencies]
 itertools = "0.15.0"
