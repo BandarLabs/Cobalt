@@ -836,7 +836,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
       registry,
       selectedPackage === undefined
     );
-    checkProtocolMinimums(registry, currentProtocolVersion());
+    checkProtocolMinimums(registry, currentProtocolVersion(), PROTOCOL_MINIMUMS, affected);
     if (mode === "--list-packages") {
       console.log(JSON.stringify(packagesToBuild(registry, published, affected)));
     } else if (mode === "--publish-needed") {
