@@ -22,7 +22,8 @@ const MANIFEST_FIELDS = [
 const COMPATIBLE_PLATFORM_PATHS = new Set([
   "crates/kobo-policy/src/services.rs",
   "crates/kobo-protocol/src/lib.rs",
-  "crates/kobo-sdk/src/lib.rs"
+  "crates/kobo-sdk/src/lib.rs",
+  "crates/kobo-ui/src/lib.rs"
 ]);
 
 // Store packages are built from the current SDK and therefore speak its exact
