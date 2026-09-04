@@ -23,6 +23,7 @@ const EXIT: &str = "exit";
 const MODE: &str = "mode";
 const INTERVAL: &str = "interval";
 const ORDER: &str = "order";
+const LOAD_WATCH_SECS: u32 = 20;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 enum View {
@@ -96,7 +97,9 @@ struct Frame {
     startup: Startup,
     unreadable: BTreeSet<String>,
     overlay: bool,
+    settings_open: bool,
     clock: Option<Heartbeat>,
+    load_watch: Option<Heartbeat>,
     notice: Option<String>,
 }
 
@@ -133,6 +136,47 @@ impl Frame {
                 )
                 .build();
         }
+        let index = self.settings.position % self.photos.len().max(1) + 1;
+        screen =
+            screen.section_with_value("Photographs", format!("{index} of {}", self.photos.len()));
+        if let Some(picture) = self.picture {
+            screen = screen
+                .picture(picture, 76)
+                .page_turns(PREVIOUS, NEXT)
+                .reading_menu(MENU)
+                .buttons([(SHOW, "Open"), (NEXT, "Next")]);
+        } else if self.loading_selected() {
+            screen = screen.activity("Opening this photograph", None);
+        } else if self.photos_all_unreadable() {
+            screen = screen.splash(
+                Some(Glyph::App),
+                "No photograph can be opened",
+                "Re-push the album from your computer.",
+            );
+        } else {
+            screen = screen
+                .secondary("This photograph could not be opened.")
+                .buttons([(SHOW, "Try again"), (NEXT, "Next photo")]);
+        }
+        if !self.unreadable.is_empty() {
+            screen = screen.banner(
+                BannerLevel::Attention,
+                format!(
+                    "{} photo(s) unreadable — re-push them from your computer.",
+                    self.unreadable.len()
+                ),
+            );
+        }
+        if self.settings_open {
+            let (mode, interval, order) = self.setting_labels();
+            screen = screen.modal("Settings", |overlay| {
+                overlay.buttons([(MODE, mode), (INTERVAL, interval), (ORDER, order)])
+            });
+        }
+        screen.build()
+    }
+
+    fn setting_labels(&self) -> (String, String, String) {
         let mode = if self.settings.slow {
             "Slow slideshow"
         } else {
@@ -148,49 +192,26 @@ impl Frame {
         } else {
             "By date"
         };
-        screen = screen
-            .facts([
-                ("Photos", self.photos.len().to_string()),
-                ("Mode", mode.to_owned()),
-                ("Interval", interval),
-                ("Order", order.to_owned()),
-            ])
-            .rows([
-                (
-                    MODE,
-                    mode.to_owned(),
-                    "Awake frame or battery-saving scheduled slideshow.",
-                    Glyph::Clock,
-                ),
-                (
-                    INTERVAL,
-                    "Change interval".to_owned(),
-                    "5, 15, 60 minutes; or 1, 6, 24 hours.",
-                    Glyph::Clock,
-                ),
-                (
-                    ORDER,
-                    order.to_owned(),
-                    "Cycle a stable shuffle order or chronological photos.",
-                    Glyph::App,
-                ),
-            ]);
-        if !self.unreadable.is_empty() {
-            screen = screen.secondary(format!(
-                "{} photo(s) unreadable — re-push them from your computer.",
-                self.unreadable.len()
-            ));
-        }
-        screen
-            .buttons([(SHOW, "Show photo"), (NEXT, "Next photo")])
-            .build()
+        (mode.to_owned(), interval, order.to_owned())
     }
 
     fn photo_screen(&self) -> Screen {
         let Some(picture) = self.picture else {
-            return ScreenBuilder::new("frame-show")
-                .top_bar("Frame")
-                .activity("Loading photo", None)
+            let screen = ScreenBuilder::new("frame-show").top_bar("Frame");
+            if self.loading_selected() {
+                return screen
+                    .activity("Loading photo", None)
+                    .build()
+                    .with_own_back(true);
+            }
+            return screen
+                .banner(
+                    BannerLevel::Attention,
+                    self.notice
+                        .clone()
+                        .unwrap_or_else(|| "This photograph could not be opened.".to_owned()),
+                )
+                .buttons([(SHOW, "Try again"), (NEXT, "Next photo")])
                 .build()
                 .with_own_back(true);
         };
@@ -228,18 +249,56 @@ impl Frame {
         indices
     }
 
+    fn loading_selected(&self) -> bool {
+        let Some(id) = self.photo_load_id.as_deref() else {
+            return false;
+        };
+        self.photo_load.is_some() && self.selected().is_some_and(|photo| photo.id == id)
+    }
+
+    fn photos_all_unreadable(&self) -> bool {
+        !self.photos.is_empty() && self.unreadable.len() >= self.photos.len()
+    }
+
+    fn abandon_photo_load(&mut self, context: &mut Context) {
+        self.photo_load = None;
+        self.photo_load_id = None;
+        self.stop_load_watch(context);
+    }
+
+    fn stop_load_watch(&mut self, context: &mut Context) {
+        if let Some(watch) = &mut self.load_watch {
+            watch.stop(context);
+        }
+        self.load_watch = None;
+    }
+
+    fn arm_load_watch(&mut self, context: &mut Context) {
+        self.stop_load_watch(context);
+        let mut watch = Heartbeat::every(LOAD_WATCH_SECS);
+        watch.start(context);
+        self.load_watch = Some(watch);
+    }
+
     fn start_current(&mut self, context: &mut Context) {
-        if self.photo_load.is_some() || self.photos.is_empty() {
+        if self.photos.is_empty() {
             return;
         }
-        let Some(photo) = self.selected() else {
+        let Some(id) = self.selected().map(|photo| photo.id.clone()) else {
             return;
         };
-        let mut load = ShelfDownload::new(format!("{}.png", photo.id)).at_most(MAX_FRAME_BYTES);
-        let id = photo.id.clone();
+        if self.unreadable.contains(&id) {
+            return;
+        }
+        if self.loading_selected() {
+            return;
+        }
+        self.abandon_photo_load(context);
+        let mut load = ShelfDownload::new(format!("{id}.png")).at_most(MAX_FRAME_BYTES);
         load.start(context);
         self.photo_load = Some(load);
         self.photo_load_id = Some(id);
+        self.arm_load_watch(context);
     }
 
     fn advance(&mut self, context: &mut Context, forward: bool) {
@@ -253,20 +312,22 @@ impl Frame {
             self.settings.position.checked_sub(1).unwrap_or(count - 1)
         };
         self.overlay = false;
+        self.settings_open = false;
         self.picture = None;
         self.save(context);
         self.start_current(context);
     }
 
     fn skip_unreadable(&mut self, context: &mut Context, id: &str, error: String) {
+        self.abandon_photo_load(context);
         self.unreadable.insert(id.to_owned());
-        if self.unreadable.len() >= self.photos.len() {
-            self.picture = None;
+        self.picture = None;
+        self.notice = Some(error);
+        if self.photos_all_unreadable() {
             self.notice = Some("No photo on this shelf can be read. Re-push the album.".to_owned());
             self.view = View::Home;
             return;
         }
-        self.notice = Some(error);
         self.advance(context, true);
     }
 
@@ -311,13 +372,12 @@ impl Frame {
     }
 
     fn accept_picture(&mut self, context: &mut Context, id: &str, bytes: &[u8]) {
+        self.stop_load_watch(context);
         let picture = kobo_image::decode(bytes).and_then(|picture| {
             if picture.width() == self.panel_width && picture.height() == self.panel_height {
                 Ok(picture)
             } else {
-                Err(kobo_image::ImageError::Undecodable(
-                    "the photo is not a panel-sized Frame PNG".to_owned(),
-                ))
+                picture.cover(self.panel_width, self.panel_height)
             }
         });
         match picture {
@@ -335,6 +395,7 @@ impl Frame {
                         "The photo exceeds Frame's picture budget.".to_owned(),
                     );
                 } else {
+                    self.unreadable.remove(id);
                     self.notice = None;
                 }
             }
@@ -390,6 +451,7 @@ impl Frame {
             ShelfProgress::Done => {
                 let bytes = self.photo_load.take().expect("active photo").take();
                 let id = self.photo_load_id.take().expect("active photo identity");
+                self.stop_load_watch(context);
                 if self.selected().is_some_and(|photo| photo.id == id) {
                     self.accept_picture(context, &id, &bytes);
                 } else {
@@ -398,8 +460,9 @@ impl Frame {
                 true
             }
             ShelfProgress::Failed(_) => {
-                self.photo_load = None;
                 let id = self.photo_load_id.take().expect("active photo identity");
+                self.photo_load = None;
+                self.stop_load_watch(context);
                 if self.selected().is_some_and(|photo| photo.id == id) {
                     self.skip_unreadable(
                         context,
@@ -450,21 +513,33 @@ impl KoboApp for Frame {
 
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
         if action == ActionId::BACK || action == action_id(EXIT) {
-            if self.view == View::Show {
+            if self.settings_open {
+                self.settings_open = false;
+            } else if self.view == View::Show {
                 self.view = View::Home;
                 self.overlay = false;
             } else {
                 context.exit();
             }
         } else if action == action_id(SHOW) {
-            self.view = View::Show;
+            if let Some(id) = self.selected().map(|photo| photo.id.clone()) {
+                self.unreadable.remove(&id);
+            }
+            if self.picture.is_some() {
+                self.view = View::Show;
+            }
+            self.settings_open = false;
             self.start_current(context);
         } else if action == action_id(NEXT) {
             self.advance(context, true);
         } else if action == action_id(PREVIOUS) {
             self.advance(context, false);
         } else if action == action_id(MENU) {
-            self.overlay = true;
+            if self.view == View::Home {
+                self.settings_open = !self.settings_open;
+            } else {
+                self.overlay = true;
+            }
         } else if action == action_id(MODE) {
             self.settings.slow = !self.settings.slow;
             self.settings.interval = if self.settings.slow { 6 } else { 15 };
@@ -489,13 +564,32 @@ impl KoboApp for Frame {
         } else if action == action_id(ORDER) {
             self.settings.shuffled = !self.settings.shuffled;
             self.settings.position = 0;
+            self.picture = None;
             self.save(context);
+            self.abandon_photo_load(context);
             self.start_current(context);
         }
         self.show(context);
     }
 
     fn on_task(&mut self, context: &mut Context, task: TaskId, outcome: TaskOutcome) {
+        if self
+            .load_watch
+            .as_mut()
+            .is_some_and(|watch| watch.on_task(context, task, &outcome))
+        {
+            if let Some(id) = self.photo_load_id.clone() {
+                self.skip_unreadable(
+                    context,
+                    &id,
+                    "This photograph is taking too long and was skipped.".to_owned(),
+                );
+            } else {
+                self.stop_load_watch(context);
+            }
+            self.show(context);
+            return;
+        }
         if self
             .clock
             .as_mut()
@@ -685,7 +779,7 @@ mod tests {
     }
 
     #[test]
-    fn a_late_photo_result_cannot_replace_the_new_selection() {
+    fn advancing_abandons_the_in_flight_load_and_starts_the_new_photo() {
         let mut frame = Frame {
             photos: vec![
                 photo("photo-aaaaaaaaaaaaaaaa", 1),
@@ -700,9 +794,9 @@ mod tests {
         frame.advance(&mut context, true);
         assert_eq!(
             frame.photo_load_id.as_deref(),
-            Some("photo-aaaaaaaaaaaaaaaa")
+            Some("photo-bbbbbbbbbbbbbbbb")
         );
-        assert!(frame.advance_photo(
+        assert!(!frame.advance_photo(
             &mut context,
             &StoreResult::ShelfRead {
                 name: "photo-aaaaaaaaaaaaaaaa.png".into(),
@@ -717,6 +811,113 @@ mod tests {
             frame.photo_load_id.as_deref(),
             Some("photo-bbbbbbbbbbbbbbbb")
         );
+    }
+
+    #[test]
+    fn a_failed_load_leaves_home_without_the_opening_spinner() {
+        let mut frame = Frame {
+            startup: Startup {
+                manifest_loaded: true,
+                state_loaded: true,
+                started: true,
+            },
+            photos: vec![photo("photo-aaaaaaaaaaaaaaaa", 1)],
+            panel_width: CLARA_BW_METRICS.width as u32,
+            panel_height: CLARA_BW_METRICS.height as u32,
+            ..Frame::default()
+        };
+        let mut context = Context::default();
+        frame.start_current(&mut context);
+        assert!(frame.advance_photo(
+            &mut context,
+            &StoreResult::Denied(kobo_sdk::StoreError::Missing)
+        ));
+        assert!(frame.picture.is_none());
+        assert!(frame.photos_all_unreadable());
+        assert_eq!(frame.view, View::Home);
+        let home = frame.home();
+        let labels = home
+            .nodes
+            .iter()
+            .filter_map(|node| match node {
+                kobo_ui::Node::Splash { title, .. } => Some(title.as_str()),
+                kobo_ui::Node::Activity { label, .. } => Some(label.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert!(!labels.contains(&"Opening this photograph"));
+        assert!(labels.contains(&"No photograph can be opened"));
+    }
+
+    #[test]
+    fn a_mismatched_panel_size_is_fitted_instead_of_skipped() {
+        let mut frame = Frame {
+            photos: vec![photo("photo-aaaaaaaaaaaaaaaa", 1)],
+            panel_width: CLARA_BW_METRICS.width as u32,
+            panel_height: CLARA_BW_METRICS.height as u32,
+            ..Frame::default()
+        };
+        let mut context = Context::default();
+        let png = kobo_image::encode_png_grey(32, 24, &vec![180_u8; 32 * 24]).expect("png");
+        frame.accept_picture(&mut context, "photo-aaaaaaaaaaaaaaaa", &png);
+        assert!(frame.picture.is_some());
+        assert!(frame.unreadable.is_empty());
+        assert!(frame.notice.is_none());
+    }
+
+    #[test]
+    fn action_graph_reaches_every_view() {
+        use kobo_sdk::AppRunner;
+        let manifest = format!(
+            "cobalt-frame-v1\nphoto-aaaaaaaaaaaaaaaa\t{}\t12\tFamily\tone.png\n",
+            "a".repeat(64)
+        );
+        let mut runner = AppRunner::new(Frame::default());
+        runner.start();
+        assert_eq!(runner.app().view, View::Opening);
+        runner.store_result(StoreResult::Loaded {
+            key: STATE.into(),
+            value: None,
+        });
+        runner.store_result(StoreResult::ShelfRead {
+            name: MANIFEST.into(),
+            offset: 0,
+            bytes: manifest.as_bytes().to_vec(),
+            size: u32::try_from(manifest.len()).expect("manifest fits"),
+        });
+        assert_eq!(runner.app().view, View::Home);
+        assert_eq!(runner.app().photos.len(), 1);
+        assert!(runner.app().loading_selected());
+        runner.action(action_id(MENU));
+        assert!(runner.app().settings_open);
+        runner.action(action_id(MODE));
+        assert!(runner.app().settings.slow);
+        runner.action(action_id(INTERVAL));
+        runner.action(action_id(ORDER));
+        runner.action(ActionId::BACK);
+        assert!(!runner.app().settings_open);
+        runner.store_result(StoreResult::Denied(kobo_sdk::StoreError::Missing));
+        assert!(runner.app().photos_all_unreadable());
+        assert_eq!(runner.app().view, View::Home);
+        assert!(!runner.app().loading_selected());
+        let png = kobo_image::encode_png_grey(16, 16, &vec![200_u8; 16 * 16]).expect("png");
+        runner.app_mut().unreadable.clear();
+        runner.app_mut().notice = None;
+        runner.action(action_id(SHOW));
+        runner.store_result(StoreResult::ShelfRead {
+            name: "photo-aaaaaaaaaaaaaaaa.png".into(),
+            offset: 0,
+            bytes: png.clone(),
+            size: u32::try_from(png.len()).expect("png fits"),
+        });
+        assert!(runner.app().picture.is_some());
+        runner.action(action_id(SHOW));
+        assert_eq!(runner.app().view, View::Show);
+        runner.action(action_id(MENU));
+        assert!(runner.app().overlay);
+        runner.action(action_id(EXIT));
+        assert_eq!(runner.app().view, View::Home);
+        assert!(!runner.app().overlay);
     }
 
     #[test]

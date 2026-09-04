@@ -2158,7 +2158,12 @@ fn simulated_tasks(name: &str) -> TaskRunner {
         .with_capabilities([kobo_policy::Capability::Network])
 }
 
-fn simulated_data_root(name: &str) -> std::path::PathBuf {
+/// Directory the host simulator uses for one application's shelf.
+///
+/// Companion commands such as `kobo frame push --sim` write here so a `kobo
+/// dev` session sees the same files the reader would after an SSH push.
+#[must_use]
+pub fn simulated_data_root(name: &str) -> std::path::PathBuf {
     std::env::temp_dir().join("cobalt-sim-data").join(name)
 }
 

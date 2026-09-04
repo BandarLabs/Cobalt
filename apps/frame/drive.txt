@@ -1,5 +1,8 @@
-expect Frame mode
-tap Show photo
-wait 500
+expect Photographs
+wait-for Open
 clean
-shot frame
+shot shelf
+tap Open
+wait 800
+clean
+shot photo
