@@ -46,12 +46,7 @@ members = [
     "examples/settings",
     "examples/sidekick",
     "examples/store",
-    "apps/arxiv",
-    "apps/backgammon",
-    "apps/lichess",
-    "apps/morse",
-    "apps/sudoku",
-    "apps/zotero-reader",
+    "apps/*",
     "tools/icon-import",
 ]
 resolver = "2"

@@ -638,7 +638,9 @@ dependencies = [
  "kobo-json",
  "kobo-net",
  "kobo-profile",
+ "kobo-protocol",
  "kobo-sim",
+ "kobod",
  "ring",
 ]
 
