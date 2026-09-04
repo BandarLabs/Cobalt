@@ -216,6 +216,15 @@ export function checkEntries(registry, published, affectedPackages) {
   }
 }
 
+export function meaningfulReleaseNotes(value) {
+  if (typeof value !== "string") return false;
+  const note = value.trim();
+  if (note.length < 12 || note.length > 240) return false;
+  return !new Set(["update", "updated", "changes", "bug fixes", "misc fixes"]).has(
+    note.toLowerCase().replace(/[.!]$/, "")
+  );
+}
+
 function versionParts(value) {
   const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(value);
   if (!match) throw new Error(`invalid Cobalt version ${value}`);
@@ -302,6 +311,10 @@ function optionalCommand(name, arguments_) {
   } catch {
     return null;
   }
+}
+
+export function isContributionManifest(path, directory) {
+  return path === directory + "/cobalt-app.json";
 }
 
 function isInside(path, directory) {

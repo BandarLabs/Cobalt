@@ -8,7 +8,7 @@
         {
           "path": "Cargo.lock",
           "base_blob": "f3f8fd06292b26c5ffab6abf944b73a4e8b31399",
-          "compatible_blob": "e45dc3c8359b7b1e1ade2f088e67f6db66205c37"
+          "compatible_blob": "91b0a0d41f658f51b2fe4380fbd0a3c2bafab235"
         },
         {
           "path": "apps/backgammon/Cargo.toml",
@@ -158,7 +158,7 @@
         {
           "path": "crates/kobod/src/app_store.rs",
           "base_blob": "6e7caa312042f6927fc3da3b0cc71cf69d5be205",
-          "compatible_blob": "342c5225dcb29bd97ee9e5c23e950cda58f31eaa"
+          "compatible_blob": "1bde22f998ae01fffaeb88d222a3f400b6c5ec42"
         },
         {
           "path": "examples/gallery/README.md",
