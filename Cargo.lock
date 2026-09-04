@@ -685,6 +685,7 @@ dependencies = [
  "kobo-profile",
  "kobo-protocol",
  "kobo-sim",
+ "kobo-wifi-trace",
  "kobod",
  "ring",
 ]
@@ -1037,6 +1038,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "kobo-wifi-trace"
+version = "0.3.6"
+dependencies = [
+ "kobo-json",
+ "ring",
+]
+
+[[package]]
 name = "kobo-xml"
 version = "0.3.6"
 
@@ -1067,6 +1076,7 @@ dependencies = [
  "kobo-shell",
  "kobo-text",
  "kobo-ui",
+ "kobo-wifi-trace",
  "p256",
  "ring",
  "rustls",
