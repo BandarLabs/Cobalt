@@ -1361,6 +1361,34 @@ A failing step reports the line, the step and the reason, and takes a
 screenshot first, because the question that immediately follows "tap Search
 failed" is "what was on the screen".
 
+**`--record` films the run instead of photographing it.**
+
+```sh
+cargo run -p kobo-cli -- drive --script drive.kobo --record target/demo --fps 4
+```
+
+The panel is sampled on its own clock while the script drives, so the
+recording catches the screens a run passes through as well as the ones it stops
+on: the list that was empty for half a second before the fetch came back, the
+pane drawn at the wrong size until the second layout pass. Frames identical to
+the one before them are dropped, so a script that waits two seconds between
+taps is one frame there and not eight. The directory ends up holding numbered
+greyscale PNGs, a `timings.txt`, a `recording.mp4` and a `recording.gif` --
+the same shape `kobo record --device` produces from a reader, so a demo made
+here and a demo made on hardware are the same kind of file.
+
+A recording is taken from the residue-free frame **unless you pass
+`--ghosting`**, which is the opposite default to `shot` and deliberate: a still
+with e-ink residue on it is two screens a person can read past, and a hundred
+of them played in sequence is every screen of the run at once. `--ideal` goes
+on governing the `shot` steps.
+
+ffmpeg assembles both files and is checked for before the script runs, because
+finding out it is missing after a minute of driving costs the minute.
+
+`scripts/record-apps-sim.sh` does this for every application in the catalog,
+one simulator at a time, with no reader anywhere near it.
+
 **Pass `--ideal` when you are reading the screenshots rather than the
 refreshes.** A screenshot is taken from the simulated panel, and the simulated
 panel keeps the e-ink residue of what it drew last, exactly as the device
@@ -1410,13 +1438,20 @@ once, at one point, which must be on the screen, and it always lifts: a tap
 that failed halfway would leave the digitiser reporting a finger that is not
 there.
 
-The division is deliberate. **`drive` is the simulator; `shot` and `tap` are
-the device.** Resolving a label to a coordinate needs the layout, and the
-layout lives in the process doing the rendering. On the host that is the
-simulator, which runs the identical renderer, layout engine, hit-testing and
-refresh planner. On the device it is inside the running application, and
+The division is deliberate. **`drive` is the simulator; `shot`, `tap` and
+`record` are the device.** Resolving a label to a coordinate needs the layout,
+and the layout lives in the process doing the rendering. On the host that is
+the simulator, which runs the identical renderer, layout engine, hit-testing
+and refresh planner. On the device it is inside the running application, and
 opening a control channel into it in order to test it would be testing
 something other than the shipped path.
+
+That is why filming the simulator is `drive --record` and not `record
+--address`. `record` is a framebuffer reader: it uploads the doctor, has the
+device copy `/dev/fb0` into a file at a fixed rate, and pulls that file home
+over SSH compressed. None of those three things has a counterpart on this side
+of the cable, and there is no framebuffer here to read. What there is, is a
+driver already holding a connection to the process doing the rendering.
 
 ---
 
