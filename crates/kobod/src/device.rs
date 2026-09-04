@@ -1301,6 +1301,7 @@ fn host_applications(
             None
         }
     };
+    backends.push(Capability::Library);
     let audio_fetcher: kobo_hal::audio::StreamFetcher = Arc::new(|url, offset, max_bytes| {
         kobo_net::fetch_from(url, offset, max_bytes, None, &[]).map_err(|error| match error {
             // A reader with no route and a service that will not answer are

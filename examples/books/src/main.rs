@@ -1,19 +1,17 @@
 //! The bundled library: documents already on this device.
 //!
-//! Books is an included application, the same class as Settings and the
-//! Store. It is not a Store catalog entry. Until the runtime can list the
-//! card over the wire, this shelf holds fixture documents it can already
-//! draw and open: a jacket when one exists, otherwise the first lines of
-//! the file inside a boxed page, with the format named only in that page's
-//! trailing foot. EPUB, Markdown, HTML and plain text open in the shared
-//! reader. PDF is listed and not opened.
+//! Books is an included application. It lists files on the card (`/mnt/onboard`,
+//! `/mnt/sd`, Cobalt shelves) and titles from the stock Kobo library. EPUB,
+//! Markdown, HTML and plain text open in the shared reader. PDF is listed
+//! and not opened. A Kobo Store title that has not been downloaded is listed
+//! and says so when opened.
 
 use kobo_bookview::{BookView, Step};
 use kobo_read::{Memory, Outcome};
 use kobo_sdk::{
     action_id, document_preview, stamp_format_badge, ActionId, Context, DeviceRequest, DeviceResult,
-    Glyph, KoboApp, PictureHandle, Screen, ScreenBuilder, TaskId, TaskOutcome, Tile, TilePicture,
-    TileShape,
+    Glyph, KoboApp, LibraryEntry, PictureHandle, Screen, ScreenBuilder, TaskId, TaskOutcome, Tile,
+    TilePicture, TileShape,
 };
 use std::process::ExitCode;
 
@@ -21,6 +19,7 @@ use std::process::ExitCode;
 ///
 /// Three columns of portrait tiles, two rows deep, matching gutenbird: that
 /// is what fits whole between the bars on this panel.
+#[cfg(test)]
 const SHELF_PAGE: usize = 6;
 
 const PREVIOUS: &str = "previous";
@@ -62,73 +61,76 @@ impl Kind {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 struct Document {
-    title: &'static str,
+    id: String,
+    title: String,
     kind: Kind,
     /// Opening words, used as the tile when there is no jacket.
-    preview: &'static str,
-    /// The file itself, when the format is not a generated EPUB.
-    body: &'static str,
+    preview: String,
+    on_card: bool,
     has_cover: bool,
+    /// Present only for in-process tests that never talk to the runtime.
+    body: Option<String>,
 }
 
-/// Stand-ins until the library listing is on the wire.
-///
-/// The protocol has [`kobo_policy::Capability::Library`] and the roots; it
-/// does not yet have `LibraryList`. An empty splash is the honest answer
-/// when this list is empty. These exist so the shelf and the shared reader
-/// can be drawn now: one jacketed EPUB, coverless Markdown, HTML and text,
-/// and a PDF that will not open.
-const DOCUMENTS: &[Document] = &[
-    Document {
-        title: "The Open Sea",
-        kind: Kind::Epub,
-        preview: "The tide was already turning when the boat left the harbour.",
-        body: "The tide was already turning when the boat left the harbour.\n\n\
-               Gulls followed the wake as far as the bar, then turned back toward the town.\n\n\
-               The hills flattened until they were a mark on the horizon, and the sea was the only road left.",
-        has_cover: true,
-    },
-    Document {
-        title: "Notes on a Rainy Afternoon",
-        kind: Kind::Markdown,
-        preview: "The rain started before the kettle boiled.\nI left the window open so the room would smell of the street.\nA bus went past without stopping.",
-        body: "# Notes on a Rainy Afternoon\n\n\
-               The rain started before the kettle boiled.\n\n\
-               I left the window open so the room would smell of the street.\n\n\
-               A bus went past without stopping.",
-        has_cover: false,
-    },
-    Document {
-        title: "Timetable",
-        kind: Kind::Pdf,
-        preview: "Northbound 06:12\nSouthbound 06:40\nThe last train is the one that does not wait.",
-        body: "",
-        has_cover: false,
-    },
-    Document {
-        title: "A Letter Home",
-        kind: Kind::Text,
-        preview: "Dear M,\nThe hill behind the house is still green in September.\nI walk it every morning before the post arrives.",
-        body: "Dear M,\n\nThe hill behind the house is still green in September.\n\n\
-               I walk it every morning before the post arrives.",
-        has_cover: false,
-    },
-    Document {
-        title: "Index of Streets",
-        kind: Kind::Html,
-        preview: "Market Street runs east from the harbour.\nChurch Lane is the shortcut when the market is full.",
-        body: "<h1>Index of Streets</h1>\n\
-               <p>Market Street runs east from the harbour.</p>\n\
-               <p>Church Lane is the shortcut when the market is full.</p>",
-        has_cover: false,
-    },
-];
+#[cfg(test)]
+fn fixtures() -> Vec<Document> {
+    vec![
+        Document {
+            id: "test/open-sea.epub".to_owned(),
+            title: "The Open Sea".to_owned(),
+            kind: Kind::Epub,
+            preview: "The tide was already turning when the boat left the harbour.".to_owned(),
+            on_card: true,
+            has_cover: true,
+            body: Some(
+                "The tide was already turning when the boat left the harbour.".to_owned(),
+            ),
+        },
+        Document {
+            id: "test/notes.md".to_owned(),
+            title: "Notes on a Rainy Afternoon".to_owned(),
+            kind: Kind::Markdown,
+            preview: "The rain started before the kettle boiled.".to_owned(),
+            on_card: true,
+            has_cover: false,
+            body: Some("# Notes on a Rainy Afternoon\n\nThe rain started before the kettle boiled.".to_owned()),
+        },
+        Document {
+            id: "test/timetable.pdf".to_owned(),
+            title: "Timetable".to_owned(),
+            kind: Kind::Pdf,
+            preview: "Northbound 06:12".to_owned(),
+            on_card: true,
+            has_cover: false,
+            body: Some(String::new()),
+        },
+        Document {
+            id: "test/letter.txt".to_owned(),
+            title: "A Letter Home".to_owned(),
+            kind: Kind::Text,
+            preview: "Dear M,".to_owned(),
+            on_card: true,
+            has_cover: false,
+            body: Some("Dear M,\n\nThe hill behind the house is still green in September.".to_owned()),
+        },
+        Document {
+            id: "test/streets.html".to_owned(),
+            title: "Index of Streets".to_owned(),
+            kind: Kind::Html,
+            preview: "Market Street runs east from the harbour.".to_owned(),
+            on_card: true,
+            has_cover: false,
+            body: Some("<h1>Index of Streets</h1>\n<p>Market Street runs east from the harbour.</p>".to_owned()),
+        },
+    ]
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum View {
     Shelf,
+    Opening(usize),
     Reading,
     Unreadable(usize),
 }
@@ -143,17 +145,22 @@ struct Books {
 
 impl Default for Books {
     fn default() -> Self {
-        Self {
-            view: View::Shelf,
-            page: 0,
-            documents: DOCUMENTS.to_vec(),
-            book: BookView::new(),
-            open_title: None,
-        }
+        Self::empty()
     }
 }
 
 impl Books {
+    #[cfg(test)]
+    fn seeded() -> Self {
+        Self {
+            view: View::Shelf,
+            page: 0,
+            documents: fixtures(),
+            book: BookView::new(),
+            open_title: None,
+        }
+    }
+
     fn empty() -> Self {
         Self {
             view: View::Shelf,
@@ -167,6 +174,7 @@ impl Books {
     fn show(&mut self, context: &mut Context) {
         let screen = match self.view {
             View::Shelf => self.shelf(context),
+            View::Opening(_) => self.shelf(context),
             View::Reading => self.reading(),
             View::Unreadable(index) => self.unreadable(index),
         };
@@ -189,11 +197,12 @@ impl Books {
         let page = pages.get(self.page).cloned().unwrap_or_default();
         let (width, height) = tile_pixels(context);
         let tiles = page.into_iter().filter_map(|index| {
-            let document = *self.documents.get(index)?;
+            let document = self.documents.get(index)?;
+            let title = document.title.clone();
             let picture = self.picture(context, index, width, height);
             Some((
                 format!("book-{index}"),
-                document.title.to_owned(),
+                title,
                 Glyph::Book,
                 move |tile: Tile| match picture {
                     Some(picture) => tile.with_picture(picture),
@@ -232,8 +241,10 @@ impl Books {
 
     fn unreadable(&self, index: usize) -> Screen {
         let document = self.documents.get(index);
-        let title = document.map_or("This document", |document| document.title);
-        let reason = if document.is_some_and(|document| !document.kind.is_readable()) {
+        let title = document.map_or("This document", |document| document.title.as_str());
+        let reason = if document.is_some_and(|document| !document.on_card) {
+            "This book is in the Kobo library but is not on the card. Open it in the Kobo reader to download."
+        } else if document.is_some_and(|document| !document.kind.is_readable()) {
             "PDF is listed but is not readable yet."
         } else {
             "This document is listed but is not openable yet."
@@ -265,7 +276,7 @@ impl Books {
         let mut grey = if document.has_cover {
             painted_cover(index, width, height)
         } else {
-            document_preview(document.preview, document.kind.badge(), width, height)
+            document_preview(&document.preview, document.kind.badge(), width, height)
         };
         if document.has_cover {
             stamp_format_badge(&mut grey, width, height, document.kind.badge());
@@ -279,10 +290,34 @@ impl Books {
     }
 
     fn open_document(&mut self, context: &mut Context, index: usize) {
-        let Some(document) = self.documents.get(index).copied() else {
+        let Some(document) = self.documents.get(index).cloned() else {
             return;
         };
-        if !document.kind.is_readable() {
+        if !document.on_card || !document.kind.is_readable() {
+            self.book.close(context);
+            self.open_title = None;
+            self.view = View::Unreadable(index);
+            self.show(context);
+            return;
+        }
+        if let Some(body) = document.body.as_ref() {
+            let bytes = fixture_bytes(&document, body);
+            self.finish_open(context, index, &document, bytes);
+            return;
+        }
+        self.view = View::Opening(index);
+        self.show(context);
+        context.device().read_library(document.id);
+    }
+
+    fn finish_open(
+        &mut self,
+        context: &mut Context,
+        index: usize,
+        document: &Document,
+        bytes: Vec<u8>,
+    ) {
+        if bytes.is_empty() {
             self.book.close(context);
             self.open_title = None;
             self.view = View::Unreadable(index);
@@ -292,11 +327,11 @@ impl Books {
         match self.book.open_bytes(
             context,
             document.kind.filename(),
-            &fixture_bytes(&document),
+            &bytes,
             Memory::default(),
         ) {
             Ok(()) => {
-                self.open_title = Some(document.title.to_owned());
+                self.open_title = Some(document.title.clone());
                 self.view = View::Reading;
             }
             Err(_) => {
@@ -340,6 +375,9 @@ impl Books {
 
 impl KoboApp for Books {
     fn on_start(&mut self, context: &mut Context) {
+        if self.documents.is_empty() {
+            context.device().list_library();
+        }
         self.show(context);
     }
 
@@ -390,6 +428,43 @@ impl KoboApp for Books {
                     self.show(context);
                 }
             }
+            return;
+        }
+        if request == DeviceRequest::ListLibrary {
+            match result {
+                DeviceResult::Library { entries, .. } => {
+                    self.documents = entries.into_iter().filter_map(from_entry).collect();
+                    self.view = View::Shelf;
+                    self.show(context);
+                }
+                DeviceResult::Denied(_) | DeviceResult::Failed(_) => {
+                    self.documents.clear();
+                    self.view = View::Shelf;
+                    self.show(context);
+                }
+                _ => {}
+            }
+            return;
+        }
+        if let DeviceRequest::ReadLibrary { .. } = request {
+            match result {
+                DeviceResult::LibraryDocument { bytes, .. } => {
+                    if let View::Opening(index) = self.view {
+                        if let Some(document) = self.documents.get(index).cloned() {
+                            self.finish_open(context, index, &document, bytes);
+                        }
+                    }
+                }
+                DeviceResult::Denied(_) | DeviceResult::Failed(_) => {
+                    if let View::Opening(index) = self.view {
+                        self.book.close(context);
+                        self.open_title = None;
+                        self.view = View::Unreadable(index);
+                        self.show(context);
+                    }
+                }
+                _ => {}
+            }
         }
     }
 
@@ -405,19 +480,39 @@ impl KoboApp for Books {
     }
 }
 
-fn fixture_bytes(document: &Document) -> Vec<u8> {
+fn from_entry(entry: LibraryEntry) -> Option<Document> {
+    let kind = match entry.kind {
+        1 => Kind::Epub,
+        2 => Kind::Markdown,
+        3 => Kind::Html,
+        4 => Kind::Text,
+        5 => Kind::Pdf,
+        _ => return None,
+    };
+    Some(Document {
+        id: entry.id,
+        preview: entry.title.clone(),
+        title: entry.title,
+        kind,
+        on_card: entry.on_card,
+        has_cover: matches!(kind, Kind::Epub) && entry.on_card,
+        body: None,
+    })
+}
+
+fn fixture_bytes(document: &Document, body: &str) -> Vec<u8> {
     match document.kind {
         Kind::Epub => kobo_doc::epub::write(
-            document.title,
+            &document.title,
             Some("A. Mariner"),
             &[kobo_doc::epub::Chapter {
                 title: "Leaving harbour".to_owned(),
-                body: document.body.to_owned(),
+                body: body.to_owned(),
             }],
         )
         .unwrap_or_default(),
         Kind::Pdf => Vec::new(),
-        Kind::Markdown | Kind::Html | Kind::Text => document.body.as_bytes().to_vec(),
+        Kind::Markdown | Kind::Html | Kind::Text => body.as_bytes().to_vec(),
     }
 }
 
@@ -484,9 +579,9 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::{painted_cover, Books, Kind, View, DOCUMENTS, SHELF_PAGE};
+    use super::{fixtures, painted_cover, Books, Kind, View, SHELF_PAGE};
     use kobo_sdk::prelude::*;
-    use kobo_sdk::{document_preview, CLARA_BW_METRICS};
+    use kobo_sdk::{document_preview, DeviceResult, LibraryEntry, CLARA_BW_METRICS};
     use kobo_ui::{Chrome, LayoutKind, TileShape};
 
     fn shown(commands: Vec<Command>) -> Screen {
@@ -512,7 +607,7 @@ mod tests {
     }
 
     fn open(runner: &mut AppRunner<Books>, kind: Kind) -> Screen {
-        let index = DOCUMENTS
+        let index = fixtures()
             .iter()
             .position(|document| document.kind == kind)
             .expect("a document of that kind");
@@ -521,7 +616,7 @@ mod tests {
 
     #[test]
     fn the_first_screen_fits_a_clara() {
-        let mut runner = AppRunner::new(Books::default());
+        let mut runner = AppRunner::new(Books::seeded());
         let screen = shown(runner.start());
         assert!(screen.validate(&CLARA_BW_METRICS).is_empty());
     }
@@ -548,8 +643,66 @@ mod tests {
     }
 
     #[test]
+    fn a_card_listing_draws_the_titles_the_runtime_named() {
+        let mut runner = AppRunner::new(Books::empty());
+        runner.start();
+        let screen = shown(runner.device_result(DeviceResult::Library {
+            entries: vec![
+                LibraryEntry {
+                    id: "n/uuid-piranesi".to_owned(),
+                    title: "Piranesi".to_owned(),
+                    kind: 1,
+                    bytes: 0,
+                    on_card: false,
+                },
+                LibraryEntry {
+                    id: "0/notes.md".to_owned(),
+                    title: "Notes on a Rainy Afternoon".to_owned(),
+                    kind: 2,
+                    bytes: 80,
+                    on_card: true,
+                },
+            ],
+            truncated: false,
+        }));
+        let text = words(&screen);
+        assert!(text.contains("Piranesi"), "{text}");
+        assert!(text.contains("Notes on a Rainy Afternoon"), "{text}");
+        assert!(
+            !text.contains("The Open Sea"),
+            "the fixture shelf came back instead of the card"
+        );
+    }
+
+    #[test]
+    fn a_store_title_that_is_not_on_the_card_says_so() {
+        let mut runner = AppRunner::new(Books::empty());
+        runner.start();
+        runner.device_result(DeviceResult::Library {
+            entries: vec![LibraryEntry {
+                id: "n/uuid-piranesi".to_owned(),
+                title: "Piranesi".to_owned(),
+                kind: 1,
+                bytes: 0,
+                on_card: false,
+            }],
+            truncated: false,
+        });
+        let screen = shown(runner.action(action_id("book-0")));
+        let text = words(&screen);
+        assert!(
+            text.contains("not on the card"),
+            "opening an undownloaded title did not say why: {text}"
+        );
+        assert!(
+            matches!(runner.app().view, View::Unreadable(_)),
+            "an undownloaded title was opened as if the file were here"
+        );
+    }
+
+    #[test]
     fn the_shelf_uses_portrait_tiles_with_pictures() {
-        let mut runner = AppRunner::new(Books::default());
+        let mut runner = AppRunner::new(Books::seeded());
         let screen = shown(runner.start());
         let grid = screen.nodes.iter().find_map(|node| match node {
             Node::TileGrid {
@@ -560,7 +713,7 @@ mod tests {
             _ => None,
         });
         let tiles = grid.expect("a portrait shelf");
-        assert_eq!(tiles.len(), DOCUMENTS.len().min(SHELF_PAGE));
+        assert_eq!(tiles.len(), fixtures().len().min(SHELF_PAGE));
         assert!(
             tiles.iter().all(|tile| tile.picture.is_some()),
             "a document was left on a generic glyph"
@@ -585,11 +738,11 @@ mod tests {
 
     #[test]
     fn a_coverless_tile_is_the_first_lines_not_a_glyph() {
-        let notes = DOCUMENTS
-            .iter()
+        let notes = fixtures()
+            .into_iter()
             .find(|document| !document.has_cover && document.kind == Kind::Markdown)
             .expect("a coverless markdown document");
-        let grey = document_preview(notes.preview, notes.kind.badge(), 180, 280);
+        let grey = document_preview(&notes.preview, notes.kind.badge(), 180, 280);
         assert!(
             grey.iter().any(|pixel| *pixel < 40),
             "the first lines left no ink"
@@ -622,7 +775,7 @@ mod tests {
 
     #[test]
     fn an_epub_opens_in_the_shared_reader() {
-        let mut runner = AppRunner::new(Books::default());
+        let mut runner = AppRunner::new(Books::seeded());
         runner.start();
         let screen = open(&mut runner, Kind::Epub);
         assert_eq!(runner.app().view, View::Reading);
@@ -644,7 +797,7 @@ mod tests {
 
     #[test]
     fn markdown_opens_in_the_shared_reader() {
-        let mut runner = AppRunner::new(Books::default());
+        let mut runner = AppRunner::new(Books::seeded());
         runner.start();
         let screen = open(&mut runner, Kind::Markdown);
         assert_eq!(runner.app().view, View::Reading);
@@ -658,7 +811,7 @@ mod tests {
 
     #[test]
     fn plain_text_opens_in_the_shared_reader() {
-        let mut runner = AppRunner::new(Books::default());
+        let mut runner = AppRunner::new(Books::seeded());
         runner.start();
         let screen = open(&mut runner, Kind::Text);
         assert_eq!(runner.app().view, View::Reading);
@@ -672,7 +825,7 @@ mod tests {
 
     #[test]
     fn html_opens_in_the_shared_reader() {
-        let mut runner = AppRunner::new(Books::default());
+        let mut runner = AppRunner::new(Books::seeded());
         runner.start();
         let screen = open(&mut runner, Kind::Html);
         assert_eq!(runner.app().view, View::Reading);
@@ -686,7 +839,7 @@ mod tests {
 
     #[test]
     fn a_pdf_is_listed_and_will_not_open() {
-        let mut runner = AppRunner::new(Books::default());
+        let mut runner = AppRunner::new(Books::seeded());
         runner.start();
         let screen = open(&mut runner, Kind::Pdf);
         let text = words(&screen);
@@ -706,7 +859,7 @@ mod tests {
 
     #[test]
     fn the_shelf_is_tappable_on_a_clara() {
-        let mut runner = AppRunner::new(Books::default());
+        let mut runner = AppRunner::new(Books::seeded());
         let screen = shown(runner.start());
         let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::with_back(true));
         let controls: Vec<_> = layout

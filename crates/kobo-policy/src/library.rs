@@ -22,9 +22,12 @@
 //! hardware, they are compiled in, and adding one is a change to this file
 //! that somebody has to justify.
 //!
-//! `/mnt/onboard/.kobo` is deliberately absent. That is the stock reader's own
-//! state -- its database, its covers, its kepub cache -- and none of it is a
-//! book the owner chose to put somewhere.
+//! `/mnt/onboard/.kobo` is not walked. That directory holds the stock reader's
+//! database, cover cache, and firmware chrome (the eLabel EPUBs). Sideloaded
+//! files live at the card root and in ordinary folders; titles the stock
+//! reader already knows — including Kepubs it downloaded, and Store books
+//! that are in the library but not on the card — come from
+//! `KoboReader.sqlite` rather than from walking that tree.
 //!
 //! # Why a walk is bounded three ways
 //!
@@ -60,6 +63,7 @@ const SKIPPED: &[&str] = &[
     ".fseventsd",
     "System Volume Information",
     "$RECYCLE.BIN",
+    ".adds",
 ];
 
 /// How deep below a root the walk will go.
@@ -147,6 +151,8 @@ pub struct Entry {
     pub title: String,
     pub kind: Kind,
     pub bytes: u64,
+    /// False when the stock library names a book whose file is not on the card.
+    pub on_card: bool,
 }
 
 /// What a listing found, and whether it is the whole story.
@@ -184,10 +190,60 @@ pub fn list_in(roots: &[PathBuf]) -> Listing {
     listing
 }
 
-/// The documents under the compiled-in [`ROOTS`].
+/// The documents under the compiled-in [`ROOTS`], plus titles from the stock
+/// reader's library that are not already on the walk.
 #[must_use]
 pub fn list() -> Listing {
-    list_in(&ROOTS.iter().map(PathBuf::from).collect::<Vec<_>>())
+    let mut listing = list_in(&ROOTS.iter().map(PathBuf::from).collect::<Vec<_>>());
+    nickel::merge(&mut listing);
+    listing
+}
+
+/// The bytes of a document, refusing anything too large to hand over.
+#[must_use]
+pub fn read(id: &str) -> Option<Vec<u8>> {
+    if let Some(bytes) = nickel::read(id) {
+        return Some(bytes);
+    }
+    read_in(&ROOTS.iter().map(PathBuf::from).collect::<Vec<_>>(), id)
+}
+
+/// The wire form of one listing entry.
+#[must_use]
+pub fn to_wire(entry: Entry) -> kobo_protocol::LibraryEntry {
+    kobo_protocol::LibraryEntry {
+        id: entry.id,
+        title: clip_title(&entry.title),
+        kind: match entry.kind {
+            Kind::Epub => 1,
+            Kind::Markdown => 2,
+            Kind::Html => 3,
+            Kind::Text => 4,
+            Kind::Pdf => 5,
+        },
+        bytes: u32::try_from(entry.bytes).unwrap_or(u32::MAX),
+        on_card: entry.on_card,
+    }
+}
+
+/// Truncates to the wire bound on a character boundary, never producing an
+/// empty title: the encoder refuses those, and one overlong Japanese title
+/// would otherwise drop the whole listing.
+fn clip_title(title: &str) -> String {
+    let mut out = String::new();
+    for ch in title.chars() {
+        let mut buf = [0; 4];
+        let encoded = ch.encode_utf8(&mut buf);
+        if out.len() + encoded.len() > kobo_protocol::MAX_LIBRARY_TITLE_LEN {
+            break;
+        }
+        out.push(ch);
+    }
+    if out.is_empty() {
+        "Untitled".to_owned()
+    } else {
+        out
+    }
 }
 
 fn walk(
@@ -262,6 +318,7 @@ fn walk(
             title: title_of(name),
             kind: document,
             bytes,
+            on_card: true,
         });
     }
 }
@@ -332,6 +389,185 @@ pub fn read_in(roots: &[PathBuf], id: &str) -> Option<Vec<u8>> {
         return None;
     }
     fs::read(path).ok()
+}
+
+mod nickel {
+    use super::{clip_title, Entry, Kind, Listing, ROOTS, MAX_DOCUMENT_BYTES, MAX_ENTRIES};
+    use std::path::{Path, PathBuf};
+
+    const DATABASE: &str = "/mnt/onboard/.kobo/KoboReader.sqlite";
+
+    pub fn merge(listing: &mut Listing) {
+        merge_from(listing, Path::new(DATABASE));
+    }
+
+    pub fn merge_from(listing: &mut Listing, database: &Path) {
+        let Ok(connection) = rusqlite::Connection::open_with_flags(
+            database,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        ) else {
+            return;
+        };
+        let mut statement = match connection.prepare(
+            "SELECT ContentID, Title, MimeType, IsDownloaded, ___FileSize
+             FROM content
+             WHERE ContentType = '6' AND Title IS NOT NULL AND Title != ''",
+        ) {
+            Ok(statement) => statement,
+            Err(_) => return,
+        };
+        let Ok(rows) = statement.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<String>>(2)?.unwrap_or_default(),
+                downloaded(row)?,
+                row.get::<_, i64>(4).unwrap_or(0),
+            ))
+        }) else {
+            return;
+        };
+        for row in rows.flatten() {
+            if listing.entries.len() >= MAX_ENTRIES {
+                listing.truncated = true;
+                break;
+            }
+            let (content_id, title, mime, downloaded, size) = row;
+            if mime.to_ascii_lowercase().contains("mp3") {
+                continue;
+            }
+            let named = content_id.strip_prefix("file://").map(Path::new);
+            if named.is_some_and(skipped_internal) {
+                continue;
+            }
+            let path = named.filter(|path| path.is_file());
+            if path.is_some_and(|path| already_listed(listing, path)) {
+                continue;
+            }
+            let on_card = downloaded && path.is_some();
+            let Some(kind) = kind_of(&mime, path) else {
+                continue;
+            };
+            let id = if let Some(path) = path.and_then(Path::to_str) {
+                format!("n/{path}")
+            } else {
+                format!("n/{content_id}")
+            };
+            if id.len() > kobo_protocol::MAX_LIBRARY_ID_LEN || !kobo_protocol_id_ok(&id) {
+                continue;
+            }
+            listing.entries.push(Entry {
+                id,
+                title: clip_title(&title),
+                kind,
+                bytes: u64::try_from(size.max(0)).unwrap_or(0),
+                on_card,
+            });
+        }
+        listing.entries.sort_by(|left, right| {
+            left.title
+                .to_ascii_lowercase()
+                .cmp(&right.title.to_ascii_lowercase())
+                .then_with(|| left.id.cmp(&right.id))
+        });
+    }
+
+    pub fn read(id: &str) -> Option<Vec<u8>> {
+        let path = id.strip_prefix("n/")?;
+        if path.contains("..") {
+            return None;
+        }
+        let path = Path::new(path);
+        if skipped_internal(path) || !path.is_file() {
+            return None;
+        }
+        let bytes = std::fs::metadata(path).ok()?.len();
+        if bytes == 0 || bytes > MAX_DOCUMENT_BYTES {
+            return None;
+        }
+        std::fs::read(path).ok()
+    }
+
+    fn downloaded(row: &rusqlite::Row<'_>) -> rusqlite::Result<bool> {
+        match row.get_ref(3)? {
+            rusqlite::types::ValueRef::Text(text) => {
+                let text = std::str::from_utf8(text).unwrap_or("");
+                Ok(text.eq_ignore_ascii_case("true") || text == "1")
+            }
+            rusqlite::types::ValueRef::Integer(value) => Ok(value != 0),
+            _ => Ok(false),
+        }
+    }
+
+    fn already_listed(listing: &Listing, path: &Path) -> bool {
+        let Ok(real) = path.canonicalize() else {
+            return false;
+        };
+        ROOTS.iter().enumerate().any(|(index, root)| {
+            let Ok(root) = PathBuf::from(root).canonicalize() else {
+                return false;
+            };
+            real.strip_prefix(&root)
+                .ok()
+                .and_then(|relative| relative.to_str())
+                .is_some_and(|relative| {
+                    listing
+                        .entries
+                        .iter()
+                        .any(|entry| entry.id == format!("{index}/{relative}"))
+                })
+        })
+    }
+
+    fn kobo_protocol_id_ok(id: &str) -> bool {
+        !id.is_empty()
+            && !id.starts_with('/')
+            && !id.chars().any(char::is_control)
+            && !id.split('/').any(|part| part == "..")
+    }
+
+    /// Firmware chrome, cover cache, and Cobalt's own files are not books.
+    /// Kepubs the stock reader downloaded under `.kobo/kepub` are.
+    pub(super) fn skipped_internal(path: &Path) -> bool {
+        let parts: Vec<&str> = path
+            .components()
+            .filter_map(|part| part.as_os_str().to_str())
+            .collect();
+        if parts.iter().any(|part| {
+            matches!(
+                *part,
+                ".kobo-images" | ".adds" | ".adobe-digital-editions"
+            )
+        }) {
+            return true;
+        }
+        match parts.iter().position(|part| *part == ".kobo") {
+            Some(index) => parts.get(index + 1).copied() != Some("kepub"),
+            None => false,
+        }
+    }
+
+    fn kind_of(mime: &str, path: Option<&Path>) -> Option<Kind> {
+        if let Some(name) = path.and_then(|path| path.file_name()?.to_str()) {
+            if let Some(kind) = Kind::from_name(name) {
+                return Some(kind);
+            }
+        }
+        let mime = mime.to_ascii_lowercase();
+        if mime.contains("epub") || mime.contains("octet-stream") {
+            Some(Kind::Epub)
+        } else if mime.contains("pdf") {
+            Some(Kind::Pdf)
+        } else if mime.contains("html") {
+            Some(Kind::Html)
+        } else if mime.contains("markdown") {
+            Some(Kind::Markdown)
+        } else if mime.contains("text/plain") {
+            Some(Kind::Text)
+        } else {
+            None
+        }
+    }
 }
 
 #[cfg(test)]
@@ -455,5 +691,69 @@ mod tests {
         for kind in [Kind::Epub, Kind::Markdown, Kind::Html, Kind::Text] {
             assert!(kind.is_readable(), "{kind:?} should page in the reader");
         }
+    }
+
+    #[test]
+    fn cobalt_program_files_are_never_walked() {
+        let root = scratch("adds-dir");
+        fs::create_dir_all(root.join(".adds/cobalt")).expect("the directory");
+        fs::write(root.join(".adds/cobalt/README.txt"), b"body").expect("the file");
+        fs::write(root.join("Letter.txt"), b"body").expect("the file");
+        let listing = list_in(&[root]);
+        assert_eq!(listing.entries.len(), 1);
+        assert_eq!(listing.entries[0].title, "Letter");
+    }
+
+    #[test]
+    fn firmware_chrome_is_not_a_book_and_a_kepub_download_is() {
+        use std::path::Path;
+        assert!(super::nickel::skipped_internal(Path::new(
+            "/mnt/onboard/.kobo/eLabel/sleep.epub"
+        )));
+        assert!(super::nickel::skipped_internal(Path::new(
+            "/mnt/onboard/.adds/cobalt/README.txt"
+        )));
+        assert!(!super::nickel::skipped_internal(Path::new(
+            "/mnt/onboard/.kobo/kepub/Piranesi.kepub.epub"
+        )));
+        assert!(!super::nickel::skipped_internal(Path::new(
+            "/mnt/onboard/sideloaded.epub"
+        )));
+    }
+
+    #[test]
+    fn the_stock_library_names_books_the_walk_cannot_see() {
+        let database = scratch("nickel-db").join("KoboReader.sqlite");
+        let connection = rusqlite::Connection::open(&database).expect("a scratch library");
+        connection
+            .execute_batch(
+                "CREATE TABLE content (
+                    ContentID TEXT PRIMARY KEY,
+                    Title TEXT,
+                    MimeType TEXT,
+                    IsDownloaded TEXT,
+                    ___FileSize INTEGER,
+                    ContentType TEXT
+                );
+                INSERT INTO content VALUES
+                ('7a866127-8d49-4541-ac08-4a279e0f07cd', 'Piranesi',
+                 'application/x-kobo-epub+zip', 'false', 0, '6'),
+                ('file:///mnt/onboard/.kobo/eLabel/sleep.epub', 'Sleep',
+                 'application/epub+zip', 'true', 12, '6'),
+                ('file:///mnt/onboard/.adds/cobalt/README.txt', 'README',
+                 'text/plain', 'true', 12, '6'),
+                ('file:///mnt/onboard/Audiobooks/comet.mp3z', 'comet',
+                 'application/x-kobo-mp3z', 'true', 12, '6');",
+            )
+            .expect("the rows");
+        drop(connection);
+        let mut listing = super::Listing::default();
+        super::nickel::merge_from(&mut listing, &database);
+        let titles: Vec<_> = listing
+            .entries
+            .iter()
+            .map(|entry| (entry.title.as_str(), entry.on_card))
+            .collect();
+        assert_eq!(titles, [("Piranesi", false)]);
     }
 }

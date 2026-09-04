@@ -8,7 +8,8 @@
 pub use kobo_protocol::{
     is_valid_key, AppInfo, AppLinkState, AudioPlaybackState, AudioSource, BatteryDetail,
     BluetoothDevice, BluetoothDeviceKind, Credential, DenyReason, DeviceError, DeviceIdentity,
-    DeviceRequest, DeviceResult, DictionaryEntry, Frame, Header, Lifecycle, LogLevel, Message,
+    DeviceRequest, DeviceResult, DictionaryEntry, Frame, Header, LibraryEntry, Lifecycle,
+    LogLevel, Message,
     RemoteInstallOutcome, SecretHeader, ShellError, ShellEvent, ShellRequest, StoreError,
     StoreRequest, StoreResult, StreamError, Task, TaskError, TaskId, TaskOutcome, UpdateChannel,
     WifiNetwork, CACHE_PREFIX, MAX_CACHE_KEYS, MAX_FONT_BYTES, MAX_HEADERS, MAX_HEADER_NAME,
@@ -4173,6 +4174,16 @@ impl Device<'_> {
     /// on real hardware.
     pub fn read_identity(&mut self) {
         self.request(DeviceRequest::ReadIdentity);
+    }
+
+    /// Lists documents already on the card and in the stock Kobo library.
+    pub fn list_library(&mut self) {
+        self.request(DeviceRequest::ListLibrary);
+    }
+
+    /// Reads one listed document by the identifier the listing returned.
+    pub fn read_library(&mut self, id: impl Into<String>) {
+        self.request(DeviceRequest::ReadLibrary { id: id.into() });
     }
 
     /// Asks where the magnet is now.

@@ -1,9 +1,5 @@
-# Same shelf, same tap path: Markdown opens the shared reader.
+# Empty-shelf path on the simulator. Opening Markdown is covered by tests.
 expect Books
-expect Notes on a Rainy
-expect-missing md
-tap Notes on a Rainy
-wait-for kettle
-expect The rain started
-shot books-markdown
+expect No books yet
+shot books-empty
 dump

@@ -1156,6 +1156,13 @@ pub enum DeviceRequest {
     /// Applications may submit a value entered by the owner, but cannot read
     /// the stored value back.
     SetSecret { name: String, value: SecretValue },
+    /// List documents already on the card and in the stock reader's library.
+    ///
+    /// The application never names a path. What comes back is an opaque id
+    /// and the few facts a shelf needs; reading the bytes is a second ask.
+    ListLibrary,
+    /// Read one library document by the identifier a listing returned.
+    ReadLibrary { id: String },
 }
 
 /// Current state of the runtime-owned App Store browser link.
@@ -1409,6 +1416,43 @@ pub enum DeviceResult {
     Denied(DenyReason),
     /// Which published update stream the runtime follows.
     UpdateChannel(UpdateChannel),
+    /// Documents already on this device. See [`LibraryEntry`].
+    Library {
+        entries: Vec<LibraryEntry>,
+        truncated: bool,
+    },
+    /// The bytes of one library document, or empty when it is listed but not
+    /// on the card (a Kobo Store title that has not been downloaded).
+    LibraryDocument { id: String, bytes: Vec<u8> },
+}
+
+/// The largest library listing one result may carry.
+pub const MAX_LIBRARY_ENTRIES: usize = 400;
+/// The largest identifier a library entry may use.
+pub const MAX_LIBRARY_ID_LEN: usize = 256;
+/// The largest title a shelf tile may carry.
+pub const MAX_LIBRARY_TITLE_LEN: usize = 96;
+/// The largest document handed over as one device result.
+pub const MAX_LIBRARY_DOCUMENT_BYTES: usize = 4 * 1024 * 1024;
+
+/// One document the owner already has, as far as a shelf is concerned.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LibraryEntry {
+    pub id: String,
+    pub title: String,
+    /// 1 EPUB, 2 Markdown, 3 HTML, 4 text, 5 PDF.
+    pub kind: u8,
+    pub bytes: u32,
+    /// False for a Kobo Store title that is in the stock library but whose
+    /// file is not on the card.
+    pub on_card: bool,
+}
+
+impl LibraryEntry {
+    #[must_use]
+    pub const fn is_readable(&self) -> bool {
+        self.on_card && self.kind != 5
+    }
 }
 
 /// Application metadata safe to show to an unprivileged launcher or Store UI.
@@ -2590,6 +2634,14 @@ fn encode_device_request(
         DeviceRequest::SetSecret { .. } => {
             return Err(ProtocolError::InvalidValue("application secret"));
         }
+        DeviceRequest::ListLibrary => output.push(48),
+        DeviceRequest::ReadLibrary { id } if valid_library_id(id) => {
+            output.push(49);
+            push_string(output, id)?;
+        }
+        DeviceRequest::ReadLibrary { .. } => {
+            return Err(ProtocolError::InvalidValue("library id"));
+        }
     }
     Ok(())
 }
@@ -2912,6 +2964,14 @@ fn decode_device_request(
                 value: SecretValue::new(value),
             })
         }
+        48 => Ok(DeviceRequest::ListLibrary),
+        49 => {
+            let id = reader.string()?;
+            if !valid_library_id(&id) {
+                return Err(ProtocolError::InvalidValue("library id"));
+            }
+            Ok(DeviceRequest::ReadLibrary { id })
+        }
         _ => Err(ProtocolError::InvalidValue("device request")),
     }
 }
@@ -3099,6 +3159,35 @@ fn encode_device_result(output: &mut Vec<u8>, result: &DeviceResult) -> Result<(
             output.extend_from_slice(&[17, radio_flags(*cobalt, *apps)]);
         }
         DeviceResult::UpdateChannel(channel) => output.extend_from_slice(&[18, channel.wire()]),
+        DeviceResult::Library {
+            entries,
+            truncated,
+        } => {
+            if entries.len() > MAX_LIBRARY_ENTRIES {
+                return Err(ProtocolError::InvalidValue("library listing"));
+            }
+            output.push(19);
+            push_u16(
+                output,
+                u16::try_from(entries.len()).map_err(|_| ProtocolError::FrameTooLarge)?,
+            );
+            output.push(u8::from(*truncated));
+            for entry in entries {
+                encode_library_entry(output, entry)?;
+            }
+        }
+        DeviceResult::LibraryDocument { id, bytes } => {
+            if !valid_library_id(id) || bytes.len() > MAX_LIBRARY_DOCUMENT_BYTES {
+                return Err(ProtocolError::InvalidValue("library document"));
+            }
+            output.push(20);
+            push_string(output, id)?;
+            push_u32(
+                output,
+                u32::try_from(bytes.len()).map_err(|_| ProtocolError::FrameTooLarge)?,
+            );
+            output.extend_from_slice(bytes);
+        }
     }
     Ok(())
 }
@@ -3301,8 +3390,85 @@ fn decode_device_result(reader: &mut Reader<'_>) -> Result<DeviceResult, Protoco
         16 => identity(reader).map(DeviceResult::Identity),
         17 => decode_auto_update(reader),
         18 => UpdateChannel::from_wire(reader.u8()?).map(DeviceResult::UpdateChannel),
+        19 => decode_library_result(reader),
+        20 => decode_library_document(reader),
         _ => Err(ProtocolError::InvalidValue("device result")),
     }
+}
+
+fn valid_library_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= MAX_LIBRARY_ID_LEN
+        && !id.starts_with('/')
+        && !id.chars().any(char::is_control)
+        && !id.split('/').any(|part| part == "..")
+}
+
+fn encode_library_entry(
+    output: &mut Vec<u8>,
+    entry: &LibraryEntry,
+) -> Result<(), ProtocolError> {
+    if !valid_library_id(&entry.id)
+        || entry.title.is_empty()
+        || entry.title.len() > MAX_LIBRARY_TITLE_LEN
+        || !(1..=5).contains(&entry.kind)
+    {
+        return Err(ProtocolError::InvalidValue("library entry"));
+    }
+    push_string(output, &entry.id)?;
+    push_string(output, &entry.title)?;
+    output.push(entry.kind);
+    push_u32(output, entry.bytes);
+    output.push(u8::from(entry.on_card));
+    Ok(())
+}
+
+fn decode_library_entry(reader: &mut Reader<'_>) -> Result<LibraryEntry, ProtocolError> {
+    let id = reader.string()?;
+    let title = reader.string()?;
+    let kind = reader.u8()?;
+    let bytes = reader.u32()?;
+    let on_card = read_boolean(reader, "library on card")?;
+    if !valid_library_id(&id)
+        || title.is_empty()
+        || title.len() > MAX_LIBRARY_TITLE_LEN
+        || !(1..=5).contains(&kind)
+    {
+        return Err(ProtocolError::InvalidValue("library entry"));
+    }
+    Ok(LibraryEntry {
+        id,
+        title,
+        kind,
+        bytes,
+        on_card,
+    })
+}
+
+fn decode_library_result(reader: &mut Reader<'_>) -> Result<DeviceResult, ProtocolError> {
+    let count = usize::from(reader.u16()?);
+    if count > MAX_LIBRARY_ENTRIES {
+        return Err(ProtocolError::InvalidValue("library listing"));
+    }
+    let truncated = read_boolean(reader, "library truncated")?;
+    let mut entries = Vec::with_capacity(count);
+    for _ in 0..count {
+        entries.push(decode_library_entry(reader)?);
+    }
+    Ok(DeviceResult::Library {
+        entries,
+        truncated,
+    })
+}
+
+fn decode_library_document(reader: &mut Reader<'_>) -> Result<DeviceResult, ProtocolError> {
+    let id = reader.string()?;
+    let length = usize::try_from(reader.u32()?).unwrap_or(usize::MAX);
+    if !valid_library_id(&id) || length > MAX_LIBRARY_DOCUMENT_BYTES {
+        return Err(ProtocolError::InvalidValue("library document"));
+    }
+    let bytes = reader.take(length)?.to_vec();
+    Ok(DeviceResult::LibraryDocument { id, bytes })
 }
 
 fn decode_auto_update(reader: &mut Reader<'_>) -> Result<DeviceResult, ProtocolError> {
@@ -6845,6 +7011,10 @@ mod tests {
                 name: "lichess".to_owned(),
                 value: SecretValue::new("token-value"),
             },
+            DeviceRequest::ListLibrary,
+            DeviceRequest::ReadLibrary {
+                id: "0/Bleak-House.epub".to_owned(),
+            },
         ];
         for request in requests {
             let frame = Frame {
@@ -6973,6 +7143,20 @@ mod tests {
                     capabilities: vec!["shared-files".to_owned()],
                     installed_version: Some("1.1.0".to_owned()),
                 }],
+            },
+            DeviceResult::Library {
+                entries: vec![LibraryEntry {
+                    id: "0/Bleak-House.epub".to_owned(),
+                    title: "Bleak House".to_owned(),
+                    kind: 1,
+                    bytes: 12_000,
+                    on_card: true,
+                }],
+                truncated: false,
+            },
+            DeviceResult::LibraryDocument {
+                id: "0/notes.md".to_owned(),
+                bytes: b"hello".to_vec(),
             },
         ];
         for result in results {

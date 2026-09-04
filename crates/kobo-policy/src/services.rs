@@ -334,6 +334,45 @@ impl DeviceServices {
             | DeviceRequest::SetAutoUpdate { .. }
             | DeviceRequest::ReadUpdateChannel
             | DeviceRequest::SetUpdateChannel { .. }) => self.handle_update_preferences(&request),
+            DeviceRequest::ListLibrary => self.list_library(),
+            DeviceRequest::ReadLibrary { id } => self.read_library(&id),
+        }
+    }
+
+    fn list_library(&self) -> DeviceResult {
+        if let Some(reason) = self.refusal(Capability::Library) {
+            return DeviceResult::Denied(reason);
+        }
+        let listing = crate::library::list();
+        let truncated =
+            listing.truncated || listing.entries.len() > kobo_protocol::MAX_LIBRARY_ENTRIES;
+        DeviceResult::Library {
+            entries: listing
+                .entries
+                .into_iter()
+                .take(kobo_protocol::MAX_LIBRARY_ENTRIES)
+                .map(crate::library::to_wire)
+                .collect(),
+            truncated,
+        }
+    }
+
+    fn read_library(&self, id: &str) -> DeviceResult {
+        if let Some(reason) = self.refusal(Capability::Library) {
+            return DeviceResult::Denied(reason);
+        }
+        match crate::library::read(id) {
+            Some(bytes) if bytes.len() <= kobo_protocol::MAX_LIBRARY_DOCUMENT_BYTES => {
+                DeviceResult::LibraryDocument {
+                    id: id.to_owned(),
+                    bytes,
+                }
+            }
+            Some(_) => DeviceResult::Failed(DeviceError::Backend),
+            None => DeviceResult::LibraryDocument {
+                id: id.to_owned(),
+                bytes: Vec::new(),
+            },
         }
     }
 
@@ -682,6 +721,7 @@ pub fn request_capability(request: &DeviceRequest) -> Option<Capability> {
         | DeviceRequest::ReadUpdateChannel
         | DeviceRequest::SetUpdateChannel { .. }
         | DeviceRequest::SetSecret { .. } => return None,
+        DeviceRequest::ListLibrary | DeviceRequest::ReadLibrary { .. } => Capability::Library,
     })
 }
 
