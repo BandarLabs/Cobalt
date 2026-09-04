@@ -1,3 +1,4 @@
+#![allow(unexpected_cfgs)]
 #![allow(clippy::collapsible_if)]
 //! <div align="center">
 //!
