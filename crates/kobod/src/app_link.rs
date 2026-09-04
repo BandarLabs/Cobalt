@@ -47,12 +47,13 @@ pub fn begin(root: &Path) -> Result<DeviceResult, DeviceError> {
 
 pub fn poll(root: &Path) -> Result<DeviceResult, DeviceError> {
     let mut relay = HttpsRelay::new()?;
+    let channel = crate::autoupdate::preferences(root).channel;
     poll_with(
         root,
         &mut relay,
         now(),
-        crate::app_store::prepare_remote_install,
-        crate::app_store::install,
+        |root, id| crate::app_store::prepare_remote_install(root, id, channel),
+        |root, id| crate::app_store::install(root, id, channel),
     )
 }
 
@@ -782,6 +783,12 @@ fn resume_pending(
                 final_pending.save(root)?;
                 return finish_pending(root, relay, credential, &final_pending);
             }
+            if matches!(outcome, RemoteInstallOutcome::RequiresCobalt { .. }) {
+                let final_pending =
+                    pending.final_outcome_failure("requires-cobalt", outcome.clone());
+                final_pending.save(root)?;
+                return finish_pending(root, relay, credential, &final_pending);
+            }
             if run {
                 if let Err(error) = install(root, &pending.app_id) {
                     let final_pending = pending.final_failure(failure_code(error), error);
@@ -1168,6 +1175,22 @@ impl Pending {
                 .set("error", device_error_name(*error)),
             PendingPhase::Final { .. } => return Err(DeviceError::Backend),
         };
+        if let Some(minimum_cobalt_version) = match &self.phase {
+            PendingPhase::Ready { outcome, .. }
+            | PendingPhase::Final {
+                report: Report::Outcome(outcome),
+                ..
+            } => match outcome {
+                RemoteInstallOutcome::RequiresCobalt {
+                    minimum_cobalt_version,
+                    ..
+                } => Some(minimum_cobalt_version),
+                _ => None,
+            },
+            PendingPhase::Final { .. } => None,
+        } {
+            body = body.set("minimum_cobalt_version", minimum_cobalt_version.clone());
+        }
         atomic_write(
             &state_root(root).join(PENDING_FILE),
             body.build().to_json().as_bytes(),
@@ -1243,6 +1266,7 @@ fn outcome_name(outcome: &RemoteInstallOutcome) -> String {
         RemoteInstallOutcome::AlreadyInstalled { .. } => "already-installed",
         RemoteInstallOutcome::Included { .. } => "included",
         RemoteInstallOutcome::Unavailable { .. } => "unavailable",
+        RemoteInstallOutcome::RequiresCobalt { .. } => "requires-cobalt",
     }
     .to_owned()
 }
@@ -1258,6 +1282,21 @@ fn parse_outcome(value: &Value) -> Result<RemoteInstallOutcome, DeviceError> {
         "already-installed" => Ok(RemoteInstallOutcome::AlreadyInstalled { id }),
         "included" => Ok(RemoteInstallOutcome::Included { id }),
         "unavailable" => Ok(RemoteInstallOutcome::Unavailable { id }),
+        "requires-cobalt" => {
+            let minimum_cobalt_version = required_string(value, "minimum_cobalt_version")?;
+            if minimum_cobalt_version.is_empty()
+                || minimum_cobalt_version.len() > 32
+                || !minimum_cobalt_version
+                    .split('.')
+                    .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
+            {
+                return Err(DeviceError::Integrity);
+            }
+            Ok(RemoteInstallOutcome::RequiresCobalt {
+                id,
+                minimum_cobalt_version,
+            })
+        }
         _ => Err(DeviceError::Integrity),
     }
 }
@@ -1268,7 +1307,9 @@ fn relay_outcome(outcome: &RemoteInstallOutcome) -> Option<&'static str> {
         RemoteInstallOutcome::Updated { .. } => Some("updated"),
         RemoteInstallOutcome::AlreadyInstalled { .. } => Some("already-installed"),
         RemoteInstallOutcome::Included { .. } => Some("included"),
-        RemoteInstallOutcome::None | RemoteInstallOutcome::Unavailable { .. } => None,
+        RemoteInstallOutcome::None
+        | RemoteInstallOutcome::Unavailable { .. }
+        | RemoteInstallOutcome::RequiresCobalt { .. } => None,
     }
 }
 
@@ -1965,6 +2006,30 @@ mod tests {
         ));
         assert!(Pending::load(&root).expect("pending state").is_none());
         assert_eq!(completed(&root).expect("completed"), vec![request_id()]);
+        let _ignored = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn cobalt_requirement_survives_a_pending_install_restart() {
+        let root = root("requires-cobalt-pending");
+        let pending = Pending {
+            command_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa".to_owned(),
+            request_id: request_id(),
+            app_id: "word-count".to_owned(),
+            expires_at: 2_000_000_000,
+            phase: PendingPhase::Ready {
+                install: false,
+                outcome: RemoteInstallOutcome::RequiresCobalt {
+                    id: "word-count".to_owned(),
+                    minimum_cobalt_version: "0.4.0".to_owned(),
+                },
+            },
+        };
+        pending.save(&root).expect("save pending requirement");
+        assert_eq!(
+            Pending::load(&root).expect("load pending requirement"),
+            Some(pending)
+        );
         let _ignored = fs::remove_dir_all(root);
     }
 

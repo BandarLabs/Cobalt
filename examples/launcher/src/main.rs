@@ -453,6 +453,7 @@ mod tests {
                 label: "Words".to_owned(),
                 summary: "Counts words in a note.".to_owned(),
                 version: "1.0.0".to_owned(),
+                minimum_cobalt_version: env!("CARGO_PKG_VERSION").to_owned(),
                 glyph: Glyph::Note,
                 capabilities: Vec::new(),
                 installed_version: Some("1.0.0".to_owned()),

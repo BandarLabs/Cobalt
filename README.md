@@ -15,6 +15,9 @@ Cobalt is an open-source application platform for Kobo. It provides a launcher,
 an App Store, a Rust SDK, a runtime with capability isolation, and a Clara BW
 simulator.
 
+See the [public roadmap](ROADMAP.md) for the product outcomes Cobalt is working
+toward and the principles used to choose them.
+
 After one USB installation, users can install, update, and remove signed apps
 over Wi-Fi. App releases are independent from Cobalt platform releases, so a
 new app can appear in Store without reinstalling or updating Cobalt.
@@ -126,30 +129,53 @@ the [app request thread](https://github.com/BandarLabs/Cobalt/issues/41).
 
 ## Install
 
-Install Rust, add the ARM target and connect a charged, fully supported reader
-over USB:
+On macOS or Linux, install the stable release:
 
 ```sh
-git clone https://github.com/BandarLabs/Cobalt.git
-cd Cobalt
-rustup target add armv7-unknown-linux-musleabihf
-cargo run -p kobo-cli -- setup
+curl -fsSL https://bandarlabs.github.io/Cobalt/install.sh | sh
 ```
 
-Restart the reader and open **Cobalt** from Kobo's menu. Future applications
-are installed from **Store** over Wi-Fi. Full Cobalt updates remain under
-**Settings**.
+This canonical discovery URL is published by GitHub Pages from stable
+`main:/docs`; it becomes available with the first stable promotion containing
+the installer. It trusts GitHub Pages HTTPS for the bootstrap script itself.
+After it starts, every downloaded executable and device package is covered by
+the signed release manifest and SHA-256 checks. For pre-execution verification
+of `install.sh`, use the recommended
+[signed-bootstrap procedure](docs/INSTALL.md#high-assurance-signed-bootstrap).
+
+The installer supports macOS Intel and Apple Silicon, and Linux x86_64 and
+arm64. It installs the stable Kobo platform only. The platform Beta channel is
+enabled exclusively in Cobalt Settings after first launch, or through the
+developer/source workflow. Settings shows the installed version and current
+channel, confirms channel changes explicitly, and verifies signed Beta
+platform metadata. Returning to Stable needs no USB connection and preserves
+installed apps, state, and secrets.
+
+Update the installed host command independently:
+
+```sh
+kobo update
+kobo update --channel beta   # explicit host CLI beta; never writes to a reader
+```
+
+The host CLI channel does not select the Kobo platform channel. Device Beta
+updates remain an explicit choice in Cobalt Settings.
+
+Rerun the same command to update. Restart the reader, wait one minute for
+NickelMenu's failsafe, then open **Cobalt** from Kobo's menu. Future
+applications are installed from **Store** over Wi-Fi.
 
 If you already use NickelMenu, Cobalt is added to it; existing entries are
 left alone.
 
 See [docs/INSTALL.md](docs/INSTALL.md) for the complete walkthrough and
-recovery steps.
+recovery, uninstall, and source-build instructions.
 
 ## App Store
 
-Store reads a signed catalog from the fixed `app-catalog` GitHub release. Each
-package contains one ARM executable and a signed canonical manifest. The
+Store reads a signed catalog from the Stable `app-catalog` GitHub release, or
+the isolated `app-catalog-beta` release when the owner enables Beta updates.
+Each package contains one ARM executable and a signed canonical manifest. The
 runtime verifies the catalog, package, installed manifest, and binary before
 launch.
 
@@ -218,7 +244,11 @@ App contributions are regular pull requests:
 2. Add its release metadata to `apps/catalog.json`.
 3. Add unit tests and layout checks for every affected supported profile.
 4. Run the app in the browser and runtime simulators.
-5. Open a pull request.
+5. Run it on a physical, fully supported Kobo and attach a GIF, video, or
+   photos to the pull request.
+6. Include one clean panel screenshot for the app README and generated website
+   install page.
+7. Open a pull request.
 
 After the PR is reviewed and merged, the `Publish apps` workflow builds every
 registered app for ARM, signs the packages and catalog, and updates the fixed
@@ -252,6 +282,7 @@ cargo run -p kobo-cli -- run --sim --app sudoku
 
 Additional guides:
 
+- [Roadmap](ROADMAP.md)
 - [Contributing](CONTRIBUTING.md)
 - [Developing Cobalt](docs/DEVELOPING.md)
 - [Working with devices](docs/DEVICES.md)

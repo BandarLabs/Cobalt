@@ -60,10 +60,12 @@ use std::process::ExitCode;
 
 mod app_link;
 mod app_store;
+mod autoupdate;
 #[cfg(feature = "device-write")]
 mod blackbox;
 #[cfg(feature = "device-write")]
 mod device;
+mod frame;
 mod update;
 
 fn main() -> ExitCode {
@@ -401,7 +403,7 @@ fn clear_session_files(state: &Path) -> String {
 
 fn print_safety_state() {
     let write_unlocked = env::var_os("KOBO_DEVICE_WRITE_UNLOCK").is_some();
-    println!("kobod 0.1.0");
+    println!("kobod {}", env!("CARGO_PKG_VERSION"));
 
     let profile_id = kobo_hal::probe_device()
         .ok()

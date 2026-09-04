@@ -7,8 +7,8 @@
       "display_name": "arXiv",
       "short_label": "arXiv",
       "summary": "Browse and search arXiv, keep preprints, and read their HTML versions on your Kobo.",
-      "version": "1.3.0",
-      "minimum_cobalt_version": "0.2.0",
+      "version": "1.3.6",
+      "minimum_cobalt_version": "0.3.1",
       "glyph": "note",
       "capabilities": ["network"]
     },
@@ -18,10 +18,21 @@
       "display_name": "Audiobook Studio",
       "short_label": "Audiobooks",
       "summary": "Turn a topic into an original narrated audiobook and listen on your Kobo.",
-      "version": "1.0.0",
-      "minimum_cobalt_version": "0.2.0",
+      "version": "1.0.6",
+      "minimum_cobalt_version": "0.3.1",
       "glyph": "headphones",
       "capabilities": ["network", "audio", "bluetooth-audio", "bluetooth-control"]
+    },
+    {
+      "package": "kobo-backgammon",
+      "id": "backgammon",
+      "display_name": "Backgammon",
+      "short_label": "Backgammon",
+      "summary": "Play complete solo or pass-and-play backgammon on one Kobo.",
+      "version": "0.1.1",
+      "minimum_cobalt_version": "0.3.1",
+      "glyph": "circle",
+      "capabilities": []
     },
     {
       "package": "kobo-brief",
@@ -29,8 +40,8 @@
       "display_name": "Daily Brief",
       "short_label": "Daily Brief",
       "summary": "Build a daily news brief in the background while you use other apps.",
-      "version": "1.0.0",
-      "minimum_cobalt_version": "0.2.0",
+      "version": "1.0.6",
+      "minimum_cobalt_version": "0.3.1",
       "glyph": "clock",
       "capabilities": ["network"]
     },
@@ -40,8 +51,8 @@
       "display_name": "AI Command Center",
       "short_label": "AI Chat",
       "summary": "Ask a question, then read and navigate the answer with touch controls.",
-      "version": "1.0.0",
-      "minimum_cobalt_version": "0.2.0",
+      "version": "1.0.6",
+      "minimum_cobalt_version": "0.3.4",
       "glyph": "chat",
       "capabilities": ["network"]
     },
@@ -51,8 +62,8 @@
       "display_name": "Components",
       "short_label": "Components",
       "summary": "See every Cobalt UI component on the device in one reference app.",
-      "version": "1.0.0",
-      "minimum_cobalt_version": "0.2.0",
+      "version": "1.0.6",
+      "minimum_cobalt_version": "0.3.1",
       "glyph": "chart",
       "capabilities": ["network"]
     },
@@ -62,8 +73,8 @@
       "display_name": "Gutenbird",
       "short_label": "Gutenbird",
       "summary": "Browse OPDS libraries and read their books on your Kobo.",
-      "version": "1.0.0",
-      "minimum_cobalt_version": "0.2.0",
+      "version": "1.0.6",
+      "minimum_cobalt_version": "0.3.1",
       "glyph": "book",
       "capabilities": ["network", "frontlight-control"]
     },
@@ -73,8 +84,8 @@
       "display_name": "Hacker News",
       "short_label": "Hacker News",
       "summary": "Read Top, New, Ask, and Show stories with complete comment threads.",
-      "version": "1.0.0",
-      "minimum_cobalt_version": "0.2.0",
+      "version": "1.0.6",
+      "minimum_cobalt_version": "0.3.1",
       "glyph": "news",
       "capabilities": ["network"]
     },
@@ -84,8 +95,8 @@
       "display_name": "Magnet",
       "short_label": "Magnet",
       "summary": "Find the hall sensor behind the bezel and watch it respond to a magnet.",
-      "version": "1.0.0",
-      "minimum_cobalt_version": "0.2.0",
+      "version": "1.0.6",
+      "minimum_cobalt_version": "0.3.1",
       "glyph": "magnet",
       "capabilities": ["cover-sensor"]
     },
@@ -95,8 +106,8 @@
       "display_name": "Morse",
       "short_label": "Morse",
       "summary": "Type a message and send it in Morse code with the front light.",
-      "version": "1.0.2",
-      "minimum_cobalt_version": "0.2.0",
+      "version": "1.0.8",
+      "minimum_cobalt_version": "0.3.1",
       "glyph": "light",
       "capabilities": ["frontlight-control", "keep-awake"]
     },
@@ -106,8 +117,8 @@
       "display_name": "Feeds",
       "short_label": "Feeds",
       "summary": "Follow website feeds and read their articles without the web page around them.",
-      "version": "1.0.0",
-      "minimum_cobalt_version": "0.2.0",
+      "version": "1.0.6",
+      "minimum_cobalt_version": "0.3.1",
       "glyph": "rss",
       "capabilities": ["network"]
     },
@@ -117,8 +128,8 @@
       "display_name": "Sidekick",
       "short_label": "Sidekick",
       "summary": "Answer coding-agent permission prompts from your Kobo.",
-      "version": "1.0.0",
-      "minimum_cobalt_version": "0.2.0",
+      "version": "1.0.6",
+      "minimum_cobalt_version": "0.3.1",
       "glyph": "key",
       "capabilities": ["network"]
     },
@@ -128,8 +139,8 @@
       "display_name": "Sudoku",
       "short_label": "Sudoku",
       "summary": "Play touch-first Sudoku designed for an e-ink screen.",
-      "version": "1.0.1",
-      "minimum_cobalt_version": "0.2.0",
+      "version": "1.0.7",
+      "minimum_cobalt_version": "0.3.1",
       "glyph": "grid",
       "capabilities": []
     },
@@ -139,8 +150,8 @@
       "display_name": "Tic-tac-toe",
       "short_label": "Tic-tac-toe",
       "summary": "Play tic-tac-toe together on one Kobo.",
-      "version": "1.0.0",
-      "minimum_cobalt_version": "0.2.0",
+      "version": "1.0.6",
+      "minimum_cobalt_version": "0.3.1",
       "glyph": "grid",
       "capabilities": []
     },
@@ -150,10 +161,49 @@
       "display_name": "Todo",
       "short_label": "Todo",
       "summary": "Keep a simple to-do list that stays on your Kobo.",
-      "version": "1.0.0",
-      "minimum_cobalt_version": "0.2.0",
+      "version": "1.0.6",
+      "minimum_cobalt_version": "0.3.1",
       "glyph": "check",
       "capabilities": []
+    },
+    {
+      "package": "kobo-zotero-reader",
+      "id": "zotero-reader",
+      "display_name": "Zotero Reader",
+      "short_label": "Zotero",
+      "summary": "Browse Zotero collections, read metadata and indexed paper text, and keep papers available offline.",
+      "version": "1.0.2",
+      "minimum_cobalt_version": "0.3.1",
+      "glyph": "book",
+      "capabilities": ["network", "frontlight-control"],
+      "setup": {
+        "steps": [
+          {
+            "text": "Create a dedicated Zotero API key with read-only access to your personal library.",
+            "link": {
+              "label": "Zotero API key settings",
+              "url": "https://www.zotero.org/settings/keys"
+            }
+          },
+          {
+            "text": "Copy the numeric user ID shown on the Zotero API key settings page. Zotero Reader asks for it on first launch."
+          },
+          {
+            "text": "Install the API key on your Kobo under the exact secret name zotero.",
+            "command": "kobo secret set zotero --device <address>"
+          },
+          {
+            "text": "Launch Zotero Reader, enter the numeric user ID, and select a collection."
+          },
+          {
+            "text": "Direct mode reads indexed text. Structured PDF layout, tables, figures, formulas, and OCR require the optional self-hosted conversion service.",
+            "link": {
+              "label": "Self-hosting guide",
+              "url": "https://andreclerigo.github.io/cobalt-zotero-reader/self-hosting.html"
+            }
+          }
+        ]
+      }
     }
   ]
 }

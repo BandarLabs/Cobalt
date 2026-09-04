@@ -12,7 +12,7 @@
 use crate::{Capability, Declared, Grant, Grants, PowerPolicy};
 use kobo_protocol::{
     AudioPlaybackState, DenyReason, DeviceError, DeviceRequest, DeviceResult, DictionaryEntry,
-    IdleSleep,
+    IdleSleep, UpdateChannel,
 };
 use std::collections::BTreeSet;
 use std::time::Duration;
@@ -96,6 +96,16 @@ pub struct DeviceServices {
     audio_volume: u8,
     dictionaries: kobo_dict::Index,
     idle_sleep: IdleSleep,
+    auto_update: AutoUpdateChoices,
+    update_channel: UpdateChannel,
+}
+
+/// The two standing update switches, held together because they are asked
+/// and answered together.
+#[derive(Clone, Copy, Debug)]
+struct AutoUpdateChoices {
+    cobalt: bool,
+    apps: bool,
 }
 
 impl DeviceServices {
@@ -136,6 +146,12 @@ impl DeviceServices {
             audio_volume: 70,
             dictionaries: kobo_dict::Index::default(),
             idle_sleep: IdleSleep::default(),
+            // Both on, matching a real reader that never opened settings.
+            auto_update: AutoUpdateChoices {
+                cobalt: true,
+                apps: true,
+            },
+            update_channel: UpdateChannel::Stable,
         }
     }
 
@@ -219,6 +235,7 @@ impl DeviceServices {
         match request {
             DeviceRequest::ReadBattery => self.read_battery(),
             DeviceRequest::ReadBatteryDetail => self.read_battery_detail(),
+            DeviceRequest::ReadIdentity => Self::read_identity(),
             DeviceRequest::ReadCover => self.read_cover(),
             DeviceRequest::HoldWifi { seconds } => self.hold_wifi(seconds),
             DeviceRequest::ReleaseWifi => {
@@ -305,9 +322,7 @@ impl DeviceServices {
                 .map_or(DeviceResult::Done, DeviceResult::Denied),
             DeviceRequest::ListInstalledApps
             | DeviceRequest::ReadAppCatalog
-            | DeviceRequest::RefreshAppCatalog => DeviceResult::Apps {
-                entries: Vec::new(),
-            },
+            | DeviceRequest::RefreshAppCatalog => Self::empty_apps(),
             DeviceRequest::InstallApp { .. } | DeviceRequest::UninstallApp { .. } => {
                 DeviceResult::Done
             }
@@ -323,6 +338,45 @@ impl DeviceServices {
             | DeviceRequest::BeginAppLink
             | DeviceRequest::PollAppLink
             | DeviceRequest::DisconnectAppLink => DeviceResult::Denied(DenyReason::Unsupported),
+            request @ (DeviceRequest::ReadAutoUpdate
+            | DeviceRequest::SetAutoUpdate { .. }
+            | DeviceRequest::ReadUpdateChannel
+            | DeviceRequest::SetUpdateChannel { .. }) => self.handle_update_preferences(&request),
+        }
+    }
+
+    fn empty_apps() -> DeviceResult {
+        DeviceResult::Apps {
+            entries: Vec::new(),
+        }
+    }
+
+    fn handle_update_preferences(&mut self, request: &DeviceRequest) -> DeviceResult {
+        match request {
+            DeviceRequest::ReadAutoUpdate => self.auto_update_state(),
+            DeviceRequest::SetAutoUpdate { cobalt, apps } => {
+                self.choose_auto_update(*cobalt, *apps)
+            }
+            DeviceRequest::ReadUpdateChannel => DeviceResult::UpdateChannel(self.update_channel),
+            DeviceRequest::SetUpdateChannel { channel } => {
+                self.update_channel = *channel;
+                DeviceResult::UpdateChannel(self.update_channel)
+            }
+            _ => unreachable!("caller passes only update-preference requests"),
+        }
+    }
+
+    fn choose_auto_update(&mut self, cobalt: bool, apps: bool) -> DeviceResult {
+        self.auto_update = AutoUpdateChoices { cobalt, apps };
+        self.auto_update_state()
+    }
+
+    /// The simulator keeps the two switches in memory so a settings screen's
+    /// whole flow can be exercised at a desk.
+    const fn auto_update_state(&self) -> DeviceResult {
+        DeviceResult::AutoUpdate {
+            cobalt: self.auto_update.cobalt,
+            apps: self.auto_update.apps,
         }
     }
 
@@ -399,6 +453,23 @@ impl DeviceServices {
             },
             DeviceResult::Denied,
         )
+    }
+
+    /// The simulator is not a reader, and the honest answer says so. The
+    /// profile name makes that unmistakable in a screenshot, so a simulator
+    /// capture can never pass for the hardware evidence the About screen
+    /// exists to provide.
+    fn read_identity() -> DeviceResult {
+        DeviceResult::Identity(kobo_protocol::DeviceIdentity {
+            profile_id: "SIMULATOR".to_owned(),
+            model: "Simulated reader".to_owned(),
+            device_code: 0,
+            firmware: String::new(),
+            kernel: String::new(),
+            runtime_version: env!("CARGO_PKG_VERSION").to_owned(),
+            panel_width: 1072,
+            panel_height: 1448,
+        })
     }
 
     /// The simulator has no bezel to hold a magnet against, so it reports a
@@ -608,7 +679,18 @@ pub fn request_capability(request: &DeviceRequest) -> Option<Capability> {
         | DeviceRequest::PollAppLink
         | DeviceRequest::DisconnectAppLink
         | DeviceRequest::ReadIdleSleep
-        | DeviceRequest::SetIdleSleep(_) => return None,
+        | DeviceRequest::SetIdleSleep(_)
+        // Identity is what the About screen shows so a photograph of it can
+        // prove a build ran. It touches no radio and costs no power, and the
+        // values are already on the session's own banner, so it is free.
+        | DeviceRequest::ReadIdentity
+        // Reading and choosing the standing preference touch a settings file,
+        // not a radio or the panel, so no capability governs them; who may
+        // ask is decided by the runtime, exactly as for the store requests.
+        | DeviceRequest::ReadAutoUpdate
+        | DeviceRequest::SetAutoUpdate { .. }
+        | DeviceRequest::ReadUpdateChannel
+        | DeviceRequest::SetUpdateChannel { .. } => return None,
     })
 }
 
@@ -620,7 +702,7 @@ fn clamp_seconds(duration: Duration) -> u32 {
 mod tests {
     use super::{Backends, DeviceServices, DeviceState};
     use crate::{Capability, Declared, PowerPolicy};
-    use kobo_protocol::{DenyReason, DeviceRequest, DeviceResult, IdleSleep};
+    use kobo_protocol::{DenyReason, DeviceRequest, DeviceResult, IdleSleep, UpdateChannel};
 
     fn seconds_of(duration: std::time::Duration) -> u32 {
         u32::try_from(duration.as_secs()).expect("policy fits in u32")
@@ -697,6 +779,49 @@ mod tests {
                 sha256: "a".repeat(64),
             }),
             DeviceResult::Done
+        );
+    }
+
+    #[test]
+    fn simulated_automatic_updates_start_on_and_remember_a_choice() {
+        let mut services = DeviceServices::simulated();
+        assert_eq!(
+            services.handle(DeviceRequest::ReadAutoUpdate),
+            DeviceResult::AutoUpdate {
+                cobalt: true,
+                apps: true,
+            }
+        );
+        assert_eq!(
+            services.handle(DeviceRequest::SetAutoUpdate {
+                cobalt: false,
+                apps: true,
+            }),
+            DeviceResult::AutoUpdate {
+                cobalt: false,
+                apps: true,
+            }
+        );
+        assert_eq!(
+            services.handle(DeviceRequest::ReadAutoUpdate),
+            DeviceResult::AutoUpdate {
+                cobalt: false,
+                apps: true,
+            }
+        );
+        assert_eq!(
+            services.handle(DeviceRequest::ReadUpdateChannel),
+            DeviceResult::UpdateChannel(UpdateChannel::Stable)
+        );
+        assert_eq!(
+            services.handle(DeviceRequest::SetUpdateChannel {
+                channel: UpdateChannel::Beta,
+            }),
+            DeviceResult::UpdateChannel(UpdateChannel::Beta)
+        );
+        assert_eq!(
+            services.handle(DeviceRequest::ReadUpdateChannel),
+            DeviceResult::UpdateChannel(UpdateChannel::Beta)
         );
     }
 

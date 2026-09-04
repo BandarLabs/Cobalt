@@ -1,0 +1,313 @@
+name: Promote tested beta
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Exact version to promote, for example 0.3.2
+        required: true
+        type: string
+      tested_commit:
+        description: Full 40-character commit SHA tested from beta
+        required: true
+        type: string
+      expected_archive_sha256:
+        description: Expected SHA-256 of cobalt-VERSION-KoboRoot.tgz
+        required: true
+        type: string
+      confirmation:
+        description: Type promote-beta-vX.Y.Z using the same version
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: cobalt-stable-promotion
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Guard the requested version
+        env:
+          VERSION: ${{ inputs.version }}
+          TESTED_COMMIT: ${{ inputs.tested_commit }}
+          EXPECTED_ARCHIVE_SHA256: ${{ inputs.expected_archive_sha256 }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          api_get() {
+            output="$1"
+            endpoint="$2"
+            if ! status="$(curl --silent --show-error --location \
+              --retry 3 --retry-all-errors \
+              --header "Authorization: Bearer $GH_TOKEN" \
+              --header "Accept: application/vnd.github+json" \
+              --header "X-GitHub-Api-Version: 2022-11-28" \
+              --output "$output" --write-out '%{http_code}' \
+              "https://api.github.com/${endpoint}")"
+            then
+              echo "GitHub API request failed for $endpoint" >&2
+              return 2
+            fi
+            case "$status" in
+              200) return 0 ;;
+              404)
+                rm -f "$output"
+                return 1
+                ;;
+              *)
+                echo "GitHub API request for $endpoint returned HTTP $status" >&2
+                return 2
+                ;;
+            esac
+          }
+          require_present() {
+            label="$1"
+            endpoint="$2"
+            output="$3"
+            if api_get "$output" "$endpoint"; then
+              return
+            else
+              lookup_status=$?
+              if [ "$lookup_status" -eq 1 ]; then
+                echo "required $label does not exist" >&2
+              fi
+              exit 1
+            fi
+          }
+          require_absent() {
+            label="$1"
+            endpoint="$2"
+            output="$3"
+            if api_get "$output" "$endpoint"; then
+              echo "$label already exists; refusing replacement" >&2
+              exit 1
+            else
+              lookup_status=$?
+              if [ "$lookup_status" -ne 1 ]; then
+                exit 1
+              fi
+            fi
+          }
+          resolve_ref_commit() {
+            state="$1"
+            depth=0
+            while :; do
+              object_type="$(node -p 'require(process.argv[1]).object.type' "$state")"
+              object_sha="$(node -p 'require(process.argv[1]).object.sha' "$state")"
+              printf '%s\n' "$object_sha" | grep -Eq '^[0-9a-f]{40}$'
+              case "$object_type" in
+                commit)
+                  printf '%s\n' "$object_sha"
+                  return
+                  ;;
+                tag)
+                  depth=$((depth + 1))
+                  if [ "$depth" -gt 8 ]; then
+                    echo "beta tag annotation chain is too deep" >&2
+                    return 1
+                  fi
+                  state="$RUNNER_TEMP/beta-tag-object-${depth}.json"
+                  require_present "beta tag object $object_sha" \
+                    "repos/${GITHUB_REPOSITORY}/git/tags/${object_sha}" \
+                    "$state"
+                  ;;
+                *)
+                  echo "beta tag resolves to unsupported object type $object_type" >&2
+                  return 1
+                  ;;
+              esac
+            done
+          }
+          printf '%s\n' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'
+          printf '%s\n' "$TESTED_COMMIT" | grep -Eq '^[0-9a-f]{40}$'
+          printf '%s\n' "$EXPECTED_ARCHIVE_SHA256" | grep -Eq '^[0-9a-f]{64}$'
+          test "$CONFIRMATION" = "promote-beta-v${VERSION}"
+          grep -Fxq "version = \"$VERSION\"" Cargo.toml
+          beta_tag="beta-v${VERSION}"
+          beta_release="$RUNNER_TEMP/beta-release.json"
+          require_present "$beta_tag release" \
+            "repos/${GITHUB_REPOSITORY}/releases/tags/${beta_tag}" \
+            "$beta_release"
+          node -e '
+            const release = require(process.argv[1]);
+            if (
+              release.tag_name !== process.argv[2] ||
+              release.draft !== false ||
+              release.prerelease !== true
+            ) process.exit(1);
+          ' "$beta_release" "$beta_tag"
+          beta_ref="$RUNNER_TEMP/beta-ref.json"
+          require_present "$beta_tag tag" \
+            "repos/${GITHUB_REPOSITORY}/git/ref/tags/${beta_tag}" \
+            "$beta_ref"
+          test "$(resolve_ref_commit "$beta_ref")" = "$TESTED_COMMIT"
+          git cat-file -e "${TESTED_COMMIT}^{commit}"
+          git cat-file -e "${TESTED_COMMIT}:install.sh"
+          git cat-file -e "${TESTED_COMMIT}:docs/install.sh"
+          git merge-base --is-ancestor "$TESTED_COMMIT" HEAD
+          stable_tag="v${VERSION}"
+          require_absent "$stable_tag tag" \
+            "repos/${GITHUB_REPOSITORY}/git/ref/tags/${stable_tag}" \
+            "$RUNNER_TEMP/stable-ref.json"
+          require_absent "$stable_tag release" \
+            "repos/${GITHUB_REPOSITORY}/releases/tags/${stable_tag}" \
+            "$RUNNER_TEMP/stable-release.json"
+      - name: Download the exact beta assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          mkdir -p dist
+          gh release download "beta-v${VERSION}" --dir dist
+      - name: Verify beta checksums and expected assets
+        env:
+          VERSION: ${{ inputs.version }}
+          EXPECTED_ARCHIVE_SHA256: ${{ inputs.expected_archive_sha256 }}
+          TESTED_COMMIT: ${{ inputs.tested_commit }}
+        run: |
+          cd dist
+          asset="cobalt-${VERSION}-KoboRoot.tgz"
+          legacy_asset="cobalt-${VERSION}-ClaraBW-KoboRoot.tgz"
+          digest="cobalt-${VERSION}.sha256"
+          test -f "$asset"
+          test -f "$legacy_asset"
+          test -f "$digest"
+          test -f "cobalt-${VERSION}-ClaraBW.sha256"
+          test -f THIRD-PARTY.md
+          test -f cobalt-host-manifest.txt
+          test -f cobalt-host-manifest.txt.sig
+          test -f cobalt-host-manifest.txt.sshsig
+          for platform in macos-x86_64 macos-arm64 linux-x86_64 linux-arm64; do
+            test -f "kobo-${VERSION}-${platform}.tar.gz"
+          done
+          test "$(find . -maxdepth 1 -type f | wc -l)" -eq 12
+          grep -Eq "^[0-9a-f]{64}  ${asset}$" "$digest"
+          grep -Eq "^[0-9a-f]{64}  ${legacy_asset}$" "$digest"
+          cmp "$digest" "cobalt-${VERSION}-ClaraBW.sha256"
+          cmp "$asset" "$legacy_asset"
+          primary_digest="$(awk -v asset="$asset" '$2 == asset { print $1 }' "$digest")"
+          test "$primary_digest" = "$EXPECTED_ARCHIVE_SHA256"
+          sha256sum --check "$digest"
+          sha256sum --check "cobalt-${VERSION}-ClaraBW.sha256"
+          test "$(sed -n '1p' cobalt-host-manifest.txt)" = "cobalt-host-release 1"
+          grep -Fx "version ${VERSION}" cobalt-host-manifest.txt
+          grep -Fx "channels stable,beta" cobalt-host-manifest.txt
+          grep -Fx "source ${TESTED_COMMIT}" cobalt-host-manifest.txt
+          printf '%s\n' \
+            'cobalt-release ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIL7XUR3p+tvPgftO/kRbigc8gagzP2RBDG3tWIu/1KXe' \
+            > allowed_signers
+          ssh-keygen -Y verify -q \
+            -f allowed_signers \
+            -I cobalt-release \
+            -n cobalt-host-release \
+            -s cobalt-host-manifest.txt.sshsig \
+            < cobalt-host-manifest.txt
+          rm allowed_signers
+          git show "${TESTED_COMMIT}:install.sh" > install.sh
+          while read -r kind first second third fourth; do
+            case "$kind" in
+              device)
+                name=$first
+                bytes=$second
+                checksum=$third
+                test -z "${fourth:-}"
+                ;;
+              bootstrap)
+                name=$first
+                bytes=$second
+                checksum=$third
+                test -z "${fourth:-}"
+                ;;
+              host)
+                name=$second
+                bytes=$third
+                checksum=$fourth
+                ;;
+              *) continue ;;
+            esac
+            test -f "$name"
+            test "$(wc -c < "$name" | tr -d ' ')" = "$bytes"
+            test "$(sha256sum "$name" | cut -d' ' -f1)" = "$checksum"
+          done < cobalt-host-manifest.txt
+          test "$(find . -maxdepth 1 -type f | wc -l)" -eq 13
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: 1.85.1
+      - name: Verify the in-process release signature
+        run: |
+          cargo run --locked -p kobo-cli -- host-release-verify \
+            --manifest dist/cobalt-host-manifest.txt \
+            --signature dist/cobalt-host-manifest.txt.sig
+      - name: Publish the exact verified bytes as stable
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+          TESTED_COMMIT: ${{ inputs.tested_commit }}
+        run: |
+          api_get() {
+            output="$1"
+            endpoint="$2"
+            if ! status="$(curl --silent --show-error --location \
+              --retry 3 --retry-all-errors \
+              --header "Authorization: Bearer $GH_TOKEN" \
+              --header "Accept: application/vnd.github+json" \
+              --header "X-GitHub-Api-Version: 2022-11-28" \
+              --output "$output" --write-out '%{http_code}' \
+              "https://api.github.com/${endpoint}")"
+            then
+              echo "GitHub API request failed for $endpoint" >&2
+              return 2
+            fi
+            case "$status" in
+              200) return 0 ;;
+              404)
+                rm -f "$output"
+                return 1
+                ;;
+              *)
+                echo "GitHub API request for $endpoint returned HTTP $status" >&2
+                return 2
+                ;;
+            esac
+          }
+          require_absent() {
+            label="$1"
+            endpoint="$2"
+            output="$3"
+            if api_get "$output" "$endpoint"; then
+              echo "$label already exists; refusing replacement" >&2
+              exit 1
+            else
+              lookup_status=$?
+              if [ "$lookup_status" -ne 1 ]; then
+                exit 1
+              fi
+            fi
+          }
+          tag="v${VERSION}"
+          require_absent "$tag tag" \
+            "repos/${GITHUB_REPOSITORY}/git/ref/tags/${tag}" \
+            "$RUNNER_TEMP/stable-ref.json"
+          require_absent "$tag release" \
+            "repos/${GITHUB_REPOSITORY}/releases/tags/${tag}" \
+            "$RUNNER_TEMP/stable-release.json"
+          created_sha="$(gh api \
+            --method POST \
+            "repos/${GITHUB_REPOSITORY}/git/refs" \
+            --field "ref=refs/tags/${tag}" \
+            --field "sha=${TESTED_COMMIT}" \
+            --jq '.object.sha')"
+          test "$created_sha" = "$TESTED_COMMIT"
+          gh release create "$tag" dist/* \
+            --title "Cobalt ${VERSION}" \
+            --notes "Promoted verified artifacts from tested beta-v${VERSION}." \
+            --latest

@@ -1,0 +1,10 @@
+expect Backgammon
+tap Roll
+expect White opened
+shot backgammon-opening
+tap 24
+expect Checker selected
+shot backgammon-selected
+tap 23
+expect Use the remaining die
+shot backgammon-play

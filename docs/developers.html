@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Build for Cobalt</title>
+<meta name="description" content="Create a Rust app, run it in the Cobalt simulator, and publish it for supported e-readers.">
+<link rel="canonical" href="https://bandarlabs.github.io/Cobalt/developers.html">
+<link rel="icon" href="logo.svg" type="image/svg+xml">
+<style>
+:root {
+  --paper: #f6f2ea;
+  --paper-deep: #eee8db;
+  --ink: #1b1813;
+  --ink-soft: #5a5347;
+  --rule: #d9d1c0;
+  --cobalt: #1a41a8;
+  --cobalt-deep: #143283;
+  --serif: "Charter", "Iowan Old Style", "Palatino", "Georgia", serif;
+  --mono: "SF Mono", "Menlo", "Consolas", monospace;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html { max-width: 100%; overflow-x: hidden; }
+body {
+  background: var(--paper) url("media/site/grain.png") repeat;
+  background-size: 128px 128px;
+  background-blend-mode: multiply;
+  color: var(--ink);
+  font-family: var(--serif);
+  font-size: 17px;
+  line-height: 1.58;
+  border-top: 5px solid var(--cobalt);
+  max-width: 100%; overflow-x: hidden;
+}
+a { color: var(--cobalt); text-decoration: none; }
+a:hover { text-decoration: underline; text-underline-offset: 3px; }
+.wrap { width: 100%; max-width: 1080px; margin: 0 auto; padding: 0 18px; }
+header { border-bottom: 1px solid var(--ink); padding: 14px 0; }
+header .wrap { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.brand { display: flex; align-items: center; color: var(--ink); }
+.brand img { width: auto; height: 34px; }
+nav.top {
+  display: flex; width: 100%; gap: 18px; overflow-x: auto;
+  padding-bottom: 4px; font-size: 15px; scrollbar-width: thin;
+}
+nav.top a { color: var(--ink); white-space: nowrap; }
+nav.top a.active, nav.top a:hover { color: var(--cobalt); }
+.icon-link { display: inline-flex; align-items: center; gap: 6px; }
+.icon-link svg { width: 15px; height: 15px; flex: none; fill: currentColor; }
+.intro { padding: 48px 0; border-bottom: 1px solid var(--rule); }
+.intro-grid { display: grid; grid-template-columns: 1fr; gap: 34px; align-items: start; }
+.intro-grid > * { min-width: 0; }
+.testimonial { width: 100%; max-width: 550px; overflow: hidden; }
+.testimonial .twitter-tweet { margin: 0 !important; }
+.testimonial iframe { width: 100% !important; max-width: 550px !important; }
+h1 { font-size: 38px; line-height: 1.06; letter-spacing: -.015em; max-width: 13em; }
+.lede { margin-top: 20px; max-width: 38em; font-size: 20px; }
+.quiet { margin-top: 10px; color: var(--ink-soft); max-width: 43em; }
+.cta { display: grid; grid-template-columns: 1fr; gap: 10px; margin-top: 28px; }
+.btn {
+  display: block; padding: 12px 16px; border: 1.5px solid var(--ink);
+  color: var(--ink); text-align: center;
+}
+.btn:hover { color: var(--paper); background: var(--ink); text-decoration: none; }
+.btn.primary { color: #fff; background: var(--cobalt); border-color: var(--cobalt); }
+.btn.primary:hover { background: var(--cobalt-deep); border-color: var(--cobalt-deep); }
+.hero-start { margin-top: 34px; max-width: 34em; }
+.hero-start > p {
+  color: var(--ink-soft); font: 12px/1.4 var(--mono);
+  letter-spacing: .12em; text-transform: uppercase;
+}
+.hero-start pre { margin-top: 10px; }
+section { padding: 48px 0; border-bottom: 1px solid var(--rule); }
+h2 { font-size: 30px; line-height: 1.12; margin-bottom: 18px; }
+.path, .resources { display: grid; grid-template-columns: 1fr; gap: 1px; background: var(--rule); border: 1px solid var(--rule); }
+.step, .resource { padding: 22px 20px; background: var(--paper); }
+.step b { display: block; margin-bottom: 8px; font-size: 19px; }
+.step p, .resource p { color: var(--ink-soft); font-size: 16px; }
+.resource h3 { margin-bottom: 7px; font-size: 20px; }
+.resource a { color: var(--ink); }
+.resource a:hover { color: var(--cobalt); }
+.example { display: grid; grid-template-columns: 1fr; gap: 28px; align-items: start; }
+.example > * { min-width: 0; }
+.example p { color: var(--ink-soft); }
+.example p + p { margin-top: 14px; }
+pre {
+  margin-top: 24px; padding: 16px 18px; overflow-wrap: anywhere;
+  white-space: pre-wrap; border-left: 3px solid var(--cobalt);
+  background: var(--ink); color: #e8e2d4; font: 13px/1.6 var(--mono);
+}
+pre .kw { color: #8fb4ff; }
+pre .str { color: #c9b98a; }
+code.inline {
+  padding: 2px 6px; border: 1px solid var(--rule); background: var(--paper-deep);
+  font: .82em var(--mono);
+}
+footer { padding: 42px 0 48px; color: #fff; background: var(--cobalt); font-size: 15px; }
+footer a { color: #fff; text-decoration: underline; text-underline-offset: 3px; }
+footer nav { display: flex; flex-wrap: wrap; gap: 16px 20px; margin-top: 20px; }
+@media (min-width: 620px) {
+  .wrap { padding-left: 24px; padding-right: 24px; }
+  header { padding: 18px 0; }
+  header .wrap { justify-content: space-between; flex-wrap: nowrap; }
+  nav.top { width: auto; overflow: visible; padding: 0; }
+  .intro, section { padding: 68px 0; }
+  h1 { font-size: 50px; }
+  .cta { display: flex; flex-wrap: wrap; }
+  .btn { display: inline-block; padding: 11px 20px; }
+  .path { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .resources { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  footer .wrap { display: flex; justify-content: space-between; align-items: center; gap: 24px; }
+  footer nav { margin-top: 0; }
+}
+@media (min-width: 900px) {
+  .intro { padding: 56px 0; }
+  .intro-grid { grid-template-columns: minmax(0, .9fr) minmax(360px, 1.1fr); gap: 54px; align-items: start; }
+  .intro-grid > div:first-child { padding-top: 56px; }
+  .path { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .example { grid-template-columns: minmax(240px, .75fr) minmax(0, 1.25fr); gap: 56px; }
+}
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <a class="brand" href="index.html"><img src="logo.svg" alt="Cobalt" width="81" height="34"></a>
+    <nav class="top">
+      <a href="index.html">Home</a>
+      <a class="active" href="developers.html">Developers</a>
+      <a href="sdk.html">SDK reference</a>
+      <a href="faq.html">FAQ</a>
+      <a class="icon-link" href="https://github.com/BandarLabs/Cobalt">
+        <svg viewBox="0 0 16 16" aria-hidden="true">
+          <path d="M8 0a8 8 0 0 0-2.53 15.59c.4.07.55-.17.55-.38v-1.49c-2.23.49-2.7-1.08-2.7-1.08-.37-.93-.9-1.18-.9-1.18-.73-.5.06-.49.06-.49.8.06 1.23.83 1.23.83.72 1.23 1.88.87 2.34.67.07-.52.28-.87.51-1.07-1.78-.2-3.65-.89-3.65-3.96 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.22 2.2.82A7.66 7.66 0 0 1 8 3.72a7.7 7.7 0 0 1 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.28.82 2.15 0 3.08-1.88 3.75-3.66 3.95.29.25.54.74.54 1.5v2.32c0 .21.15.46.55.38A8 8 0 0 0 8 0Z"/>
+        </svg>
+        GitHub
+      </a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <div class="intro">
+    <div class="wrap intro-grid">
+      <div>
+        <h1>Put your idea on an e-ink screen.</h1>
+        <p class="lede">Create a Rust app, run it in our simulator, try it on a supported reader, and publish it to Cobalt Store.</p>
+        <p class="quiet">You can start without a device. Hardware testing comes after the interaction works in the simulator.</p>
+        <div class="cta">
+          <a class="btn primary" href="sdk.html#quick-start">Create an app</a>
+          <a class="btn" href="https://github.com/BandarLabs/Cobalt/blob/main/docs/CONTRIBUTING_APPS.md">Publish an app</a>
+        </div>
+        <div class="hero-start">
+          <p>Start in the simulator</p>
+<pre><code>cargo install --path crates/kobo-cli
+kobo new my-app
+cd my-app
+kobo dev</code></pre>
+        </div>
+      </div>
+      <aside class="testimonial" aria-label="Community testimonial">
+        <blockquote class="twitter-tweet" data-theme="dark" data-dnt="true">
+          <p lang="en" dir="ltr">Kobo Aura 2 with Cobalt.<br><br>Running Linux on my ebook reader is so funny.<br><br>Time to hack and see how far I can go with this new toy.<br><br>First test: Hermes Agent on it. <a href="https://t.co/2gEvzD0A0O">pic.twitter.com/2gEvzD0A0O</a></p>
+          <p>Marco Franzon (@mfranz_on), <a href="https://x.com/mfranz_on/status/2092370523556602367?ref_src=twsrc%5Etfw">August 25, 2026</a></p>
+        </blockquote>
+      </aside>
+    </div>
+  </div>
+
+  <section>
+    <div class="wrap">
+      <h2>From idea to Store</h2>
+      <div class="path">
+        <div class="step"><b>1. Create</b><p>Start from the app template and build one useful screen.</p></div>
+        <div class="step"><b>2. Run</b><p>Use the Cobalt simulator for quick interaction and failure-state checks.</p></div>
+        <div class="step"><b>3. Test</b><p>Confirm the final interface and device behavior on supported hardware.</p></div>
+        <div class="step"><b>4. Publish</b><p>Submit the app for review and independent Store delivery.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="wrap example">
+      <div>
+        <h2>An app is one Rust file.</h2>
+        <p>Implement <code class="inline">KoboApp</code>, draw the current screen, and handle named actions.</p>
+        <p>This counter has one value and one button. Run it with <code class="inline">kobo dev</code>, then add only the services the app needs.</p>
+        <p><a href="sdk.html#quick-start">Continue with the SDK reference</a></p>
+      </div>
+<pre><code><span class="kw">use</span> kobo_sdk::{
+    action_id, ActionId, Context,
+    KoboApp, ScreenBuilder,
+};
+
+#[derive(Default)]
+<span class="kw">struct</span> Counter { taps: u32 }
+
+<span class="kw">impl</span> KoboApp <span class="kw">for</span> Counter {
+    <span class="kw">fn</span> on_start(&amp;<span class="kw">mut</span> self, ctx: &amp;<span class="kw">mut</span> Context) {
+        self.show(ctx);
+    }
+
+    <span class="kw">fn</span> on_action(
+        &amp;<span class="kw">mut</span> self,
+        ctx: &amp;<span class="kw">mut</span> Context,
+        action: ActionId,
+    ) {
+        <span class="kw">if</span> action == action_id(<span class="str">"tap"</span>) {
+            self.taps += 1;
+        }
+        self.show(ctx);
+    }
+}
+
+<span class="kw">impl</span> Counter {
+    <span class="kw">fn</span> show(&amp;self, ctx: &amp;<span class="kw">mut</span> Context) {
+        ctx.set_screen(
+            ScreenBuilder::new(<span class="str">"counter"</span>)
+                .top_bar(<span class="str">"Counter"</span>)
+                .heading(format!(<span class="str">"{} taps"</span>, self.taps))
+                .primary_button(<span class="str">"tap"</span>, <span class="str">"Tap"</span>)
+                .build(),
+        );
+    }
+}
+
+<span class="kw">fn</span> main() {
+    <span class="kw">let</span> _ = kobo_sdk::run(
+        <span class="str">"counter"</span>,
+        Counter::default(),
+    );
+}</code></pre>
+    </div>
+  </section>
+
+  <section>
+    <div class="wrap">
+      <h2>Documentation</h2>
+      <div class="resources">
+        <div class="resource"><h3><a href="sdk.html">SDK reference</a></h3><p>Application lifecycle, interface components, services, capabilities, commands, and limits.</p></div>
+        <div class="resource"><h3><a href="https://github.com/BandarLabs/Cobalt/blob/main/docs/CONTRIBUTING_APPS.md">Publish an app</a></h3><p>Repository layout, review requirements, screenshots, tests, and Store submission.</p></div>
+        <div class="resource"><h3><a href="https://github.com/BandarLabs/Cobalt/blob/main/docs/DEVICES.md">Test on a reader</a></h3><p>Supported devices, connection steps, diagnostics, and hardware evidence.</p></div>
+        <div class="resource"><h3><a href="APP_STORE.md">Store format</a></h3><p>Signed packages, the public catalog, updates, rollback behavior, and release flow.</p></div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <p>Cobalt · AGPL-3.0 · <a href="https://github.com/BandarLabs/Cobalt">BandarLabs/Cobalt</a></p>
+    <nav>
+      <a href="index.html">For owners</a>
+      <a href="sdk.html">SDK reference</a>
+      <a href="https://github.com/BandarLabs/Cobalt/blob/main/docs/CONTRIBUTING_APPS.md">Contribute an app</a>
+      <a href="https://github.com/BandarLabs/Cobalt/issues">Report an issue</a>
+    </nav>
+  </div>
+</footer>
+<script async src="https://platform.x.com/widgets.js" charset="utf-8"></script>
+</body>
+</html>

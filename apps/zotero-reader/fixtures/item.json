@@ -1,0 +1,22 @@
+{
+  "key": "PAPER001",
+  "version": 9,
+  "data": {
+    "key": "PAPER001",
+    "version": 9,
+    "itemType": "journalArticle",
+    "title": "Bounded Research Readers",
+    "creators": [
+      {"creatorType": "author", "firstName": "Ada", "lastName": "Lovelace"},
+      {"creatorType": "author", "firstName": "Grace", "lastName": "Hopper"},
+      {"creatorType": "author", "name": "Systems Group"}
+    ],
+    "abstractNote": "A fixture abstract with a deliberately ordinary provenance: synthetic test data.",
+    "publicationTitle": "Journal of Bounded Systems",
+    "date": "2026-05-14",
+    "dateAdded": "2026-08-19T12:00:00Z",
+    "DOI": "10.0000/synthetic.1",
+    "url": "https://example.invalid/paper",
+    "tags": [{"tag": "systems"}]
+  }
+}
