@@ -28,8 +28,6 @@ members = [
     "crates/kobo-ui",
     "crates/kobo-guard",
     "crates/kobo-handoff",
-    "crates/kobo-flashcards-format",
-    "crates/kobo-flashcards-import",
     "crates/kobo-xml",
     "crates/kobod",
     "examples/brief",
@@ -48,18 +46,10 @@ members = [
     "examples/settings",
     "examples/sidekick",
     "examples/store",
-    "apps/arxiv",
-    "apps/backgammon",
-    "apps/flashcards",
-    "apps/morse",
-    "apps/sudoku",
-    "apps/zotero-reader",
+    "apps/*",
     "tools/icon-import",
 ]
 resolver = "2"
-
-[patch.crates-io]
-fsrs = { path = "third_party/fsrs" }
 
 [workspace.package]
 version = "0.3.5"

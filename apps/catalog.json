@@ -10,7 +10,9 @@
       "version": "1.3.6",
       "minimum_cobalt_version": "0.3.1",
       "glyph": "note",
-      "capabilities": ["network"]
+      "capabilities": [
+        "network"
+      ]
     },
     {
       "package": "kobo-audiobook",
@@ -21,7 +23,12 @@
       "version": "1.0.6",
       "minimum_cobalt_version": "0.3.1",
       "glyph": "headphones",
-      "capabilities": ["network", "audio", "bluetooth-audio", "bluetooth-control"]
+      "capabilities": [
+        "network",
+        "audio",
+        "bluetooth-audio",
+        "bluetooth-control"
+      ]
     },
     {
       "package": "kobo-backgammon",
@@ -32,7 +39,8 @@
       "version": "0.1.1",
       "minimum_cobalt_version": "0.3.1",
       "glyph": "circle",
-      "capabilities": []
+      "capabilities": [],
+      "release_notes": "Play complete solo or pass-and-play backgammon on one Kobo."
     },
     {
       "package": "kobo-brief",
@@ -43,7 +51,9 @@
       "version": "1.0.6",
       "minimum_cobalt_version": "0.3.1",
       "glyph": "clock",
-      "capabilities": ["network"]
+      "capabilities": [
+        "network"
+      ]
     },
     {
       "package": "kobo-chat",
@@ -54,7 +64,9 @@
       "version": "1.0.6",
       "minimum_cobalt_version": "0.3.4",
       "glyph": "chat",
-      "capabilities": ["network"]
+      "capabilities": [
+        "network"
+      ]
     },
     {
       "package": "kobo-gallery",
@@ -65,7 +77,9 @@
       "version": "1.0.6",
       "minimum_cobalt_version": "0.3.1",
       "glyph": "chart",
-      "capabilities": ["network"]
+      "capabilities": [
+        "network"
+      ]
     },
     {
       "package": "kobo-flashcards",
@@ -87,7 +101,10 @@
       "version": "1.0.6",
       "minimum_cobalt_version": "0.3.1",
       "glyph": "book",
-      "capabilities": ["network", "frontlight-control"]
+      "capabilities": [
+        "network",
+        "frontlight-control"
+      ]
     },
     {
       "package": "kobo-hn",
@@ -98,7 +115,9 @@
       "version": "1.0.6",
       "minimum_cobalt_version": "0.3.1",
       "glyph": "news",
-      "capabilities": ["network"]
+      "capabilities": [
+        "network"
+      ]
     },
     {
       "package": "kobo-magnet",
@@ -109,7 +128,9 @@
       "version": "1.0.6",
       "minimum_cobalt_version": "0.3.1",
       "glyph": "magnet",
-      "capabilities": ["cover-sensor"]
+      "capabilities": [
+        "cover-sensor"
+      ]
     },
     {
       "package": "kobo-morse",
@@ -120,7 +141,10 @@
       "version": "1.0.8",
       "minimum_cobalt_version": "0.3.1",
       "glyph": "light",
-      "capabilities": ["frontlight-control", "keep-awake"]
+      "capabilities": [
+        "frontlight-control",
+        "keep-awake"
+      ]
     },
     {
       "package": "kobo-rss",
@@ -131,7 +155,9 @@
       "version": "1.0.6",
       "minimum_cobalt_version": "0.3.1",
       "glyph": "rss",
-      "capabilities": ["network"]
+      "capabilities": [
+        "network"
+      ]
     },
     {
       "package": "kobo-sidekick",
@@ -142,7 +168,9 @@
       "version": "1.0.6",
       "minimum_cobalt_version": "0.3.1",
       "glyph": "key",
-      "capabilities": ["network"]
+      "capabilities": [
+        "network"
+      ]
     },
     {
       "package": "kobo-sudoku",
@@ -186,7 +214,10 @@
       "version": "1.0.2",
       "minimum_cobalt_version": "0.3.1",
       "glyph": "book",
-      "capabilities": ["network", "frontlight-control"],
+      "capabilities": [
+        "network",
+        "frontlight-control"
+      ],
       "setup": {
         "steps": [
           {

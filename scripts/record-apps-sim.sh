@@ -85,7 +85,10 @@ command -v ffmpeg >/dev/null 2>&1 || {
 # written: the applications that landed afterwards are the ones with no demo,
 # which is exactly the ones a demo is for.
 catalog_apps() {
-    sed -n 's/^ *"id": *"\([a-z0-9-]*\)".*/\1/p' apps/catalog.json
+    node --input-type=module -e '
+        import { collectRegistry } from "./tools/app-registry.mjs";
+        for (const app of collectRegistry().apps) console.log(app.id);
+    '
 }
 
 # Where an application's source lives. The catalog does not say, because the
