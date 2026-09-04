@@ -1,3 +1,4 @@
+#![allow(clippy::collapsible_if)]
 //! <div align="center">
 //!
 //! # FSRS-rs

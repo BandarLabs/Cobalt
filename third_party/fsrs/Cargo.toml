@@ -15,6 +15,7 @@ autoexamples = false
 
 [features]
 default = []
+experimental_cost_adr = []
 
 [lib]
 name = "fsrs"
