@@ -17,7 +17,6 @@ kobo-image = { path = "../kobo-image" }
 kobo-json = { path = "../kobo-json" }
 kobo-net = { path = "../kobo-net" }
 kobo-profile = { path = "../kobo-profile" }
-kobo-wifi-trace = { path = "../kobo-wifi-trace" }
 kobo-protocol = { path = "../kobo-protocol" }
 kobod = { path = "../kobod" }
 ring = "0.17"
