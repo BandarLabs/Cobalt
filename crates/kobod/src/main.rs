@@ -432,6 +432,26 @@ fn restart_reader(state: &Path) -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
     let reader = Reader::load(state)?;
+    match kobo_hal::probe_device() {
+        Ok(snapshot) => match kobo_profile::write_ready_profile(&snapshot) {
+            Ok(profile) => {
+                let mut executables = profile.leftover_radio_daemons.to_vec();
+                if profile.reap_nickel_supplicant
+                    && !executables.contains(&kobo_hal::network::SUPPLICANT_EXECUTABLE)
+                {
+                    executables.push(kobo_hal::network::SUPPLICANT_EXECUTABLE);
+                }
+                device::reap_leftover_radio_daemons(&executables);
+            }
+            Err(blockers) => println!(
+                "could not identify a write-ready profile while recovering the reader ({}); restarting without radio cleanup",
+                blockers.join("; ")
+            ),
+        },
+        Err(error) => println!(
+            "could not probe the device while recovering the reader ({error}); restarting without radio cleanup"
+        ),
+    }
     // The restart below is the operation that trips the SoC watchdog, and this
     // process is here precisely because the session that should have been
     // holding it off is dead. Slack first, then arm unconditionally once the

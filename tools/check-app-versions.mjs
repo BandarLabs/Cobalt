@@ -583,19 +583,34 @@ export function lockfileOnlyAddsPackages(previousSource, currentSource) {
 }
 
 // Given an explicit change list, decide whether the catalog must move.
-// Platform-only paths (crates/, Cargo.toml, Cargo.lock, CI, docs) produce an
-// empty affected set. The cargo walk that names individual Store packages is
-// reached only when a Store catalog input actually changed.
+// CI and documentation stay quiet. Workspace packages and build inputs still
+// reach the Cargo dependency walk because Store binaries statically link them.
 export function storeImpactOfChangedPaths(changedPaths, packageDirectories, registeredPackages) {
   const storeDirectories = storeWatchDirectories(packageDirectories, registeredPackages);
   const storeChanges = storeCatalogChanges(changedPaths, storeDirectories).filter(path => {
     const directory = path.split("/").slice(0, -1).join("/");
     return !isFilmingScript(path, directory);
   });
+  const registered = new Set(registeredPackages);
+  const sharedPackageChanged = [...packageDirectories].some(
+    ([packageName, directory]) =>
+      !registered.has(packageName) &&
+      changedPaths.some(path => isInside(path, directory) && !isFilmingScript(path, directory))
+  );
+  const globalBuildInputChanged = changedPaths.some(
+    path =>
+      path === "Cargo.toml" ||
+      path === "Cargo.lock" ||
+      path === "rust-toolchain" ||
+      path === "rust-toolchain.toml" ||
+      path.startsWith(".cargo/")
+  );
+  const catalogQuiet =
+    storeChanges.length === 0 && !sharedPackageChanged && !globalBuildInputChanged;
   return {
     storeChanges,
-    catalogQuiet: storeChanges.length === 0,
-    affected: storeChanges.length === 0 ? new Set() : null
+    catalogQuiet,
+    affected: catalogQuiet ? new Set() : null
   };
 }
 
@@ -619,10 +634,6 @@ export function analyzeAppReleaseInputs(baseRevision, registry, strictUnknown = 
   );
   const impact = storeImpactOfChangedPaths(changedPaths, packageDirectories, registeredPackages);
   const storeChanges = impact.storeChanges;
-  // A platform-only push must not force every Store app to bump. Device-package
-  // inputs (crates/, Cargo.toml, Cargo.lock, the toolchain pin) reach readers
-  // through beta-vX.Y.Z. The next catalog publication of an actually edited
-  // app compiles against whatever the platform then is.
   if (impact.catalogQuiet) {
     return { affected: impact.affected, storeChanges };
   }
@@ -671,7 +682,6 @@ export function analyzeAppReleaseInputs(baseRevision, registry, strictUnknown = 
     );
   }
   for (const package_ of workspacePackages) {
-    if (!registered.has(package_.name)) continue;
     const directory = dirname(package_.manifest_path);
     const relativeDirectory = relative(workspaceRoot, directory).split(sep).join("/");
     const packageChanges = changedPaths.filter(
