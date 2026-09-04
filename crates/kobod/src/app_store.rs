@@ -3,7 +3,7 @@
 use kobo_app_store::{
     parse_public_bundle, verify, Catalog, DetachedSignature, Ed25519PublicKey, Manifest,
 };
-use kobo_protocol::{AppInfo, DeviceError, RemoteInstallOutcome};
+use kobo_protocol::{AppInfo, DeviceError, RemoteInstallOutcome, UpdateChannel};
 use kobo_ui::Glyph;
 use std::collections::BTreeSet;
 use std::fs;
@@ -14,6 +14,10 @@ pub const CATALOG_URL: &str =
     "https://github.com/BandarLabs/Cobalt/releases/download/app-catalog/cobalt-app-catalog.json";
 pub const CATALOG_SIGNATURE_URL: &str =
     "https://github.com/BandarLabs/Cobalt/releases/download/app-catalog/cobalt-app-catalog.json.sig";
+pub const BETA_CATALOG_URL: &str =
+    "https://github.com/BandarLabs/Cobalt/releases/download/app-catalog-beta/cobalt-app-catalog.json";
+pub const BETA_CATALOG_SIGNATURE_URL: &str =
+    "https://github.com/BandarLabs/Cobalt/releases/download/app-catalog-beta/cobalt-app-catalog.json.sig";
 
 const CATALOG_LIMIT: u32 = 512 * 1024;
 const SIGNATURE_LIMIT: u32 = 1024;
@@ -164,16 +168,16 @@ const SYSTEM_APPS: &[BuiltinApp] = &[
     },
 ];
 
-pub fn refresh(root: &Path) -> Result<Vec<AppInfo>, DeviceError> {
+pub fn refresh(root: &Path, channel: UpdateChannel) -> Result<Vec<AppInfo>, DeviceError> {
     let key = public_key()?;
-    refresh_with(root, &key, |url, maximum| {
+    refresh_channel_with(root, channel, &key, |url, maximum| {
         kobo_net::fetch(url, maximum).map_err(network_error)
     })
 }
 
-pub fn catalog(root: &Path) -> Result<Vec<AppInfo>, DeviceError> {
+pub fn catalog(root: &Path, channel: UpdateChannel) -> Result<Vec<AppInfo>, DeviceError> {
     let key = public_key()?;
-    match read_cached_catalog(root, &key) {
+    match read_channel_catalog(root, channel, &key) {
         Ok(catalog) => catalog_info(root, &catalog, &key),
         Err(DeviceError::NotFound) => local_catalog_info(root, &key),
         Err(error) => Err(error),
@@ -203,8 +207,8 @@ fn installed_with_key(root: &Path, key: &Ed25519PublicKey) -> Result<Vec<AppInfo
     Ok(entries)
 }
 
-pub fn install(root: &Path, id: &str) -> Result<(), DeviceError> {
-    install_with(root, id, &public_key()?, |url, maximum| {
+pub fn install(root: &Path, id: &str, channel: UpdateChannel) -> Result<(), DeviceError> {
+    install_channel_with(root, id, channel, &public_key()?, |url, maximum| {
         kobo_net::fetch(url, maximum).map_err(network_error)
     })
 }
@@ -215,26 +219,42 @@ pub struct RemoteInstallPlan {
     pub install: bool,
 }
 
-pub fn prepare_remote_install(root: &Path, id: &str) -> Result<RemoteInstallPlan, DeviceError> {
+pub fn prepare_remote_install(
+    root: &Path,
+    id: &str,
+    channel: UpdateChannel,
+) -> Result<RemoteInstallPlan, DeviceError> {
     let key = public_key()?;
-    prepare_remote_install_with(root, id, &key, |url, maximum| {
+    prepare_remote_install_channel_with(root, id, channel, &key, |url, maximum| {
         kobo_net::fetch(url, maximum).map_err(network_error)
     })
 }
 
+#[cfg(test)]
 fn prepare_remote_install_with(
     root: &Path,
     id: &str,
+    key: &Ed25519PublicKey,
+    fetch: impl FnMut(&str, u32) -> Result<Vec<u8>, DeviceError>,
+) -> Result<RemoteInstallPlan, DeviceError> {
+    prepare_remote_install_channel_with(root, id, UpdateChannel::Stable, key, fetch)
+}
+
+fn prepare_remote_install_channel_with(
+    root: &Path,
+    id: &str,
+    channel: UpdateChannel,
     key: &Ed25519PublicKey,
     mut fetch: impl FnMut(&str, u32) -> Result<Vec<u8>, DeviceError>,
 ) -> Result<RemoteInstallPlan, DeviceError> {
     if !kobo_protocol::valid_app_id(id) || kobo_app_store::is_public_reserved_app_id(id) {
         return Err(DeviceError::InvalidInput);
     }
-    let json = fetch(CATALOG_URL, CATALOG_LIMIT)?;
-    let signature = fetch(CATALOG_SIGNATURE_URL, SIGNATURE_LIMIT)?;
+    let source = catalog_source(channel);
+    let json = fetch(source.url, CATALOG_LIMIT)?;
+    let signature = fetch(source.signature_url, SIGNATURE_LIMIT)?;
     let catalog = verify_catalog(&json, &signature, key)?;
-    write_catalog_cache(root, &json, &signature)?;
+    write_channel_catalog_cache(root, channel, &json, &signature)?;
     let Some(entry) = catalog
         .entries()
         .iter()
@@ -272,6 +292,18 @@ fn prepare_remote_install_with(
             } else {
                 RemoteInstallOutcome::AlreadyInstalled { id: id.to_owned() }
             },
+            install: false,
+        });
+    }
+    if current.is_some()
+        && !manifest_info(
+            entry.manifest(),
+            current.and_then(|candidate| candidate.installed_version.as_deref()),
+        )?
+        .has_update()
+    {
+        return Ok(RemoteInstallPlan {
+            outcome: RemoteInstallOutcome::AlreadyInstalled { id: id.to_owned() },
             install: false,
         });
     }
@@ -366,21 +398,43 @@ pub fn declared(root: &Path, id: &str) -> Option<kobo_policy::Declared> {
         .map(|manifest| manifest.declared_capabilities().clone())
 }
 
+#[cfg(test)]
 fn refresh_with(
     root: &Path,
     key: &Ed25519PublicKey,
+    fetch: impl FnMut(&str, u32) -> Result<Vec<u8>, DeviceError>,
+) -> Result<Vec<AppInfo>, DeviceError> {
+    refresh_channel_with(root, UpdateChannel::Stable, key, fetch)
+}
+
+fn refresh_channel_with(
+    root: &Path,
+    channel: UpdateChannel,
+    key: &Ed25519PublicKey,
     mut fetch: impl FnMut(&str, u32) -> Result<Vec<u8>, DeviceError>,
 ) -> Result<Vec<AppInfo>, DeviceError> {
-    let json = fetch(CATALOG_URL, CATALOG_LIMIT)?;
-    let signature = fetch(CATALOG_SIGNATURE_URL, SIGNATURE_LIMIT)?;
+    let source = catalog_source(channel);
+    let json = fetch(source.url, CATALOG_LIMIT)?;
+    let signature = fetch(source.signature_url, SIGNATURE_LIMIT)?;
     let catalog = verify_catalog(&json, &signature, key)?;
-    write_catalog_cache(root, &json, &signature)?;
+    write_channel_catalog_cache(root, channel, &json, &signature)?;
     catalog_info(root, &catalog, key)
 }
 
+#[cfg(test)]
 fn install_with(
     root: &Path,
     id: &str,
+    key: &Ed25519PublicKey,
+    fetch: impl FnMut(&str, u32) -> Result<Vec<u8>, DeviceError>,
+) -> Result<(), DeviceError> {
+    install_channel_with(root, id, UpdateChannel::Stable, key, fetch)
+}
+
+fn install_channel_with(
+    root: &Path,
+    id: &str,
+    channel: UpdateChannel,
     key: &Ed25519PublicKey,
     mut fetch: impl FnMut(&str, u32) -> Result<Vec<u8>, DeviceError>,
 ) -> Result<(), DeviceError> {
@@ -388,7 +442,7 @@ fn install_with(
         return Err(DeviceError::InvalidInput);
     }
     recover_interrupted_transaction(root, id, key)?;
-    let catalog = read_cached_catalog(root, key)?;
+    let catalog = read_channel_catalog(root, channel, key)?;
     let entry = catalog
         .entries()
         .iter()
@@ -399,6 +453,17 @@ fn install_with(
         entry.manifest().minimum_cobalt_version(),
     ) {
         return Err(DeviceError::InvalidInput);
+    }
+    if let Some(current) = installed_with_key(root, key)?
+        .iter()
+        .find(|candidate| candidate.id == id)
+    {
+        let candidate = manifest_info(entry.manifest(), current.installed_version.as_deref())?;
+        if current.installed_version.as_deref() != Some(entry.manifest().version())
+            && !candidate.has_update()
+        {
+            return Ok(());
+        }
     }
     let maximum = u32::try_from(entry.package_bytes()).map_err(|_| DeviceError::InvalidInput)?;
     let package = fetch(entry.package_url(), maximum)?;
@@ -434,9 +499,18 @@ fn verify_catalog(
     Ok(catalog)
 }
 
+#[cfg(test)]
 fn read_cached_catalog(root: &Path, key: &Ed25519PublicKey) -> Result<Catalog, DeviceError> {
-    recover_catalog_cache(root, key)?;
-    let cache = catalog_cache(root);
+    read_channel_catalog(root, UpdateChannel::Stable, key)
+}
+
+fn read_channel_catalog(
+    root: &Path,
+    channel: UpdateChannel,
+    key: &Ed25519PublicKey,
+) -> Result<Catalog, DeviceError> {
+    recover_channel_catalog_cache(root, channel, key)?;
+    let cache = catalog_cache(root, channel);
     read_catalog_directory(&cache, key)
 }
 
@@ -722,13 +796,24 @@ fn stage_and_swap(
     Ok(())
 }
 
+#[cfg(test)]
 fn write_catalog_cache(root: &Path, json: &[u8], signature: &[u8]) -> Result<(), DeviceError> {
+    write_channel_catalog_cache(root, UpdateChannel::Stable, json, signature)
+}
+
+fn write_channel_catalog_cache(
+    root: &Path,
+    channel: UpdateChannel,
+    json: &[u8],
+    signature: &[u8],
+) -> Result<(), DeviceError> {
     let store = cache_root(root);
     fs::create_dir_all(&store).map_err(|_| DeviceError::Backend)?;
     sync_directory(root)?;
-    let current = catalog_cache(root);
-    let next = store.join("catalog.next");
-    let previous = store.join("catalog.prev");
+    let source = catalog_source(channel);
+    let current = catalog_cache(root, channel);
+    let next = store.join(format!("{}.next", source.cache_name));
+    let previous = store.join(format!("{}.prev", source.cache_name));
     remove_directory(&next)?;
     fs::create_dir(&next).map_err(|_| DeviceError::Backend)?;
     if write_synced(&next.join("catalog.json"), json).is_err()
@@ -756,12 +841,17 @@ fn write_catalog_cache(root: &Path, json: &[u8], signature: &[u8]) -> Result<(),
     Ok(())
 }
 
-fn recover_catalog_cache(root: &Path, key: &Ed25519PublicKey) -> Result<(), DeviceError> {
-    let current = catalog_cache(root);
+fn recover_channel_catalog_cache(
+    root: &Path,
+    channel: UpdateChannel,
+    key: &Ed25519PublicKey,
+) -> Result<(), DeviceError> {
+    let source = catalog_source(channel);
+    let current = catalog_cache(root, channel);
     if safe_directory(&current)? && read_catalog_directory(&current, key).is_ok() {
         return Ok(());
     }
-    let previous = cache_root(root).join("catalog.prev");
+    let previous = cache_root(root).join(format!("{}.prev", source.cache_name));
     if safe_directory(&previous)? && read_catalog_directory(&previous, key).is_ok() {
         remove_directory(&current)?;
         rename_synced(&previous, &current, &cache_root(root))?;
@@ -864,8 +954,30 @@ fn cache_root(root: &Path) -> PathBuf {
     root.join("store")
 }
 
-fn catalog_cache(root: &Path) -> PathBuf {
-    cache_root(root).join("catalog")
+fn catalog_cache(root: &Path, channel: UpdateChannel) -> PathBuf {
+    cache_root(root).join(catalog_source(channel).cache_name)
+}
+
+#[derive(Clone, Copy)]
+struct CatalogSource {
+    url: &'static str,
+    signature_url: &'static str,
+    cache_name: &'static str,
+}
+
+const fn catalog_source(channel: UpdateChannel) -> CatalogSource {
+    match channel {
+        UpdateChannel::Stable => CatalogSource {
+            url: CATALOG_URL,
+            signature_url: CATALOG_SIGNATURE_URL,
+            cache_name: "catalog",
+        },
+        UpdateChannel::Beta => CatalogSource {
+            url: BETA_CATALOG_URL,
+            signature_url: BETA_CATALOG_SIGNATURE_URL,
+            cache_name: "catalog-beta",
+        },
+    }
 }
 
 fn app_binary(root: &Path, id: &str) -> PathBuf {
@@ -1302,6 +1414,103 @@ mod tests {
     }
 
     #[test]
+    fn stable_and_beta_catalogs_have_separate_urls_and_verified_caches() {
+        let root = root();
+        let seed = [9_u8; 32];
+        let key = derive_public_key(&seed).expect("key");
+        let (stable_json, stable_signature, _) = release_for(&seed, "word-count", "1.0.0");
+        let (beta_json, beta_signature, _) = release_for(&seed, "word-count", "2.0.0");
+
+        refresh_channel_with(&root, UpdateChannel::Stable, &key, |url, _| match url {
+            CATALOG_URL => Ok(stable_json.clone()),
+            CATALOG_SIGNATURE_URL => Ok(stable_signature.clone()),
+            _ => Err(DeviceError::NotFound),
+        })
+        .expect("stable refresh");
+        refresh_channel_with(&root, UpdateChannel::Beta, &key, |url, _| match url {
+            BETA_CATALOG_URL => Ok(beta_json.clone()),
+            BETA_CATALOG_SIGNATURE_URL => Ok(beta_signature.clone()),
+            _ => Err(DeviceError::NotFound),
+        })
+        .expect("beta refresh");
+
+        assert_eq!(
+            read_channel_catalog(&root, UpdateChannel::Stable, &key)
+                .expect("stable cache")
+                .entries()[0]
+                .manifest()
+                .version(),
+            "1.0.0"
+        );
+        assert_eq!(
+            read_channel_catalog(&root, UpdateChannel::Beta, &key)
+                .expect("beta cache")
+                .entries()[0]
+                .manifest()
+                .version(),
+            "2.0.0"
+        );
+        assert!(catalog_cache(&root, UpdateChannel::Stable).is_dir());
+        assert!(catalog_cache(&root, UpdateChannel::Beta).is_dir());
+        let _ignored = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn opting_out_of_beta_never_downgrades_an_installed_app() {
+        let root = root();
+        let seed = [9_u8; 32];
+        let key = derive_public_key(&seed).expect("key");
+        let (stable_json, stable_signature, stable_package) =
+            release_for(&seed, "word-count", "1.0.0");
+        let (beta_json, beta_signature, beta_package) = release_for(&seed, "word-count", "2.0.0");
+        refresh_channel_with(&root, UpdateChannel::Beta, &key, |url, _| {
+            if url == BETA_CATALOG_URL {
+                Ok(beta_json.clone())
+            } else {
+                Ok(beta_signature.clone())
+            }
+        })
+        .expect("beta refresh");
+        install_channel_with(&root, "word-count", UpdateChannel::Beta, &key, |_, _| {
+            Ok(beta_package.clone())
+        })
+        .expect("beta install");
+        refresh_channel_with(&root, UpdateChannel::Stable, &key, |url, _| {
+            if url == CATALOG_URL {
+                Ok(stable_json.clone())
+            } else {
+                Ok(stable_signature.clone())
+            }
+        })
+        .expect("stable refresh");
+
+        let stable_listing = catalog_info(
+            &root,
+            &read_channel_catalog(&root, UpdateChannel::Stable, &key).expect("stable cache"),
+            &key,
+        )
+        .expect("stable listing");
+        let entry = stable_listing
+            .iter()
+            .find(|entry| entry.id == "word-count")
+            .expect("word-count");
+        assert_eq!(entry.installed_version.as_deref(), Some("2.0.0"));
+        assert!(!entry.has_update());
+
+        install_channel_with(&root, "word-count", UpdateChannel::Stable, &key, |_, _| {
+            Ok(stable_package.clone())
+        })
+        .expect("stable install is a no-op");
+        assert_eq!(
+            installed_manifest(&root, "word-count", &key)
+                .expect("installed beta remains")
+                .version(),
+            "2.0.0"
+        );
+        let _ignored = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn interrupted_install_and_uninstall_renames_recover_the_working_copy() {
         let root = root();
         let seed = [9_u8; 32];
@@ -1440,7 +1649,11 @@ mod tests {
         let (json, signature, _) = release(&seed);
         write_catalog_cache(&root, &json, &signature).expect("cache");
         let store = cache_root(&root);
-        fs::rename(catalog_cache(&root), store.join("catalog.prev")).expect("retire cache");
+        fs::rename(
+            catalog_cache(&root, UpdateChannel::Stable),
+            store.join("catalog.prev"),
+        )
+        .expect("retire cache");
         fs::create_dir(store.join("catalog.next")).expect("stage cache");
         fs::write(store.join("catalog.next/catalog.json"), b"incomplete").expect("partial cache");
 
@@ -1451,7 +1664,9 @@ mod tests {
                 .len(),
             1
         );
-        assert!(catalog_cache(&root).join("catalog.json.sig").is_file());
+        assert!(catalog_cache(&root, UpdateChannel::Stable)
+            .join("catalog.json.sig")
+            .is_file());
         let _ignored = fs::remove_dir_all(root);
     }
 

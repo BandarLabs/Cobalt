@@ -7,7 +7,7 @@ license.workspace = true
 publish = false
 
 [dependencies]
-fsrs = "6.6.2"
+fsrs = { path = "../../third_party/fsrs" }
 kobo-sdk = { path = "../../crates/kobo-sdk" }
 
 [dev-dependencies]

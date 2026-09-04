@@ -33,6 +33,7 @@
 //! spread across returns.
 
 use crate::blackbox::{self, trace};
+use crate::frame::{FramePlanner, FrameRegion, FrameTransition, PanelWaveform};
 use kobo_hal::display::{DisplaySession, OWNER_UNLOCK_PHRASE};
 use kobo_hal::gpio::{self, GpioEvent, GpioSession};
 use kobo_hal::input::TouchSession;
@@ -44,8 +45,7 @@ use kobo_hal::{Rect, RefreshIntent, RefreshPlan, RegionSnapshot};
 use kobo_policy::{Backends, Capability, Declared, DeviceServices, PowerPolicy, TaskRunner};
 use kobo_protocol::{Frame, Lifecycle, Message, TaskError, TaskOutcome};
 use kobo_ui::{
-    ActionId, CellStyle, Chrome, FontHandle, FramePlanner, Layout, LayoutKind, PanelWaveform,
-    PictureCache, Screen, Surface,
+    ActionId, CellStyle, Chrome, FontHandle, Layout, LayoutKind, PictureCache, Screen, Surface,
 };
 use std::collections::BTreeMap;
 use std::fs;
@@ -529,6 +529,7 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
 
     // Everything that can fail happens before the reader is stopped.
     let reader = Reader::find().map_err(|error| error.to_string())?;
+    let network = kobo_hal::network::Connection::capture();
     let state = PathBuf::from(format!("/tmp/kobo-session-{}", std::process::id()));
     reader
         .save(&state)
@@ -610,6 +611,26 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
         .stop(STOP_GRACE)
         .map_err(|error| format!("stop the reader: {error}"))?;
 
+    // Nickel owns Wi-Fi while it runs, but its supplicant and DHCP client are
+    // detached processes. Capture them before the handoff and restore exactly
+    // those processes if stopping Nickel drops the route. Cobalt never invents
+    // a network or starts a daemon that was not already serving the owner.
+    if network.was_online() {
+        if let Some(wifi) = kobo_hal::wifi::Wifi::open() {
+            let reconnected = wifi.set_enabled(true);
+            trace(&format!(
+                "asked the captured Wi-Fi owner to reconnect: {reconnected:?}"
+            ));
+        }
+    }
+    let session_network = network.restore_for_session(Duration::from_secs(30));
+    trace(&format!(
+        "session network: {:?}; uncertain captures: {:?}; start errors: {:?}",
+        session_network.outcome(),
+        session_network.uncertain_executables(),
+        session_network.start_errors()
+    ));
+
     // One reader thread on the touch descriptor for the whole panel session,
     // started here rather than per application.
     let taps = TouchSink::default();
@@ -672,12 +693,61 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
     // Without this the recovery watchdog would conclude the runtime had died
     // and restart a reader that is already starting.
     let teardown = KeepBeating::start(&watchdog);
+    let captured_supplicant_release_failed = if profile.reap_nickel_supplicant {
+        trace("stopping the captured leftover supplicant before the reader returns");
+        if let Err(error) =
+            network.release_captured(kobo_hal::network::SUPPLICANT_EXECUTABLE, STOP_GRACE)
+        {
+            trace(&format!("the leftover supplicant would not stop: {error}"));
+            true
+        } else {
+            false
+        }
+    } else {
+        false
+    };
+    let network_start_uncertain = !session_network.start_errors().is_empty()
+        || !session_network.uncertain_executables().is_empty();
+    let network_release_failed = match session_network.release(STOP_GRACE) {
+        Ok(()) => false,
+        Err(errors) => {
+            trace(&format!(
+                "session network would not stop cleanly: {errors:?}"
+            ));
+            true
+        }
+    };
     // Asked once, before the panel is given up, because the answer decides
     // whether the owner is owed an explanation and the display is gone by the
     // time the reboot itself is requested.
-    let rebooting = kobo_hal::bluetooth::requires_reboot_after_use();
+    let bluetooth_reboot = kobo_hal::bluetooth::requires_reboot_after_use();
+    let reboot_reason = if bluetooth_reboot {
+        Some((
+            kobo_ui::Glyph::Bluetooth,
+            "Bluetooth shares one radio with Wi-Fi here, and that radio can only be \
+             started once per boot. Restarting is the only way to hand it back working. \
+             This is expected, it is not a crash, and everything you have saved is \
+             already on the disk.",
+            "Bluetooth used the shared MediaTek radio",
+        ))
+    } else if network_start_uncertain
+        || network_release_failed
+        || captured_supplicant_release_failed
+    {
+        Some((
+            kobo_ui::Glyph::Wifi,
+            "Cobalt could not prove that Wi-Fi has exactly one owner. Restarting avoids \
+             handing the radio to competing processes. This is expected, it is not a \
+             crash, and everything you have saved is already on the disk.",
+            "Wi-Fi ownership could not be handed back safely",
+        ))
+    } else {
+        None
+    };
+    let rebooting = reboot_reason.is_some();
     if rebooting {
-        if let Err(error) = announce_reboot(&display, whole_screen) {
+        let (glyph, summary, _) = reboot_reason.expect("reboot reason");
+        if let Err(error) = announce_reboot(&display, whole_screen, glyph, summary) {
             // Not fatal. Failing to explain the reboot is worse than not
             // rebooting, but it is not a reason to leave the radio broken.
             trace(&format!("could not show the restart notice: {error}"));
@@ -703,61 +773,58 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
     // the only proven hand-back: it returns directly to the stock reader with
     // a pristine shared Wi-Fi/Bluetooth driver state.
     if rebooting {
-        trace("MediaTek Bluetooth was used; rebooting cleanly instead of restarting the reader");
-        println!("Bluetooth changed; rebooting cleanly back to the reader");
+        let (_, _, detail) = reboot_reason.expect("reboot reason");
+        trace(&format!(
+            "{detail}; rebooting cleanly instead of restarting the reader"
+        ));
+        println!("shared hardware needs a clean handoff; rebooting back to the reader");
         watchdog.disarm();
         drop(teardown);
         let _ignored = fs::remove_dir_all(&state);
         let summary = outcome.unwrap_or_else(|error| format!("application ended: {error}"));
         return request_clean_reboot().map(|()| {
             format!(
-                "{summary}; typeface {typeface}; Bluetooth used the shared MediaTek radio, so a clean reboot was requested before returning to the stock reader"
+                "{summary}; typeface {typeface}; {detail}, so a clean reboot was requested before returning to the stock reader"
             )
         });
     }
-    // Nickel launches its supplicant detached, so stopping the reader never
-    // took it down and it has been running for the whole session. A restarted
-    // Nickel starts a supplicant of its own on top of it, the two fight over
-    // the interface, and Wi-Fi stays down until a reboot. On the profiles
-    // that declare it, the leftover one is stopped here, after the panel is
-    // given up and before the reader returns, so the new Nickel comes up
-    // alone. This is a reap, not radio configuration: the interface, the
-    // association and the choice to reconnect stay Nickel's.
-    //
-    // Nothing here is fatal. A supplicant that is absent, ambiguous, or will
-    // not die leaves the owner exactly where every session left them before
-    // this existed: reconnecting by hand or rebooting.
-    if profile.reap_nickel_supplicant {
-        match Reader::find_running(kobo_hal::network::SUPPLICANT_EXECUTABLE) {
-            Ok(supplicant) => {
-                trace("stopping the leftover supplicant before the reader returns");
-                if let Err(error) = supplicant.stop(STOP_GRACE) {
-                    trace(&format!("the leftover supplicant would not stop: {error}"));
-                }
-            }
-            Err(error) => trace(&format!("no leftover supplicant to stop: {error}")),
-        }
-    }
     trace("panel and touch released, restarting the reader");
     println!("panel released, restarting the reader");
-    let restarted = reader.start(START_GRACE);
-    // The connection is never put back, and there is no longer a way to ask
-    // for it. Restoring it meant starting a supplicant and a DHCP client on
-    // `wlan0` while the reader we had just restarted drives that same radio
-    // itself, from inside libnickel, with no way to be told what we did. Two
-    // owners of one radio is the mistake the display is careful to avoid
-    // twelve lines above, and it had the same shape here.
-    //
-    // It existed as a convenience for working on a device over Wi-Fi, where
-    // losing the link costs a reboot. It is gone because that convenience was
-    // the first link in the chain that erased a device: the reader came up
-    // owning a radio it had not configured, never reached its first watchdog
-    // ping, and the watchdog was armed against it anyway. The second link is
-    // fixed in `resume_once_fed`, which now arms nothing without evidence, but
-    // a developer's reboot was never worth being one fault away from a
-    // stranger's library.
+    let restarted = match reader.start(START_GRACE) {
+        Ok(pid) => pid,
+        Err(error) => {
+            trace(&format!(
+                "the reader did not restart ({error}); requesting a clean reboot"
+            ));
+            watchdog.disarm();
+            drop(teardown);
+            let _ignored = fs::remove_dir_all(&state);
+            let summary = outcome.unwrap_or_else(|error| format!("application ended: {error}"));
+            return request_clean_reboot().map(|()| {
+                format!(
+                    "{summary}; typeface {typeface}; the reader did not restart ({error}), so a clean reboot was requested"
+                )
+            });
+        }
+    };
+    // Any daemon Cobalt started for the session was stopped by exact captured
+    // identity above. A stop or capture uncertainty takes the clean-reboot
+    // path, so Nickel is never started on top of an unproven network owner.
     trace("reader restart returned, waiting for it to feed the freeze watchdog");
     println!("waiting for the reader to feed the freeze watchdog");
+    let reader_wifi = restore_reader_wifi(network.was_online(), Duration::from_secs(45));
+    if !reader_wifi {
+        trace("the reader did not complete Wi-Fi association; requesting a clean reboot");
+        watchdog.disarm();
+        drop(teardown);
+        let _ignored = fs::remove_dir_all(&state);
+        let summary = outcome.unwrap_or_else(|error| format!("application ended: {error}"));
+        return request_clean_reboot().map(|()| {
+            format!(
+                "{summary}; typeface {typeface}; the reader did not reclaim Wi-Fi, so a clean reboot was requested"
+            )
+        });
+    }
     // Resumed only once the reader is feeding it again. Resuming the moment
     // the process exists lights a ten second fuse that a still-starting reader
     // cannot feed, which is what rebooted the device at the end of a session.
@@ -771,15 +838,12 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
     drop(teardown);
     let _ignored = fs::remove_dir_all(&state);
 
-    let reader_state = match (restarted, resumed) {
-        (Ok(pid), Ok(after)) => {
-            format!("the reader is running again as pid {pid}, and the freeze watchdog was resumed {after}")
+    let reader_state = match resumed {
+        Ok(after) => {
+            format!("the reader is running again as pid {restarted}, and the freeze watchdog was resumed {after}")
         }
-        (Ok(pid), Err(error)) => format!(
-            "the reader is running again as pid {pid}, but the freeze watchdog could not be resumed ({error}); it returns on the next reboot"
-        ),
-        (Err(error), _) => format!(
-            "THE READER DID NOT COME BACK ({error}). Power cycle the device; it always boots the stock reader"
+        Err(error) => format!(
+            "the reader is running again as pid {restarted}, but the freeze watchdog could not be resumed ({error}); it returns on the next reboot"
         ),
     };
     let reader_state =
@@ -799,6 +863,44 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
             "{summary}; typeface {typeface}; the screen could not be restored ({error}), but {reader_state} and repaints its own screen"
         )),
         (Err(error), _) => Err(format!("{error}; {reader_state}")),
+    }
+}
+
+fn restore_reader_wifi(was_online: bool, within: Duration) -> bool {
+    if !was_online {
+        return true;
+    }
+    let deadline = Instant::now() + within;
+    let mut retry_at = Instant::now();
+    let mut healthy_since = None;
+    loop {
+        if let Some(wifi) = kobo_hal::wifi::Wifi::open() {
+            let associated = wifi.associated().unwrap_or(false);
+            let healthy =
+                associated && kobo_hal::network::is_online(kobo_hal::network::WIRELESS_LINK);
+            if healthy {
+                let since = healthy_since.get_or_insert_with(Instant::now);
+                if since.elapsed() >= Duration::from_secs(10) {
+                    return true;
+                }
+            } else {
+                healthy_since = None;
+                if !associated && Instant::now() >= retry_at {
+                    if let Err(error) = wifi.recover_association() {
+                        trace(&format!(
+                            "the reader Wi-Fi recovery sequence was not accepted: {error:?}"
+                        ));
+                    }
+                    retry_at = Instant::now() + Duration::from_secs(5);
+                }
+            }
+        } else {
+            healthy_since = None;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        thread::sleep(Duration::from_millis(500));
     }
 }
 
@@ -852,18 +954,19 @@ fn describe(limit: Duration) -> String {
 /// It exists because the reboot below was silent. The only warning was a line
 /// on a developer's terminal, so from the owner's chair a Bluetooth connection
 /// simply killed the device, which is exactly how it was reported.
-fn announce_reboot(display: &DisplaySession, whole_screen: Rect) -> Result<(), String> {
+fn announce_reboot(
+    display: &DisplaySession,
+    whole_screen: Rect,
+    glyph: kobo_ui::Glyph,
+    summary: &str,
+) -> Result<(), String> {
     let screen = Screen::new(
         0,
         vec![kobo_ui::Node::Splash {
             id: kobo_ui::NodeId(1),
-            glyph: Some(kobo_ui::Glyph::Bluetooth),
+            glyph: Some(glyph),
             title: "Restarting your reader".to_owned(),
-            summary: "Bluetooth shares one radio with Wi-Fi here, and that radio can only be \
-                      started once per boot. Restarting is the only way to hand it back working. \
-                      This is expected, it is not a crash, and everything you have saved is \
-                      already on the disk."
-                .to_owned(),
+            summary: summary.to_owned(),
         }],
     );
     let mut surface = Surface::new(
@@ -1268,6 +1371,11 @@ fn host_applications(
     let result = (|| -> Result<String, String> {
         let front = start_application(&mut apps, &mut next_id, &home, whole_screen, &sender)?;
         let mut front = front;
+        // Store installation stays bound to the channel whose catalog this
+        // session last displayed. Settings may change while Store is
+        // backgrounded; resolving the channel again at install time could
+        // otherwise install a different version than the one the user saw.
+        let mut store_channel = crate::autoupdate::preferences(Path::new(COBALT_ROOT)).channel;
         let mut visited: Vec<String> = Vec::new();
         let ceiling = Instant::now() + limits.ceiling;
         let mut last_activity = Instant::now();
@@ -1285,7 +1393,7 @@ fn host_applications(
         // that answer arrives promptly. If it does not, this deadline makes
         // the release visible on its own instead of leaving a key held down
         // while an application works or fails.
-        let mut release_due: Option<Instant> = None;
+        let mut release_due: Option<(Instant, kobo_ui::Rect)> = None;
         // When and where the finger landed, for telling a tap from a hold.
         let mut landed: Option<(Instant, i32, i32)> = None;
         // Updates the background checker found, held until the panel has been
@@ -1299,9 +1407,9 @@ fn host_applications(
             // the runtime is still serving the panel rather than merely that
             // the process has not been reaped.
             watchdog.beat();
-            if release_due.is_some_and(|deadline| now >= deadline) {
-                panel.paint(display, whole_screen, &surface)?;
-                release_due = None;
+            if release_due.is_some_and(|(deadline, _)| now >= deadline) {
+                let (_, damage) = release_due.take().expect("release deadline existed");
+                panel.paint_feedback(display, whole_screen, &surface, damage)?;
             }
             // The band is the only thing on the panel that changes without
             // anybody touching it, so the loop has to notice it on its own.
@@ -1400,7 +1508,7 @@ fn host_applications(
                 .min(back_offered.map_or(BEAT_INTERVAL, |(_, offered_at)| {
                     (offered_at + BACK_GRACE).saturating_duration_since(now)
                 }))
-                .min(release_due.map_or(BEAT_INTERVAL, |deadline| {
+                .min(release_due.map_or(BEAT_INTERVAL, |(deadline, _)| {
                     deadline.saturating_duration_since(now)
                 }));
             match events.recv_timeout(wait) {
@@ -1595,14 +1703,29 @@ fn host_applications(
                                         current.layout_with(&metrics_for(current), &chrome);
                                     if let Some(rect) = layout.pressed_control(x, y) {
                                         let metrics = metrics_for(current);
+                                        // An exact-damage feedback frame does
+                                        // not carry pixels outside its own
+                                        // rectangle, so an older deferred
+                                        // release is painted with its damage
+                                        // before its fallback is retired. A
+                                        // press outside every control paints
+                                        // nothing and leaves the deadline
+                                        // armed.
+                                        if let Some((_, damage)) = release_due.take() {
+                                            panel.paint_feedback(
+                                                display,
+                                                whole_screen,
+                                                &surface,
+                                                damage,
+                                            )?;
+                                        }
                                         surface.invert_press(rect, &metrics);
-                                        panel.paint(display, whole_screen, &surface)?;
-                                        // This feedback frame also carried any
-                                        // older deferred release, so its
-                                        // fallback is no longer needed. A press
-                                        // outside every control paints nothing
-                                        // and must leave the deadline armed.
-                                        release_due = None;
+                                        panel.paint_feedback(
+                                            display,
+                                            whole_screen,
+                                            &surface,
+                                            rect,
+                                        )?;
                                         pressed =
                                             Some((rect, metrics, feedback_kind(&layout, rect)));
                                     }
@@ -1616,7 +1739,7 @@ fn host_applications(
                                 // screen in one update.
                                 if let Some((rect, metrics, class)) = pressed.take() {
                                     surface.invert_press(rect, &metrics);
-                                    released = Some(class);
+                                    released = Some((class, rect));
                                 }
                             }
                             TouchEvent::Move { x, y } => {
@@ -1645,7 +1768,12 @@ fn host_applications(
                                 if off {
                                     if let Some((rect, metrics, _)) = pressed.take() {
                                         surface.invert_press(rect, &metrics);
-                                        panel.paint(display, whole_screen, &surface)?;
+                                        panel.paint_feedback(
+                                            display,
+                                            whole_screen,
+                                            &surface,
+                                            rect,
+                                        )?;
                                     }
                                 }
                             }
@@ -1695,9 +1823,9 @@ fn host_applications(
                             )?;
                         }
                     }
-                    if let Some(class) = released {
+                    if let Some((class, damage)) = released {
                         release_due = (disposition != Tap::Leave)
-                            .then(|| Instant::now() + release_grace(class));
+                            .then(|| (Instant::now() + release_grace(class), damage));
                     }
                 }
                 Ok(Event::App(id, frame)) => {
@@ -2159,18 +2287,27 @@ fn host_applications(
                                         )))
                                     }
                                     kobo_protocol::DeviceRequest::ReadAppCatalog => {
-                                        app_store_result(crate::app_store::catalog(Path::new(
-                                            COBALT_ROOT,
-                                        )))
+                                        let root = Path::new(COBALT_ROOT);
+                                        let channel = crate::autoupdate::preferences(root).channel;
+                                        let result = crate::app_store::catalog(root, channel);
+                                        if result.is_ok() {
+                                            store_channel = channel;
+                                        }
+                                        app_store_result(result)
                                     }
                                     kobo_protocol::DeviceRequest::RefreshAppCatalog => {
-                                        app_store_result(crate::app_store::refresh(Path::new(
-                                            COBALT_ROOT,
-                                        )))
+                                        let root = Path::new(COBALT_ROOT);
+                                        let channel = crate::autoupdate::preferences(root).channel;
+                                        let result = crate::app_store::refresh(root, channel);
+                                        if result.is_ok() {
+                                            store_channel = channel;
+                                        }
+                                        app_store_result(result)
                                     }
                                     kobo_protocol::DeviceRequest::InstallApp { id } => {
+                                        let root = Path::new(COBALT_ROOT);
                                         let result =
-                                            crate::app_store::install(Path::new(COBALT_ROOT), id);
+                                            crate::app_store::install(root, id, store_channel);
                                         if result.is_ok() {
                                             stop_named_application(&mut apps, id);
                                         }
@@ -2216,15 +2353,40 @@ fn host_applications(
                                         cobalt,
                                         apps,
                                     } => {
+                                        let current =
+                                            crate::autoupdate::preferences(Path::new(COBALT_ROOT));
                                         let chosen = crate::autoupdate::Preferences {
                                             cobalt: *cobalt,
                                             apps: *apps,
+                                            ..current
                                         };
                                         match crate::autoupdate::set_preferences(
                                             Path::new(COBALT_ROOT),
                                             chosen,
                                         ) {
                                             Ok(()) => auto_update_result(chosen),
+                                            Err(error) => {
+                                                kobo_protocol::DeviceResult::Failed(error)
+                                            }
+                                        }
+                                    }
+                                    kobo_protocol::DeviceRequest::ReadUpdateChannel => {
+                                        update_channel_result(crate::autoupdate::preferences(
+                                            Path::new(COBALT_ROOT),
+                                        ))
+                                    }
+                                    kobo_protocol::DeviceRequest::SetUpdateChannel { channel } => {
+                                        let current =
+                                            crate::autoupdate::preferences(Path::new(COBALT_ROOT));
+                                        let chosen = crate::autoupdate::Preferences {
+                                            channel: *channel,
+                                            ..current
+                                        };
+                                        match crate::autoupdate::set_preferences(
+                                            Path::new(COBALT_ROOT),
+                                            chosen,
+                                        ) {
+                                            Ok(()) => update_channel_result(chosen),
                                             Err(error) => {
                                                 kobo_protocol::DeviceResult::Failed(error)
                                             }
@@ -2550,7 +2712,9 @@ fn system_request_allowed(app: &str, request: &kobo_protocol::DeviceRequest) -> 
     match request {
         kobo_protocol::DeviceRequest::Update { .. }
         | kobo_protocol::DeviceRequest::ReadAutoUpdate
-        | kobo_protocol::DeviceRequest::SetAutoUpdate { .. } => app == "settings",
+        | kobo_protocol::DeviceRequest::SetAutoUpdate { .. }
+        | kobo_protocol::DeviceRequest::ReadUpdateChannel
+        | kobo_protocol::DeviceRequest::SetUpdateChannel { .. } => app == "settings",
         kobo_protocol::DeviceRequest::ListInstalledApps => matches!(app, "launcher" | "store"),
         kobo_protocol::DeviceRequest::ReadAppCatalog
         | kobo_protocol::DeviceRequest::RefreshAppCatalog
@@ -2652,6 +2816,10 @@ fn auto_update_result(chosen: crate::autoupdate::Preferences) -> kobo_protocol::
     }
 }
 
+fn update_channel_result(chosen: crate::autoupdate::Preferences) -> kobo_protocol::DeviceResult {
+    kobo_protocol::DeviceResult::UpdateChannel(chosen.channel)
+}
+
 /// Whether the battery can afford background writes right now. A reader whose
 /// gauge cannot be read is allowed, because refusing forever is worse than
 /// trusting hardware that boots.
@@ -2671,6 +2839,10 @@ fn auto_update_battery_permits() -> bool {
 fn apply_auto_update(plan: crate::autoupdate::Plan, apps: &mut [Hosted], front: u64) {
     let root = Path::new(COBALT_ROOT);
     let chosen = crate::autoupdate::preferences(root);
+    if chosen.channel != plan.channel {
+        trace("the update channel changed, so the old background plan was discarded");
+        return;
+    }
     let showing = apps
         .iter()
         .find(|app| app.id == front)
@@ -2681,7 +2853,7 @@ fn apply_auto_update(plan: crate::autoupdate::Plan, apps: &mut [Hosted], front: 
                 trace(&format!("{id} is on the panel, so its update waits"));
                 continue;
             }
-            match crate::app_store::install(root, &id) {
+            match crate::app_store::install(root, &id, chosen.channel) {
                 Ok(()) => {
                     stop_named_application(apps, &id);
                     trace(&format!("{id} was updated in the background"));
@@ -3506,13 +3678,51 @@ impl Painter {
             // some battery to show exactly the same picture.
             return Ok(());
         };
-        let region = Rect {
-            x: u32::try_from(transition.region.x).unwrap_or(0),
-            y: u32::try_from(transition.region.y).unwrap_or(0),
-            width: u32::try_from(transition.region.width).unwrap_or(0),
-            height: u32::try_from(transition.region.height).unwrap_or(0),
+        self.apply(display, whole_screen, surface, &transition)
+    }
+
+    fn paint_feedback(
+        &mut self,
+        display: &DisplaySession,
+        whole_screen: Rect,
+        surface: &Surface,
+        damage: kobo_ui::Rect,
+    ) -> Result<(), String> {
+        let Some(transition) = self.frames.plan_damage(surface, damage, PanelWaveform::Du) else {
+            return Ok(());
         };
-        let intent = match transition.waveform {
+        self.apply(display, whole_screen, surface, &transition)
+    }
+
+    fn apply(
+        &mut self,
+        display: &DisplaySession,
+        whole_screen: Rect,
+        surface: &Surface,
+        transition: &FrameTransition,
+    ) -> Result<(), String> {
+        for update in &transition.regions {
+            Self::apply_region(display, whole_screen, surface, *update)?;
+        }
+        if !self.frames.commit(surface, transition) {
+            return Err("the frame planner rejected a completed refresh".to_owned());
+        }
+        Ok(())
+    }
+
+    fn apply_region(
+        display: &DisplaySession,
+        whole_screen: Rect,
+        surface: &Surface,
+        update: FrameRegion,
+    ) -> Result<(), String> {
+        let region = Rect {
+            x: u32::try_from(update.region.x).unwrap_or(0),
+            y: u32::try_from(update.region.y).unwrap_or(0),
+            width: u32::try_from(update.region.width).unwrap_or(0),
+            height: u32::try_from(update.region.height).unwrap_or(0),
+        };
+        let intent = match update.waveform {
             PanelWaveform::Du => RefreshIntent::FastFeedback,
             PanelWaveform::Gl16 => RefreshIntent::TextContent,
             PanelWaveform::Gc16 => RefreshIntent::QualityContent,
@@ -3525,10 +3735,10 @@ impl Painter {
         // 1.6 seconds per tap regardless of how small the change was.
         let region_gray = {
             let out_of_surface = || "the transition region is not inside the surface".to_owned();
-            let x = usize::try_from(transition.region.x).map_err(|_| out_of_surface())?;
-            let y = usize::try_from(transition.region.y).map_err(|_| out_of_surface())?;
-            let width = usize::try_from(transition.region.width).map_err(|_| out_of_surface())?;
-            let height = usize::try_from(transition.region.height).map_err(|_| out_of_surface())?;
+            let x = usize::try_from(update.region.x).map_err(|_| out_of_surface())?;
+            let y = usize::try_from(update.region.y).map_err(|_| out_of_surface())?;
+            let width = usize::try_from(update.region.width).map_err(|_| out_of_surface())?;
+            let height = usize::try_from(update.region.height).map_err(|_| out_of_surface())?;
             let mut gray = Vec::with_capacity(width.saturating_mul(height));
             for row in 0..height {
                 let start = (y + row) * surface.width + x;
@@ -3547,7 +3757,7 @@ impl Painter {
         let plan = RefreshPlan::new(
             region,
             intent,
-            transition.full,
+            update.waveform == PanelWaveform::Gc16,
             whole_screen.width,
             whole_screen.height,
         )
@@ -3577,9 +3787,6 @@ impl Painter {
             );
         }
 
-        if !self.frames.commit(surface, transition) {
-            return Err("the frame planner rejected a completed refresh".to_owned());
-        }
         Ok(())
     }
 }
@@ -4304,6 +4511,10 @@ mod hosting_tests {
             DeviceRequest::SetAutoUpdate {
                 cobalt: true,
                 apps: false,
+            },
+            DeviceRequest::ReadUpdateChannel,
+            DeviceRequest::SetUpdateChannel {
+                channel: kobo_protocol::UpdateChannel::Beta,
             },
         ] {
             assert!(super::system_request_allowed("settings", &request));

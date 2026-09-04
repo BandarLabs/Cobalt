@@ -73,6 +73,7 @@ mod autoupdate;
 mod blackbox;
 #[cfg(feature = "device-write")]
 mod device;
+mod frame;
 mod syncthing;
 mod update;
 

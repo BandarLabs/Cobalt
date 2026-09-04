@@ -12,6 +12,7 @@
 use crate::{Capability, Declared, Grant, Grants, PowerPolicy};
 use kobo_protocol::{
     AudioPlaybackState, DenyReason, DeviceError, DeviceRequest, DeviceResult, DictionaryEntry,
+    UpdateChannel,
 };
 use std::collections::BTreeSet;
 use std::time::Duration;
@@ -95,6 +96,7 @@ pub struct DeviceServices {
     audio_volume: u8,
     dictionaries: kobo_dict::Index,
     auto_update: AutoUpdateChoices,
+    update_channel: UpdateChannel,
 }
 
 /// The two standing update switches, held together because they are asked
@@ -147,6 +149,7 @@ impl DeviceServices {
                 cobalt: true,
                 apps: true,
             },
+            update_channel: UpdateChannel::Stable,
         }
     }
 
@@ -316,9 +319,7 @@ impl DeviceServices {
                 .map_or(DeviceResult::Done, DeviceResult::Denied),
             DeviceRequest::ListInstalledApps
             | DeviceRequest::ReadAppCatalog
-            | DeviceRequest::RefreshAppCatalog => DeviceResult::Apps {
-                entries: Vec::new(),
-            },
+            | DeviceRequest::RefreshAppCatalog => Self::empty_apps(),
             DeviceRequest::InstallApp { .. } | DeviceRequest::UninstallApp { .. } => {
                 DeviceResult::Done
             }
@@ -329,8 +330,31 @@ impl DeviceServices {
             | DeviceRequest::BeginAppLink
             | DeviceRequest::PollAppLink
             | DeviceRequest::DisconnectAppLink => DeviceResult::Denied(DenyReason::Unsupported),
+            request @ (DeviceRequest::ReadAutoUpdate
+            | DeviceRequest::SetAutoUpdate { .. }
+            | DeviceRequest::ReadUpdateChannel
+            | DeviceRequest::SetUpdateChannel { .. }) => self.handle_update_preferences(&request),
+        }
+    }
+
+    fn empty_apps() -> DeviceResult {
+        DeviceResult::Apps {
+            entries: Vec::new(),
+        }
+    }
+
+    fn handle_update_preferences(&mut self, request: &DeviceRequest) -> DeviceResult {
+        match request {
             DeviceRequest::ReadAutoUpdate => self.auto_update_state(),
-            DeviceRequest::SetAutoUpdate { cobalt, apps } => self.choose_auto_update(cobalt, apps),
+            DeviceRequest::SetAutoUpdate { cobalt, apps } => {
+                self.choose_auto_update(*cobalt, *apps)
+            }
+            DeviceRequest::ReadUpdateChannel => DeviceResult::UpdateChannel(self.update_channel),
+            DeviceRequest::SetUpdateChannel { channel } => {
+                self.update_channel = *channel;
+                DeviceResult::UpdateChannel(self.update_channel)
+            }
+            _ => unreachable!("caller passes only update-preference requests"),
         }
     }
 
@@ -654,7 +678,9 @@ pub fn request_capability(request: &DeviceRequest) -> Option<Capability> {
         // not a radio or the panel, so no capability governs them; who may
         // ask is decided by the runtime, exactly as for the store requests.
         | DeviceRequest::ReadAutoUpdate
-        | DeviceRequest::SetAutoUpdate { .. } => return None,
+        | DeviceRequest::SetAutoUpdate { .. }
+        | DeviceRequest::ReadUpdateChannel
+        | DeviceRequest::SetUpdateChannel { .. } => return None,
     })
 }
 
@@ -666,7 +692,7 @@ fn clamp_seconds(duration: Duration) -> u32 {
 mod tests {
     use super::{Backends, DeviceServices, DeviceState};
     use crate::{Capability, Declared, PowerPolicy};
-    use kobo_protocol::{DenyReason, DeviceRequest, DeviceResult};
+    use kobo_protocol::{DenyReason, DeviceRequest, DeviceResult, UpdateChannel};
 
     fn seconds_of(duration: std::time::Duration) -> u32 {
         u32::try_from(duration.as_secs()).expect("policy fits in u32")
@@ -772,6 +798,20 @@ mod tests {
                 cobalt: false,
                 apps: true,
             }
+        );
+        assert_eq!(
+            services.handle(DeviceRequest::ReadUpdateChannel),
+            DeviceResult::UpdateChannel(UpdateChannel::Stable)
+        );
+        assert_eq!(
+            services.handle(DeviceRequest::SetUpdateChannel {
+                channel: UpdateChannel::Beta,
+            }),
+            DeviceResult::UpdateChannel(UpdateChannel::Beta)
+        );
+        assert_eq!(
+            services.handle(DeviceRequest::ReadUpdateChannel),
+            DeviceResult::UpdateChannel(UpdateChannel::Beta)
         );
     }
 

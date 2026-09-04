@@ -2,7 +2,7 @@ name: Publish apps
 
 on:
   push:
-    branches: [main]
+    branches: [beta]
   workflow_dispatch:
 
 permissions:
@@ -10,17 +10,31 @@ permissions:
   actions: read
 
 concurrency:
-  group: cobalt-app-catalog
+  group: cobalt-app-catalog-${{ github.ref_name }}
   cancel-in-progress: false
 
 jobs:
   trusted-tool:
-    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     outputs:
       packages: ${{ steps.registry.outputs.packages }}
+      previous-run: ${{ steps.registry.outputs.previous-run }}
+      previous-artifact: ${{ steps.registry.outputs.previous-artifact }}
+      previous-set-name: ${{ steps.registry.outputs.previous-set-name }}
+      published-sha: ${{ steps.registry.outputs.published-sha }}
+      publish: ${{ steps.registry.outputs.publish }}
     steps:
+      # Every job used to be gated on the branch, so dispatching this workflow
+      # anywhere else skipped all of them and reported success.
+      - name: Refuse to publish an app channel from another branch
+        if: github.ref != 'refs/heads/beta'
+        run: |
+          echo "This workflow publishes the beta app channel and only runs on refs/heads/beta." >&2
+          echo "It was started on ${GITHUB_REF}; re-run it with the beta branch selected." >&2
+          exit 1
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
         with:
           toolchain: 1.85.1
@@ -28,12 +42,330 @@ jobs:
         run: cargo build --locked -p kobo-cli
       - name: Validate the registry
         id: registry
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          echo "packages=$(target/debug/kobo app-list --registry apps/catalog.json)" >> "$GITHUB_OUTPUT"
+          all_packages="$(target/debug/kobo app-list --registry apps/catalog.json)"
+          if [ "$GITHUB_REF_NAME" = beta ]; then
+            release_tag=app-catalog-beta
+          else
+            release_tag=app-catalog
+          fi
+          has_release=false
+          repair=false
+          previous_run=
+          previous_artifact=
+          previous_set_name=
+          previous_sha=
+          api_get() {
+            output="$1"
+            endpoint="$2"
+            if ! status="$(curl --silent --show-error --location \
+              --retry 3 --retry-all-errors \
+              --header "Authorization: Bearer $GH_TOKEN" \
+              --header "Accept: application/vnd.github+json" \
+              --header "X-GitHub-Api-Version: 2022-11-28" \
+              --output "$output" --write-out '%{http_code}' \
+              "https://api.github.com/${endpoint}")"
+            then
+              echo "GitHub API request failed for $endpoint" >&2
+              return 2
+            fi
+            case "$status" in
+              200) return 0 ;;
+              404)
+                rm -f "$output"
+                return 1
+                ;;
+              *)
+                echo "GitHub API request for $endpoint returned HTTP $status" >&2
+                return 2
+                ;;
+            esac
+          }
+
+          api_download_asset() {
+            output="$1"
+            asset_id="$2"
+            if ! status="$(curl --silent --show-error --location \
+              --retry 3 --retry-all-errors \
+              --header "Authorization: Bearer $GH_TOKEN" \
+              --header "Accept: application/octet-stream" \
+              --header "X-GitHub-Api-Version: 2022-11-28" \
+              --output "$output" --write-out '%{http_code}' \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}")"
+            then
+              echo "GitHub asset download failed for asset $asset_id" >&2
+              return 1
+            fi
+            if [ "$status" != 200 ]; then
+              echo "GitHub asset download for asset $asset_id returned HTTP $status" >&2
+              return 1
+            fi
+          }
+          # A single page holds 100 artifacts. A catalog heading for forty-six
+          # apps passes that in one run, and an unpaginated query then reports a
+          # short list, silently discards reusable binaries and rebuilds
+          # everything. Ask for every page and keep the expired flag, which the
+          # callers below need.
+          run_artifacts() {
+            gh api --paginate \
+              "repos/${GITHUB_REPOSITORY}/actions/runs/${2}/artifacts?per_page=100" \
+              --jq '.artifacts[] | [.name, .expired] | @tsv' \
+              > "$1"
+          }
+          # The publish job uploads a `verified-app-set-<attempt>` artifact
+          # alongside the per-app ones, and it shares their prefix. Both lists
+          # below are compared against the per-package names, so the set has to
+          # be filtered out or the comparison can never hold.
+          verified_app_names() {
+            awk -F'\t' '$1 ~ /^verified-app-/ && $1 !~ /^verified-app-set-[0-9]+$/ {print $1}' \
+              "$1" | sort
+          }
+          live_verified_apps() {
+            awk -F'\t' \
+              '$2 == "false" && $1 ~ /^verified-app-/ && $1 !~ /^verified-app-set-[0-9]+$/ {print $1}' \
+              "$1" | sort
+          }
+          asset_id() {
+            # shellcheck disable=SC2016
+            node -e '
+              const fs = require("fs");
+              const release = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+              const matches = release.assets.filter(asset => asset.name === process.argv[2]);
+              if (matches.length > 1) throw new Error(`duplicate release asset ${process.argv[2]}`);
+              if (matches.length === 1) {
+                if (!Number.isSafeInteger(matches[0].id)) throw new Error("invalid release asset id");
+                process.stdout.write(String(matches[0].id));
+              }
+            ' "$1" "$2"
+          }
+          release_state="$RUNNER_TEMP/$release_tag-release.json"
+          if api_get "$release_state" \
+            "repos/${GITHUB_REPOSITORY}/releases/tags/${release_tag}"
+          then
+            has_release=true
+            catalog_present=false
+            catalog_asset_id="$(asset_id "$release_state" cobalt-app-catalog.json)"
+            if [ -n "$catalog_asset_id" ]; then
+              api_download_asset published-app-catalog.json "$catalog_asset_id"
+              catalog_present=true
+            else
+              printf '{"format_version":1,"entries":[]}\n' > published-app-catalog.json
+            fi
+            provenance_loaded=false
+            provenance_asset_id="$(
+              asset_id "$release_state" cobalt-app-catalog-provenance.json
+            )"
+            if [ -n "$provenance_asset_id" ]; then
+              api_download_asset \
+                published-app-catalog-provenance.json \
+                "$provenance_asset_id"
+              if node -e '
+                  const fs = require("fs");
+                  const value = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+                  const channel = process.argv[2];
+                  if (
+                    value.format_version !== 1 ||
+                    value.channel !== channel ||
+                    !/^[0-9a-f]{40}$/.test(value.source_sha) ||
+                    !Number.isSafeInteger(value.workflow_run_id) ||
+                    value.workflow_run_id <= 0 ||
+                    !Number.isSafeInteger(value.workflow_run_attempt) ||
+                    value.workflow_run_attempt <= 0 ||
+                    !/^[0-9a-f]{64}$/.test(value.catalog_sha256)
+                  ) process.exit(1);
+                ' published-app-catalog-provenance.json "$release_tag" &&
+                [ "$catalog_present" = true ] &&
+                [ "$(sha256sum published-app-catalog.json | cut -d' ' -f1)" = \
+                  "$(node -p 'require(process.argv[1]).catalog_sha256' ./published-app-catalog-provenance.json)" ]
+              then
+                provenance_loaded=true
+              fi
+            fi
+            if [ "$provenance_loaded" = false ]; then
+              # shellcheck disable=SC2016
+              transaction="$(
+                node -e '
+                  const fs = require("fs");
+                  const release = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+                  const pattern = /^cobalt-app-catalog-provenance-(\d+)-(\d+)\.json$/;
+                  const matches = release.assets.flatMap(asset => {
+                    const match = pattern.exec(asset.name);
+                    if (!match) return [];
+                    if (!Number.isSafeInteger(asset.id)) throw new Error("invalid release asset id");
+                    return [{
+                      id: asset.id,
+                      name: asset.name,
+                      run: BigInt(match[1]),
+                      attempt: BigInt(match[2]),
+                    }];
+                  });
+                  matches.sort((left, right) => {
+                    if (left.run < right.run) return -1;
+                    if (left.run > right.run) return 1;
+                    if (left.attempt < right.attempt) return -1;
+                    if (left.attempt > right.attempt) return 1;
+                    return 0;
+                  });
+                  const latest = matches.at(-1);
+                  if (latest) process.stdout.write(`${latest.id}\t${latest.name}`);
+                ' "$release_state"
+              )"
+              if [ -n "$transaction" ]; then
+                IFS=$'\t' read -r transaction_id transaction_name <<< "$transaction"
+                test -n "$transaction_name"
+                api_download_asset \
+                  published-app-catalog-provenance.json \
+                  "$transaction_id"
+                node -e '
+                  const fs = require("fs");
+                  const value = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+                  const channel = process.argv[2];
+                  if (
+                    value.format_version !== 1 ||
+                    value.channel !== channel ||
+                    !/^[0-9a-f]{40}$/.test(value.source_sha) ||
+                    !Number.isSafeInteger(value.workflow_run_id) ||
+                    value.workflow_run_id <= 0 ||
+                    !Number.isSafeInteger(value.workflow_run_attempt) ||
+                    value.workflow_run_attempt <= 0 ||
+                    !/^[0-9a-f]{64}$/.test(value.catalog_sha256)
+                  ) process.exit(1);
+                ' published-app-catalog-provenance.json "$release_tag"
+                provenance_loaded=true
+                repair=true
+              elif [ "$catalog_present" = false ]; then
+                repair=true
+              fi
+            fi
+            if [ "$provenance_loaded" = true ]; then
+              previous_sha="$(node -p 'require(process.argv[1]).source_sha' ./published-app-catalog-provenance.json)"
+              previous_run="$(node -p 'require(process.argv[1]).workflow_run_id' ./published-app-catalog-provenance.json)"
+              previous_set_name="verified-app-set-$(node -p 'require(process.argv[1]).workflow_run_attempt' ./published-app-catalog-provenance.json)"
+              previous_artifacts="$RUNNER_TEMP/artifacts-$previous_run.tsv"
+              run_artifacts "$previous_artifacts" "$previous_run"
+              complete_sets="$(awk -F'\t' -v name="$previous_set_name" \
+                '$1 == name && $2 == "false" {count += 1} END {print count + 0}' \
+                "$previous_artifacts")"
+              if [ "$complete_sets" = 1 ]; then
+                previous_artifact="set"
+              else
+                previous_run=
+                previous_set_name=
+              fi
+            fi
+            if [ "$provenance_loaded" = false ] && [ "$catalog_present" = true ]; then
+              # shellcheck disable=SC2016
+              expected="$(node -e \
+                'for (const name of JSON.parse(process.argv[1]).sort()) console.log(`verified-app-${name}`)' \
+                "$all_packages")"
+              runs_file="$RUNNER_TEMP/$release_tag-successful-runs.tsv"
+              # Deliberately one page of runs rather than every run this branch
+              # has ever had: this walk exists to find reusable binaries, and
+              # artifacts older than the retention window have none left to
+              # reuse. Finding nothing rebuilds every app, which is correct.
+              gh api \
+                "repos/${GITHUB_REPOSITORY}/actions/workflows/apps.yml/runs?branch=${GITHUB_REF_NAME}&status=success&per_page=100" \
+                --jq '.workflow_runs[] | [.id, .head_sha] | @tsv' \
+                > "$runs_file"
+              while IFS=$'\t' read -r run_id run_sha; do
+                candidate="$RUNNER_TEMP/artifacts-$run_id.tsv"
+                run_artifacts "$candidate" "$run_id"
+                artifact_names="$(verified_app_names "$candidate")"
+                if [ "$artifact_names" = "$expected" ]; then
+                  previous_sha="$run_sha"
+                  if [ "$(live_verified_apps "$candidate")" = "$expected" ]; then
+                    previous_run="$run_id"
+                    previous_artifact="individual"
+                  fi
+                  break
+                fi
+              done < "$runs_file"
+            fi
+            base="${previous_sha:-$(git rev-list --max-parents=0 HEAD)}"
+          else
+            release_status=$?
+            if [ "$release_status" -eq 1 ]; then
+              printf '{"format_version":1,"entries":[]}\n' > published-app-catalog.json
+              base="$(git rev-list --max-parents=0 HEAD)"
+            else
+              exit 1
+            fi
+          fi
+          packages="$(node tools/check-app-versions.mjs --list-packages \
+            --registry apps/catalog.json \
+            --published-catalog published-app-catalog.json \
+            --base "$base")"
+          publish="$(node tools/check-app-versions.mjs --publish-needed \
+            --registry apps/catalog.json \
+            --published-catalog published-app-catalog.json \
+            --base "$base")"
+          if [ "$repair" = true ]; then
+            publish=true
+          fi
+          if [ "$publish" = false ] && [ "$has_release" = true ]; then
+            # Having nothing to publish is not the same as what is published
+            # being correct, and this is the only run that ever looks. Verify
+            # the signature readers verify, and that every bundle the catalog
+            # sends them to is still on the release.
+            signature_asset_id="$(asset_id "$release_state" cobalt-app-catalog.json.sig)"
+            if [ -z "$signature_asset_id" ]; then
+              echo "$release_tag publishes a catalog with no signature beside it" >&2
+              exit 1
+            fi
+            api_download_asset published-app-catalog.json.sig "$signature_asset_id"
+            node tools/verify-published-catalog.mjs \
+              --catalog published-app-catalog.json \
+              --signature published-app-catalog.json.sig \
+              --registry apps/catalog.json \
+              --release "$release_state"
+            # Having nothing to publish is not the same as Store inputs being
+            # unchanged. The platform used to skip a release while crates/
+            # moved; this is that gate for the catalog. apps/ and every
+            # registered Store package directory must not differ from the
+            # published source when this run decided not to touch the channel.
+            git diff --name-only --diff-filter=ACDMRT "$base" "$GITHUB_SHA" \
+              > "$RUNNER_TEMP/changed-since-catalog"
+            node tools/store-catalog-changes.mjs --channel "$release_tag" \
+              < "$RUNNER_TEMP/changed-since-catalog"
+          fi
+          if [ "$publish" = true ] && [ "$has_release" = true ] && [ "$packages" != "$all_packages" ]; then
+            if [ -z "$previous_run" ]; then
+              packages="$all_packages"
+            elif [ "$previous_artifact" = individual ]; then
+              # shellcheck disable=SC2016
+              expected="$(node -e \
+                'for (const name of JSON.parse(process.argv[1]).sort()) console.log(`verified-app-${name}`)' \
+                "$all_packages")"
+              reusable_artifacts="$RUNNER_TEMP/reusable-$previous_run.tsv"
+              run_artifacts "$reusable_artifacts" "$previous_run"
+              if [ "$(live_verified_apps "$reusable_artifacts")" != "$expected" ]; then
+                packages="$all_packages"
+                previous_run=
+                previous_artifact=
+                previous_set_name=
+              fi
+            fi
+          fi
+          if [ "$packages" = "$all_packages" ]; then
+            previous_run=
+            previous_artifact=
+            previous_set_name=
+          fi
+          {
+            echo "packages=$packages"
+            echo "previous-run=$previous_run"
+            echo "previous-artifact=$previous_artifact"
+            echo "previous-set-name=$previous_set_name"
+            echo "published-sha=$base"
+            echo "publish=$publish"
+          } >> "$GITHUB_OUTPUT"
           node tools/generate-app-pages.mjs
           git status --porcelain -- docs/apps docs/sitemap.xml
           test -z "$(git status --porcelain -- docs/apps docs/sitemap.xml)"
       - name: Save the release tool
+        if: steps.registry.outputs.publish == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: trusted-kobo
@@ -41,7 +373,10 @@ jobs:
           if-no-files-found: error
 
   build-apps:
-    if: github.ref == 'refs/heads/main'
+    if: >-
+      github.ref == 'refs/heads/beta' &&
+      needs.trusted-tool.outputs.publish == 'true' &&
+      needs.trusted-tool.outputs.packages != '[]'
     needs: trusted-tool
     runs-on: ubuntu-latest
     strategy:
@@ -78,8 +413,73 @@ jobs:
           path: dist/prebuilt/${{ matrix.package }}
           if-no-files-found: error
 
+  # The catalog is one signed document covering every app, and the binary set is
+  # assembled only when every registered app has an artifact. There is no safe
+  # partial publication: shipping a catalog without the app that failed
+  # withdraws a working app from readers, and shipping one with it points them
+  # at a bundle that was never built. So the catalog waits, and this job says
+  # which app it is waiting for, because "publish: skipped" under forty-six
+  # matrix legs is not something anybody can act on.
+  unbuilt-apps:
+    if: >-
+      always() &&
+      github.ref == 'refs/heads/beta' &&
+      needs.trusted-tool.result == 'success' &&
+      needs.trusted-tool.outputs.publish == 'true' &&
+      needs.trusted-tool.outputs.packages != '[]' &&
+      needs.build-apps.result != 'success'
+    needs: [trusted-tool, build-apps]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Name the apps holding back the catalog
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PACKAGES: ${{ needs.trusted-tool.outputs.packages }}
+          BUILD_RESULT: ${{ needs.build-apps.result }}
+        run: |
+          artifacts="$RUNNER_TEMP/run-artifacts.txt"
+          gh api --paginate \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/artifacts?per_page=100" \
+            --jq '.artifacts[] | select(.name | startswith("verified-app-")) | .name' \
+            > "$artifacts"
+          built="$RUNNER_TEMP/built-packages.txt"
+          sed 's/^verified-app-//' "$artifacts" | sort > "$built"
+          # shellcheck disable=SC2016
+          node -e '
+            const fs = require("fs");
+            const requested = JSON.parse(process.argv[1]).sort();
+            const built = new Set(
+              fs.readFileSync(process.argv[2], "utf8").split("\n").filter(Boolean)
+            );
+            const missing = requested.filter(name => !built.has(name));
+            if (missing.length > 0) {
+              console.error("These app packages produced no verified binary in this run:");
+              for (const name of missing) console.error(`  ${name}`);
+            } else {
+              console.error(
+                `Every one of the ${requested.length} requested packages produced a verified binary, so build-apps ${process.argv[3]} after the build; read the failed matrix legs.`
+              );
+            }
+            console.error("");
+            console.error(
+              `${requested.length - missing.length} of ${requested.length} packages built and verified. Their artifacts stay on this run, and the next attempt reuses them instead of rebuilding.`
+            );
+            console.error(
+              "The catalog was not published. Readers keep the previous publication, which is signed and complete, so no reader is ever offered an app whose bundle does not exist."
+            );
+            process.exit(1);
+          ' "$PACKAGES" "$built" "$BUILD_RESULT"
+
   publish:
-    if: github.ref == 'refs/heads/main'
+    if: >-
+      always() &&
+      github.ref == 'refs/heads/beta' &&
+      needs.trusted-tool.result == 'success' &&
+      needs.trusted-tool.outputs.publish == 'true' &&
+      (
+        (needs.trusted-tool.outputs.packages == '[]' && needs.build-apps.result == 'skipped') ||
+        (needs.trusted-tool.outputs.packages != '[]' && needs.build-apps.result == 'success')
+      )
     needs: [trusted-tool, build-apps]
     runs-on: ubuntu-latest
     permissions:
@@ -95,25 +495,133 @@ jobs:
           name: trusted-kobo
           path: trusted
       - name: Load verified app binaries
+        if: needs.trusted-tool.outputs.packages != '[]'
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: verified-app-*
+          path: dist/current
+      - name: Load unchanged binaries from the previous channel run
+        if: needs.trusted-tool.outputs.previous-artifact == 'individual'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: verified-app-*
+          path: dist/previous
+          run-id: ${{ needs.trusted-tool.outputs.previous-run }}
+          github-token: ${{ github.token }}
+      - name: Load the complete binary set from the previous publication
+        if: needs.trusted-tool.outputs.previous-artifact == 'set'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ${{ needs.trusted-tool.outputs.previous-set-name }}
+          path: dist/previous
+          run-id: ${{ needs.trusted-tool.outputs.previous-run }}
+          github-token: ${{ github.token }}
+      - name: Assemble the complete verified binary set
+        run: |
+          mkdir -p dist/merged dist/artifacts
+          if [ -d dist/previous ]; then
+            cp -R dist/previous/. dist/merged/
+          fi
+          if [ -d dist/current ]; then
+            cp -R dist/current/. dist/merged/
+          fi
+          node -e '
+            const fs = require("fs");
+            const registry = JSON.parse(fs.readFileSync("apps/catalog.json", "utf8"));
+            for (const app of registry.apps) console.log(app.package);
+          ' | while IFS= read -r package; do
+            artifact="verified-app-${package}"
+            test -d "dist/merged/$artifact"
+            cp -R "dist/merged/$artifact" dist/artifacts/
+          done
+      - name: Save the complete verified binary set
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: verified-app-set-${{ github.run_attempt }}
           path: dist/artifacts
+          if-no-files-found: error
       - name: Require versions for changed app packages
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          published_sha="$(gh api \
-            "repos/${GITHUB_REPOSITORY}/actions/workflows/apps.yml/runs?status=success&per_page=1" \
-            --jq '.workflow_runs[0].head_sha')"
-          test -n "$published_sha"
-          curl --fail --location --retry 3 \
-            --output published-app-catalog.json \
-            https://github.com/BandarLabs/Cobalt/releases/download/app-catalog/cobalt-app-catalog.json
+          api_get() {
+            output="$1"
+            endpoint="$2"
+            if ! status="$(curl --silent --show-error --location \
+              --retry 3 --retry-all-errors \
+              --header "Authorization: Bearer $GH_TOKEN" \
+              --header "Accept: application/vnd.github+json" \
+              --header "X-GitHub-Api-Version: 2022-11-28" \
+              --output "$output" --write-out '%{http_code}' \
+              "https://api.github.com/${endpoint}")"
+            then
+              echo "GitHub API request failed for $endpoint" >&2
+              return 2
+            fi
+            case "$status" in
+              200) return 0 ;;
+              404)
+                rm -f "$output"
+                return 1
+                ;;
+              *)
+                echo "GitHub API request for $endpoint returned HTTP $status" >&2
+                return 2
+                ;;
+            esac
+          }
+          api_download_asset() {
+            output="$1"
+            asset_id="$2"
+            if ! status="$(curl --silent --show-error --location \
+              --retry 3 --retry-all-errors \
+              --header "Authorization: Bearer $GH_TOKEN" \
+              --header "Accept: application/octet-stream" \
+              --header "X-GitHub-Api-Version: 2022-11-28" \
+              --output "$output" --write-out '%{http_code}' \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}")"
+            then
+              echo "GitHub asset download failed for asset $asset_id" >&2
+              return 1
+            fi
+            if [ "$status" != 200 ]; then
+              echo "GitHub asset download for asset $asset_id returned HTTP $status" >&2
+              return 1
+            fi
+          }
+          if [ "$GITHUB_REF_NAME" = beta ]; then
+            release_tag=app-catalog-beta
+          else
+            release_tag=app-catalog
+          fi
+          release_state="$RUNNER_TEMP/$release_tag-release.json"
+          if api_get "$release_state" \
+            "repos/${GITHUB_REPOSITORY}/releases/tags/${release_tag}"
+          then
+            catalog_asset_id="$(
+              node -e '
+                const fs = require("fs");
+                const release = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+                const matches = release.assets.filter(asset => asset.name === "cobalt-app-catalog.json");
+                if (matches.length !== 1 || !Number.isSafeInteger(matches[0].id)) {
+                  throw new Error("existing app catalog release has no unique catalog asset");
+                }
+                process.stdout.write(String(matches[0].id));
+              ' "$release_state"
+            )"
+            api_download_asset published-app-catalog.json "$catalog_asset_id"
+          else
+            release_status=$?
+            if [ "$release_status" -eq 1 ]; then
+              printf '{"format_version":1,"entries":[]}\n' > published-app-catalog.json
+            else
+              exit 1
+            fi
+          fi
           node tools/check-app-versions.mjs \
             --registry apps/catalog.json \
             --published-catalog published-app-catalog.json \
-            --base "$published_sha"
+            --base "${{ needs.trusted-tool.outputs.published-sha }}"
       - name: Sign the app packages and catalog
         env:
           COBALT_APP_SIGNING_SEED: ${{ secrets.COBALT_APP_SIGNING_SEED }}
@@ -124,6 +632,11 @@ jobs:
             exit 1
           }
           chmod +x trusted/kobo
+          if [ "$GITHUB_REF_NAME" = beta ]; then
+            release_tag=app-catalog-beta
+          else
+            release_tag=app-catalog
+          fi
           seed="$RUNNER_TEMP/cobalt-app-signing-seed"
           trap 'rm -f "$seed"' EXIT
           printf '%s' "$COBALT_APP_SIGNING_SEED" > "$seed"
@@ -132,18 +645,144 @@ jobs:
             --registry apps/catalog.json \
             --seed "$seed" \
             --out dist/apps \
-            --base-url https://github.com/BandarLabs/Cobalt/releases/download/app-catalog \
+            --base-url "https://github.com/${GITHUB_REPOSITORY}/releases/download/${release_tag}" \
             --artifact-dir dist/artifacts
+          catalog_sha256="$(sha256sum dist/apps/cobalt-app-catalog.json | cut -d' ' -f1)"
+          # shellcheck disable=SC2016
+          node -e '
+            const fs = require("fs");
+            const value = {
+              format_version: 1,
+              channel: process.argv[2],
+              source_sha: process.argv[3],
+              workflow_run_id: Number(process.argv[4]),
+              workflow_run_attempt: Number(process.argv[5]),
+              catalog_sha256: process.argv[6],
+            };
+            fs.writeFileSync(process.argv[1], `${JSON.stringify(value)}\n`);
+          ' \
+            dist/apps/cobalt-app-catalog-provenance.json \
+            "$release_tag" "$GITHUB_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$catalog_sha256"
+          cp \
+            dist/apps/cobalt-app-catalog-provenance.json \
+            "dist/apps/cobalt-app-catalog-provenance-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
       - name: Publish the fixed app channel
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release view app-catalog >/dev/null 2>&1; then
-            gh release upload app-catalog dist/apps/* --clobber
+          api_get() {
+            output="$1"
+            endpoint="$2"
+            if ! status="$(curl --silent --show-error --location \
+              --retry 3 --retry-all-errors \
+              --header "Authorization: Bearer $GH_TOKEN" \
+              --header "Accept: application/vnd.github+json" \
+              --header "X-GitHub-Api-Version: 2022-11-28" \
+              --output "$output" --write-out '%{http_code}' \
+              "https://api.github.com/${endpoint}")"
+            then
+              echo "GitHub API request failed for $endpoint" >&2
+              return 2
+            fi
+            case "$status" in
+              200) return 0 ;;
+              404)
+                rm -f "$output"
+                return 1
+                ;;
+              *)
+                echo "GitHub API request for $endpoint returned HTTP $status" >&2
+                return 2
+                ;;
+            esac
+          }
+          download_release_asset() {
+            output="$1"
+            asset_id="$2"
+            if ! status="$(curl --silent --show-error --location \
+              --retry 3 --retry-all-errors \
+              --header "Authorization: Bearer ${GH_TOKEN}" \
+              --header "Accept: application/octet-stream" \
+              --header "X-GitHub-Api-Version: 2022-11-28" \
+              --output "$output" --write-out '%{http_code}' \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}")"
+            then
+              echo "GitHub asset download failed for asset $asset_id" >&2
+              return 1
+            fi
+            if [ "$status" != 200 ]; then
+              echo "GitHub asset download for asset $asset_id returned HTTP $status" >&2
+              return 1
+            fi
+          }
+          if [ "$GITHUB_REF_NAME" = beta ]; then
+            release_tag=app-catalog-beta
+            title="Cobalt Beta App Catalog"
+            notes="Automatically published signed prerelease apps for Cobalt beta readers."
           else
-            gh release create app-catalog dist/apps/* \
-              --target "$GITHUB_SHA" \
-              --title "Cobalt App Catalog" \
-              --notes "Automatically published signed apps for installed Cobalt readers." \
-              --latest=false
+            release_tag=app-catalog
+            title="Cobalt App Catalog"
+            notes="Automatically published signed apps for installed Cobalt readers."
           fi
+          release_state="$RUNNER_TEMP/$release_tag-release.json"
+          if api_get "$release_state" \
+            "repos/${GITHUB_REPOSITORY}/releases/tags/${release_tag}"
+          then
+            :
+          else
+            release_status=$?
+            if [ "$release_status" -eq 1 ]; then
+              gh release create "$release_tag" \
+                --target "$GITHUB_SHA" \
+                --title "$title" \
+                --notes "$notes" \
+                --latest=false
+            else
+              exit 1
+            fi
+          fi
+          api_get "$release_state" \
+            "repos/${GITHUB_REPOSITORY}/releases/tags/${release_tag}"
+          for package in dist/apps/*.cobalt-app; do
+            asset_name="$(basename "$package")"
+            asset_id="$(
+              # shellcheck disable=SC2016
+              node -e '
+                const fs = require("fs");
+                const release = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+                const matches = release.assets.filter(asset => asset.name === process.argv[2]);
+                if (matches.length > 1) throw new Error(`duplicate release asset ${process.argv[2]}`);
+                if (matches.length === 1) {
+                  if (!Number.isSafeInteger(matches[0].id)) throw new Error("invalid asset id");
+                  process.stdout.write(String(matches[0].id));
+                }
+              ' "$release_state" "$asset_name"
+            )"
+            if [ -n "$asset_id" ]; then
+              published_package="$RUNNER_TEMP/published-$asset_name"
+              download_release_asset "$published_package" "$asset_id"
+              cmp "$package" "$published_package"
+            else
+              gh release upload "$release_tag" "$package"
+            fi
+          done
+          # The immutable transaction marker makes any interrupted publication
+          # recoverable from this run's complete verified binary artifact.
+          gh release upload "$release_tag" \
+            "dist/apps/cobalt-app-catalog-provenance-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
+          # Publish the signed pointer only after every referenced bundle is
+          # present, then record canonical provenance as the final commit.
+          #
+          # The catalog goes up before its signature. Replacing the signature
+          # first left a window in which the channel offered a signature for a
+          # catalog nobody could fetch yet, so a reader fetching in that window
+          # was told the catalog it had been given was forged. Doing it this way
+          # round, the signature is never newer than the catalog it covers: the
+          # window holds the previous signature over the new catalog, which a
+          # reader also rejects, but as the retryable state it is.
+          gh release upload \
+            "$release_tag" dist/apps/cobalt-app-catalog.json --clobber
+          gh release upload \
+            "$release_tag" dist/apps/cobalt-app-catalog.json.sig --clobber
+          gh release upload \
+            "$release_tag" dist/apps/cobalt-app-catalog-provenance.json --clobber

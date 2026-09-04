@@ -10,11 +10,11 @@ pub use kobo_protocol::{
     BluetoothDevice, BluetoothDeviceKind, Credential, DenyReason, DeviceError, DeviceIdentity,
     DeviceRequest, DeviceResult, DictionaryEntry, Frame, Header, Lifecycle, LogLevel, Message,
     RemoteInstallOutcome, SecretHeader, ShellError, ShellEvent, ShellRequest, StoreError,
-    StoreRequest, StoreResult, StreamError, Task, TaskError, TaskId, TaskOutcome, WifiNetwork,
-    CACHE_PREFIX, MAX_CACHE_KEYS, MAX_FONT_BYTES, MAX_HEADERS, MAX_HEADER_NAME, MAX_HEADER_VALUE,
-    MAX_INLINE_PICTURE_BYTES, MAX_LOOKUP_WORD_BYTES, MAX_PICTURE_BYTES, MAX_PICTURE_CHUNK_BYTES,
-    MAX_RADIO_DEVICES, MAX_RADIO_NAME, MAX_SHELF_CHUNK, MAX_SHELL_CHUNK, MAX_STORE_KEYS,
-    MAX_STORE_VALUE, MAX_TASK_BYTES, MAX_URL_LEN,
+    StoreRequest, StoreResult, StreamError, Task, TaskError, TaskId, TaskOutcome, UpdateChannel,
+    WifiNetwork, CACHE_PREFIX, MAX_CACHE_KEYS, MAX_FONT_BYTES, MAX_HEADERS, MAX_HEADER_NAME,
+    MAX_HEADER_VALUE, MAX_INLINE_PICTURE_BYTES, MAX_LOOKUP_WORD_BYTES, MAX_PICTURE_BYTES,
+    MAX_PICTURE_CHUNK_BYTES, MAX_RADIO_DEVICES, MAX_RADIO_NAME, MAX_SHELF_CHUNK, MAX_SHELL_CHUNK,
+    MAX_STORE_KEYS, MAX_STORE_VALUE, MAX_TASK_BYTES, MAX_URL_LEN,
 };
 pub use kobo_ui::QuoteRole;
 pub use kobo_ui::{
@@ -4363,6 +4363,20 @@ impl Device<'_> {
     #[cfg(feature = "runtime-settings")]
     pub fn set_auto_update(&mut self, cobalt: bool, apps: bool) {
         self.request(DeviceRequest::SetAutoUpdate { cobalt, apps });
+    }
+
+    /// Asks which stable or beta release channel the runtime follows. The
+    /// reply is [`DeviceResult::UpdateChannel`].
+    #[cfg(feature = "runtime-settings")]
+    pub fn read_update_channel(&mut self) {
+        self.request(DeviceRequest::ReadUpdateChannel);
+    }
+
+    /// Atomically selects the stable or beta release channel used for both
+    /// platform and Store app updates.
+    #[cfg(feature = "runtime-settings")]
+    pub fn set_update_channel(&mut self, channel: UpdateChannel) {
+        self.request(DeviceRequest::SetUpdateChannel { channel });
     }
 
     fn bluetooth_address(
