@@ -408,13 +408,12 @@ mod nickel {
         ) else {
             return;
         };
-        let mut statement = match connection.prepare(
+        let Ok(mut statement) = connection.prepare(
             "SELECT ContentID, Title, MimeType, IsDownloaded, ___FileSize
              FROM content
              WHERE ContentType = '6' AND Title IS NOT NULL AND Title != ''",
-        ) {
-            Ok(statement) => statement,
-            Err(_) => return,
+        ) else {
+            return;
         };
         let Ok(rows) = statement.query_map([], |row| {
             Ok((

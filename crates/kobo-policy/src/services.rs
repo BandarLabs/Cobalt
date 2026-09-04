@@ -228,6 +228,7 @@ impl DeviceServices {
     }
 
     /// Answers exactly one request.
+    #[allow(clippy::too_many_lines)]
     pub fn handle(&mut self, request: DeviceRequest) -> DeviceResult {
         match request {
             DeviceRequest::ReadBattery => self.read_battery(),
