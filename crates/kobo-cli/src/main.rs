@@ -7397,7 +7397,7 @@ mod tests {
             use std::collections::BTreeSet;
 
             #[test]
-            fn checked_in_registry_contains_every_store_application() {
+            fn checked_in_base_registry_contains_only_store_applications() {
                 let registry = workspace_manifest()
                     .parent()
                     .expect("workspace root")
@@ -7407,14 +7407,17 @@ mod tests {
                     .iter()
                     .map(|app| app.package.as_str())
                     .collect::<BTreeSet<_>>();
-                assert_eq!(
-                    registered,
-                    STORE_PACKAGES.iter().copied().collect::<BTreeSet<_>>()
+                let store_packages = STORE_PACKAGES.iter().copied().collect::<BTreeSet<_>>();
+                assert!(!registered.is_empty());
+                assert!(
+                    registered.is_subset(&store_packages),
+                    "base registry contains a non-Store package: {:?}",
+                    registered.difference(&store_packages).collect::<Vec<_>>()
                 );
                 // Versions move with every release, so the check is that
-                // each entry carries a version rather than which version it
-                // carries. A pinned number here broke every routine catalog
-                // bump while catching nothing the shape check misses.
+                // each base entry carries a version rather than which version
+                // it carries. Source-adjacent manifests are collected by the
+                // Node registry checks before the effective catalog is built.
                 for app in &apps {
                     let parts: Vec<&str> = app.version.split('.').collect();
                     assert!(
