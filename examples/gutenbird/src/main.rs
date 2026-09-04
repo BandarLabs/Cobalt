@@ -5629,7 +5629,7 @@ Please read this before you distribute or use this work.\n";
             complete: true,
             ..Gutenbird::default()
         };
-        app.open_cover = Some(TilePicture::new(PictureHandle(0), 306, 484));
+        app.open_cover = Some(TilePicture::new(PictureHandle(0), 80, 120));
         let context = kobo_sdk::Context::default();
         let publication = app.open.clone().unwrap();
         let blocks = Gutenbird::detail_blocks(&publication);
