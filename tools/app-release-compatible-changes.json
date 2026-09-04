@@ -8,12 +8,12 @@
         {
           "path": "Cargo.lock",
           "base_blob": "6e0752673a601512064dcfb5b8fa993e4886c8ff",
-          "compatible_blob": "cda95ea14358590e71245e867f1f5ad81f4cedfe"
+          "compatible_blob": "e45dc3c8359b7b1e1ade2f088e67f6db66205c37"
         },
         {
           "path": "apps/backgammon/Cargo.toml",
           "base_blob": null,
-          "compatible_blob": "1a7c6b866c49f675cfb48a8327de25a70321cc41"
+          "compatible_blob": "cb235d72110488dd9e0b2728f17058bec4a1714f"
         },
         {
           "path": "apps/backgammon/README.md",
@@ -88,7 +88,7 @@
         {
           "path": "crates/kobo-policy/src/credentials.rs",
           "base_blob": "229061a856c96fcfbecbd264f65107f0b9d5293c",
-          "compatible_blob": "4b855de046ec913d72fc61ba844f39afaf6d8a9c"
+          "compatible_blob": "6ad6e11d12de70eb5a59566ca5ce722f82c152fb"
         },
         {
           "path": "crates/kobo-policy/src/services.rs",
@@ -143,7 +143,7 @@
         {
           "path": "crates/kobo-ui/src/lib.rs",
           "base_blob": "b423c372440c61e785db9dd0128eac22343cb9f8",
-          "compatible_blob": "18f06457046ca721962fd5a28cdd8f3d64f9c2ec"
+          "compatible_blob": "8ae15c0c4ac8b7eadba44f06d2561edd0d143cd9"
         },
         {
           "path": "crates/kobo-ui/src/vector.rs",

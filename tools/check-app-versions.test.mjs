@@ -15,11 +15,19 @@ import {
   onlyRemovesOpdsUrlReexports,
   packagesToBuild,
   registeredConsumers,
+  isFilmingScript,
   releaseDiffArguments,
   releaseLockPackageIdentities,
   releaseNeeded,
-  releaseDependencyIds
+  releaseDependencyIds,
+  storeImpactOfChangedPaths
 } from "./check-app-versions.mjs";
+import {
+  registeredStorePackages,
+  storeCatalogChanges,
+  storeWatchDirectories,
+  workspacePackageDirectories
+} from "./store-catalog-changes.mjs";
 
 const BETA_RELEASE_BASE = "2b08e793e13d36547fb72841df846774ca69798d";
 
@@ -153,6 +161,54 @@ test("catalog removal still requires publication without a build", () => {
   const values = fixture();
   values.registry.apps = [];
   assert.equal(releaseNeeded(values.registry, values.published, new Set()), true);
+});
+
+// A new app reaches the stable catalog one promotion after it reaches beta.
+// While the two disagree, checking a beta-bound change against stable waves the
+// app through, and the very next publication to beta rejects it.
+test("a new app is version-checked only against a catalog that already lists it", () => {
+  const values = fixture();
+  const app = {
+    package: "kobo-backgammon",
+    id: "backgammon",
+    display_name: "Backgammon",
+    short_label: "Backgammon",
+    summary: "Play backgammon",
+    version: "0.1.0",
+    minimum_cobalt_version: "0.3.1",
+    glyph: "dice",
+    capabilities: []
+  };
+  values.registry.apps.push(app);
+  const stable = values.published;
+  const beta = {
+    format_version: 1,
+    entries: [
+      ...stable.entries,
+      {
+        manifest: {
+          format_version: 1,
+          id: app.id,
+          display_name: app.display_name,
+          short_label: app.short_label,
+          summary: app.summary,
+          version: app.version,
+          minimum_cobalt_version: app.minimum_cobalt_version,
+          glyph: app.glyph,
+          capabilities: app.capabilities,
+          binary_sha256: "1".repeat(64),
+          binary_bytes: 5
+        }
+      }
+    ]
+  };
+  const affected = new Set([app.package]);
+
+  assert.doesNotThrow(() => checkEntries(values.registry, stable, affected));
+  assert.throws(
+    () => checkEntries(values.registry, beta, affected),
+    /backgammon: package inputs changed \(release inputs\).*version 0\.1\.0 is not newer than 0\.1\.0/s
+  );
 });
 
 test("changing an app ID to a different Cargo package is a release input", () => {
@@ -365,6 +421,15 @@ test("release input discovery includes deleted paths", () => {
     "--diff-filter=ACDMRT",
     "published...HEAD"
   ]);
+});
+
+test("a drive script next to an application is not a release input", () => {
+  assert.equal(isFilmingScript("examples/todo/drive.txt", "examples/todo"), true);
+  assert.equal(isFilmingScript("examples/todo/drive.kobo", "examples/todo"), true);
+  assert.equal(isFilmingScript("examples/gallery/drive.txt", "examples/gallery"), true);
+  assert.equal(isFilmingScript("examples/todo/src/main.rs", "examples/todo"), false);
+  assert.equal(isFilmingScript("examples/todo/src/drive.txt", "examples/todo"), false);
+  assert.equal(isFilmingScript("examples/todo-extra/drive.txt", "examples/todo"), false);
 });
 
 test("workspace version and member additions do not change existing app release inputs", () => {
@@ -771,4 +836,57 @@ test("workspace package version-only lock changes affect no Store app", () => {
   const previous = `version = 4\n\n[[package]]\nname = "kobo-sdk"\nversion = "0.3.1"\ndependencies = [\n "shared",\n]\n`;
   const current = previous.replace('version = "0.3.1"', 'version = "0.3.2"');
   assert.deepEqual(changedLockPackageIdentities(previous, current), new Set());
+});
+
+// The #101 failure mode: a crates/ or workflow edit looked like a Store
+// release input and demanded every app bump. The filter is tested against an
+// explicit path list so a shallow CI checkout does not have to contain the
+// last catalog publication.
+test("platform-only paths affect no Store package", () => {
+  const packageDirectories = new Map([
+    ["kobo-todo", "examples/todo"],
+    ["kobo-backgammon", "apps/backgammon"]
+  ]);
+  const registered = ["kobo-todo", "kobo-backgammon"];
+  const platformOnly = [
+    "crates/kobo-sim/src/lib.rs",
+    "crates/kobo-profile/src/lib.rs",
+    "Cargo.toml",
+    "Cargo.lock",
+    ".github/workflows/ci.yml",
+    "tools/check-app-versions.mjs",
+    "docs/RELEASE-TRAIN.md"
+  ];
+
+  const quiet = storeImpactOfChangedPaths(platformOnly, packageDirectories, registered);
+  assert.deepEqual(quiet.storeChanges, []);
+  assert.equal(quiet.catalogQuiet, true);
+  assert.deepEqual(quiet.affected, new Set());
+
+  const storeEdit = storeImpactOfChangedPaths(
+    ["apps/backgammon/src/main.rs", "crates/kobo-sim/src/lib.rs"],
+    packageDirectories,
+    registered
+  );
+  assert.deepEqual(storeEdit.storeChanges, ["apps/backgammon/src/main.rs"]);
+  assert.equal(storeEdit.catalogQuiet, false);
+  assert.equal(storeEdit.affected, null);
+
+  const directories = storeWatchDirectories(
+    workspacePackageDirectories(readFileSync("Cargo.toml", "utf8"), member =>
+      readFileSync(`${member}/Cargo.toml`, "utf8")
+    ),
+    registeredStorePackages(JSON.parse(readFileSync("apps/catalog.json", "utf8")))
+  );
+  assert.deepEqual(storeCatalogChanges(["crates/kobo-sim/src/lib.rs"], directories), []);
+  assert.deepEqual(storeCatalogChanges(["apps/backgammon/src/main.rs"], directories), [
+    "apps/backgammon/src/main.rs"
+  ]);
+});
+
+test("the previous complete-set artifact is still excluded from per-app reuse", () => {
+  const source = readFileSync(".github/workflows/apps.yml", "utf8");
+  assert.match(source, /\$1 !~ \/\^verified-app-set-\[0-9\]\+\$\//);
+  assert.match(source, /previous_artifact="set"/);
+  assert.match(source, /the set has to/);
 });
