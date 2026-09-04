@@ -5580,9 +5580,11 @@ fn print_help() {
            deck ls|show [--json]                 List the assigned pads, or print the layout JSON\n\
            deck push (--sim | --device IP | --out PATH)  Publish that layout to the reader or simulator\n\
            flashcards import FILE --out BUNDLE  Prepare an Anki package for Flashcards\n\
-           frame push INPUT --device IP          Prepare and atomically push Frame photos\n\
-           frame ls --device IP                  List Frame shelf photos\n\
-           frame rm ID --device IP               Remove a Frame shelf photo\n\
+           frame init (--sim | --device IP)      Create the Frame shelf\n\
+           frame push INPUT (--sim | --device IP) [--fit crop|pad] [--delete]\n\
+                                             Prepare and atomically push Frame photos\n\
+           frame ls (--sim | --device IP)        List Frame shelf photos\n\
+           frame rm ID (--sim | --device IP)     Remove a Frame shelf photo\n\
            vault init (--device IP | --sim)      Prepare the Vault store on the reader or simulator\n\
            vault push DIR (--device IP | --sim | --out INDEX)  Pack a markdown vault and publish it\n\
            sync setup DIR --folder NAME --device IP  Pair one safe fixed Sync folder\n\
