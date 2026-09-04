@@ -5,16 +5,23 @@ use kobo_frame_host::{
 };
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
-use std::path::Path;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 const ROOT: &str = "/mnt/onboard/.adds/cobalt/data/frame";
 const KOBOD: &str = "/mnt/onboard/.adds/cobalt/bin/kobod";
 const TRANSFER_TIMEOUT: Duration = Duration::from_secs(300);
-const USAGE: &str = "usage: kobo frame init --device IP\n\
-                     \x20      kobo frame push INPUT --device IP [--fit crop|pad] [--delete]\n\
-                     \x20      kobo frame ls --device IP\n\
-                     \x20      kobo frame rm ID --device IP";
+const USAGE: &str = "usage: kobo frame init (--sim | --device IP)\n\
+                     \x20      kobo frame push INPUT (--sim | --device IP) [--fit crop|pad] [--delete]\n\
+                     \x20      kobo frame ls (--sim | --device IP)\n\
+                     \x20      kobo frame rm ID (--sim | --device IP)";
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum Target {
+    Device(String),
+    Sim,
+}
 
 pub fn command(arguments: &[String]) -> Result<(), String> {
     if super::wants_help(arguments) {
@@ -30,24 +37,52 @@ pub fn command(arguments: &[String]) -> Result<(), String> {
 }
 
 fn init(arguments: &[String]) -> Result<(), String> {
-    let host = device_only(arguments)?;
-    let output = remote(
-        host,
-        &format!(
-            "set -eu\nmkdir -p '{ROOT}'\nchmod 700 '{ROOT}'\nsync\nprintf 'Frame shelf ready; transfers use this owner-attended SSH connection.\\n'\n"
-        ),
-    )?;
-    print!("{}", String::from_utf8_lossy(&output.stdout));
+    match parse_target(arguments)? {
+        Target::Device(host) => {
+            let output = remote(
+                &host,
+                &format!(
+                    "set -eu\nmkdir -p '{ROOT}'\nchmod 700 '{ROOT}'\nsync\nprintf 'Frame shelf ready; transfers use this owner-attended SSH connection.\\n'\n"
+                ),
+            )?;
+            print!("{}", String::from_utf8_lossy(&output.stdout));
+        }
+        Target::Sim => {
+            let root = sim_root();
+            fs::create_dir_all(&root)
+                .map_err(|error| format!("create Frame simulator shelf: {error}"))?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                fs::set_permissions(&root, fs::Permissions::from_mode(0o700))
+                    .map_err(|error| format!("protect Frame simulator shelf: {error}"))?;
+            }
+            println!(
+                "Frame shelf ready at {}; transfers stay on this computer.",
+                root.display()
+            );
+        }
+    }
     Ok(())
 }
 
 fn push(arguments: &[String]) -> Result<(), String> {
-    let (input, host, fit, delete) = parse_push(arguments)?;
-    let panel = reader_panel(host)?;
-    let existing = read_manifest(host)?;
+    let (input, target, fit, delete) = parse_push(arguments)?;
+    let (existing, panel) = match &target {
+        Target::Device(host) => (read_manifest(host)?, reader_panel(host)?),
+        Target::Sim => (read_local_manifest()?, sim_panel()),
+    };
     let push = prepare_for_panel(Path::new(input), fit, &existing, delete, panel)?;
-    enforce_capacity(host, &push)?;
-    transfer(host, &push)?;
+    match &target {
+        Target::Device(host) => {
+            enforce_capacity(host, &push)?;
+            transfer(host, &push)?;
+        }
+        Target::Sim => {
+            enforce_local_capacity(&push)?;
+            publish_local(&push)?;
+        }
+    }
     println!(
         "Frame updated: {} photo(s), {} new, {} removed",
         push.manifest.photos.len(),
@@ -77,8 +112,10 @@ fn reader_panel(host: &str) -> Result<Panel, String> {
 }
 
 fn list(arguments: &[String]) -> Result<(), String> {
-    let host = device_only(arguments)?;
-    let manifest = read_manifest(host)?;
+    let manifest = match parse_target(arguments)? {
+        Target::Device(host) => read_manifest(&host)?,
+        Target::Sim => read_local_manifest()?,
+    };
     if manifest.photos.is_empty() {
         println!("Frame shelf is empty.");
         return Ok(());
@@ -93,40 +130,69 @@ fn list(arguments: &[String]) -> Result<(), String> {
 }
 
 fn remove(arguments: &[String]) -> Result<(), String> {
-    let [id, flag, host] = arguments else {
-        return Err(USAGE.to_owned());
-    };
-    if !super::is_device_flag(flag) || !super::valid_device_host(host) {
-        return Err(USAGE.to_owned());
+    let (id, target) = parse_remove(arguments)?;
+    match target {
+        Target::Device(host) => {
+            let mut manifest = read_manifest(&host)?;
+            let Some(index) = manifest.photos.iter().position(|photo| photo.id == id) else {
+                return Err(format!("Frame has no photo with id {id:?}"));
+            };
+            let photo = manifest.photos.remove(index);
+            let encoded = super::base64_encode(&manifest.encode());
+            let script = format!(
+                "set -eu\nroot='{ROOT}'\npartial=\"$root/.{MANIFEST}.writing\"\nbase64 -d > \"$partial\" <<'COBALT_FRAME_MANIFEST'\n{encoded}\nCOBALT_FRAME_MANIFEST\nchmod 600 \"$partial\"\nmv -f \"$partial\" \"$root/{MANIFEST}\"\nsync\nrm -f \"$root/{}.png\"\nsync\nprintf 'Removed Frame photo {}\\n'\n",
+                photo.id, photo.id
+            );
+            let output = remote(&host, &script)?;
+            print!("{}", String::from_utf8_lossy(&output.stdout));
+        }
+        Target::Sim => {
+            let mut manifest = read_local_manifest()?;
+            let Some(index) = manifest.photos.iter().position(|photo| photo.id == id) else {
+                return Err(format!("Frame has no photo with id {id:?}"));
+            };
+            let photo = manifest.photos.remove(index);
+            publish_local(&Push {
+                manifest,
+                photos: Vec::new(),
+                removed: vec![photo.clone()],
+            })?;
+            println!("Removed Frame photo {}", photo.id);
+        }
     }
-    let mut manifest = read_manifest(host)?;
-    let Some(index) = manifest.photos.iter().position(|photo| photo.id == *id) else {
-        return Err(format!("Frame has no photo with id {id:?}"));
-    };
-    let photo = manifest.photos.remove(index);
-    let encoded = super::base64_encode(&manifest.encode());
-    let script = format!(
-        "set -eu\nroot='{ROOT}'\npartial=\"$root/.{MANIFEST}.writing\"\nbase64 -d > \"$partial\" <<'COBALT_FRAME_MANIFEST'\n{encoded}\nCOBALT_FRAME_MANIFEST\nchmod 600 \"$partial\"\nmv -f \"$partial\" \"$root/{MANIFEST}\"\nsync\nrm -f \"$root/{}.png\"\nsync\nprintf 'Removed Frame photo {}\\n'\n",
-        photo.id, photo.id
-    );
-    let output = remote(host, &script)?;
-    print!("{}", String::from_utf8_lossy(&output.stdout));
     Ok(())
 }
 
-fn parse_push(arguments: &[String]) -> Result<(&str, &str, Fit, bool), String> {
+fn parse_push(arguments: &[String]) -> Result<(&str, Target, Fit, bool), String> {
     let Some(input) = arguments.first() else {
         return Err(USAGE.to_owned());
     };
-    let mut host = None;
+    let mut target = None;
     let mut fit = Fit::Crop;
     let mut delete = false;
     let mut index = 1;
     while index < arguments.len() {
         match arguments[index].as_str() {
             flag if super::is_device_flag(flag) => {
-                host = arguments.get(index + 1).map(String::as_str);
+                if target.is_some() {
+                    return Err(USAGE.to_owned());
+                }
+                let host = arguments
+                    .get(index + 1)
+                    .ok_or_else(|| USAGE.to_owned())?
+                    .as_str();
+                if !super::valid_device_host(host) {
+                    return Err("device host contains unsupported characters".to_owned());
+                }
+                target = Some(Target::Device(host.to_owned()));
                 index += 2;
+            }
+            "--sim" => {
+                if target.is_some() {
+                    return Err(USAGE.to_owned());
+                }
+                target = Some(Target::Sim);
+                index += 1;
             }
             "--fit" => {
                 fit = Fit::parse(arguments.get(index + 1).ok_or_else(|| USAGE.to_owned())?)?;
@@ -139,21 +205,130 @@ fn parse_push(arguments: &[String]) -> Result<(&str, &str, Fit, bool), String> {
             _ => return Err(USAGE.to_owned()),
         }
     }
-    let host = host.ok_or_else(|| USAGE.to_owned())?;
-    if !super::valid_device_host(host) {
-        return Err("device host contains unsupported characters".to_owned());
-    }
-    Ok((input, host, fit, delete))
+    let target = target.ok_or_else(|| USAGE.to_owned())?;
+    Ok((input, target, fit, delete))
 }
 
-fn device_only(arguments: &[String]) -> Result<&str, String> {
-    let [flag, host] = arguments else {
-        return Err(USAGE.to_owned());
-    };
-    if !super::is_device_flag(flag) || !super::valid_device_host(host) {
-        return Err(USAGE.to_owned());
+fn parse_target(arguments: &[String]) -> Result<Target, String> {
+    match arguments {
+        [flag, host] if super::is_device_flag(flag) => {
+            if !super::valid_device_host(host) {
+                return Err("device host contains unsupported characters".to_owned());
+            }
+            Ok(Target::Device(host.clone()))
+        }
+        [flag] if flag == "--sim" => Ok(Target::Sim),
+        _ => Err(USAGE.to_owned()),
     }
-    Ok(host)
+}
+
+fn parse_remove(arguments: &[String]) -> Result<(String, Target), String> {
+    match arguments {
+        [id, flag, host] if super::is_device_flag(flag) => {
+            if !super::valid_device_host(host) {
+                return Err("device host contains unsupported characters".to_owned());
+            }
+            Ok((id.clone(), Target::Device(host.clone())))
+        }
+        [id, flag] if flag == "--sim" => Ok((id.clone(), Target::Sim)),
+        _ => Err(USAGE.to_owned()),
+    }
+}
+
+fn sim_root() -> PathBuf {
+    kobo_sim::simulated_data_root("frame")
+}
+
+fn sim_panel() -> Panel {
+    let profile = kobo_sim::selected_profile();
+    Panel {
+        width: profile.width,
+        height: profile.height,
+    }
+}
+
+fn read_local_manifest() -> Result<Manifest, String> {
+    let path = sim_root().join(MANIFEST);
+    match fs::read(&path) {
+        Ok(bytes) => Manifest::decode(&bytes)
+            .map_err(|error| format!("the simulator Frame manifest is invalid: {error}")),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Manifest::default()),
+        Err(error) => Err(format!("read Frame simulator shelf: {error}")),
+    }
+}
+
+fn publish_local(push: &Push) -> Result<(), String> {
+    let root = sim_root();
+    fs::create_dir_all(&root).map_err(|error| format!("create Frame simulator shelf: {error}"))?;
+    for prepared in push.photos.iter().filter(|prepared| prepared.png.is_some()) {
+        let png = prepared.png.as_ref().expect("filtered");
+        let dest = root.join(format!("{}.png", prepared.photo.id));
+        let partial = root.join(format!(".{}.png.writing", prepared.photo.id));
+        fs::write(&partial, png)
+            .map_err(|error| format!("write Frame photo {}: {error}", prepared.photo.id))?;
+        fs::rename(&partial, &dest)
+            .map_err(|error| format!("publish Frame photo {}: {error}", prepared.photo.id))?;
+    }
+    let dest = root.join(MANIFEST);
+    let partial = root.join(format!(".{MANIFEST}.writing"));
+    fs::write(&partial, push.manifest.encode())
+        .map_err(|error| format!("write Frame manifest: {error}"))?;
+    fs::rename(&partial, &dest).map_err(|error| format!("publish Frame manifest: {error}"))?;
+    for photo in &push.removed {
+        let _ = fs::remove_file(root.join(format!("{}.png", photo.id)));
+    }
+    Ok(())
+}
+
+fn enforce_local_capacity(push: &Push) -> Result<(), String> {
+    let incoming = push
+        .photos
+        .iter()
+        .filter(|prepared| prepared.png.is_some())
+        .map(|prepared| prepared.photo.id.as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+    let retained = push
+        .manifest
+        .photos
+        .iter()
+        .filter(|photo| !incoming.contains(photo.id.as_str()))
+        .map(|photo| photo.id.as_str())
+        .collect::<Vec<_>>();
+    let current = local_sizes(&retained)?;
+    let total = capacity_bytes(push, &current)?;
+    if total > MAX_FRAME_CAPACITY {
+        return Err(format!(
+            "this would use {} MB for Frame photos; its capacity is {} MB",
+            total / (1024 * 1024),
+            MAX_FRAME_CAPACITY / (1024 * 1024)
+        ));
+    }
+    Ok(())
+}
+
+fn local_sizes(ids: &[&str]) -> Result<BTreeMap<String, usize>, String> {
+    let root = sim_root();
+    let mut sizes = BTreeMap::new();
+    for id in ids {
+        let path = root.join(format!("{id}.png"));
+        match fs::metadata(&path) {
+            Ok(metadata) => {
+                sizes.insert(
+                    (*id).to_owned(),
+                    usize::try_from(metadata.len()).map_err(|_| {
+                        format!("Frame photo {id} is larger than this host can count")
+                    })?,
+                );
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Err(format!(
+                    "Frame photo {id} is missing from the simulator shelf"
+                ));
+            }
+            Err(error) => return Err(format!("inspect Frame photo {id}: {error}")),
+        }
+    }
+    Ok(sizes)
 }
 
 fn read_manifest(host: &str) -> Result<Manifest, String> {
@@ -345,7 +520,10 @@ fn base64_value(byte: u8) -> Result<u8, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{base64_decode, capacity_bytes, parse_push, transfer_script, MANIFEST};
+    use super::{
+        base64_decode, capacity_bytes, parse_push, parse_remove, parse_target, transfer_script,
+        Target, MANIFEST,
+    };
     use kobo_frame_host::{Fit, Manifest, Photo, PreparedPhoto, Push};
     use std::collections::BTreeMap;
 
@@ -361,8 +539,31 @@ mod tests {
         ];
         assert_eq!(
             parse_push(&arguments).expect("parse"),
-            ("family", "192.0.2.1", Fit::Pad, true)
+            ("family", Target::Device("192.0.2.1".into()), Fit::Pad, true)
         );
+    }
+
+    #[test]
+    fn parses_simulator_target() {
+        assert_eq!(
+            parse_push(&["harbour.png".into(), "--sim".into()]).expect("parse"),
+            ("harbour.png", Target::Sim, Fit::Crop, false)
+        );
+        assert_eq!(
+            parse_target(&["--sim".into()]).expect("target"),
+            Target::Sim
+        );
+        assert_eq!(
+            parse_remove(&["photo-abc".into(), "--sim".into()]).expect("remove"),
+            ("photo-abc".into(), Target::Sim)
+        );
+        assert!(parse_push(&[
+            "harbour.png".into(),
+            "--sim".into(),
+            "--device".into(),
+            "192.0.2.1".into()
+        ])
+        .is_err());
     }
 
     #[test]

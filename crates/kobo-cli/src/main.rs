@@ -5571,9 +5571,11 @@ fn print_help() {
            dev [--builtin] [address]  Run this SDK app in the browser simulator\n\
            drive --script PATH    Drive a running simulator and save PNG screenshots\n\
            flashcards import FILE --out BUNDLE  Prepare an Anki package for Flashcards\n\
-           frame push INPUT --device IP          Prepare and atomically push Frame photos\n\
-           frame ls --device IP                  List Frame shelf photos\n\
-           frame rm ID --device IP               Remove a Frame shelf photo\n\
+           frame init (--sim | --device IP)      Create the Frame shelf\n\
+           frame push INPUT (--sim | --device IP) [--fit crop|pad] [--delete]\n\
+                                             Prepare and atomically push Frame photos\n\
+           frame ls (--sim | --device IP)        List Frame shelf photos\n\
+           frame rm ID (--sim | --device IP)     Remove a Frame shelf photo\n\
            sync setup DIR --folder NAME --device IP  Pair one safe fixed Sync folder\n\
            sync run [--foreground] [--seconds N] Start the private host Syncthing peer\n\
            sync status|stop                      Inspect or stop that dedicated peer\n\

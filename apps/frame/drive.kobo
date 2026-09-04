@@ -1,6 +1,14 @@
-# Honest first-run: the shelf is empty until the host CLI pushes photos.
+# Populated shelf after `kobo frame init --sim` and `kobo frame push … --sim`.
 expect Frame
-expect Your frame is empty
-expect kobo frame
+expect Photographs
+expect-missing Your frame is empty
+expect-missing kobo frame
+wait-for Open
 clean
-shot empty
+shot shelf
+tap Open
+wait 800
+expect-missing Open
+expect-missing Your frame is empty
+clean
+shot photo

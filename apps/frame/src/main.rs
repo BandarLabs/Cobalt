@@ -96,6 +96,7 @@ struct Frame {
     startup: Startup,
     unreadable: BTreeSet<String>,
     overlay: bool,
+    settings_open: bool,
     clock: Option<Heartbeat>,
     notice: Option<String>,
 }
@@ -133,6 +134,37 @@ impl Frame {
                 )
                 .build();
         }
+        let index = self.settings.position % self.photos.len().max(1) + 1;
+        screen =
+            screen.section_with_value("Photographs", format!("{index} of {}", self.photos.len()));
+        if let Some(picture) = self.picture {
+            screen = screen
+                .picture(picture, 76)
+                .page_turns(PREVIOUS, NEXT)
+                .reading_menu(MENU)
+                .buttons([(SHOW, "Open"), (NEXT, "Next")]);
+        } else {
+            screen = screen.activity("Opening this photograph", None);
+        }
+        if !self.unreadable.is_empty() {
+            screen = screen.banner(
+                BannerLevel::Attention,
+                format!(
+                    "{} photo(s) unreadable — re-push them from your computer.",
+                    self.unreadable.len()
+                ),
+            );
+        }
+        if self.settings_open {
+            let (mode, interval, order) = self.setting_labels();
+            screen = screen.modal("Settings", |overlay| {
+                overlay.buttons([(MODE, mode), (INTERVAL, interval), (ORDER, order)])
+            });
+        }
+        screen.build()
+    }
+
+    fn setting_labels(&self) -> (String, String, String) {
         let mode = if self.settings.slow {
             "Slow slideshow"
         } else {
@@ -148,42 +180,7 @@ impl Frame {
         } else {
             "By date"
         };
-        screen = screen
-            .facts([
-                ("Photos", self.photos.len().to_string()),
-                ("Mode", mode.to_owned()),
-                ("Interval", interval),
-                ("Order", order.to_owned()),
-            ])
-            .rows([
-                (
-                    MODE,
-                    mode.to_owned(),
-                    "Awake frame or battery-saving scheduled slideshow.",
-                    Glyph::Clock,
-                ),
-                (
-                    INTERVAL,
-                    "Change interval".to_owned(),
-                    "5, 15, 60 minutes; or 1, 6, 24 hours.",
-                    Glyph::Clock,
-                ),
-                (
-                    ORDER,
-                    order.to_owned(),
-                    "Cycle a stable shuffle order or chronological photos.",
-                    Glyph::App,
-                ),
-            ]);
-        if !self.unreadable.is_empty() {
-            screen = screen.secondary(format!(
-                "{} photo(s) unreadable — re-push them from your computer.",
-                self.unreadable.len()
-            ));
-        }
-        screen
-            .buttons([(SHOW, "Show photo"), (NEXT, "Next photo")])
-            .build()
+        (mode.to_owned(), interval, order.to_owned())
     }
 
     fn photo_screen(&self) -> Screen {
@@ -253,6 +250,7 @@ impl Frame {
             self.settings.position.checked_sub(1).unwrap_or(count - 1)
         };
         self.overlay = false;
+        self.settings_open = false;
         self.picture = None;
         self.save(context);
         self.start_current(context);
@@ -450,7 +448,9 @@ impl KoboApp for Frame {
 
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
         if action == ActionId::BACK || action == action_id(EXIT) {
-            if self.view == View::Show {
+            if self.settings_open {
+                self.settings_open = false;
+            } else if self.view == View::Show {
                 self.view = View::Home;
                 self.overlay = false;
             } else {
@@ -458,13 +458,18 @@ impl KoboApp for Frame {
             }
         } else if action == action_id(SHOW) {
             self.view = View::Show;
+            self.settings_open = false;
             self.start_current(context);
         } else if action == action_id(NEXT) {
             self.advance(context, true);
         } else if action == action_id(PREVIOUS) {
             self.advance(context, false);
         } else if action == action_id(MENU) {
-            self.overlay = true;
+            if self.view == View::Home {
+                self.settings_open = !self.settings_open;
+            } else {
+                self.overlay = true;
+            }
         } else if action == action_id(MODE) {
             self.settings.slow = !self.settings.slow;
             self.settings.interval = if self.settings.slow { 6 } else { 15 };
