@@ -16,8 +16,15 @@ import {
   isFilmingScript,
   releaseDiffArguments,
   releaseNeeded,
-  releaseDependencyIds
+  releaseDependencyIds,
+  storeImpactOfChangedPaths
 } from "./check-app-versions.mjs";
+import {
+  registeredStorePackages,
+  storeCatalogChanges,
+  storeWatchDirectories,
+  workspacePackageDirectories
+} from "./store-catalog-changes.mjs";
 
 function fixture({ currentVersion = "1.0.0", summary = "Summary" } = {}) {
   const app = {
@@ -518,4 +525,57 @@ test("workspace package version-only lock changes affect no Store app", () => {
   const previous = `version = 4\n\n[[package]]\nname = "kobo-sdk"\nversion = "0.3.1"\ndependencies = [\n "shared",\n]\n`;
   const current = previous.replace('version = "0.3.1"', 'version = "0.3.2"');
   assert.deepEqual(changedLockPackageIdentities(previous, current), new Set());
+});
+
+// The #101 failure mode: a crates/ or workflow edit looked like a Store
+// release input and demanded every app bump. The filter is tested against an
+// explicit path list so a shallow CI checkout does not have to contain the
+// last catalog publication.
+test("platform-only paths affect no Store package", () => {
+  const packageDirectories = new Map([
+    ["kobo-todo", "examples/todo"],
+    ["kobo-backgammon", "apps/backgammon"]
+  ]);
+  const registered = ["kobo-todo", "kobo-backgammon"];
+  const platformOnly = [
+    "crates/kobo-sim/src/lib.rs",
+    "crates/kobo-profile/src/lib.rs",
+    "Cargo.toml",
+    "Cargo.lock",
+    ".github/workflows/ci.yml",
+    "tools/check-app-versions.mjs",
+    "docs/RELEASE-TRAIN.md"
+  ];
+
+  const quiet = storeImpactOfChangedPaths(platformOnly, packageDirectories, registered);
+  assert.deepEqual(quiet.storeChanges, []);
+  assert.equal(quiet.catalogQuiet, true);
+  assert.deepEqual(quiet.affected, new Set());
+
+  const storeEdit = storeImpactOfChangedPaths(
+    ["apps/backgammon/src/main.rs", "crates/kobo-sim/src/lib.rs"],
+    packageDirectories,
+    registered
+  );
+  assert.deepEqual(storeEdit.storeChanges, ["apps/backgammon/src/main.rs"]);
+  assert.equal(storeEdit.catalogQuiet, false);
+  assert.equal(storeEdit.affected, null);
+
+  const directories = storeWatchDirectories(
+    workspacePackageDirectories(readFileSync("Cargo.toml", "utf8"), member =>
+      readFileSync(`${member}/Cargo.toml`, "utf8")
+    ),
+    registeredStorePackages(JSON.parse(readFileSync("apps/catalog.json", "utf8")))
+  );
+  assert.deepEqual(storeCatalogChanges(["crates/kobo-sim/src/lib.rs"], directories), []);
+  assert.deepEqual(storeCatalogChanges(["apps/backgammon/src/main.rs"], directories), [
+    "apps/backgammon/src/main.rs"
+  ]);
+});
+
+test("the previous complete-set artifact is still excluded from per-app reuse", () => {
+  const source = readFileSync(".github/workflows/apps.yml", "utf8");
+  assert.match(source, /\$1 !~ \/\^verified-app-set-\[0-9\]\+\$\//);
+  assert.match(source, /previous_artifact="set"/);
+  assert.match(source, /the set has to/);
 });

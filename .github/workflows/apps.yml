@@ -320,6 +320,15 @@ jobs:
               --signature published-app-catalog.json.sig \
               --registry apps/catalog.json \
               --release "$release_state"
+            # Having nothing to publish is not the same as Store inputs being
+            # unchanged. The platform used to skip a release while crates/
+            # moved; this is that gate for the catalog. apps/ and every
+            # registered Store package directory must not differ from the
+            # published source when this run decided not to touch the channel.
+            git diff --name-only --diff-filter=ACDMRT "$base" "$GITHUB_SHA" \
+              > "$RUNNER_TEMP/changed-since-catalog"
+            node tools/store-catalog-changes.mjs --channel "$release_tag" \
+              < "$RUNNER_TEMP/changed-since-catalog"
           fi
           if [ "$publish" = true ] && [ "$has_release" = true ] && [ "$packages" != "$all_packages" ]; then
             if [ -z "$previous_run" ]; then
