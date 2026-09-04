@@ -2,6 +2,11 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { dirname, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  storeCatalogChanges,
+  storeWatchDirectories,
+  unpublishedStoreChangeReport
+} from "./store-catalog-changes.mjs";
 
 const MANIFEST_FIELDS = [
   "id",
@@ -525,13 +530,35 @@ export function lockfileOnlyAddsPackages(previousSource, currentSource) {
   return true;
 }
 
-export function affectedWorkspacePackages(baseRevision, registry) {
+export function analyzeAppReleaseInputs(baseRevision, registry) {
   const metadata = JSON.parse(command("cargo", ["metadata", "--format-version", "1", "--locked"]));
   const workspaceRoot = resolve(metadata.workspace_root);
   const changedPaths = command("git", releaseDiffArguments(baseRevision))
     .split("\n")
     .filter(Boolean)
     .map(path => path.split(sep).join("/"));
+
+  const registeredPackages = registry.apps.map(app => app.package);
+  const registered = new Set(registeredPackages);
+  const workspaceMembers = new Set(metadata.workspace_members);
+  const workspacePackages = metadata.packages.filter(package_ => workspaceMembers.has(package_.id));
+  const packageDirectories = new Map(
+    workspacePackages.map(package_ => [
+      package_.name,
+      relative(workspaceRoot, dirname(package_.manifest_path)).split(sep).join("/")
+    ])
+  );
+  const storeDirectories = storeWatchDirectories(packageDirectories, registeredPackages);
+  const storeChanges = storeCatalogChanges(changedPaths, storeDirectories);
+  const empty = { affected: new Set(), storeChanges };
+  // A platform-only push must not force every Store app to bump. Device-package
+  // inputs (crates/, Cargo.toml, Cargo.lock, the toolchain pin) reach readers
+  // through beta-vX.Y.Z. The next catalog publication of an actually edited
+  // app compiles against whatever the platform then is.
+  if (storeChanges.length === 0) {
+    return empty;
+  }
+
   const compatibleManifest = readJson(
     resolve(
       dirname(fileURLToPath(import.meta.url)),
@@ -547,7 +574,6 @@ export function affectedWorkspacePackages(baseRevision, registry) {
     path => command("git", ["hash-object", path])
   );
 
-  const registeredPackages = registry.apps.map(app => app.package);
   const unconditionalGlobalInputs = new Set(["rust-toolchain", "rust-toolchain.toml"]);
   const changesGlobalInputs =
     changedPaths.some(path => unconditionalGlobalInputs.has(path) || path.startsWith(".cargo/")) ||
@@ -557,11 +583,9 @@ export function affectedWorkspacePackages(baseRevision, registry) {
         readFileSync(resolve(workspaceRoot, "Cargo.toml"), "utf8")
       ));
   if (changesGlobalInputs) {
-    return new Set(registeredPackages);
+    return { affected: new Set(registeredPackages), storeChanges };
   }
 
-  const workspaceMembers = new Set(metadata.workspace_members);
-  const workspacePackages = metadata.packages.filter(package_ => workspaceMembers.has(package_.id));
   const changedIdentities = new Set();
   const previousRegistry = JSON.parse(
     command("git", ["show", `${baseRevision}:apps/catalog.json`])
@@ -579,6 +603,7 @@ export function affectedWorkspacePackages(baseRevision, registry) {
     );
   }
   for (const package_ of workspacePackages) {
+    if (!registered.has(package_.name)) continue;
     const directory = dirname(package_.manifest_path);
     const relativeDirectory = relative(workspaceRoot, directory).split(sep).join("/");
     const packageChanges = changedPaths.filter(
@@ -617,7 +642,14 @@ export function affectedWorkspacePackages(baseRevision, registry) {
     for (const identity of lockChanges) changedIdentities.add(identity);
   }
 
-  return registeredConsumers(metadata, registeredPackages, changedIdentities);
+  return {
+    affected: registeredConsumers(metadata, registeredPackages, changedIdentities),
+    storeChanges
+  };
+}
+
+export function affectedWorkspacePackages(baseRevision, registry) {
+  return analyzeAppReleaseInputs(baseRevision, registry).affected;
 }
 
 function argumentsFrom(argv) {
@@ -648,7 +680,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     const { values, mode } = argumentsFrom(process.argv.slice(2));
     const registry = readJson(resolve(values.get("--registry")), "app registry");
     const published = readJson(resolve(values.get("--published-catalog")), "published catalog");
-    const affected = affectedWorkspacePackages(values.get("--base"), registry);
+    const { affected, storeChanges } = analyzeAppReleaseInputs(values.get("--base"), registry);
     checkProtocolMinimums(registry, currentProtocolVersion());
     if (mode === "--list-packages") {
       console.log(JSON.stringify(packagesToBuild(registry, published, affected)));
@@ -656,6 +688,9 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
       console.log(releaseNeeded(registry, published, affected) ? "true" : "false");
     } else {
       checkEntries(registry, published, affected);
+      if (storeChanges.length > 0 && !releaseNeeded(registry, published, affected)) {
+        throw new Error(unpublishedStoreChangeReport("the app catalog", storeChanges));
+      }
       console.log("Every changed app package has a new version.");
     }
   } catch (error) {

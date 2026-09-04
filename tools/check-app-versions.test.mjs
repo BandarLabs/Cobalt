@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import {
+  analyzeAppReleaseInputs,
   changedLockPackageIdentities,
   changedRegistryPackages,
   checkEntries,
@@ -508,4 +509,24 @@ test("workspace package version-only lock changes affect no Store app", () => {
   const previous = `version = 4\n\n[[package]]\nname = "kobo-sdk"\nversion = "0.3.1"\ndependencies = [\n "shared",\n]\n`;
   const current = previous.replace('version = "0.3.1"', 'version = "0.3.2"');
   assert.deepEqual(changedLockPackageIdentities(previous, current), new Set());
+});
+
+// Since the last catalog publication, beta has moved crates/kobo-sim and
+// workflow files. Those are platform or CI inputs. The catalog must stay
+// quiet: requiring every Store app to bump here is the #101 failure mode.
+test("platform-only commits since the published catalog affect no Store package", () => {
+  const registry = JSON.parse(readFileSync("apps/catalog.json", "utf8"));
+  const { affected, storeChanges } = analyzeAppReleaseInputs(
+    "626cc8bbb3b801384c6c252d150b8508beef3e24",
+    registry
+  );
+  assert.deepEqual(storeChanges, []);
+  assert.deepEqual(affected, new Set());
+});
+
+test("the previous complete-set artifact is still excluded from per-app reuse", () => {
+  const source = readFileSync(".github/workflows/apps.yml", "utf8");
+  assert.match(source, /\$1 !~ \/\^verified-app-set-\[0-9\]\+\$\//);
+  assert.match(source, /previous_artifact="set"/);
+  assert.match(source, /the set has to/);
 });
