@@ -928,6 +928,7 @@ mod tests {
                         glyph: "g".repeat(MAX_GLYPH_BYTES),
                         capabilities: kobo_policy::Capability::ALL
                             .iter()
+                            .take(MAX_CAPABILITIES)
                             .map(ToString::to_string)
                             .collect(),
                         binary_sha256: "a".repeat(64),
