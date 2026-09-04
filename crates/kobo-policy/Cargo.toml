@@ -9,10 +9,10 @@ repository.workspace = true
 description = "Capability, task, storage, and credential policy for Kobo applications"
 
 [dependencies]
-kobo-abi = { version = "0.3.0", path = "../kobo-abi" }
-kobo-dict = { version = "0.3.0", path = "../kobo-dict" }
-kobo-net = { version = "0.3.0", path = "../kobo-net" }
-kobo-protocol = { version = "0.3.0", path = "../kobo-protocol" }
+kobo-abi = { version = "0.3.2", path = "../kobo-abi" }
+kobo-dict = { version = "0.3.2", path = "../kobo-dict" }
+kobo-net = { version = "0.3.2", path = "../kobo-net" }
+kobo-protocol = { version = "0.3.2", path = "../kobo-protocol" }
 
 [lints]
 workspace = true
