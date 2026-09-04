@@ -173,6 +173,24 @@ impl Reader {
         Self::find_in(Path::new("/proc"))
     }
 
+    /// Returns whether one or more stock readers currently own the panel.
+    ///
+    /// Unlike [`Self::find`], this does not need to capture a process's
+    /// environment or reject an ambiguous set. It is used at display
+    /// hand-off boundaries, where any Nickel process means Cobalt must stop
+    /// painting immediately.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the process table cannot be read.
+    pub fn any_running() -> Result<bool, ReaderError> {
+        Self::any_running_in(Path::new("/proc"))
+    }
+
+    fn any_running_in(proc_root: &Path) -> Result<bool, ReaderError> {
+        Ok(!matching_pids_in(proc_root, READER_EXECUTABLE, Identity::ZerothArgument)?.is_empty())
+    }
+
     /// Finds Kobo's freeze watchdog, which must be stopped before the reader.
     ///
     /// # Errors
@@ -362,11 +380,26 @@ impl Reader {
 
     /// Starts an identical reader and waits for it to appear.
     ///
+    /// If one is already running, it is left alone: spawning another is what
+    /// puts two Nickels on one panel. If several are already running, they
+    /// are stopped first so the one we start is the only owner.
+    ///
     /// # Errors
     ///
     /// Returns an error when the reader cannot be spawned or never appears in
     /// the process table.
     pub fn start(&self, appear_within: Duration) -> Result<i32, ReaderError> {
+        match resume_plan(Self::find_executable_in(
+            Path::new("/proc"),
+            &self.executable,
+        )) {
+            Ok(Resume::Use(pid)) => return Ok(pid),
+            Ok(Resume::Spawn) => {}
+            Ok(Resume::Replace(pids)) => {
+                stop_matching(&self.executable, &pids, appear_within);
+            }
+            Err(error) => return Err(error),
+        }
         self.start_captured(appear_within).map(|reader| reader.pid)
     }
 
@@ -522,6 +555,55 @@ fn matching_pids_in(
     }
     matches.sort_unstable();
     Ok(matches)
+}
+
+/// What [`Reader::start`] should do given the processes already on the panel.
+#[derive(Debug, PartialEq)]
+enum Resume {
+    /// One reader is already running; do not spawn another.
+    Use(i32),
+    /// None is running; start one.
+    Spawn,
+    /// Several are fighting; stop them, then start one.
+    Replace(Vec<i32>),
+}
+
+fn resume_plan(found: Result<Reader, ReaderError>) -> Result<Resume, ReaderError> {
+    match found {
+        Ok(running) => Ok(Resume::Use(running.pid)),
+        Err(ReaderError::NotRunning) => Ok(Resume::Spawn),
+        Err(ReaderError::Ambiguous(pids)) => Ok(Resume::Replace(pids)),
+        Err(error) => Err(error),
+    }
+}
+
+fn exe_matches(proc_root: &Path, pid: i32, executable: &str) -> bool {
+    fs::read_link(proc_root.join(pid.to_string()).join("exe"))
+        .is_ok_and(|target| target == Path::new(executable))
+}
+
+fn stop_matching(executable: &str, pids: &[i32], grace: Duration) {
+    let proc_root = Path::new("/proc");
+    for &pid in pids {
+        if exe_matches(proc_root, pid, executable) {
+            let _ignored = signal(pid, SIGTERM);
+        }
+    }
+    let deadline = Instant::now() + grace;
+    while Instant::now() < deadline {
+        if pids
+            .iter()
+            .all(|&pid| !exe_matches(proc_root, pid, executable))
+        {
+            return;
+        }
+        sleep(POLL_INTERVAL);
+    }
+    for &pid in pids {
+        if exe_matches(proc_root, pid, executable) {
+            let _ignored = signal(pid, SIGKILL);
+        }
+    }
 }
 
 fn newly_started_pids(before: &[i32], running: &[i32]) -> Vec<i32> {
@@ -720,9 +802,10 @@ fn read_environment(proc_root: &Path, pid: i32) -> io::Result<BTreeMap<OsString,
 #[cfg(test)]
 mod tests {
     use super::{
-        newly_started_pids, read_argv, read_environment, sibling, watchdog_script, Reader,
-        ReaderError, READER_EXECUTABLE,
+        newly_started_pids, read_argv, read_environment, resume_plan, sibling, watchdog_script,
+        Identity, Reader, ReaderError, Resume, READER_EXECUTABLE,
     };
+    use std::collections::BTreeMap;
     use std::ffi::OsString;
     use std::fs;
     use std::path::{Path, PathBuf};
@@ -839,6 +922,45 @@ mod tests {
             other => panic!("expected an ambiguous reader, got {other:?}"),
         }
         let _ignored = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn panel_ownership_detects_one_or_several_readers() {
+        let one = fake_proc("any_one", &[(360, READER_EXECUTABLE, &[])]);
+        assert!(Reader::any_running_in(&one).expect("scan one reader"));
+        let _ignored = fs::remove_dir_all(&one);
+
+        let several = fake_proc(
+            "any_several",
+            &[(360, READER_EXECUTABLE, &[]), (361, READER_EXECUTABLE, &[])],
+        );
+        assert!(Reader::any_running_in(&several).expect("scan several readers"));
+        let _ignored = fs::remove_dir_all(&several);
+
+        let none = fake_proc("any_none", &[(12, "/bin/sh", &[])]);
+        assert!(!Reader::any_running_in(&none).expect("scan without reader"));
+        let _ignored = fs::remove_dir_all(&none);
+    }
+
+    #[test]
+    fn handing_the_panel_back_does_not_start_a_second_reader() {
+        assert_eq!(
+            resume_plan(Err(ReaderError::NotRunning)).unwrap(),
+            Resume::Spawn
+        );
+        assert_eq!(
+            resume_plan(Err(ReaderError::Ambiguous(vec![2012, 2444]))).unwrap(),
+            Resume::Replace(vec![2012, 2444])
+        );
+        let running = Reader {
+            executable: READER_EXECUTABLE.to_owned(),
+            pid: 2012,
+            arguments: Vec::new(),
+            environment: BTreeMap::new(),
+            working_directory: PathBuf::from("/"),
+            identity: Identity::Executable,
+        };
+        assert_eq!(resume_plan(Ok(running)).unwrap(), Resume::Use(2012));
     }
 
     #[test]

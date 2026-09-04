@@ -4,8 +4,8 @@ use kobo_json::Value;
 use kobo_sdk::keyboard::{Keyboard, Pressed};
 use kobo_sdk::{
     action_id, ActionId, BatteryDetail, BluetoothDevice, Context, DeviceIdentity, DeviceRequest,
-    DeviceResult, Glyph, Heartbeat, KoboApp, RowLead, Screen, ScreenBuilder, Task, TaskId,
-    TaskOutcome, UpdateChannel, WifiNetwork,
+    DeviceResult, Glyph, Heartbeat, IdleSleep, KoboApp, RowLead, Screen, ScreenBuilder, Task,
+    TaskId, TaskOutcome, UpdateChannel, WifiNetwork,
 };
 use std::process::ExitCode;
 
@@ -14,6 +14,7 @@ const WIFI: &str = "wifi";
 const BATTERY: &str = "battery";
 const ABOUT: &str = "about";
 const UPDATE: &str = "update";
+const SLEEP: &str = "sleep";
 const CHECK: &str = "check";
 const INSTALL: &str = "install";
 const CLOSE: &str = "close";
@@ -66,6 +67,7 @@ enum View {
     Battery,
     About,
     Update,
+    Sleep,
     UpdateChannelConfirm,
 }
 
@@ -148,6 +150,7 @@ enum Topic {
     Bluetooth,
     Wifi,
     Battery,
+    Sleep,
     About,
 }
 
@@ -167,6 +170,7 @@ impl Topic {
             | DeviceRequest::JoinWifi { .. }
             | DeviceRequest::DisconnectWifi => Some(Self::Wifi),
             DeviceRequest::ReadBattery | DeviceRequest::ReadBatteryDetail => Some(Self::Battery),
+            DeviceRequest::ReadIdleSleep | DeviceRequest::SetIdleSleep(_) => Some(Self::Sleep),
             DeviceRequest::ReadIdentity => Some(Self::About),
             _ => None,
         }
@@ -199,11 +203,16 @@ struct Settings {
     connected_ssid: Option<String>,
     networks: Vec<WifiNetwork>,
     wifi_page: usize,
-    /// Ticks while the Wi-Fi screen is open, and each tick asks for another
-    /// scan. A list of networks goes stale the moment the reader carries the
-    /// device into another room, and asking them to press a button to find
-    /// that out is asking them to do the radio's job.
+    /// Ticks while the Wi-Fi list is the thing on the panel, and each tick
+    /// asks for another scan. A list of networks goes stale the moment the
+    /// reader carries the device into another room, and asking them to press
+    /// a button to find that out is asking them to do the radio's job.
     scan_clock: Heartbeat,
+    /// Ticks whenever a scan is not already the source of truth, and each
+    /// tick asks whether the radio is still in the state this screen last
+    /// drew. Turning Wi-Fi off here and having another application bring it
+    /// back left the row saying Off until Settings was opened again.
+    watch_clock: Heartbeat,
     scanning: bool,
     selected_ssid: Option<String>,
     password: Keyboard,
@@ -211,6 +220,7 @@ struct Settings {
     identity: Option<DeviceIdentity>,
     update: UpdateFlow,
     update_task: Option<TaskId>,
+    idle_sleep: IdleSleep,
     /// What the runtime updates on its own, once it has answered. `None`
     /// until the first reply, so the switches are drawn from a real answer
     /// rather than a guess that a tap would then contradict.
@@ -223,7 +233,7 @@ struct Settings {
 
 impl Settings {
     fn show(&mut self, context: &mut Context) {
-        self.keep_scanning(context);
+        self.keep_watching(context);
         let screen = match self.view {
             View::Home => self.home(),
             View::Bluetooth => self.bluetooth(),
@@ -232,20 +242,22 @@ impl Settings {
             View::Battery => self.battery(),
             View::About => self.about(),
             View::Update => self.update(),
+            View::Sleep => self.sleep(),
             View::UpdateChannelConfirm => self.update_channel_confirmation(),
         };
         context.set_screen(screen);
     }
 
-    /// Keeps the radio looking for as long as the Wi-Fi list is the thing on
-    /// the panel, and no longer.
+    /// Keeps asking the radio what it is doing, cheaply when the list is not
+    /// on the panel and with a scan when it is.
     ///
     /// Every screen is drawn through `show`, so this is the one place that
     /// knows what the reader is looking at now rather than what they tapped a
     /// moment ago. A scan costs a repaint only when the answer differs: the
     /// frame planner declines an identical frame, so a still list is free.
-    fn keep_scanning(&mut self, context: &mut Context) {
+    fn keep_watching(&mut self, context: &mut Context) {
         if self.view == View::Wifi && self.wifi_state.enabled() {
+            self.watch_clock.stop(context);
             if !self.scan_clock.is_running() {
                 self.scan_clock.start(context);
                 self.scanning = true;
@@ -254,6 +266,9 @@ impl Settings {
         } else {
             self.scan_clock.stop(context);
             self.scanning = false;
+            if !self.watch_clock.is_running() {
+                self.watch_clock.start(context);
+            }
         }
     }
 
@@ -301,6 +316,12 @@ impl Settings {
                     RowLead::from(Glyph::Battery),
                 ),
                 (
+                    SLEEP,
+                    "Sleep after idle",
+                    self.idle_sleep.label().to_owned(),
+                    RowLead::from(Glyph::Clock),
+                ),
+                (
                     UPDATE,
                     "Software update",
                     self.update_summary(),
@@ -312,11 +333,7 @@ impl Settings {
                     "Device code, firmware, resolution".to_owned(),
                     RowLead::from(Glyph::Reader),
                 ),
-            ])
-            // The installed build's own version, baked in at compile time.
-            // The binaries and the installer travel together, so what this
-            // binary was compiled as is what is installed.
-            .section_with_value("Cobalt", VERSION);
+            ]);
         screen.build()
     }
 
@@ -413,6 +430,30 @@ impl Settings {
                 | UpdateFlow::Failed(_)
         ) {
             screen = self.auto_update_controls(screen);
+        }
+        screen.build()
+    }
+
+    fn sleep(&self) -> Screen {
+        let mut screen = ScreenBuilder::new("settings-sleep")
+            .top_bar("Sleep after idle")
+            .owns_back(true)
+            .section("After idle")
+            .rows(IdleSleep::ALL.iter().copied().map(|choice| {
+                let selected = choice == self.idle_sleep;
+                (
+                    sleep_action(choice),
+                    choice.label(),
+                    if selected { "On" } else { "" },
+                    RowLead::from(if selected {
+                        Glyph::Check
+                    } else {
+                        Glyph::Circle
+                    }),
+                )
+            }));
+        if let Some(trouble) = self.banner_for(Topic::Sleep) {
+            screen = screen.banner(kobo_sdk::BannerLevel::Attention, trouble);
         }
         screen.build()
     }
@@ -800,6 +841,7 @@ impl Settings {
         context.device().read_bluetooth();
         context.device().read_wifi();
         context.device().read_battery_detail();
+        context.device().read_idle_sleep();
         context.device().read_auto_update();
         context.device().read_update_channel();
     }
@@ -996,6 +1038,7 @@ impl Settings {
             | View::Battery
             | View::About
             | View::Update
+            | View::Sleep
             | View::UpdateChannelConfirm => return,
         };
         *page = if forward {
@@ -1038,6 +1081,20 @@ impl Settings {
             context.device().join_wifi(network.ssid, "");
         }
     }
+    fn choose_idle_sleep(&mut self, context: &mut Context, action: ActionId) {
+        let Some(choice) = IdleSleep::ALL
+            .iter()
+            .copied()
+            .find(|choice| action == action_id(sleep_action(*choice)))
+        else {
+            return;
+        };
+        self.settled(Topic::Sleep);
+        self.idle_sleep = choice;
+        context.device().set_idle_sleep(choice);
+        self.show(context);
+    }
+
     /// Keystrokes for the Wi-Fi password screen, which owns every action
     /// while it is up: letters go to the keyboard, and the only ways off the
     /// screen are submitting a password or going back.
@@ -1085,6 +1142,25 @@ impl KoboApp for Settings {
         self.show(context);
     }
 
+    fn on_background(&mut self, context: &mut Context) {
+        // A scan belongs to the list on the panel. Status does not: another
+        // application may bring the radio back while nobody is looking, and
+        // the screen waiting behind it has to be the radio as it is, not as
+        // it was when the reader left.
+        self.scan_clock.stop(context);
+        self.scanning = false;
+        self.watch_clock.start(context);
+    }
+
+    fn on_foreground(&mut self, context: &mut Context) {
+        Self::refresh(context);
+        self.show(context);
+    }
+
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one action table for every settings screen"
+    )]
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
         if self.view == View::WifiPassword {
             self.password_action(context, action);
@@ -1111,6 +1187,9 @@ impl KoboApp for Settings {
         } else if action == action_id(BATTERY) {
             self.view = View::Battery;
             context.device().read_battery_detail();
+            self.show(context);
+        } else if action == action_id(SLEEP) {
+            self.view = View::Sleep;
             self.show(context);
         } else if action == action_id(ABOUT) {
             self.view = View::About;
@@ -1142,6 +1221,7 @@ impl KoboApp for Settings {
                 | View::Battery
                 | View::About
                 | View::Update
+                | View::Sleep
                 | View::UpdateChannelConfirm => {}
             }
         } else if action == action_id(RESCAN) {
@@ -1158,7 +1238,11 @@ impl KoboApp for Settings {
                 }
                 View::Battery => context.device().read_battery_detail(),
                 View::About => context.device().read_identity(),
-                View::Home | View::WifiPassword | View::Update | View::UpdateChannelConfirm => {}
+                View::Home
+                | View::WifiPassword
+                | View::Update
+                | View::Sleep
+                | View::UpdateChannelConfirm => {}
             }
             self.show(context);
         } else if action == action_id(MORE) {
@@ -1177,6 +1261,8 @@ impl KoboApp for Settings {
             .position(|name| action == action_id(name))
         {
             self.choose_network(context, self.wifi_page * PAGE_SIZE + index);
+        } else {
+            self.choose_idle_sleep(context, action);
         }
     }
 
@@ -1226,6 +1312,10 @@ impl KoboApp for Settings {
             DeviceResult::BatteryDetail(detail) => {
                 self.battery = Some(detail);
                 self.settled(Topic::Battery);
+            }
+            DeviceResult::IdleSleep(timeout) => {
+                self.idle_sleep = timeout;
+                self.settled(Topic::Sleep);
             }
             DeviceResult::AutoUpdate { cobalt, apps } => {
                 self.auto_update = Some((cobalt, apps));
@@ -1299,6 +1389,10 @@ impl KoboApp for Settings {
             }
             return;
         }
+        if self.watch_clock.on_task(context, task, &outcome) {
+            context.device().read_wifi();
+            return;
+        }
         if self.update_task == Some(task) {
             self.update_task = None;
             match outcome {
@@ -1351,6 +1445,16 @@ fn paging(page: usize, pages: usize) -> Vec<(&'static str, &'static str, Glyph)>
 
 fn page_count(items: usize) -> usize {
     items.div_ceil(PAGE_SIZE).max(1)
+}
+
+fn sleep_action(choice: IdleSleep) -> &'static str {
+    match choice {
+        IdleSleep::OneMinute => "sleep-1",
+        IdleSleep::FiveMinutes => "sleep-5",
+        IdleSleep::TenMinutes => "sleep-10",
+        IdleSleep::ThirtyMinutes => "sleep-30",
+        IdleSleep::Never => "sleep-never",
+    }
 }
 
 /// The newest published release, as its assets name this device's download.
@@ -1560,8 +1664,8 @@ mod tests {
     };
     use kobo_sdk::{
         action_id, BannerLevel, BatteryDetail, BluetoothDevice, BluetoothDeviceKind, Chrome,
-        DeviceIdentity, DeviceRequest, Emphasis, Glyph, Node, UpdateChannel, WifiNetwork,
-        CLARA_BW_METRICS,
+        DeviceIdentity, DeviceRequest, Emphasis, Glyph, IdleSleep, Node, UpdateChannel,
+        WifiNetwork, CLARA_BW_METRICS,
     };
 
     fn bluetooth_device(index: usize) -> BluetoothDevice {
@@ -1571,6 +1675,55 @@ mod tests {
             kind: BluetoothDeviceKind::Audio,
             paired: index % 2 == 0,
             connected: index == 0,
+        }
+    }
+
+    #[test]
+    fn the_home_row_follows_the_radio() {
+        let off = Settings {
+            wifi_state: RadioState::Off,
+            ..Settings::default()
+        };
+        assert!(labels_of(&off.home()).contains("Off"));
+        let on = Settings {
+            wifi_state: RadioState::On,
+            connected_ssid: Some("Home".to_owned()),
+            ..Settings::default()
+        };
+        let shown = labels_of(&on.home());
+        assert!(shown.contains("Connected to Home"));
+        assert!(!shown.contains("Off"));
+    }
+
+    #[test]
+    fn the_home_screen_names_the_idle_sleep_delay() {
+        let settings = Settings::default();
+        let screen = settings.home();
+        let issues = screen.validate(&CLARA_BW_METRICS);
+        assert!(issues.is_empty(), "{issues:?}");
+        assert!(labels_of(&screen).contains("5 minutes"));
+        assert!(labels_of(&screen).contains("Sleep after idle"));
+    }
+
+    #[test]
+    fn every_idle_sleep_choice_fits_the_panel() {
+        for choice in IdleSleep::ALL {
+            let settings = Settings {
+                view: super::View::Sleep,
+                idle_sleep: choice,
+                ..Settings::default()
+            };
+            let screen = settings.sleep();
+            let issues = screen.validate(&CLARA_BW_METRICS);
+            assert!(issues.is_empty(), "{choice:?}: {issues:?}");
+            let shown = labels_of(&screen);
+            for option in IdleSleep::ALL {
+                assert!(
+                    shown.contains(option.label()),
+                    "{choice:?} hid {}",
+                    option.label()
+                );
+            }
         }
     }
 
@@ -1621,6 +1774,16 @@ mod tests {
             assert!(text.contains(chosen), "{text}");
             assert!(text.contains("preserved"), "{text}");
         }
+    }
+
+    #[test]
+    fn never_is_offered_and_shown_on_the_home_row() {
+        let settings = Settings {
+            idle_sleep: IdleSleep::Never,
+            ..Settings::default()
+        };
+        assert!(labels_of(&settings.home()).contains("Never"));
+        assert!(labels_of(&settings.sleep()).contains("Never"));
     }
 
     #[test]
@@ -1763,6 +1926,26 @@ mod tests {
             .wifi()
             .layout_with(&CLARA_BW_METRICS, &Chrome::with_back(true));
         assert!(layout.rect_of_action(action_id(RESCAN)).is_none());
+    }
+
+    fn labels_of(screen: &kobo_sdk::Screen) -> String {
+        screen
+            .nodes
+            .iter()
+            .filter_map(|node| match node {
+                kobo_sdk::Node::Text { text, .. } | kobo_sdk::Node::Heading { text, .. } => {
+                    Some(text.clone())
+                }
+                kobo_sdk::Node::Rows { rows, .. } => Some(
+                    rows.iter()
+                        .map(|row| format!("{} {}", row.title, row.summary))
+                        .collect::<Vec<_>>()
+                        .join(" "),
+                ),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
     }
 
     fn text_of(screen: &kobo_sdk::Screen) -> String {
@@ -1964,6 +2147,10 @@ mod tests {
         assert_eq!(
             super::Topic::of(&DeviceRequest::ScanBluetooth),
             Some(super::Topic::Bluetooth)
+        );
+        assert_eq!(
+            super::Topic::of(&DeviceRequest::ReadIdleSleep),
+            Some(super::Topic::Sleep)
         );
         assert_eq!(super::Topic::of(&DeviceRequest::ReadFrontlight), None);
     }

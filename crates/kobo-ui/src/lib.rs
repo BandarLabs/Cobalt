@@ -9043,6 +9043,16 @@ impl FramePlanner {
         }
     }
 
+    /// Forgets that the planner knows what the physical panel contains.
+    ///
+    /// Suspend-to-RAM can restore a framebuffer behind the runtime's back.
+    /// The next planned frame must therefore repaint the whole panel even
+    /// when its pixels are identical to the last surface committed here.
+    pub fn invalidate(&mut self) {
+        self.dirty = 0;
+        self.started = false;
+    }
+
     /// Plans the next update without changing planner state.
     ///
     /// Returning `None` means the surface is the wrong size or no pixel has
@@ -13416,6 +13426,32 @@ mod tests {
         frame.pixels[0] = tone::INK;
         let grey_outside_change = planner.plan(&frame).expect("black pixel changed");
         assert_eq!(grey_outside_change.waveform, PanelWaveform::Du);
+    }
+
+    #[test]
+    fn invalidating_the_panel_forces_an_unchanged_full_refresh() {
+        let mut planner = FramePlanner::new(8, 4);
+        let frame = Surface::new(8, 4);
+        let first = planner.plan(&frame).expect("first frame refreshes");
+        assert!(planner.commit(&frame, first));
+        assert!(planner.plan(&frame).is_none(), "unchanged frame refreshes");
+
+        planner.invalidate();
+        let restored = planner
+            .plan(&frame)
+            .expect("an untrusted physical panel must refresh");
+        assert_eq!(restored.waveform, PanelWaveform::Gc16);
+        assert!(restored.full);
+        assert_eq!(
+            restored.region,
+            Rect {
+                x: 0,
+                y: 0,
+                width: 8,
+                height: 4,
+            }
+        );
+        assert_eq!(restored.refresh, 2, "refresh numbering stays monotonic");
     }
 
     #[test]

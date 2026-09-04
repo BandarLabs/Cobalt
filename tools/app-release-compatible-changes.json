@@ -3,22 +3,37 @@
   "changes": [
     {
       "protocol_version": 11,
-      "reason": "Additive protocol-11 orientation command is opt-in; existing Store apps keep their existing messages and portrait rendering",
+      "reason": "Additive protocol-11 orientation, update-channel, and idle-sleep settings are opt-in or bundled-runtime-only. Existing Store apps retain their messages and portrait rendering; the network hook, suspend predicate, and FramePlanner invalidation remain runtime-only.",
       "files": [
+        {
+          "path": "crates/kobo-net/src/lib.rs",
+          "base_blob": "ce2a45ae69445d06f0de5111aef775751ef8146e",
+          "compatible_blob": "0520be216a1b8db0fcb49f4e591c55711bf9262c"
+        },
+        {
+          "path": "crates/kobo-policy/src/services.rs",
+          "base_blob": "e5b8617ac601332dd9b5d39c8e6ea83d613e171b",
+          "compatible_blob": "b99721d7840e8b2ae6c57500d56d489fcc2ef75a"
+        },
+        {
+          "path": "crates/kobo-profile/src/lib.rs",
+          "base_blob": "18d6d9d83a6f7580cd8d56069e034fc7c6d48977",
+          "compatible_blob": "d8adf85cdf2159038430ffa9f6a81dbd641a7fee"
+        },
         {
           "path": "crates/kobo-protocol/src/lib.rs",
           "base_blob": "f34528d7b407e542a7836b0348b91de043822274",
-          "compatible_blob": "50e99c1933462675c1a9f1e368023c375775d10b"
+          "compatible_blob": "d14047e5cb149356bad24f52bf2bc29932702b57"
         },
         {
           "path": "crates/kobo-sdk/src/lib.rs",
           "base_blob": "9a645f3f3d9c8746dda47d858bb3fcd744621df8",
-          "compatible_blob": "1ff0ec9725746213be19556b1c035de890878c34"
+          "compatible_blob": "b6c23e7e5a77d0bf2367f38a1f25f175b48f02e8"
         },
         {
           "path": "crates/kobo-ui/src/lib.rs",
           "base_blob": "ce538c70b5779ee482e2b35aa83191eb06b04b4d",
-          "compatible_blob": "d6c79d5ee6e3d574b3768da3721e865688e7f657"
+          "compatible_blob": "792f0768d9acd427f393fe576f43b597554dd31e"
         }
       ]
     }

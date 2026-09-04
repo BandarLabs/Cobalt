@@ -18,7 +18,9 @@ const MANIFEST_FIELDS = [
   "glyph"
 ];
 const COMPATIBLE_PLATFORM_PATHS = new Set([
+  "crates/kobo-net/src/lib.rs",
   "crates/kobo-policy/src/services.rs",
+  "crates/kobo-profile/src/lib.rs",
   "crates/kobo-protocol/src/lib.rs",
   "crates/kobo-sdk/src/lib.rs",
   "crates/kobo-ui/src/lib.rs"

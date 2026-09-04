@@ -231,6 +231,13 @@ impl FramePlanner {
         true
     }
 
+    /// Forgets the last committed frame so the next plan is a full refresh.
+    pub fn invalidate(&mut self) {
+        self.started = false;
+        self.dirty = 0;
+        self.previous.fill(tone::INK);
+    }
+
     #[must_use]
     pub const fn refreshes(&self) -> u64 {
         self.refreshes

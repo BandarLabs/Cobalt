@@ -51,6 +51,24 @@ pub fn read_from(supplies: &Path) -> Option<Battery> {
     Some(Battery { percent, charging })
 }
 
+/// Whether the battery status explicitly says the reader is discharging.
+///
+/// Suspend callers use this stricter answer than [`Battery::charging`]:
+/// `MediaTek` kernels may hang on any external-power state, including `Full`
+/// and `Not charging`, and an unreadable status must not enable suspend.
+#[must_use]
+pub fn discharging() -> Option<bool> {
+    discharging_from(Path::new(SUPPLIES))
+}
+
+/// The same strict status check against an arbitrary power-supply root.
+#[must_use]
+pub fn discharging_from(supplies: &Path) -> Option<bool> {
+    let supply = find_battery(supplies)?;
+    let status = fs::read_to_string(supply.join("status")).ok()?;
+    Some(status.trim().eq_ignore_ascii_case("Discharging"))
+}
+
 /// The first supply whose `type` file says `Battery`.
 ///
 /// Entries are sorted, so a device with more than one battery reports the same
@@ -132,7 +150,7 @@ fn read_charging(path: &Path) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{read_from, Battery};
+    use super::{discharging_from, read_from, Battery};
     use std::fs;
     use std::path::{Path, PathBuf};
 
@@ -191,7 +209,24 @@ mod tests {
                 charging: true,
             })
         );
+        assert_eq!(discharging_from(&root), Some(false));
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn suspend_requires_an_explicit_discharging_status() {
+        for (status, expected) in [
+            ("Discharging", Some(true)),
+            ("Charging", Some(false)),
+            ("Full", Some(false)),
+            ("Not charging", Some(false)),
+            ("", None),
+        ] {
+            let root = root(&format!("suspend-{}", status.replace(' ', "-")));
+            supply(&root, "bat", "Battery", "80", status);
+            assert_eq!(discharging_from(&root), expected, "{status:?}");
+            let _ = fs::remove_dir_all(root);
+        }
     }
 
     #[test]

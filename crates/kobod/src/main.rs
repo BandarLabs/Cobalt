@@ -411,10 +411,14 @@ fn present_on_panel(application: &Path) -> Result<(), Box<dyn Error>> {
     // way out, or when the device has been left alone; the environment is only
     // an escape hatch for testing, and both values are clamped inside.
     let limits = device::Limits {
-        idle: env::var("KOBO_IDLE_SECONDS")
-            .ok()
-            .and_then(|value| value.parse::<u64>().ok())
-            .map_or(device::Limits::default().idle, Duration::from_secs),
+        idle: match env::var("KOBO_IDLE_SECONDS") {
+            Ok(value) => match value.parse::<u64>() {
+                Ok(0) => device::IdleLimit::Never,
+                Ok(seconds) => device::IdleLimit::After(Duration::from_secs(seconds)),
+                Err(_) => device::IdleLimit::FromSettings,
+            },
+            Err(_) => device::IdleLimit::FromSettings,
+        },
         ceiling: env::var("KOBO_SESSION_SECONDS")
             .ok()
             .and_then(|value| value.parse::<u64>().ok())
