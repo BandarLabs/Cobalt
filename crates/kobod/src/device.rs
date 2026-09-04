@@ -47,6 +47,7 @@ use kobo_protocol::{Frame, Lifecycle, Message, TaskError, TaskOutcome};
 use kobo_ui::{
     ActionId, CellStyle, Chrome, FontHandle, Layout, LayoutKind, PictureCache, Screen, Surface,
 };
+use kobo_wifi_trace::{Lifecycle as WifiTraceEvent, TraceClient};
 use std::collections::BTreeMap;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -495,7 +496,11 @@ impl Default for Limits {
 /// Returns an error describing what failed and, always, what state the device
 /// was left in.
 #[allow(clippy::too_many_lines)]
-pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
+pub fn present(
+    application: &Path,
+    limits: Limits,
+    wifi_trace: &mut TraceClient,
+) -> Result<String, String> {
     let limits = Limits {
         idle: limits.idle.min(MAX_SESSION),
         ceiling: limits.ceiling.min(MAX_SESSION),
@@ -607,9 +612,12 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
 
     // The point of no return.
     trace("stopping the reader");
+    wifi_trace.checkpoint(WifiTraceEvent::PreStop);
     reader
         .stop(STOP_GRACE)
         .map_err(|error| format!("stop the reader: {error}"))?;
+    wifi_trace.checkpoint(WifiTraceEvent::NickelStopped);
+    wifi_trace.checkpoint(WifiTraceEvent::RecoveryBegin);
 
     // Nickel owns Wi-Fi while it runs, but its supplicant and DHCP client are
     // detached processes. Capture them before the handoff and restore exactly
@@ -624,6 +632,9 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
         }
     }
     let session_network = network.restore_for_session(Duration::from_secs(30));
+    if network.was_online() && kobo_hal::network::is_online(kobo_hal::network::WIRELESS_LINK) {
+        wifi_trace.checkpoint(WifiTraceEvent::RecoveryFirstSuccess);
+    }
     trace(&format!(
         "session network: {:?}; uncertain captures: {:?}; start errors: {:?}",
         session_network.outcome(),
@@ -810,6 +821,7 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
     reap_leftover_radio_daemons(profile.leftover_radio_daemons);
     trace("panel and touch released, restarting the reader");
     println!("panel released, restarting the reader");
+    wifi_trace.checkpoint(WifiTraceEvent::NickelStartRequested);
     let restarted = match reader.start(START_GRACE) {
         Ok(pid) => pid,
         Err(error) => {
@@ -827,12 +839,15 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
             });
         }
     };
+    wifi_trace.checkpoint(WifiTraceEvent::NickelPidObserved);
     // Any daemon Cobalt started for the session was stopped by exact captured
     // identity above. A stop or capture uncertainty takes the clean-reboot
     // path, so Nickel is never started on top of an unproven network owner.
     trace("reader restart returned, waiting for it to feed the freeze watchdog");
     println!("waiting for the reader to feed the freeze watchdog");
-    let reader_wifi = restore_reader_wifi(network.was_online(), Duration::from_secs(45));
+    wifi_trace.checkpoint(WifiTraceEvent::NickelRecoveryBegin);
+    let reader_wifi =
+        restore_reader_wifi(network.was_online(), Duration::from_secs(45), wifi_trace);
     if !reader_wifi {
         trace("the reader did not complete Wi-Fi association; requesting a clean reboot");
         watchdog.disarm();
@@ -886,8 +901,9 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
     }
 }
 
-fn restore_reader_wifi(was_online: bool, within: Duration) -> bool {
+fn restore_reader_wifi(was_online: bool, within: Duration, wifi_trace: &mut TraceClient) -> bool {
     if !was_online {
+        wifi_trace.checkpoint(WifiTraceEvent::Current94GateAccepted);
         return true;
     }
     let deadline = Instant::now() + within;
@@ -899,8 +915,13 @@ fn restore_reader_wifi(was_online: bool, within: Duration) -> bool {
             let healthy =
                 associated && kobo_hal::network::is_online(kobo_hal::network::WIRELESS_LINK);
             if healthy {
+                let first_success = healthy_since.is_none();
                 let since = healthy_since.get_or_insert_with(Instant::now);
+                if first_success {
+                    wifi_trace.checkpoint(WifiTraceEvent::NickelRecoveryFirstSuccess);
+                }
                 if since.elapsed() >= Duration::from_secs(10) {
+                    wifi_trace.checkpoint(WifiTraceEvent::Current94GateAccepted);
                     return true;
                 }
             } else {

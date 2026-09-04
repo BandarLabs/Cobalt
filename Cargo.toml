@@ -30,6 +30,7 @@ members = [
     "crates/kobo-ui",
     "crates/kobo-guard",
     "crates/kobo-handoff",
+    "crates/kobo-wifi-trace",
     "crates/kobo-xml",
     "crates/kobod",
     "examples/brief",
