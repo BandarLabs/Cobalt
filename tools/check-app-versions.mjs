@@ -18,9 +18,19 @@ const MANIFEST_FIELDS = [
   "glyph"
 ];
 const COMPATIBLE_PLATFORM_PATHS = new Set([
+  "Cargo.lock",
+  "crates/kobo-abi/src/lib.rs",
+  "crates/kobo-policy/src/credentials.rs",
   "crates/kobo-policy/src/services.rs",
+  "crates/kobo-policy/src/tasks.rs",
   "crates/kobo-protocol/src/lib.rs",
+  "crates/kobo-sdk/Cargo.toml",
   "crates/kobo-sdk/src/lib.rs",
+  "crates/kobo-sdk/src/credentials.rs",
+  "crates/kobo-sdk/src/keyboard.rs",
+  "crates/kobo-sdk/src/terminal.rs",
+  "crates/kobo-text/src/lib.rs",
+  "crates/kobo-ui/Cargo.toml",
   "crates/kobo-ui/src/lib.rs"
 ]);
 
@@ -403,7 +413,7 @@ export function compatibleChangePaths(
       if (
         typeof file?.path !== "string" ||
         !COMPATIBLE_PLATFORM_PATHS.has(file.path) ||
-        !/^[0-9a-f]{40}$/.test(file?.base_blob) ||
+        (file?.base_blob !== null && !/^[0-9a-f]{40}$/.test(file?.base_blob)) ||
         !/^[0-9a-f]{40}$/.test(file?.compatible_blob)
       ) {
         throw new Error("invalid app release compatible-change file");
@@ -493,6 +503,16 @@ export function changedLockPackageIdentities(previousSource, currentSource) {
       return JSON.stringify(previousBlocks) !== JSON.stringify(currentBlocks);
     })
   );
+}
+
+export function releaseLockPackageIdentities(previousSource, currentSource, compatiblePaths) {
+  if (!(compatiblePaths instanceof Set)) {
+    throw new Error("compatible release paths must be a set");
+  }
+  // A reviewed compatible Cargo.lock change has no app release impact.
+  return compatiblePaths.has("Cargo.lock")
+    ? new Set()
+    : changedLockPackageIdentities(previousSource, currentSource);
 }
 
 export function registeredConsumers(

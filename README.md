@@ -12,8 +12,8 @@
 </p>
 
 Cobalt is an open-source application platform for Kobo. It provides a launcher,
-an App Store, a Rust SDK, a runtime with capability isolation, and a Clara BW
-simulator.
+an App Store, a Rust SDK, a runtime with capability isolation, and a
+profile-faithful simulator for every supported model.
 
 See the [public roadmap](ROADMAP.md) for the product outcomes Cobalt is working
 toward and the principles used to choose them.
@@ -208,7 +208,9 @@ cd my-app
 kobo dev
 ```
 
-`kobo dev` runs the app in the Clara BW browser simulator. Start with the
+`kobo dev` runs the app in the default Clara BW browser simulator; pass
+`--profile ID` and a verified `--rotation N` to select another supported pose.
+Start with the
 [SDK documentation](https://bandarlabs.github.io/Cobalt/sdk.html); the
 repository also keeps the [deep implementation guide](SDK.md).
 
@@ -266,7 +268,7 @@ capabilities, testing, and release details.
 | `crates/kobo-sdk` | Public application SDK |
 | `crates/kobod` | Device runtime |
 | `crates/kobo-ui` | Layout and e-ink renderer |
-| `crates/kobo-sim` | Clara BW browser/runtime simulator |
+| `crates/kobo-sim` | Profile-driven browser/runtime simulator |
 | `crates/kobo-app-store` | Signed package and catalog formats |
 | `crates/kobo-cli` | Setup, build, simulation, packaging, and release tools |
 | `docs/` | Installation, device, app publishing, and development guides |

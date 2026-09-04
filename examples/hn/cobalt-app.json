@@ -1,1 +1,1 @@
-{"id":"hn","display_name":"Hacker News","short_label":"Hacker News","summary":"Read Top, New, Ask, and Show stories with complete comment threads.","version":"1.0.6","glyph":"news","capabilities":["network"]}
+{"id":"hn","display_name":"Hacker News","short_label":"Hacker News","summary":"Read Top, New, Ask, and Show stories with complete comment threads.","version":"1.0.7","glyph":"news","capabilities":["network"],"release_notes":"Update for Cobalt 0.3.5 and its protocol 12 app runtime."}

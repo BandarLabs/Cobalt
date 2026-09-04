@@ -41,6 +41,7 @@ pub use kobo_policy as permissions;
 pub use kobo_policy::{Capability, Declared, Grant, Grants, PowerPolicy};
 
 pub mod audio;
+pub mod credentials;
 /// Common application and builder types.
 pub mod keyboard;
 pub mod terminal;
@@ -731,6 +732,7 @@ impl ScreenBuilder {
             id,
             title: title.into(),
             value: None,
+            link: None,
         });
         self
     }
@@ -751,7 +753,27 @@ impl ScreenBuilder {
             id,
             title: title.into(),
             value: Some(value.into()),
+            link: None,
         });
+        self
+    }
+
+    /// Adds a caption-sized trailing destination to the most recent section.
+    ///
+    /// This deliberately searches backwards so it can follow `section_rows`:
+    /// rows remain the content introduced by the section, not an obstacle to
+    /// giving that section a "View all" destination.
+    #[must_use]
+    pub fn section_link(mut self, name: impl AsRef<str>, label: impl Into<String>) -> Self {
+        let action = self.register(name.as_ref());
+        if let Some(Node::Section { link, .. }) = self
+            .nodes
+            .iter_mut()
+            .rev()
+            .find(|node| matches!(node, Node::Section { .. }))
+        {
+            *link = Some(BarAction::new(action, label));
+        }
         self
     }
 
@@ -1577,6 +1599,19 @@ impl ScreenBuilder {
         self
     }
 
+    /// Draws Folio's passive right-margin page rail.
+    ///
+    /// `page` is zero-based, matching application pagination vectors. The
+    /// rail is display-only, so it is never a slider or a competing gesture.
+    #[must_use]
+    pub fn page_rail(mut self, page: u16, of: u16) -> Self {
+        if of > 1 {
+            let id = self.next_id();
+            self.nodes.push(Node::PageRail { id, page, of });
+        }
+        self
+    }
+
     /// Adds a middle column that asks for this screen's own controls.
     ///
     /// For a screen that carries nothing at the foot, which is every reading
@@ -1594,12 +1629,14 @@ impl ScreenBuilder {
         self
     }
 
-    /// Sends `action` when a finger is held still on the content area.
+    /// Sends an optional secondary `action` when a finger is held still on
+    /// empty content.
     ///
-    /// A hold is the only gesture left on a page that is nothing but words: a
-    /// tap already turns it, and putting a control over the text to reach the
-    /// same thing would cover what the reader is looking at. Holding a real
-    /// control still presses that control, so this cannot take a button away.
+    /// A hold is an accelerator, never the only way to reach navigation,
+    /// accessibility, confirmation, destructive, or primary behavior. Keep a
+    /// visible control or overflow entry for anything a reader must discover.
+    /// Ordinary control taps remain immediate; holding a real control still
+    /// activates that control rather than hiding it behind a gesture.
     #[must_use]
     pub fn hold(mut self, action: impl AsRef<str>) -> Self {
         self.hold = Some(self.register(action.as_ref()));
@@ -1624,6 +1661,28 @@ impl ScreenBuilder {
         let destinations = destinations
             .into_iter()
             .map(|(name, label)| BarAction::new(self.register(name.as_ref()), label))
+            .collect::<Vec<_>>();
+        self.warn_second_bottom_bar(id);
+        self.nav_bar = Some(NavBar::new(id, destinations, selected.into()));
+        self.bottom_action = None;
+        self
+    }
+
+    /// Adds a destination bar whose labels keep their recognisable glyphs.
+    #[must_use]
+    pub fn nav_bar_marked<I, N, L, S>(mut self, selected: S, destinations: I) -> Self
+    where
+        I: IntoIterator<Item = (N, L, kobo_ui::Glyph)>,
+        N: AsRef<str>,
+        L: Into<String>,
+        S: Into<Option<usize>>,
+    {
+        let id = self.next_id();
+        let destinations = destinations
+            .into_iter()
+            .map(|(name, label, glyph)| {
+                BarAction::new(self.register(name.as_ref()), label).with_glyph(glyph)
+            })
             .collect::<Vec<_>>();
         self.warn_second_bottom_bar(id);
         self.nav_bar = Some(NavBar::new(id, destinations, selected.into()));
@@ -1885,6 +1944,32 @@ impl ScreenBuilder {
             .into_iter()
             .map(|(name, label, glyph, configure)| {
                 configure(Tile::new(self.register(name.as_ref()), label, glyph))
+            })
+            .collect();
+        self.nodes.push(Node::TileGrid { id, tiles, shape });
+        self
+    }
+
+    /// Adds tiles with an optional hold accelerator for a secondary menu.
+    ///
+    /// `menu` must also be exposed by a visible overflow, details, or section
+    /// control. Holding is a convenience for experienced readers, never the
+    /// only route to an action.
+    #[must_use]
+    pub fn contextual_tiles<I, N, L, M>(mut self, shape: TileShape, tiles: I) -> Self
+    where
+        I: IntoIterator<Item = (N, L, Glyph, M)>,
+        N: AsRef<str>,
+        L: Into<String>,
+        M: AsRef<str>,
+    {
+        let id = self.next_id();
+        let tiles = tiles
+            .into_iter()
+            .map(|(name, label, glyph, menu)| {
+                let action = self.register(name.as_ref());
+                let menu = self.register(menu.as_ref());
+                Tile::new(action, label, glyph).with_menu(menu)
             })
             .collect();
         self.nodes.push(Node::TileGrid { id, tiles, shape });
@@ -2581,6 +2666,9 @@ impl ScreenBuilder {
             text_scale: self.text_scale,
             overlay: self.overlay,
             reading: self.reading,
+            // Applications built with this SDK emit the current protocol and
+            // measure against Folio. Only a v11 decoder path marks legacy.
+            legacy_typography: false,
             reading_font: self.reading_font,
         }
     }
@@ -3154,12 +3242,14 @@ impl Context {
         // the screen that built it rather than a device session doing nothing.
         debug_assert!(
             kobo_protocol::encode(&kobo_protocol::Frame {
+                version: kobo_protocol::VERSION,
                 request_id: 1,
                 message: kobo_protocol::Message::SetScreen(screen.clone()),
             })
             .is_ok(),
             "this screen cannot be sent to the runtime: {:?}",
             kobo_protocol::encode(&kobo_protocol::Frame {
+                version: kobo_protocol::VERSION,
                 request_id: 1,
                 message: kobo_protocol::Message::SetScreen(screen.clone()),
             })
@@ -3363,6 +3453,15 @@ impl Context {
         Applications { context: self }
     }
 
+    /// Runtime-owned credentials that this application is allowed to use.
+    ///
+    /// A submitted value is written by the runtime and cannot be read back by
+    /// the application. The runtime authorizes the calling app and exact
+    /// secret name before replacing anything.
+    pub fn secrets(&mut self) -> AppSecrets<'_> {
+        AppSecrets { context: self }
+    }
+
     /// The application's own small state, which survives being closed.
     ///
     /// Every application has one and none has to ask for it, in the same way a
@@ -3408,6 +3507,27 @@ impl Context {
 #[derive(Debug)]
 pub struct Applications<'a> {
     context: &'a mut Context,
+}
+
+/// Installation of app-scoped runtime credentials.
+#[derive(Debug)]
+pub struct AppSecrets<'a> {
+    context: &'a mut Context,
+}
+
+impl AppSecrets<'_> {
+    /// Installs or replaces one credential after the owner entered it.
+    ///
+    /// Completion or refusal is delivered through
+    /// [`KoboApp::on_device_result`].
+    pub fn set(&mut self, name: impl Into<String>, value: impl Into<String>) {
+        self.context
+            .commands
+            .push(Command::Device(DeviceRequest::SetSecret {
+                name: name.into(),
+                value: kobo_protocol::SecretValue::new(value.into()),
+            }));
+    }
 }
 
 impl Applications<'_> {
@@ -4941,6 +5061,7 @@ impl Client {
         kobo_protocol::write_to(
             &mut stream,
             &Frame {
+                version: kobo_protocol::VERSION,
                 request_id: 1,
                 message: Message::Hello {
                     name: app_name.to_owned(),
@@ -5098,6 +5219,7 @@ impl Client {
         kobo_protocol::write_to(
             &mut self.stream,
             &Frame {
+                version: kobo_protocol::VERSION,
                 request_id,
                 message,
             },
@@ -5964,6 +6086,22 @@ mod tests {
     }
 
     #[test]
+    fn contextual_tiles_register_primary_and_visible_secondary_actions() {
+        let builder = ScreenBuilder::new("tiles").contextual_tiles(
+            TileShape::Card,
+            [("open", "Reader", Glyph::Reader, "details")],
+        );
+        assert_eq!(builder.action("open"), Some(action_id("open")));
+        assert_eq!(builder.action("details"), Some(action_id("details")));
+        let screen = builder.build();
+        let Node::TileGrid { tiles, .. } = &screen.nodes[0] else {
+            panic!("contextual tiles did not produce a tile grid");
+        };
+        assert_eq!(tiles[0].action, action_id("open"));
+        assert_eq!(tiles[0].menu, Some(action_id("details")));
+    }
+
+    #[test]
     fn checked_build_reports_collection_items_it_had_to_drop() {
         let builder = ScreenBuilder::new("choice").choose(
             "Pick one",
@@ -5997,6 +6135,7 @@ mod tests {
             kobo_protocol::write_to(
                 &mut daemon_stream,
                 &Frame {
+                    version: kobo_protocol::VERSION,
                     request_id: hello.request_id,
                     message: Message::Welcome {
                         width: 1072,
@@ -6028,6 +6167,7 @@ mod tests {
             kobo_protocol::write_to(
                 &mut daemon_stream,
                 &Frame {
+                    version: kobo_protocol::VERSION,
                     request_id: hello.request_id,
                     message: Message::Welcome {
                         width: 1072,

@@ -3,9 +3,12 @@
   "display_name": "Zotero Reader",
   "short_label": "Zotero",
   "summary": "Browse Zotero collections, read metadata and indexed paper text, and keep papers available offline.",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "glyph": "book",
-  "capabilities": ["network", "frontlight-control"],
+  "capabilities": [
+    "network",
+    "frontlight-control"
+  ],
   "setup": {
     "steps": [
       {
@@ -33,5 +36,6 @@
         }
       }
     ]
-  }
+  },
+  "release_notes": "Update for Cobalt 0.3.5 and its protocol 12 app runtime."
 }

@@ -1772,14 +1772,40 @@ impl Gutenbird {
         for block in blocks {
             screen = block.add(screen);
         }
-        screen
+        let screen = screen
             .page_turns("about-back", "about-next")
             .page_position(1, 2)
-            .build()
-            .diagnostics(&context.metrics(), &Chrome::measuring(true))
-            .issues
+            .build();
+        let layout = screen.layout_with(&context.metrics(), &Chrome::measuring(true));
+        // Layout clips excess prose rather than emitting a diagnostic. Each
+        // source text block must therefore be present in full in the layout.
+        let expected_text = blocks
             .iter()
-            .all(|issue| issue.severity != DiagnosticSeverity::Error)
+            .filter_map(|block| match block {
+                DetailBlock::Text(text) => Some(text.split_whitespace().collect::<Vec<_>>()),
+                _ => None,
+            })
+            .filter(|words| !words.is_empty())
+            .collect::<Vec<_>>();
+        let rendered_text = layout
+            .nodes
+            .iter()
+            .map(|node| {
+                node.text_lines
+                    .iter()
+                    .flat_map(|line| line.split_whitespace())
+                    .collect::<Vec<_>>()
+            })
+            .filter(|words| !words.is_empty())
+            .collect::<Vec<_>>();
+        expected_text
+            .iter()
+            .all(|expected| rendered_text.iter().any(|rendered| rendered == expected))
+            && screen
+                .diagnostics(&context.metrics(), &Chrome::measuring(true))
+                .issues
+                .iter()
+                .all(|issue| issue.severity != DiagnosticSeverity::Error)
     }
 
     fn detail_head(&self, publication: &Publication, first_page: bool) -> ScreenBuilder {
@@ -5617,7 +5643,7 @@ Please read this before you distribute or use this work.\n";
     fn a_summary_under_a_cover_is_divided_rather_than_drawn_off_the_panel() {
         let long = "This is the summary of a book, written by whoever catalogued it, at \
                     whatever length they felt the book deserved. "
-            .repeat(12);
+            .repeat(200);
         let mut book = publication(
             "Moby Dick; Or, The Whale",
             vec![text_acquisition("https://x/moby.txt")],
@@ -5629,7 +5655,7 @@ Please read this before you distribute or use this work.\n";
             complete: true,
             ..Gutenbird::default()
         };
-        app.open_cover = Some(TilePicture::new(PictureHandle(0), 306, 484));
+        app.open_cover = Some(TilePicture::new(PictureHandle(0), 80, 120));
         let context = kobo_sdk::Context::default();
         let publication = app.open.clone().unwrap();
         let blocks = Gutenbird::detail_blocks(&publication);

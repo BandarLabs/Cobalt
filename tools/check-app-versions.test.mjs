@@ -17,6 +17,7 @@ import {
   registeredConsumers,
   isFilmingScript,
   releaseDiffArguments,
+  releaseLockPackageIdentities,
   releaseNeeded,
   releaseDependencyIds,
   storeImpactOfChangedPaths
@@ -283,6 +284,33 @@ test("accepts the first Cobalt release supporting the package protocol", () => {
   );
 });
 
+test("manifest-only rebuilds must meet the current protocol minimum", () => {
+  const values = fixture({ currentVersion: "1.0.1", summary: "New summary" });
+  const built = new Set(packagesToBuild(values.registry, values.published, new Set()));
+  assert.deepEqual([...built], ["kobo-notes"]);
+  assert.throws(
+    () => checkProtocolMinimums(values.registry, 12, new Map([[12, "0.3.5"]]), built),
+    /minimum Cobalt 0\.3\.0 is older than protocol 12/
+  );
+});
+
+test("new packages must meet the current protocol minimum", () => {
+  const values = fixture();
+  values.registry.apps.push({
+    ...values.registry.apps[0],
+    package: "kobo-reader",
+    id: "reader",
+    display_name: "Reader",
+    short_label: "Reader"
+  });
+  const built = new Set(packagesToBuild(values.registry, values.published, new Set()));
+  assert.deepEqual([...built], ["kobo-reader"]);
+  assert.throws(
+    () => checkProtocolMinimums(values.registry, 12, new Map([[12, "0.3.5"]]), built),
+    /reader: minimum Cobalt 0\.3\.0 is older than protocol 12/
+  );
+});
+
 test("release inputs ignore exclusively dev-only dependency edges", () => {
   const dependencies = releaseDependencyIds({
     deps: [
@@ -417,6 +445,42 @@ test("only exact reviewed compatible blobs are excluded from app release inputs"
     ),
     new Set()
   );
+  const additive = {
+    format_version: 1,
+    changes: [
+      {
+        protocol_version: 11,
+        reason: "reviewed additive SDK module",
+        files: [
+          {
+            path: "crates/kobo-sdk/src/credentials.rs",
+            base_blob: null,
+            compatible_blob: "c".repeat(40)
+          }
+        ]
+      }
+    ]
+  };
+  assert.deepEqual(
+    compatibleChangePaths(
+      additive,
+      11,
+      ["crates/kobo-sdk/src/credentials.rs"],
+      () => null,
+      () => "c".repeat(40)
+    ),
+    new Set(["crates/kobo-sdk/src/credentials.rs"])
+  );
+  assert.deepEqual(
+    compatibleChangePaths(
+      additive,
+      11,
+      ["crates/kobo-sdk/src/credentials.rs"],
+      () => "a".repeat(40),
+      () => "c".repeat(40)
+    ),
+    new Set()
+  );
   assert.deepEqual(
     compatibleChangePaths(
       manifest,
@@ -468,11 +532,71 @@ test("reviewed compatible-change entries name the exact current files", () => {
   }
 });
 
+test("responsive SDK release isolation covers only exact reviewed inputs", () => {
+  const manifest = JSON.parse(
+    readFileSync("tools/app-release-compatible-changes.json", "utf8")
+  );
+  const responsivePaths = [
+    "Cargo.lock",
+    "crates/kobo-sdk/Cargo.toml",
+    "crates/kobo-sdk/src/keyboard.rs",
+    "crates/kobo-sdk/src/terminal.rs",
+    "crates/kobo-ui/Cargo.toml",
+    "crates/kobo-ui/src/lib.rs"
+  ];
+  const files = new Map(
+    manifest.changes
+      .find(change => change.protocol_version === 12)
+      .files.map(file => [file.path, file])
+  );
+  assert.deepEqual(
+    compatibleChangePaths(
+      manifest,
+      12,
+      responsivePaths,
+      path => files.get(path)?.base_blob,
+      path => files.get(path)?.compatible_blob
+    ),
+    new Set(responsivePaths)
+  );
+
+  for (const path of responsivePaths) {
+    assert.equal(
+      compatibleChangePaths(
+        manifest,
+        12,
+        [path],
+        candidate => files.get(candidate)?.base_blob,
+        () => "f".repeat(40)
+      ).size,
+      0,
+      `${path} must fail closed when its reviewed blob changes`
+    );
+  }
+});
+
 test("new lockfile package blocks do not change existing app release inputs", () => {
   const previous = `version = 4\n\n[[package]]\nname = "notes"\nversion = "1.0.0"\n`;
   const current = `${previous}\n[[package]]\nname = "reader"\nversion = "1.0.0"\n`;
 
   assert.equal(lockfileOnlyAddsPackages(previous, current), true);
+});
+
+test("Cargo.lock changes are isolated only after exact compatible review", () => {
+  const previous = `version = 4\n\n[[package]]\nname = "kobo-ui"\nversion = "0.3.4"\ndependencies = [\n "unicode-segmentation",\n]\n`;
+  const current = previous.replace(
+    ' "unicode-segmentation",',
+    ' "unicode-segmentation",\n "unicode-width",'
+  );
+
+  assert.notDeepEqual(
+    releaseLockPackageIdentities(previous, current, new Set()),
+    new Set()
+  );
+  assert.deepEqual(
+    releaseLockPackageIdentities(previous, current, new Set(["Cargo.lock"])),
+    new Set()
+  );
 });
 
 function metadata() {

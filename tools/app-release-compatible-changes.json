@@ -2,23 +2,78 @@
   "format_version": 1,
   "changes": [
     {
-      "protocol_version": 11,
-      "reason": "Additive protocol-11 orientation command is opt-in; existing Store apps keep their existing messages and portrait rendering",
+      "protocol_version": 12,
+      "reason": "Protocol 12 rebuilds the published apps for its new Folio and credential surfaces, while additive orientation remains opt-in and preserves portrait behavior for existing messages. Simulator profile coverage and responsive rendering do not add further Store rebuilds.",
       "files": [
+        {
+          "path": "Cargo.lock",
+          "base_blob": "0ddd4fc90b82c2de367775f2bbb8bc8fb17a4a4a",
+          "compatible_blob": "f89228565f24fed7b0c771b9ae6c624da97a8509"
+        },
+        {
+          "path": "crates/kobo-abi/src/lib.rs",
+          "base_blob": "2e3e88db5ba1fd08feed46fd65b0f502dd7f8dfb",
+          "compatible_blob": "3f4c4c11e78686f10dbea1456d911dcc03ce3f7f"
+        },
+        {
+          "path": "crates/kobo-policy/src/credentials.rs",
+          "base_blob": "8cfe06762b6a039c09c1991e9ad374f3dcbb50a3",
+          "compatible_blob": "83feb72c618488503fbc14cc65cd8c76b753d7d6"
+        },
+        {
+          "path": "crates/kobo-policy/src/services.rs",
+          "base_blob": "e5b8617ac601332dd9b5d39c8e6ea83d613e171b",
+          "compatible_blob": "48e98006a574b8b6f2b2e52cd0c282d8fe0a7816"
+        },
+        {
+          "path": "crates/kobo-policy/src/tasks.rs",
+          "base_blob": "7e4448442a00d0315f9bf91d50be3eb41b707d5d",
+          "compatible_blob": "35862b4c4f457abc25bc785fd9c91d008131312b"
+        },
         {
           "path": "crates/kobo-protocol/src/lib.rs",
           "base_blob": "f34528d7b407e542a7836b0348b91de043822274",
-          "compatible_blob": "50e99c1933462675c1a9f1e368023c375775d10b"
+          "compatible_blob": "dd0e20af70a9126e1ce1c6bdfe03663a12e9797e"
+        },
+        {
+          "path": "crates/kobo-sdk/Cargo.toml",
+          "base_blob": "950cc4ba03f0c5743b458820f411c39f5e19cad5",
+          "compatible_blob": "1e430f2f1912c1c327b17ec7a388b934c33c6d42"
         },
         {
           "path": "crates/kobo-sdk/src/lib.rs",
           "base_blob": "9a645f3f3d9c8746dda47d858bb3fcd744621df8",
-          "compatible_blob": "1ff0ec9725746213be19556b1c035de890878c34"
+          "compatible_blob": "83bd312d2e1eb3c9e71963aa22a07990b6ec187d"
+        },
+        {
+          "path": "crates/kobo-sdk/src/credentials.rs",
+          "base_blob": null,
+          "compatible_blob": "7cc2181bdad2e5b580a668283642159d486551e4"
+        },
+        {
+          "path": "crates/kobo-sdk/src/keyboard.rs",
+          "base_blob": "6a2ced13d30bbbed83e54fa949f8362563c944e4",
+          "compatible_blob": "3ee32641ffc26a83b739463e366e72ddec4a6ee4"
+        },
+        {
+          "path": "crates/kobo-sdk/src/terminal.rs",
+          "base_blob": "016d5792d4f0c3e1d173a0509b17d2fc3b6d0dc5",
+          "compatible_blob": "211816b2b69a1152abd7ff9c84f6ddbc5bd2aa34"
+        },
+        {
+          "path": "crates/kobo-text/src/lib.rs",
+          "base_blob": "229e03073b19f78f623b2ab15d183fef86c9e48f",
+          "compatible_blob": "c645479d92d9bdcc7e07a38f2e8fca591fc9cf57"
+        },
+        {
+          "path": "crates/kobo-ui/Cargo.toml",
+          "base_blob": "5ffc679b17b75bcdd7008e33569800c4bce5d979",
+          "compatible_blob": "94a904d6db2500ac354997940d20a918828523af"
         },
         {
           "path": "crates/kobo-ui/src/lib.rs",
           "base_blob": "ce538c70b5779ee482e2b35aa83191eb06b04b4d",
-          "compatible_blob": "d6c79d5ee6e3d574b3768da3721e865688e7f657"
+          "compatible_blob": "1e9df2fb7756e10affae64dba2ecda96f85e23e2"
         }
       ]
     }

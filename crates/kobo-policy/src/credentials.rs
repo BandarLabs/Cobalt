@@ -7,6 +7,107 @@
 
 use kobo_net::{has_origin, parse};
 use kobo_protocol::{Credential, CredentialUse, SecretHeader};
+use std::fs;
+use std::io::Write;
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+use std::path::{Path, PathBuf};
+
+/// The directory below the owner secret root reserved for app-entered values.
+pub const APP_SECRET_DIRECTORY: &str = "apps";
+
+/// Returns the private namespace for one runtime-verified application.
+///
+/// The app identity is supplied by the runtime after the executable's path
+/// and `Hello` identity agree. A secret name is only one path component, so
+/// neither input can select another application's namespace.
+#[must_use]
+pub fn app_secret_path(root: &Path, app: &str, name: &str) -> Option<PathBuf> {
+    if !kobo_protocol::valid_app_id(app) || !valid_secret_name(name) {
+        return None;
+    }
+    Some(root.join(APP_SECRET_DIRECTORY).join(app).join(name))
+}
+
+/// Installs an app-entered credential in the verified caller's namespace.
+///
+/// Global files directly below `root` remain owner-managed CLI credentials.
+/// They are never replaced by this path and are only a fallback at lookup.
+///
+/// # Errors
+///
+/// Returns [`kobo_protocol::DeviceError::InvalidInput`] for a caller, name, or
+/// value outside policy, and [`kobo_protocol::DeviceError::Backend`] when the
+/// private directory cannot be safely created or durably replaced.
+pub fn install_app_secret(
+    root: &Path,
+    app: &str,
+    name: &str,
+    value: &str,
+) -> Result<(), kobo_protocol::DeviceError> {
+    if !may_set(app, name)
+        || app_secret_path(root, app, name).is_none()
+        || value.is_empty()
+        || value.len() > kobo_protocol::MAX_APP_SECRET_BYTES
+        || value.chars().any(char::is_control)
+    {
+        return Err(kobo_protocol::DeviceError::InvalidInput);
+    }
+    private_directory(root)?;
+    let apps = root.join(APP_SECRET_DIRECTORY);
+    private_directory(&apps)?;
+    let directory = apps.join(app);
+    private_directory(&directory)?;
+
+    let temporary = directory.join(format!(".{name}.new"));
+    let destination = directory.join(name);
+    if temporary.exists() {
+        let kind = fs::symlink_metadata(&temporary)
+            .map_err(|_| kobo_protocol::DeviceError::Backend)?
+            .file_type();
+        if !kind.is_file() && !kind.is_symlink() {
+            return Err(kobo_protocol::DeviceError::Backend);
+        }
+        fs::remove_file(&temporary).map_err(|_| kobo_protocol::DeviceError::Backend)?;
+    }
+    let result: std::io::Result<()> = (|| {
+        let mut file = fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .mode(0o600)
+            .open(&temporary)?;
+        file.set_permissions(fs::Permissions::from_mode(0o600))?;
+        file.write_all(value.as_bytes())?;
+        file.sync_all()?;
+        fs::rename(&temporary, &destination)?;
+        fs::File::open(&directory)?.sync_all()
+    })();
+    if result.is_err() {
+        let _ignored = fs::remove_file(&temporary);
+    }
+    result.map_err(|_| kobo_protocol::DeviceError::Backend)
+}
+
+fn private_directory(path: &Path) -> Result<(), kobo_protocol::DeviceError> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_dir() => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            fs::create_dir(path).map_err(|_| kobo_protocol::DeviceError::Backend)?;
+        }
+        Ok(_) | Err(_) => return Err(kobo_protocol::DeviceError::Backend),
+    }
+    fs::set_permissions(path, fs::Permissions::from_mode(0o700))
+        .map_err(|_| kobo_protocol::DeviceError::Backend)
+}
+
+/// Whether a credential name is exactly one portable path component.
+#[must_use]
+pub fn valid_secret_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 64
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+}
 
 /// The narration voices the audiobook application may spend its `ElevenLabs`
 /// key on: one per offered language, native accents. The application holds
@@ -19,6 +120,20 @@ const AUDIOBOOK_VOICES: [&str; 6] = [
     "7eVMgwCnXydb3CikjV7a", // Lea, German
     "4VZIsMPtgggwNg7OXbPY", // James Gao, Chinese
 ];
+
+/// Whether an application may install one runtime-owned credential.
+///
+/// This is deliberately narrower than filesystem access: an app may replace
+/// only the exact secret names its reviewed network policy can consume.
+#[must_use]
+pub fn may_set(app: &str, name: &str) -> bool {
+    match app {
+        "audiobook" => matches!(name, "exa" | "openai" | "elevenlabs"),
+        "chat" => matches!(name, "openai" | "anthropic" | "gemini"),
+        "zotero-reader" => name == "zotero",
+        _ => false,
+    }
+}
 
 /// Whether a shipped application may attach one named secret to this request.
 ///
@@ -159,8 +274,67 @@ fn zotero_key(value: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{allowed, AUDIOBOOK_VOICES};
+    use super::{allowed, install_app_secret, may_set, AUDIOBOOK_VOICES};
     use kobo_protocol::{Credential, CredentialUse};
+
+    #[test]
+    fn apps_can_install_only_the_credentials_their_policy_consumes() {
+        assert!(may_set("zotero-reader", "zotero"));
+        assert!(may_set("chat", "anthropic"));
+        assert!(may_set("audiobook", "elevenlabs"));
+        assert!(!may_set("zotero-reader", "openai"));
+        assert!(!may_set("other", "zotero"));
+    }
+
+    #[test]
+    fn app_entered_credentials_are_written_only_under_the_verified_app() {
+        let root =
+            std::env::temp_dir().join(format!("kobo-policy-app-secrets-{}", std::process::id()));
+        let _ignored = std::fs::remove_dir_all(&root);
+        install_app_secret(&root, "chat", "openai", "chat-key").expect("chat credential");
+        install_app_secret(&root, "audiobook", "openai", "audio-key")
+            .expect("audiobook credential");
+        assert_eq!(
+            std::fs::read(root.join("apps/chat/openai")).expect("chat value"),
+            b"chat-key"
+        );
+        assert_eq!(
+            std::fs::read(root.join("apps/audiobook/openai")).expect("audiobook value"),
+            b"audio-key"
+        );
+        assert!(!root.join("openai").exists());
+        let _ignored = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn app_identity_and_symlink_boundaries_fail_closed() {
+        use std::os::unix::fs::symlink;
+
+        let root = std::env::temp_dir().join(format!(
+            "kobo-policy-app-secret-links-{}",
+            std::process::id()
+        ));
+        let outside = std::env::temp_dir().join(format!(
+            "kobo-policy-app-secret-outside-{}",
+            std::process::id()
+        ));
+        let _ignored = std::fs::remove_dir_all(&root);
+        let _ignored = std::fs::remove_dir_all(&outside);
+        std::fs::create_dir_all(root.join("apps")).expect("apps");
+        std::fs::create_dir_all(&outside).expect("outside");
+        symlink(&outside, root.join("apps/chat")).expect("app link");
+        assert!(
+            install_app_secret(&root, "chat", "openai", "not-written").is_err(),
+            "an app namespace symlink was followed"
+        );
+        assert!(
+            install_app_secret(&root, "../audiobook", "openai", "not-written").is_err(),
+            "a caller selected another namespace"
+        );
+        assert!(!outside.join("openai").exists());
+        let _ignored = std::fs::remove_dir_all(root);
+        let _ignored = std::fs::remove_dir_all(outside);
+    }
 
     #[test]
     fn chat_credentials_are_bound_to_their_exact_service() {

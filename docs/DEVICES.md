@@ -29,6 +29,50 @@ fixture results are not substitutes.
 Firmware versions not listed here are unsupported even on the same model until
 a new read-only probe and the applicable attended evidence have been reviewed.
 
+## Simulator profile facts
+
+The simulator uses the same seven exact profiles. `Measured` below means a
+doctor capture or attended hardware run exists; `derived` means arithmetic from
+measured pixels and PPI. `Unknown` is not treated as unsupported hardware: it
+means the simulator refuses or disables the operation rather than guessing.
+
+| Profile | Measured logical panel | Derived size | Measured framebuffer | Verified poses |
+|---|---:|---:|---|---|
+| `clara-bw-391` | 1072×1448, 300 PPI | 90.7×122.5 mm | 32 bpp, grayscale 0, visual 2, stride 4288; RGBA offsets 0/8/16/24, length 8, `msb_right` 0 | rotation 3 |
+| `clara-bw-395` | 1072×1448, 300 PPI | 90.7×122.5 mm | same measured panel fields as 391 | rotation 3 |
+| `clara-hd-376` | 1072×1448, 300 PPI | 90.7×122.5 mm | 32 bpp, grayscale 0, visual 2, stride 4352; BGRA offsets 16/8/0/24, length 8, `msb_right` 0 | rotation 3 |
+| `clara-colour-393` | 1072×1448, 300 PPI | 90.7×122.5 mm | same measured RGBA fields as 391; Kaleido 3 panel | rotation 3 |
+| `elipsa-2e-389` | 1404×1872, 227 PPI | 157.0×209.4 mm | 32 bpp, grayscale 0, visual 2, stride 5616; every reported channel field is zero-length, so packing is unknown and serialization is refused | rotation 1 |
+| `libra-2-388` | 1264×1680, 300 PPI | 107.0×142.2 mm | 32 bpp, grayscale 0, visual 2, stride 5120; BGRA offsets 16/8/0/24, length 8, `msb_right` 0 | rotations 1 and 3 |
+| `libra-colour-390` | 1264×1680, 300 PPI | 107.0×142.2 mm | 32 bpp, grayscale 0, visual 2, stride 5056; RGBA offsets 0/8/16/24, length 8, `msb_right` 0; Kaleido 3 panel | rotation 1 |
+
+The 7 mm minimum touch target is derived as 83 pixels on the 300 PPI
+profiles and 63 pixels on Elipsa 2E. Touch itself is measured:
+
+| Profiles | Controller range (inclusive) | Reference-pose transform |
+|---|---:|---|
+| Clara BW 391/395, Clara HD, Clara Colour | X 0–1447, Y 0–1071 | transpose and mirror X |
+| Elipsa 2E | X 0–1872, Y 0–1404 | transpose and mirror Y |
+| Libra 2 | X 0–1680, Y 0–1264 | transpose; rotation 3 uses the verified half-turn composition |
+| Libra Colour | X 0–1680, Y 0–1264 | transpose and mirror Y |
+
+Measured non-framebuffer facts are intentionally sparse. Libra 2 and Libra
+Colour have page keys 193/194, meaning back/forward at the reference pose.
+Simulation maps the physical upper/lower position through the selected pose
+before applying that measured event-code direction. Libra 2 also has measured
+orientation-sensor values. Clara BW 391 has measured
+frontlight brightness 0–100 and raw warm/cool balance 0–10. Wi-Fi operation is
+measured only on Clara BW 391 and Libra 2. The shared MediaTek radio platform
+applies to the current MediaTek profiles, Libra 2 uses Realtek 8723ds, and
+Clara HD's radio platform is unknown. Reaping Nickel's leftover supplicant is
+measured only on Clara BW 391 and Libra 2.
+
+No other pose, orientation sensor, frontlight range, warm-light range, button
+mapping, framebuffer packing, or supplicant handoff is implied. Chromatic
+rendering is also still unavailable: colour profiles identify Kaleido 3 and
+their measured 32-bit packing, but simulator presentation remains explicitly
+greyscale rather than inventing a colour response.
+
 ## Connecting a device
 
 The reader has to be on the same wireless network as the machine you work from.
@@ -170,8 +214,11 @@ accepts a connection but answers neither way is asked again next round rather
 than written off, because a booting reader does exactly that.
 
 `--no-wait` skips that SSH wait and `--no-menu` skips the menu entry.
-`kobo setup --undo` puts every part of the setup back,
-and `kobo setup --dry-run` prints what it would do without touching anything.
+`kobo setup --undo` removes the managed trees, stable launcher, and exact
+Cobalt NickelMenu entry. It preserves owner folders under
+`.adds/cobalt.recovery.N` and reports any `.adds/cobalt.unusable[.N]`
+quarantine for inspection rather than silently deleting recoverable data.
+`kobo setup --dry-run` prints what it would do without touching anything,
 including for `--undo`, which is what `--undo --dry-run` means.
 
 Both settings are the reader's own, applied by the reader's own code, so
@@ -200,16 +247,18 @@ The ordinary way to install anything on a Kobo is to drop a `KoboRoot.tgz` into
 is also the one mechanism on the device that can leave it unbootable, because
 nothing checks the paths inside before extracting them over the running system.
 
-So Cobalt is not shipped that way. `kobo setup` copies the same files straight
-into `.adds/cobalt` as a plain folder, which the reader never elevates. The cost
-is that a folder copy does not trigger the firmware's update-and-restart, so the
-reader has to be restarted by hand once for the SSH server to start. That is one
-button held down, in exchange for never handing the boot script an archive. The
-worst outcome of a setup that goes wrong is a folder to delete.
+So normal `kobo setup` does not use that route. It copies the versioned files
+straight into `.adds/cobalt` and the stable sibling
+`.adds/cobalt-launch.sh`, which the reader never elevates. The cost is that a
+folder copy does not trigger the firmware's update-and-restart, so the reader
+has to be restarted by hand once for the SSH server to start.
 
 `kobo package` still builds a `KoboRoot.tgz` for owners who want the usual
-route, and `kobo inspect` proves before it is copied that every path in it falls
-under `.adds/cobalt`.
+route. `kobo inspect` proves that its only member outside `.adds/cobalt` is the
+first, exact, executable `.adds/cobalt-launch.sh`. With `--folder OUTPUT`, the
+output is explicitly volume-relative: copy `OUTPUT/.adds` to the root of the
+mounted Kobo volume. It contains both `.adds/cobalt-launch.sh` and the complete
+`.adds/cobalt/...` tree.
 
 ### The one archive setup does stage, and what is checked first
 
@@ -221,7 +270,7 @@ over HTTPS and checked against a recorded SHA-256, so the transport does not hav
 to be trusted, and writes a single entry beside it:
 
 ```
-menu_item :main :Cobalt :cmd_spawn :quiet:/mnt/onboard/.adds/cobalt/start.sh
+menu_item :main :Cobalt :cmd_spawn :quiet:/mnt/onboard/.adds/cobalt-launch.sh
 ```
 
 `--no-menu` skips all of it.
@@ -243,10 +292,11 @@ archive naming `./etc/init.d/rcS` is the one that ends a device, and it is
 refused by name. It also refuses to overwrite an archive some other mod has
 already staged, since `.kobo/KoboRoot.tgz` is a single shared slot.
 
-`kobo setup --undo` takes the entry away. If the reader has not restarted yet it
-simply takes the staged archive back, and nothing was ever installed. If it has,
-it writes NickelMenu's own uninstall flag, unless another mod still has a
-configuration file beside ours, in which case the plugin stays and only the
+`kobo setup --undo` takes the exact Cobalt entry away from either its dedicated
+configuration or the shared `.adds/nm/menu`. If the reader has not restarted
+yet it simply takes the staged archive back, and nothing was ever installed. If
+it has, it writes NickelMenu's own uninstall flag, unless another mod still has
+a configuration file beside ours, in which case the plugin stays and only the
 Cobalt entry goes, because it is shared.
 
 The entry starts Cobalt **on demand**, and deliberately not at boot. `kobod` has

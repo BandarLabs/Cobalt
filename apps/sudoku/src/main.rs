@@ -205,18 +205,12 @@ fn screen(game: &Game) -> Screen {
     let digits = (1..=9).map(|digit| (digit_name(digit), digit.to_string()));
     ScreenBuilder::new("sudoku")
         .top_bar("Sudoku")
+        .top_bar_action("hint", "Hint")
+        .top_bar_action("reset", "Reset")
+        .top_bar_action("new-game", "New game")
         .secondary(game.status())
         .board(COLUMNS, cells)
         .grid(COLUMNS, false, digits)
-        .grid(
-            3,
-            false,
-            [
-                ("hint", "Hint"),
-                ("reset", "Reset"),
-                ("new-game", "New game"),
-            ],
-        )
         .build()
 }
 

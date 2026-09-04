@@ -85,6 +85,14 @@ fn run(arguments: &[String]) -> Result<(), Box<dyn Error>> {
         print_safety_state();
         return Ok(());
     }
+    #[cfg(feature = "device-write")]
+    if matches!(
+        arguments.first().map(String::as_str),
+        Some("--present" | "--restart-from")
+    ) {
+        update::recover_at_startup(Path::new("/mnt/onboard/.adds"))
+            .map_err(|error| format!("recover interrupted update before launch: {error}"))?;
+    }
     if arguments.len() == 4 && arguments[0] == "--sim-socket" && arguments[2] == "--frame" {
         return serve_simulation(Path::new(&arguments[1]), Path::new(&arguments[3]));
     }
@@ -568,6 +576,26 @@ fn print_safety_state() {
     }
 }
 
+fn simulation_metrics_from_env() -> Result<Option<kobo_ui::DisplayMetrics>, String> {
+    let Some(profile_id) = env::var_os("KOBO_SIM_PROFILE") else {
+        return Ok(None);
+    };
+    let profile_id = profile_id.to_str().ok_or("KOBO_SIM_PROFILE is not UTF-8")?;
+    let profile = kobo_profile::supported_profile(profile_id)
+        .ok_or_else(|| format!("unknown simulator profile {profile_id:?}"))?;
+    let rotation = env::var("KOBO_SIM_ROTATION")
+        .ok()
+        .map(|value| {
+            value
+                .parse::<u32>()
+                .map_err(|_| "KOBO_SIM_ROTATION must be 0, 1, 2, or 3".to_owned())
+        })
+        .transpose()?
+        .unwrap_or(profile.reference_rotation);
+    kobo_profile::PanelPose::simulated(profile, rotation).map_err(|error| error.to_string())?;
+    metrics_for_profile(profile, display_metrics_from_env()).map(Some)
+}
+
 fn serve_simulation(socket_path: &Path, frame_path: &Path) -> Result<(), Box<dyn Error>> {
     validate_simulation_paths(socket_path, frame_path)?;
     // Without this the preview renders in the built-in bitmap fallback, which
@@ -575,7 +603,7 @@ fn serve_simulation(socket_path: &Path, frame_path: &Path) -> Result<(), Box<dyn
     // paragraph height in the picture belongs to a panel nobody has. The
     // preview exists to be looked at; a preview drawn in the wrong face is
     // worse than none, because it is believed.
-    let metrics = crate::device_metrics();
+    let metrics = simulation_metrics_from_env()?.unwrap_or_else(crate::device_metrics);
     let _ = kobo_text::install(metrics);
     // The same owner trust roots the device loads, from the host's own
     // directory, so an application developed against a local daemon works
@@ -601,6 +629,7 @@ fn serve_simulation(socket_path: &Path, frame_path: &Path) -> Result<(), Box<dyn
     kobo_protocol::write_to(
         &mut stream,
         &Frame {
+            version: hello.version,
             request_id: hello.request_id,
             message: Message::Welcome {
                 width: u16::try_from(metrics.width)?,
@@ -610,7 +639,7 @@ fn serve_simulation(socket_path: &Path, frame_path: &Path) -> Result<(), Box<dyn
             },
         },
     )?;
-    serve_application(&mut stream, frame_path, &name, metrics)
+    serve_application(&mut stream, frame_path, &name, metrics, hello.version)
 }
 
 /// Where a host runtime looks for owner-installed TLS trust roots.
@@ -642,6 +671,10 @@ fn host_dictionary_directory() -> PathBuf {
     )
 }
 
+fn host_secret_directory() -> PathBuf {
+    std::env::temp_dir().join("cobalt-host-secrets")
+}
+
 #[allow(
     clippy::too_many_lines,
     reason = "one arm per message type; splitting the dispatch hides it"
@@ -651,6 +684,7 @@ fn serve_application(
     frame_path: &Path,
     name: &str,
     metrics: kobo_ui::DisplayMetrics,
+    peer_version: u8,
 ) -> Result<(), Box<dyn Error>> {
     // In simulation the daemon owns no hardware, so every hardware-touching
     // request is answered honestly rather than pretended.
@@ -668,10 +702,16 @@ fn serve_application(
     // runtime uses. Without the grant the backend could never run, so this
     // path claimed to be the real runtime while refusing every request an
     // application made.
+    let secrets = host_secret_directory();
+    let credential_app = name.to_owned();
     let tasks = std::sync::Arc::new(std::sync::Mutex::new(
         TaskRunner::simulated(std::env::temp_dir())
             .with_fetch(std::sync::Arc::new(kobo_net::fetch_from))
             .with_post(std::sync::Arc::new(kobo_net::post))
+            .with_app_secrets(&secrets, name)
+            .with_credential_policy(std::sync::Arc::new(move |credential, url, usage| {
+                kobo_policy::credentials::allowed(&credential_app, credential, url, usage)
+            }))
             .with_capabilities([kobo_policy::Capability::Network]),
     ));
     // Outcomes are delivered from their own thread. This loop blocks on the
@@ -684,7 +724,7 @@ fn serve_application(
     {
         let draining = std::sync::Arc::clone(&tasks);
         let writer = std::sync::Arc::clone(&writer);
-        std::thread::spawn(move || deliver_outcomes(&draining, &writer));
+        std::thread::spawn(move || deliver_outcomes(&draining, &writer, peer_version));
     }
     let store = kobo_policy::store::Store::new(std::env::temp_dir().join("cobalt-host-state"));
     let shelf = kobo_policy::shelf::Shelf::new(std::env::temp_dir().join("cobalt-host-data"));
@@ -756,11 +796,32 @@ fn serve_application(
             Message::Launch { name } => println!("launch requested: {name}"),
             Message::Log { level, message } => log_app(level, &message),
             Message::DeviceRequest(request) => {
-                let result = services.handle(request.clone());
+                let result = if let kobo_protocol::DeviceRequest::SetSecret {
+                    name: secret_name,
+                    value,
+                } = &request
+                {
+                    if kobo_policy::credentials::may_set(name, secret_name) {
+                        kobo_policy::credentials::install_app_secret(
+                            &secrets,
+                            name,
+                            secret_name,
+                            value.as_str(),
+                        )
+                        .map_or_else(kobo_protocol::DeviceResult::Failed, |()| {
+                            kobo_protocol::DeviceResult::Done
+                        })
+                    } else {
+                        kobo_protocol::DeviceResult::Denied(kobo_protocol::DenyReason::NotDeclared)
+                    }
+                } else {
+                    services.handle(request.clone())
+                };
                 println!("device request {request:?} -> {result:?}");
                 write_shared(
                     &writer,
                     &Frame {
+                        version: frame.version,
                         request_id: frame.request_id,
                         message: Message::DeviceResult(result),
                     },
@@ -776,6 +837,7 @@ fn serve_application(
                     write_shared(
                         &writer,
                         &Frame {
+                            version: frame.version,
                             request_id: frame.request_id,
                             message: Message::TaskOutcome {
                                 task,
@@ -792,6 +854,7 @@ fn serve_application(
                 write_shared(
                     &writer,
                     &Frame {
+                        version: frame.version,
                         request_id: frame.request_id,
                         message: Message::StoreResult(result),
                     },
@@ -805,6 +868,7 @@ fn serve_application(
             Message::ShellRequest(_) => write_shared(
                 &writer,
                 &Frame {
+                    version: frame.version,
                     request_id: frame.request_id,
                     message: Message::ShellEvent(kobo_protocol::ShellEvent::Refused(
                         kobo_protocol::ShellError::Unavailable,
@@ -858,6 +922,7 @@ fn write_shared(
 fn deliver_outcomes(
     tasks: &std::sync::Arc<std::sync::Mutex<TaskRunner>>,
     writer: &std::sync::Arc<std::sync::Mutex<UnixStream>>,
+    peer_version: u8,
 ) {
     loop {
         let Ok(finished) = tasks.lock().map(|mut tasks| tasks.drain()) else {
@@ -870,6 +935,7 @@ fn deliver_outcomes(
             if kobo_protocol::write_to(
                 &mut *stream,
                 &Frame {
+                    version: peer_version,
                     request_id: 0,
                     message: Message::TaskOutcome {
                         task: finished.task,
@@ -1030,6 +1096,33 @@ impl Drop for SocketGuard {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn host_secret_installation_replaces_without_exposing_a_partial_file() {
+        let directory =
+            std::env::temp_dir().join(format!("cobalt-host-secret-test-{}", std::process::id()));
+        let _ignored = std::fs::remove_dir_all(&directory);
+        kobo_policy::credentials::install_app_secret(
+            &directory,
+            "zotero-reader",
+            "zotero",
+            "first",
+        )
+        .expect("install secret");
+        kobo_policy::credentials::install_app_secret(
+            &directory,
+            "zotero-reader",
+            "zotero",
+            "second",
+        )
+        .expect("replace secret");
+        assert_eq!(
+            std::fs::read(directory.join("apps/zotero-reader/zotero")).expect("read secret"),
+            b"second"
+        );
+        assert!(!directory.join("apps/zotero-reader/.zotero.new").exists());
+        let _ignored = std::fs::remove_dir_all(directory);
+    }
 
     #[test]
     fn an_elipsa_session_keeps_its_verified_metrics_without_another_probe() {

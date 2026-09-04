@@ -1,1 +1,1 @@
-{"id":"gutenbird","display_name":"Gutenbird","short_label":"Gutenbird","summary":"Browse OPDS libraries and read their books on your Kobo.","version":"1.0.6","glyph":"book","capabilities":["network","frontlight-control"]}
+{"id":"gutenbird","display_name":"Gutenbird","short_label":"Gutenbird","summary":"Browse OPDS libraries and read their books on your Kobo.","version":"1.0.7","glyph":"book","capabilities":["network","frontlight-control"],"release_notes":"Update for Cobalt 0.3.5 and its protocol 12 app runtime."}
