@@ -30,7 +30,11 @@ use std::fmt::Write as _;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+
+use crate::RecordedFrame;
 
 /// How long to wait for the simulator to answer one request.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
@@ -92,6 +96,7 @@ impl Control {
 }
 
 /// A connection to a running simulator.
+#[derive(Clone)]
 pub struct Driver {
     address: String,
     shots: PathBuf,
@@ -456,6 +461,208 @@ impl Driver {
     }
 }
 
+/// How often a recording looks at the panel when nothing says otherwise.
+///
+/// Four times a second rather than the two `kobo record` takes from a reader.
+/// The device's rate is set by what it costs there: six megabytes read out of
+/// the framebuffer of a machine that is also drawing to it. Here the frame
+/// comes over loopback from a process on the same desk, so the only budget
+/// that matters is the simulator's request loop, which the driver is using at
+/// the same time. Four is fast enough to catch a screen that is only up for a
+/// moment -- a spinner, or a wrong state a screen passes through before it
+/// settles -- and slow enough to leave that loop to the taps.
+pub const DEFAULT_RECORD_FPS: u32 = 4;
+
+/// The fastest a recording may look at the panel.
+///
+/// The simulator serves one request at a time and the driver is queueing
+/// behind every one of these. Past roughly this rate a recording stops being a
+/// passenger and starts deciding how long a tap takes to settle, which would
+/// make the recording a cause of the thing it is meant to be watching.
+pub const MAXIMUM_RECORD_FPS: u32 = 20;
+
+/// How long the sampler waits before noticing it has been asked to stop.
+const STOP_POLL: Duration = Duration::from_millis(10);
+
+/// The frames of one recording, with the ones that did not move left out.
+///
+/// The same bargain `kobo record` strikes on the device, for the same reason.
+/// Every grey level is kept, because the panel is greyscale and its text is
+/// anti-aliased and a recording that flattened the greys would look harsher
+/// than the thing it recorded. What keeps it small instead is that a screen
+/// that nobody has touched is the same screen: a script that waits two seconds
+/// between taps is one frame there, not eight.
+#[derive(Default)]
+struct FrameLog {
+    frames: Vec<RecordedFrame>,
+    looked: u32,
+}
+
+impl FrameLog {
+    /// Offers one look at the panel, and says whether it was worth keeping.
+    fn sample(&mut self, millis: u32, grey: Vec<u8>) -> bool {
+        self.looked += 1;
+        if self
+            .frames
+            .last()
+            .is_some_and(|last| last.grey.as_slice() == grey.as_slice())
+        {
+            return false;
+        }
+        self.frames.push(RecordedFrame { millis, grey });
+        true
+    }
+}
+
+/// Films the simulated panel while something else drives it.
+///
+/// The moving-picture half of [`Driver::shot`], and deliberately a separate
+/// thing from the driver rather than a step in the script. A recording made of
+/// the steps would only ever show the screens the script stops on, and the
+/// frames worth having are usually the ones between them: the list that was
+/// empty for half a second before the fetch came back, the pane that was drawn
+/// at the wrong size until the second layout pass. So this watches on its own
+/// clock and the script never knows it is there.
+///
+/// # Ghosting
+///
+/// A recording is taken from the residue-free frame unless it is asked for the
+/// other one. This is the opposite default to [`Driver::shot`], and on
+/// purpose. A still with e-ink residue on it is a still of two screens, which
+/// a person can still read past; a hundred of them played in sequence is every
+/// screen the run ever showed, all at once, and there is nothing to read past.
+/// Ask for `ghosting` when the recording is *of* the refreshes.
+pub struct Recorder {
+    /// A second connection to the same simulator, used only for frames.
+    sampler: Driver,
+    started: Instant,
+    log: Arc<Mutex<FrameLog>>,
+    stop: Arc<AtomicBool>,
+    /// Why the sampler gave up, if it did.
+    failure: Arc<Mutex<Option<String>>>,
+    worker: Option<std::thread::JoinHandle<()>>,
+}
+
+impl Recorder {
+    /// Starts filming, and takes the opening frame before it returns.
+    ///
+    /// The first frame is taken here rather than on the sampler thread so that
+    /// a simulator which is not running is a message now, with the line about
+    /// how to start one, rather than a script that runs to the end and then
+    /// reports that it recorded nothing.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the rate is one the simulator cannot serve, or
+    /// when the first frame cannot be had.
+    pub fn start(address: &str, fps: u32, ghosting: bool) -> Result<Self, String> {
+        if fps == 0 || fps > MAXIMUM_RECORD_FPS {
+            return Err(format!(
+                "--fps takes a rate between 1 and {MAXIMUM_RECORD_FPS}, not {fps}"
+            ));
+        }
+        let sampler = Driver::new(address, Path::new(".")).ideal(!ghosting);
+        let mut opening = FrameLog::default();
+        opening.sample(0, sampler.frame()?);
+
+        let interval = Duration::from_micros(1_000_000 / u64::from(fps));
+        let started = Instant::now();
+        let log = Arc::new(Mutex::new(opening));
+        let stop = Arc::new(AtomicBool::new(false));
+        let failure = Arc::new(Mutex::new(None));
+        let worker = {
+            let sampler = sampler.clone();
+            let log = Arc::clone(&log);
+            let stop = Arc::clone(&stop);
+            let failure = Arc::clone(&failure);
+            std::thread::spawn(move || {
+                while !stop.load(Ordering::Relaxed) {
+                    let looked_at = Instant::now();
+                    match sampler.frame() {
+                        Ok(grey) => {
+                            let millis =
+                                u32::try_from(started.elapsed().as_millis()).unwrap_or(u32::MAX);
+                            lock(&log).sample(millis, grey);
+                        }
+                        Err(error) => {
+                            *lock(&failure) = Some(error);
+                            return;
+                        }
+                    }
+                    // Measured from the start of the read, exactly as the
+                    // device does it, so a slow frame shortens the wait rather
+                    // than adding to it and the recording keeps the rate it
+                    // was asked for. Slept in slices, so stopping does not
+                    // have to wait out an interval that is already over.
+                    while looked_at.elapsed() < interval && !stop.load(Ordering::Relaxed) {
+                        std::thread::sleep(
+                            STOP_POLL.min(interval.saturating_sub(looked_at.elapsed())),
+                        );
+                    }
+                }
+            })
+        };
+        Ok(Self {
+            sampler,
+            started,
+            log,
+            stop,
+            failure,
+            worker: Some(worker),
+        })
+    }
+
+    /// Stops filming and hands back the panel, its size, and every frame kept.
+    ///
+    /// The closing frame is taken here, after the sampler has stopped. Without
+    /// it a script whose last step is a tap ends the recording on the screen
+    /// before that tap about half the time, which reads as the last thing the
+    /// script did having done nothing.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the sampler failed before it had a single frame.
+    /// A sampler that failed part way through has still recorded whatever it
+    /// saw up to then, which is the half of the run worth looking at, so that
+    /// is reported and kept rather than thrown away.
+    pub fn finish(mut self) -> Result<(u32, u32, Vec<RecordedFrame>), String> {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+        let closing = self.sampler.frame();
+        let mut log = lock(&self.log);
+        match closing {
+            Ok(grey) => {
+                let millis = u32::try_from(self.started.elapsed().as_millis()).unwrap_or(u32::MAX);
+                log.sample(millis, grey);
+            }
+            Err(error) => *lock(&self.failure) = Some(error),
+        }
+        if let Some(error) = lock(&self.failure).take() {
+            if log.frames.is_empty() {
+                return Err(error);
+            }
+            eprintln!("warning: the recording stopped early: {error}");
+        }
+        println!(
+            "recording: kept {} of {} frames",
+            log.frames.len(),
+            log.looked
+        );
+        Ok((FRAME_WIDTH, FRAME_HEIGHT, std::mem::take(&mut log.frames)))
+    }
+}
+
+/// A poisoned lock here means the sampler thread panicked mid-frame, which
+/// loses that frame and nothing else; the frames already taken are still
+/// frames, and refusing to hand them back would be the larger loss.
+fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 /// Pulls the picture out of a device transcript.
 ///
 /// The doctor prints its whole read-only report and then the panel, so this
@@ -745,8 +952,10 @@ fn parse_point(text: &str) -> Result<(i32, i32), String> {
 mod tests {
     use super::{
         base64_decode, decode_capture, json_array, json_field, json_number, json_objects,
-        json_point, split_response,
+        json_point, split_response, Driver, FrameLog, Recorder, FRAME_HEIGHT, FRAME_WIDTH,
+        MAXIMUM_RECORD_FPS,
     };
+    use std::path::Path;
 
     const BODY: &str = r#"{"nodes":[{"kind":"Button","x":10,"y":20,"width":30,"height":40,"centre":{"x":25,"y":40},"action":77,"lines":["Search","for a \"book\""]},{"kind":"Divider","x":0,"y":1,"width":2,"height":3,"centre":{"x":1,"y":2},"action":null,"lines":[]}]}"#;
 
@@ -843,5 +1052,93 @@ mod tests {
     #[test]
     fn a_report_with_no_capture_says_so_rather_than_producing_an_empty_screen() {
         assert!(decode_capture("Kobo doctor 0.1.0\n").is_err());
+    }
+
+    /// A script that waits two seconds between taps is a screen nobody
+    /// touched, and a recording that kept eight copies of it would be eight
+    /// megabytes of the same picture.
+    #[test]
+    fn a_screen_that_did_not_move_is_recorded_once() {
+        let mut log = FrameLog::default();
+        assert!(log.sample(0, vec![0xff; 4]));
+        assert!(!log.sample(250, vec![0xff; 4]));
+        assert!(!log.sample(500, vec![0xff; 4]));
+        assert!(log.sample(750, vec![0x40; 4]));
+        assert_eq!(log.looked, 4);
+        assert_eq!(log.frames.len(), 2);
+        assert_eq!(
+            log.frames[1].millis, 750,
+            "a kept frame is stamped when it appeared"
+        );
+    }
+
+    /// Only the frame before is compared, not every frame so far. A screen
+    /// that goes away and comes back -- opening a pane and closing it, which
+    /// is most of what these scripts do -- is a new thing to see each time,
+    /// and a recording that dropped the return would cut the tap that made it.
+    #[test]
+    fn a_screen_that_comes_back_is_recorded_again() {
+        let mut log = FrameLog::default();
+        log.sample(0, vec![0xff; 4]);
+        log.sample(100, vec![0x40; 4]);
+        assert!(log.sample(200, vec![0xff; 4]));
+        assert_eq!(log.frames.len(), 3);
+    }
+
+    /// The simulator serves one request at a time and the driver is queueing
+    /// behind every frame this asks for. A rate it cannot serve is refused
+    /// here, before a script has been run against it, rather than quietly
+    /// becoming the reason a tap took a second to settle.
+    #[test]
+    fn a_rate_the_simulator_cannot_serve_is_refused_before_anything_is_driven() {
+        for fps in [0, MAXIMUM_RECORD_FPS + 1, 1000] {
+            let error = Recorder::start("127.0.0.1:1", fps, false)
+                .err()
+                .expect("a rate outside the range is refused");
+            assert!(error.contains("--fps"), "{error}");
+        }
+    }
+
+    /// Films a simulator that is really running, which is the whole claim.
+    ///
+    /// The failure this guards against is a recording that is technically a
+    /// file: the right number of frames, the right length, and every pixel the
+    /// same shade of nothing. That is what an off-by-one in the frame size, a
+    /// panel read before the first paint, or a sampler pointed at the wrong
+    /// endpoint all look like, and none of them fails a test that only counts
+    /// frames. So this asserts the panel is the size the panel is, and that
+    /// there is more than one grey on it.
+    #[test]
+    fn a_recording_of_a_running_simulator_is_a_full_panel_with_something_drawn_on_it() {
+        let mut server = kobo_sim::Server::bind_address("127.0.0.1:0").expect("bind simulator");
+        let address = server.local_addr().expect("simulator address").to_string();
+        std::thread::spawn(move || server.serve());
+
+        let recorder = Recorder::start(&address, 10, false).expect("start recording");
+        // Something for it to film: the built-in simulator's button increments
+        // a counter and redraws, so the panel really does change under it.
+        let mut driver = Driver::new(&address, Path::new("."));
+        driver.step("tap Increment").expect("tap the counter");
+        driver.step("wait 250").expect("wait");
+        let (width, height, frames) = recorder.finish().expect("finish recording");
+
+        assert_eq!((width, height), (FRAME_WIDTH, FRAME_HEIGHT));
+        assert!(!frames.is_empty(), "nothing was filmed");
+        for frame in &frames {
+            assert_eq!(
+                frame.grey.len(),
+                (FRAME_WIDTH as usize) * (FRAME_HEIGHT as usize),
+                "a frame is not the size of the panel"
+            );
+            let first = frame.grey[0];
+            assert!(
+                frame.grey.iter().any(|grey| *grey != first),
+                "the frame is one flat shade, so nothing was drawn on it"
+            );
+        }
+        assert!(
+            frames.len() >= 2,
+            "the counter was tapped and the recording never noticed"
+        );
     }
 }

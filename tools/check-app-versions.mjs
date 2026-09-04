@@ -2,6 +2,11 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { dirname, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  storeCatalogChanges,
+  storeWatchDirectories,
+  unpublishedStoreChangeReport
+} from "./store-catalog-changes.mjs";
 
 const MANIFEST_FIELDS = [
   "id",
@@ -240,6 +245,14 @@ function optionalCommand(name, arguments_) {
 
 function isInside(path, directory) {
   return path === directory || path.startsWith(`${directory}/`);
+}
+
+// A drive script is the host-side route used to film an application. It is
+// never compiled into the signed bundle, so adding or editing one must not
+// look like a Store package change. That mistake is what turned a simulator
+// recording script into a forced version bump of every example that grew one.
+export function isFilmingScript(path, packageDirectory) {
+  return path === `${packageDirectory}/drive.txt` || path === `${packageDirectory}/drive.kobo`;
 }
 
 // Returns the dependency edges capable of changing a release artifact.
@@ -607,13 +620,48 @@ export function lockfileOnlyAddsPackages(previousSource, currentSource) {
   return true;
 }
 
-export function affectedWorkspacePackages(baseRevision, registry) {
+// Given an explicit change list, decide whether the catalog must move.
+// Platform-only paths (crates/, Cargo.toml, Cargo.lock, CI, docs) produce an
+// empty affected set. The cargo walk that names individual Store packages is
+// reached only when a Store catalog input actually changed.
+export function storeImpactOfChangedPaths(changedPaths, packageDirectories, registeredPackages) {
+  const storeDirectories = storeWatchDirectories(packageDirectories, registeredPackages);
+  const storeChanges = storeCatalogChanges(changedPaths, storeDirectories);
+  return {
+    storeChanges,
+    catalogQuiet: storeChanges.length === 0,
+    affected: storeChanges.length === 0 ? new Set() : null
+  };
+}
+
+export function analyzeAppReleaseInputs(baseRevision, registry) {
   const metadata = JSON.parse(command("cargo", ["metadata", "--format-version", "1", "--locked"]));
   const workspaceRoot = resolve(metadata.workspace_root);
   const changedPaths = command("git", releaseDiffArguments(baseRevision))
     .split("\n")
     .filter(Boolean)
     .map(path => path.split(sep).join("/"));
+
+  const registeredPackages = registry.apps.map(app => app.package);
+  const registered = new Set(registeredPackages);
+  const workspaceMembers = new Set(metadata.workspace_members);
+  const workspacePackages = metadata.packages.filter(package_ => workspaceMembers.has(package_.id));
+  const packageDirectories = new Map(
+    workspacePackages.map(package_ => [
+      package_.name,
+      relative(workspaceRoot, dirname(package_.manifest_path)).split(sep).join("/")
+    ])
+  );
+  const impact = storeImpactOfChangedPaths(changedPaths, packageDirectories, registeredPackages);
+  const storeChanges = impact.storeChanges;
+  // A platform-only push must not force every Store app to bump. Device-package
+  // inputs (crates/, Cargo.toml, Cargo.lock, the toolchain pin) reach readers
+  // through beta-vX.Y.Z. The next catalog publication of an actually edited
+  // app compiles against whatever the platform then is.
+  if (impact.catalogQuiet) {
+    return { affected: impact.affected, storeChanges };
+  }
+
   const compatibleManifest = readJson(
     resolve(
       dirname(fileURLToPath(import.meta.url)),
@@ -636,7 +684,6 @@ export function affectedWorkspacePackages(baseRevision, registry) {
     path => command("git", ["hash-object", path])
   );
 
-  const registeredPackages = registry.apps.map(app => app.package);
   const unconditionalGlobalInputs = new Set(["rust-toolchain", "rust-toolchain.toml"]);
   const changesGlobalInputs =
     changedPaths.some(path => unconditionalGlobalInputs.has(path) || path.startsWith(".cargo/")) ||
@@ -646,11 +693,9 @@ export function affectedWorkspacePackages(baseRevision, registry) {
         readFileSync(resolve(workspaceRoot, "Cargo.toml"), "utf8")
       ));
   if (changesGlobalInputs) {
-    return new Set(registeredPackages);
+    return { affected: new Set(registeredPackages), storeChanges };
   }
 
-  const workspaceMembers = new Set(metadata.workspace_members);
-  const workspacePackages = metadata.packages.filter(package_ => workspaceMembers.has(package_.id));
   const changedIdentities = new Set();
   const equivalentIdentities = new Set();
   const previousRegistry = JSON.parse(
@@ -669,10 +714,14 @@ export function affectedWorkspacePackages(baseRevision, registry) {
     );
   }
   for (const package_ of workspacePackages) {
+    if (!registered.has(package_.name)) continue;
     const directory = dirname(package_.manifest_path);
     const relativeDirectory = relative(workspaceRoot, directory).split(sep).join("/");
     const packageChanges = changedPaths.filter(
-      path => isInside(path, relativeDirectory) && !compatiblePaths.has(path)
+      path =>
+        isInside(path, relativeDirectory) &&
+        !compatiblePaths.has(path) &&
+        !isFilmingScript(path, relativeDirectory)
     );
     if (packageChanges.length === 0) continue;
     const relativeManifest = relative(workspaceRoot, package_.manifest_path).split(sep).join("/");
@@ -719,7 +768,14 @@ export function affectedWorkspacePackages(baseRevision, registry) {
   for (const package_ of equivalentConsumers) {
     if (!artifactEquivalence.unchangedPackages.has(package_)) affected.add(package_);
   }
-  return affected;
+  return {
+    affected,
+    storeChanges
+  };
+}
+
+export function affectedWorkspacePackages(baseRevision, registry) {
+  return analyzeAppReleaseInputs(baseRevision, registry).affected;
 }
 
 function argumentsFrom(argv) {
@@ -750,7 +806,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     const { values, mode } = argumentsFrom(process.argv.slice(2));
     const registry = readJson(resolve(values.get("--registry")), "app registry");
     const published = readJson(resolve(values.get("--published-catalog")), "published catalog");
-    const affected = affectedWorkspacePackages(values.get("--base"), registry);
+    const { affected, storeChanges } = analyzeAppReleaseInputs(values.get("--base"), registry);
     checkProtocolMinimums(registry, currentProtocolVersion());
     if (mode === "--list-packages") {
       console.log(JSON.stringify(packagesToBuild(registry, published, affected)));
@@ -758,6 +814,9 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
       console.log(releaseNeeded(registry, published, affected) ? "true" : "false");
     } else {
       checkEntries(registry, published, affected);
+      if (storeChanges.length > 0 && !releaseNeeded(registry, published, affected)) {
+        throw new Error(unpublishedStoreChangeReport("the app catalog", storeChanges));
+      }
       console.log("Every changed app package has a new version.");
     }
   } catch (error) {

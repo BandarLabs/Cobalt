@@ -1,0 +1,11 @@
+# Both pages of tiles and the way between them. No tile is opened: the launcher
+# hands the panel to another application to do that, and there is no other
+# application in this simulator to hand it to.
+wait-for Cobalt 1 of 2
+wait 1200
+tap More apps
+wait-for Cobalt 2 of 2
+wait 1400
+tap Previous
+wait-for Cobalt 1 of 2
+wait 1400

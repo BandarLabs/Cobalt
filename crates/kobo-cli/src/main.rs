@@ -63,6 +63,7 @@ const INSTALLED_PACKAGES: &[(&str, Option<&str>)] = &[
 const STORE_PACKAGES: &[&str] = &[
     "kobo-arxiv",
     "kobo-audiobook",
+    "kobo-backgammon",
     "kobo-brief",
     "kobo-chat",
     "kobo-gallery",
@@ -4747,12 +4748,24 @@ where
 }
 
 /// Drives a running simulator from a script, and brings the panel back as PNG.
+///
+/// With `--record` it also brings it back as a moving picture. That lives here
+/// rather than in `kobo record` because the division between the two is
+/// deliberate and documented: `drive` is the simulator and `record` is the
+/// device. `record` is a framebuffer reader -- it uploads the doctor, has the
+/// device write `/dev/fb0` into a file, and pulls that file home over SSH --
+/// and there is no framebuffer on this side to point it at. What there is, is
+/// a driver already holding a connection to the process doing the rendering,
+/// which is the only thing that knows when a screen has changed.
 fn drive_command(arguments: &[String]) -> Result<(), String> {
     let mut address = "127.0.0.1:8787".to_owned();
     let mut shots = PathBuf::from("target/kobo-shots");
     let mut script: Option<String> = None;
     let mut steps: Vec<String> = Vec::new();
     let mut ideal = false;
+    let mut record: Option<PathBuf> = None;
+    let mut fps = drive::DEFAULT_RECORD_FPS;
+    let mut ghosting = false;
     let mut index = 0;
     while index < arguments.len() {
         match arguments[index].as_str() {
@@ -4785,6 +4798,21 @@ fn drive_command(arguments: &[String]) -> Result<(), String> {
                 index += 1;
             }
             "--ideal" => ideal = true,
+            "--record" => {
+                record = Some(PathBuf::from(
+                    arguments.get(index + 1).ok_or("--record needs a folder")?,
+                ));
+                index += 1;
+            }
+            "--fps" => {
+                fps = arguments
+                    .get(index + 1)
+                    .ok_or("--fps needs a rate")?
+                    .parse()
+                    .map_err(|_| "--fps takes a whole number".to_owned())?;
+                index += 1;
+            }
+            "--ghosting" => ghosting = true,
             other => return Err(format!("unknown option '{other}'\n{DRIVE_USAGE}")),
         }
         index += 1;
@@ -4792,11 +4820,35 @@ fn drive_command(arguments: &[String]) -> Result<(), String> {
     if script.is_none() && steps.is_empty() {
         return Err(DRIVE_USAGE.to_owned());
     }
-    let mut driver = drive::Driver::new(&address, &shots).ideal(ideal);
-    if let Some(script) = script {
-        driver.run_script(&script)?;
+    // Before the simulator is touched, because the frames are only half of
+    // what `--record` was asked for and finding out at the end costs the whole
+    // run. `kobo record --device` is deliberately softer about this: there the
+    // numbered PNGs are the product and the video is a bonus.
+    if record.is_some() && !ffmpeg_is_available() {
+        return Err(FFMPEG_MISSING.to_owned());
     }
-    driver.run_script(&steps.join("\n"))?;
+    let recorder = record
+        .as_ref()
+        .map(|_| drive::Recorder::start(&address, fps, ghosting))
+        .transpose()?;
+
+    let mut driver = drive::Driver::new(&address, &shots).ideal(ideal);
+    let outcome = script
+        .map_or(Ok(()), |script| driver.run_script(&script))
+        .and_then(|()| driver.run_script(&steps.join("\n")));
+
+    // Written even when a step failed. A recording of the run that went wrong
+    // is the recording worth having, and throwing it away to report the
+    // failure a second later would be the wrong way round.
+    if let (Some(recorder), Some(directory)) = (recorder, record.as_ref()) {
+        match recorder.finish() {
+            Ok(recording) => write_recording(directory, &recording)?,
+            Err(error) if outcome.is_ok() => return Err(error),
+            Err(error) => eprintln!("warning: nothing was recorded: {error}"),
+        }
+    }
+    outcome?;
+
     println!(
         "drive: every step passed; screenshots in {}",
         shots.display()
@@ -5119,25 +5171,32 @@ fn write_recording(
     Ok(())
 }
 
-/// Turns the frames into an mp4, if ffmpeg is available.
+/// Whether ffmpeg can be run at all.
 ///
-/// The frames are not evenly spaced, because only the ones that changed were
-/// kept, so a concat list carrying each frame's real duration is used rather
-/// than a fixed rate. Otherwise a screen held for ten seconds would flash past
-/// in the same time as one held for a tenth of a second.
-fn write_recording_video(
-    directory: &Path,
-    frames: &[RecordedFrame],
-) -> Result<Option<PathBuf>, String> {
-    if std::process::Command::new("ffmpeg")
+/// Asked before a run rather than after it wherever the moving picture is the
+/// point of the run. Discovering that ffmpeg is missing at the end of a script
+/// that took a minute to drive is a minute nobody gets back.
+fn ffmpeg_is_available() -> bool {
+    std::process::Command::new("ffmpeg")
         .arg("-version")
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status()
-        .is_err()
-    {
-        return Ok(None);
-    }
+        .is_ok_and(|status| status.success())
+}
+
+/// What to say when it is not there.
+const FFMPEG_MISSING: &str = "ffmpeg is not on the path, and a recording is assembled with it.\n\
+                              install it with: brew install ffmpeg (macOS) \
+                              or apt install ffmpeg (Debian)";
+
+/// The concat list ffmpeg is fed, holding each frame and how long it was up.
+///
+/// The frames are not evenly spaced, because only the ones that changed were
+/// kept, so a list carrying each frame's real duration is used rather than a
+/// fixed rate. Otherwise a screen held for ten seconds would flash past in the
+/// same time as one held for a tenth of a second.
+fn concat_list(frames: &[RecordedFrame]) -> String {
     let mut list = String::new();
     for (index, frame) in frames.iter().enumerate() {
         let next = frames
@@ -5151,15 +5210,34 @@ fn write_recording_video(
     if let Some(index) = frames.len().checked_sub(1) {
         let _ = writeln!(list, "file 'frame-{index:04}.png'");
     }
+    list
+}
+
+/// Turns the frames into an mp4 and a looping GIF, if ffmpeg is available.
+///
+/// Two files because they are read in two places. The mp4 is what you scrub
+/// through when you are looking for the frame where it went wrong. The GIF is
+/// what goes in a README: a repository path in an `<img>` renders everywhere
+/// and a `<video>` element does not, and a demo that waits to be clicked is a
+/// demo nobody sees.
+fn write_recording_video(
+    directory: &Path,
+    frames: &[RecordedFrame],
+) -> Result<Option<PathBuf>, String> {
+    if !ffmpeg_is_available() {
+        return Ok(None);
+    }
     let list_path = directory.join("frames.txt");
-    fs::write(&list_path, list)
+    fs::write(&list_path, concat_list(frames))
         .map_err(|error| format!("write {}: {error}", list_path.display()))?;
     let video = directory.join("recording.mp4");
-    let status = std::process::Command::new("ffmpeg")
-        .args(["-y", "-f", "concat", "-safe", "0", "-i"])
+    let mut encode = std::process::Command::new("ffmpeg");
+    encode
+        .args(["-nostdin", "-y", "-loglevel", "error"])
+        .args(["-f", "concat", "-safe", "0", "-i"])
         .arg(&list_path)
-        // Even dimensions, because h264 refuses odd ones and 1072x1448 is only
-        // even by luck.
+        // Even dimensions, because h264 refuses odd ones and 1072x1448 is
+        // only even by luck.
         .args([
             "-vf",
             "pad=ceil(iw/2)*2:ceil(ih/2)*2",
@@ -5168,25 +5246,59 @@ fn write_recording_video(
             "-r",
             "10",
         ])
+        .arg(&video);
+    run_ffmpeg(encode)?;
+    // Built from the mp4 rather than from the frames again, the same way
+    // `cut-tour.py` builds the one on the front page, so the two are the same
+    // picture at the same width with the same palette.
+    let loop_path = directory.join("recording.gif");
+    let mut looping = std::process::Command::new("ffmpeg");
+    looping
+        .args(["-nostdin", "-y", "-loglevel", "error", "-i"])
         .arg(&video)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map_err(|error| format!("run ffmpeg: {error}"))?;
-    if !status.success() {
-        return Err("ffmpeg refused the frames".to_owned());
-    }
+        .args([
+            "-vf",
+            "scale=600:-1:flags=lanczos,fps=12,split[a][b];\
+             [a]palettegen=max_colors=64[p];\
+             [b][p]paletteuse=dither=bayer:bayer_scale=3",
+        ])
+        .arg(&loop_path);
+    run_ffmpeg(looping)?;
+    println!("loop {}", loop_path.display());
     Ok(Some(video))
+}
+
+fn run_ffmpeg(command: std::process::Command) -> Result<(), String> {
+    let mut command = command;
+    let output = command
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .output()
+        .map_err(|error| format!("run ffmpeg: {error}"))?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+    if stderr.is_empty() {
+        Err("ffmpeg refused the frames".to_owned())
+    } else {
+        Err(format!("ffmpeg refused the frames: {stderr}"))
+    }
 }
 
 const SHOT_USAGE: &str =
     "usage: kobo shot [--device HOST | --address host:port] [--out PATH] [--ideal]";
 
-const DRIVE_USAGE: &str = "usage: kobo drive [--address host:port] [--shots DIR] [--ideal] \
-                           (--script PATH | --step 'tap Search' ...)\n\
+const DRIVE_USAGE: &str = "usage: kobo drive [--address host:port] [--shots DIR] [--ideal]\n\
+                           \u{20}                 [--record DIR [--fps N] [--ghosting]]\n\
+                           \u{20}                 (--script PATH | --step 'tap Search' ...)\n\
                            steps: tap LABEL | tap-at X,Y | type TEXT | shot NAME | expect TEXT\n\
                            \u{20}       expect-missing TEXT | wait-for TEXT | clean | dump\n\
-                           \u{20}       lifecycle foreground|background | scenario NAME | wait MS";
+                           \u{20}       lifecycle foreground|background | scenario NAME | wait MS\n\
+                           --record films the panel while the script runs and writes numbered\n\
+                           \u{20} PNGs, timings.txt, recording.mp4 and recording.gif into DIR.\n\
+                           \u{20} Frames are residue-free unless --ghosting asks for the real\n\
+                           \u{20} e-ink refresh; --ideal governs the `shot` steps as before.";
 
 /// Where the runtime reads named secrets from, mirrored from `kobod`.
 const DEVICE_SECRETS_DIRECTORY: &str = "/mnt/onboard/.adds/cobalt/secrets";
@@ -5778,6 +5890,7 @@ fn print_help() {
            new <name>             Create a Rust application\n\
            dev [--builtin] [address]  Run this SDK app in the browser simulator\n\
            drive --script PATH    Drive a running simulator and save PNG screenshots\n\
+           drive --script PATH --record DIR  ... and film it, no hardware needed\n\
            shot [--device HOST]   Save a PNG of the panel (device or simulator)\n\
            record --device IP [--seconds N] [--fps F] [--out DIR]  Film the panel, read-only\n\
            present <app> --device IP [--seconds N]  Run one app on the panel\n\
@@ -6114,6 +6227,38 @@ mod tests {
     fn something_that_is_not_a_recording_is_refused() {
         assert!(super::decode_recording(b"not a recording at all").is_err());
         assert!(super::decode_recording(&recording(2, 3, &[])).is_err());
+    }
+
+    /// The frames are not evenly spaced, because only the ones that moved were
+    /// kept. Handing them to ffmpeg at a fixed rate would play a screen that
+    /// was up for ten seconds in the same time as one that was up for a tenth
+    /// of one, which is a recording of a run that never happened.
+    #[test]
+    fn each_frame_is_played_for_as_long_as_it_was_really_on_the_panel() {
+        let raw = recording(2, 3, &[(0, 0xff), (2_000, 0x40), (2_150, 0x10)]);
+        let (_, _, frames) = super::decode_recording(&raw).expect("decode");
+        assert_eq!(
+            super::concat_list(&frames),
+            "file 'frame-0000.png'\nduration 2.000\n\
+             file 'frame-0001.png'\nduration 0.150\n\
+             file 'frame-0002.png'\nduration 1.000\n\
+             file 'frame-0002.png'\n",
+            "the last frame is named twice because concat ignores the last duration"
+        );
+    }
+
+    /// A frame that was replaced within a tenth of a second is still a frame
+    /// somebody has to be able to see. Played for its real duration it is one
+    /// or two hundredths of a second, which at any sane frame rate is a frame
+    /// the encoder drops entirely.
+    #[test]
+    fn a_screen_that_barely_appeared_is_still_held_long_enough_to_see() {
+        let raw = recording(2, 3, &[(0, 0xff), (20, 0x40)]);
+        let (_, _, frames) = super::decode_recording(&raw).expect("decode");
+        assert!(
+            super::concat_list(&frames).contains("duration 0.100"),
+            "a frame was given less time than the encoder will keep"
+        );
     }
 
     use super::package;
