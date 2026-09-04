@@ -991,6 +991,11 @@ pub enum CellStyle {
     /// finger's width of paper between them are already separate, and putting
     /// each on a grey slab turns a quiet row into four boxes.
     Plain,
+    /// A recessed hardware pad: rounded square, thick ink bezel, paper face.
+    ///
+    /// Fifteen of these in three rows of five is a command deck. Empty pads
+    /// stay as blank keys so the grid does not collapse into a list.
+    Pad,
 }
 
 /// Whether a control can currently be activated.
@@ -6202,8 +6207,11 @@ fn layout_node(
                 && columns == 12
                 && cells.len() == 24
                 && cells.iter().all(|cell| cell.label.starts_with("Point "));
+            let pad_deck = *square && columns == 5 && cells.len() == 15;
             let (x, width, gutter) = if backgammon_board {
                 (0, metrics.width, 0)
+            } else if pad_deck {
+                (x, width, metrics.space(Space::Small))
             } else {
                 (x, width, metrics.space(Space::Tight))
             };
@@ -6220,6 +6228,8 @@ fn layout_node(
             // not a keyboard, and it is drawn as the pictures alone.
             let (cell_height, style) = if backgammon_board {
                 (cell_width.saturating_mul(3), CellStyle::BackgammonTop)
+            } else if pad_deck {
+                (cell_width, CellStyle::Pad)
             } else if *square {
                 (cell_width, CellStyle::Board)
             } else if cells.iter().all(|cell| cell.glyph.is_some()) {
@@ -6331,6 +6341,35 @@ fn layout_node(
                     }
                 } else {
                     match cell.glyph {
+                        Some(glyph) if style == CellStyle::Pad => {
+                            let inset = metrics.tenth_mm(PAD_BORDER_TENTH_MM);
+                            let mark = min(cell_height, cell_width) * 2 / 5;
+                            layout.nodes.push(LayoutNode {
+                                id: *id,
+                                rect: Rect {
+                                    x: rect.x.saturating_add((cell_width - mark).max(0) / 2),
+                                    y: rect.y.saturating_add(inset + cell_height / 8),
+                                    width: mark,
+                                    height: mark,
+                                },
+                                kind: LayoutKind::InlineGlyph(glyph),
+                                text_lines: vec![cell.label.clone()],
+                            });
+                            if !cell.label.is_empty() {
+                                let label_top = rect.y + cell_height * 3 / 5;
+                                layout.nodes.push(LayoutNode {
+                                    id: *id,
+                                    rect: Rect {
+                                        x: rect.x + inset,
+                                        y: label_top,
+                                        width: (cell_width - inset * 2).max(1),
+                                        height: (rect.y + cell_height - inset - label_top).max(1),
+                                    },
+                                    kind: LayoutKind::CellLabel,
+                                    text_lines: vec![cell.label.clone()],
+                                });
+                            }
+                        }
                         Some(glyph) => {
                             let mark = min(cell_height, cell_width) * 3 / 5;
                             layout.nodes.push(LayoutNode {
@@ -8857,6 +8896,12 @@ fn force_grapheme_break(
 /// looked like in 1996, and it is most of why these controls read as
 /// wireframes rather than as buttons.
 pub const BUTTON_RADIUS_TENTH_MM: i32 = 10;
+/// Corner radius of a command-deck pad. Larger than a keyboard key so a
+/// fifteen-key grid reads as recessed hardware rather than a ruled board.
+pub const PAD_RADIUS_TENTH_MM: i32 = 28;
+/// Bezel of a command-deck pad, in tenths of a millimetre. Heavier than a
+/// rule so the key sits in a dark frame the way a Stream Deck key does.
+pub const PAD_BORDER_TENTH_MM: i32 = 12;
 
 /// How far a press mark sits inside the control it acknowledges, in tenths of
 /// a millimetre. Enough to clear a row separator and the screen margin, not so
@@ -10937,6 +10982,18 @@ fn render_all_with_selected_font(
                 tone::SURFACE,
                 clip,
             ),
+            LayoutKind::Cell(_, CellStyle::Pad) => {
+                let radius = metrics.tenth_mm(PAD_RADIUS_TENTH_MM);
+                fill_rounded_clipped(surface, node.rect, radius, tone::PAPER, clip);
+                stroke_rounded_clipped(
+                    surface,
+                    node.rect,
+                    radius,
+                    tone::INK,
+                    metrics.tenth_mm(PAD_BORDER_TENTH_MM),
+                    clip,
+                );
+            }
             LayoutKind::CellLabel => {
                 // A short label in a tall cell is a mark rather than a word:
                 // an X, an O or a letter key is the content of the cell and

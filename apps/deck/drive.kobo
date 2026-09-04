@@ -1,3 +1,10 @@
-# Clean Clara BW capture of Deck's pairing state.
+# Configured 3×5 command deck from `kobo deck set` / `kobo deck push --sim`.
+wait-for Todo
 expect Deck
-shot deck
+expect Todo
+expect Example
+expect-missing Pair with your computer
+expect-missing Opening
+expect-missing Refresh
+clean
+shot grid
