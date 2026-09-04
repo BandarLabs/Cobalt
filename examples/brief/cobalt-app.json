@@ -1,1 +1,1 @@
-{"id":"brief","display_name":"Daily Brief","short_label":"Daily Brief","summary":"Build a daily news brief in the background while you use other apps.","version":"1.0.6","glyph":"clock","capabilities":["network"]}
+{"id":"brief","display_name":"Daily Brief","short_label":"Daily Brief","summary":"Build a daily news brief in the background while you use other apps.","version":"1.0.7","glyph":"clock","capabilities":["network"],"release_notes":"Update for Cobalt 0.3.5 and its protocol 12 app runtime."}
