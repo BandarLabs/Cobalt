@@ -20,6 +20,7 @@ kobo-profile = { path = "../kobo-profile" }
 kobo-protocol = { path = "../kobo-protocol" }
 kobod = { path = "../kobod" }
 ring = "0.17"
+kobo-wifi-trace = { path = "../kobo-wifi-trace" }
 
 [features]
 default = []
