@@ -15,12 +15,19 @@ concurrency:
 
 jobs:
   prepare:
-    if: github.ref == 'refs/heads/beta'
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
       publish: ${{ steps.release.outputs.publish }}
     steps:
+      # Every job used to be gated on the branch, so dispatching this workflow
+      # anywhere else skipped all of them and reported success.
+      - name: Refuse to publish the beta channel from another branch
+        if: github.ref != 'refs/heads/beta'
+        run: |
+          echo "This workflow publishes the beta channel and only runs on refs/heads/beta." >&2
+          echo "It was started on ${GITHUB_REF}; re-run it with the beta branch selected." >&2
+          exit 1
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
@@ -36,6 +43,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
+          set -o pipefail
           tag="beta-v${VERSION}"
           tag_count="$(git ls-remote --tags origin "refs/tags/$tag" | wc -l)"
           release_count="$(gh release list --limit 100 --json tagName \
@@ -46,7 +54,10 @@ jobs:
           fi
           if [ "$tag_count" -eq 1 ]; then
             release="$RUNNER_TEMP/release.json"
-            gh release view "$tag" --json tagName,isDraft,isPrerelease,assets,targetCommitish \
+            # The release is created against an existing tag, so GitHub fills
+            # targetCommitish with the default branch and it says nothing about
+            # what was published. The tag ref below is the authority.
+            gh release view "$tag" --json tagName,isDraft,isPrerelease,assets \
               > "$release"
             node - "$release" "$tag" "$VERSION" <<'NODE'
           const fs = require("fs");
@@ -142,6 +153,14 @@ jobs:
               test "$(sha256sum "$name" | cut -d' ' -f1)" = "$checksum"
             done < cobalt-host-manifest.txt
             cd "$GITHUB_WORKSPACE"
+            # The tag being an ancestor of this commit only proves beta has not
+            # rewritten history. Beta can still have moved on with packaged
+            # changes the published tag does not carry, and skipping the build
+            # then reports success while no reader receives them.
+            changed="$RUNNER_TEMP/changed-since-$tag"
+            git diff --name-only --diff-filter=ACDMRT "$tag_sha" "$GITHUB_SHA" > "$changed"
+            node tools/device-package-changes.mjs --tag "$tag" --version "$VERSION" \
+              < "$changed"
             echo "publish=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi

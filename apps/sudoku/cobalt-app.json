@@ -3,7 +3,7 @@
   "display_name": "Sudoku",
   "short_label": "Sudoku",
   "summary": "Play touch-first Sudoku designed for an e-ink screen.",
-  "version": "1.0.5",
+  "version": "1.0.7",
   "glyph": "grid",
   "capabilities": []
 }

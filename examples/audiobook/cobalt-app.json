@@ -1,1 +1,1 @@
-{"id":"audiobook","display_name":"Audiobook Studio","short_label":"Audiobooks","summary":"Turn a topic into an original narrated audiobook and listen on your Kobo.","version":"1.0.4","glyph":"headphones","capabilities":["network","audio","bluetooth-audio","bluetooth-control"]}
+{"id":"audiobook","display_name":"Audiobook Studio","short_label":"Audiobooks","summary":"Turn a topic into an original narrated audiobook and listen on your Kobo.","version":"1.0.6","glyph":"headphones","capabilities":["network","audio","bluetooth-audio","bluetooth-control"]}

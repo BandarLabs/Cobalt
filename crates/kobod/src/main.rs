@@ -64,6 +64,7 @@ mod autoupdate;
 mod blackbox;
 #[cfg(feature = "device-write")]
 mod device;
+mod frame;
 mod update;
 
 pub(crate) use kobod::app_store;

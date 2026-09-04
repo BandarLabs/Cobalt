@@ -11,7 +11,7 @@ test("pull request and build automation use generated contributor manifests", ()
   assert.match(ci, /collect-app-registry\.mjs --out generated-app-registry\.json/);
   assert.match(apps, /app-list --registry generated-app-registry\.json/);
   assert.doesNotMatch(apps, /--registry apps\/catalog\.json/);
-  assert.match(ci, /else\n            target_branch=beta/);
+  assert.match(ci, /app-catalog-channel\.mjs/);
 });
 
 test("only the final Beta publication job can write repository contents", () => {
