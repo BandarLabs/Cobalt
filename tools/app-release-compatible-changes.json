@@ -7,8 +7,8 @@
       "files": [
         {
           "path": "Cargo.lock",
-          "base_blob": "98e86504890e59da1755181ad38d7ffaa86c635a",
-          "compatible_blob": "9a3ed4bbebc2a631a00380f97a933edf72e17a0d"
+          "base_blob": "0ddd4fc90b82c2de367775f2bbb8bc8fb17a4a4a",
+          "compatible_blob": "8a92c40a84c7913e70161299851b907bf408a90c"
         },
         {
           "path": "crates/kobo-abi/src/lib.rs",
@@ -17,7 +17,7 @@
         },
         {
           "path": "crates/kobo-policy/src/credentials.rs",
-          "base_blob": "229061a856c96fcfbecbd264f65107f0b9d5293c",
+          "base_blob": "8cfe06762b6a039c09c1991e9ad374f3dcbb50a3",
           "compatible_blob": "83feb72c618488503fbc14cc65cd8c76b753d7d6"
         },
         {
@@ -72,7 +72,7 @@
         },
         {
           "path": "crates/kobo-ui/src/lib.rs",
-          "base_blob": "b423c372440c61e785db9dd0128eac22343cb9f8",
+          "base_blob": "ce538c70b5779ee482e2b35aa83191eb06b04b4d",
           "compatible_blob": "0dd8e7e99b2eb081d958053082ece66773c5b6a3"
         }
       ]
