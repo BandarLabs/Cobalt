@@ -197,7 +197,23 @@ jobs:
           elif printf '%s\n' "$output" | grep -Eq \
             'error loading advisory database|expected RUSTSEC-[0-9-]+ to be in'; then
             printf '%s\n' "$output" >&2
-            echo "Current advisory database is malformed; using the last verified snapshot." >&2
+            # Auditing the pinned snapshot is blind to every advisory published
+            # after the pin, and it reported that as a clean audit in a line of
+            # stderr nobody reads. Say so where a run is read from, and refuse
+            # unless somebody has accepted the blind spot with an expiry date.
+            snapshot="$(git -C advisory-db-fallback rev-parse HEAD)"
+            echo "::warning title=Advisory database fallback::The current RustSec database failed to load. This run can only audit the snapshot pinned at ${snapshot}, which cannot see any advisory published after it."
+            {
+              echo "### Advisory database fallback"
+              echo
+              echo "The current RustSec advisory database failed to load."
+              echo "This run can only audit the snapshot pinned at \`${snapshot}\`,"
+              echo "which cannot see any advisory published after it."
+            } >> "$GITHUB_STEP_SUMMARY"
+            node tools/advisory-db-fallback.mjs \
+              --record tools/advisory-db-fallback.json \
+              --snapshot "$snapshot" \
+              --today "$(date -u +%F)"
             cargo audit --db advisory-db-fallback --no-fetch
           else
             printf '%s\n' "$output" >&2
