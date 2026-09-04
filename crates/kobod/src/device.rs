@@ -1692,13 +1692,27 @@ fn host_applications(
                             TouchEvent::Down { x, y } => {
                                 if let (Ok(x), Ok(y)) = (i32::try_from(x), i32::try_from(y)) {
                                     landed = Some((Instant::now(), x, y));
-                                    if orientation == kobo_ui::Orientation::Landscape {
-                                        continue;
-                                    }
-                                    let layout =
-                                        current.layout_with(&metrics_for(current), &chrome);
-                                    if let Some(rect) = layout.pressed_control(x, y) {
-                                        let metrics = metrics_for(current);
+                                    let physical = crate::device_metrics();
+                                    let (logical_x, logical_y) = kobo_ui::logical_point_with_turn(
+                                        orientation,
+                                        landscape_turn,
+                                        physical.width,
+                                        physical.height,
+                                        x,
+                                        y,
+                                    );
+                                    let metrics = metrics_for(current);
+                                    let logical_metrics = metrics.oriented(orientation);
+                                    let layout = current.layout_with(&logical_metrics, &chrome);
+                                    if let Some(logical_rect) =
+                                        layout.pressed_control(logical_x, logical_y)
+                                    {
+                                        let rect = physical_feedback_rect(
+                                            logical_rect,
+                                            orientation,
+                                            landscape_turn,
+                                            &metrics,
+                                        );
                                         // An exact-damage feedback frame does
                                         // not carry pixels outside its own
                                         // rectangle, so an older deferred
@@ -1722,8 +1736,11 @@ fn host_applications(
                                             &surface,
                                             rect,
                                         )?;
-                                        pressed =
-                                            Some((rect, metrics, feedback_kind(&layout, rect)));
+                                        pressed = Some((
+                                            rect,
+                                            metrics,
+                                            feedback_kind(&layout, logical_rect),
+                                        ));
                                     }
                                 }
                             }
@@ -3281,6 +3298,35 @@ enum FeedbackKind {
     KeyboardKey,
 }
 
+fn physical_feedback_rect(
+    rect: kobo_ui::Rect,
+    orientation: kobo_ui::Orientation,
+    turn: kobo_ui::LandscapeTurn,
+    physical: &kobo_ui::DisplayMetrics,
+) -> kobo_ui::Rect {
+    if orientation == kobo_ui::Orientation::Portrait {
+        return rect;
+    }
+    match turn {
+        kobo_ui::LandscapeTurn::Clockwise => kobo_ui::Rect {
+            x: physical
+                .width
+                .saturating_sub(rect.y.saturating_add(rect.height)),
+            y: rect.x,
+            width: rect.height,
+            height: rect.width,
+        },
+        kobo_ui::LandscapeTurn::CounterClockwise => kobo_ui::Rect {
+            x: rect.y,
+            y: physical
+                .height
+                .saturating_sub(rect.x.saturating_add(rect.width)),
+            width: rect.height,
+            height: rect.width,
+        },
+    }
+}
+
 fn feedback_kind(layout: &Layout, rect: kobo_ui::Rect) -> FeedbackKind {
     if layout
         .nodes
@@ -4243,6 +4289,45 @@ mod tests {
             action_for(touch, Some(&covered), &chrome, true),
             Some(ActionId(13)),
             "the modal leaked the page hold"
+        );
+    }
+
+    #[test]
+    fn landscape_feedback_rect_matches_the_rotated_control() {
+        let physical = crate::device_metrics();
+        let logical = kobo_ui::Rect {
+            x: 10,
+            y: 20,
+            width: 30,
+            height: 40,
+        };
+        assert_eq!(
+            super::physical_feedback_rect(
+                logical,
+                kobo_ui::Orientation::Landscape,
+                kobo_ui::LandscapeTurn::Clockwise,
+                &physical,
+            ),
+            kobo_ui::Rect {
+                x: physical.width - 60,
+                y: 10,
+                width: 40,
+                height: 30,
+            }
+        );
+        assert_eq!(
+            super::physical_feedback_rect(
+                logical,
+                kobo_ui::Orientation::Landscape,
+                kobo_ui::LandscapeTurn::CounterClockwise,
+                &physical,
+            ),
+            kobo_ui::Rect {
+                x: 20,
+                y: physical.height - 40,
+                width: 40,
+                height: 30,
+            }
         );
     }
 
