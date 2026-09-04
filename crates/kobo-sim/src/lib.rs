@@ -1007,6 +1007,7 @@ struct AppState {
     config: SimulationConfig,
     app_name: String,
     screen: Screen,
+    orientation: kobo_ui::Orientation,
     /// How many screens the application has painted since it started.
     ///
     /// A driver posts a tap to this process and the application answers it in
@@ -1047,6 +1048,7 @@ impl AppState {
             config,
             app_name: String::new(),
             screen: Screen::new(0, Vec::new()),
+            orientation: kobo_ui::Orientation::Portrait,
             paints: 0,
             logs: Vec::new(),
             pictures: kobo_ui::PictureCache::default(),
@@ -1498,13 +1500,14 @@ impl AppSession {
         let config = state.config;
         let chrome = simulated_chrome(&state.app_name, &state.screen);
         let mut surface = Surface::new(config.pose.width() as usize, config.pose.height() as usize);
-        kobo_ui::render_all(
+        kobo_ui::render_oriented(
             &state.screen,
             &config.metrics(),
             &chrome,
             state.active_pictures(),
             &mut surface,
             None,
+            state.orientation,
         );
         state.panel.update(&surface);
         state.panel.frame(ideal).to_vec()
@@ -2408,6 +2411,12 @@ fn read_app_messages(
                 let chrome = simulated_chrome(name, &screen);
                 state.screen = kobo_ui::ensure_way_back(screen, &chrome, name);
                 state.paints = state.paints.saturating_add(1);
+            }
+            Message::SetOrientation(orientation) => {
+                state
+                    .lock()
+                    .map_err(|_| io::Error::other("app state lock poisoned"))?
+                    .orientation = orientation;
             }
             // The simulator hosts exactly one application, so a launch is
             // reported rather than performed. Pretending it worked would hide
