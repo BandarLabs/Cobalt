@@ -8,7 +8,7 @@
         {
           "path": "Cargo.lock",
           "base_blob": "f3f8fd06292b26c5ffab6abf944b73a4e8b31399",
-          "compatible_blob": "1ec4bb19835885d851df5a45eafe56b24df7d56c"
+          "compatible_blob": "67235be8751e8f5d18aacb4bdaec4f156c1ddd41"
         },
         {
           "path": "apps/backgammon/Cargo.toml",
