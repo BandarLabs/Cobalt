@@ -354,33 +354,19 @@ already in the supplicant. That is on-demand join, not a second owner of
 the interface. It does not survive handing the panel back.
 
 Stopping and restarting the stock reader reliably drops the Wi-Fi connection.
-The reader owns the radio and drives it inside `libnickel`, and the restarted
-one begins from its own "not connected" state; there is no D-Bus service, no
-script and no supported way to ask it to reconnect. So every session costs the
-connection, and the reader picks it up again by itself.
+The reader owns the radio inside `libnickel`, while the firmware supplicant,
+DHCP client and D-Bus adapter are separate processes. The current beta
+handoff captures those exact processes, preserves the existing automatic
+reconnect path while Cobalt owns the panel, removes only Cobalt-started owners
+before Nickel returns, then waits for Nickel's association and default route
+to remain healthy for ten seconds.
 
-The runtime does **not** put the link back at session end, and there is no
-option to make it.
-It used to be able to, by restarting the supplicant and DHCP client it had
-recorded. Those daemons attach to `wlan0`; the restarted reader drives the same
-radio from inside libnickel and cannot be told what we started behind it; and
-two owners of one radio leaves the reader's own network panel unable to scan at
-all: not merely disconnected, but unable to see a network it has known for
-months.
-
-That was known and the restore was kept anyway, behind an environment variable,
-as a convenience for working on a device over Wi-Fi where losing the link costs
-a reboot. It was removed after it erased a device. The reader came up owning a
-radio it had not configured, never reached its first watchdog ping, and the
-freeze watchdog was armed against it regardless, which is an SoC reset every
-ten seconds with nothing synced, until one landed inside a write to the library
-database and the device came up asking for a language.
-
-Both links in that chain are now cut. The watchdog is armed only on evidence
-that something is feeding it (see `resume_once_fed`), and the network is simply
-never restored. A developer working over Wi-Fi loses the link when the session
-ends and reconnects the reader's own way, or reboots. That is a worse afternoon
-and a better trade.
+That immediate gate is not evidence that the handoff stays healthy minutes
+later. For the N365 investigation, the owner-attended
+[`KOBO_WIFI_HANDOFF_TRACE`](WIFI_HANDOFF_TRACE.md) mode records the process and
+route generations through a ten-minute soak without adding network lifecycle
+operations. It is a diagnostic harness, not a fix. Do not toggle Wi-Fi until
+its passive soak has completed.
 
 ### The three watchdogs
 
