@@ -1271,9 +1271,16 @@ mod tests {
     #[test]
     fn matrix_covers_the_union_of_platform_and_store_apps() {
         let packages = packages();
-        assert_eq!(packages.len(), 20);
+        let expected = super::INSTALLED_PACKAGES
+            .iter()
+            .map(|(package, _)| *package)
+            .filter(|package| *package != "kobod")
+            .chain(super::STORE_PACKAGES.iter().copied())
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(packages, expected.into_iter().collect::<Vec<_>>());
         assert!(packages.contains(&"kobo-launcher"));
         assert!(packages.contains(&"kobo-store"));
+        assert!(packages.contains(&"kobo-wifi-trace"));
         assert!(packages.contains(&"kobo-backgammon"));
         assert!(!packages.contains(&"kobod"));
     }

@@ -7252,6 +7252,11 @@ mod tests {
         assert!(!valid_device_host(""));
         assert!(!valid_device_host("reader;reboot"));
         assert!(!valid_device_host("reader name"));
+        assert!(super::workspace_doctor_binary()
+            .ends_with("armv7-unknown-linux-musleabihf/release/kobo-doctor"));
+        #[cfg(feature = "device-write")]
+        assert!(super::workspace_smoke_binary()
+            .ends_with("armv7-unknown-linux-musleabihf/release/kobo-smoke"));
     }
 
     #[test]
