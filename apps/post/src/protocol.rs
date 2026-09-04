@@ -20,22 +20,16 @@ pub fn inbox(gateway: &str) -> Task {
 pub fn reply(gateway: &str, letter: &str, body: &str) -> Task {
     Task::Post {
         url: endpoint(gateway, "/replies"),
-        body: format!(
-            r#"{{"letter_id":"{}","body":"{}"}}"#,
-            escape(letter),
-            escape(body)
-        ),
+        body: kobo_json::ObjectBuilder::new()
+            .set("letter_id", letter)
+            .set("body", body)
+            .build()
+            .to_json(),
         content_type: "application/json".to_owned(),
         credential: Some(Credential::bearer(SECRET)),
         headers: Vec::new(),
         max_bytes: 4096,
     }
-}
-fn escape(value: &str) -> String {
-    value
-        .replace('\\', "\\\\")
-        .replace('"', "\\\"")
-        .replace('\n', "\\n")
 }
 pub fn letters(bytes: &[u8]) -> Vec<(String, String, String)> {
     let Ok(text) = std::str::from_utf8(bytes) else {

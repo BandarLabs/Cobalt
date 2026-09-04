@@ -360,7 +360,11 @@ mod tests {
             .heading("Why the Borrow Checker Exists")
             .secondary("example.com")
             .text("ownership is not optional")
-            .action_bar([("archive", "Archive"), ("star", "Star"), ("delete", "Delete")])
+            .action_bar([
+                ("archive", "Archive"),
+                ("star", "Star"),
+                ("delete", "Delete"),
+            ])
             .build();
         let loading = ScreenBuilder::new("readlater")
             .top_bar("Read Later")

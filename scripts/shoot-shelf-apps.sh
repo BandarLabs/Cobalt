@@ -3,9 +3,10 @@
 set -eu
 
 ROOT="$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)"
-KOBO="${CARGO_TARGET_DIR:-/private/tmp/cobalt-beta-shelf-target}/debug/kobo"
-SHOTS="${SHOTS:-/tmp/cobalt-app-shots}"
-export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/private/tmp/cobalt-beta-shelf-target}"
+TMP="${TMPDIR:-/tmp}"
+KOBO="${CARGO_TARGET_DIR:-$TMP/cobalt-beta-shelf-target}/debug/kobo"
+SHOTS="${SHOTS:-$TMP/cobalt-app-shots}"
+export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$TMP/cobalt-beta-shelf-target}"
 
 if [ ! -x "$KOBO" ]; then
   echo "missing $KOBO; build kobo-cli first" >&2

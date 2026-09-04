@@ -1319,7 +1319,7 @@ book partition and run from there.
 this will not connect. **Cobalt does not install an SSH server and does not
 need one to run.** SSH is only how a developer's machine reaches a device.
 
-#The default simulator profile is the 1072x1448 Clara BW. Set
+The default simulator profile is the 1072x1448 Clara BW. Set
 `KOBO_SIM_PROFILE` to a supported profile id to verify another panel:
 
 ```sh

@@ -346,7 +346,8 @@ mod tests {
     #[test]
     fn main_dispatches_to_nonograms_command() {
         super::super::run(&["nonograms".to_owned(), "--help".to_owned()]).expect("help");
-        let error = super::super::run(&["nonograms".to_owned(), "look".to_owned()]).expect_err("usage");
+        let error =
+            super::super::run(&["nonograms".to_owned(), "look".to_owned()]).expect_err("usage");
         assert!(error.starts_with("usage: kobo nonograms push"));
     }
 

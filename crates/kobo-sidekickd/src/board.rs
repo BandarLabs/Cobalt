@@ -87,7 +87,7 @@ impl Asking {
 
     #[must_use]
     pub fn in_session(mut self, session: &str) -> Self {
-        session.clone_into(&mut self.session);
+        self.session = session.to_owned();
         self
     }
 
