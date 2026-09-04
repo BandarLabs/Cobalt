@@ -530,6 +530,20 @@ export function lockfileOnlyAddsPackages(previousSource, currentSource) {
   return true;
 }
 
+// Given an explicit change list, decide whether the catalog must move.
+// Platform-only paths (crates/, Cargo.toml, Cargo.lock, CI, docs) produce an
+// empty affected set. The cargo walk that names individual Store packages is
+// reached only when a Store catalog input actually changed.
+export function storeImpactOfChangedPaths(changedPaths, packageDirectories, registeredPackages) {
+  const storeDirectories = storeWatchDirectories(packageDirectories, registeredPackages);
+  const storeChanges = storeCatalogChanges(changedPaths, storeDirectories);
+  return {
+    storeChanges,
+    catalogQuiet: storeChanges.length === 0,
+    affected: storeChanges.length === 0 ? new Set() : null
+  };
+}
+
 export function analyzeAppReleaseInputs(baseRevision, registry) {
   const metadata = JSON.parse(command("cargo", ["metadata", "--format-version", "1", "--locked"]));
   const workspaceRoot = resolve(metadata.workspace_root);
@@ -548,15 +562,14 @@ export function analyzeAppReleaseInputs(baseRevision, registry) {
       relative(workspaceRoot, dirname(package_.manifest_path)).split(sep).join("/")
     ])
   );
-  const storeDirectories = storeWatchDirectories(packageDirectories, registeredPackages);
-  const storeChanges = storeCatalogChanges(changedPaths, storeDirectories);
-  const empty = { affected: new Set(), storeChanges };
+  const impact = storeImpactOfChangedPaths(changedPaths, packageDirectories, registeredPackages);
+  const storeChanges = impact.storeChanges;
   // A platform-only push must not force every Store app to bump. Device-package
   // inputs (crates/, Cargo.toml, Cargo.lock, the toolchain pin) reach readers
   // through beta-vX.Y.Z. The next catalog publication of an actually edited
   // app compiles against whatever the platform then is.
-  if (storeChanges.length === 0) {
-    return empty;
+  if (impact.catalogQuiet) {
+    return { affected: impact.affected, storeChanges };
   }
 
   const compatibleManifest = readJson(
