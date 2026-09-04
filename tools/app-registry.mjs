@@ -4,6 +4,8 @@ import { fileURLToPath } from "node:url";
 import { validatedSetup } from "./app-page-setup.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const MAX_VERSION_BYTES = 64;
+const MAX_U64 = (1n << 64n) - 1n;
 const APP_FIELDS = new Set([
   "id",
   "display_name",
@@ -11,6 +13,7 @@ const APP_FIELDS = new Set([
   "summary",
   "version",
   "release_notes",
+  "minimum_cobalt_version",
   "glyph",
   "capabilities",
   "setup"
@@ -24,10 +27,20 @@ function object(value, label) {
 }
 
 function versionParts(value, label) {
-  if (typeof value !== "string" || !/^\d+\.\d+\.\d+$/.test(value)) {
+  if (
+    typeof value !== "string" ||
+    value.length > MAX_VERSION_BYTES ||
+    !/^\d+\.\d+\.\d+$/.test(value)
+  ) {
     throw new Error(`${label} must be a numeric MAJOR.MINOR.PATCH version`);
   }
-  return value.split(".").map(Number);
+  return value.split(".").map(part => {
+    const number = BigInt(part);
+    if (number > MAX_U64) {
+      throw new Error(`${label} components must fit in an unsigned 64-bit integer`);
+    }
+    return number;
+  });
 }
 
 function laterVersion(left, right) {
@@ -86,7 +99,7 @@ export function normalizeContribution(value, directoryName) {
   for (const field of Object.keys(app)) {
     if (!APP_FIELDS.has(field)) {
       throw new Error(
-        `unknown field '${field}' in ${directoryName}/cobalt-app.json; package and minimum Cobalt are derived`
+        `unknown field '${field}' in ${directoryName}/cobalt-app.json; package is derived`
       );
     }
   }
@@ -122,7 +135,11 @@ export function normalizeContribution(value, directoryName) {
     throw new Error(`${app.id} release_notes must be 12 to 240 meaningful characters`);
   }
   validatedSetup(app);
-  const minimum_cobalt_version = deriveMinimumCobalt(app.capabilities);
+  const derivedMinimum = deriveMinimumCobalt(app.capabilities);
+  const minimum_cobalt_version =
+    app.minimum_cobalt_version === undefined
+      ? derivedMinimum
+      : laterVersion(derivedMinimum, app.minimum_cobalt_version);
   return {
     package: `kobo-${app.id}`,
     id: app.id,

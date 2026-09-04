@@ -27,10 +27,11 @@ The only Store metadata file is `apps/<app-id>/cobalt-app.json`:
 }
 ```
 
-`package` is derived as `kobo-<id>`. `minimum_cobalt_version` is derived from
-the current SDK protocol and capability policy in
-`tools/protocol-minimums.json`. Supplying either field is an error: release
-plumbing belongs to Cobalt.
+`package` is derived as `kobo-<id>` and cannot be supplied.
+`minimum_cobalt_version` is normally derived from the current SDK protocol and
+capability policy in `tools/protocol-minimums.json`. An app may supply a newer
+version as an explicit compatibility floor; it can never lower the derived
+minimum.
 
 Optional `setup.steps` may describe account or self-hosting prerequisites.
 Use one to six short steps. Links must be absolute HTTPS URLs without embedded

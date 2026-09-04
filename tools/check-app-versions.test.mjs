@@ -500,18 +500,27 @@ function metadata() {
       workspacePackage("notes"),
       workspacePackage("reader"),
       workspacePackage("weather"),
+      workspacePackage("kobo-sdk"),
       registryPackage("notes-dep"),
       registryPackage("shared"),
       registryPackage("unrelated")
     ],
     resolve: {
       nodes: [
-        { id: "notes 1.0.0", deps: [dependency("notes-dep 1.0.0"), dependency("shared 1.0.0")] },
+        {
+          id: "notes 1.0.0",
+          deps: [
+            dependency("notes-dep 1.0.0"),
+            dependency("shared 1.0.0"),
+            dependency("kobo-sdk 1.0.0")
+          ]
+        },
         { id: "reader 1.0.0", deps: [dependency("notes 1.0.0")] },
         { id: "weather 1.0.0", deps: [dependency("shared 1.0.0")] },
         { id: "notes-dep 1.0.0", deps: [] },
         { id: "shared 1.0.0", deps: [] },
-        { id: "unrelated 1.0.0", deps: [] }
+        { id: "unrelated 1.0.0", deps: [] },
+        { id: "kobo-sdk 1.0.0", deps: [] }
       ]
     }
   };
@@ -551,6 +560,17 @@ test("a shared dependency lock change affects every consuming Store app", () => 
       new Set([registryIdentity("shared")])
     ),
     new Set(["notes", "reader", "weather"])
+  );
+});
+
+test("a changed shared workspace crate affects only its Store consumers", () => {
+  assert.deepEqual(
+    registeredConsumers(
+      metadata(),
+      ["notes", "reader", "weather"],
+      new Set([JSON.stringify(["kobo-sdk", "<workspace-version>", ""])])
+    ),
+    new Set(["notes", "reader"])
   );
 });
 
@@ -620,30 +640,41 @@ test("workspace package version-only lock changes affect no Store app", () => {
   assert.deepEqual(changedLockPackageIdentities(previous, current), new Set());
 });
 
-// The #101 failure mode: a crates/ or workflow edit looked like a Store
-// release input and demanded every app bump. The filter is tested against an
-// explicit path list so a shallow CI checkout does not have to contain the
-// last catalog publication.
-test("platform-only paths affect no Store package", () => {
+test("non-build paths affect no Store package", () => {
   const packageDirectories = new Map([
     ["kobo-todo", "examples/todo"],
-    ["kobo-backgammon", "apps/backgammon"]
+    ["kobo-backgammon", "apps/backgammon"],
+    ["kobo-sim", "crates/kobo-sim"],
+    ["kobo-profile", "crates/kobo-profile"]
   ]);
   const registered = ["kobo-todo", "kobo-backgammon"];
-  const platformOnly = [
-    "crates/kobo-sim/src/lib.rs",
-    "crates/kobo-profile/src/lib.rs",
-    "Cargo.toml",
-    "Cargo.lock",
+  const quietPaths = [
     ".github/workflows/ci.yml",
     "tools/check-app-versions.mjs",
     "docs/RELEASE-TRAIN.md"
   ];
 
-  const quiet = storeImpactOfChangedPaths(platformOnly, packageDirectories, registered);
+  const quiet = storeImpactOfChangedPaths(quietPaths, packageDirectories, registered);
   assert.deepEqual(quiet.storeChanges, []);
   assert.equal(quiet.catalogQuiet, true);
   assert.deepEqual(quiet.affected, new Set());
+
+  for (const buildInput of [
+    "crates/kobo-sim/src/lib.rs",
+    "crates/kobo-profile/src/lib.rs",
+    "Cargo.toml",
+    "Cargo.lock",
+    "rust-toolchain.toml"
+  ]) {
+    const impact = storeImpactOfChangedPaths(
+      [buildInput],
+      packageDirectories,
+      registered
+    );
+    assert.deepEqual(impact.storeChanges, []);
+    assert.equal(impact.catalogQuiet, false, buildInput);
+    assert.equal(impact.affected, null, buildInput);
+  }
 
   const storeEdit = storeImpactOfChangedPaths(
     ["apps/backgammon/src/main.rs", "crates/kobo-sim/src/lib.rs"],

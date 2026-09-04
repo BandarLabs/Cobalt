@@ -40,14 +40,23 @@ test("protocol and capability policy derive the strictest minimum", () => {
   );
 });
 
-test("contributors cannot supply derived release plumbing", () => {
+test("contributors cannot supply a package name", () => {
   assert.throws(
     () => normalizeContribution(manifest({ package: "other" }), "notes"),
-    /package and minimum Cobalt are derived/
+    /package is derived/
   );
-  assert.throws(
-    () => normalizeContribution(manifest({ minimum_cobalt_version: "0.1.0" }), "notes"),
-    /package and minimum Cobalt are derived/
+});
+
+test("an explicit minimum Cobalt version can only raise the derived floor", () => {
+  assert.equal(
+    normalizeContribution(manifest({ minimum_cobalt_version: "0.4.0" }), "notes")
+      .minimum_cobalt_version,
+    "0.4.0"
+  );
+  assert.equal(
+    normalizeContribution(manifest({ minimum_cobalt_version: "0.1.0" }), "notes")
+      .minimum_cobalt_version,
+    "0.3.1"
   );
 });
 
@@ -55,6 +64,22 @@ test("directory identity and versions fail with actionable errors", () => {
   assert.throws(() => normalizeContribution(manifest(), "reader"), /must match its directory/);
   assert.throws(
     () => normalizeContribution(manifest({ version: "next" }), "notes"),
+    /numeric MAJOR.MINOR.PATCH/
+  );
+  assert.throws(
+    () =>
+      normalizeContribution(
+        manifest({ minimum_cobalt_version: "18446744073709551616.0.0" }),
+        "notes"
+      ),
+    /unsigned 64-bit integer/
+  );
+  assert.throws(
+    () =>
+      normalizeContribution(
+        manifest({ minimum_cobalt_version: `${"1".repeat(63)}.0.0` }),
+        "notes"
+      ),
     /numeric MAJOR.MINOR.PATCH/
   );
 });
@@ -91,6 +116,10 @@ test("the effective repository registry includes standalone contributions", () =
     assert.equal(app.package, `kobo-${id}`);
     assert.equal(app.minimum_cobalt_version, "0.3.2");
   }
+  assert.equal(
+    registry.apps.find(candidate => candidate.id === "chat")?.minimum_cobalt_version,
+    "0.3.4"
+  );
 });
 
 test("the one-command plan resolves source manifest package and protocol", () => {
