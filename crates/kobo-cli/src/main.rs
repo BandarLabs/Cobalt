@@ -28,13 +28,7 @@ mod panel;
 mod setup;
 mod sha256;
 
-const DEVICE_PACKAGES: &[&str] = &[
-    "kobo-doctor",
-    "kobod",
-    "kobo-wifi-trace",
-    "kobo-todo",
-    "kobo-terminal",
-];
+const DEVICE_PACKAGES: &[&str] = &["kobo-doctor", "kobod", "kobo-todo", "kobo-terminal"];
 /// Everything an owner's device needs, in the order it is packaged, with the
 /// features each one has to be built with.
 ///
@@ -50,7 +44,6 @@ const DEVICE_PACKAGES: &[&str] = &[
 /// the artifact check in `build_package` both exist to keep it shipped.
 const INSTALLED_PACKAGES: &[(&str, Option<&str>)] = &[
     ("kobod", Some("device-write")),
-    ("kobo-wifi-trace", None),
     ("kobo-launcher", None),
     ("kobo-audiobook", None),
     ("kobo-terminal", None),
@@ -449,7 +442,6 @@ fn run(arguments: &[String]) -> Result<(), String> {
         "session" => dev_session(&arguments[1..]),
         "wait" => wait_for_device(&arguments[1..]),
         "logs" => device_logs(&arguments[1..]),
-        "wifi-trace" => wifi_trace_command(&arguments[1..]),
         // Reached only when something other than main dispatches, which today
         // is the tests. main takes this verb first so that the reader's own
         // exit code survives.
@@ -1999,7 +1991,6 @@ fn device_logs(arguments: &[String]) -> Result<(), String> {
                 request.host
             )));
         }
-
         println!("cleared {DEVICE_TRACE_LOG} on {}", request.host);
         if !request.follow {
             return Ok(());
@@ -2052,56 +2043,6 @@ fn device_logs(arguments: &[String]) -> Result<(), String> {
             "reading the trace from {} failed with status {code}",
             request.host
         ))),
-    }
-}
-
-fn wifi_trace_command(arguments: &[String]) -> Result<(), String> {
-    const USAGE: &str = "usage: kobo wifi-trace summarize PATH | \
-                         kobo wifi-trace retrieve --device HOST --out PATH";
-    match arguments {
-        [action, path] if action == "summarize" => {
-            let bytes = fs::read(path).map_err(|error| format!("read {path}: {error}"))?;
-            println!("{}", kobo_wifi_trace::summarize(&bytes).render());
-            Ok(())
-        }
-        [action, device, host, out, path]
-            if action == "retrieve" && is_device_flag(device) && out == "--out" =>
-        {
-            if !valid_device_host(host) {
-                return Err("device host contains unsupported characters".to_owned());
-            }
-            let script = format!(
-                "set -e\n\
-                 dir={directory}\n\
-                 latest=$(ls -1t \"$dir\"/wifi-handoff-v1-*.jsonl 2>/dev/null | head -n 1)\n\
-                 if [ -z \"$latest\" ]; then\n\
-                   echo 'no Wi-Fi handoff trace on this device' >&2\n\
-                   exit 3\n\
-                 fi\n\
-                 cat \"$latest\"\n",
-                directory = kobo_wifi_trace::DIAGNOSTICS_DIR,
-            );
-            let remote = format!("root@{host}");
-            let output = run_remote_shell(&remote, &script, REMOTE_SESSION_TIMEOUT)
-                .map_err(unreachable_device)?;
-            if !output.status.success() {
-                return Err(match output.status.code() {
-                    Some(3) => "no Wi-Fi handoff trace to retrieve".to_owned(),
-                    _ => unreachable_device(format!(
-                        "retrieving the Wi-Fi handoff trace from {host} failed"
-                    )),
-                });
-            }
-            fs::write(path, &output.stdout)
-                .map_err(|error| format!("write retrieved trace to {path}: {error}"))?;
-            println!(
-                "saved {} bytes to {path}\n{}",
-                output.stdout.len(),
-                kobo_wifi_trace::summarize(&output.stdout).render()
-            );
-            Ok(())
-        }
-        _ => Err(USAGE.to_owned()),
     }
 }
 
@@ -2709,46 +2650,16 @@ fn workspace_manifest() -> PathBuf {
         .join("Cargo.toml")
 }
 
-/// Resolves a device binary from this workspace's configured target directory.
+/// Resolves a device binary inside this workspace's own target directory.
 ///
 /// Pinning it to this manifest means an uploaded artifact always comes from the
 /// reviewed source tree rather than whatever workspace the caller stood in.
 /// Cargo resolves a relative `CARGO_TARGET_DIR` from its invoking current
 /// directory, not from the manifest's workspace.
 fn workspace_device_binary(name: &str) -> PathBuf {
-<<<<<<< HEAD
     workspace_target_directory()
         .join("armv7-unknown-linux-musleabihf/release")
         .join(name)
-=======
-    let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let invocation = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    configured_target_directory(
-        &workspace,
-        &invocation,
-        env::var_os("CARGO_TARGET_DIR").as_deref(),
-    )
-    .join("armv7-unknown-linux-musleabihf/release")
-    .join(name)
-}
-
-fn configured_target_directory(
-    workspace: &Path,
-    invocation: &Path,
-    configured: Option<&OsStr>,
-) -> PathBuf {
-    configured.map_or_else(
-        || workspace.join("target"),
-        |target| {
-            let target = Path::new(target);
-            if target.is_absolute() {
-                target.to_path_buf()
-            } else {
-                invocation.join(target)
-            }
-        },
-    )
->>>>>>> origin/beta
 }
 
 fn workspace_host_binary(name: &str) -> PathBuf {
@@ -6168,8 +6079,6 @@ fn print_help() {
            session --device IP --hold [minutes]  Keep it reachable for unattended testing\n\
            wait --device IP       Block until a device answers again\n\
            logs --device IP [--follow] [--lines N]  Read the runtime trace from the device\n\
-           wifi-trace summarize PATH  Report handoff generations and first divergence\n\
-           wifi-trace retrieve --device IP --out PATH  Retrieve and summarize the latest trace\n\
            shell --device IP [command ...]  Run one command on the reader, or open a\n\
            \x20                             session when no command is given. Exits with\n\
            \x20                             whatever the reader exited with\n\
@@ -6533,15 +6442,9 @@ mod tests {
         build_executables, canonical, configured_target_directory, is_device_flag,
         manifest_uses_sdk, normalise_secret_value, parse_deploy, parse_devices, parse_logs,
         parse_touch_probe, unreachable_device, valid_device_host, valid_slug, verify_arm_elf,
-<<<<<<< HEAD
         wait_for_remote_child, DevSessionGuard, RemoteArtifact, SimulationGuard, ALIASES,
         DEFAULT_TRACE_LINES, DEPLOY_TIMEOUT, DEVICE_PACKAGES, TOUCH_PROBE_DEFAULT_SECONDS,
         TOUCH_PROBE_MAXIMUM_SECONDS,
-=======
-        wait_for_remote_child, workspace_doctor_binary, DevSessionGuard, RemoteArtifact,
-        SimulationGuard, ALIASES, DEFAULT_TRACE_LINES, DEPLOY_TIMEOUT, DEVICE_PACKAGES,
-        TOUCH_PROBE_DEFAULT_SECONDS, TOUCH_PROBE_MAXIMUM_SECONDS,
->>>>>>> origin/beta
     };
     #[cfg(feature = "device-write")]
     use super::{
@@ -6810,8 +6713,8 @@ mod tests {
     fn every_installed_package_is_a_member_of_this_workspace() {
         let manifest = fs::read_to_string(super::workspace_manifest()).expect("read the workspace");
         for (name, _) in super::INSTALLED_PACKAGES {
-            let directory = if matches!(*name, "kobod" | "kobo-wifi-trace") {
-                format!("crates/{name}")
+            let directory = if *name == "kobod" {
+                "crates/kobod".to_owned()
             } else {
                 format!("examples/{}", name.trim_start_matches("kobo-"))
             };
@@ -7132,13 +7035,7 @@ mod tests {
     fn default_device_build_excludes_guard_and_smoke() {
         assert_eq!(
             DEVICE_PACKAGES,
-            [
-                "kobo-doctor",
-                "kobod",
-                "kobo-wifi-trace",
-                "kobo-todo",
-                "kobo-terminal"
-            ]
+            ["kobo-doctor", "kobod", "kobo-todo", "kobo-terminal"]
         );
         assert!(!DEVICE_PACKAGES.contains(&"kobo-guard"));
         assert!(!DEVICE_PACKAGES.contains(&"kobo-smoke"));
@@ -7201,36 +7098,22 @@ mod tests {
     }
 
     #[test]
-    fn remote_doctor_uses_strict_hosts_and_configured_target_artifact() {
+    fn remote_doctor_uses_strict_hosts_and_workspace_artifact() {
         assert!(valid_device_host("192.0.2.1"));
         assert!(valid_device_host("kobo-reader_1"));
         assert!(!valid_device_host(""));
         assert!(!valid_device_host("reader;reboot"));
         assert!(!valid_device_host("reader name"));
-<<<<<<< HEAD
     }
 
     #[test]
     fn cargo_target_dir_resolves_exactly_like_the_build_invocation() {
-=======
-        assert!(workspace_doctor_binary()
-            .ends_with("armv7-unknown-linux-musleabihf/release/kobo-doctor"));
-        #[cfg(feature = "device-write")]
-        assert!(
-            workspace_smoke_binary().ends_with("armv7-unknown-linux-musleabihf/release/kobo-smoke")
-        );
-    }
-
-    #[test]
-    fn relative_cargo_target_dir_resolves_from_the_build_invocation() {
->>>>>>> origin/beta
         let workspace = PathBuf::from("/source/cobalt");
         let invocation = PathBuf::from("/runner/jobs/package");
         let relative = std::ffi::OsStr::new("../../cobalt-targets");
         let resolved = configured_target_directory(&workspace, &invocation, Some(relative));
         assert_eq!(resolved, invocation.join(relative));
         assert_ne!(resolved, workspace.join(relative));
-<<<<<<< HEAD
         assert_eq!(
             resolved.join("armv7-unknown-linux-musleabihf/release/kobod"),
             invocation
@@ -7238,15 +7121,6 @@ mod tests {
                 .join("armv7-unknown-linux-musleabihf/release/kobod")
         );
         assert_eq!(
-=======
-        assert_eq!(
-            resolved.join("armv7-unknown-linux-musleabihf/release/kobod"),
-            invocation
-                .join(relative)
-                .join("armv7-unknown-linux-musleabihf/release/kobod")
-        );
-        assert_eq!(
->>>>>>> origin/beta
             configured_target_directory(&workspace, &invocation, None),
             workspace.join("target")
         );
