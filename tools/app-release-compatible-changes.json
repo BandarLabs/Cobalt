@@ -8,7 +8,7 @@
         {
           "path": "Cargo.lock",
           "base_blob": "98e86504890e59da1755181ad38d7ffaa86c635a",
-          "compatible_blob": "f55a8be42e1edce7759feebe0131c9f122b8e7ea"
+          "compatible_blob": "c787c72bfffe27f632371f757fe458694db1e959"
         },
         {
           "path": "crates/kobo-abi/src/lib.rs",
@@ -118,7 +118,7 @@
         {
           "path": "crates/kobod/src/app_store.rs",
           "base_blob": "6e7caa312042f6927fc3da3b0cc71cf69d5be205",
-          "compatible_blob": "477535ea1dd2053d5be233c57ff9297007000418"
+          "compatible_blob": "c353a9ae1e9b0b789a87ca88e853300a734077b7"
         },
         {
           "path": "tools/icon-import/icons.txt",

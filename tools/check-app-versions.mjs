@@ -160,7 +160,7 @@ export function changedRegistryPackages(previousRegistry, currentRegistry) {
   );
 }
 
-export function checkEntries(registry, published, affectedPackages) {
+export function checkEntries(registry, published, affectedPackages, requireReleaseNotes = true) {
   if (!Array.isArray(registry.apps) || !Array.isArray(published.entries)) {
     throw new Error("registry apps and published catalog entries must be arrays");
   }
@@ -180,7 +180,14 @@ export function checkEntries(registry, published, affectedPackages) {
       throw new Error("registry app has no valid identity or package name");
     }
     const previous = previousById.get(app.id);
-    if (!previous) continue;
+    if (!previous) {
+      if (!meaningfulReleaseNotes(app.release_notes)) {
+        failures.push(
+          `${app.id}: a new Store app needs release_notes describing the initial user-visible value`
+        );
+      }
+      continue;
+    }
     if (typeof app.version !== "string" || typeof previous.version !== "string") {
       throw new Error(`${app.id} has no valid version`);
     }
@@ -193,15 +200,28 @@ export function checkEntries(registry, published, affectedPackages) {
           `${app.id}: package inputs changed (${changed.join(", ")}) but version ` +
             `${app.version} is not newer than ${previous.version}`
         );
+      } else if (requireReleaseNotes && !meaningfulReleaseNotes(app.release_notes)) {
+        failures.push(
+          `${app.id}: version ${app.version} needs meaningful release_notes because ${changed.join(", ")} changed`
+        );
       }
     }
   }
 
   if (failures.length > 0) {
     throw new Error(
-      `${failures.join("\n")}\nSet each affected app to a strictly newer numeric version.`
+      `${failures.join("\n")}\nUpdate only the affected app's version and release_notes, then rerun the contributor check.`
     );
   }
+}
+
+export function meaningfulReleaseNotes(value) {
+  if (typeof value !== "string") return false;
+  const note = value.trim();
+  if (note.length < 12 || note.length > 240) return false;
+  return !new Set(["update", "updated", "changes", "bug fixes", "misc fixes"]).has(
+    note.toLowerCase().replace(/[.!]$/, "")
+  );
 }
 
 function versionParts(value) {
@@ -262,7 +282,7 @@ export function checkBuildPackages(
     if (!registered.has(package_)) throw new Error(`unknown build package ${package_}`);
   }
   checkProtocolMinimums(registry, protocolVersion, baselines, selected);
-  checkEntries(registry, published, selected);
+  checkEntries(registry, published, selected, false);
 }
 
 function currentProtocolVersion() {
@@ -296,6 +316,10 @@ function isInside(path, directory) {
   return path === directory || path.startsWith(`${directory}/`);
 }
 
+
+export function isContributionManifest(path, directory) {
+  return path === `${directory}/cobalt-app.json`;
+}
 // A drive script is the host-side route used to film an application. It is
 // never compiled into the signed bundle, so adding or editing one must not
 // look like a Store package change. That mistake is what turned a simulator
@@ -363,7 +387,18 @@ export function manifestOnlyChangesWorkspaceMembershipOrVersion(
 
   const previousMembers = new Set(previous.entries);
   const currentMembers = new Set(current.entries);
-  if (![...previousMembers].every(member => currentMembers.has(member))) return false;
+  const currentGlobs = [...currentMembers]
+    .filter(member => member.endsWith("/*"))
+    .map(member => member.slice(0, -1));
+  if (
+    ![...previousMembers].every(
+      member =>
+        currentMembers.has(member) ||
+        currentGlobs.some(prefix => member.startsWith(prefix))
+    )
+  ) {
+    return false;
+  }
 
   const previousRemainder = normalizeWorkspaceVersion(previous.remainder);
   const currentRemainder = normalizeWorkspaceVersion(current.remainder);
@@ -523,7 +558,12 @@ export function releaseLockPackageIdentities(
     : changedLockPackageIdentities(previousSource, currentSource);
 }
 
-export function registeredConsumers(metadata, registeredPackages, changedPackageIdentities) {
+export function registeredConsumers(
+  metadata,
+  registeredPackages,
+  changedPackageIdentities,
+  strictUnknown = true
+) {
   const packagesByIdentity = new Map();
   const packageIdsByName = new Map();
   for (const package_ of metadata.packages) {
@@ -547,6 +587,7 @@ export function registeredConsumers(metadata, registeredPackages, changedPackage
       const [name] = JSON.parse(identity);
       const possibleReplacements = packageIdsByName.get(name);
       if (!possibleReplacements) {
+        if (!strictUnknown) continue;
         throw new Error(
           `Cargo.lock changed package ${name}, but current cargo metadata cannot identify its consumers`
         );
@@ -611,11 +652,30 @@ export function lockfileOnlyAddsPackages(previousSource, currentSource) {
 // reached only when a Store catalog input actually changed.
 export function storeImpactOfChangedPaths(changedPaths, packageDirectories, registeredPackages) {
   const storeDirectories = storeWatchDirectories(packageDirectories, registeredPackages);
-  const storeChanges = storeCatalogChanges(changedPaths, storeDirectories);
+  const storeChanges = storeCatalogChanges(changedPaths, storeDirectories).filter(path => {
+    const directory = path.split("/").slice(0, -1).join("/");
+    return !isFilmingScript(path, directory);
+  });
+  const registered = new Set(registeredPackages);
+  const sharedPackageChanged = [...packageDirectories].some(
+    ([packageName, directory]) =>
+      !registered.has(packageName) &&
+      changedPaths.some(path => isInside(path, directory) && !isFilmingScript(path, directory))
+  );
+  const globalBuildInputChanged = changedPaths.some(
+    path =>
+      path === "Cargo.toml" ||
+      path === "Cargo.lock" ||
+      path === "rust-toolchain" ||
+      path === "rust-toolchain.toml" ||
+      path.startsWith(".cargo/")
+  );
+  const catalogQuiet =
+    storeChanges.length === 0 && !sharedPackageChanged && !globalBuildInputChanged;
   return {
     storeChanges,
-    catalogQuiet: storeChanges.length === 0,
-    affected: storeChanges.length === 0 ? new Set() : null
+    catalogQuiet,
+    affected: catalogQuiet ? new Set() : null
   };
 }
 

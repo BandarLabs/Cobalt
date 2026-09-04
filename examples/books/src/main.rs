@@ -179,8 +179,7 @@ impl Books {
 
     fn show(&mut self, context: &mut Context) {
         let screen = match self.view {
-            View::Shelf => self.shelf(context),
-            View::Opening(_) => self.shelf(context),
+            View::Shelf | View::Opening(_) => self.shelf(context),
             View::Reading => self.reading(),
             View::Unreadable(index) => self.unreadable(index),
         };
@@ -306,7 +305,7 @@ impl Books {
         }
         if let Some(body) = document.body.as_ref() {
             let bytes = fixture_bytes(&document, body);
-            self.finish_open(context, index, &document, bytes);
+            self.finish_open(context, index, &document, &bytes);
             return;
         }
         self.view = View::Opening(index);
@@ -319,7 +318,7 @@ impl Books {
         context: &mut Context,
         index: usize,
         document: &Document,
-        bytes: Vec<u8>,
+        bytes: &[u8],
     ) {
         if bytes.is_empty() {
             self.book.close(context);
@@ -328,19 +327,17 @@ impl Books {
             self.show(context);
             return;
         }
-        match self
+        if self
             .book
-            .open_bytes(context, document.kind.filename(), &bytes, Memory::default())
+            .open_bytes(context, document.kind.filename(), bytes, Memory::default())
+            .is_ok()
         {
-            Ok(()) => {
-                self.open_title = Some(document.title.clone());
-                self.view = View::Reading;
-            }
-            Err(_) => {
-                self.book.close(context);
-                self.open_title = None;
-                self.view = View::Unreadable(index);
-            }
+            self.open_title = Some(document.title.clone());
+            self.view = View::Reading;
+        } else {
+            self.book.close(context);
+            self.open_title = None;
+            self.view = View::Unreadable(index);
         }
         self.show(context);
     }
@@ -453,7 +450,7 @@ impl KoboApp for Books {
                 DeviceResult::LibraryDocument { bytes, .. } => {
                     if let View::Opening(index) = self.view {
                         if let Some(document) = self.documents.get(index).cloned() {
-                            self.finish_open(context, index, &document, bytes);
+                            self.finish_open(context, index, &document, &bytes);
                         }
                     }
                 }
