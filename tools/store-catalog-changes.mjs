@@ -1,6 +1,7 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { collectRegistry } from "./app-registry.mjs";
 
 // Everything whose content reaches a reader through the signed Store catalog.
 //
@@ -46,8 +47,22 @@ export function workspacePackageDirectories(rootManifest, readMemberManifest) {
   const match = /^members\s*=\s*\[([\s\S]*?)^\]/m.exec(rootManifest);
   if (!match) throw new Error("read the workspace members from Cargo.toml");
   const directories = new Map();
-  for (const member of [...match[1].matchAll(/"([^"]+)"/g)].map(entry => entry[1])) {
-    const name = /^name\s*=\s*"([^"]+)"$/m.exec(readMemberManifest(member))?.[1];
+  const members = [...match[1].matchAll(/"([^"]+)"/g)].flatMap(entry => {
+    const member = entry[1];
+    if (!member.endsWith("/*")) return [member];
+    const directory = member.slice(0, -2);
+    return readdirSync(directory, { withFileTypes: true })
+      .filter(item => item.isDirectory())
+      .map(item => `${directory}/${item.name}`);
+  });
+  for (const member of members) {
+    let manifest;
+    try {
+      manifest = readMemberManifest(member);
+    } catch {
+      continue;
+    }
+    const name = /^name\s*=\s*"([^"]+)"$/m.exec(manifest)?.[1];
     if (name) directories.set(name, member);
   }
   return directories;
@@ -99,7 +114,10 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     const values = argumentsFrom(process.argv.slice(2));
     const root = values.get("--root");
     const channel = values.get("--channel");
-    const registry = JSON.parse(readFileSync(join(root, "apps/catalog.json"), "utf8"));
+    const registry = collectRegistry({
+      basePath: join(root, "apps/catalog.json"),
+      sourcePaths: [join(root, "apps"), join(root, "examples")]
+    });
     const directories = storeWatchDirectories(
       workspacePackageDirectories(readFileSync(join(root, "Cargo.toml"), "utf8"), member =>
         readFileSync(join(root, member, "Cargo.toml"), "utf8")
