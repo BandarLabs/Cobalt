@@ -1,4 +1,0 @@
-expect Reversi
-tap Reversi
-expect Tap a marked destination
-shot reversi

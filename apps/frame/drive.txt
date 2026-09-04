@@ -1,4 +1,0 @@
-expect Sample photograph
-tap Show photograph
-expect Frame settings
-shot frame

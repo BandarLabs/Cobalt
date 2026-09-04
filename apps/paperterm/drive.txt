@@ -1,3 +1,0 @@
-# Pairing is the useful first-run path and yields a clean 1072x1448 capture.
-expect Pair with your computer
-shot pairing

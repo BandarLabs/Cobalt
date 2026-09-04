@@ -1,6 +1,0 @@
-tap Log a sighting
-expect TALLY
-tap TALLY
-expect Lifer!
-clean
-shot log

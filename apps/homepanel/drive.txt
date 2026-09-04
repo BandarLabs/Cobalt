@@ -1,5 +1,0 @@
-# Starts after a local simulator has loaded the binary.
-expect Connect Home Assistant
-type https://ha.example.net
-tap Test connection
-shot setup.png
