@@ -53,7 +53,7 @@
         {
           "path": "crates/kobo-policy/src/services.rs",
           "base_blob": "e5b8617ac601332dd9b5d39c8e6ea83d613e171b",
-          "compatible_blob": "52774ba1b53d710bb7179c4f343dc770f16d42dd"
+          "compatible_blob": "0a8dbe4c00ff5b6e03555090f0f00ca6e86fea0e"
         },
         {
           "path": "crates/kobo-policy/src/tasks.rs",
