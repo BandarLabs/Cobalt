@@ -1,1 +1,1 @@
-{"id":"sidekick","display_name":"Sidekick","short_label":"Sidekick","summary":"Answer coding-agent permission prompts from your Kobo.","version":"1.0.6","glyph":"key","capabilities":["network"]}
+{"id":"sidekick","display_name":"Sidekick","short_label":"Sidekick","summary":"Answer coding-agent permission prompts from your Kobo.","version":"1.0.7","glyph":"key","capabilities":["network"],"release_notes":"Rebuild for protocol 14 on Cobalt 0.3.5 after shared workspace changes."}
