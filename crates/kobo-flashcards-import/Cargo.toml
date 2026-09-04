@@ -23,6 +23,11 @@ serde_json = "1.0.140"
 tokio = { version = "1.45", features = ["io-util"] }
 unicase = "=2.6.0"
 zip = { version = "2.2.2", default-features = false, features = ["deflate"] }
+# Host rustc is 1.85.1; current ICU/time crates need 1.88.
+idna_adapter = "=1.2.1"
+icu_normalizer = "=2.0.0"
+icu_properties = "=2.0.0"
+time = "=0.3.41"
 
 [lints]
 workspace = true

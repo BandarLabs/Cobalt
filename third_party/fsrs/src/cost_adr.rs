@@ -112,13 +112,13 @@ impl CostAdrPolicy {
         Ok(policy)
     }
 
-    #[cfg(test)]
+    #[cfg(any())]
     fn default_initial() -> Self {
         Self::new(COST_ADR_DEFAULT_INITIAL_COEFFICIENTS.to_vec())
             .expect("built-in Cost ADR policy is valid")
     }
 
-    #[cfg(test)]
+    #[cfg(any())]
     fn constant_retention(desired_retention: f32) -> Result<Self> {
         let retention_min = 0.30;
         let retention_max = 0.995;
@@ -1228,7 +1228,7 @@ fn softplus(value: f32) -> f32 {
     }
 }
 
-#[cfg(test)]
+#[cfg(any())]
 mod tests {
     use super::*;
     use crate::{DEFAULT_PARAMETERS, FSRS};

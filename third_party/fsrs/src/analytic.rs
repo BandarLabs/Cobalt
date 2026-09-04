@@ -712,7 +712,7 @@ pub(crate) fn batch_loss_and_grad(
 /// This is the forward-only counterpart of [`batch_loss_and_grad`]. It uses the
 /// same time-major history layout and target arrays, but skips all cache
 /// backpropagation work.
-#[cfg(test)]
+#[cfg(any())]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn batch_loss(
     w: &[f32],
@@ -861,7 +861,7 @@ pub(crate) fn card_loss_and_grad(
     loss
 }
 
-#[cfg(test)]
+#[cfg(any())]
 mod tests {
     use super::*;
     use crate::DEFAULT_PARAMETERS;

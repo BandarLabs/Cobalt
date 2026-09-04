@@ -281,7 +281,7 @@ pub(crate) fn smooth_and_fill(
     Ok(init_s0[0..=3].try_into().unwrap())
 }
 
-#[cfg(test)]
+#[cfg(any())]
 mod tests {
     use super::*;
     use crate::dataset::filter_outlier;

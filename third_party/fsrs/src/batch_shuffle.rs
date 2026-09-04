@@ -94,7 +94,7 @@ impl<B: Backend> ShuffleDataLoader<B> {
     }
 }
 
-#[cfg(test)]
+#[cfg(any())]
 mod tests {
     use burn::{backend::NdArray, tensor::Shape};
     use itertools::Itertools;

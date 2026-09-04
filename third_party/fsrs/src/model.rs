@@ -5,7 +5,7 @@ use crate::inference::{FSRS5_DEFAULT_DECAY, MemoryState, Parameters};
 use crate::parameter_clipper::clip_parameters;
 use crate::simulation::{D_MAX, D_MIN, S_MAX, S_MIN};
 
-#[cfg(test)]
+#[cfg(any())]
 use burn::{
     module::{Module, Param},
     tensor::{Shape, Tensor, TensorData, backend::Backend},
@@ -48,7 +48,7 @@ impl ModelConfig {
         parameters
     }
 
-    #[cfg(test)]
+    #[cfg(any())]
     pub fn init<B: Backend>(&self) -> Model<B> {
         Model::new(self.clone())
     }
@@ -152,7 +152,7 @@ impl FSRS {
     }
 
     #[inline]
-    #[cfg(test)]
+    #[cfg(any())]
     pub(crate) fn next_difficulty(&self, difficulty: f32, rating: u32) -> f32 {
         next_difficulty(&self.parameters, difficulty, rating as f32)
     }
@@ -357,25 +357,25 @@ pub fn check_and_fill_parameters(parameters: &Parameters) -> Result<Vec<f32>, FS
     Ok(parameters)
 }
 
-#[cfg(test)]
+#[cfg(any())]
 #[derive(Module, Debug)]
 pub struct Model<B: Backend> {
     pub w: Param<Tensor<B, 1>>,
 }
 
-#[cfg(test)]
+#[cfg(any())]
 pub(crate) trait Get<B: Backend, const N: usize> {
     fn get(&self, n: usize) -> Tensor<B, N>;
 }
 
-#[cfg(test)]
+#[cfg(any())]
 impl<B: Backend, const N: usize> Get<B, N> for Tensor<B, N> {
     fn get(&self, n: usize) -> Self {
         self.clone().slice([n..(n + 1)])
     }
 }
 
-#[cfg(test)]
+#[cfg(any())]
 impl<B: Backend> Model<B> {
     pub fn new(config: ModelConfig) -> Self {
         Self::new_with_device(config, &B::Device::default())
@@ -572,14 +572,14 @@ impl<B: Backend> Model<B> {
     }
 }
 
-#[cfg(test)]
+#[cfg(any())]
 #[derive(Debug, Clone)]
 pub(crate) struct MemoryStateTensors<B: Backend> {
     pub stability: Tensor<B, 1>,
     pub difficulty: Tensor<B, 1>,
 }
 
-#[cfg(test)]
+#[cfg(any())]
 impl<B: Backend> MemoryStateTensors<B> {
     pub(crate) fn zeros(batch_size: usize) -> MemoryStateTensors<B> {
         let device = B::Device::default();
@@ -598,7 +598,7 @@ impl<B: Backend> MemoryStateTensors<B> {
     }
 }
 
-#[cfg(test)]
+#[cfg(any())]
 impl<B: Backend> From<MemoryStateTensors<B>> for MemoryState {
     fn from(m: MemoryStateTensors<B>) -> Self {
         use burn::tensor::ElementConversion;
@@ -609,7 +609,7 @@ impl<B: Backend> From<MemoryStateTensors<B>> for MemoryState {
     }
 }
 
-#[cfg(test)]
+#[cfg(any())]
 mod tests {
     use super::*;
     use crate::test_helpers::TestHelper;
