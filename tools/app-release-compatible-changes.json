@@ -3,22 +3,22 @@
   "changes": [
     {
       "protocol_version": 11,
-      "reason": "Additive protocol-11 update-channel settings used only by the bundled runtime and Settings app",
+      "reason": "Additive protocol-11 orientation command is opt-in; existing Store apps keep their existing messages and portrait rendering",
       "files": [
         {
           "path": "crates/kobo-protocol/src/lib.rs",
-          "base_blob": "8c30366191af89abc121075544635bf871fdfac4",
-          "compatible_blob": "f34528d7b407e542a7836b0348b91de043822274"
-        },
-        {
-          "path": "crates/kobo-policy/src/services.rs",
-          "base_blob": "d0a852942683f396baaf3803830d9c19c9911f18",
-          "compatible_blob": "e5b8617ac601332dd9b5d39c8e6ea83d613e171b"
+          "base_blob": "f34528d7b407e542a7836b0348b91de043822274",
+          "compatible_blob": "50e99c1933462675c1a9f1e368023c375775d10b"
         },
         {
           "path": "crates/kobo-sdk/src/lib.rs",
-          "base_blob": "52bd17b242beee85f691ebefdd0083fdabbd4550",
-          "compatible_blob": "9a645f3f3d9c8746dda47d858bb3fcd744621df8"
+          "base_blob": "9a645f3f3d9c8746dda47d858bb3fcd744621df8",
+          "compatible_blob": "1ff0ec9725746213be19556b1c035de890878c34"
+        },
+        {
+          "path": "crates/kobo-ui/src/lib.rs",
+          "base_blob": "ce538c70b5779ee482e2b35aa83191eb06b04b4d",
+          "compatible_blob": "d6c79d5ee6e3d574b3768da3721e865688e7f657"
         }
       ]
     }

@@ -21,12 +21,12 @@ pub use kobo_ui::{
     terminal_grid, terminal_grid_for, typographic_cover, ActionId, BandAlign, BandSlot,
     BannerLevel, BarAction, BarStyle, BottomAction, Caret, Cell, Chip, Chrome, ControlState,
     DiagnosticSeverity, DisplayMetrics, Emphasis, Fold, FontHandle, Freeform, Glyph, InlineFormula,
-    LayoutIssue, LayoutIssueKind, NavBar, Node, NodeId, Overlay, OverlayKind, ParagraphAlignment,
-    ParagraphPresentation, Percent, PictureHandle, ProseArea, RichTextSpan, Row, RowLead, RowState,
-    Screen, SlotWidth, Space, TextHit, TextPresentation, TextSelection, Tile, TilePicture,
-    TileShape, TileState, TopBar, TransferFailure, CLARA_BW_METRICS, MAX_BAND_SLOTS, MAX_CELLS,
-    MAX_CHIPS, MAX_CHOICE_OPTIONS, MAX_COLUMNS, MAX_INLINE_FORMULAE, MAX_QUOTE_DEPTH, MAX_ROWS,
-    MAX_TABS, MAX_TERMINAL_COLUMNS, MAX_TERMINAL_ROWS, TILE_BADGE_LIMIT,
+    LayoutIssue, LayoutIssueKind, NavBar, Node, NodeId, Orientation, Overlay, OverlayKind,
+    ParagraphAlignment, ParagraphPresentation, Percent, PictureHandle, ProseArea, RichTextSpan,
+    Row, RowLead, RowState, Screen, SlotWidth, Space, TextHit, TextPresentation, TextSelection,
+    Tile, TilePicture, TileShape, TileState, TopBar, TransferFailure, CLARA_BW_METRICS,
+    MAX_BAND_SLOTS, MAX_CELLS, MAX_CHIPS, MAX_CHOICE_OPTIONS, MAX_COLUMNS, MAX_INLINE_FORMULAE,
+    MAX_QUOTE_DEPTH, MAX_ROWS, MAX_TABS, MAX_TERMINAL_COLUMNS, MAX_TERMINAL_ROWS, TILE_BADGE_LIMIT,
 };
 use std::collections::BTreeMap;
 use std::collections::VecDeque;
@@ -2683,6 +2683,7 @@ fn stable_id(value: &str) -> u32 {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Command {
     SetScreen(Screen),
+    SetOrientation(Orientation),
     Log {
         level: LogLevel,
         message: String,
@@ -2734,6 +2735,10 @@ pub struct Context {
 }
 
 impl Context {
+    /// Sets the app session's logical viewport direction.
+    pub fn set_orientation(&mut self, orientation: Orientation) {
+        self.commands.push(Command::SetOrientation(orientation));
+    }
     /// The panel this application is drawing to.
     ///
     /// An application never positions anything, so this is not for layout. It
@@ -5024,6 +5029,7 @@ impl Client {
             };
             let message = match command {
                 Command::SetScreen(screen) => Message::SetScreen(screen),
+                Command::SetOrientation(orientation) => Message::SetOrientation(orientation),
                 Command::Log { level, message } => Message::Log { level, message },
                 Command::Device(request) => Message::DeviceRequest(request),
                 Command::Spawn { task, work } => Message::Spawn { task, work },
