@@ -1,160 +1,159 @@
 # Contributing applications
 
-Store applications live under `apps/` and are published independently from
-the Cobalt platform.
+A Store contribution has only two hand-authored parts: app source and one
+concise manifest. The contributor command generates website files as ordinary
+reviewable outputs. Contributors do not hand-edit release catalogs,
+minimum-platform tables, package lists, signing configuration, GitHub
+releases, or Stable promotion inputs.
 
 ## Add an app
 
-1. Create `apps/<app-id>/Cargo.toml` and `apps/<app-id>/src/main.rs`.
-2. Name the Cargo package `kobo-<app-id>`.
-3. Add the package to the workspace members in the root `Cargo.toml`.
-4. Add one entry to `apps/catalog.json`.
-5. Add the package to `STORE_PACKAGES` in `crates/kobo-cli/src/main.rs`.
+Copy `templates/app/` to `apps/<app-id>/`, rename the Cargo package to
+`kobo-<app-id>`, and make the runtime identity passed to `kobo_sdk::run` equal
+`<app-id>`.
 
-Store apps are downloaded only when an owner installs them. Do not add a
-contributed app to `INSTALLED_PACKAGES` or `MANAGED_BUILTINS`; those lists put
-the binary in the Cobalt platform package and are reserved for system apps.
-
-Registry fields:
-
-| Field | Meaning |
-|---|---|
-| `package` | Workspace Cargo package, such as `kobo-sudoku` |
-| `id` | Stable lowercase Store and launcher identifier |
-| `display_name` | Full Store title |
-| `short_label` | Compact launcher label |
-| `summary` | Short Store description |
-| `version` | App release version, independent from Cobalt. Bump it whenever the published binary or metadata changes |
-| `minimum_cobalt_version` | Oldest platform release that supports the SDK protocol and every runtime service the app uses |
-| `glyph` | A built-in Cobalt glyph name |
-| `capabilities` | Runtime services the app needs |
-| `setup` | Optional website-only prerequisites shown before the install controls |
-
-Public apps cannot use a platform-reserved ID or request the `shell`
-capability. Request only capabilities the app actually uses.
-
-If an app needs an account, API key, named secret, self-hosted service, or
-other preparation outside Cobalt, add a `setup` object to its registry entry.
-The generated install page puts these steps in a **Before you install** panel,
-so owners see the requirements before installing rather than discovering them
-on first launch. Each step has plain `text` and may add one HTTPS `link` and
-one shell `command`:
+The only Store metadata file is `apps/<app-id>/cobalt-app.json`:
 
 ```json
-"setup": {
-  "steps": [
-    {
-      "text": "Create a dedicated read-only key.",
-      "link": {
-        "label": "Service key settings",
-        "url": "https://example.com/settings/keys"
-      }
-    },
-    {
-      "text": "Install the key under the exact secret name used by the app.",
-      "command": "kobo secret set service --device <address>"
-    },
-    {
-      "text": "Launch the app and finish its on-device setup."
-    }
-  ]
+{
+  "id": "example",
+  "display_name": "Example",
+  "short_label": "Example",
+  "summary": "Describe what the app lets a Kobo owner do.",
+  "version": "1.0.0",
+  "release_notes": "Initial release with the app's primary reader workflow.",
+  "glyph": "app",
+  "capabilities": []
 }
 ```
 
+`package` is derived as `kobo-<id>`. `minimum_cobalt_version` is derived from
+the current SDK protocol and capability policy in
+`tools/protocol-minimums.json`. Supplying either field is an error: release
+plumbing belongs to Cobalt.
+
+Optional `setup.steps` may describe account or self-hosting prerequisites.
 Use one to six short steps. Links must be absolute HTTPS URLs without embedded
-credentials. Do not put HTML or Markdown in these fields; the generator
-escapes all catalog text. The setup block is website metadata and does not
-enter the signed device catalog, so correcting these instructions does not by
-itself require an app version bump.
+credentials. Setup text is website-only and never enters the signed package.
 
-Apps built from the current SDK require Cobalt 0.2.4 or newer because that is
-the first release supporting the current wire protocol. A newer runtime
-service can require a higher minimum. CI rejects a registry entry below the
-SDK protocol floor.
+New directories under `apps/` are workspace members automatically. The
+effective registry is assembled from Cobalt's built-in base entries and every
+source-adjacent `apps/*/cobalt-app.json` and
+`examples/*/cobalt-app.json`; duplicate IDs or packages fail closed.
 
-## Test the app
+## Update an existing app
 
-Run unit and workspace checks:
+Edit its source and the same `cobalt-app.json`; there is no update form or
+second manifest.
+
+- If release inputs or signed public metadata changed, set a strictly newer
+  numeric version and add `release_notes` describing the user-visible result.
+- If only tests, comments, setup instructions, or other non-release inputs
+  changed, leave the version alone and omit release notes.
+
+CI derives this decision from the last published Beta transaction. Placeholder
+notes such as “Update” or “Bug fixes” are rejected with the changed fields
+listed. Unaffected apps neither bump versions nor rebuild.
+
+## Run the one contributor check
+
+From the repository root:
 
 ```sh
-cargo test -p kobo-<app-id>
-cargo test --workspace --all-features
-cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo fmt --all --check
+node tools/app-contribute.mjs \
+  --manifest apps/<app-id>/cobalt-app.json \
+  --dry-run
 ```
 
-Run the complete host runtime:
+That one command:
 
-```sh
-cargo run -p kobo-cli -- run --sim --app <app-id>
-```
+1. validates the directory, Cargo package, manifest, capabilities, and
+   generated registry;
+2. downloads the current Beta provenance and determines whether this app
+   actually needs a version/release-note change;
+3. derives the protocol and minimum compatible Cobalt release;
+4. runs workspace formatting plus the app's tests and strict clippy;
+5. cross-builds and verifies the static ARMv7 hard-float executable;
+6. builds a deterministic pathless `.cobalt-app` and signed Beta-shaped
+   catalog using the public test-only fixture key; and
+7. generates the install page/sitemap and writes hashes and derived values
+   under `target/app-contribute/<app-id>/`.
 
-Run the browser simulator from the app directory:
+Commit generated `docs/apps/<app-id>/` and `docs/sitemap.xml` changes produced
+by the command. They are automation output, not additional metadata to design
+or maintain.
+
+The preview exercises the same bundle/catalog commands as publishing, but its
+key and `example.invalid` URL make it impossible to mistake for a release.
+There is intentionally no local publish mode.
+
+If the ARM compiler is missing, install `gcc-arm-linux-gnueabihf` on Debian or
+an equivalent `armv7-unknown-linux-musleabihf` compiler on macOS. Every failure
+names the failed command and the next corrective action.
+
+For interactive layout work:
 
 ```sh
 cd apps/<app-id>
 cargo run --manifest-path ../../crates/kobo-cli/Cargo.toml -- dev
 ```
 
-Layout tests should use `CLARA_BW_METRICS` and verify that controls fit, remain
-tappable, and do not move when app state changes.
+Tests should validate screens with `CLARA_BW_METRICS`, including tappability
+and stable layout after state changes.
 
-## Show the app running
+## Pull request and Beta publication
 
-Every new app pull request needs two different kinds of visual evidence:
+Open the app pull-request template against `beta`. Human review is for product
+policy: purpose, licensing, capabilities, setup requirements, and whether the
+public/demo evidence is appropriate. Mechanical release work is automated.
 
-1. Attach a GIF, video, or photos showing the app running on a physical,
-   fully supported Kobo. This is review evidence: it proves the real panel,
-   touch controls, page buttons where applicable, and return to the launcher.
-2. Check in one clean 1072×1448 panel screenshot for the app README and its
-   generated website install page. This is the product image: use a direct
-   panel capture without a bezel, hand, camera perspective, or e-ink residue.
+Pull-request CI has read-only repository permissions and runs:
 
-Put the clean image under `apps/<app-id>/screenshots/`, show it from
-`apps/<app-id>/README.md`, then choose a site filename and copy the same bytes
-to `docs/media/site/apps/<site-filename>.png`. Register that exact filename and
-useful alt text in the `screenshots` map in `tools/generate-app-pages.mjs`. A
-photograph attached to the pull request does not replace this clean checked-in
-image.
+- formatting, Node policy tests, full Rust tests, and strict clippy;
+- generated registry/page freshness;
+- targeted ARM build/static verification only for affected apps; and
+- published-version/protocol compatibility gates.
 
-Add the app's card and `apps/<app-id>/` link to `docs/index.html`, then generate
-and commit the install page and sitemap:
+After merge to `beta`, `Publish apps`:
 
-```sh
-node tools/generate-app-pages.mjs
-git diff --check
-```
+1. selects only affected apps and reuses unchanged verified binaries;
+2. builds each selected ARM app on an isolated runner;
+3. downloads immutable binaries onto a separate signing runner;
+4. creates deterministic signed packages and the complete signed Beta catalog;
+5. records source commit, workflow run/attempt, and catalog SHA-256;
+6. archives versioned catalog/signature/provenance transaction assets for
+   rollback; and
+7. moves the fixed Beta catalog pointer only after every referenced package is
+   present.
 
-The publish workflow runs the generator again and refuses stale generated
-files. It does not create or commit missing screenshots, homepage cards,
-install pages, or sitemap entries after merge.
+The signing seed exists only in the publish job. Fork pull requests, build
+jobs, tests, and contributors never receive it. Build jobs have read-only
+permissions; only the final publish job receives `contents: write`.
 
-## Publish or update an app
+Run the documented `kobo beta-store-smoke` local fixture and attended device
+proof after publication. Automation retains exact catalog/package identities,
+functional evidence, and mandatory public-route marketing artifacts. Physical
+hardware is never assumed by ordinary CI.
 
-Open a pull request containing the app source, tests, workspace and Store
-entries, registry metadata, README, clean screenshot, generated website files,
-and physical-device evidence. Increment the app's `version` whenever its code,
-local dependencies, release inputs, or public metadata change. Shared SDK and
-protocol changes count because they produce a different binary. CI compares
-each package with the last published catalog and rejects a reused version.
+## Stable promotion
 
-Do not change the Cobalt platform version for an ordinary app update. Raise
-`minimum_cobalt_version` when the app starts using a protocol or runtime
-service absent from older platform releases.
+Merge the tested Beta commit to `main`, then dispatch **Promote tested beta
+apps** with that commit. The `app-store-stable` GitHub environment supplies
+the human release approval. No digest, signature, seed, release upload, or
+confirmation phrase is entered manually.
 
-After merge to `main`, `.github/workflows/apps.yml`:
+Promotion finds the archived Beta transaction whose provenance names the
+tested commit, verifies its catalog digest, downloads every package named by
+that catalog, and compares exact size/SHA-256. Stable package assets are copied
+byte-for-byte and never rebuilt. Only the signed Stable catalog pointer is
+regenerated to replace Beta asset URLs with Stable URLs; its provenance binds
+the tested Beta commit and source catalog digest.
 
-1. Builds every registered app as static ARMv7 hard-float on its own runner.
-2. Verifies and uploads exactly that app's executable.
-3. Downloads the immutable artifacts on a fresh signing runner.
-4. Creates signed `.cobalt-app` packages.
-5. Creates and signs the complete catalog.
-6. Updates the fixed `app-catalog` GitHub release.
+Stable catalog, signature, and provenance are archived per workflow
+run/attempt before the fixed pointer changes. Those immutable transaction
+assets preserve audit history and provide a known-good rollback source.
 
-Installed readers fetch:
-
-- `https://github.com/BandarLabs/Cobalt/releases/download/app-catalog/cobalt-app-catalog.json`
-- `https://github.com/BandarLabs/Cobalt/releases/download/app-catalog/cobalt-app-catalog.json.sig`
-
-The signing seed is available only to the protected repository workflow. Pull
-requests never need access to it.
+Repository/environment protection should require approval only for merging
+policy-sensitive app changes and for the Stable environment. Formatting,
+tests, builds, signing, publication, provenance checks, evidence collection,
+and byte copying are automation decisions.

@@ -20,6 +20,8 @@ kobo-stream = { path = "../kobo-stream" }
 kobo-doc = { path = "../kobo-doc" }
 kobo-frame-host = { path = "../kobo-frame-host" }
 kobo-profile = { path = "../kobo-profile" }
+kobo-protocol = { path = "../kobo-protocol" }
+kobod = { path = "../kobod" }
 ring = "0.17"
 rusqlite = { version = "0.37.0", features = ["bundled", "serialize"] }
 serde_json = "1.0"

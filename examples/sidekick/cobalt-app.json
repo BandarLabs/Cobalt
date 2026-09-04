@@ -1,0 +1,28 @@
+{
+  "id": "sidekick",
+  "display_name": "Sidekick",
+  "short_label": "Sidekick",
+  "summary": "Answer coding-agent permission prompts from your Kobo.",
+  "version": "1.0.7",
+  "glyph": "key",
+  "capabilities": [
+    "network"
+  ],
+  "setup": {
+    "steps": [
+      {
+        "text": "Initialize the Sidekick daemon on the computer to create its TLS certificate, address, and pairing code.",
+        "command": "kobo-sidekickd init"
+      },
+      {
+        "text": "Install the printed Sidekick certificate on the Kobo.",
+        "command": "kobo trust set sidekick --device <address>"
+      },
+      {
+        "text": "Configure detected coding-agent hooks, then keep the daemon running.",
+        "command": "kobo-sidekickd setup && kobo-sidekickd run"
+      }
+    ]
+  },
+  "release_notes": "Rebuild for protocol 12 so the Store listing matches Cobalt 0.3.2."
+}

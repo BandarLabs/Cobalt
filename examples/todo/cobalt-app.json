@@ -1,0 +1,10 @@
+{
+  "id": "todo",
+  "display_name": "Todo",
+  "short_label": "Todo",
+  "summary": "Keep a simple to-do list that stays on your Kobo.",
+  "version": "1.0.7",
+  "glyph": "check",
+  "capabilities": [],
+  "release_notes": "Rebuild for protocol 12 so the Store listing matches Cobalt 0.3.2."
+}

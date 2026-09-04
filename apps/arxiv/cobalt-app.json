@@ -1,0 +1,12 @@
+{
+  "id": "arxiv",
+  "display_name": "arXiv",
+  "short_label": "arXiv",
+  "summary": "Browse and search arXiv, keep preprints, and read their HTML versions on your Kobo.",
+  "version": "1.3.7",
+  "glyph": "note",
+  "capabilities": [
+    "network"
+  ],
+  "release_notes": "Rebuild for protocol 12 so the Store listing matches Cobalt 0.3.2."
+}

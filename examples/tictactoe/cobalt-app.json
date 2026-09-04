@@ -1,0 +1,10 @@
+{
+  "id": "tictactoe",
+  "display_name": "Tic-tac-toe",
+  "short_label": "Tic-tac-toe",
+  "summary": "Play tic-tac-toe together on one Kobo.",
+  "version": "1.0.7",
+  "glyph": "grid",
+  "capabilities": [],
+  "release_notes": "Rebuild for protocol 12 so the Store listing matches Cobalt 0.3.2."
+}

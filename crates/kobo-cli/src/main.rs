@@ -11,6 +11,7 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 mod authorize;
+mod beta_store_smoke;
 mod connect;
 mod deck;
 mod devsession;
@@ -123,6 +124,48 @@ const STORE_PACKAGES: &[&str] = &[
     "kobo-verses",
     "kobo-zotero-reader",
 ];
+
+/// Store contributions discovered from their one checked-in manifest.
+///
+/// Released host commands may not have a source tree beside them, so the
+/// built-in list remains the fallback. Source builds add every valid
+/// `apps/*/cobalt-app.json` automatically.
+pub(crate) fn contributed_store_packages() -> &'static [String] {
+    static PACKAGES: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    PACKAGES.get_or_init(|| {
+        let apps = workspace_manifest()
+            .parent()
+            .expect("workspace manifest has a parent")
+            .join("apps");
+        let Ok(entries) = fs::read_dir(apps) else {
+            return Vec::new();
+        };
+        let mut packages = entries
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
+            .filter_map(|entry| {
+                let text = fs::read_to_string(entry.path().join("cobalt-app.json")).ok()?;
+                let value = kobo_json::parse(&text).ok()?;
+                let kobo_json::Value::Object(fields) = value else {
+                    return None;
+                };
+                let ids = fields
+                    .iter()
+                    .filter(|(name, _)| name == "id")
+                    .filter_map(|(_, value)| value.as_str())
+                    .collect::<Vec<_>>();
+                let [id] = ids.as_slice() else {
+                    return None;
+                };
+                (kobo_protocol::valid_app_id(id) && entry.file_name().to_str() == Some(*id))
+                    .then(|| format!("kobo-{id}"))
+            })
+            .collect::<Vec<_>>();
+        packages.sort();
+        packages.dedup();
+        packages
+    })
+}
 /// Proof that the daemon in the package can actually take the panel. The
 /// phrase only exists inside `present_on_panel`, which is behind
 /// `device-write`, so finding it in the finished binary is the artifact-level
@@ -485,6 +528,7 @@ fn run(arguments: &[String]) -> Result<(), String> {
         "stream" => stream_command(&arguments[1..]),
         "app-check" => app_check(&arguments[1..]),
         "app-release" => app_release(&arguments[1..]),
+        "beta-store-smoke" => beta_store_smoke::command(&arguments[1..]),
         "host-release-sign" => host_release_sign(&arguments[1..]),
         "host-release-verify" => host_release_verify(&arguments[1..]),
         "update" => update_host(&arguments[1..]),
@@ -1256,7 +1300,12 @@ fn parse_release_app(value: &kobo_json::Value) -> Result<ReleaseApp, String> {
     ];
     // These are website-only registry fields. The page generator validates
     // them; the CLI ignores them and release manifests contain neither.
-    let fields = strict_registry_object(value, "app", &FIELDS, &["page_description", "setup"])?;
+    let fields = strict_registry_object(
+        value,
+        "app",
+        &FIELDS,
+        &["page_description", "setup", "release_notes"],
+    )?;
     let string = |name| {
         registry_field(fields, name)?
             .as_str()
@@ -4733,6 +4782,7 @@ fn simulated_package(arguments: &[String]) -> Result<&'static str, String> {
         .iter()
         .map(|(package, _)| *package)
         .chain(STORE_PACKAGES.iter().copied())
+        .chain(contributed_store_packages().iter().map(String::as_str))
         .find(|package| {
             *package != "kobod"
                 && (*package == wanted || package.strip_prefix("kobo-") == Some(wanted))
@@ -4747,6 +4797,11 @@ fn simulatable() -> String {
         .filter_map(|(package, _)| package.strip_prefix("kobo-"))
         .chain(
             STORE_PACKAGES
+                .iter()
+                .filter_map(|package| package.strip_prefix("kobo-")),
+        )
+        .chain(
+            contributed_store_packages()
                 .iter()
                 .filter_map(|package| package.strip_prefix("kobo-")),
         )
@@ -5282,6 +5337,15 @@ const RECORD_USAGE: &str = "usage: kobo record --device HOST [--seconds N] [--fp
 /// for reading and never grabs, refreshes or writes, so it can watch our own
 /// application or the stock reader without changing either.
 fn record_command(arguments: &[String]) -> Result<(), String> {
+    record_command_notifying(arguments, None)
+}
+
+/// Runs `kobo record`, optionally notifying a coordinator the instant the
+/// device has finished writing frames and before the slower pull/encode work.
+fn record_command_notifying(
+    arguments: &[String],
+    capture_barrier: Option<(std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>)>,
+) -> Result<(), String> {
     let mut host: Option<String> = None;
     let mut seconds = 20_u64;
     let mut fps = 2_u32;
@@ -5334,6 +5398,12 @@ fn record_command(arguments: &[String]) -> Result<(), String> {
         "device kept {} frames",
         summary.split(' ').nth(1).unwrap_or("?")
     );
+    if let Some((complete, resume)) = capture_barrier {
+        let _ignored = complete.send(());
+        resume
+            .recv_timeout(Duration::from_secs(120))
+            .map_err(|_| "recording coordinator did not release the transfer".to_owned())?;
+    }
 
     let raw = pull_recording(&host)?;
     let frames = decode_recording(&raw)?;
@@ -6228,6 +6298,8 @@ fn print_help() {
                                    Build and verify every registered Store app\n\
            app-release --registry PATH --seed PATH --out PATH --base-url HTTPS_URL [--prebuilt-dir PATH | --artifact-dir PATH]\n\
                                    Build and sign every registered Store app\n\
+           beta-store-smoke --app ID (--fixture DIR | --beta-catalog URL --device IP) --out DIR [--marketing-route PATH]\n\
+                                   Verify Beta Store lifecycle and required marketing evidence\n\
            host-release-sign --manifest PATH --seed PATH --signature PATH --ssh-signature PATH\n\
                                    Sign host release metadata for publishing\n\
            host-release-verify --manifest PATH --signature PATH\n\
@@ -7632,11 +7704,14 @@ mod tests {
         }
 
         mod app_registry {
-            use super::super::super::{read_release_registry, workspace_manifest, STORE_PACKAGES};
+            use super::super::super::{
+                contributed_store_packages, read_release_registry, workspace_manifest,
+                STORE_PACKAGES,
+            };
             use std::collections::BTreeSet;
 
             #[test]
-            fn checked_in_registry_contains_every_store_application() {
+            fn cobalt_owned_registry_entries_are_known_store_applications() {
                 let registry = workspace_manifest()
                     .parent()
                     .expect("workspace root")
@@ -7646,9 +7721,10 @@ mod tests {
                     .iter()
                     .map(|app| app.package.as_str())
                     .collect::<BTreeSet<_>>();
-                assert_eq!(
-                    registered,
-                    STORE_PACKAGES.iter().copied().collect::<BTreeSet<_>>()
+                let known = STORE_PACKAGES.iter().copied().collect::<BTreeSet<_>>();
+                assert!(
+                    registered.is_subset(&known),
+                    "Cobalt-owned base entries must remain presentable; third-party manifests are collected by tools/app-registry.mjs"
                 );
                 // Versions move with every release, so the check is that
                 // each entry carries a version rather than which version it
@@ -7665,6 +7741,22 @@ mod tests {
                         app.id,
                         app.version
                     );
+                }
+            }
+
+            #[test]
+            fn standalone_contributions_are_discovered_without_a_package_list_edit() {
+                let contributed = contributed_store_packages()
+                    .iter()
+                    .map(String::as_str)
+                    .collect::<BTreeSet<_>>();
+                for package in [
+                    "kobo-arxiv",
+                    "kobo-morse",
+                    "kobo-sudoku",
+                    "kobo-zotero-reader",
+                ] {
+                    assert!(contributed.contains(package), "missing {package}");
                 }
             }
         }

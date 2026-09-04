@@ -1,0 +1,13 @@
+{
+  "id": "gutenbird",
+  "display_name": "Gutenbird",
+  "short_label": "Gutenbird",
+  "summary": "Browse OPDS libraries and read their books on your Kobo.",
+  "version": "1.0.7",
+  "glyph": "book",
+  "capabilities": [
+    "network",
+    "frontlight-control"
+  ],
+  "release_notes": "Rebuild for protocol 12 so the Store listing matches Cobalt 0.3.2."
+}

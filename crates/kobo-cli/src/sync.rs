@@ -1257,7 +1257,9 @@ mod tests {
         assert_eq!(mode & 0o077, 0);
         assert_eq!(read_state(&root).expect("read"), state);
         fs::remove_dir(&local).expect("remove root");
-        fs::create_dir(&local).expect("replace root");
+        let decoy = root.join("decoy");
+        fs::create_dir(&decoy).expect("decoy");
+        std::os::unix::fs::symlink(&decoy, &local).expect("replace root with a symlink");
         assert!(verify_mappings(&state).is_err());
         fs::remove_dir_all(root).expect("cleanup");
     }

@@ -1,0 +1,12 @@
+{
+  "id": "rss",
+  "display_name": "Feeds",
+  "short_label": "Feeds",
+  "summary": "Follow website feeds and read their articles without the web page around them.",
+  "version": "1.0.7",
+  "glyph": "rss",
+  "capabilities": [
+    "network"
+  ],
+  "release_notes": "Rebuild for protocol 12 so the Store listing matches Cobalt 0.3.2."
+}

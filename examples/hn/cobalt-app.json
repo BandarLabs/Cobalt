@@ -1,0 +1,12 @@
+{
+  "id": "hn",
+  "display_name": "Hacker News",
+  "short_label": "Hacker News",
+  "summary": "Read Top, New, Ask, and Show stories with complete comment threads.",
+  "version": "1.0.7",
+  "glyph": "news",
+  "capabilities": [
+    "network"
+  ],
+  "release_notes": "Rebuild for protocol 12 so the Store listing matches Cobalt 0.3.2."
+}

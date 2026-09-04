@@ -1,0 +1,15 @@
+{
+  "id": "audiobook",
+  "display_name": "Audiobook Studio",
+  "short_label": "Audiobooks",
+  "summary": "Turn a topic into an original narrated audiobook and listen on your Kobo.",
+  "version": "1.0.7",
+  "glyph": "headphones",
+  "capabilities": [
+    "network",
+    "audio",
+    "bluetooth-audio",
+    "bluetooth-control"
+  ],
+  "release_notes": "Rebuild for protocol 12 so the Store listing matches Cobalt 0.3.2."
+}
