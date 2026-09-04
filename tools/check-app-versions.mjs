@@ -17,10 +17,29 @@ const MANIFEST_FIELDS = [
   "minimum_cobalt_version",
   "glyph"
 ];
-const COMPATIBLE_PLATFORM_PATHS = new Set([
+const COMPATIBLE_RELEASE_PATHS = new Set([
+  "Cargo.lock",
+  "crates/kobo-abi/src/lib.rs",
+  "crates/kobo-net/src/lib.rs",
+  "crates/kobo-net/src/lines.rs",
+  "crates/kobo-net/tests/fixtures/localhost-ca.der",
+  "crates/kobo-net/tests/fixtures/localhost-cert.der",
+  "crates/kobo-net/tests/fixtures/localhost-key.der",
+  "crates/kobo-net/tests/lichess_stream_mock.rs",
+  "crates/kobo-policy/src/credentials.rs",
   "crates/kobo-policy/src/services.rs",
+  "crates/kobo-policy/src/tasks.rs",
   "crates/kobo-protocol/src/lib.rs",
-  "crates/kobo-sdk/src/lib.rs"
+  "crates/kobo-sdk/Cargo.toml",
+  "crates/kobo-sdk/src/credentials.rs",
+  "crates/kobo-sdk/src/keyboard.rs",
+  "crates/kobo-sdk/src/lib.rs",
+  "crates/kobo-sdk/src/terminal.rs",
+  "crates/kobo-text/src/lib.rs",
+  "crates/kobo-ui/Cargo.toml",
+  "crates/kobo-ui/src/lib.rs",
+  "examples/gutenbird/Cargo.toml",
+  "examples/gutenbird/src/main.rs"
 ]);
 
 // Store packages are built from the current SDK and therefore speak its exact
@@ -218,7 +237,12 @@ function versionIsOlder(value, minimum) {
   return false;
 }
 
-export function checkProtocolMinimums(registry, protocolVersion, baselines = PROTOCOL_MINIMUMS) {
+export function checkProtocolMinimums(
+  registry,
+  protocolVersion,
+  baselines = PROTOCOL_MINIMUMS,
+  affectedPackages = null
+) {
   if (!Array.isArray(registry.apps)) throw new Error("registry apps must be an array");
   const minimum = baselines.get(protocolVersion);
   if (!minimum) {
@@ -227,12 +251,36 @@ export function checkProtocolMinimums(registry, protocolVersion, baselines = PRO
     );
   }
   const failures = registry.apps
+    .filter(app => !affectedPackages || affectedPackages.has(app.package))
     .filter(app => versionIsOlder(app.minimum_cobalt_version, minimum))
     .map(
       app =>
         `${app.id}: minimum Cobalt ${app.minimum_cobalt_version} is older than protocol ${protocolVersion}, first supported by ${minimum}`
     );
   if (failures.length > 0) throw new Error(failures.join("\n"));
+}
+
+export function checkBuildPackages(
+  registry,
+  published,
+  packages,
+  protocolVersion,
+  baselines = PROTOCOL_MINIMUMS
+) {
+  if (!Array.isArray(registry.apps)) throw new Error("registry apps must be an array");
+  if (!Array.isArray(packages) || packages.some(package_ => typeof package_ !== "string")) {
+    throw new Error("build packages must be an array of strings");
+  }
+  const selected = new Set(packages);
+  if (selected.size !== packages.length) {
+    throw new Error("build packages must not contain duplicates");
+  }
+  const registered = new Set(registry.apps.map(app => app?.package));
+  for (const package_ of selected) {
+    if (!registered.has(package_)) throw new Error(`unknown build package ${package_}`);
+  }
+  checkProtocolMinimums(registry, protocolVersion, baselines, selected);
+  checkEntries(registry, published, selected);
 }
 
 function currentProtocolVersion() {
@@ -401,8 +449,8 @@ export function compatibleChangePaths(
     for (const file of change.files) {
       if (
         typeof file?.path !== "string" ||
-        !COMPATIBLE_PLATFORM_PATHS.has(file.path) ||
-        !/^[0-9a-f]{40}$/.test(file?.base_blob) ||
+        !COMPATIBLE_RELEASE_PATHS.has(file.path) ||
+        (file?.base_blob !== null && !/^[0-9a-f]{40}$/.test(file?.base_blob)) ||
         !/^[0-9a-f]{40}$/.test(file?.compatible_blob)
       ) {
         throw new Error("invalid app release compatible-change file");
@@ -492,6 +540,19 @@ export function changedLockPackageIdentities(previousSource, currentSource) {
       return JSON.stringify(previousBlocks) !== JSON.stringify(currentBlocks);
     })
   );
+}
+
+export function releaseLockPackageIdentities(
+  previousSource,
+  currentSource,
+  compatiblePaths
+) {
+  if (!(compatiblePaths instanceof Set)) {
+    throw new Error("compatible release paths must be a set");
+  }
+  return compatiblePaths.has("Cargo.lock")
+    ? new Set()
+    : changedLockPackageIdentities(previousSource, currentSource);
 }
 
 export function registeredConsumers(

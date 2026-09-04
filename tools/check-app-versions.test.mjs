@@ -315,7 +315,8 @@ test("new packages must meet the current protocol minimum", () => {
 test("the intended Gallery and Zotero build selection passes final validation", () => {
   const values = fixture({
     currentVersion: "1.0.1",
-    summary: "Updated Gallery"
+    summary: "Updated Gallery",
+    releaseNotes: "Explain the updated Gallery reader workflow."
   });
   values.registry.apps[0].package = "kobo-gallery";
   values.registry.apps[0].id = "gallery";

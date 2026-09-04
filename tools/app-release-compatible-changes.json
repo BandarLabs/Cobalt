@@ -8,7 +8,7 @@
         {
           "path": "Cargo.lock",
           "base_blob": "98e86504890e59da1755181ad38d7ffaa86c635a",
-          "compatible_blob": "5d3f461dbce8ec894c99d9f00366832d8ea6480e"
+          "compatible_blob": "70b193be15767acdeedd2cbc716ef318e44314f3"
         },
         {
           "path": "crates/kobo-abi/src/lib.rs",
