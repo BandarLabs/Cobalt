@@ -40,6 +40,7 @@ const screenshots = {
   launcher: ["launcher.png", "The Cobalt launcher showing installed apps on a Kobo"],
   magnet: ["magnet.png", "The Kobo hall sensor responding to a magnet"],
   morse: ["morse.png", "A letter filling the Kobo screen while the front light sends Morse code"],
+  paperterm: ["paperterm.png", "Paperterm pairing screen with computer address field and on-screen keyboard on a Kobo Clara BW."],
   rss: ["feeds.png", "Subscribed feeds and articles in the Feeds app on a Kobo"],
   settings: ["settings.png", "Battery status and hardware information in Cobalt Settings"],
   sidekick: ["sidekick.png", "A coding-agent request with tappable responses on a Kobo"],

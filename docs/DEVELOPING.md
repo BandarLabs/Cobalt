@@ -75,15 +75,53 @@ touch node, so the digitiser, the transform, the multitouch decoder and the
 hit-testing all run as they do under a finger; it is behind `device-write` and
 an unlock phrase, and it always lifts.
 
-To record the panel rather than photograph it once:
+To record the simulator rather than photograph it one screen at a time:
+
+```sh
+cargo run -p kobo-cli -- drive --script drive.txt --record target/demo --fps 4
+```
+
+`--record` films the panel on its own clock while the script drives it, so it
+catches the screens a script passes through as well as the ones it stops on. It
+writes numbered greyscale PNGs, a `timings.txt`, a `recording.mp4` and a
+`recording.gif` into the directory, which is the same shape `record --device`
+produces. Frames identical to the one before them are dropped, so a script that
+waits two seconds between taps is one frame there rather than eight.
+
+**A recording is residue-free unless you ask for the residue.** This is the
+opposite default to `shot`, and deliberate: a still with e-ink ghosting on it is
+two screens a person can read past, while a hundred of them played in sequence
+is every screen of the run at once. Pass `--ghosting` when the refreshes are
+what you are recording. `--ideal` still governs the `shot` steps.
+
+ffmpeg is required and is checked for before the script runs, because
+discovering it is missing at the end of a run costs the run.
+
+`scripts/record-apps-sim.sh` does that for every application in
+`apps/catalog.json`, one simulator at a time, into a dated directory under
+`target/sim-recordings/`. It needs no reader:
+
+```sh
+scripts/record-apps-sim.sh                       # every catalog application
+scripts/record-apps-sim.sh --apps "todo gallery" # or a few
+scripts/record-apps-sim.sh --list                # what it would record, and how
+```
+
+An application is driven by its committed `drive.kobo` or `drive.txt`; one with
+neither is recorded on its opening screen and named at the end, because a route
+through an application is something only its author can write.
+
+To record the real panel rather than the simulated one:
 
 ```sh
 cargo run -p kobo-cli -- record --device <address> --seconds 24 --out target/run
 ```
 
 `record --device` is read-only in the same way `shot --device` is. It writes
-numbered greyscale PNGs and a `timings.txt`, plus an `recording.mp4` when
-ffmpeg is on the path. Every grey level is kept: the panel is greyscale and its
+numbered greyscale PNGs and a `timings.txt`, plus a `recording.mp4` and a
+`recording.gif` when ffmpeg is on the path -- there the pictures are the
+product and the video is a bonus, so a missing ffmpeg is a note rather than a
+refusal. Every grey level is kept: the panel is greyscale and its
 text is anti-aliased, so a recording that flattened the greys would look
 harsher than the device and would read as a rendering bug that is not there.
 What keeps it small is that e-ink barely moves, so identical frames are dropped
