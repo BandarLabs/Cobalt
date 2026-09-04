@@ -288,6 +288,7 @@ pub const CLARA_BW_391: DeviceProfile = DeviceProfile {
     firmware_versions: &["4.45.23697"],
     kernel_release: "4.9.77",
     write_ready: true,
+    leftover_radio_daemons: &["/usr/bin/wmt_launcher"],
     // Measured on the device on 2026-09-02: preserving Nickel's detached
     // supplicant kept SSH alive throughout Cobalt's panel session, but the
     // restarted reader launched a replacement. Reaping the exact captured
@@ -360,6 +361,7 @@ pub const CLARA_BW_395: DeviceProfile = DeviceProfile {
     firmware_versions: &["4.45.23697"],
     kernel_release: "4.9.77",
     write_ready: true,
+    leftover_radio_daemons: &[],
     // The refresh carries the same MediaTek radio, firmware, and kernel as the
     // N365, so the two-supplicant collision measured there applies unchanged:
     // hand back without reaping and Nickel's restarted reader races the
@@ -433,6 +435,7 @@ pub const CLARA_HD_376: DeviceProfile = DeviceProfile {
     firmware_versions: &["4.38.23684", "4.38.23697"],
     kernel_release: "4.1.15-00136-g12655eaaef89",
     write_ready: true,
+    leftover_radio_daemons: &[],
     reap_nickel_supplicant: false,
 };
 
@@ -451,6 +454,7 @@ pub const CLARA_COLOUR_393: DeviceProfile = DeviceProfile {
     device_code: 393,
     serial_prefix: "N367",
     write_ready: true,
+    leftover_radio_daemons: &[],
     reap_nickel_supplicant: false,
     ..CLARA_BW_391
 };
@@ -510,6 +514,7 @@ pub const ELIPSA_2E_389: DeviceProfile = DeviceProfile {
     firmware_versions: &["4.38.23697"],
     kernel_release: "4.9.77",
     write_ready: true,
+    leftover_radio_daemons: &[],
     reap_nickel_supplicant: false,
 };
 
@@ -603,6 +608,7 @@ pub const LIBRA_2_388: DeviceProfile = DeviceProfile {
     // Both halves measured on the device: the two-supplicant collision after
     // a normal hand-back, and the clean recovery after the leftover one was
     // killed during a live session.
+    leftover_radio_daemons: &["/bin/wpa_supplicant"],
     reap_nickel_supplicant: true,
 };
 
@@ -697,6 +703,7 @@ pub const LIBRA_COLOUR_390: DeviceProfile = DeviceProfile {
     // Off until measured here. The evidence behind the reap is from a Realtek
     // radio on i.MX6SLL; this is a MediaTek device whose Wi-Fi stack is shared
     // with Bluetooth and known to behave differently.
+    leftover_radio_daemons: &[],
     reap_nickel_supplicant: false,
 };
 
@@ -939,21 +946,41 @@ pub struct DeviceProfile {
     pub kernel_release: &'static str,
     /// True only after owner-attended hardware evidence has been reviewed.
     pub write_ready: bool,
-    /// Whether the hand-back must stop Nickel's leftover `wpa_supplicant`
-    /// before the reader is restarted.
+    /// Radio daemons of Nickel's that the hand-back must stop before the
+    /// reader is restarted, named by their exact executable path.
     ///
-    /// Nickel launches its supplicant detached (`-B`, parented to init), so
-    /// stopping the reader never takes it down and it survives the whole
-    /// Cobalt session. The restarted Nickel then starts a supplicant of its
-    /// own, two of them fight over `wlan0`, and Wi-Fi stays down until a
-    /// reboot. Measured on the Libra 2 and the Clara BW: killing the leftover
-    /// supplicant before the hand-back gives a clean recovery, every time,
-    /// and leaving it gives the retry loop, every time.
+    /// Nickel launches these detached and parented to init, so stopping the
+    /// reader never takes one down and it survives the whole Cobalt session.
+    /// A restarted Nickel then launches its own, and the two fight over one
+    /// piece of hardware.
     ///
-    /// Per profile rather than unconditional for the usual reason: radios
-    /// differ, and the `MediaTek` devices share their Wi-Fi stack with
-    /// Bluetooth. Do not silently change a device nobody here can test;
-    /// enable this per device once the symptom and the fix are observed on it.
+    /// Two have been observed, at different layers:
+    ///
+    /// * `/bin/wpa_supplicant` on the Libra 2. Two of them fight over `wlan0`
+    ///   and Wi-Fi stays down until a reboot. Measured on the device: killing
+    ///   the leftover before the hand-back gives a clean recovery every time,
+    ///   and leaving it gives the retry loop every time.
+    /// * `/usr/bin/wmt_launcher` on the Clara BW, which owns the `MediaTek`
+    ///   combo chip through `/dev/stpwmt`. The second one cannot open that
+    ///   node and wedges in `WMT_open` uninterruptibly, so it cannot even be
+    ///   killed afterwards. One is left behind per session, and Wi-Fi holds up
+    ///   only while the one from boot still owns the chip, which is why the
+    ///   symptom looks intermittent and worsens the longer a reader is up.
+    ///
+    /// A list rather than a flag because these are different daemons on
+    /// different devices, and a device can want more than one.
+    ///
+    /// Per profile rather than unconditional for the usual reason: a radio is
+    /// evidence about one device, and the `MediaTek` parts share their Wi-Fi
+    /// stack with Bluetooth. Do not silently change a device nobody here can
+    /// test; name a daemon for a device once the symptom and the fix are
+    /// observed on it.
+    pub leftover_radio_daemons: &'static [&'static str],
+    /// Whether Nickel's leftover `wpa_supplicant` is stopped before hand-back.
+    ///
+    /// Independent of [`Self::leftover_radio_daemons`]: that list names every
+    /// leftover radio process to reap, while this flag is the measured
+    /// two-supplicant collision on `wlan0`.
     pub reap_nickel_supplicant: bool,
 }
 
@@ -1745,18 +1772,42 @@ mod tests {
         );
     }
 
-    /// The supplicant reap is declared, not guessed. Both halves were
-    /// measured on the Libra 2 and the Clara BW: the two-supplicant collision
-    /// after a normal hand-back, and the clean recovery once the leftover one
-    /// was killed. The two Clara BW profiles are the same board, radio,
-    /// firmware, and kernel under two device codes, so evidence gathered on
-    /// either one covers both; splitting them is what let the N365 carry the
-    /// reap while the P365 refresh silently went without it. Every other
-    /// profile keeps its current behaviour until the same evidence exists for
-    /// it, so a change to one of these values is a claim about a device and
-    /// needs the measurement to go with it.
+    /// A leftover daemon is named for a device, not guessed at. The Libra 2
+    /// has both halves measured: the two-supplicant collision after a normal
+    /// hand-back, and the clean recovery once the leftover one was killed. The
+    /// Clara BW has the collision measured -- eight orphaned `wmt_launcher`
+    /// processes after eight hand-backs, every one of them stuck
+    /// uninterruptibly in `WMT_open` holding no `/dev/stpwmt`, with a matching
+    /// `-EIO` timeout in the kernel log for each -- and its recovery is what
+    /// this reap is for. The two Clara BW profiles are the same board, radio,
+    /// firmware, and kernel under two device codes, so the Nickel-supplicant
+    /// reap measured on either one covers both. Every other profile keeps its
+    /// current behaviour until the same evidence exists, so a change to one of
+    /// these values is a claim about a device and needs the measurement to go
+    /// with it.
     #[test]
-    fn the_supplicant_reap_is_declared_only_where_it_was_measured() {
+    fn a_leftover_daemon_is_declared_only_where_it_was_measured() {
+        let declared = super::SUPPORTED_PROFILES
+            .iter()
+            .map(|profile| (profile.id, profile.leftover_radio_daemons))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            declared,
+            [
+                ("clara-bw-391", &["/usr/bin/wmt_launcher"][..]),
+                ("clara-bw-395", &[][..]),
+                ("clara-hd-376", &[][..]),
+                ("clara-colour-393", &[][..]),
+                ("elipsa-2e-389", &[][..]),
+                ("libra-2-388", &["/bin/wpa_supplicant"][..]),
+                ("libra-colour-390", &[][..]),
+                ("libra-colour-390-4.46.23836", &[][..]),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_supplicant_reap_is_declared_only_where_it_was_measured() {
         let declared = super::SUPPORTED_PROFILES
             .iter()
             .map(|profile| (profile.id, profile.reap_nickel_supplicant))

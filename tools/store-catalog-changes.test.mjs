@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { collectRegistry } from "./app-registry.mjs";
 import {
   affectsDevicePackage,
   devicePackageChanges
@@ -19,7 +20,7 @@ function directoriesOfThisTree() {
     workspacePackageDirectories(readFileSync("Cargo.toml", "utf8"), member =>
       readFileSync(`${member}/Cargo.toml`, "utf8")
     ),
-    registeredStorePackages(JSON.parse(readFileSync("apps/catalog.json", "utf8")))
+    registeredStorePackages(collectRegistry())
   );
 }
 
@@ -98,9 +99,7 @@ test("a mixed push reports only the Store catalog inputs", () => {
 
 test("every catalog package in this tree is inside the gate", () => {
   const directories = directoriesOfThisTree();
-  const packages = registeredStorePackages(
-    JSON.parse(readFileSync("apps/catalog.json", "utf8"))
-  );
+  const packages = registeredStorePackages(collectRegistry());
   const packageDirectories = workspacePackageDirectories(
     readFileSync("Cargo.toml", "utf8"),
     member => readFileSync(`${member}/Cargo.toml`, "utf8")

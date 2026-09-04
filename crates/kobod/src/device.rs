@@ -830,44 +830,35 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
             )
         });
     }
-    // Nickel launches its supplicant detached, so stopping the reader never
-    // took it down and it has been running for the whole session. A restarted
-    // Nickel starts a supplicant of its own on top of it, the two fight over
-    // the interface, and Wi-Fi stays down until a reboot. On the profiles
-    // that declare it, the leftover one is stopped here, after the panel is
-    // given up and before the reader returns, so the new Nickel comes up
+    // Nickel launches its radio daemons detached, so stopping the reader never
+    // took them down and they have been running for the whole session. A
+    // restarted Nickel launches its own on top of them, the two fight over one
+    // piece of hardware, and the radio stays down until a reboot. On the
+    // profiles that name one, the leftovers are stopped here, after the panel
+    // is given up and before the reader returns, so the new Nickel comes up
     // alone. This is a reap, not radio configuration: the interface, the
     // association and the choice to reconnect stay Nickel's.
     //
-    // Nothing here is fatal. A supplicant that is absent, ambiguous, or will
-    // not die leaves the owner exactly where every session left them before
-    // this existed: reconnecting by hand or rebooting.
-    if !reader_was_running && profile.reap_nickel_supplicant {
-        match Reader::find_running(kobo_hal::network::SUPPLICANT_EXECUTABLE) {
-            Ok(supplicant) => {
-                trace("stopping the leftover supplicant before the reader returns");
-                if let Err(error) = supplicant.stop(STOP_GRACE) {
-                    trace(&format!("the leftover supplicant would not stop: {error}"));
-                }
-            }
-            Err(error) => trace(&format!("no leftover supplicant to stop: {error}")),
-        }
-    }
-    // Sleep takes `wlan0` down. Leaving it down means a restarted Nickel has
-    // no node to associate on, even after the leftover supplicant is gone.
-    // Putting the link up is not a second owner: no supplicant, no DHCP.
+    // Every one of them goes, not the first: a reader that has handed the
+    // panel back several times has one leftover per session, and stopping only
+    // one leaves the collision in place. Timing is the whole of it on the
+    // MediaTek parts, where the leftover is killable now and, once the new
+    // Nickel has started its own and that one has wedged trying to open a
+    // device node this one still holds, is not killable at all.
+    //
+    // Nothing here is fatal. A daemon that is absent or will not die leaves
+    // the owner exactly where every session left them before this existed:
+    // reconnecting by hand or rebooting.
+    reap_leftover_radio_daemons(profile.leftover_radio_daemons);
+    // Sleep may leave wlan0 administratively down. Give Nickel its link back
+    // before it starts its own supplicant; it remains the sole radio owner.
     if !reader_was_running && kobo_hal::wifi::wanted() {
         kobo_hal::wifi::leave_link_up();
         trace("left wlan0 up for the reader");
         println!("left wlan0 up for the reader");
     }
-    if reader_was_running {
-        trace("panel and touch released to the reader that is already running");
-        println!("panel released to the reader already running");
-    } else {
-        trace("panel and touch released, restarting the reader");
-        println!("panel released, restarting the reader");
-    }
+    trace("panel and touch released, restarting the reader");
+    println!("panel released, restarting the reader");
     let restarted = match reader.start(START_GRACE) {
         Ok(pid) => pid,
         Err(error) => {
@@ -3802,6 +3793,31 @@ fn preflight(application: &Path) -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+/// Stops every leftover radio daemon a profile names, so the reader that is
+/// about to start comes up as the only owner of the hardware.
+///
+/// Called from both paths that restart the reader, because a session that
+/// ended badly leaves the same leftovers as one that ended well, and a reader
+/// recovered by the watchdog deserves its radio back just as much.
+pub(crate) fn reap_leftover_radio_daemons(executables: &[&str]) {
+    for executable in executables {
+        let leftovers = Reader::find_all_running(executable);
+        if leftovers.is_empty() {
+            trace(&format!("no leftover {executable} to stop"));
+            continue;
+        }
+        trace(&format!(
+            "stopping {} leftover {executable} before the reader returns",
+            leftovers.len()
+        ));
+        for leftover in leftovers {
+            if let Err(error) = leftover.stop(STOP_GRACE) {
+                trace(&format!("a leftover {executable} would not stop: {error}"));
+            }
+        }
+    }
 }
 
 /// Turns an application's name into the binary to run.

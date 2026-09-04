@@ -219,6 +219,32 @@ impl Reader {
         Self::find_matching_in(Path::new("/proc"), executable, Identity::Executable)
     }
 
+    /// Every process running this executable, lowest process id first.
+    ///
+    /// [`Self::find_running`] refuses to choose when several match, which is
+    /// right when the caller means the one reader and a second would make the
+    /// answer a guess. A leftover daemon is the opposite case: several is the
+    /// normal answer, one per session that has handed the panel back, and each
+    /// one is wanted. Reaping through the single-match lookup would do nothing
+    /// on exactly the readers that need it most, because the second leftover
+    /// makes the lookup ambiguous and the reap is skipped from then on.
+    ///
+    /// Reading `/proc` at all is the only failure worth a word, and a caller
+    /// that has nothing to stop and a caller that cannot look are in the same
+    /// position, so both come back empty.
+    #[must_use]
+    pub fn find_all_running(executable: &str) -> Vec<Self> {
+        Self::find_all_matching_in(Path::new("/proc"), executable, Identity::Executable)
+    }
+
+    fn find_all_matching_in(proc_root: &Path, executable: &str, identity: Identity) -> Vec<Self> {
+        matching_pids_in(proc_root, executable, identity)
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|pid| Self::capture_pid_in(proc_root, executable, pid, identity).ok())
+            .collect()
+    }
+
     fn find_executable_in(proc_root: &Path, executable: &str) -> Result<Self, ReaderError> {
         Self::find_matching_in(proc_root, executable, Identity::ZerothArgument)
     }
@@ -828,6 +854,58 @@ mod tests {
             reader.arguments(),
             [OsString::from("-platform"), OsString::from("kobo")]
         );
+        let _ignored = fs::remove_dir_all(&root);
+    }
+
+    /// A leftover daemon accumulates one per session, so several is the state
+    /// the reap exists for.
+    ///
+    /// Found on a device: eight orphaned `wmt_launcher` processes after eight
+    /// hand-backs. Reaping through the single-match lookup would have refused
+    /// every one of them as ambiguous from the second session onward, which is
+    /// to say it would have stopped working exactly when it started mattering.
+    #[test]
+    fn every_leftover_daemon_is_found_and_not_refused_as_ambiguous() {
+        let root = fake_proc(
+            "leftovers",
+            &[
+                (700, "wmt_launcher", &["-p", "/lib/firmware"]),
+                (701, "wmt_launcher", &["-p", "/lib/firmware"]),
+                (702, "wmt_launcher", &["-p", "/lib/firmware"]),
+            ],
+        );
+        for pid in [700, 701, 702] {
+            std::os::unix::fs::symlink("/bin/sh", root.join(pid.to_string()).join("exe"))
+                .expect("create exe link");
+        }
+        let leftovers = Reader::find_all_matching_in(&root, "/bin/sh", super::Identity::Executable);
+        assert_eq!(
+            leftovers.iter().map(Reader::pid).collect::<Vec<_>>(),
+            vec![700, 701, 702],
+            "the single-match lookup would have refused these as ambiguous"
+        );
+        // Each one is described well enough to be signalled, which is the only
+        // reason to have found it.
+        for leftover in &leftovers {
+            assert!(leftover.still_running_in(&root));
+        }
+        let _ignored = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn nothing_to_reap_is_an_empty_answer_rather_than_a_failure() {
+        let root = fake_proc("no_leftovers", &[(360, READER_EXECUTABLE, &[])]);
+        assert!(
+            Reader::find_all_matching_in(&root, "/bin/sh", super::Identity::Executable).is_empty()
+        );
+        // A caller that cannot read /proc is in the same position as one with
+        // nothing to stop, and must not be made to handle a second outcome.
+        assert!(Reader::find_all_matching_in(
+            Path::new("/definitely/not/a/proc"),
+            "/bin/sh",
+            super::Identity::Executable
+        )
+        .is_empty());
         let _ignored = fs::remove_dir_all(&root);
     }
 
