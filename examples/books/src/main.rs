@@ -9,9 +9,9 @@
 use kobo_bookview::{BookView, Step};
 use kobo_read::{Memory, Outcome};
 use kobo_sdk::{
-    action_id, document_preview, stamp_format_badge, ActionId, Context, DeviceRequest, DeviceResult,
-    Glyph, KoboApp, LibraryEntry, PictureHandle, Screen, ScreenBuilder, TaskId, TaskOutcome, Tile,
-    TilePicture, TileShape,
+    action_id, document_preview, stamp_format_badge, ActionId, Context, DeviceRequest,
+    DeviceResult, Glyph, KoboApp, LibraryEntry, PictureHandle, Screen, ScreenBuilder, TaskId,
+    TaskOutcome, Tile, TilePicture, TileShape,
 };
 use std::process::ExitCode;
 
@@ -84,9 +84,7 @@ fn fixtures() -> Vec<Document> {
             preview: "The tide was already turning when the boat left the harbour.".to_owned(),
             on_card: true,
             has_cover: true,
-            body: Some(
-                "The tide was already turning when the boat left the harbour.".to_owned(),
-            ),
+            body: Some("The tide was already turning when the boat left the harbour.".to_owned()),
         },
         Document {
             id: "test/notes.md".to_owned(),
@@ -95,7 +93,10 @@ fn fixtures() -> Vec<Document> {
             preview: "The rain started before the kettle boiled.".to_owned(),
             on_card: true,
             has_cover: false,
-            body: Some("# Notes on a Rainy Afternoon\n\nThe rain started before the kettle boiled.".to_owned()),
+            body: Some(
+                "# Notes on a Rainy Afternoon\n\nThe rain started before the kettle boiled."
+                    .to_owned(),
+            ),
         },
         Document {
             id: "test/timetable.pdf".to_owned(),
@@ -113,7 +114,9 @@ fn fixtures() -> Vec<Document> {
             preview: "Dear M,".to_owned(),
             on_card: true,
             has_cover: false,
-            body: Some("Dear M,\n\nThe hill behind the house is still green in September.".to_owned()),
+            body: Some(
+                "Dear M,\n\nThe hill behind the house is still green in September.".to_owned(),
+            ),
         },
         Document {
             id: "test/streets.html".to_owned(),
@@ -122,7 +125,10 @@ fn fixtures() -> Vec<Document> {
             preview: "Market Street runs east from the harbour.".to_owned(),
             on_card: true,
             has_cover: false,
-            body: Some("<h1>Index of Streets</h1>\n<p>Market Street runs east from the harbour.</p>".to_owned()),
+            body: Some(
+                "<h1>Index of Streets</h1>\n<p>Market Street runs east from the harbour.</p>"
+                    .to_owned(),
+            ),
         },
     ]
 }
@@ -215,9 +221,7 @@ impl Books {
         if page_count > 1 {
             let page = u16::try_from(self.page + 1).unwrap_or(u16::MAX);
             let total = u16::try_from(page_count).unwrap_or(u16::MAX);
-            screen = screen
-                .page_turns(PREVIOUS, NEXT)
-                .page_position(page, total);
+            screen = screen.page_turns(PREVIOUS, NEXT).page_position(page, total);
         }
         screen.build()
     }
@@ -324,12 +328,10 @@ impl Books {
             self.show(context);
             return;
         }
-        match self.book.open_bytes(
-            context,
-            document.kind.filename(),
-            &bytes,
-            Memory::default(),
-        ) {
+        match self
+            .book
+            .open_bytes(context, document.kind.filename(), &bytes, Memory::default())
+        {
             Ok(()) => {
                 self.open_title = Some(document.title.clone());
                 self.view = View::Reading;
@@ -402,8 +404,8 @@ impl KoboApp for Books {
             self.show(context);
             return;
         }
-        if let Some(index) = (0..self.documents.len())
-            .find(|index| action == action_id(&format!("book-{index}")))
+        if let Some(index) =
+            (0..self.documents.len()).find(|index| action == action_id(&format!("book-{index}")))
         {
             self.open_document(context, index);
         }
@@ -789,7 +791,10 @@ mod tests {
             "the shared reader did not show the EPUB: {text}"
         );
         assert!(
-            !screen.nodes.iter().any(|node| matches!(node, Node::TileGrid { .. })),
+            !screen
+                .nodes
+                .iter()
+                .any(|node| matches!(node, Node::TileGrid { .. })),
             "the EPUB tap left the shelf on the panel"
         );
         assert!(screen.validate(&CLARA_BW_METRICS).is_empty());

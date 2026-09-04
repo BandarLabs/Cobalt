@@ -392,7 +392,7 @@ pub fn read_in(roots: &[PathBuf], id: &str) -> Option<Vec<u8>> {
 }
 
 mod nickel {
-    use super::{clip_title, Entry, Kind, Listing, ROOTS, MAX_DOCUMENT_BYTES, MAX_ENTRIES};
+    use super::{clip_title, Entry, Kind, Listing, MAX_DOCUMENT_BYTES, MAX_ENTRIES, ROOTS};
     use std::path::{Path, PathBuf};
 
     const DATABASE: &str = "/mnt/onboard/.kobo/KoboReader.sqlite";
@@ -533,12 +533,10 @@ mod nickel {
             .components()
             .filter_map(|part| part.as_os_str().to_str())
             .collect();
-        if parts.iter().any(|part| {
-            matches!(
-                *part,
-                ".kobo-images" | ".adds" | ".adobe-digital-editions"
-            )
-        }) {
+        if parts
+            .iter()
+            .any(|part| matches!(*part, ".kobo-images" | ".adds" | ".adobe-digital-editions"))
+        {
             return true;
         }
         match parts.iter().position(|part| *part == ".kobo") {

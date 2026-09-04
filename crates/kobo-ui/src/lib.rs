@@ -19928,7 +19928,8 @@ mod prose_tests {
             foot.iter().any(|pixel| *pixel == tone::INK),
             "the format chip was not drawn in the trailing foot"
         );
-        let with_lines = document_preview("A line of prose that should appear.", "md", width, height);
+        let with_lines =
+            document_preview("A line of prose that should appear.", "md", width, height);
         let no_lines = document_preview("", "md", width, height);
         assert_ne!(
             with_lines, no_lines,

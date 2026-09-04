@@ -3159,10 +3159,7 @@ fn encode_device_result(output: &mut Vec<u8>, result: &DeviceResult) -> Result<(
             output.extend_from_slice(&[17, radio_flags(*cobalt, *apps)]);
         }
         DeviceResult::UpdateChannel(channel) => output.extend_from_slice(&[18, channel.wire()]),
-        DeviceResult::Library {
-            entries,
-            truncated,
-        } => {
+        DeviceResult::Library { entries, truncated } => {
             if entries.len() > MAX_LIBRARY_ENTRIES {
                 return Err(ProtocolError::InvalidValue("library listing"));
             }
@@ -3404,10 +3401,7 @@ fn valid_library_id(id: &str) -> bool {
         && !id.split('/').any(|part| part == "..")
 }
 
-fn encode_library_entry(
-    output: &mut Vec<u8>,
-    entry: &LibraryEntry,
-) -> Result<(), ProtocolError> {
+fn encode_library_entry(output: &mut Vec<u8>, entry: &LibraryEntry) -> Result<(), ProtocolError> {
     if !valid_library_id(&entry.id)
         || entry.title.is_empty()
         || entry.title.len() > MAX_LIBRARY_TITLE_LEN
@@ -3455,10 +3449,7 @@ fn decode_library_result(reader: &mut Reader<'_>) -> Result<DeviceResult, Protoc
     for _ in 0..count {
         entries.push(decode_library_entry(reader)?);
     }
-    Ok(DeviceResult::Library {
-        entries,
-        truncated,
-    })
+    Ok(DeviceResult::Library { entries, truncated })
 }
 
 fn decode_library_document(reader: &mut Reader<'_>) -> Result<DeviceResult, ProtocolError> {

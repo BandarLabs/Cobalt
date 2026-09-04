@@ -8,9 +8,8 @@
 pub use kobo_protocol::{
     is_valid_key, AppInfo, AppLinkState, AudioPlaybackState, AudioSource, BatteryDetail,
     BluetoothDevice, BluetoothDeviceKind, Credential, DenyReason, DeviceError, DeviceIdentity,
-    DeviceRequest, DeviceResult, DictionaryEntry, Frame, Header, LibraryEntry, Lifecycle,
-    LogLevel, Message,
-    RemoteInstallOutcome, SecretHeader, ShellError, ShellEvent, ShellRequest, StoreError,
+    DeviceRequest, DeviceResult, DictionaryEntry, Frame, Header, LibraryEntry, Lifecycle, LogLevel,
+    Message, RemoteInstallOutcome, SecretHeader, ShellError, ShellEvent, ShellRequest, StoreError,
     StoreRequest, StoreResult, StreamError, Task, TaskError, TaskId, TaskOutcome, UpdateChannel,
     WifiNetwork, CACHE_PREFIX, MAX_CACHE_KEYS, MAX_FONT_BYTES, MAX_HEADERS, MAX_HEADER_NAME,
     MAX_HEADER_VALUE, MAX_INLINE_PICTURE_BYTES, MAX_LOOKUP_WORD_BYTES, MAX_PICTURE_BYTES,
@@ -20,15 +19,15 @@ pub use kobo_protocol::{
 pub use kobo_ui::QuoteRole;
 pub use kobo_ui::{
     document_preview, stamp_format_badge, terminal_grid, terminal_grid_for, typographic_cover,
-    ActionId, BandAlign, BandSlot,
-    BannerLevel, BarAction, BarStyle, BottomAction, Caret, Cell, Chip, Chrome, ControlState,
-    DiagnosticSeverity, DisplayMetrics, Emphasis, Fold, FontHandle, Freeform, Glyph, InlineFormula,
-    LayoutIssue, LayoutIssueKind, NavBar, Node, NodeId, Orientation, Overlay, OverlayKind,
-    ParagraphAlignment, ParagraphPresentation, Percent, PictureHandle, ProseArea, RichTextSpan,
-    Row, RowLead, RowState, Screen, SlotWidth, Space, TextHit, TextPresentation, TextSelection,
-    Tile, TilePicture, TileShape, TileState, TopBar, TransferFailure, CLARA_BW_METRICS,
-    MAX_BAND_SLOTS, MAX_CELLS, MAX_CHIPS, MAX_CHOICE_OPTIONS, MAX_COLUMNS, MAX_INLINE_FORMULAE,
-    MAX_QUOTE_DEPTH, MAX_ROWS, MAX_TABS, MAX_TERMINAL_COLUMNS, MAX_TERMINAL_ROWS, TILE_BADGE_LIMIT,
+    ActionId, BandAlign, BandSlot, BannerLevel, BarAction, BarStyle, BottomAction, Caret, Cell,
+    Chip, Chrome, ControlState, DiagnosticSeverity, DisplayMetrics, Emphasis, Fold, FontHandle,
+    Freeform, Glyph, InlineFormula, LayoutIssue, LayoutIssueKind, NavBar, Node, NodeId,
+    Orientation, Overlay, OverlayKind, ParagraphAlignment, ParagraphPresentation, Percent,
+    PictureHandle, ProseArea, RichTextSpan, Row, RowLead, RowState, Screen, SlotWidth, Space,
+    TextHit, TextPresentation, TextSelection, Tile, TilePicture, TileShape, TileState, TopBar,
+    TransferFailure, CLARA_BW_METRICS, MAX_BAND_SLOTS, MAX_CELLS, MAX_CHIPS, MAX_CHOICE_OPTIONS,
+    MAX_COLUMNS, MAX_INLINE_FORMULAE, MAX_QUOTE_DEPTH, MAX_ROWS, MAX_TABS, MAX_TERMINAL_COLUMNS,
+    MAX_TERMINAL_ROWS, TILE_BADGE_LIMIT,
 };
 use std::collections::BTreeMap;
 use std::collections::VecDeque;
