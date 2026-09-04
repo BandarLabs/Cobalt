@@ -7,7 +7,7 @@
       "display_name": "arXiv",
       "short_label": "arXiv",
       "summary": "Browse and search arXiv, keep preprints, and read their HTML versions on your Kobo.",
-      "version": "1.3.6",
+      "version": "1.3.7",
       "minimum_cobalt_version": "0.3.1",
       "glyph": "note",
       "capabilities": [
@@ -20,7 +20,7 @@
       "display_name": "Audiobook Studio",
       "short_label": "Audiobooks",
       "summary": "Turn a topic into an original narrated audiobook and listen on your Kobo.",
-      "version": "1.0.6",
+      "version": "1.0.7",
       "minimum_cobalt_version": "0.3.1",
       "glyph": "headphones",
       "capabilities": [
@@ -75,7 +75,7 @@
       "display_name": "Gutenbird",
       "short_label": "Gutenbird",
       "summary": "Browse OPDS libraries and read their books on your Kobo.",
-      "version": "1.0.6",
+      "version": "1.0.7",
       "minimum_cobalt_version": "0.3.1",
       "glyph": "book",
       "capabilities": [
@@ -143,7 +143,7 @@
       "short_label": "Sidekick",
       "summary": "Review coding-agent requests across multiple terminal sessions.",
       "page_description": "An e-reader board for coding-agent approvals, distinguishing simultaneous terminal sessions before an answer is sent.",
-      "version": "1.0.6",
+      "version": "1.0.7",
       "minimum_cobalt_version": "0.3.1",
       "glyph": "key",
       "capabilities": [
@@ -206,7 +206,7 @@
       "short_label": "Backgammon",
       "summary": "Play a deterministic touch-first backgammon board on one Kobo.",
       "page_description": "Play a tactile 24-point backgammon board built for Kobo's paper-like display.",
-      "version": "0.1.1",
+      "version": "0.1.2",
       "minimum_cobalt_version": "0.3.1",
       "glyph": "circle",
       "capabilities": []
@@ -732,7 +732,7 @@
       "display_name": "Zotero Reader",
       "short_label": "Zotero",
       "summary": "Browse Zotero collections, read metadata and indexed paper text, and keep papers available offline.",
-      "version": "1.0.2",
+      "version": "1.0.3",
       "minimum_cobalt_version": "0.3.1",
       "glyph": "book",
       "capabilities": [

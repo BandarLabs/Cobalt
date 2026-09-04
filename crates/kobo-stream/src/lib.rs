@@ -843,12 +843,12 @@ fn decode_base64(text: &str) -> Option<Vec<u8>> {
         } else {
             value(group[3])?
         };
-        out.push((a << 2 | b >> 4) as u8);
+        out.push(((a << 2) | (b >> 4)) as u8);
         if group[2] != b'=' {
-            out.push((b << 4 | c >> 2) as u8);
+            out.push(((b << 4) | (c >> 2)) as u8);
         }
         if group[3] != b'=' {
-            out.push((c << 6 | d) as u8);
+            out.push(((c << 6) | d) as u8);
         }
     }
     Some(out)
