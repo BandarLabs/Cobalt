@@ -2,6 +2,27 @@
   "format_version": 1,
   "changes": [
     {
+      "protocol_version": 11,
+      "reason": "Additive protocol-11 orientation command is opt-in; existing Store apps keep their existing messages and portrait rendering",
+      "files": [
+        {
+          "path": "crates/kobo-protocol/src/lib.rs",
+          "base_blob": "f34528d7b407e542a7836b0348b91de043822274",
+          "compatible_blob": "6fe595c0342ee48bd57a9aed7ac4ad3b482379ec"
+        },
+        {
+          "path": "crates/kobo-sdk/src/lib.rs",
+          "base_blob": "9a645f3f3d9c8746dda47d858bb3fcd744621df8",
+          "compatible_blob": "c5e69a8fe9ec5ed13d7f95164a216580d9351715"
+        },
+        {
+          "path": "crates/kobo-ui/src/lib.rs",
+          "base_blob": "ce538c70b5779ee482e2b35aa83191eb06b04b4d",
+          "compatible_blob": "b95eee2fc4bad70e0c797e204cfc54e2ce1b3a0d"
+        }
+      ]
+    },
+    {
       "protocol_version": 12,
       "reason": "The 0.3.5 runtime retains protocol-11 rendering, responses, and Atkinson metrics for unchanged Store binaries. Responsive renderer fixes, single-source section links, SDK profile tests, Gutenbird test-only pagination coverage, and Lichess runtime transport and policy prerequisites do not alter already-published app bytes. Protocol 12 additively introduces Folio nodes, orientation, and a write-only app-scoped credential request that protocol-11 apps cannot emit; only catalog apps changed to use the new SDK surface are rebuilt.",
       "files": [
@@ -103,7 +124,7 @@
         {
           "path": "crates/kobo-ui/src/lib.rs",
           "base_blob": "ce538c70b5779ee482e2b35aa83191eb06b04b4d",
-          "compatible_blob": "8ae15c0c4ac8b7eadba44f06d2561edd0d143cd9"
+          "compatible_blob": "b95eee2fc4bad70e0c797e204cfc54e2ce1b3a0d"
         },
         {
           "path": "examples/gutenbird/Cargo.toml",
@@ -229,7 +250,7 @@
         {
           "path": "crates/kobo-ui/src/lib.rs",
           "base_blob": "ce538c70b5779ee482e2b35aa83191eb06b04b4d",
-          "compatible_blob": "8ae15c0c4ac8b7eadba44f06d2561edd0d143cd9"
+          "compatible_blob": "b95eee2fc4bad70e0c797e204cfc54e2ce1b3a0d"
         },
         {
           "path": "examples/gutenbird/Cargo.toml",
