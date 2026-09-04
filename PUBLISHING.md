@@ -50,7 +50,14 @@ The long-lived `beta` branch is the only source for beta publishing:
   Stable and its Beta host channel is explicit and independent from the
   in-product platform channel.
 - `.github/workflows/apps.yml` publishes beta branch apps only to
-  `app-catalog-beta`; main continues to publish only to `app-catalog`.
+  `app-catalog-beta`. Contributors supply source plus one concise manifest;
+  Cobalt derives compatibility, builds ARM binaries, signs packages/catalogs,
+  and archives each publication transaction.
+- `.github/workflows/promote-beta-apps.yml` promotes an archived, tested Beta
+  app transaction after the commit is merged to main. The
+  `app-store-stable` environment supplies human release approval. Stable
+  packages are copied byte-for-byte and never rebuilt; the Stable catalog
+  pointer is signed only after exact package size/SHA verification.
 - `.github/workflows/promote-beta.yml` is a manual, guarded promotion. Supply
   `X.Y.Z`, the full tested beta commit SHA, the expected primary archive
   SHA-256, and the exact confirmation `promote-beta-vX.Y.Z`. It requires the

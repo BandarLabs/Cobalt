@@ -12,6 +12,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 mod authorize;
 mod bootstrap;
+mod beta_store_smoke;
 mod connect;
 mod devsession;
 mod drive;
