@@ -6524,6 +6524,7 @@ mod tests {
         parse_guard_test, parse_smoke_display, run, RemoteArtifactSession, RemoteProgram,
         SmokeStage, GUARD_TEST_CHILD, GUARD_TEST_CONFIRMATION, REMOTE_CLEANUP_TIMEOUT,
         REMOTE_COMMAND_TIMEOUT, REMOTE_CONNECT_TIMEOUT_SECONDS, REMOTE_SMOKE_TIMEOUT_SECONDS,
+        workspace_smoke_binary,
     };
     use std::fs;
     use std::path::PathBuf;
