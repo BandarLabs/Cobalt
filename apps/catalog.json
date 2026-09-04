@@ -62,7 +62,7 @@
       "display_name": "Components",
       "short_label": "Components",
       "summary": "See every Cobalt UI component on the device in one reference app.",
-      "version": "1.0.6",
+      "version": "1.0.7",
       "minimum_cobalt_version": "0.3.1",
       "glyph": "chart",
       "capabilities": ["network"]

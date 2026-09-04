@@ -274,6 +274,25 @@ test("a drive script next to an application is not a release input", () => {
   assert.equal(isFilmingScript("examples/todo-extra/drive.txt", "examples/todo"), false);
 });
 
+test("drive scripts do not count as unpublished Store catalog inputs", () => {
+  const packageDirectories = new Map([
+    ["kobo-todo", "examples/todo"],
+    ["kobo-gallery", "examples/gallery"],
+    ["kobo-tictactoe", "examples/tictactoe"]
+  ]);
+  const impact = storeImpactOfChangedPaths(
+    [
+      "examples/todo/drive.txt",
+      "examples/gallery/drive.txt",
+      "examples/tictactoe/drive.txt"
+    ],
+    packageDirectories,
+    ["kobo-todo", "kobo-gallery", "kobo-tictactoe"]
+  );
+  assert.deepEqual(impact.storeChanges, []);
+  assert.equal(impact.catalogQuiet, true);
+});
+
 test("workspace version and member additions do not change existing app release inputs", () => {
   const previous = `[workspace]\nmembers = [\n    "apps/notes",\n]\nresolver = "2"\n\n[workspace.package]\nversion = "0.3.1"\nedition = "2021"\n`;
   const current = `[workspace]\nmembers = [\n    "apps/notes",\n    "apps/reader",\n]\nresolver = "2"\n\n[workspace.package]\nversion = "0.3.2"\nedition = "2021"\n`;
