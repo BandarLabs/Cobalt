@@ -8,7 +8,7 @@
         {
           "path": "crates/kobo-protocol/src/lib.rs",
           "base_blob": "8c30366191af89abc121075544635bf871fdfac4",
-          "compatible_blob": "aef68073fe8b181ef3c7bbd9873c4b65c4a42d6d"
+          "compatible_blob": "d06c62fcafac10adb34823c524395111c1190620"
         },
         {
           "path": "crates/kobo-policy/src/services.rs",

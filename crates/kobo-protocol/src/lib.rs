@@ -6782,7 +6782,7 @@ mod tests {
         let read_bytes = encode(&read).expect("encode read");
         assert_eq!(
             read_bytes,
-            [b'K', b'O', b'B', b'O', 11, 7, 0, 0, 0, 1, 0, 0, 0, 8, 43,]
+            [b'K', b'O', b'B', b'O', VERSION, 7, 0, 0, 0, 1, 0, 0, 0, 8, 43,]
         );
         assert_eq!(decode(&read_bytes).expect("decode read"), read);
 
@@ -6796,7 +6796,7 @@ mod tests {
         let request_bytes = encode(&request).expect("encode request");
         assert_eq!(
             request_bytes,
-            [b'K', b'O', b'B', b'O', 11, 7, 0, 0, 0, 2, 0, 0, 0, 9, 44, 1,]
+            [b'K', b'O', b'B', b'O', VERSION, 7, 0, 0, 0, 2, 0, 0, 0, 9, 44, 1,]
         );
         assert_eq!(decode(&request_bytes).expect("decode request"), request);
 
@@ -6810,7 +6810,7 @@ mod tests {
         let result_bytes = encode(&result).expect("encode result");
         assert_eq!(
             result_bytes,
-            [b'K', b'O', b'B', b'O', 11, 8, 0, 0, 0, 2, 0, 0, 0, 11, 17, 2,]
+            [b'K', b'O', b'B', b'O', VERSION, 8, 0, 0, 0, 2, 0, 0, 0, 11, 17, 2,]
         );
         assert_eq!(decode(&result_bytes).expect("decode result"), result);
     }
