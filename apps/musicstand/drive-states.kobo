@@ -1,0 +1,18 @@
+wait 800
+expect Library
+clean
+shot library
+tap Evening rehearsal setlist
+expect Setlist
+clean
+shot setlist
+tap Library
+tap Add scores
+expect Transfer
+clean
+shot about
+tap Library
+tap Cello Suite No. 1
+expect Half-page mode
+clean
+shot stand

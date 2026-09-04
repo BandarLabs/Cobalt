@@ -1,0 +1,19 @@
+wait 800
+expect Question packs
+tap About
+expect opentdb.com
+clean
+shot about
+tap Back to packs
+tap Start pass-around
+expect Ada answers
+clean
+shot question
+tap A · Mercury
+expect Answer locked
+clean
+shot pass
+tap Show result
+expect Round result
+clean
+shot reveal

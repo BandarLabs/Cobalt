@@ -5,7 +5,7 @@ use kobo_sdk::{action_id, ActionId, Context, Glyph, KoboApp, Screen, ScreenBuild
 use model::{backlinks, search, Note};
 use std::process::ExitCode;
 const INDEX: &str = "vault-index-v1";
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 enum View {
     Home,
     Browse,
@@ -156,7 +156,7 @@ impl KoboApp for Vault {
                 self.notes = value
                     .and_then(|v| String::from_utf8(v).ok())
                     .map(|raw| {
-                        raw.split("\n\n---\n\n")
+                        raw.split("\n\n---vault-note---\n\n")
                             .filter_map(|part| {
                                 part.split_once('\n').map(|(path, body)| Note {
                                     path: path.to_owned(),
@@ -208,5 +208,44 @@ fn main() -> ExitCode {
             eprintln!("vault: {error}");
             ExitCode::FAILURE
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use kobo_sdk::AppRunner;
+
+    fn seeded() -> AppRunner<Vault> {
+        let mut runner = AppRunner::new(Vault::default());
+        runner.start();
+        runner.store_result(StoreResult::Loaded {
+            key: INDEX.into(),
+            value: Some(
+                "Welcome.md\n# Welcome\n\nhome note of the fixture. See [[Alpha]].\n\n---vault-note---\n\nProjects/Alpha.md\n# Alpha\n\nA project with a wiki link to [[Welcome]].\n\n#project\n"
+                    .as_bytes()
+                    .to_vec(),
+            ),
+        });
+        runner
+    }
+
+    #[test]
+    fn action_graph_reaches_every_view() {
+        let mut runner = seeded();
+        assert_eq!(runner.app().view, View::Home);
+        assert_eq!(runner.app().notes.len(), 2);
+        runner.action(action_id("browse"));
+        assert_eq!(runner.app().view, View::Browse);
+        runner.action(action_id("note-0"));
+        assert_eq!(runner.app().view, View::Note);
+        runner.action(action_id("backlinks"));
+        assert_eq!(runner.app().view, View::Backlinks);
+        runner.action(action_id("tags"));
+        assert_eq!(runner.app().view, View::Tags);
+        runner.action(action_id("recent"));
+        assert_eq!(runner.app().view, View::Recent);
+        runner.action(action_id("search"));
+        assert!(runner.app().entry.is_open());
     }
 }

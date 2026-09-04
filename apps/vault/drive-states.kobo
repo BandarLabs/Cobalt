@@ -1,0 +1,19 @@
+# Seeded path: run `kobo vault push DIR --sim` before starting the simulator.
+wait 500
+expect Vault
+expect notes
+clean
+shot home
+tap Browse
+expect Welcome
+expect Alpha
+clean
+shot browse
+tap Welcome
+expect home note of the fixture
+clean
+shot note
+tap Tags
+expect Tags
+clean
+shot tags

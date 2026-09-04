@@ -360,4 +360,30 @@ mod tests {
                 .is_some());
         }
     }
+
+    #[test]
+    fn action_graph_reaches_party_views() {
+        use kobo_sdk::AppRunner;
+        let mut runner = AppRunner::new(Quiz::default());
+        runner.start();
+        runner.store_result(StoreResult::Loaded {
+            key: STATE.into(),
+            value: None,
+        });
+        assert_eq!(runner.app().view, View::Home);
+        runner.action(action_id("about"));
+        assert_eq!(runner.app().view, View::About);
+        runner.action(action_id("home"));
+        runner.action(action_id("party"));
+        assert_eq!(runner.app().view, View::Question);
+        runner.action(action_id(&choice(0)));
+        assert_eq!(runner.app().view, View::Pass);
+        runner.action(action_id("reveal"));
+        assert_eq!(runner.app().view, View::Reveal);
+        runner.app_mut().question = 9;
+        runner.action(action_id("continue"));
+        assert_eq!(runner.app().view, View::Podium);
+        runner.action(action_id("home"));
+        assert_eq!(runner.app().view, View::Home);
+    }
 }

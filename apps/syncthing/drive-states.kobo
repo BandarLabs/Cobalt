@@ -1,0 +1,11 @@
+wait 800
+expect Sync
+tap About Sync
+expect MPL-2.0
+clean
+shot about
+tap Back
+tap Folders
+expect Sync folders
+clean
+shot folders

@@ -20,6 +20,7 @@ mod menu;
 mod needles;
 mod nonograms;
 mod package;
+mod vault;
 // Only the `device-write` build dispatches to this, but its tests decide what
 // gets sent to a reader and are worth running on every build. So it compiles
 // either way, and the unused warning is silenced rather than the module gated
@@ -424,6 +425,7 @@ fn run(arguments: &[String]) -> Result<(), String> {
         "drive" => drive_command(&arguments[1..]),
         "flashcards" => flashcards::command(&arguments[1..]),
         "frame" => frame::command(&arguments[1..]),
+        "vault" => vault::command(&arguments[1..]),
         "sync" => sync::command(&arguments[1..]),
         "needles" => needles::command(&arguments[1..]),
         "nonograms" => nonograms::command(&arguments[1..]),
@@ -5574,6 +5576,8 @@ fn print_help() {
            frame push INPUT --device IP          Prepare and atomically push Frame photos\n\
            frame ls --device IP                  List Frame shelf photos\n\
            frame rm ID --device IP               Remove a Frame shelf photo\n\
+           vault init (--sim | --device IP)      Prepare the Vault store\n\
+           vault push DIR (--sim | --device IP)  Pack notes into the Vault index\n\
            sync setup DIR --folder NAME --device IP  Pair one safe fixed Sync folder\n\
            sync run [--foreground] [--seconds N] Start the private host Syncthing peer\n\
            sync status|stop                      Inspect or stop that dedicated peer\n\

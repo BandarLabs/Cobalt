@@ -1,0 +1,11 @@
+wait 800
+expect Grimoire
+tap About
+expect Creative Commons
+clean
+shot about
+tap Back
+tap Dice
+expect Dice
+clean
+shot dice
