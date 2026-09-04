@@ -1772,14 +1772,40 @@ impl Gutenbird {
         for block in blocks {
             screen = block.add(screen);
         }
-        screen
+        let screen = screen
             .page_turns("about-back", "about-next")
             .page_position(1, 2)
-            .build()
-            .diagnostics(&context.metrics(), &Chrome::measuring(true))
-            .issues
+            .build();
+        let layout = screen.layout_with(&context.metrics(), &Chrome::measuring(true));
+        // Layout clips excess prose rather than emitting a diagnostic. Each
+        // source text block must therefore be present in full in the layout.
+        let expected_text = blocks
             .iter()
-            .all(|issue| issue.severity != DiagnosticSeverity::Error)
+            .filter_map(|block| match block {
+                DetailBlock::Text(text) => Some(text.split_whitespace().collect::<Vec<_>>()),
+                _ => None,
+            })
+            .filter(|words| !words.is_empty())
+            .collect::<Vec<_>>();
+        let rendered_text = layout
+            .nodes
+            .iter()
+            .map(|node| {
+                node.text_lines
+                    .iter()
+                    .flat_map(|line| line.split_whitespace())
+                    .collect::<Vec<_>>()
+            })
+            .filter(|words| !words.is_empty())
+            .collect::<Vec<_>>();
+        expected_text
+            .iter()
+            .all(|expected| rendered_text.iter().any(|rendered| rendered == expected))
+            && screen
+                .diagnostics(&context.metrics(), &Chrome::measuring(true))
+                .issues
+                .iter()
+                .all(|issue| issue.severity != DiagnosticSeverity::Error)
     }
 
     fn detail_head(&self, publication: &Publication, first_page: bool) -> ScreenBuilder {
