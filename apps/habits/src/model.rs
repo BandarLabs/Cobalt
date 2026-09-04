@@ -139,10 +139,11 @@ pub fn decode(bytes: &[u8]) -> Vec<Habit> {
             if fields.len() != 5 || fields[2].is_empty() {
                 return None;
             }
-            let schedule = match fields[1] {
-                "d" => Schedule::Daily,
-                "w" => Schedule::Weekdays,
-                value => Schedule::Every(value.strip_prefix('e')?.parse().ok()?),
+            let schedule = match fields.get(1).copied() {
+                Some("d") => Schedule::Daily,
+                Some("w") => Schedule::Weekdays,
+                Some(value) => Schedule::Every(value.strip_prefix('e')?.parse().ok()?),
+                None => return None,
             };
             Some(Habit {
                 archived: fields[0] == "1",
