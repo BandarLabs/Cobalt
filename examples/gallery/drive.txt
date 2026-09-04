@@ -1,0 +1,27 @@
+# Every page of the component gallery, and a tab inside three of them. This is
+# the route a rendering change is diffed along, so it is deliberately wide
+# rather than deep: one screen from each family, not every screen of one.
+wait-for Type and tone
+wait 900
+tap Quotes
+wait 900
+tap Lists
+wait-for Lists, rows and tiles
+wait 900
+tap Tiles
+wait 900
+tap Covers
+wait 900
+tap Input
+wait-for Groups, fields and asking
+wait 900
+tap Fields
+wait 900
+tap States
+wait-for Nothing here yet
+wait 900
+tap Offline
+wait 900
+tap Work
+wait-for Work in flight
+wait 1500
