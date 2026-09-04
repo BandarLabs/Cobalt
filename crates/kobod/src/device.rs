@@ -3205,6 +3205,26 @@ fn preflight(application: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Stops every leftover radio daemon a profile names before the reader returns.
+pub(crate) fn reap_leftover_radio_daemons(executables: &[&str]) {
+    for executable in executables {
+        let leftovers = Reader::find_all_running(executable);
+        if leftovers.is_empty() {
+            trace(&format!("no leftover {executable} to stop"));
+            continue;
+        }
+        trace(&format!(
+            "stopping {} leftover {executable} before the reader returns",
+            leftovers.len()
+        ));
+        for leftover in leftovers {
+            if let Err(error) = leftover.stop(STOP_GRACE) {
+                trace(&format!("a leftover {executable} would not stop: {error}"));
+            }
+        }
+    }
+}
+
 /// Turns an application's name into the binary to run.
 ///
 /// Names are validated rather than trusted. An application that could name a
