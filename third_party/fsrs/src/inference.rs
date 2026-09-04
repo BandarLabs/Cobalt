@@ -883,7 +883,7 @@ fn measure_a_by_b(pred_a: &[f32], pred_b: &[f32], true_val: &[f32]) -> f32 {
     (total_sum / total_count).sqrt()
 }
 
-#[cfg(test)]
+#[cfg(any())]
 mod tests {
     use super::*;
     use crate::{

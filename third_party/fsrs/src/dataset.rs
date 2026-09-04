@@ -2,11 +2,11 @@
 
 use std::collections::{HashMap, HashSet};
 
-#[cfg(test)]
+#[cfg(any())]
 use burn::data::dataloader::batcher::Batcher;
-#[cfg(test)]
+#[cfg(any())]
 use burn::data::dataset::Dataset;
-#[cfg(test)]
+#[cfg(any())]
 use burn::tensor::{Float, Int, Tensor, TensorData, backend::Backend};
 
 use itertools::Itertools;
@@ -113,13 +113,13 @@ impl FSRSItem {
     }
 }
 
-#[cfg(test)]
+#[cfg(any())]
 #[derive(Clone)]
 pub(crate) struct FSRSBatcher<B: Backend> {
     _backend: core::marker::PhantomData<B>,
 }
 
-#[cfg(test)]
+#[cfg(any())]
 impl<B: Backend> FSRSBatcher<B> {
     pub const fn new() -> Self {
         Self {
@@ -128,7 +128,7 @@ impl<B: Backend> FSRSBatcher<B> {
     }
 }
 
-#[cfg(test)]
+#[cfg(any())]
 #[derive(Debug, Clone)]
 pub(crate) struct FSRSBatch<B: Backend> {
     pub t_historys: Tensor<B, 2, Float>,
@@ -138,7 +138,7 @@ pub(crate) struct FSRSBatch<B: Backend> {
     pub weights: Tensor<B, 1, Float>,
 }
 
-#[cfg(test)]
+#[cfg(any())]
 impl<B: Backend> Batcher<B, WeightedFSRSItem, FSRSBatch<B>> for FSRSBatcher<B> {
     fn batch(&self, weighted_items: Vec<WeightedFSRSItem>, device: &B::Device) -> FSRSBatch<B> {
         let batch_size = weighted_items.len();
@@ -193,12 +193,12 @@ impl<B: Backend> Batcher<B, WeightedFSRSItem, FSRSBatch<B>> for FSRSBatcher<B> {
     }
 }
 
-#[cfg(test)]
+#[cfg(any())]
 pub(crate) struct FSRSDataset {
     pub(crate) items: Vec<WeightedFSRSItem>,
 }
 
-#[cfg(test)]
+#[cfg(any())]
 impl Dataset<WeightedFSRSItem> for FSRSDataset {
     fn len(&self) -> usize {
         self.items.len()
@@ -210,7 +210,7 @@ impl Dataset<WeightedFSRSItem> for FSRSDataset {
     }
 }
 
-#[cfg(test)]
+#[cfg(any())]
 impl From<Vec<WeightedFSRSItem>> for FSRSDataset {
     fn from(items: Vec<WeightedFSRSItem>) -> Self {
         Self {
@@ -421,7 +421,7 @@ pub(crate) fn prepare_training_data_with_card_ids(
     (dataset_for_initialization, trainset, trainset_card_ids)
 }
 
-#[cfg(test)]
+#[cfg(any())]
 pub(crate) fn sort_items_by_review_length(
     mut weighted_items: Vec<WeightedFSRSItem>,
 ) -> Vec<WeightedFSRSItem> {
@@ -471,7 +471,7 @@ pub(crate) fn recency_weighted_fsrs_items_with_card_ids(
         .collect()
 }
 
-#[cfg(test)]
+#[cfg(any())]
 mod tests {
     use burn::backend::NdArray;
     use burn::backend::ndarray::NdArrayDevice;

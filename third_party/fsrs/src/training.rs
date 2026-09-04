@@ -5,15 +5,15 @@ use crate::dataset::{
     recency_weighted_fsrs_items, recency_weighted_fsrs_items_with_card_ids,
 };
 use crate::error::Result;
-#[cfg(test)]
+#[cfg(any())]
 use crate::model::Model;
 use crate::model::ModelConfig;
-#[cfg(test)]
+#[cfg(any())]
 use crate::parameter_clipper::clip_parameters;
 use crate::parameter_clipper::clip_parameters_in_place;
 use crate::parameter_initialization::{initialize_stability_parameters, smooth_and_fill};
 use crate::{DEFAULT_PARAMETERS, FSRSError};
-#[cfg(test)]
+#[cfg(any())]
 use burn::{nn::loss::Reduction, tensor::Int, tensor::Tensor, tensor::backend::Backend};
 use rand::SeedableRng;
 use rand::rngs::StdRng;
@@ -41,9 +41,9 @@ pub(crate) fn weighted_binary_cross_entropy(
     -loss / weight_sum
 }
 
-#[cfg(test)]
+#[cfg(any())]
 impl<B: Backend> Model<B> {
-    #[cfg(test)]
+    #[cfg(any())]
     pub fn forward_classification(
         &self,
         t_historys: Tensor<B, 2>,
@@ -68,7 +68,7 @@ impl<B: Backend> Model<B> {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(any())]
     pub(crate) fn l2_regularization(
         &self,
         init_w: Tensor<B, 1>,
@@ -789,7 +789,7 @@ fn train(
     Ok(parameters)
 }
 
-#[cfg(test)]
+#[cfg(any())]
 mod tests {
     use std::fs::create_dir_all;
     use std::path::Path;

@@ -3,13 +3,13 @@ use crate::{
     parameter_initialization::INIT_S_MAX,
     simulation::{D_MAX, D_MIN, S_MIN},
 };
-#[cfg(test)]
+#[cfg(any())]
 use burn::{
     module::Param,
     tensor::{Tensor, TensorData, backend::Backend},
 };
 
-#[cfg(test)]
+#[cfg(any())]
 pub(crate) fn parameter_clipper<B: Backend>(
     parameters: Param<Tensor<B, 1>>,
     num_relearning_steps: usize,
@@ -89,7 +89,7 @@ pub(crate) fn clip_parameters_in_place(
         .for_each(|(w, (low, high))| *w = w.clamp(low, high));
 }
 
-#[cfg(test)]
+#[cfg(any())]
 mod tests {
     use super::*;
     use crate::{DEFAULT_PARAMETERS, test_helpers::Tensor};

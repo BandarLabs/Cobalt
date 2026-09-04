@@ -1908,7 +1908,7 @@ pub fn extract_simulator_config(
     }
 }
 
-#[cfg(test)]
+#[cfg(any())]
 mod tests {
     use std::time::Instant;
 

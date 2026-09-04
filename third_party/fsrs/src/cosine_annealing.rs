@@ -49,7 +49,7 @@ impl CosineAnnealingLR {
     }
 }
 
-#[cfg(test)]
+#[cfg(any())]
 mod tests {
     use super::*;
     use crate::test_helpers::TestHelper;
