@@ -177,9 +177,9 @@
       "id": "backgammon",
       "display_name": "Backgammon",
       "short_label": "Backgammon",
-      "summary": "Play backgammon together on one Kobo.",
+      "summary": "Play complete solo or pass-and-play backgammon on one Kobo.",
       "page_description": "Play a tactile 24-point backgammon board built for Kobo's paper-like display.",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "minimum_cobalt_version": "0.3.2",
       "glyph": "circle",
       "capabilities": []
