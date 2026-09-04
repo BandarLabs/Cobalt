@@ -45,8 +45,7 @@ use kobo_hal::{Rect, RefreshIntent, RefreshPlan, RegionSnapshot};
 use kobo_policy::{Backends, Capability, Declared, DeviceServices, PowerPolicy, TaskRunner};
 use kobo_protocol::{Frame, Lifecycle, Message, TaskError, TaskOutcome};
 use kobo_ui::{
-    render_all, ActionId, CellStyle, Chrome, FontHandle, Layout, LayoutKind, PictureCache, Screen,
-    Surface,
+    ActionId, CellStyle, Chrome, FontHandle, Layout, LayoutKind, PictureCache, Screen, Surface,
 };
 use std::collections::BTreeMap;
 use std::fs;
