@@ -188,7 +188,7 @@ impl Reader {
     }
 
     fn any_running_in(proc_root: &Path) -> Result<bool, ReaderError> {
-        Ok(!matching_pids(proc_root, READER_EXECUTABLE, Identity::ZerothArgument)?.is_empty())
+        Ok(!matching_pids_in(proc_root, READER_EXECUTABLE, Identity::ZerothArgument)?.is_empty())
     }
 
     /// Finds Kobo's freeze watchdog, which must be stopped before the reader.
