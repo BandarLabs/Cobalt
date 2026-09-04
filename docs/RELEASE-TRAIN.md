@@ -39,12 +39,17 @@ gh workflow run "Publish beta platform" --ref beta
    workspace version bump.
 3. Install or update the application from the beta Store on a physical Kobo.
    Record the beta catalog source commit, catalog SHA-256, package SHA-256, and
-   acceptance evidence.
+   acceptance evidence. Follow
+   [Beta Store acceptance](BETA-STORE-ACCEPTANCE.md): run the complete local
+   fixture matrix first, then the bounded owner-attended command against the
+   exact published beta catalog.
 4. Merge `beta` into `main` without squashing away the tested beta commit.
    This merge does not publish a stable catalog and does not create `vX.Y.Z`.
 5. Run **Promote tested beta apps** from `main` with the recorded commit and
-   catalog digest. The workflow verifies provenance and copies the exact tested
-   `.cobalt-app` bytes before replacing the signed stable catalog. Readers
+   catalog digest. The protected `app-store-stable` environment supplies
+   release approval; the workflow derives and verifies the catalog digest from
+   archived provenance and copies exact tested `.cobalt-app` bytes before
+   replacing the signed stable catalog. Readers
    reject a transient catalog/signature mismatch and retain their last verified
    catalog until the next check.
 
