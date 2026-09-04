@@ -71,27 +71,6 @@ what is ticked with a button of its own. An agent asking four questions at
 once has them put one at a time, so the panel never holds more than one
 thing to decide.
 
-## More than one terminal
-
-When one question waits, Sidekick still opens it directly. When several wait,
-the reader instead shows one board row per question: agent, project/session,
-tool, and the beginning of its request. Selecting a row opens the same
-decision screen, so an answer always returns to its originating terminal.
-The daemon's `GET /pending?all=true` snapshot carries every waiting question
-and a revision number; the ordinary long poll remains compatible with older
-readers.
-
-| Agent | Status |
-| --- | --- |
-| Claude Code | Wired: permission requests and `AskUserQuestion` |
-| Codex | Wired: permission requests |
-| Gemini CLI | Watched, not wired: its permission-moment hook contract has not been verified |
-| OpenCode | Watched, not wired: its plugin/decision contract has not been verified |
-| GitHub Copilot CLI | Watched, not wired: no compatible hook surface has been verified |
-| Cursor CLI | Watched, not wired: no compatible hook surface has been verified |
-
-![Sidekick pairing](screenshots/pairing.png)
-
 ## Trust
 
 The connection is TLS against a root the owner installed with `kobo trust

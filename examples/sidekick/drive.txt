@@ -1,3 +1,0 @@
-# Starts after a local simulator has loaded the binary.
-expect Pair with your computer
-shot pairing.png

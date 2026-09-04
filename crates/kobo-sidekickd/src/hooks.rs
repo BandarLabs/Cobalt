@@ -63,8 +63,7 @@ fn decide_permission(agent: &str, event: &kobo_json::Value) {
                 .build()
         })
         .collect();
-    let session = session_identity(event);
-    let Some((decision, labels)) = ask_daemon(agent, &session, &tool, &detail, choices, Wants::permission())
+    let Some((decision, labels)) = ask_daemon(agent, &tool, &detail, choices, Wants::permission())
     else {
         return;
     };
@@ -124,9 +123,8 @@ fn answer_questions(agent: &str, event: &kobo_json::Value) {
             .get("multiSelect")
             .and_then(kobo_json::Value::as_bool)
             == Some(true);
-        let session = session_identity(event);
         let Some((decision, labels)) =
-            ask_daemon(agent, &session, &tool, &text, choices, Wants::question(multi))
+            ask_daemon(agent, &tool, &text, choices, Wants::question(multi))
         else {
             return;
         };
@@ -153,7 +151,6 @@ fn answer_questions(agent: &str, event: &kobo_json::Value) {
 /// "this hook has no opinion".
 fn ask_daemon(
     agent: &str,
-    session: &str,
     tool: &str,
     detail: &str,
     choices: Vec<kobo_json::Value>,
@@ -161,7 +158,6 @@ fn ask_daemon(
 ) -> Option<(String, Vec<String>)> {
     let body = kobo_json::ObjectBuilder::new()
         .set("source", agent)
-        .set("session", session)
         .set("tool", tool)
         .set("detail", detail)
         .set("choices", kobo_json::Value::Array(choices))
@@ -175,7 +171,6 @@ fn ask_daemon(
     if decision.is_empty() || decision == "pass" {
         return None;
     }
-
     let labels = reply
         .get("labels")
         .and_then(kobo_json::Value::as_array)
@@ -185,21 +180,6 @@ fn ask_daemon(
         .filter_map(|label| label.as_str().map(str::to_owned))
         .collect();
     Some((decision, labels))
-}
-
-/// A concise stable identity for the terminal that sent a hook. Both fields
-/// are optional in hook dialects, so absence is a blank label, never refusal.
-fn session_identity(event: &kobo_json::Value) -> String {
-    let cwd = string(event, "cwd");
-    let session = string(event, "session_id");
-    let project = cwd.rsplit('/').find(|part| !part.is_empty()).unwrap_or("");
-    let suffix: String = session.chars().rev().take(4).collect::<String>().chars().rev().collect();
-    match (project.is_empty(), suffix.is_empty()) {
-        (true, true) => String::new(),
-        (false, true) => project.to_owned(),
-        (true, false) => suffix,
-        (false, false) => format!("{project} · {suffix}"),
-    }
 }
 
 /// What kind of answer a question will take.
@@ -513,8 +493,7 @@ pub fn list() -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        always, answered, decision_json, describe, describe_suggestion, session_identity, string,
-        tool_name,
+        always, answered, decision_json, describe, describe_suggestion, string, tool_name,
     };
 
     /// What the reader would be shown for one event.
@@ -530,17 +509,6 @@ mod tests {
             shown(r#"{"tool_name":"shell","tool_input":{"command":"rm -rf ./build"}}"#);
         assert_eq!(tool, "shell");
         assert_eq!(detail, "rm -rf ./build");
-    }
-
-    #[test]
-    fn session_identity_uses_workspace_basename_and_short_session_tail() {
-        let event = kobo_json::parse(r#"{"cwd":"/work/cobalt","session_id":"01HZY2ABCD"}"#)
-            .expect("valid json");
-        assert_eq!(session_identity(&event), "cobalt · ABCD");
-        assert_eq!(
-            session_identity(&kobo_json::parse(r#"{"tool_name":"Bash"}"#).expect("valid json")),
-            ""
-        );
     }
 
     #[test]
