@@ -6,6 +6,7 @@
 //! every unit of work is registered, counted, cancellable, and reports back
 //! exactly once.
 
+use kobo_net::{LineStreamAction, LineStreamOwner, LineStreams, RequestOptions};
 use kobo_protocol::{
     Credential, CredentialUse, SecretHeader, Task, TaskError, TaskId, TaskOutcome, MAX_TASK_BYTES,
     MAX_TASK_BYTES_U32,
@@ -55,6 +56,18 @@ pub struct Finished {
 struct Running {
     cancel: Arc<AtomicBool>,
     handle: Option<thread::JoinHandle<()>>,
+    stream: Option<RunningStream>,
+}
+
+struct RunningStream {
+    url: String,
+    owner: LineStreamOwner,
+}
+
+#[derive(Clone, Debug)]
+struct SecretStore {
+    root: PathBuf,
+    app: Option<String>,
 }
 
 /// The host-provided network implementation a task's fetch runs through.
@@ -65,7 +78,15 @@ struct Running {
 /// kept separate so the backend retains its provenance; the fifth is the
 /// application's non-secret headers, already checked against the ones the
 /// runtime owns. These are the same guarantees `Poster` makes for `Post`.
-pub type Fetcher = dyn Fn(&str, u32, u32, Option<(&str, &str)>, &[(&str, &str)]) -> Result<Vec<u8>, TaskError>
+pub type Fetcher = dyn Fn(
+        &str,
+        u32,
+        u32,
+        Option<(&str, &str)>,
+        &[(&str, &str)],
+        RequestOptions,
+        &AtomicBool,
+    ) -> Result<Vec<u8>, TaskError>
     + Send
     + Sync;
 
@@ -76,15 +97,31 @@ pub type Fetcher = dyn Fn(&str, u32, u32, Option<(&str, &str)>, &[(&str, &str)])
 /// never supplied or observed it. The fifth argument is the non-secret headers
 /// the application asked for, already checked against the ones the runtime
 /// owns.
-pub type Poster = dyn Fn(&str, &[u8], &str, Option<(&str, &str)>, &[(&str, &str)], u32) -> Result<Vec<u8>, TaskError>
+pub type Poster = dyn Fn(
+        &str,
+        &[u8],
+        &str,
+        Option<(&str, &str)>,
+        &[(&str, &str)],
+        u32,
+        RequestOptions,
+        &AtomicBool,
+    ) -> Result<Vec<u8>, TaskError>
     + Send
     + Sync;
+
+/// The host-provided implementation a `Put` task runs through.
+///
+/// Kept distinct from [`Poster`] at the builder boundary so a typed
+/// `Task::Put` cannot silently become a POST on the wire.
+pub type Putter = Poster;
 
 /// Decides whether one named credential may be sent to one URL.
 ///
 /// Secret files alone are not authority: without this second decision an
 /// application could name a real key and an attacker-controlled destination.
-pub type CredentialAuthorizer = dyn Fn(&Credential, &str, CredentialUse) -> bool + Send + Sync;
+pub type CredentialAuthorizer =
+    dyn Fn(&Credential, &str, CredentialUse, Option<&str>, Option<&str>) -> bool + Send + Sync;
 
 /// Headers an application may not set, because the runtime decides them.
 ///
@@ -103,10 +140,15 @@ const RESERVED_HEADERS: &[&str] = &[
     "accept-encoding",
 ];
 
+const LINE_STREAM_HEADER: &str = "x-cobalt-line-stream";
+const WAIT_HEADER: &str = "x-cobalt-wait-until-cancelled";
+const RATE_LIMIT_HEADER: &str = "x-cobalt-rate-limit";
+
 /// Whether an application may set this header itself.
 #[must_use]
 pub fn header_is_the_applications_to_set(name: &str) -> bool {
-    !RESERVED_HEADERS.contains(&name.to_ascii_lowercase().as_str())
+    let name = name.to_ascii_lowercase();
+    !name.starts_with("x-cobalt-") && !RESERVED_HEADERS.contains(&name.as_str())
 }
 
 /// Turns a named credential into the header it will be sent as.
@@ -120,20 +162,22 @@ fn resolved_credential(
     wanted: Option<&kobo_protocol::Credential>,
     url: &str,
     usage: CredentialUse,
+    body: Option<&str>,
+    content_type: Option<&str>,
     credentials: Option<&CredentialAuthorizer>,
-    secrets: Option<&Path>,
+    secrets: Option<&SecretStore>,
 ) -> Result<Option<(String, String)>, TaskError> {
     let Some(wanted) = wanted else {
         return Ok(None);
     };
-    if credentials.is_none_or(|allows| !allows(wanted, url, usage)) {
+    if credentials.is_none_or(|allows| !allows(wanted, url, usage, body, content_type)) {
         return Err(TaskError::Denied);
     }
     // Not `Denied`. The application asked for a key it is allowed to ask for,
     // by the name the runtime publishes, and the check above already said so.
     // What is missing is the key itself, which is the reader owner's to
     // install.
-    let Some(value) = secret(secrets, &wanted.secret) else {
+    let Some(value) = scoped_secret(secrets, &wanted.secret) else {
         return Err(TaskError::NoCredential);
     };
     Ok(Some((
@@ -149,24 +193,97 @@ fn resolved_credential(
     )))
 }
 
-/// Checks a task's headers against the ones the runtime owns and, if none of
-/// them are reserved, hands back the pairs a network backend can use.
+fn credential_is_authorized(
+    wanted: Option<&Credential>,
+    url: &str,
+    usage: CredentialUse,
+    body: Option<&str>,
+    content_type: Option<&str>,
+    credentials: Option<&CredentialAuthorizer>,
+) -> Result<(), TaskError> {
+    let Some(wanted) = wanted else {
+        return Err(TaskError::Denied);
+    };
+    if credentials.is_some_and(|allows| allows(wanted, url, usage, body, content_type)) {
+        Ok(())
+    } else {
+        Err(TaskError::Denied)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct Controls {
+    stream: Option<LineStreamAction>,
+    wait_until_cancelled: bool,
+    report_rate_limit: bool,
+}
+
+struct PreparedHeaders<'a> {
+    forwarded: Vec<(&'a str, &'a str)>,
+    controls: Controls,
+}
+
+/// Checks a task's headers, separates runtime controls, and hands only ordinary
+/// non-secret pairs to the network backend.
 ///
 /// Shared by `Fetch` and `Post` rather than duplicated, because the two
 /// checks have to keep agreeing: `Range` is reserved for exactly the reason
 /// `Authorization` is, and a fork here is how one of them would quietly stop
 /// enforcing it.
-fn own_headers(headers: &[kobo_protocol::Header]) -> Result<Vec<(&str, &str)>, TaskError> {
-    if headers
-        .iter()
-        .any(|header| !header_is_the_applications_to_set(&header.name))
-    {
-        return Err(TaskError::Denied);
+fn own_headers(headers: &[kobo_protocol::Header]) -> Result<PreparedHeaders<'_>, TaskError> {
+    let mut controls = Controls::default();
+    let mut forwarded = Vec::with_capacity(headers.len());
+    for header in headers {
+        let name = header.name.to_ascii_lowercase();
+        match name.as_str() {
+            LINE_STREAM_HEADER => {
+                if controls.stream.is_some() {
+                    return Err(TaskError::Denied);
+                }
+                controls.stream = Some(match header.value.as_str() {
+                    "open" => LineStreamAction::Open,
+                    "next" => LineStreamAction::Next,
+                    "close" => LineStreamAction::Close,
+                    _ => return Err(TaskError::Denied),
+                });
+            }
+            WAIT_HEADER => {
+                if controls.wait_until_cancelled || header.value != "1" {
+                    return Err(TaskError::Denied);
+                }
+                controls.wait_until_cancelled = true;
+            }
+            RATE_LIMIT_HEADER => {
+                if controls.report_rate_limit || header.value != "1" {
+                    return Err(TaskError::Denied);
+                }
+                controls.report_rate_limit = true;
+            }
+            _ if name.starts_with("x-cobalt-")
+                || !header_is_the_applications_to_set(&header.name) =>
+            {
+                return Err(TaskError::Denied);
+            }
+            _ => forwarded.push((header.name.as_str(), header.value.as_str())),
+        }
     }
-    Ok(headers
+    Ok(PreparedHeaders {
+        forwarded,
+        controls,
+    })
+}
+
+fn line_stream_url(work: &Task) -> Option<String> {
+    let Task::Fetch { url, headers, .. } = work else {
+        return None;
+    };
+    headers
         .iter()
-        .map(|header| (header.name.as_str(), header.value.as_str()))
-        .collect())
+        .any(|header| {
+            header.name.eq_ignore_ascii_case(LINE_STREAM_HEADER)
+                && matches!(header.value.as_str(), "open" | "next")
+        })
+        .then(|| url.clone())
 }
 
 /// Told, from the finishing task's own thread, that a result is now waiting.
@@ -193,8 +310,10 @@ pub struct TaskRunner {
     receiver: Receiver<Finished>,
     fetch: Option<Arc<Fetcher>>,
     post: Option<Arc<Poster>>,
+    put: Option<Arc<Putter>>,
+    line_streams: Option<Arc<LineStreams>>,
     /// Where named secrets are read from, if anywhere.
-    secrets: Option<PathBuf>,
+    secrets: Option<SecretStore>,
     /// Which secret and destination pairs this application is trusted to use.
     credentials: Option<Arc<CredentialAuthorizer>>,
     /// Called once, from the task's own thread, the moment a result is ready.
@@ -218,6 +337,8 @@ impl std::fmt::Debug for TaskRunner {
             // Deliberately whether, not where and never what. This type ends
             // up in error messages and traces.
             .field("posts", &self.post.is_some())
+            .field("puts", &self.put.is_some())
+            .field("line_streams", &self.line_streams.is_some())
             .field("secrets", &self.secrets.is_some())
             .field("credential_policy", &self.credentials.is_some())
             .finish_non_exhaustive()
@@ -241,6 +362,8 @@ impl TaskRunner {
             receiver,
             fetch: None,
             post: None,
+            put: None,
+            line_streams: None,
             secrets: None,
             credentials: None,
             wake: None,
@@ -268,6 +391,20 @@ impl TaskRunner {
         self
     }
 
+    /// Supplies the network backend used by `Put`.
+    #[must_use]
+    pub fn with_put(mut self, put: Arc<Putter>) -> Self {
+        self.put = Some(put);
+        self
+    }
+
+    /// Supplies the per-application retained line-stream backend.
+    #[must_use]
+    pub fn with_line_streams(mut self, streams: Arc<LineStreams>) -> Self {
+        self.line_streams = Some(streams);
+        self
+    }
+
     /// Supplies the directory named secrets are read from.
     ///
     /// A runner without one refuses every task that names a secret, which is
@@ -275,7 +412,28 @@ impl TaskRunner {
     /// a credential.
     #[must_use]
     pub fn with_secrets(mut self, directory: impl Into<PathBuf>) -> Self {
-        self.secrets = Some(directory.into());
+        self.secrets = Some(SecretStore {
+            root: directory.into(),
+            app: None,
+        });
+        self
+    }
+
+    /// Supplies app-scoped secrets plus the owner-managed global fallback.
+    ///
+    /// Lookup first tries `apps/{verified-app}/{name}`, then the legacy/global
+    /// `{name}` file. This preserves CLI-installed owner credentials while an
+    /// app-entered value can affect only the verified caller.
+    #[must_use]
+    pub fn with_app_secrets(
+        mut self,
+        directory: impl Into<PathBuf>,
+        verified_app: impl Into<String>,
+    ) -> Self {
+        self.secrets = Some(SecretStore {
+            root: directory.into(),
+            app: Some(verified_app.into()),
+        });
         self
     }
 
@@ -327,7 +485,7 @@ impl TaskRunner {
         }
 
         let required = match &work {
-            Task::Fetch { .. } | Task::Post { .. } => Some(Capability::Network),
+            Task::Fetch { .. } | Task::Post { .. } | Task::Put { .. } => Some(Capability::Network),
             Task::ReadFile { .. } | Task::Sleep { .. } => None,
         };
         if let Some(capability) = required {
@@ -344,10 +502,17 @@ impl TaskRunner {
         }
 
         let cancel = Arc::new(AtomicBool::new(false));
+        let stream = line_stream_url(&work).map(|url| RunningStream {
+            url,
+            owner: LineStreamOwner::default(),
+        });
+        let stream_owner = stream.as_ref().map(|stream| stream.owner.clone());
         let sender = self.sender.clone();
         let root = self.root.clone();
         let fetch = self.fetch.clone();
         let post = self.post.clone();
+        let put = self.put.clone();
+        let line_streams = self.line_streams.clone();
         let secrets = self.secrets.clone();
         let credentials = self.credentials.clone();
         let flag = Arc::clone(&cancel);
@@ -361,10 +526,13 @@ impl TaskRunner {
                     Backends {
                         fetch: fetch.as_deref(),
                         post: post.as_deref(),
-                        secrets: secrets.as_deref(),
+                        put: put.as_deref(),
+                        line_streams: line_streams.as_deref(),
+                        secrets: secrets.as_ref(),
                         credentials: credentials.as_deref(),
                     },
                     &flag,
+                    stream_owner.as_ref(),
                 );
                 let outcome = if flag.load(Ordering::SeqCst) {
                     TaskOutcome::Cancelled
@@ -384,6 +552,7 @@ impl TaskRunner {
             Running {
                 cancel,
                 handle: Some(handle),
+                stream,
             },
         );
         Ok(())
@@ -396,6 +565,11 @@ impl TaskRunner {
     pub fn cancel(&mut self, task: TaskId) {
         if let Some(running) = self.running.get(&task) {
             running.cancel.store(true, Ordering::SeqCst);
+            if let (Some(streams), Some(stream)) =
+                (self.line_streams.as_deref(), running.stream.as_ref())
+            {
+                streams.close_owned(&stream.url, &stream.owner);
+            }
         }
     }
 
@@ -443,6 +617,9 @@ impl TaskRunner {
             self.reap(task);
         }
         while self.receiver.try_recv().is_ok() {}
+        if let Some(streams) = &self.line_streams {
+            streams.close_all();
+        }
     }
 }
 
@@ -457,7 +634,9 @@ impl Drop for TaskRunner {
 struct Backends<'a> {
     fetch: Option<&'a Fetcher>,
     post: Option<&'a Poster>,
-    secrets: Option<&'a Path>,
+    put: Option<&'a Putter>,
+    line_streams: Option<&'a LineStreams>,
+    secrets: Option<&'a SecretStore>,
     credentials: Option<&'a CredentialAuthorizer>,
 }
 
@@ -468,17 +647,51 @@ struct Backends<'a> {
 /// choosing its own secret name must not be able to turn that into a read of
 /// an arbitrary file, because the value goes straight into a request to a
 /// server the application also chose.
-fn secret(directory: Option<&Path>, name: &str) -> Option<String> {
-    let directory = directory?;
-    if name.is_empty()
-        || name.len() > 64
-        || !name
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
-    {
+fn scoped_secret(store: Option<&SecretStore>, name: &str) -> Option<String> {
+    let store = store?;
+    if !crate::credentials::valid_secret_name(name) {
         return None;
     }
-    let file = std::fs::File::open(directory.join(name)).ok()?;
+    if let Some(app) = store.app.as_deref() {
+        let path = crate::credentials::app_secret_path(&store.root, app, name)?;
+        if let Some(value) = read_secret(&store.root, &path) {
+            return Some(value);
+        }
+    }
+    read_secret(&store.root, &store.root.join(name))
+}
+
+#[cfg(test)]
+fn secret(directory: Option<&Path>, name: &str) -> Option<String> {
+    let directory = directory?;
+    if !crate::credentials::valid_secret_name(name) {
+        return None;
+    }
+    read_secret(directory, &directory.join(name))
+}
+
+fn read_secret(root: &Path, path: &Path) -> Option<String> {
+    let root_metadata = std::fs::symlink_metadata(root).ok()?;
+    if !root_metadata.file_type().is_dir() {
+        return None;
+    }
+    let relative = path.strip_prefix(root).ok()?;
+    let mut checked = root.to_owned();
+    for component in relative.components() {
+        let Component::Normal(component) = component else {
+            return None;
+        };
+        checked.push(component);
+        let metadata = std::fs::symlink_metadata(&checked).ok()?;
+        if checked == path {
+            if !metadata.file_type().is_file() {
+                return None;
+            }
+        } else if !metadata.file_type().is_dir() {
+            return None;
+        }
+    }
+    let file = kobo_abi::open_read_nofollow(path).ok()?;
     let mut bytes = Vec::new();
     file.take(MAX_SECRET_BYTES as u64 + 1)
         .read_to_end(&mut bytes)
@@ -495,7 +708,13 @@ fn secret(directory: Option<&Path>, name: &str) -> Option<String> {
     }
 }
 
-fn run(work: &Task, root: &Path, backends: Backends<'_>, cancel: &AtomicBool) -> TaskOutcome {
+fn run(
+    work: &Task,
+    root: &Path,
+    backends: Backends<'_>,
+    cancel: &AtomicBool,
+    stream_owner: Option<&LineStreamOwner>,
+) -> TaskOutcome {
     match work {
         Task::Sleep { seconds } => {
             // Polled in short slices rather than slept in one call, so a
@@ -537,7 +756,16 @@ fn run(work: &Task, root: &Path, backends: Backends<'_>, cancel: &AtomicBool) ->
             max_bytes,
             credential: wanted,
             headers,
-        } => run_fetch(url, *offset, *max_bytes, wanted.as_ref(), headers, backends),
+        } => run_fetch(
+            url,
+            *offset,
+            *max_bytes,
+            wanted.as_ref(),
+            headers,
+            backends,
+            cancel,
+            stream_owner,
+        ),
         Task::Post {
             url,
             body,
@@ -553,10 +781,33 @@ fn run(work: &Task, root: &Path, backends: Backends<'_>, cancel: &AtomicBool) ->
             wanted.as_ref(),
             headers,
             backends,
+            cancel,
+        ),
+        Task::Put {
+            url,
+            body,
+            content_type,
+            credential: wanted,
+            headers,
+            max_bytes,
+        } => run_put(
+            url,
+            body,
+            content_type,
+            *max_bytes,
+            wanted.as_ref(),
+            headers,
+            backends,
+            cancel,
         ),
     }
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    clippy::too_many_lines,
+    reason = "ordinary fetch and retained-stream fetch share one credential, header, cancellation, and ownership gate"
+)]
 fn run_fetch(
     url: &str,
     offset: u32,
@@ -564,20 +815,105 @@ fn run_fetch(
     wanted: Option<&Credential>,
     headers: &[kobo_protocol::Header],
     backends: Backends<'_>,
+    cancel: &AtomicBool,
+    stream_owner: Option<&LineStreamOwner>,
 ) -> TaskOutcome {
-    let Some(fetch) = backends.fetch else {
-        return TaskOutcome::Failed(TaskError::Denied);
-    };
     // `Range` and the runtime-owned credential cannot be replaced by app
     // headers; `own_headers` applies the same gate used for POST.
-    let extra = match own_headers(headers) {
-        Ok(extra) => extra,
+    let prepared = match own_headers(headers) {
+        Ok(prepared) => prepared,
         Err(error) => return TaskOutcome::Failed(error),
+    };
+    let (extra, controls) = (prepared.forwarded, prepared.controls);
+    if controls.wait_until_cancelled {
+        return TaskOutcome::Failed(TaskError::Denied);
+    }
+    if let Some(action) = controls.stream {
+        if offset != 0 || wanted.is_none() {
+            return TaskOutcome::Failed(TaskError::Denied);
+        }
+        let Some(streams) = backends.line_streams else {
+            return TaskOutcome::Failed(TaskError::Denied);
+        };
+        if action == LineStreamAction::Close {
+            let authorized = credential_is_authorized(
+                wanted,
+                url,
+                CredentialUse::Fetch,
+                None,
+                None,
+                backends.credentials,
+            );
+            return match authorized {
+                Ok(()) => match streams.request(
+                    action,
+                    url,
+                    max_bytes.min(MAX_TASK_BYTES_U32),
+                    None,
+                    &extra,
+                    RequestOptions {
+                        report_rate_limit: controls.report_rate_limit,
+                        wait_until_cancelled: false,
+                    },
+                    cancel,
+                ) {
+                    Ok(bytes) => TaskOutcome::Completed(bytes),
+                    Err(error) => TaskOutcome::Failed(error),
+                },
+                Err(error) => TaskOutcome::Failed(error),
+            };
+        }
+        let Some(owner) = stream_owner else {
+            return TaskOutcome::Failed(TaskError::Unreachable);
+        };
+        if action == LineStreamAction::Next {
+            if let Err(error) = streams.claim_current(url, owner, cancel) {
+                return TaskOutcome::Failed(error);
+            }
+        }
+        let resolved = match resolved_credential(
+            wanted,
+            url,
+            CredentialUse::Fetch,
+            None,
+            None,
+            backends.credentials,
+            backends.secrets,
+        ) {
+            Ok(credential) => credential,
+            Err(error) => {
+                streams.close_owned(url, owner);
+                return TaskOutcome::Failed(error);
+            }
+        };
+        return match streams.request_owned(
+            owner,
+            action,
+            url,
+            max_bytes.min(MAX_TASK_BYTES_U32),
+            resolved
+                .as_ref()
+                .map(|(name, value)| (name.as_str(), value.as_str())),
+            &extra,
+            RequestOptions {
+                report_rate_limit: controls.report_rate_limit,
+                wait_until_cancelled: false,
+            },
+            cancel,
+        ) {
+            Ok(bytes) => TaskOutcome::Completed(bytes),
+            Err(error) => TaskOutcome::Failed(error),
+        };
+    }
+    let Some(fetch) = backends.fetch else {
+        return TaskOutcome::Failed(TaskError::Denied);
     };
     let resolved = match resolved_credential(
         wanted,
         url,
         CredentialUse::Fetch,
+        None,
+        None,
         backends.credentials,
         backends.secrets,
     ) {
@@ -592,12 +928,21 @@ fn run_fetch(
             .as_ref()
             .map(|(name, value)| (name.as_str(), value.as_str())),
         &extra,
+        RequestOptions {
+            report_rate_limit: controls.report_rate_limit,
+            wait_until_cancelled: false,
+        },
+        cancel,
     ) {
         Ok(bytes) => TaskOutcome::Completed(bytes),
         Err(error) => TaskOutcome::Failed(error),
     }
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the closed Task::Post fields and runtime backends are passed explicitly"
+)]
 fn run_post(
     url: &str,
     body: &str,
@@ -606,18 +951,26 @@ fn run_post(
     wanted: Option<&Credential>,
     headers: &[kobo_protocol::Header],
     backends: Backends<'_>,
+    cancel: &AtomicBool,
 ) -> TaskOutcome {
     let Some(post) = backends.post else {
         return TaskOutcome::Failed(TaskError::Denied);
     };
-    let extra = match own_headers(headers) {
-        Ok(extra) => extra,
+    let prepared = match own_headers(headers) {
+        Ok(prepared) => prepared,
         Err(error) => return TaskOutcome::Failed(error),
     };
+    let (extra, controls) = (prepared.forwarded, prepared.controls);
+    if controls.stream.is_some() || (controls.wait_until_cancelled && wanted.is_none()) {
+        return TaskOutcome::Failed(TaskError::Denied);
+    }
+
     let resolved = match resolved_credential(
         wanted,
         url,
         CredentialUse::Post,
+        Some(body),
+        Some(content_type),
         backends.credentials,
         backends.secrets,
     ) {
@@ -633,6 +986,68 @@ fn run_post(
             .map(|(name, value)| (name.as_str(), value.as_str())),
         &extra,
         max_bytes.min(MAX_TASK_BYTES_U32),
+        RequestOptions {
+            report_rate_limit: controls.report_rate_limit,
+            wait_until_cancelled: controls.wait_until_cancelled,
+        },
+        cancel,
+    ) {
+        Ok(bytes) => TaskOutcome::Completed(bytes),
+        Err(error) => TaskOutcome::Failed(error),
+    }
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the closed Task::Put fields and runtime backends are passed explicitly"
+)]
+fn run_put(
+    url: &str,
+    body: &str,
+    content_type: &str,
+    max_bytes: u32,
+    wanted: Option<&Credential>,
+    headers: &[kobo_protocol::Header],
+    backends: Backends<'_>,
+    cancel: &AtomicBool,
+) -> TaskOutcome {
+    let Some(put) = backends.put else {
+        return TaskOutcome::Failed(TaskError::Denied);
+    };
+    let prepared = match own_headers(headers) {
+        Ok(prepared) => prepared,
+        Err(error) => return TaskOutcome::Failed(error),
+    };
+    let (extra, controls) = (prepared.forwarded, prepared.controls);
+    if controls.stream.is_some() || controls.wait_until_cancelled {
+        return TaskOutcome::Failed(TaskError::Denied);
+    }
+    let resolved = match resolved_credential(
+        wanted,
+        url,
+        CredentialUse::Put,
+        Some(body),
+        Some(content_type),
+        backends.credentials,
+        backends.secrets,
+    ) {
+        Ok(credential) => credential,
+        Err(error) => return TaskOutcome::Failed(error),
+    };
+    match put(
+        url,
+        body.as_bytes(),
+        content_type,
+        resolved
+            .as_ref()
+            .map(|(name, value)| (name.as_str(), value.as_str())),
+        &extra,
+        max_bytes.min(MAX_TASK_BYTES_U32),
+        RequestOptions {
+            report_rate_limit: controls.report_rate_limit,
+            wait_until_cancelled: false,
+        },
+        cancel,
     ) {
         Ok(bytes) => TaskOutcome::Completed(bytes),
         Err(error) => TaskOutcome::Failed(error),
@@ -909,10 +1324,54 @@ mod tests {
     }
 
     #[test]
+    fn shutdown_interrupts_a_stream_blocked_writing_its_tls_request_head() {
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).expect("bind blocking server");
+        let port = listener.local_addr().expect("server address").port();
+        let (report_accepted, accepted) = std::sync::mpsc::channel();
+        let (release, wait) = std::sync::mpsc::channel();
+        let server = std::thread::spawn(move || {
+            let (_socket, _) = listener.accept().expect("accept stream");
+            report_accepted.send(()).expect("report connection");
+            let _ = wait.recv_timeout(Duration::from_secs(5));
+        });
+        let secrets = secret_dir("shutdown-stream-head");
+        let streams = Arc::new(LineStreams::default());
+        let mut runner = TaskRunner::simulated(temp_root("shutdown-stream-root"))
+            .with_capabilities([Capability::Network])
+            .with_secrets(secrets)
+            .with_line_streams(streams)
+            .with_credential_policy(Arc::new(|_, _, _, _, _| true));
+        runner
+            .submit(
+                TaskId(1),
+                Task::Fetch {
+                    url: format!("https://localhost:{port}/api/stream/event"),
+                    offset: 0,
+                    max_bytes: 4096,
+                    credential: Some(Credential::bearer("openai")),
+                    headers: vec![
+                        Header::new("Accept", "application/x-ndjson"),
+                        Header::new("X-Cobalt-Line-Stream", "open"),
+                    ],
+                },
+            )
+            .expect("submit stream");
+        accepted
+            .recv_timeout(Duration::from_secs(2))
+            .expect("stream reached TCP server");
+        let started = std::time::Instant::now();
+        runner.shutdown();
+        assert!(started.elapsed() < Duration::from_secs(1));
+        assert_eq!(runner.in_flight(), 0);
+        release.send(()).expect("release server");
+        server.join().expect("blocking server");
+    }
+
+    #[test]
     fn a_granted_fetch_reaches_the_backend() {
         let mut runner = TaskRunner::simulated(temp_root("fetch"))
             .with_capabilities([Capability::Network])
-            .with_fetch(Arc::new(|url: &str, _, _, _, _| {
+            .with_fetch(Arc::new(|url: &str, _, _, _, _, _, _| {
                 Ok(url.as_bytes().to_vec())
             }));
         runner
@@ -938,7 +1397,7 @@ mod tests {
     fn a_fetch_header_reaches_the_backend_the_application_asked_for_it_by() {
         let mut runner = TaskRunner::simulated(temp_root("fetch-headers"))
             .with_capabilities([Capability::Network])
-            .with_fetch(Arc::new(|_, _, _, _, headers: &[(&str, &str)]| {
+            .with_fetch(Arc::new(|_, _, _, _, headers: &[(&str, &str)], _, _| {
                 Ok(headers
                     .iter()
                     .map(|(name, value)| format!("{name}: {value}"))
@@ -966,6 +1425,257 @@ mod tests {
     }
 
     #[test]
+    fn a_put_uses_its_own_backend_and_credential_usage() {
+        let directory = secret_dir("put");
+        std::fs::rename(directory.join("openai"), directory.join("miniflux"))
+            .expect("name Miniflux secret");
+        let mut runner = TaskRunner::simulated(temp_root("put-root"))
+            .with_capabilities([Capability::Network])
+            .with_secrets(&directory)
+            .with_credential_policy(Arc::new(|credential, url, usage, body, content_type| {
+                credential.secret == "miniflux"
+                    && url == "https://feeds.example/v1/entries"
+                    && usage == CredentialUse::Put
+                    && body == Some(r#"{"entry_ids":[7],"starred":true}"#)
+                    && content_type == Some("application/json")
+            }))
+            .with_put(Arc::new(
+                |url, body, content_type, credential, headers, _, options, _| {
+                    assert_eq!(url, "https://feeds.example/v1/entries");
+                    assert_eq!(body, br#"{"entry_ids":[7],"starred":true}"#);
+                    assert_eq!(content_type, "application/json");
+                    assert_eq!(credential, Some(("X-Auth-Token", "not-a-real-key")));
+                    assert!(headers.is_empty());
+                    assert!(!options.wait_until_cancelled);
+                    Ok(Vec::new())
+                },
+            ));
+        runner
+            .submit(
+                TaskId(1),
+                Task::Put {
+                    url: "https://feeds.example/v1/entries".into(),
+                    body: r#"{"entry_ids":[7],"starred":true}"#.into(),
+                    content_type: "application/json".into(),
+                    credential: Some(Credential::in_header("miniflux", "X-Auth-Token")),
+                    headers: Vec::new(),
+                    max_bytes: 1024,
+                },
+            )
+            .expect("PUT submitted");
+        assert_eq!(
+            collect(&mut runner, 1)[0].outcome,
+            TaskOutcome::Completed(Vec::new())
+        );
+    }
+
+    #[test]
+    fn runtime_network_controls_are_validated_and_never_forwarded_upstream() {
+        let directory = secret_dir("controls");
+        let mut runner = TaskRunner::simulated(temp_root("controls-root"))
+            .with_capabilities([Capability::Network])
+            .with_secrets(directory)
+            .with_credential_policy(Arc::new(|credential, url, usage, body, content_type| {
+                credential.secret == "openai"
+                    && url == "https://example.invalid/seek"
+                    && usage == CredentialUse::Post
+                    && body == Some("fixed=1")
+                    && content_type == Some("application/x-www-form-urlencoded")
+            }))
+            .with_post(Arc::new(
+                |_, _, _, credential, headers, _, options, cancel| {
+                    let Some((name, value)) = credential else {
+                        panic!("the runtime credential was not attached")
+                    };
+                    assert_eq!(name, "Authorization");
+                    assert!(
+                        value.starts_with("Bearer ") && value.len() > "Bearer ".len(),
+                        "the runtime did not apply bearer framing"
+                    );
+                    assert!(headers.is_empty(), "runtime controls leaked upstream");
+                    assert!(options.report_rate_limit);
+                    assert!(options.wait_until_cancelled);
+                    assert!(!cancel.load(Ordering::SeqCst));
+                    Ok(Vec::new())
+                },
+            ));
+        runner
+            .submit(
+                TaskId(1),
+                Task::Post {
+                    url: "https://example.invalid/seek".into(),
+                    body: "fixed=1".into(),
+                    content_type: "application/x-www-form-urlencoded".into(),
+                    credential: Some(Credential::bearer("openai")),
+                    headers: vec![
+                        Header::new("X-Cobalt-Wait-Until-Cancelled", "1"),
+                        Header::new("X-Cobalt-Rate-Limit", "1"),
+                    ],
+                    max_bytes: 1024,
+                },
+            )
+            .expect("submitted");
+        assert_eq!(
+            collect(&mut runner, 1)[0].outcome,
+            TaskOutcome::Completed(Vec::new())
+        );
+    }
+
+    #[test]
+    fn line_stream_controls_round_trip_as_an_unchanged_protocol_11_fetch() {
+        use kobo_protocol::{read_from, write_to, Frame, Message, LEGACY_VERSION};
+        use std::io::Cursor;
+
+        assert_eq!(LEGACY_VERSION, 11);
+        let frame = Frame {
+            version: LEGACY_VERSION,
+            request_id: 9,
+            message: Message::Spawn {
+                task: TaskId(4),
+                work: Task::Fetch {
+                    url: "https://lichess.org/api/stream/event".into(),
+                    offset: 0,
+                    max_bytes: 4096,
+                    credential: Some(Credential::bearer("lichess")),
+                    headers: vec![
+                        Header::new("Accept", "application/x-ndjson"),
+                        Header::new("X-Cobalt-Line-Stream", "open"),
+                    ],
+                },
+            },
+        };
+        let mut encoded = Vec::new();
+        write_to(&mut encoded, &frame).expect("encode protocol 11");
+        let decoded = read_from(&mut Cursor::new(encoded)).expect("decode protocol 11");
+        assert_eq!(decoded, frame);
+    }
+
+    #[test]
+    fn cancelling_open_or_next_closes_a_stream_but_cancelling_close_does_not() {
+        let work = |action| Task::Fetch {
+            url: "https://lichess.org/api/stream/event".into(),
+            offset: 0,
+            max_bytes: 4096,
+            credential: Some(Credential::bearer("lichess")),
+            headers: vec![
+                Header::new("Accept", "application/x-ndjson"),
+                Header::new("X-Cobalt-Line-Stream", action),
+            ],
+        };
+        assert!(line_stream_url(&work("open")).is_some());
+        assert!(line_stream_url(&work("next")).is_some());
+        assert!(line_stream_url(&work("close")).is_none());
+    }
+
+    #[test]
+    fn cancelling_superseded_stream_owner_cannot_close_current_generation() {
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).expect("bind blocking server");
+        let port = listener.local_addr().expect("server address").port();
+        let (report_accepted, accepted) = std::sync::mpsc::channel();
+        let (release, wait) = std::sync::mpsc::channel();
+        let server = std::thread::spawn(move || {
+            let (first, _) = listener.accept().expect("accept first stream");
+            report_accepted.send(()).expect("report first stream");
+            let (second, _) = listener.accept().expect("accept replacement stream");
+            report_accepted.send(()).expect("report replacement stream");
+            let _ = wait.recv_timeout(Duration::from_secs(5));
+            drop((first, second));
+        });
+        let url = format!("https://localhost:{port}/api/stream/event");
+        let work = || Task::Fetch {
+            url: url.clone(),
+            offset: 0,
+            max_bytes: 4096,
+            credential: Some(Credential::bearer("openai")),
+            headers: vec![
+                Header::new("Accept", "application/x-ndjson"),
+                Header::new("X-Cobalt-Line-Stream", "open"),
+            ],
+        };
+        let streams = Arc::new(LineStreams::default());
+        let mut runner = TaskRunner::simulated(temp_root("stream-owner-race"))
+            .with_capabilities([Capability::Network])
+            .with_secrets(secret_dir("stream-owner-race"))
+            .with_line_streams(Arc::clone(&streams))
+            .with_credential_policy(Arc::new(|_, _, _, _, _| true));
+
+        runner.submit(TaskId(1), work()).expect("submit first open");
+        accepted
+            .recv_timeout(Duration::from_secs(2))
+            .expect("first stream connected");
+        runner
+            .submit(TaskId(2), work())
+            .expect("submit replacement open");
+        accepted
+            .recv_timeout(Duration::from_secs(2))
+            .expect("replacement stream connected");
+
+        runner.cancel(TaskId(1));
+        std::thread::sleep(Duration::from_millis(600));
+        assert!(
+            !runner
+                .running
+                .get(&TaskId(2))
+                .and_then(|running| running.handle.as_ref())
+                .is_some_and(thread::JoinHandle::is_finished),
+            "stale cancellation closed the replacement generation"
+        );
+
+        runner.cancel(TaskId(2));
+        let finished = collect(&mut runner, 2);
+        assert_eq!(finished.len(), 2);
+        assert_eq!(
+            finished
+                .iter()
+                .find(|finished| finished.task == TaskId(2))
+                .map(|finished| &finished.outcome),
+            Some(&TaskOutcome::Cancelled),
+            "the current owner did not close its generation"
+        );
+
+        release.send(()).expect("release server");
+        server.join().expect("blocking server");
+    }
+
+    #[test]
+    fn unknown_duplicate_or_misplaced_runtime_controls_fail_closed() {
+        for headers in [
+            vec![Header::new("X-Cobalt-Unknown", "1")],
+            vec![
+                Header::new("X-Cobalt-Rate-Limit", "1"),
+                Header::new("x-cobalt-rate-limit", "1"),
+            ],
+            vec![Header::new("X-Cobalt-Wait-Until-Cancelled", "1")],
+            vec![
+                Header::new("Accept", "application/x-ndjson"),
+                Header::new("X-Cobalt-Line-Stream", "open"),
+            ],
+        ] {
+            let mut runner = TaskRunner::simulated(temp_root("bad-controls"))
+                .with_capabilities([Capability::Network])
+                .with_fetch(Arc::new(|_, _, _, _, _, _, _| {
+                    panic!("a rejected control must not reach the network")
+                }));
+            runner
+                .submit(
+                    TaskId(1),
+                    Task::Fetch {
+                        url: "https://example.invalid/".into(),
+                        offset: 0,
+                        max_bytes: 128,
+                        credential: None,
+                        headers,
+                    },
+                )
+                .expect("submitted");
+            assert_eq!(
+                collect(&mut runner, 1)[0].outcome,
+                TaskOutcome::Failed(TaskError::Denied)
+            );
+        }
+    }
+
+    #[test]
     fn an_application_supplied_range_header_cannot_displace_the_byte_offset_the_runtime_sets() {
         // `offset` is the only thing allowed to become `Range`: it is turned
         // into the header the runtime sends, not merged with one the
@@ -973,7 +1683,9 @@ mod tests {
         // outright rather than sent with two.
         let mut runner = TaskRunner::simulated(temp_root("fetch-range"))
             .with_capabilities([Capability::Network])
-            .with_fetch(Arc::new(|_, _, _, _, _| Ok(b"should not run".to_vec())));
+            .with_fetch(Arc::new(|_, _, _, _, _, _, _| {
+                Ok(b"should not run".to_vec())
+            }));
         runner
             .submit(
                 TaskId(1),
@@ -1031,6 +1743,70 @@ mod tests {
     }
 
     #[test]
+    fn app_scoped_credentials_precede_global_owner_credentials() {
+        let root = temp_root("app-secret-precedence");
+        std::fs::write(root.join("openai"), "owner-global").expect("global secret");
+        crate::credentials::install_app_secret(&root, "chat", "openai", "chat-secret")
+            .expect("chat secret");
+        crate::credentials::install_app_secret(&root, "audiobook", "openai", "audiobook-secret")
+            .expect("audiobook secret");
+        let chat = SecretStore {
+            root: root.clone(),
+            app: Some("chat".to_owned()),
+        };
+        let audiobook = SecretStore {
+            root: root.clone(),
+            app: Some("audiobook".to_owned()),
+        };
+        let other = SecretStore {
+            root,
+            app: Some("zotero-reader".to_owned()),
+        };
+        assert_eq!(
+            scoped_secret(Some(&chat), "openai").as_deref(),
+            Some("chat-secret")
+        );
+        assert_eq!(
+            scoped_secret(Some(&audiobook), "openai").as_deref(),
+            Some("audiobook-secret")
+        );
+        assert_eq!(
+            scoped_secret(Some(&other), "openai").as_deref(),
+            Some("owner-global"),
+            "legacy and CLI-installed globals remain the deliberate fallback"
+        );
+
+        let legacy = temp_root("legacy-global-secret");
+        std::fs::write(legacy.join("openai"), "legacy-global").expect("legacy secret");
+        for app in ["chat", "audiobook"] {
+            let store = SecretStore {
+                root: legacy.clone(),
+                app: Some(app.to_owned()),
+            };
+            assert_eq!(
+                scoped_secret(Some(&store), "openai").as_deref(),
+                Some("legacy-global"),
+                "{app} lost the pre-namespace credential"
+            );
+        }
+    }
+
+    #[test]
+    fn app_secret_lookup_refuses_symlinked_namespaces_and_values() {
+        use std::os::unix::fs::symlink;
+
+        let root = temp_root("app-secret-symlink");
+        std::fs::create_dir_all(root.join("apps/chat")).expect("chat namespace");
+        std::fs::write(root.join("outside"), "must-not-be-read").expect("outside");
+        symlink(root.join("outside"), root.join("apps/chat/openai")).expect("secret link");
+        let store = SecretStore {
+            root,
+            app: Some("chat".to_owned()),
+        };
+        assert_eq!(scoped_secret(Some(&store), "openai"), None);
+    }
+
+    #[test]
     fn an_oversized_file_is_not_treated_as_a_secret() {
         // A log or a truncated download dropped in the directory is not a
         // credential, and sending one to a server would leak whatever it held.
@@ -1049,8 +1825,8 @@ mod tests {
         let mut runner = TaskRunner::simulated(temp_root("nosecret"))
             .with_capabilities([Capability::Network])
             .with_secrets(temp_root("nosecret-empty"))
-            .with_credential_policy(Arc::new(|_, _, _| true))
-            .with_post(Arc::new(move |_, _, _, _, _, _| {
+            .with_credential_policy(Arc::new(|_, _, _, _, _| true))
+            .with_post(Arc::new(move |_, _, _, _, _, _, _, _| {
                 observed.store(true, Ordering::SeqCst);
                 Ok(Vec::new())
             }));
@@ -1086,10 +1862,10 @@ mod tests {
         let mut runner = TaskRunner::simulated(temp_root("resolved-root"))
             .with_capabilities([Capability::Network])
             .with_secrets(directory)
-            .with_credential_policy(Arc::new(|credential, url, _| {
+            .with_credential_policy(Arc::new(|credential, url, _, _, _| {
                 credential.secret == "openai" && url == "https://example.invalid/"
             }))
-            .with_post(Arc::new(|_, _, _, credential, _, _| {
+            .with_post(Arc::new(|_, _, _, credential, _, _, _, _| {
                 assert_eq!(credential, Some(("Authorization", "Bearer not-a-real-key")));
                 Ok(b"{\"ok\":true}".to_vec())
             }));
@@ -1116,6 +1892,40 @@ mod tests {
     }
 
     #[test]
+    fn removing_a_secret_denies_the_next_request_without_calling_the_backend() {
+        let directory = secret_dir("removed");
+        let calls = Arc::new(AtomicUsize::new(0));
+        let observed = Arc::clone(&calls);
+        let mut runner = TaskRunner::simulated(temp_root("removed-root"))
+            .with_capabilities([Capability::Network])
+            .with_secrets(&directory)
+            .with_credential_policy(Arc::new(|_, _, _, _, _| true))
+            .with_fetch(Arc::new(move |_, _, _, _, _, _, _| {
+                observed.fetch_add(1, Ordering::SeqCst);
+                Ok(Vec::new())
+            }));
+        let work = || Task::Fetch {
+            url: "https://example.invalid/".into(),
+            offset: 0,
+            max_bytes: 128,
+            credential: Some(Credential::bearer("openai")),
+            headers: Vec::new(),
+        };
+        runner.submit(TaskId(1), work()).expect("first");
+        assert!(matches!(
+            collect(&mut runner, 1)[0].outcome,
+            TaskOutcome::Completed(_)
+        ));
+        std::fs::remove_file(directory.join("openai")).expect("remove secret");
+        runner.submit(TaskId(2), work()).expect("second");
+        assert_eq!(
+            collect(&mut runner, 1)[0].outcome,
+            TaskOutcome::Failed(TaskError::NoCredential)
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
     fn a_secret_cannot_be_sent_to_a_destination_its_policy_did_not_allow() {
         let directory = secret_dir("wrong-destination");
         let sent = Arc::new(AtomicBool::new(false));
@@ -1123,10 +1933,10 @@ mod tests {
         let mut runner = TaskRunner::simulated(temp_root("wrong-destination-root"))
             .with_capabilities([Capability::Network])
             .with_secrets(directory)
-            .with_credential_policy(Arc::new(|credential, url, _| {
+            .with_credential_policy(Arc::new(|credential, url, _, _, _| {
                 credential.secret == "openai" && url == "https://api.openai.com/v1/chat/completions"
             }))
-            .with_post(Arc::new(move |_, _, _, _, _, _| {
+            .with_post(Arc::new(move |_, _, _, _, _, _, _, _| {
                 observed.store(true, Ordering::SeqCst);
                 Ok(Vec::new())
             }));
@@ -1156,17 +1966,17 @@ mod tests {
         let mut runner = TaskRunner::simulated(temp_root("read-only-method-root"))
             .with_capabilities([Capability::Network])
             .with_secrets(directory)
-            .with_credential_policy(Arc::new(|credential, url, usage| {
+            .with_credential_policy(Arc::new(|credential, url, usage, _, _| {
                 credential.secret == "openai"
                     && url == "https://example.invalid/items"
                     && usage == CredentialUse::Fetch
             }))
-            .with_fetch(Arc::new(|_, _, _, credential, headers| {
+            .with_fetch(Arc::new(|_, _, _, credential, headers, _, _| {
                 assert_eq!(credential, Some(("x-api-key", "not-a-real-key")));
                 assert!(headers.is_empty());
                 Ok(b"[]".to_vec())
             }))
-            .with_post(Arc::new(|_, _, _, _, _, _| Ok(b"{}".to_vec())));
+            .with_post(Arc::new(|_, _, _, _, _, _, _, _| Ok(b"{}".to_vec())));
         runner
             .submit(
                 TaskId(1),
@@ -1206,7 +2016,7 @@ mod tests {
     #[test]
     fn posting_without_the_network_capability_is_refused() {
         let mut runner = TaskRunner::simulated(temp_root("ungranted")).with_post(Arc::new(
-            |_, _, _, _, _, _| panic!("an ungranted post must never reach the network"),
+            |_, _, _, _, _, _, _, _| panic!("an ungranted post must never reach the network"),
         ));
         runner
             .submit(

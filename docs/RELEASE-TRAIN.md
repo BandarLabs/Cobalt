@@ -79,6 +79,12 @@ gh workflow run "Publish beta platform" --ref beta
    platform bump does not republish `app-catalog-beta`.
 3. Install the beta release through Software Update and record the tested
    commit and archive SHA-256.
+   For a protocol transition, OTA over an existing protocol-11 installation
+   before installing protocol-12 apps. Confirm old apps retain their state,
+   secrets and preferences, keep their legacy layout, can return to Nickel,
+   and can roll back. Confirm protocol-12 Folio, protocol-13 selected-cell,
+   and protocol-14 PUT Store apps are beta-gated with their
+   `minimum_cobalt_version` before promotion.
 4. Merge `beta` into `main` without squashing away the tested commit.
    This merge does not create `vX.Y.Z` and does not replace the stable catalog.
 5. Run **Promote tested beta** from `main`. The workflow tags the tested commit
@@ -112,3 +118,11 @@ acceptance or artifact promotion. Stable `vX.Y.Z` tags and releases are created
 only by **Promote tested beta**; pushing a tag does not start a second build.
 Protect the `v*` tag namespace with a repository ruleset that allows tag
 creation only by the GitHub Actions promotion workflow.
+
+Beta is opt-in: Stable readers do not move channels just because a beta exists.
+Returning to Stable changes only future checks; it never forces a beta
+downgrade, and Stable resumes once GA catches or exceeds that beta. OTA is a
+verified staged swap over Wi-Fi, not a USB requirement. Acceptance evidence
+must include rollback after the staged swap and a return through the normal
+Nickel handoff, as well as confirmation that owner secrets, trust, state, data,
+apps, and Store data all survived.

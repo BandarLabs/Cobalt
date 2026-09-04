@@ -7,11 +7,47 @@
       "display_name": "Backgammon",
       "short_label": "Backgammon",
       "summary": "Play complete solo or pass-and-play backgammon on one Kobo.",
-      "version": "0.1.1",
-      "minimum_cobalt_version": "0.3.1",
+      "version": "0.1.2",
+      "minimum_cobalt_version": "0.3.5",
       "glyph": "circle",
       "capabilities": [],
       "release_notes": "Play complete solo or pass-and-play backgammon on one Kobo."
+    },
+    {
+      "package": "kobo-lichess",
+      "id": "lichess",
+      "display_name": "Lichess",
+      "short_label": "Lichess",
+      "summary": "Play Lichess games, challenge players, solve puzzles, or play offline.",
+      "version": "1.0.2",
+      "minimum_cobalt_version": "0.3.5",
+      "glyph": "grid",
+      "capabilities": [
+        "network",
+        "hold-wifi",
+        "keep-awake"
+      ],
+      "setup": {
+        "steps": [
+          {
+            "text": "Create a Lichess Personal Access Token granting only board:play.",
+            "link": {
+              "label": "Create a Lichess API token",
+              "url": "https://lichess.org/account/oauth/token/create?scopes[]=board:play&description=Cobalt"
+            }
+          },
+          {
+            "text": "Save the token in a private local file, then install it under the exact secret name lichess.",
+            "command": "kobo secret set lichess --from <token-file> --device <address>"
+          },
+          {
+            "text": "Use Cobalt 0.3.5 or newer. This app uses the responsive Folio interface in protocol 12."
+          },
+          {
+            "text": "Official Lichess Board API. Rapid and Classical seeks."
+          }
+        ]
+      }
     }
   ]
 }

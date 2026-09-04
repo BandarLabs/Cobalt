@@ -1,0 +1,6 @@
+# Starts at the empty standalone shelf.
+expect No feeds yet
+tap Add a feed
+expect Feed search powered by feedsearch.dev
+clean
+shot standalone-discovery

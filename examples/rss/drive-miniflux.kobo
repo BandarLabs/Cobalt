@@ -1,0 +1,8 @@
+# Switches the same Store app from standalone to its Miniflux settings.
+expect No feeds yet
+tap Settings
+expect Feeds settings
+tap Standalone
+expect Miniflux
+clean
+shot miniflux-settings

@@ -5,6 +5,11 @@ The sites you read, on the device.
 Type an address, pick the feed it finds, and read the articles without leaving
 the application.
 
+Feeds starts in standalone mode. Settings can switch the same app to Miniflux:
+enter an HTTPS server, then install its token with `kobo secret set miniflux`.
+The runtime attaches only that dedicated secret as `X-Auth-Token`; neither mode
+stores token bytes.
+
 | The articles | Finding a feed |
 | --- | --- |
 | ![A list of articles with glyph leads and clamped titles](screenshots/articles.png) | ![The search screen, with the Feedsearch attribution](screenshots/search.png) |
@@ -27,7 +32,7 @@ few hundred lines rather than a browser.
 Their terms ask for a visible attribution wherever their results are shown,
 which is why it is on both the search screen and the results screen.
 
-## Why the articles are read from the feed and not from the site
+## Reading offline
 
 Because the feed is the readable copy. Most publishers put the whole post in
 `content:encoded`, and the ones that do not put a summary there. Either way it
@@ -35,11 +40,54 @@ is prose with a little markup, which is exactly what an E Ink panel wants.
 Following the link instead would mean fetching a modern web page: a megabyte of
 layout, script and advertising wrapped around the same words.
 
+Subscribed standalone feeds retain a bounded readable cache per feed, plus
+read/unread and starred state keyed by the entry GUID/id or its safe canonical
+link. Relative RSS, Atom, and JSON Feed links resolve only against the safe
+subscription URL requested. Redirect-relative and `xml:base` resolution are
+unavailable: `TaskOutcome` provides neither a final URL nor response metadata.
+Miniflux keeps a separate bounded cache for each list mode, exact full articles
+by entry ID, and durable read/star changes for the next sync. All Miniflux
+state is namespaced by the canonical HTTPS server and any configured
+reverse-proxy prefix, so changing servers never displays an old server's entry
+or sends its queued action to the new one. Unauthorized tokens, offline
+devices, unreachable servers, and malformed successful entry responses leave
+cached reading intact; a valid empty Miniflux list replaces that cache.
+
+### Conditional requests
+
+The current SDK cannot implement ETag or Last-Modified conditional GET
+correctly. `TaskOutcome` is exactly `Completed(Vec<u8>)`, `Failed`, or
+`Cancelled`: it carries no response status, headers, or redirected final URL.
+The app therefore does not fake validators. Runtime task response metadata is
+the concrete blocker; until it exposes those fields, each sync fetches the
+requested feed URL normally.
+
+### Miniflux migration
+
+There is no `rss-miniflux` state migration. Git shows that the old catalog
+entry first appeared in `790ba72` (2026-09-01), after `v0.3.1`; the released
+`v0.3.2`, `v0.3.3`, `v0.3.4`, `beta-v0.3.3`, `beta-v0.3.4`, and current public
+catalog contain no such ID. It was never published, so no installed app state
+exists to migrate.
+
 ## Running it
 
 ```sh
 kobo run --sim --app rss                # in the browser simulator
 kobo deploy --device <ip>               # onto a reader over Wi-Fi
+```
+
+## Deterministic drives
+
+The scripts exercise the standalone discovery surface and the Miniflux mode
+switch without relying on a network service:
+
+```sh
+kobo dev
+kobo drive --ideal --script examples/rss/drive-standalone.kobo --shots examples/rss/screenshots
+
+kobo dev
+kobo drive --ideal --script examples/rss/drive-miniflux.kobo --shots examples/rss/screenshots
 ```
 
 ---

@@ -5,23 +5,23 @@ import { readFileSync } from "node:fs";
 import {
   changedLockPackageIdentities,
   changedRegistryPackages,
+  checkBuildPackages,
   checkEntries,
   checkProtocolMinimums,
   compatibleChangePaths,
-  isContributionManifest,
-  meaningfulReleaseNotes,
   lockfileOnlyAddsPackages,
   manifestOnlyChangesPathDependencyVersions,
   manifestOnlyChangesWorkspaceMembershipOrVersion,
+  onlyRemovesOpdsUrlReexports,
   packagesToBuild,
   registeredConsumers,
   isFilmingScript,
   releaseDiffArguments,
+  releaseLockPackageIdentities,
   releaseNeeded,
   releaseDependencyIds,
   storeImpactOfChangedPaths
 } from "./check-app-versions.mjs";
-import { collectRegistry } from "./app-registry.mjs";
 import {
   registeredStorePackages,
   storeCatalogChanges,
@@ -29,11 +29,20 @@ import {
   workspacePackageDirectories
 } from "./store-catalog-changes.mjs";
 
-function fixture({
-  currentVersion = "1.0.0",
-  summary = "Summary",
-  releaseNotes
-} = {}) {
+const BETA_RELEASE_BASE = "8263fc03c30a937d069157ec96b619da4aeb01d0";
+
+function baseBlob(path) {
+  try {
+    return execFileSync("git", ["rev-parse", `${BETA_RELEASE_BASE}:${path}`], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"]
+    }).trim();
+  } catch {
+    return null;
+  }
+}
+
+function fixture({ currentVersion = "1.0.0", summary = "Summary" } = {}) {
   const app = {
     package: "kobo-notes",
     id: "notes",
@@ -45,7 +54,6 @@ function fixture({
     glyph: "note",
     capabilities: ["network"]
   };
-  if (releaseNotes !== undefined) app.release_notes = releaseNotes;
   const previous = {
     format_version: 1,
     id: "notes",
@@ -86,12 +94,8 @@ test("requires a version bump when public metadata changes", () => {
   );
 });
 
-test("accepts changed content with a new version and meaningful notes", () => {
-  const values = fixture({
-    currentVersion: "1.0.1",
-    summary: "New summary",
-    releaseNotes: "Explain the new summary and improved reader workflow."
-  });
+test("accepts changed content with a new version", () => {
+  const values = fixture({ currentVersion: "1.0.1", summary: "New summary" });
   assert.doesNotThrow(() =>
     checkEntries(values.registry, values.published, new Set(["kobo-notes"]))
   );
@@ -111,43 +115,8 @@ test("rejects downgraded and nonnumeric release versions", () => {
   );
 });
 
-test("requires release notes only for a new or changed release", () => {
-  const unchanged = fixture();
-  assert.doesNotThrow(() => checkEntries(unchanged.registry, unchanged.published, new Set()));
-
-  const changed = fixture({ currentVersion: "1.0.1", summary: "New summary" });
-  assert.throws(
-    () => checkEntries(changed.registry, changed.published, new Set()),
-    /needs meaningful release_notes/
-  );
-  changed.registry.apps[0].release_notes = "Bug fixes";
-  assert.throws(
-    () => checkEntries(changed.registry, changed.published, new Set()),
-    /needs meaningful release_notes/
-  );
-  changed.registry.apps[0].release_notes =
-    "Improves the summary and makes the main task easier to understand.";
-  assert.doesNotThrow(() => checkEntries(changed.registry, changed.published, new Set()));
-
-  const added = fixture();
-  added.published.entries = [];
-  assert.throws(() => checkEntries(added.registry, added.published, new Set()), /new Store app/);
-});
-
-test("release note quality rejects placeholders", () => {
-  assert.equal(meaningfulReleaseNotes("Bug fixes"), false);
-  assert.equal(
-    meaningfulReleaseNotes("Fixes duplicate rows when refreshing a long feed."),
-    true
-  );
-});
-
 test("matches runtime numeric version ordering", () => {
-  const values = fixture({
-    currentVersion: "1.0.0.1",
-    summary: "New summary",
-    releaseNotes: "Improves the visible summary for readers."
-  });
+  const values = fixture({ currentVersion: "1.0.0.1", summary: "New summary" });
   assert.doesNotThrow(() => checkEntries(values.registry, values.published, new Set()));
 
   values.registry.apps[0].version = "1.0.0.0";
@@ -208,8 +177,7 @@ test("a new app is version-checked only against a catalog that already lists it"
     version: "0.1.0",
     minimum_cobalt_version: "0.3.1",
     glyph: "dice",
-    capabilities: [],
-    release_notes: "Play complete solo or pass-and-play backgammon on one Kobo."
+    capabilities: []
   };
   values.registry.apps.push(app);
   const stable = values.published;
@@ -283,6 +251,148 @@ test("accepts the first Cobalt release supporting the package protocol", () => {
   );
 });
 
+test("manifest-only rebuilds must meet the current protocol minimum", () => {
+  const values = fixture({ currentVersion: "1.0.1", summary: "New summary" });
+  const built = new Set(packagesToBuild(values.registry, values.published, new Set()));
+  assert.deepEqual([...built], ["kobo-notes"]);
+  assert.throws(
+    () => checkProtocolMinimums(values.registry, 12, new Map([[12, "0.3.5"]]), built),
+    /minimum Cobalt 0\.3\.0 is older than protocol 12/
+  );
+});
+
+test("new packages must meet the current protocol minimum", () => {
+  const values = fixture();
+  values.registry.apps.push({
+    ...values.registry.apps[0],
+    package: "kobo-reader",
+    id: "reader",
+    display_name: "Reader",
+    short_label: "Reader"
+  });
+  const built = new Set(packagesToBuild(values.registry, values.published, new Set()));
+  assert.deepEqual([...built], ["kobo-reader"]);
+  assert.throws(
+    () => checkProtocolMinimums(values.registry, 12, new Map([[12, "0.3.5"]]), built),
+    /reader: minimum Cobalt 0\.3\.0 is older than protocol 12/
+  );
+});
+
+test("the intended Gallery and Zotero build selection passes final validation", () => {
+  const values = fixture({
+    currentVersion: "1.0.1",
+    summary: "Updated Gallery"
+  });
+  values.registry.apps[0].package = "kobo-gallery";
+  values.registry.apps[0].id = "gallery";
+  values.registry.apps[0].minimum_cobalt_version = "0.3.5";
+  values.published.entries[0].manifest.id = "gallery";
+  values.registry.apps.push({
+    ...values.registry.apps[0],
+    package: "kobo-zotero-reader",
+    id: "zotero-reader",
+    display_name: "Zotero Reader",
+    short_label: "Zotero"
+  });
+  values.published.entries.push({
+    manifest: {
+      ...values.published.entries[0].manifest,
+      id: "zotero-reader",
+      display_name: "Zotero Reader",
+      short_label: "Zotero"
+    }
+  });
+
+  assert.doesNotThrow(() =>
+    checkBuildPackages(
+      values.registry,
+      values.published,
+      ["kobo-gallery", "kobo-zotero-reader"],
+      12,
+      new Map([[12, "0.3.5"]])
+    )
+  );
+});
+
+test("fallback expansion rejects a legacy app with an obsolete platform minimum", () => {
+  const values = fixture({ currentVersion: "1.0.1", summary: "Updated Gallery" });
+  values.registry.apps[0].minimum_cobalt_version = "0.3.5";
+  values.registry.apps.push({
+    ...values.registry.apps[0],
+    package: "kobo-legacy",
+    id: "legacy",
+    version: "1.0.0",
+    minimum_cobalt_version: "0.3.1"
+  });
+  values.published.entries.push({
+    manifest: {
+      ...values.published.entries[0].manifest,
+      id: "legacy",
+      minimum_cobalt_version: "0.3.1"
+    }
+  });
+
+  assert.throws(
+    () =>
+      checkBuildPackages(
+        values.registry,
+        values.published,
+        ["kobo-notes", "kobo-legacy"],
+        12,
+        new Map([[12, "0.3.5"]])
+      ),
+    /legacy: minimum Cobalt 0\.3\.1 is older than protocol 12/
+  );
+});
+
+test("fallback expansion rejects rebuilding an unchanged legacy app version", () => {
+  const values = fixture({ currentVersion: "1.0.1", summary: "Updated Gallery" });
+  values.registry.apps[0].minimum_cobalt_version = "0.3.5";
+  values.registry.apps.push({
+    ...values.registry.apps[0],
+    package: "kobo-legacy",
+    id: "legacy",
+    version: "1.0.0",
+    summary: "Summary"
+  });
+  values.published.entries.push({
+    manifest: {
+      ...values.published.entries[0].manifest,
+      id: "legacy",
+      minimum_cobalt_version: "0.3.5"
+    }
+  });
+
+  assert.throws(
+    () =>
+      checkBuildPackages(
+        values.registry,
+        values.published,
+        ["kobo-notes", "kobo-legacy"],
+        12,
+        new Map([[12, "0.3.5"]])
+      ),
+    /legacy: package inputs changed \(release inputs\).*version 1\.0\.0 is not newer than 1\.0\.0/s
+  );
+});
+
+test("apps workflow validates the final package matrix after fallback expansion", () => {
+  const workflow = readFileSync(".github/workflows/apps.yml", "utf8");
+  const expansion = workflow.lastIndexOf('packages="$all_packages"');
+  const validation = workflow.indexOf(
+    "node tools/check-app-versions.mjs --validate-packages"
+  );
+  const outputs = workflow.indexOf('echo "packages=$packages"');
+
+  assert.notEqual(expansion, -1);
+  assert.ok(validation > expansion);
+  assert.ok(outputs > validation);
+  assert.match(
+    workflow.slice(validation, outputs),
+    /--published-catalog published-app-catalog\.json \\\n\s+--packages "\$packages"/
+  );
+});
+
 test("release inputs ignore exclusively dev-only dependency edges", () => {
   const dependencies = releaseDependencyIds({
     deps: [
@@ -313,11 +423,6 @@ test("release input discovery includes deleted paths", () => {
   ]);
 });
 
-test("standalone app metadata is compared as a manifest, not a binary input", () => {
-  assert.equal(isContributionManifest("apps/notes/cobalt-app.json", "apps/notes"), true);
-  assert.equal(isContributionManifest("apps/notes/src/main.rs", "apps/notes"), false);
-});
-
 test("a drive script next to an application is not a release input", () => {
   assert.equal(isFilmingScript("examples/todo/drive.txt", "examples/todo"), true);
   assert.equal(isFilmingScript("examples/todo/drive.kobo", "examples/todo"), true);
@@ -327,35 +432,10 @@ test("a drive script next to an application is not a release input", () => {
   assert.equal(isFilmingScript("examples/todo-extra/drive.txt", "examples/todo"), false);
 });
 
-test("drive scripts do not count as unpublished Store catalog inputs", () => {
-  const packageDirectories = new Map([
-    ["kobo-todo", "examples/todo"],
-    ["kobo-gallery", "examples/gallery"],
-    ["kobo-tictactoe", "examples/tictactoe"]
-  ]);
-  const impact = storeImpactOfChangedPaths(
-    [
-      "examples/todo/drive.txt",
-      "examples/gallery/drive.txt",
-      "examples/tictactoe/drive.txt"
-    ],
-    packageDirectories,
-    ["kobo-todo", "kobo-gallery", "kobo-tictactoe"]
-  );
-  assert.deepEqual(impact.storeChanges, []);
-  assert.equal(impact.catalogQuiet, true);
-});
-
 test("workspace version and member additions do not change existing app release inputs", () => {
   const previous = `[workspace]\nmembers = [\n    "apps/notes",\n]\nresolver = "2"\n\n[workspace.package]\nversion = "0.3.1"\nedition = "2021"\n`;
   const current = `[workspace]\nmembers = [\n    "apps/notes",\n    "apps/reader",\n]\nresolver = "2"\n\n[workspace.package]\nversion = "0.3.2"\nedition = "2021"\n`;
 
-  assert.equal(manifestOnlyChangesWorkspaceMembershipOrVersion(previous, current), true);
-});
-
-test("replacing explicit app members with the equivalent app glob is not a release input", () => {
-  const previous = `[workspace]\nmembers = [\n    "apps/notes",\n    "apps/reader",\n]\nresolver = "2"\n\n[workspace.package]\nversion = "0.3.1"\n`;
-  const current = `[workspace]\nmembers = [\n    "apps/*",\n]\nresolver = "2"\n\n[workspace.package]\nversion = "0.3.1"\n`;
   assert.equal(manifestOnlyChangesWorkspaceMembershipOrVersion(previous, current), true);
 });
 
@@ -375,6 +455,20 @@ test("path dependency version-only manifest edits are not app release inputs", (
       previous,
       current.replace('features = ["text"]', 'features = ["runtime-settings"]')
     ),
+    false
+  );
+});
+
+test("removing obsolete OPDS URL reexports leaves Gutenbird's binary inputs unchanged", () => {
+  const previous = `mod url;\n\npub use url::{is_https, safe_href, same_origin};\n`;
+  const current = `mod url;\n\npub use url::same_origin;\n`;
+  assert.equal(onlyRemovesOpdsUrlReexports(previous, current), true);
+  assert.equal(
+    onlyRemovesOpdsUrlReexports(previous, current.replace("same_origin", "other")),
+    false
+  );
+  assert.equal(
+    onlyRemovesOpdsUrlReexports(previous, current.replace("mod url;", "mod changed;")),
     false
   );
 });
@@ -417,6 +511,42 @@ test("only exact reviewed compatible blobs are excluded from app release inputs"
     ),
     new Set()
   );
+  const additive = {
+    format_version: 1,
+    changes: [
+      {
+        protocol_version: 11,
+        reason: "reviewed additive transport helper",
+        files: [
+          {
+            path: "crates/kobo-net/src/lib.rs",
+            base_blob: null,
+            compatible_blob: "c".repeat(40)
+          }
+        ]
+      }
+    ]
+  };
+  assert.deepEqual(
+    compatibleChangePaths(
+      additive,
+      11,
+      ["crates/kobo-net/src/lib.rs"],
+      () => null,
+      () => "c".repeat(40)
+    ),
+    new Set(["crates/kobo-net/src/lib.rs"])
+  );
+  assert.deepEqual(
+    compatibleChangePaths(
+      additive,
+      11,
+      ["crates/kobo-net/src/lib.rs"],
+      () => "a".repeat(40),
+      () => "c".repeat(40)
+    ),
+    new Set()
+  );
   assert.deepEqual(
     compatibleChangePaths(
       manifest,
@@ -453,12 +583,17 @@ test("only exact reviewed compatible blobs are excluded from app release inputs"
   );
 });
 
-test("reviewed compatible-change entries name the exact current files", () => {
+test("reviewed compatible-change entries name exact beta-base and current files", () => {
   const manifest = JSON.parse(
     readFileSync("tools/app-release-compatible-changes.json", "utf8")
   );
   for (const change of manifest.changes) {
     for (const file of change.files) {
+      assert.equal(
+        baseBlob(file.path),
+        file.base_blob,
+        `${file.path} has an unreviewed beta-base blob`
+      );
       assert.equal(
         execFileSync("git", ["hash-object", file.path], { encoding: "utf8" }).trim(),
         file.compatible_blob,
@@ -468,11 +603,109 @@ test("reviewed compatible-change entries name the exact current files", () => {
   }
 });
 
+test("protocol 14 has an exact reviewed set of compatible release inputs", () => {
+  const manifest = JSON.parse(
+    readFileSync("tools/app-release-compatible-changes.json", "utf8")
+  );
+  const files = manifest.changes.find(change => change.protocol_version === 14).files;
+  const paths = files.map(file => file.path);
+  assert.deepEqual(paths, [
+    "Cargo.lock",
+    "apps/backgammon/Cargo.toml",
+    "apps/backgammon/README.md",
+    "apps/backgammon/drive.txt",
+    "apps/backgammon/screenshots/backgammon-opening.png",
+    "apps/backgammon/screenshots/backgammon-play.png",
+    "apps/backgammon/screenshots/backgammon-selected.png",
+    "apps/backgammon/src/main.rs",
+    "apps/zotero-reader/src/main.rs",
+    "crates/kobo-abi/src/lib.rs",
+    "crates/kobo-net/src/lib.rs",
+    "crates/kobo-net/src/lines.rs",
+    "crates/kobo-net/tests/fixtures/localhost-ca.der",
+    "crates/kobo-net/tests/fixtures/localhost-cert.der",
+    "crates/kobo-net/tests/fixtures/localhost-key.der",
+    "crates/kobo-net/tests/lichess_stream_mock.rs",
+    "crates/kobo-policy/src/credentials.rs",
+    "crates/kobo-policy/src/services.rs",
+    "crates/kobo-policy/src/tasks.rs",
+    "crates/kobo-protocol/src/lib.rs",
+    "crates/kobo-sdk/Cargo.toml",
+    "crates/kobo-sdk/src/credentials.rs",
+    "crates/kobo-sdk/src/keyboard.rs",
+    "crates/kobo-sdk/src/lib.rs",
+    "crates/kobo-sdk/src/terminal.rs",
+    "crates/kobo-text/src/lib.rs",
+    "crates/kobo-ui/Cargo.toml",
+    "crates/kobo-ui/src/lib.rs",
+    "crates/kobo-ui/src/vector.rs",
+    "crates/kobo-ui/src/vector/tabler.rs",
+    "crates/kobod/src/app_store.rs",
+    "examples/gallery/README.md",
+    "examples/gallery/src/main.rs",
+    "examples/gutenbird/Cargo.toml",
+    "examples/gutenbird/src/main.rs",
+    "tools/icon-import/icons.txt"
+  ]);
+  const byPath = new Map(files.map(file => [file.path, file]));
+  assert.deepEqual(
+    compatibleChangePaths(
+      manifest,
+      14,
+      paths,
+      path => byPath.get(path)?.base_blob,
+      path => byPath.get(path)?.compatible_blob
+    ),
+    new Set(paths)
+  );
+
+  for (const path of paths) {
+    assert.equal(
+      compatibleChangePaths(
+        manifest,
+        14,
+        [path],
+        candidate => byPath.get(candidate)?.base_blob,
+        () => "f".repeat(40)
+      ).size,
+      0,
+      `${path} must fail closed when its reviewed blob changes`
+    );
+  }
+  assert.equal(
+    compatibleChangePaths(
+      manifest,
+      14,
+      ["examples/gutenbird/src/main.rs"],
+      () => null,
+      () => null
+    ).size,
+    0
+  );
+});
+
 test("new lockfile package blocks do not change existing app release inputs", () => {
   const previous = `version = 4\n\n[[package]]\nname = "notes"\nversion = "1.0.0"\n`;
   const current = `${previous}\n[[package]]\nname = "reader"\nversion = "1.0.0"\n`;
 
   assert.equal(lockfileOnlyAddsPackages(previous, current), true);
+});
+
+test("Cargo.lock changes are isolated only after exact compatible review", () => {
+  const previous = `version = 4\n\n[[package]]\nname = "kobo-ui"\nversion = "0.3.4"\ndependencies = [\n "unicode-segmentation",\n]\n`;
+  const current = previous.replace(
+    ' "unicode-segmentation",',
+    ' "unicode-segmentation",\n "unicode-width",'
+  );
+
+  assert.notDeepEqual(
+    releaseLockPackageIdentities(previous, current, new Set()),
+    new Set()
+  );
+  assert.deepEqual(
+    releaseLockPackageIdentities(previous, current, new Set(["Cargo.lock"])),
+    new Set()
+  );
 });
 
 function metadata() {
@@ -494,27 +727,18 @@ function metadata() {
       workspacePackage("notes"),
       workspacePackage("reader"),
       workspacePackage("weather"),
-      workspacePackage("kobo-sdk"),
       registryPackage("notes-dep"),
       registryPackage("shared"),
       registryPackage("unrelated")
     ],
     resolve: {
       nodes: [
-        {
-          id: "notes 1.0.0",
-          deps: [
-            dependency("notes-dep 1.0.0"),
-            dependency("shared 1.0.0"),
-            dependency("kobo-sdk 1.0.0")
-          ]
-        },
+        { id: "notes 1.0.0", deps: [dependency("notes-dep 1.0.0"), dependency("shared 1.0.0")] },
         { id: "reader 1.0.0", deps: [dependency("notes 1.0.0")] },
         { id: "weather 1.0.0", deps: [dependency("shared 1.0.0")] },
         { id: "notes-dep 1.0.0", deps: [] },
         { id: "shared 1.0.0", deps: [] },
-        { id: "unrelated 1.0.0", deps: [] },
-        { id: "kobo-sdk 1.0.0", deps: [] }
+        { id: "unrelated 1.0.0", deps: [] }
       ]
     }
   };
@@ -554,17 +778,6 @@ test("a shared dependency lock change affects every consuming Store app", () => 
       new Set([registryIdentity("shared")])
     ),
     new Set(["notes", "reader", "weather"])
-  );
-});
-
-test("a changed shared workspace crate affects only its Store consumers", () => {
-  assert.deepEqual(
-    registeredConsumers(
-      metadata(),
-      ["notes", "reader", "weather"],
-      new Set([JSON.stringify(["kobo-sdk", "<workspace-version>", ""])])
-    ),
-    new Set(["notes", "reader"])
   );
 });
 
@@ -617,15 +830,6 @@ test("a lock change with no identifiable current package fails closed", () => {
       ),
     /cannot identify its consumers/
   );
-  assert.deepEqual(
-    registeredConsumers(
-      metadata(),
-      ["notes"],
-      new Set([registryIdentity("removed-dependency")]),
-      false
-    ),
-    new Set()
-  );
 });
 
 test("workspace package version-only lock changes affect no Store app", () => {
@@ -634,41 +838,30 @@ test("workspace package version-only lock changes affect no Store app", () => {
   assert.deepEqual(changedLockPackageIdentities(previous, current), new Set());
 });
 
-test("non-build paths affect no Store package", () => {
+// The #101 failure mode: a crates/ or workflow edit looked like a Store
+// release input and demanded every app bump. The filter is tested against an
+// explicit path list so a shallow CI checkout does not have to contain the
+// last catalog publication.
+test("platform-only paths affect no Store package", () => {
   const packageDirectories = new Map([
     ["kobo-todo", "examples/todo"],
-    ["kobo-backgammon", "apps/backgammon"],
-    ["kobo-sim", "crates/kobo-sim"],
-    ["kobo-profile", "crates/kobo-profile"]
+    ["kobo-backgammon", "apps/backgammon"]
   ]);
   const registered = ["kobo-todo", "kobo-backgammon"];
-  const quietPaths = [
+  const platformOnly = [
+    "crates/kobo-sim/src/lib.rs",
+    "crates/kobo-profile/src/lib.rs",
+    "Cargo.toml",
+    "Cargo.lock",
     ".github/workflows/ci.yml",
     "tools/check-app-versions.mjs",
     "docs/RELEASE-TRAIN.md"
   ];
 
-  const quiet = storeImpactOfChangedPaths(quietPaths, packageDirectories, registered);
+  const quiet = storeImpactOfChangedPaths(platformOnly, packageDirectories, registered);
   assert.deepEqual(quiet.storeChanges, []);
   assert.equal(quiet.catalogQuiet, true);
   assert.deepEqual(quiet.affected, new Set());
-
-  for (const buildInput of [
-    "crates/kobo-sim/src/lib.rs",
-    "crates/kobo-profile/src/lib.rs",
-    "Cargo.toml",
-    "Cargo.lock",
-    "rust-toolchain.toml"
-  ]) {
-    const impact = storeImpactOfChangedPaths(
-      [buildInput],
-      packageDirectories,
-      registered
-    );
-    assert.deepEqual(impact.storeChanges, []);
-    assert.equal(impact.catalogQuiet, false, buildInput);
-    assert.equal(impact.affected, null, buildInput);
-  }
 
   const storeEdit = storeImpactOfChangedPaths(
     ["apps/backgammon/src/main.rs", "crates/kobo-sim/src/lib.rs"],
@@ -683,7 +876,7 @@ test("non-build paths affect no Store package", () => {
     workspacePackageDirectories(readFileSync("Cargo.toml", "utf8"), member =>
       readFileSync(`${member}/Cargo.toml`, "utf8")
     ),
-    registeredStorePackages(collectRegistry())
+    registeredStorePackages(JSON.parse(readFileSync("apps/catalog.json", "utf8")))
   );
   assert.deepEqual(storeCatalogChanges(["crates/kobo-sim/src/lib.rs"], directories), []);
   assert.deepEqual(storeCatalogChanges(["apps/backgammon/src/main.rs"], directories), [

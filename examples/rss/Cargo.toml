@@ -9,6 +9,7 @@ publish = false
 [dependencies]
 kobo-html = { path = "../../crates/kobo-html" }
 kobo-json = { path = "../../crates/kobo-json" }
+kobo-net = { path = "../../crates/kobo-net" }
 kobo-sdk = { path = "../../crates/kobo-sdk" }
 kobo-xml = { path = "../../crates/kobo-xml" }
 

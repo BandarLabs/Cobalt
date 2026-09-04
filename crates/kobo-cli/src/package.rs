@@ -12,8 +12,9 @@
 //!
 //! `/etc/init.d/rcS` extracts `/mnt/onboard/.kobo/KoboRoot.tgz` as root at
 //! boot, so a tarball could put a file anywhere. This one deliberately cannot:
-//! every path is checked to sit under `mnt/onboard/.adds/cobalt/`, which is the
-//! book partition the owner already sees over USB.
+//! every managed path is checked to sit under `mnt/onboard/.adds/cobalt/`.
+//! The only exception is the fixed, byte-checked
+//! `mnt/onboard/.adds/cobalt-launch.sh` bootstrap on that same book partition.
 //!
 //! That is possible because of something measured on the device rather than
 //! assumed: `/mnt/onboard` is mounted `rw,noatime,nodiratime,fmask=0022` with
@@ -38,7 +39,7 @@
 
 use std::collections::BTreeSet;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 /// Where everything this platform installs lives.
 ///
@@ -46,6 +47,7 @@ use std::path::{Path, PathBuf};
 /// exactly the thing that would let a tarball escape.
 pub const INSTALL_ROOT: &str = "mnt/onboard/.adds/cobalt";
 pub const INSTALL_ROOT_PREFIX: &str = "mnt/onboard/.adds/cobalt/";
+pub const LAUNCH_BOOTSTRAP: &str = "mnt/onboard/.adds/cobalt-launch.sh";
 
 /// The largest member this builder will write.
 ///
@@ -76,6 +78,13 @@ pub struct Member {
 /// Returns the first path that is absolute, escapes the install root, is
 /// empty, is duplicated, or is larger than [`MAX_MEMBER`].
 pub fn check(members: &[Member]) -> Result<(), String> {
+    if members
+        .iter()
+        .position(is_launch_bootstrap)
+        .is_some_and(|index| index != 0)
+    {
+        return Err("the standalone launch bootstrap must be the first archive member".to_owned());
+    }
     let mut seen = BTreeSet::new();
     for member in members {
         let path = member.path.as_str();
@@ -85,10 +94,18 @@ pub fn check(members: &[Member]) -> Result<(), String> {
         if path.split('/').any(|part| part == ".." || part.is_empty()) {
             return Err(format!("{path:?} escapes the archive"));
         }
-        if !path.starts_with(&format!("{INSTALL_ROOT}/")) {
+        let launch_bootstrap = path == LAUNCH_BOOTSTRAP;
+        if !path.starts_with(&format!("{INSTALL_ROOT}/")) && !launch_bootstrap {
             return Err(format!(
                 "{path:?} is outside {INSTALL_ROOT}; this package never writes to the root filesystem"
             ));
+        }
+        if launch_bootstrap
+            && (!member.program || member.bytes.as_slice() != crate::bootstrap::CONTENT.as_bytes())
+        {
+            return Err(
+                "the standalone launch bootstrap must be the reviewed executable".to_owned(),
+            );
         }
         if member.bytes.len() as u64 > MAX_MEMBER {
             return Err(format!("{path:?} is larger than this builder will package"));
@@ -113,19 +130,29 @@ pub fn check(members: &[Member]) -> Result<(), String> {
 pub fn tar(members: &[Member]) -> Result<Vec<u8>, String> {
     check(members)?;
     let mut archive = Vec::new();
+    let mut files = members.iter();
+    if let Some(bootstrap) = files.next().filter(|member| is_launch_bootstrap(member)) {
+        append_member(&mut archive, bootstrap);
+    } else {
+        files = members.iter();
+    }
     for directory in directories(members) {
         archive.extend_from_slice(&header(&format!("{directory}/"), 0, b'5', 0o755));
     }
-    for member in members {
-        let mode = if member.program { 0o755 } else { 0o644 };
-        archive.extend_from_slice(&header(&member.path, member.bytes.len(), b'0', mode));
-        archive.extend_from_slice(&member.bytes);
-        let padding = (BLOCK - member.bytes.len() % BLOCK) % BLOCK;
-        archive.extend(std::iter::repeat_n(0u8, padding));
+    for member in files {
+        append_member(&mut archive, member);
     }
     // Two empty blocks end an archive, and BusyBox tar wants them.
     archive.extend(std::iter::repeat_n(0u8, BLOCK * 2));
     Ok(archive)
+}
+
+fn append_member(archive: &mut Vec<u8>, member: &Member) {
+    let mode = if member.program { 0o755 } else { 0o644 };
+    archive.extend_from_slice(&header(&member.path, member.bytes.len(), b'0', mode));
+    archive.extend_from_slice(&member.bytes);
+    let padding = (BLOCK - member.bytes.len() % BLOCK) % BLOCK;
+    archive.extend(std::iter::repeat_n(0u8, padding));
 }
 
 /// Writes a ustar archive from entries given exactly, without [`check`].
@@ -408,45 +435,78 @@ fn read_octal(field: &[u8]) -> Result<u64, String> {
     u64::from_str_radix(digits, 8).map_err(|_| format!("{digits:?} is not an octal field"))
 }
 
-/// Writes the same payload as a plain folder, for an owner who would rather
-/// copy files than trust a tarball.
+/// Writes only the versioned payload into a staging installation tree.
 ///
 /// # Errors
 ///
 /// Returns any filesystem error, and refuses a member list [`check`] rejects.
-pub fn write_folder(members: &[Member], root: &Path) -> Result<(), String> {
+pub fn write_install_tree(members: &[Member], root: &Path) -> Result<(), String> {
     check(members)?;
     let prefix = format!("{INSTALL_ROOT}/");
     for member in members {
+        if is_launch_bootstrap(member) {
+            continue;
+        }
         let relative = member
             .path
             .strip_prefix(&prefix)
             .ok_or_else(|| format!("{:?} is outside the install root", member.path))?;
         let destination = root.join(relative);
-        if let Some(parent) = destination.parent() {
-            fs::create_dir_all(parent).map_err(|error| format!("{}: {error}", parent.display()))?;
-        }
-        fs::write(&destination, &member.bytes)
-            .map_err(|error| format!("{}: {error}", destination.display()))?;
-        if member.program {
-            set_executable(&destination)?;
-        }
+        write_member(&destination, member)?;
     }
     Ok(())
 }
 
-fn set_executable(path: &PathBuf) -> Result<(), String> {
+/// Writes a volume-relative folder containing both `.adds/cobalt` and its
+/// sibling stable bootstrap, suitable for copying to a mounted reader root.
+///
+/// # Errors
+///
+/// Returns any filesystem error, and refuses a member list [`check`] rejects.
+pub fn write_volume_layout(members: &[Member], root: &Path) -> Result<(), String> {
+    const VOLUME_PREFIX: &str = "mnt/onboard/";
+
+    check(members)?;
+    for member in members {
+        let relative = member
+            .path
+            .strip_prefix(VOLUME_PREFIX)
+            .ok_or_else(|| format!("{:?} is outside the book partition", member.path))?;
+        write_member(&root.join(relative), member)?;
+    }
+    Ok(())
+}
+
+fn write_member(destination: &Path, member: &Member) -> Result<(), String> {
+    if let Some(parent) = destination.parent() {
+        fs::create_dir_all(parent).map_err(|error| format!("{}: {error}", parent.display()))?;
+    }
+    fs::write(destination, &member.bytes)
+        .map_err(|error| format!("{}: {error}", destination.display()))?;
+    set_mode(destination, if member.program { 0o755 } else { 0o644 })
+}
+
+#[must_use]
+pub fn is_launch_bootstrap(member: &Member) -> bool {
+    member.path == LAUNCH_BOOTSTRAP
+}
+
+fn set_mode(path: &Path, mode: u32) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
     let mut permissions = fs::metadata(path)
         .map_err(|error| format!("{}: {error}", path.display()))?
         .permissions();
-    permissions.set_mode(0o755);
+    permissions.set_mode(mode);
     fs::set_permissions(path, permissions).map_err(|error| format!("{}: {error}", path.display()))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{check, header, list, tar, write_folder, Member, BLOCK, INSTALL_ROOT};
+    use super::{
+        check, header, list, tar, write_install_tree, write_volume_layout, Member, BLOCK,
+        INSTALL_ROOT,
+    };
+    use std::process::Command;
 
     fn member(name: &str, bytes: &[u8]) -> Member {
         Member {
@@ -476,8 +536,8 @@ mod tests {
     /// The property the whole design rests on.
     ///
     /// This archive is extracted as root by the device's own boot script. If a
-    /// path outside the install root could ever get in, everything else in this
-    /// project's safety argument is void.
+    /// path outside the install root other than the byte-checked book-partition
+    /// bootstrap could ever get in, the safety argument would be void.
     #[test]
     fn nothing_outside_the_install_root_can_be_packaged() {
         assert_eq!(super::INSTALL_ROOT_PREFIX, format!("{INSTALL_ROOT}/"));
@@ -495,6 +555,38 @@ mod tests {
             }];
             assert!(check(&members).is_err(), "{path} was accepted");
             assert!(tar(&members).is_err(), "{path} was packaged");
+        }
+    }
+
+    #[test]
+    fn only_the_reviewed_bootstrap_is_allowed_beside_the_install_root() {
+        let reviewed = Member {
+            path: super::LAUNCH_BOOTSTRAP.to_owned(),
+            bytes: crate::bootstrap::CONTENT.as_bytes().to_vec(),
+            program: true,
+        };
+        check(std::slice::from_ref(&reviewed)).expect("reviewed bootstrap");
+        tar(std::slice::from_ref(&reviewed)).expect("package bootstrap");
+        let release = vec![reviewed.clone(), member("bin/kobod", b"ELF")];
+        let listed = list(&tar(&release).expect("release archive")).expect("list release");
+        assert_eq!(listed[0].path, super::LAUNCH_BOOTSTRAP);
+        assert_eq!(
+            super::members(&tar(&release).expect("release archive")).unwrap(),
+            release
+        );
+        assert!(check(&[member("bin/kobod", b"ELF"), reviewed.clone()]).is_err());
+
+        for changed in [
+            Member {
+                bytes: b"#!/bin/sh\nexit 0\n".to_vec(),
+                ..reviewed.clone()
+            },
+            Member {
+                program: false,
+                ..reviewed
+            },
+        ] {
+            assert!(check(&[changed]).is_err());
         }
     }
 
@@ -556,18 +648,87 @@ mod tests {
 
     #[test]
     fn the_folder_form_holds_the_same_files() {
-        let root = std::env::temp_dir().join(format!("cobalt-package-{}", std::process::id()));
+        let root = std::env::current_dir()
+            .expect("working directory")
+            .join("target")
+            .join(format!("cobalt-package-{}", std::process::id()));
         let _ignored = std::fs::remove_dir_all(&root);
         let members = vec![
             member("bin/kobod", b"ELF..."),
             member("README.txt", b"how to remove this"),
         ];
-        write_folder(&members, &root).expect("writing a folder");
+        write_install_tree(&members, &root).expect("writing a folder");
         assert_eq!(
             std::fs::read(root.join("bin/kobod")).expect("the binary"),
             b"ELF..."
         );
         assert!(root.join("README.txt").is_file());
+        let _ignored = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn volume_folder_contains_and_launches_the_complete_documented_layout() {
+        #[cfg(unix)]
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = std::env::current_dir()
+            .expect("working directory")
+            .join("target")
+            .join(format!("cobalt-volume-package-{}", std::process::id()));
+        let _ignored = std::fs::remove_dir_all(&root);
+        let members = vec![
+            Member {
+                path: super::LAUNCH_BOOTSTRAP.to_owned(),
+                bytes: crate::bootstrap::CONTENT.as_bytes().to_vec(),
+                program: true,
+            },
+            member(
+                "start.sh",
+                b"#!/bin/sh\nbase=${0%/start.sh}\nexec \"$base/bin/kobod\" --present \"$base/bin/kobo-launcher\"\n",
+            ),
+            member(
+                "bin/kobod",
+                b"#!/bin/sh\n[ \"$1\" = --present ] || exit 70\nexec \"$2\"\n",
+            ),
+            member(
+                "bin/kobo-launcher",
+                b"#!/bin/sh\nprintf launched > \"$COBALT_TEST_LAUNCHED\"\n",
+            ),
+        ];
+
+        write_volume_layout(&members, &root).expect("volume-relative layout");
+
+        let bootstrap = root.join(".adds/cobalt-launch.sh");
+        assert_eq!(
+            std::fs::read(&bootstrap).expect("bootstrap bytes"),
+            crate::bootstrap::CONTENT.as_bytes()
+        );
+        #[cfg(unix)]
+        assert_eq!(
+            std::fs::metadata(&bootstrap)
+                .expect("bootstrap metadata")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o755
+        );
+        let launched = root.join("launched");
+        let status = Command::new("/bin/sh")
+            .arg(&bootstrap)
+            .env("COBALT_ADDS", root.join(".adds"))
+            .env("COBALT_TEST_LAUNCHED", &launched)
+            .status()
+            .expect("documented launch");
+        assert!(status.success());
+        assert_eq!(
+            std::fs::read_to_string(launched).expect("launch marker"),
+            "launched"
+        );
+
+        let stage = root.join("stage");
+        write_install_tree(&members, &stage).expect("setup staging layout");
+        assert!(stage.join("start.sh").is_file());
+        assert!(!stage.join(".adds").exists());
         let _ignored = std::fs::remove_dir_all(&root);
     }
 }

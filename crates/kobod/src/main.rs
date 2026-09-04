@@ -85,6 +85,14 @@ fn run(arguments: &[String]) -> Result<(), Box<dyn Error>> {
         print_safety_state();
         return Ok(());
     }
+    #[cfg(feature = "device-write")]
+    if matches!(
+        arguments.first().map(String::as_str),
+        Some("--present" | "--restart-from")
+    ) {
+        update::recover_at_startup(Path::new("/mnt/onboard/.adds"))
+            .map_err(|error| format!("recover interrupted update before launch: {error}"))?;
+    }
     if arguments.len() == 4 && arguments[0] == "--sim-socket" && arguments[2] == "--frame" {
         return serve_simulation(Path::new(&arguments[1]), Path::new(&arguments[3]));
     }
@@ -593,14 +601,15 @@ fn serve_simulation(socket_path: &Path, frame_path: &Path) -> Result<(), Box<dyn
     println!("simulation socket ready: {}", socket_path.display());
 
     let (mut stream, _) = listener.accept()?;
-    let hello = kobo_protocol::read_from(&mut stream)?;
+    let (peer_version, hello) = kobo_protocol::read_from_versioned(&mut stream)?;
     let Message::Hello { name } = hello.message else {
         return Err("first application message must be Hello".into());
     };
     println!("application connected: {name}");
-    kobo_protocol::write_to(
+    kobo_protocol::write_to_version(
         &mut stream,
         &Frame {
+            version: hello.version,
             request_id: hello.request_id,
             message: Message::Welcome {
                 width: u16::try_from(metrics.width)?,
@@ -609,8 +618,9 @@ fn serve_simulation(socket_path: &Path, frame_path: &Path) -> Result<(), Box<dyn
                 text_scale: metrics.text_scale,
             },
         },
+        peer_version,
     )?;
-    serve_application(&mut stream, frame_path, &name, metrics)
+    serve_application(&mut stream, frame_path, &name, metrics, peer_version)
 }
 
 /// Where a host runtime looks for owner-installed TLS trust roots.
@@ -642,6 +652,37 @@ fn host_dictionary_directory() -> PathBuf {
     )
 }
 
+fn host_secret_directory() -> PathBuf {
+    std::env::temp_dir().join("cobalt-host-secrets")
+}
+
+#[derive(Default)]
+struct PreviewState {
+    orientation: kobo_ui::Orientation,
+    latest: Option<(Screen, kobo_ui::Chrome)>,
+}
+
+impl PreviewState {
+    fn remember(&mut self, screen: Screen, chrome: kobo_ui::Chrome) {
+        self.latest = Some((screen, chrome));
+    }
+}
+
+fn apply_preview_orientation<E>(
+    preview: &mut PreviewState,
+    requested: kobo_ui::Orientation,
+    rewrite: impl FnOnce(&Screen, &kobo_ui::Chrome, kobo_ui::Orientation) -> Result<(), E>,
+) -> Result<(), E> {
+    if preview.orientation == requested {
+        return Ok(());
+    }
+    preview.orientation = requested;
+    if let Some((screen, chrome)) = preview.latest.as_ref() {
+        rewrite(screen, chrome, requested)?;
+    }
+    Ok(())
+}
+
 #[allow(
     clippy::too_many_lines,
     reason = "one arm per message type; splitting the dispatch hides it"
@@ -651,6 +692,7 @@ fn serve_application(
     frame_path: &Path,
     name: &str,
     metrics: kobo_ui::DisplayMetrics,
+    peer_version: u8,
 ) -> Result<(), Box<dyn Error>> {
     // In simulation the daemon owns no hardware, so every hardware-touching
     // request is answered honestly rather than pretended.
@@ -668,10 +710,27 @@ fn serve_application(
     // runtime uses. Without the grant the backend could never run, so this
     // path claimed to be the real runtime while refusing every request an
     // application made.
+    let secrets = host_secret_directory();
+    let credential_app = name.to_owned();
     let tasks = std::sync::Arc::new(std::sync::Mutex::new(
         TaskRunner::simulated(std::env::temp_dir())
-            .with_fetch(std::sync::Arc::new(kobo_net::fetch_from))
-            .with_post(std::sync::Arc::new(kobo_net::post))
+            .with_fetch(std::sync::Arc::new(kobo_net::fetch_from_controlled))
+            .with_post(std::sync::Arc::new(kobo_net::post_controlled))
+            .with_put(std::sync::Arc::new(kobo_net::put_controlled))
+            .with_line_streams(std::sync::Arc::new(kobo_net::LineStreams::default()))
+            .with_app_secrets(&secrets, name)
+            .with_credential_policy(std::sync::Arc::new(
+                move |credential, url, usage, body, content_type| {
+                    kobo_policy::credentials::allowed_request(
+                        &credential_app,
+                        credential,
+                        url,
+                        usage,
+                        body,
+                        content_type,
+                    )
+                },
+            ))
             .with_capabilities([kobo_policy::Capability::Network]),
     ));
     // Outcomes are delivered from their own thread. This loop blocks on the
@@ -684,22 +743,41 @@ fn serve_application(
     {
         let draining = std::sync::Arc::clone(&tasks);
         let writer = std::sync::Arc::clone(&writer);
-        std::thread::spawn(move || deliver_outcomes(&draining, &writer));
+        std::thread::spawn(move || deliver_outcomes(&draining, &writer, peer_version));
     }
     let store = kobo_policy::store::Store::new(std::env::temp_dir().join("cobalt-host-state"));
     let shelf = kobo_policy::shelf::Shelf::new(std::env::temp_dir().join("cobalt-host-data"));
     let mut pictures = kobo_ui::PictureCache::default();
-    let mut orientation = kobo_ui::Orientation::Portrait;
+    let mut preview = PreviewState::default();
     loop {
-        let frame = kobo_protocol::read_from(stream)?;
+        let (version, frame) = kobo_protocol::read_from_versioned(stream)?;
+        if version != peer_version {
+            return Err("application changed its negotiated protocol version".into());
+        }
         match frame.message {
             Message::SetScreen(screen) => {
                 // Per screen, as the device does it: a book is drawn
                 // without a band and everything else with one.
                 let chrome = simulated_chrome(name, &screen);
-                write_screen(frame_path, screen, &chrome, name, &pictures, orientation)?;
+                write_screen(
+                    frame_path,
+                    &screen,
+                    &chrome,
+                    name,
+                    &pictures,
+                    preview.orientation,
+                )?;
+                preview.remember(screen, chrome);
             }
-            Message::SetOrientation(requested) => orientation = requested,
+            Message::SetOrientation(requested) => {
+                apply_preview_orientation(
+                    &mut preview,
+                    requested,
+                    |screen, chrome, orientation| {
+                        write_screen(frame_path, screen, chrome, name, &pictures, orientation)
+                    },
+                )?;
+            }
             Message::PutPicture {
                 handle,
                 width,
@@ -756,14 +834,36 @@ fn serve_application(
             Message::Launch { name } => println!("launch requested: {name}"),
             Message::Log { level, message } => log_app(level, &message),
             Message::DeviceRequest(request) => {
-                let result = services.handle(request.clone());
+                let result = if let kobo_protocol::DeviceRequest::SetSecret {
+                    name: secret_name,
+                    value,
+                } = &request
+                {
+                    if kobo_policy::credentials::may_set(name, secret_name) {
+                        kobo_policy::credentials::install_app_secret(
+                            &secrets,
+                            name,
+                            secret_name,
+                            value.as_str(),
+                        )
+                        .map_or_else(kobo_protocol::DeviceResult::Failed, |()| {
+                            kobo_protocol::DeviceResult::Done
+                        })
+                    } else {
+                        kobo_protocol::DeviceResult::Denied(kobo_protocol::DenyReason::NotDeclared)
+                    }
+                } else {
+                    services.handle(request.clone())
+                };
                 println!("device request {request:?} -> {result:?}");
                 write_shared(
                     &writer,
                     &Frame {
+                        version: frame.version,
                         request_id: frame.request_id,
                         message: Message::DeviceResult(result),
                     },
+                    peer_version,
                 )?;
             }
             Message::Spawn { task, work } => {
@@ -776,12 +876,14 @@ fn serve_application(
                     write_shared(
                         &writer,
                         &Frame {
+                            version: frame.version,
                             request_id: frame.request_id,
                             message: Message::TaskOutcome {
                                 task,
                                 outcome: TaskOutcome::Failed(TaskError::Denied),
                             },
                         },
+                        peer_version,
                     )?;
                 }
             }
@@ -792,9 +894,11 @@ fn serve_application(
                 write_shared(
                     &writer,
                     &Frame {
+                        version: frame.version,
                         request_id: frame.request_id,
                         message: Message::StoreResult(result),
                     },
+                    peer_version,
                 )?;
             }
             // This path renders to a file and has no reader at a keyboard, so
@@ -805,11 +909,13 @@ fn serve_application(
             Message::ShellRequest(_) => write_shared(
                 &writer,
                 &Frame {
+                    version: frame.version,
                     request_id: frame.request_id,
                     message: Message::ShellEvent(kobo_protocol::ShellEvent::Refused(
                         kobo_protocol::ShellError::Unavailable,
                     )),
                 },
+                peer_version,
             )?,
             Message::Cancel { task } => tasks
                 .lock()
@@ -848,9 +954,10 @@ fn serve_application(
 fn write_shared(
     writer: &std::sync::Arc<std::sync::Mutex<UnixStream>>,
     frame: &Frame,
+    peer_version: u8,
 ) -> Result<(), Box<dyn Error>> {
     let mut stream = writer.lock().map_err(|_| "the writer lock was poisoned")?;
-    kobo_protocol::write_to(&mut *stream, frame)?;
+    kobo_protocol::write_to_version(&mut *stream, frame, peer_version)?;
     Ok(())
 }
 
@@ -858,6 +965,7 @@ fn write_shared(
 fn deliver_outcomes(
     tasks: &std::sync::Arc<std::sync::Mutex<TaskRunner>>,
     writer: &std::sync::Arc<std::sync::Mutex<UnixStream>>,
+    peer_version: u8,
 ) {
     loop {
         let Ok(finished) = tasks.lock().map(|mut tasks| tasks.drain()) else {
@@ -867,15 +975,17 @@ fn deliver_outcomes(
             let Ok(mut stream) = writer.lock() else {
                 return;
             };
-            if kobo_protocol::write_to(
+            if kobo_protocol::write_to_version(
                 &mut *stream,
                 &Frame {
+                    version: peer_version,
                     request_id: 0,
                     message: Message::TaskOutcome {
                         task: finished.task,
                         outcome: finished.outcome,
                     },
                 },
+                peer_version,
             )
             .is_err()
             {
@@ -932,7 +1042,7 @@ const HOME_APPLICATION: &str = "launcher";
 
 fn write_screen(
     path: &Path,
-    screen: Screen,
+    screen: &Screen,
     chrome: &kobo_ui::Chrome,
     name: &str,
     pictures: &dyn kobo_ui::Pictures,
@@ -947,7 +1057,7 @@ fn write_screen(
     // never exist. Rendering with &Chrome::default() here meant the way back
     // was the one part of every screen that could not be looked at without a
     // reader, and it is the part that traps somebody when it is missing.
-    let screen = kobo_ui::ensure_way_back(screen, chrome, name);
+    let screen = kobo_ui::ensure_way_back(screen.clone(), chrome, name);
     let metrics = crate::device_metrics();
     // The same reason as on the device: the typeface sets at the ambient
     // scale, so a preview of a screen that asked for larger prose has to say
@@ -1032,6 +1142,33 @@ impl Drop for SocketGuard {
 mod tests {
 
     #[test]
+    fn host_secret_installation_replaces_without_exposing_a_partial_file() {
+        let directory =
+            std::env::temp_dir().join(format!("cobalt-host-secret-test-{}", std::process::id()));
+        let _ignored = std::fs::remove_dir_all(&directory);
+        kobo_policy::credentials::install_app_secret(
+            &directory,
+            "zotero-reader",
+            "zotero",
+            "first",
+        )
+        .expect("install secret");
+        kobo_policy::credentials::install_app_secret(
+            &directory,
+            "zotero-reader",
+            "zotero",
+            "second",
+        )
+        .expect("replace secret");
+        assert_eq!(
+            std::fs::read(directory.join("apps/zotero-reader/zotero")).expect("read secret"),
+            b"second"
+        );
+        assert!(!directory.join("apps/zotero-reader/.zotero.new").exists());
+        let _ignored = std::fs::remove_dir_all(directory);
+    }
+
+    #[test]
     fn an_elipsa_session_keeps_its_verified_metrics_without_another_probe() {
         let ambient = kobo_ui::DisplayMetrics {
             text_scale: kobo_ui::TextScale::Large,
@@ -1053,6 +1190,40 @@ mod tests {
         let mut screen = plain();
         screen.reading = true;
         screen
+    }
+
+    #[test]
+    fn orientation_only_change_rewrites_the_latest_preview_immediately() {
+        let screen = plain();
+        let chrome = super::simulated_chrome("terminal", &screen);
+        let mut preview = super::PreviewState::default();
+        preview.remember(screen.clone(), chrome.clone());
+        let mut rewrites = Vec::new();
+
+        super::apply_preview_orientation(
+            &mut preview,
+            kobo_ui::Orientation::Landscape,
+            |retained, retained_chrome, orientation| {
+                rewrites.push((retained.id, retained_chrome.back, orientation));
+                Ok::<(), ()>(())
+            },
+        )
+        .expect("rewrite landscape preview");
+        assert_eq!(
+            rewrites,
+            vec![(screen.id, chrome.back, kobo_ui::Orientation::Landscape)]
+        );
+
+        super::apply_preview_orientation(
+            &mut preview,
+            kobo_ui::Orientation::Landscape,
+            |_, _, _| {
+                rewrites.push((0, false, kobo_ui::Orientation::Portrait));
+                Ok::<(), ()>(())
+            },
+        )
+        .expect("unchanged orientation");
+        assert_eq!(rewrites.len(), 1, "unchanged orientation rewrote preview");
     }
 
     #[test]

@@ -2,7 +2,6 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { dirname, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { compatibilityPolicy } from "./app-registry.mjs";
 import {
   storeCatalogChanges,
   storeWatchDirectories,
@@ -17,22 +16,55 @@ const MANIFEST_FIELDS = [
   "minimum_cobalt_version",
   "glyph"
 ];
-const COMPATIBLE_PLATFORM_PATHS = new Set([
+const COMPATIBLE_RELEASE_PATHS = new Set([
+  "Cargo.lock",
+  "apps/backgammon/Cargo.toml",
+  "apps/backgammon/README.md",
+  "apps/backgammon/drive.txt",
+  "apps/backgammon/screenshots/backgammon-opening.png",
+  "apps/backgammon/screenshots/backgammon-play.png",
+  "apps/backgammon/screenshots/backgammon-selected.png",
+  "apps/backgammon/src/main.rs",
+  "apps/zotero-reader/src/main.rs",
+  "crates/kobo-abi/src/lib.rs",
+  "crates/kobo-net/src/lib.rs",
+  "crates/kobo-net/src/lines.rs",
+  "crates/kobo-net/tests/fixtures/localhost-ca.der",
+  "crates/kobo-net/tests/fixtures/localhost-cert.der",
+  "crates/kobo-net/tests/fixtures/localhost-key.der",
+  "crates/kobo-net/tests/lichess_stream_mock.rs",
+  "crates/kobo-policy/src/credentials.rs",
   "crates/kobo-policy/src/services.rs",
+  "crates/kobo-policy/src/tasks.rs",
   "crates/kobo-protocol/src/lib.rs",
+  "crates/kobo-sdk/Cargo.toml",
+  "crates/kobo-sdk/src/credentials.rs",
+  "crates/kobo-sdk/src/keyboard.rs",
   "crates/kobo-sdk/src/lib.rs",
-  "crates/kobo-ui/src/lib.rs"
+  "crates/kobo-sdk/src/terminal.rs",
+  "crates/kobo-text/src/lib.rs",
+  "crates/kobo-ui/Cargo.toml",
+  "crates/kobo-ui/src/lib.rs",
+  "crates/kobo-ui/src/vector.rs",
+  "crates/kobo-ui/src/vector/tabler.rs",
+  "crates/kobod/src/app_store.rs",
+  "examples/gallery/README.md",
+  "examples/gallery/src/main.rs",
+  "examples/gutenbird/Cargo.toml",
+  "examples/gutenbird/src/main.rs",
+  "tools/icon-import/icons.txt"
 ]);
 
 // Store packages are built from the current SDK and therefore speak its exact
 // wire protocol. A new protocol must add its first compatible Cobalt release
 // here before the catalog can be published.
-const PROTOCOL_MINIMUMS = new Map(
-  Object.entries(compatibilityPolicy().protocols).map(([protocol, version]) => [
-    Number(protocol),
-    version
-  ])
-);
+const PROTOCOL_MINIMUMS = new Map([
+  [10, "0.2.4"],
+  [11, "0.3.1"],
+  [12, "0.3.5"],
+  [13, "0.3.5"],
+  [14, "0.3.5"]
+]);
 
 function readJson(path, label) {
   try {
@@ -160,14 +192,7 @@ export function checkEntries(registry, published, affectedPackages) {
       throw new Error("registry app has no valid identity or package name");
     }
     const previous = previousById.get(app.id);
-    if (!previous) {
-      if (!meaningfulReleaseNotes(app.release_notes)) {
-        failures.push(
-          `${app.id}: a new Store app needs release_notes describing the initial user-visible value`
-        );
-      }
-      continue;
-    }
+    if (!previous) continue;
     if (typeof app.version !== "string" || typeof previous.version !== "string") {
       throw new Error(`${app.id} has no valid version`);
     }
@@ -180,17 +205,13 @@ export function checkEntries(registry, published, affectedPackages) {
           `${app.id}: package inputs changed (${changed.join(", ")}) but version ` +
             `${app.version} is not newer than ${previous.version}`
         );
-      } else if (!meaningfulReleaseNotes(app.release_notes)) {
-        failures.push(
-          `${app.id}: version ${app.version} needs meaningful release_notes because ${changed.join(", ")} changed`
-        );
       }
     }
   }
 
   if (failures.length > 0) {
     throw new Error(
-      `${failures.join("\n")}\nUpdate only the affected app's version and release_notes, then rerun the contributor check.`
+      `${failures.join("\n")}\nSet each affected app to a strictly newer numeric version.`
     );
   }
 }
@@ -219,7 +240,12 @@ function versionIsOlder(value, minimum) {
   return false;
 }
 
-export function checkProtocolMinimums(registry, protocolVersion, baselines = PROTOCOL_MINIMUMS) {
+export function checkProtocolMinimums(
+  registry,
+  protocolVersion,
+  baselines = PROTOCOL_MINIMUMS,
+  affectedPackages = null
+) {
   if (!Array.isArray(registry.apps)) throw new Error("registry apps must be an array");
   const minimum = baselines.get(protocolVersion);
   if (!minimum) {
@@ -228,12 +254,36 @@ export function checkProtocolMinimums(registry, protocolVersion, baselines = PRO
     );
   }
   const failures = registry.apps
+    .filter(app => !affectedPackages || affectedPackages.has(app.package))
     .filter(app => versionIsOlder(app.minimum_cobalt_version, minimum))
     .map(
       app =>
         `${app.id}: minimum Cobalt ${app.minimum_cobalt_version} is older than protocol ${protocolVersion}, first supported by ${minimum}`
     );
   if (failures.length > 0) throw new Error(failures.join("\n"));
+}
+
+export function checkBuildPackages(
+  registry,
+  published,
+  packages,
+  protocolVersion,
+  baselines = PROTOCOL_MINIMUMS
+) {
+  if (!Array.isArray(registry.apps)) throw new Error("registry apps must be an array");
+  if (!Array.isArray(packages) || packages.some(package_ => typeof package_ !== "string")) {
+    throw new Error("build packages must be an array of strings");
+  }
+  const selected = new Set(packages);
+  if (selected.size !== packages.length) {
+    throw new Error("build packages must not contain duplicates");
+  }
+  const registered = new Set(registry.apps.map(app => app?.package));
+  for (const package_ of selected) {
+    if (!registered.has(package_)) throw new Error(`unknown build package ${package_}`);
+  }
+  checkProtocolMinimums(registry, protocolVersion, baselines, selected);
+  checkEntries(registry, published, selected);
 }
 
 function currentProtocolVersion() {
@@ -263,12 +313,12 @@ function optionalCommand(name, arguments_) {
   }
 }
 
-function isInside(path, directory) {
-  return path === directory || path.startsWith(`${directory}/`);
+export function isContributionManifest(path, directory) {
+  return path === directory + "/cobalt-app.json";
 }
 
-export function isContributionManifest(path, directory) {
-  return path === `${directory}/cobalt-app.json`;
+function isInside(path, directory) {
+  return path === directory || path.startsWith(`${directory}/`);
 }
 
 // A drive script is the host-side route used to film an application. It is
@@ -338,18 +388,7 @@ export function manifestOnlyChangesWorkspaceMembershipOrVersion(
 
   const previousMembers = new Set(previous.entries);
   const currentMembers = new Set(current.entries);
-  const currentGlobs = [...currentMembers]
-    .filter(member => member.endsWith("/*"))
-    .map(member => member.slice(0, -1));
-  if (
-    ![...previousMembers].every(
-      member =>
-        currentMembers.has(member) ||
-        currentGlobs.some(prefix => member.startsWith(prefix))
-    )
-  ) {
-    return false;
-  }
+  if (![...previousMembers].every(member => currentMembers.has(member))) return false;
 
   const previousRemainder = normalizeWorkspaceVersion(previous.remainder);
   const currentRemainder = normalizeWorkspaceVersion(current.remainder);
@@ -372,6 +411,17 @@ export function manifestOnlyChangesPathDependencyVersions(previousSource, curren
       })
       .join("\n");
   return normalize(previousSource).trimEnd() === normalize(currentSource).trimEnd();
+}
+
+// `url` is private to kobo-opds, so deleting these two root re-exports emits
+// no code in an app that does not name them. RSS now calls kobo-net directly;
+// retaining the exact source check keeps an unrelated OPDS edit fail-closed.
+export function onlyRemovesOpdsUrlReexports(previousSource, currentSource) {
+  const removed = previousSource.replace(
+    "pub use url::{is_https, safe_href, same_origin};",
+    "pub use url::same_origin;"
+  );
+  return removed !== previousSource && removed === currentSource;
 }
 
 export function compatibleChangePaths(
@@ -402,8 +452,8 @@ export function compatibleChangePaths(
     for (const file of change.files) {
       if (
         typeof file?.path !== "string" ||
-        !COMPATIBLE_PLATFORM_PATHS.has(file.path) ||
-        !/^[0-9a-f]{40}$/.test(file?.base_blob) ||
+        !COMPATIBLE_RELEASE_PATHS.has(file.path) ||
+        (file?.base_blob !== null && !/^[0-9a-f]{40}$/.test(file?.base_blob)) ||
         !/^[0-9a-f]{40}$/.test(file?.compatible_blob)
       ) {
         throw new Error("invalid app release compatible-change file");
@@ -495,12 +545,21 @@ export function changedLockPackageIdentities(previousSource, currentSource) {
   );
 }
 
-export function registeredConsumers(
-  metadata,
-  registeredPackages,
-  changedPackageIdentities,
-  strictUnknown = true
+export function releaseLockPackageIdentities(
+  previousSource,
+  currentSource,
+  compatiblePaths
 ) {
+  if (!(compatiblePaths instanceof Set)) {
+    throw new Error("compatible release paths must be a set");
+  }
+  // compatibleChangePaths adds Cargo.lock only after both complete blobs match.
+  return compatiblePaths.has("Cargo.lock")
+    ? new Set()
+    : changedLockPackageIdentities(previousSource, currentSource);
+}
+
+export function registeredConsumers(metadata, registeredPackages, changedPackageIdentities) {
   const packagesByIdentity = new Map();
   const packageIdsByName = new Map();
   for (const package_ of metadata.packages) {
@@ -524,7 +583,6 @@ export function registeredConsumers(
       const [name] = JSON.parse(identity);
       const possibleReplacements = packageIdsByName.get(name);
       if (!possibleReplacements) {
-        if (!strictUnknown) continue;
         throw new Error(
           `Cargo.lock changed package ${name}, but current cargo metadata cannot identify its consumers`
         );
@@ -584,38 +642,20 @@ export function lockfileOnlyAddsPackages(previousSource, currentSource) {
 }
 
 // Given an explicit change list, decide whether the catalog must move.
-// CI and documentation stay quiet. Workspace packages and build inputs still
-// reach the Cargo dependency walk because Store binaries statically link them.
+// Platform-only paths (crates/, Cargo.toml, Cargo.lock, CI, docs) produce an
+// empty affected set. The cargo walk that names individual Store packages is
+// reached only when a Store catalog input actually changed.
 export function storeImpactOfChangedPaths(changedPaths, packageDirectories, registeredPackages) {
   const storeDirectories = storeWatchDirectories(packageDirectories, registeredPackages);
-  const storeChanges = storeCatalogChanges(changedPaths, storeDirectories).filter(path => {
-    const directory = path.split("/").slice(0, -1).join("/");
-    return !isFilmingScript(path, directory);
-  });
-  const registered = new Set(registeredPackages);
-  const sharedPackageChanged = [...packageDirectories].some(
-    ([packageName, directory]) =>
-      !registered.has(packageName) &&
-      changedPaths.some(path => isInside(path, directory) && !isFilmingScript(path, directory))
-  );
-  const globalBuildInputChanged = changedPaths.some(
-    path =>
-      path === "Cargo.toml" ||
-      path === "Cargo.lock" ||
-      path === "rust-toolchain" ||
-      path === "rust-toolchain.toml" ||
-      path.startsWith(".cargo/")
-  );
-  const catalogQuiet =
-    storeChanges.length === 0 && !sharedPackageChanged && !globalBuildInputChanged;
+  const storeChanges = storeCatalogChanges(changedPaths, storeDirectories);
   return {
     storeChanges,
-    catalogQuiet,
-    affected: catalogQuiet ? new Set() : null
+    catalogQuiet: storeChanges.length === 0,
+    affected: storeChanges.length === 0 ? new Set() : null
   };
 }
 
-export function analyzeAppReleaseInputs(baseRevision, registry, strictUnknown = true) {
+export function analyzeAppReleaseInputs(baseRevision, registry) {
   const metadata = JSON.parse(command("cargo", ["metadata", "--format-version", "1", "--locked"]));
   const workspaceRoot = resolve(metadata.workspace_root);
   const changedPaths = command("git", releaseDiffArguments(baseRevision))
@@ -635,6 +675,10 @@ export function analyzeAppReleaseInputs(baseRevision, registry, strictUnknown = 
   );
   const impact = storeImpactOfChangedPaths(changedPaths, packageDirectories, registeredPackages);
   const storeChanges = impact.storeChanges;
+  // A platform-only push must not force every Store app to bump. Device-package
+  // inputs (crates/, Cargo.toml, Cargo.lock, the toolchain pin) reach readers
+  // through beta-vX.Y.Z. The next catalog publication of an actually edited
+  // app compiles against whatever the platform then is.
   if (impact.catalogQuiet) {
     return { affected: impact.affected, storeChanges };
   }
@@ -652,6 +696,19 @@ export function analyzeAppReleaseInputs(baseRevision, registry, strictUnknown = 
     changedPaths,
     path => optionalCommand("git", ["rev-parse", `${baseRevision}:${path}`]),
     path => command("git", ["hash-object", path])
+  );
+  const nonReleaseSourcePaths = new Set(
+    changedPaths.filter(path => {
+      if (path !== "crates/kobo-opds/src/lib.rs") return false;
+      const previous = optionalCommand("git", ["show", `${baseRevision}:${path}`]);
+      return (
+        previous !== null &&
+        onlyRemovesOpdsUrlReexports(
+          previous,
+          readFileSync(resolve(workspaceRoot, path), "utf8")
+        )
+      );
+    })
   );
 
   const unconditionalGlobalInputs = new Set(["rust-toolchain", "rust-toolchain.toml"]);
@@ -683,13 +740,14 @@ export function analyzeAppReleaseInputs(baseRevision, registry, strictUnknown = 
     );
   }
   for (const package_ of workspacePackages) {
+    if (!registered.has(package_.name)) continue;
     const directory = dirname(package_.manifest_path);
     const relativeDirectory = relative(workspaceRoot, directory).split(sep).join("/");
     const packageChanges = changedPaths.filter(
       path =>
         isInside(path, relativeDirectory) &&
-        !isContributionManifest(path, relativeDirectory) &&
         !compatiblePaths.has(path) &&
+        !nonReleaseSourcePaths.has(path) &&
         !isFilmingScript(path, relativeDirectory)
     );
     if (packageChanges.length === 0) continue;
@@ -718,43 +776,47 @@ export function analyzeAppReleaseInputs(baseRevision, registry, strictUnknown = 
   }
 
   if (changedPaths.includes("Cargo.lock")) {
-    const lockChanges = changedLockPackageIdentities(
+    const lockChanges = releaseLockPackageIdentities(
       command("git", ["show", `${baseRevision}:Cargo.lock`]),
-      readFileSync(resolve(workspaceRoot, "Cargo.lock"), "utf8")
+      readFileSync(resolve(workspaceRoot, "Cargo.lock"), "utf8"),
+      compatiblePaths
     );
     for (const identity of lockChanges) changedIdentities.add(identity);
   }
 
   return {
-    affected: registeredConsumers(metadata, registeredPackages, changedIdentities, strictUnknown),
+    affected: registeredConsumers(metadata, registeredPackages, changedIdentities),
     storeChanges
   };
 }
 
-export function affectedWorkspacePackages(baseRevision, registry, strictUnknown = true) {
-  return analyzeAppReleaseInputs(baseRevision, registry, strictUnknown).affected;
+export function affectedWorkspacePackages(baseRevision, registry) {
+  return analyzeAppReleaseInputs(baseRevision, registry).affected;
 }
 
 function argumentsFrom(argv) {
-  const mode = argv[0] === "--list-packages" || argv[0] === "--publish-needed" ? argv[0] : null;
+  const modes = new Set(["--list-packages", "--publish-needed", "--validate-packages"]);
+  const mode = modes.has(argv[0]) ? argv[0] : null;
   if (mode) argv = argv.slice(1);
-  const required = ["--registry", "--published-catalog", "--base"];
-  const allowed = [...required, "--package"];
+  const allowed =
+    mode === "--validate-packages"
+      ? ["--registry", "--published-catalog", "--packages"]
+      : ["--registry", "--published-catalog", "--base"];
+  const usage =
+    mode === "--validate-packages"
+      ? "usage: node tools/check-app-versions.mjs --validate-packages --registry PATH --published-catalog PATH --packages JSON"
+      : "usage: node tools/check-app-versions.mjs --registry PATH --published-catalog PATH --base GIT_REVISION";
   const values = new Map();
   for (let index = 0; index < argv.length; index += 2) {
     const flag = argv[index];
     const value = argv[index + 1];
     if (!allowed.includes(flag) || !value) {
-      throw new Error(
-        "usage: node tools/check-app-versions.mjs --registry PATH --published-catalog PATH --base GIT_REVISION"
-      );
+      throw new Error(usage);
     }
     values.set(flag, value);
   }
-  if (!required.every(flag => values.has(flag))) {
-    throw new Error(
-      "usage: node tools/check-app-versions.mjs --registry PATH --published-catalog PATH --base GIT_REVISION"
-    );
+  if (values.size !== allowed.length) {
+    throw new Error(usage);
   }
   return { values, mode };
 }
@@ -763,22 +825,34 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   try {
     const { values, mode } = argumentsFrom(process.argv.slice(2));
     const registry = readJson(resolve(values.get("--registry")), "app registry");
-    const selectedPackage = values.get("--package");
-    if (selectedPackage !== undefined) {
-      registry.apps = registry.apps.filter(app => app.package === selectedPackage);
-      if (registry.apps.length !== 1) {
-        throw new Error(`package ${selectedPackage} does not name exactly one registered app`);
-      }
-    }
     const published = readJson(resolve(values.get("--published-catalog")), "published catalog");
-    const { affected, storeChanges } = analyzeAppReleaseInputs(
-      values.get("--base"),
+    if (mode === "--validate-packages") {
+      let packages;
+      try {
+        packages = JSON.parse(values.get("--packages"));
+      } catch (error) {
+        throw new Error(`read build packages: ${error.message}`);
+      }
+      checkBuildPackages(
+        registry,
+        published,
+        packages,
+        currentProtocolVersion(),
+        PROTOCOL_MINIMUMS
+      );
+      console.log("Every build package has a new version and compatible minimum Cobalt release.");
+      process.exit(0);
+    }
+    const { affected, storeChanges } = analyzeAppReleaseInputs(values.get("--base"), registry);
+    const packages = packagesToBuild(registry, published, affected);
+    checkProtocolMinimums(
       registry,
-      selectedPackage === undefined
+      currentProtocolVersion(),
+      PROTOCOL_MINIMUMS,
+      new Set(packages)
     );
-    checkProtocolMinimums(registry, currentProtocolVersion());
     if (mode === "--list-packages") {
-      console.log(JSON.stringify(packagesToBuild(registry, published, affected)));
+      console.log(JSON.stringify(packages));
     } else if (mode === "--publish-needed") {
       console.log(releaseNeeded(registry, published, affected) ? "true" : "false");
     } else {

@@ -38,6 +38,7 @@ const screenshots = {
   gallery: ["components.png", "Cobalt typography and interface components on a Kobo"],
   gutenbird: ["gutenbird.png", "A shelf of books from an OPDS library on a Kobo"],
   hn: ["hackernews.png", "A ranked list of Hacker News stories on a Kobo"],
+  lichess: ["lichess.png", "A black-oriented live Lichess board with clocks and the last move marked on a Kobo"],
   launcher: ["launcher.png", "The Cobalt launcher showing installed apps on a Kobo"],
   magnet: ["magnet.png", "The Kobo hall sensor responding to a magnet"],
   morse: ["morse.png", "A letter filling the Kobo screen while the front light sends Morse code"],

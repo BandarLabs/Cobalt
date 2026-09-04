@@ -1239,6 +1239,18 @@ fn glyph(name: &str) -> Option<Glyph> {
         "plus" => Glyph::Plus,
         "headphones" => Glyph::Headphones,
         "minus" => Glyph::Minus,
+        "chess-white-king" => Glyph::ChessWhiteKing,
+        "chess-white-queen" => Glyph::ChessWhiteQueen,
+        "chess-white-rook" => Glyph::ChessWhiteRook,
+        "chess-white-bishop" => Glyph::ChessWhiteBishop,
+        "chess-white-knight" => Glyph::ChessWhiteKnight,
+        "chess-white-pawn" => Glyph::ChessWhitePawn,
+        "chess-black-king" => Glyph::ChessBlackKing,
+        "chess-black-queen" => Glyph::ChessBlackQueen,
+        "chess-black-rook" => Glyph::ChessBlackRook,
+        "chess-black-bishop" => Glyph::ChessBlackBishop,
+        "chess-black-knight" => Glyph::ChessBlackKnight,
+        "chess-black-pawn" => Glyph::ChessBlackPawn,
         _ => return None,
     })
 }

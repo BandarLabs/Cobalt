@@ -76,7 +76,7 @@ The example applications talk to services this project does not own.
 | --- | --- | --- |
 | `hn` | Hacker News Firebase API | Public, unauthenticated, no key |
 | `gutenbird` | Gutendex and Project Gutenberg | Public; Gutenberg texts are public domain in the US |
-| `rss` | Feedsearch | Public; the search screen carries the attribution its terms ask for |
+| `rss` | Feedsearch and optional Miniflux API | Feedsearch is a remote discovery service; Miniflux is owner-supplied or hosted and Apache-2.0 licensed |
 
 None of them is paid for or rate-limit-exempt. An application that hammers
 them is your responsibility, not theirs.
