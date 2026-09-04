@@ -5181,7 +5181,7 @@ fn ffmpeg_is_available() -> bool {
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status()
-        .is_ok()
+        .is_ok_and(|status| status.success())
 }
 
 /// What to say when it is not there.
@@ -5230,52 +5230,59 @@ fn write_recording_video(
     fs::write(&list_path, concat_list(frames))
         .map_err(|error| format!("write {}: {error}", list_path.display()))?;
     let video = directory.join("recording.mp4");
-    run_ffmpeg(
-        std::process::Command::new("ffmpeg")
-            .args(["-nostdin", "-y", "-loglevel", "error"])
-            .args(["-f", "concat", "-safe", "0", "-i"])
-            .arg(&list_path)
-            // Even dimensions, because h264 refuses odd ones and 1072x1448 is
-            // only even by luck.
-            .args([
-                "-vf",
-                "pad=ceil(iw/2)*2:ceil(ih/2)*2",
-                "-pix_fmt",
-                "yuv420p",
-                "-r",
-                "10",
-            ])
-            .arg(&video),
-    )?;
+    let mut encode = std::process::Command::new("ffmpeg");
+    encode
+        .args(["-nostdin", "-y", "-loglevel", "error"])
+        .args(["-f", "concat", "-safe", "0", "-i"])
+        .arg(&list_path)
+        // Even dimensions, because h264 refuses odd ones and 1072x1448 is
+        // only even by luck.
+        .args([
+            "-vf",
+            "pad=ceil(iw/2)*2:ceil(ih/2)*2",
+            "-pix_fmt",
+            "yuv420p",
+            "-r",
+            "10",
+        ])
+        .arg(&video);
+    run_ffmpeg(encode)?;
     // Built from the mp4 rather than from the frames again, the same way
     // `cut-tour.py` builds the one on the front page, so the two are the same
     // picture at the same width with the same palette.
     let loop_path = directory.join("recording.gif");
-    run_ffmpeg(
-        std::process::Command::new("ffmpeg")
-            .args(["-nostdin", "-y", "-loglevel", "error", "-i"])
-            .arg(&video)
-            .args([
-                "-vf",
-                "scale=600:-1:flags=lanczos,fps=12,split[a][b];\
-                 [a]palettegen=max_colors=64[p];\
-                 [b][p]paletteuse=dither=bayer:bayer_scale=3",
-            ])
-            .arg(&loop_path),
-    )?;
+    let mut looping = std::process::Command::new("ffmpeg");
+    looping
+        .args(["-nostdin", "-y", "-loglevel", "error", "-i"])
+        .arg(&video)
+        .args([
+            "-vf",
+            "scale=600:-1:flags=lanczos,fps=12,split[a][b];\
+             [a]palettegen=max_colors=64[p];\
+             [b][p]paletteuse=dither=bayer:bayer_scale=3",
+        ])
+        .arg(&loop_path);
+    run_ffmpeg(looping)?;
     println!("loop {}", loop_path.display());
     Ok(Some(video))
 }
 
-fn run_ffmpeg(command: &mut std::process::Command) -> Result<(), String> {
-    let status = command
+fn run_ffmpeg(command: std::process::Command) -> Result<(), String> {
+    let mut command = command;
+    let output = command
         .stdout(std::process::Stdio::null())
-        .status()
+        .stderr(std::process::Stdio::piped())
+        .output()
         .map_err(|error| format!("run ffmpeg: {error}"))?;
-    if !status.success() {
-        return Err("ffmpeg refused the frames".to_owned());
+    if output.status.success() {
+        return Ok(());
     }
-    Ok(())
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+    if stderr.is_empty() {
+        Err("ffmpeg refused the frames".to_owned())
+    } else {
+        Err(format!("ffmpeg refused the frames: {stderr}"))
+    }
 }
 
 const SHOT_USAGE: &str =
