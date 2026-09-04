@@ -3,22 +3,37 @@
   "changes": [
     {
       "protocol_version": 11,
-      "reason": "Additive protocol-11 update-channel settings and colour-picture support; existing Store apps retain the legacy picture frames",
+      "reason": "Additive protocol-11 colour-picture support preserves every existing grayscale picture/frame path. Only Gallery opts into RGB pictures, so previously published Store artifacts remain valid and only its changed manifest selects a rebuild.",
       "files": [
         {
+          "path": "crates/kobo-abi/src/lib.rs",
+          "base_blob": "2e3e88db5ba1fd08feed46fd65b0f502dd7f8dfb",
+          "compatible_blob": "3a5959b77fe68bc2a59b8beff790f4832c09c515"
+        },
+        {
+          "path": "crates/kobo-bookview/src/lib.rs",
+          "base_blob": "9e71ffc2cc1ca4d6150a65b004abd0a0988482c3",
+          "compatible_blob": "85713e547ffb0913cb562c2e82c4f0047bd0484e"
+        },
+        {
+          "path": "crates/kobo-image/src/lib.rs",
+          "base_blob": "438aa86c74e92de05580d226de70669bf5329798",
+          "compatible_blob": "eae15cb94ffbb65474ca4a1d024ac42f07cac86c"
+        },
+        {
           "path": "crates/kobo-protocol/src/lib.rs",
-          "base_blob": "8c30366191af89abc121075544635bf871fdfac4",
+          "base_blob": "f34528d7b407e542a7836b0348b91de043822274",
           "compatible_blob": "101b59d92cc98176b1c8c51b75f42538cb5ae802"
         },
         {
-          "path": "crates/kobo-policy/src/services.rs",
-          "base_blob": "d0a852942683f396baaf3803830d9c19c9911f18",
-          "compatible_blob": "e5b8617ac601332dd9b5d39c8e6ea83d613e171b"
+          "path": "crates/kobo-sdk/src/lib.rs",
+          "base_blob": "9a645f3f3d9c8746dda47d858bb3fcd744621df8",
+          "compatible_blob": "cbf828c46df7fcc783288facb7edf308b2b7eea2"
         },
         {
-          "path": "crates/kobo-sdk/src/lib.rs",
-          "base_blob": "52bd17b242beee85f691ebefdd0083fdabbd4550",
-          "compatible_blob": "cbf828c46df7fcc783288facb7edf308b2b7eea2"
+          "path": "crates/kobo-ui/src/lib.rs",
+          "base_blob": "ce538c70b5779ee482e2b35aa83191eb06b04b4d",
+          "compatible_blob": "d200c94e6487800f6aba7378efa1a29bcccf25c0"
         }
       ]
     }
