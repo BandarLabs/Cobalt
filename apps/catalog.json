@@ -7,8 +7,8 @@
       "display_name": "arXiv",
       "short_label": "arXiv",
       "summary": "Browse and search arXiv, keep preprints, and read their HTML versions on your Kobo.",
-      "version": "1.3.6",
-      "minimum_cobalt_version": "0.3.1",
+      "version": "1.3.7",
+      "minimum_cobalt_version": "0.3.5",
       "glyph": "note",
       "capabilities": [
         "network"
@@ -20,8 +20,8 @@
       "display_name": "Audiobook Studio",
       "short_label": "Audiobooks",
       "summary": "Turn a topic into an original narrated audiobook and listen on your Kobo.",
-      "version": "1.0.6",
-      "minimum_cobalt_version": "0.3.1",
+      "version": "1.0.7",
+      "minimum_cobalt_version": "0.3.5",
       "glyph": "headphones",
       "capabilities": [
         "network",
@@ -36,8 +36,8 @@
       "display_name": "Backgammon",
       "short_label": "Backgammon",
       "summary": "Play complete solo or pass-and-play backgammon on one Kobo.",
-      "version": "0.1.1",
-      "minimum_cobalt_version": "0.3.1",
+      "version": "0.1.2",
+      "minimum_cobalt_version": "0.3.5",
       "glyph": "circle",
       "capabilities": []
     },
@@ -47,8 +47,8 @@
       "display_name": "Daily Brief",
       "short_label": "Daily Brief",
       "summary": "Build a daily news brief in the background while you use other apps.",
-      "version": "1.0.6",
-      "minimum_cobalt_version": "0.3.1",
+      "version": "1.0.7",
+      "minimum_cobalt_version": "0.3.5",
       "glyph": "clock",
       "capabilities": [
         "network"
@@ -60,8 +60,8 @@
       "display_name": "AI Command Center",
       "short_label": "AI Chat",
       "summary": "Ask a question, then read and navigate the answer with touch controls.",
-      "version": "1.0.6",
-      "minimum_cobalt_version": "0.3.4",
+      "version": "1.0.7",
+      "minimum_cobalt_version": "0.3.5",
       "glyph": "chat",
       "capabilities": [
         "network"
@@ -86,8 +86,8 @@
       "display_name": "Gutenbird",
       "short_label": "Gutenbird",
       "summary": "Browse OPDS libraries and read their books on your Kobo.",
-      "version": "1.0.6",
-      "minimum_cobalt_version": "0.3.1",
+      "version": "1.0.7",
+      "minimum_cobalt_version": "0.3.5",
       "glyph": "book",
       "capabilities": [
         "network",
@@ -100,8 +100,8 @@
       "display_name": "Hacker News",
       "short_label": "Hacker News",
       "summary": "Read Top, New, Ask, and Show stories with complete comment threads.",
-      "version": "1.0.6",
-      "minimum_cobalt_version": "0.3.1",
+      "version": "1.0.7",
+      "minimum_cobalt_version": "0.3.5",
       "glyph": "news",
       "capabilities": [
         "network"
@@ -149,8 +149,8 @@
       "display_name": "Magnet",
       "short_label": "Magnet",
       "summary": "Find the hall sensor behind the bezel and watch it respond to a magnet.",
-      "version": "1.0.6",
-      "minimum_cobalt_version": "0.3.1",
+      "version": "1.0.7",
+      "minimum_cobalt_version": "0.3.5",
       "glyph": "magnet",
       "capabilities": [
         "cover-sensor"
@@ -162,8 +162,8 @@
       "display_name": "Morse",
       "short_label": "Morse",
       "summary": "Type a message and send it in Morse code with the front light.",
-      "version": "1.0.8",
-      "minimum_cobalt_version": "0.3.1",
+      "version": "1.0.9",
+      "minimum_cobalt_version": "0.3.5",
       "glyph": "light",
       "capabilities": [
         "frontlight-control",
@@ -201,8 +201,8 @@
       "display_name": "Sidekick",
       "short_label": "Sidekick",
       "summary": "Answer coding-agent permission prompts from your Kobo.",
-      "version": "1.0.6",
-      "minimum_cobalt_version": "0.3.1",
+      "version": "1.0.7",
+      "minimum_cobalt_version": "0.3.5",
       "glyph": "key",
       "capabilities": [
         "network"
@@ -214,8 +214,8 @@
       "display_name": "Sudoku",
       "short_label": "Sudoku",
       "summary": "Play touch-first Sudoku designed for an e-ink screen.",
-      "version": "1.0.7",
-      "minimum_cobalt_version": "0.3.1",
+      "version": "1.0.8",
+      "minimum_cobalt_version": "0.3.5",
       "glyph": "grid",
       "capabilities": []
     },
@@ -225,8 +225,8 @@
       "display_name": "Tic-tac-toe",
       "short_label": "Tic-tac-toe",
       "summary": "Play tic-tac-toe together on one Kobo.",
-      "version": "1.0.6",
-      "minimum_cobalt_version": "0.3.1",
+      "version": "1.0.7",
+      "minimum_cobalt_version": "0.3.5",
       "glyph": "grid",
       "capabilities": []
     },
@@ -236,8 +236,8 @@
       "display_name": "Todo",
       "short_label": "Todo",
       "summary": "Keep a simple to-do list that stays on your Kobo.",
-      "version": "1.0.6",
-      "minimum_cobalt_version": "0.3.1",
+      "version": "1.0.7",
+      "minimum_cobalt_version": "0.3.5",
       "glyph": "check",
       "capabilities": []
     },
