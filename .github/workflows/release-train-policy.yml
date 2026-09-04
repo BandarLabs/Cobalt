@@ -1,0 +1,26 @@
+name: Release train policy
+
+on:
+  pull_request:
+    branches: [main, beta]
+
+permissions:
+  contents: read
+
+jobs:
+  route:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require beta promotion for main
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          HEAD_REF: ${{ github.head_ref }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          if [ "$BASE_REF" = main ] &&
+            { [ "$HEAD_REF" != beta ] || [ "$HEAD_REPOSITORY" != "$REPOSITORY" ]; }
+          then
+            echo "Pull requests into main must promote the beta branch." >&2
+            exit 1
+          fi

@@ -289,6 +289,13 @@ pub const CLARA_BW_391: DeviceProfile = DeviceProfile {
     kernel_release: "4.9.77",
     write_ready: true,
     leftover_radio_daemons: &["/usr/bin/wmt_launcher"],
+    // Measured on the device on 2026-09-02: preserving Nickel's detached
+    // supplicant kept SSH alive throughout Cobalt's panel session, but the
+    // restarted reader launched a replacement. Reaping the exact captured
+    // process prevents the two-owner handoff; the runtime then reproduces the
+    // stock network screen's scan/reassociate sequence and waits for the
+    // replacement to complete association because a stale route can linger.
+    reap_nickel_supplicant: true,
 };
 
 /// The 2025 P365 hardware refresh of the Clara BW. Kobo lists N365 and P365
@@ -355,6 +362,13 @@ pub const CLARA_BW_395: DeviceProfile = DeviceProfile {
     kernel_release: "4.9.77",
     write_ready: true,
     leftover_radio_daemons: &[],
+    // The refresh carries the same MediaTek radio, firmware, and kernel as the
+    // N365, so the two-supplicant collision measured there applies unchanged:
+    // hand back without reaping and Nickel's restarted reader races the
+    // leftover process for `wlan0`, leaving Wi-Fi down until a reboot. This
+    // profile was left at `false` when the reap landed for the N365, so the
+    // fix never ran on the refreshed hardware that needed it just as much.
+    reap_nickel_supplicant: true,
 };
 
 /// The Kobo Clara HD, added upstream without i.MX6 hardware to test on.
@@ -422,6 +436,7 @@ pub const CLARA_HD_376: DeviceProfile = DeviceProfile {
     kernel_release: "4.1.15-00136-g12655eaaef89",
     write_ready: true,
     leftover_radio_daemons: &[],
+    reap_nickel_supplicant: false,
 };
 
 /// Kobo Clara Colour, whose measured framebuffer geometry, HWTCON interface,
@@ -440,6 +455,7 @@ pub const CLARA_COLOUR_393: DeviceProfile = DeviceProfile {
     serial_prefix: "N367",
     write_ready: true,
     leftover_radio_daemons: &[],
+    reap_nickel_supplicant: false,
     ..CLARA_BW_391
 };
 
@@ -499,6 +515,7 @@ pub const ELIPSA_2E_389: DeviceProfile = DeviceProfile {
     kernel_release: "4.9.77",
     write_ready: true,
     leftover_radio_daemons: &[],
+    reap_nickel_supplicant: false,
 };
 
 /// Kobo Libra 2, codename `io`, an i.MX6SLL Mark 7 device driven by
@@ -592,6 +609,7 @@ pub const LIBRA_2_388: DeviceProfile = DeviceProfile {
     // a normal hand-back, and the clean recovery after the leftover one was
     // killed during a live session.
     leftover_radio_daemons: &["/bin/wpa_supplicant"],
+    reap_nickel_supplicant: true,
 };
 
 /// Kobo Libra Colour, a `MediaTek` HWTCON device like the Clara BW, and the
@@ -686,6 +704,17 @@ pub const LIBRA_COLOUR_390: DeviceProfile = DeviceProfile {
     // radio on i.MX6SLL; this is a MediaTek device whose Wi-Fi stack is shared
     // with Bluetooth and known to behave differently.
     leftover_radio_daemons: &[],
+    reap_nickel_supplicant: false,
+};
+
+/// Kobo Libra Colour on firmware 4.46.23836. The doctor report and attended
+/// display, touch, exit, and recovery evidence match the hardware profile
+/// above. The firmware is kept as a separate exact identity.
+pub const LIBRA_COLOUR_390_446: DeviceProfile = DeviceProfile {
+    id: "libra-colour-390-4.46.23836",
+    firmware_versions: &["4.46.23836"],
+    write_ready: true,
+    ..LIBRA_COLOUR_390
 };
 
 pub const SUPPORTED_PROFILES: &[&DeviceProfile] = &[
@@ -696,6 +725,7 @@ pub const SUPPORTED_PROFILES: &[&DeviceProfile] = &[
     &ELIPSA_2E_389,
     &LIBRA_2_388,
     &LIBRA_COLOUR_390,
+    &LIBRA_COLOUR_390_446,
 ];
 
 pub const WRITE_EVIDENCE_PENDING: &str =
@@ -946,6 +976,12 @@ pub struct DeviceProfile {
     /// test; name a daemon for a device once the symptom and the fix are
     /// observed on it.
     pub leftover_radio_daemons: &'static [&'static str],
+    /// Whether Nickel's leftover `wpa_supplicant` is stopped before hand-back.
+    ///
+    /// Independent of [`Self::leftover_radio_daemons`]: that list names every
+    /// leftover radio process to reap, while this flag is the measured
+    /// two-supplicant collision on `wlan0`.
+    pub reap_nickel_supplicant: bool,
 }
 
 /// Pose geometry derived by a profile's [`GeometryRule`].
@@ -1651,9 +1687,10 @@ mod tests {
     const CLARA_HD_POSE: PanelPose<'static> = PanelPose::reference(&CLARA_HD_376);
 
     use super::{
-        identify_profile, Bitfield, DeviceProfile, DeviceSnapshot, FramebufferSnapshot,
-        IdentitySnapshot, Readiness, TouchSnapshot, CLARA_BW_391, CLARA_BW_395, CLARA_COLOUR_393,
-        CLARA_HD_376, ELIPSA_2E_389, LIBRA_2_388, LIBRA_COLOUR_390, WRITE_EVIDENCE_PENDING,
+        identify_profile, write_ready_profile, Bitfield, DeviceProfile, DeviceSnapshot,
+        FramebufferSnapshot, IdentitySnapshot, Readiness, TouchSnapshot, CLARA_BW_391,
+        CLARA_BW_395, CLARA_COLOUR_393, CLARA_HD_376, ELIPSA_2E_389, LIBRA_2_388, LIBRA_COLOUR_390,
+        LIBRA_COLOUR_390_446, WRITE_EVIDENCE_PENDING,
     };
 
     /// The Libra 2 as `kobo doctor` read it from a cold boot into Nickel, in
@@ -1732,9 +1769,12 @@ mod tests {
     /// processes after eight hand-backs, every one of them stuck
     /// uninterruptibly in `WMT_open` holding no `/dev/stpwmt`, with a matching
     /// `-EIO` timeout in the kernel log for each -- and its recovery is what
-    /// this reap is for. Every other profile keeps its current behaviour until
-    /// the same evidence exists, so a change to one of these values is a claim
-    /// about a device and needs the measurement to go with it.
+    /// this reap is for. The two Clara BW profiles are the same board, radio,
+    /// firmware, and kernel under two device codes, so the Nickel-supplicant
+    /// reap measured on either one covers both. Every other profile keeps its
+    /// current behaviour until the same evidence exists, so a change to one of
+    /// these values is a claim about a device and needs the measurement to go
+    /// with it.
     #[test]
     fn a_leftover_daemon_is_declared_only_where_it_was_measured() {
         let declared = super::SUPPORTED_PROFILES
@@ -1751,6 +1791,28 @@ mod tests {
                 ("elipsa-2e-389", &[][..]),
                 ("libra-2-388", &["/bin/wpa_supplicant"][..]),
                 ("libra-colour-390", &[][..]),
+                ("libra-colour-390-4.46.23836", &[][..]),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_supplicant_reap_is_declared_only_where_it_was_measured() {
+        let declared = super::SUPPORTED_PROFILES
+            .iter()
+            .map(|profile| (profile.id, profile.reap_nickel_supplicant))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            declared,
+            [
+                ("clara-bw-391", true),
+                ("clara-bw-395", true),
+                ("clara-hd-376", false),
+                ("clara-colour-393", false),
+                ("elipsa-2e-389", false),
+                ("libra-2-388", true),
+                ("libra-colour-390", false),
+                ("libra-colour-390-4.46.23836", false),
             ]
         );
     }
@@ -2431,6 +2493,42 @@ mod tests {
             super::identify_profile(&snapshot).map(|profile| profile.id),
             Some("libra-colour-390")
         );
+    }
+
+    /// The 4.46.23836 doctor report matches the existing Libra Colour hardware
+    /// fields, and its exact firmware identity selects the write-ready profile.
+    #[test]
+    fn libra_colour_446_profile_matches_doctor_and_is_write_ready() {
+        let mut snapshot = measured_libra_colour();
+        snapshot.identity.firmware_version = Some("4.46.23836".into());
+        let report = LIBRA_COLOUR_390_446.validate(&snapshot);
+        assert!(report.mismatches.is_empty(), "{:?}", report.mismatches);
+        assert_eq!(report.readiness, Readiness::WriteReady);
+        assert!(report.write_blockers.is_empty());
+        assert!(LIBRA_COLOUR_390.validate(&snapshot).mismatches.is_empty());
+        assert!(!LIBRA_COLOUR_390
+            .write_identity_blockers(&snapshot)
+            .is_empty());
+        assert_eq!(
+            identify_profile(&snapshot).map(|profile| profile.id),
+            Some("libra-colour-390-4.46.23836")
+        );
+        assert_eq!(
+            write_ready_profile(&snapshot).map(|profile| profile.id),
+            Ok("libra-colour-390-4.46.23836")
+        );
+    }
+
+    /// Three physical taps on the 4.46.23836 test device discriminate the
+    /// exchanged axes and the mirrored axis. The expected display coordinates
+    /// are recorded literals from `kobo touch-probe`, not values generated by
+    /// the transform under test.
+    #[test]
+    fn libra_colour_446_touch_matches_three_physically_measured_taps() {
+        let pose = PanelPose::reference(&LIBRA_COLOUR_390_446);
+        assert_eq!(pose.touch_to_display(1624, 68), Some((68, 56)));
+        assert_eq!(pose.touch_to_display(74, 80), Some((80, 1605)));
+        assert_eq!(pose.touch_to_display(79, 1175), Some((1174, 1600)));
     }
 
     /// The Libra 2 has the same panel dimensions, the same touch controller

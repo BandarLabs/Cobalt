@@ -31,6 +31,7 @@ const systemApps = [
 const screenshots = {
   arxiv: ["arxiv.png", "The newest machine learning preprints listed in the arXiv app on a Kobo"],
   audiobook: ["audiobook.png", "An audiobook player with cover art and playback controls on a Kobo"],
+  backgammon: ["backgammon.png", "A grayscale Backgammon board with legal move markers on a Kobo"],
   brief: ["brief.png", "A numbered daily news brief on a Kobo"],
   chat: ["chat.png", "An answer displayed for touch-friendly reading on a Kobo"],
   gallery: ["components.png", "Cobalt typography and interface components on a Kobo"],
@@ -46,7 +47,8 @@ const screenshots = {
   sudoku: ["sudoku.png", "A Sudoku game designed for the Kobo touch screen"],
   terminal: ["terminal.png", "A shell and touch keyboard on a Kobo"],
   tictactoe: ["tictactoe.png", "A completed game of tic-tac-toe on a Kobo"],
-  todo: ["todo.png", "A to-do list with completed items on a Kobo"]
+  todo: ["todo.png", "A to-do list with completed items on a Kobo"],
+  "zotero-reader": ["zotero-reader.png", "Reading a paper with structured layout and Zotero metadata on a Kobo"]
 };
 const screenshotFor = app => {
   const screenshot = screenshots[app.id];

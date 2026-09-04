@@ -47,12 +47,13 @@ pub fn begin(root: &Path) -> Result<DeviceResult, DeviceError> {
 
 pub fn poll(root: &Path) -> Result<DeviceResult, DeviceError> {
     let mut relay = HttpsRelay::new()?;
+    let channel = crate::autoupdate::preferences(root).channel;
     poll_with(
         root,
         &mut relay,
         now(),
-        crate::app_store::prepare_remote_install,
-        crate::app_store::install,
+        |root, id| crate::app_store::prepare_remote_install(root, id, channel),
+        |root, id| crate::app_store::install(root, id, channel),
     )
 }
 

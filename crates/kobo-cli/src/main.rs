@@ -14,6 +14,7 @@ mod authorize;
 mod connect;
 mod devsession;
 mod drive;
+mod host_release;
 mod menu;
 mod package;
 // Only the `device-write` build dispatches to this, but its tests decide what
@@ -62,6 +63,7 @@ const INSTALLED_PACKAGES: &[(&str, Option<&str>)] = &[
 const STORE_PACKAGES: &[&str] = &[
     "kobo-arxiv",
     "kobo-audiobook",
+    "kobo-backgammon",
     "kobo-brief",
     "kobo-chat",
     "kobo-gallery",
@@ -74,6 +76,7 @@ const STORE_PACKAGES: &[&str] = &[
     "kobo-sudoku",
     "kobo-tictactoe",
     "kobo-todo",
+    "kobo-zotero-reader",
 ];
 /// Proof that the daemon in the package can actually take the panel. The
 /// phrase only exists inside `present_on_panel`, which is behind
@@ -237,6 +240,10 @@ enum SmokeStage {
     ScreenSnapshot,
     FastFeedback,
     WaitTiming,
+}
+
+fn confirmation_answer(answer: &str) -> bool {
+    matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes")
 }
 
 #[cfg(feature = "device-write")]
@@ -411,6 +418,9 @@ fn run(arguments: &[String]) -> Result<(), String> {
         "app-list" => app_list(&arguments[1..]),
         "app-check" => app_check(&arguments[1..]),
         "app-release" => app_release(&arguments[1..]),
+        "host-release-sign" => host_release_sign(&arguments[1..]),
+        "host-release-verify" => host_release_verify(&arguments[1..]),
+        "update" => update_host(&arguments[1..]),
         "setup" => setup_device(&arguments[1..]),
         "deploy" => deploy_package(&arguments[1..]),
         "secret" => secret_command(&arguments[1..]),
@@ -433,6 +443,153 @@ fn run(arguments: &[String]) -> Result<(), String> {
         }
         unknown => Err(format!("unknown command '{unknown}'")),
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum HostUpdateChannel {
+    Stable,
+    Beta,
+}
+
+impl HostUpdateChannel {
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Stable => "stable",
+            Self::Beta => "beta",
+        }
+    }
+}
+
+fn parse_host_update(arguments: &[String]) -> Result<HostUpdateChannel, String> {
+    match arguments {
+        [] => Ok(HostUpdateChannel::Stable),
+        [flag, channel] if flag == "--channel" => match channel.as_str() {
+            "stable" => Ok(HostUpdateChannel::Stable),
+            "beta" => Ok(HostUpdateChannel::Beta),
+            _ => Err("usage: kobo update [--channel stable|beta]".to_owned()),
+        },
+        _ => Err("usage: kobo update [--channel stable|beta]".to_owned()),
+    }
+}
+
+fn update_host(arguments: &[String]) -> Result<(), String> {
+    let channel = parse_host_update(arguments)?;
+    let home = env::var_os("HOME").ok_or("HOME is not set")?;
+    let data = env::var_os("XDG_DATA_HOME")
+        .map_or_else(|| Path::new(&home).join(".local/share"), PathBuf::from);
+    let root = data.join("kobo");
+    let state_path = root.join("install-state");
+    let state = fs::read_to_string(&state_path).map_err(|error| {
+        format!(
+            "kobo update requires a managed host installation (read {}: {error})",
+            state_path.display()
+        )
+    })?;
+    let binary = state
+        .lines()
+        .find_map(|line| line.strip_prefix("binary "))
+        .map(PathBuf::from)
+        .ok_or("managed installation state has no binary path")?;
+    if !binary.exists() {
+        return Err(format!(
+            "managed kobo command is missing at {}",
+            binary.display()
+        ));
+    }
+    let host = managed_host_directory(&root)?;
+    let current = env::current_exe()
+        .and_then(|path| path.canonicalize())
+        .map_err(|error| format!("locate running kobo: {error}"))?;
+    let installed = host
+        .join("kobo")
+        .canonicalize()
+        .map_err(|error| format!("locate selected host kobo: {error}"))?;
+    if current != installed {
+        return Err(
+            "kobo update is available only from the host command installed by Cobalt; \
+             source checkouts use git and cargo"
+                .to_owned(),
+        );
+    }
+    let updater = host.join("updater.sh");
+    if !updater.is_file() {
+        return Err(format!(
+            "verified host updater is missing at {}; rerun the stable installer",
+            updater.display()
+        ));
+    }
+    let status = Command::new("sh")
+        .arg(&updater)
+        .args(["--host-update", "--channel", channel.name()])
+        .status()
+        .map_err(|error| format!("run verified host updater: {error}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("host update exited with {status}"))
+    }
+}
+
+fn managed_host_directory(root: &Path) -> Result<PathBuf, String> {
+    let selector = root.join("current");
+    let selected = fs::read_to_string(&selector)
+        .map_err(|error| format!("read host selector {}: {error}", selector.display()))?;
+    let selected = selected.trim();
+    if selected.is_empty()
+        || !selected
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+    {
+        return Err("managed host selector is invalid".to_owned());
+    }
+    Ok(root.join("hosts").join(selected))
+}
+
+fn host_release_sign(arguments: &[String]) -> Result<(), String> {
+    const USAGE: &str = "usage: kobo host-release-sign --manifest PATH --seed PATH \
+                         --signature PATH --ssh-signature PATH";
+    let manifest_path = single_path_flag(arguments, "--manifest", USAGE)?;
+    let seed_path = single_path_flag(arguments, "--seed", USAGE)?;
+    let signature_path = single_path_flag(arguments, "--signature", USAGE)?;
+    let ssh_signature_path = single_path_flag(arguments, "--ssh-signature", USAGE)?;
+    ensure_only_flags(
+        arguments,
+        &["--manifest", "--seed", "--signature", "--ssh-signature"],
+        USAGE,
+    )?;
+    let manifest = fs::read(&manifest_path)
+        .map_err(|error| format!("read {}: {error}", manifest_path.display()))?;
+    host_release::Manifest::parse(&manifest)?;
+    let seed = read_signing_seed(&seed_path)?;
+    let public = kobo_app_store::derive_public_key(&seed).map_err(|error| error.to_string())?;
+    if public.to_hex() != kobo_app_store::PUBLIC_RELEASE_KEY_HEX {
+        return Err("host release seed does not match the public release key".to_owned());
+    }
+    let (signature, ssh_signature) = host_release::sign(&manifest, &seed)?;
+    fs::write(&signature_path, format!("{signature}\n"))
+        .map_err(|error| format!("write {}: {error}", signature_path.display()))?;
+    fs::write(&ssh_signature_path, ssh_signature)
+        .map_err(|error| format!("write {}: {error}", ssh_signature_path.display()))?;
+    println!("created {}", signature_path.display());
+    println!("created {}", ssh_signature_path.display());
+    Ok(())
+}
+
+fn host_release_verify(arguments: &[String]) -> Result<(), String> {
+    const USAGE: &str = "usage: kobo host-release-verify --manifest PATH --signature PATH";
+    let manifest_path = single_path_flag(arguments, "--manifest", USAGE)?;
+    let signature_path = single_path_flag(arguments, "--signature", USAGE)?;
+    ensure_only_flags(arguments, &["--manifest", "--signature"], USAGE)?;
+    let manifest = fs::read(&manifest_path)
+        .map_err(|error| format!("read {}: {error}", manifest_path.display()))?;
+    let signature = fs::read_to_string(&signature_path)
+        .map_err(|error| format!("read {}: {error}", signature_path.display()))?;
+    let parsed = host_release::verify_manifest(&manifest, &signature)?;
+    println!(
+        "verified Cobalt {} host release from {}",
+        parsed.version, parsed.source
+    );
+    Ok(())
 }
 
 fn app_key(arguments: &[String]) -> Result<(), String> {
@@ -655,14 +812,15 @@ fn app_release(arguments: &[String]) -> Result<(), String> {
         .map_err(|error| format!("invalid {} metadata: {error}", app.id))?;
         let bundle = kobo_app_store::build_bundle(&manifest, &binary, &seed)
             .map_err(|error| format!("bundle {}: {error}", app.id))?;
-        let package_path = output.join(format!("{}.cobalt-app", app.id));
+        let (package_name, package_sha256) = release_package_name(&app.id, &bundle);
+        let package_path = output.join(&package_name);
         fs::write(&package_path, &bundle)
             .map_err(|error| format!("write {}: {error}", package_path.display()))?;
         entries.push(
             kobo_app_store::CatalogEntry::new(kobo_app_store::CatalogEntryInput {
                 manifest,
-                package_url: format!("{base_url}/{}.cobalt-app", app.id),
-                package_sha256: kobo_net::sha256::hex_digest(&bundle),
+                package_url: format!("{base_url}/{package_name}"),
+                package_sha256,
                 package_bytes: u64::try_from(bundle.len())
                     .map_err(|_| format!("{} package is too large", app.id))?,
             })
@@ -1018,6 +1176,11 @@ fn ensure_only_flags(arguments: &[String], flags: &[&str], usage: &str) -> Resul
         index += width;
     }
     Ok(())
+}
+
+fn release_package_name(id: &str, bundle: &[u8]) -> (String, String) {
+    let digest = kobo_net::sha256::hex_digest(bundle);
+    (format!("{id}-{digest}.cobalt-app"), digest)
 }
 
 fn read_signing_seed(path: &Path) -> Result<[u8; 32], String> {
@@ -3101,10 +3264,15 @@ enum MenuEntry {
 #[allow(clippy::struct_excessive_bools)]
 struct SetupOptions {
     volume: Option<PathBuf>,
+    release_dir: Option<PathBuf>,
+    source: bool,
     mode: SetupMode,
     menu: MenuEntry,
     eject: bool,
     dry_run: bool,
+    yes: bool,
+    non_interactive: bool,
+    wait_for_reader: bool,
     wait: bool,
     enable_ssh: bool,
     /// Whether this machine's key is installed alongside the SSH server.
@@ -3118,10 +3286,15 @@ struct SetupOptions {
 fn parse_setup(arguments: &[String]) -> Result<SetupOptions, String> {
     let mut options = SetupOptions {
         volume: None,
+        release_dir: None,
+        source: false,
         mode: SetupMode::Install,
         menu: MenuEntry::Add,
         eject: true,
         dry_run: false,
+        yes: false,
+        non_interactive: false,
+        wait_for_reader: false,
         wait: true,
         enable_ssh: false,
         authorize_key: true,
@@ -3137,6 +3310,17 @@ fn parse_setup(arguments: &[String]) -> Result<SetupOptions, String> {
                 index += 1;
             }
             "--undo" => options.mode = SetupMode::Undo,
+            "--release-dir" => {
+                let value = arguments
+                    .get(index + 1)
+                    .ok_or("--release-dir needs a verified release directory")?;
+                options.release_dir = Some(PathBuf::from(value));
+                index += 1;
+            }
+            "--source" => options.source = true,
+            "--yes" => options.yes = true,
+            "--non-interactive" => options.non_interactive = true,
+            "--wait-for-reader" => options.wait_for_reader = true,
             "--no-eject" => options.eject = false,
             "--no-wait" => options.wait = false,
             "--no-menu" => options.menu = MenuEntry::Skip,
@@ -3148,11 +3332,18 @@ fn parse_setup(arguments: &[String]) -> Result<SetupOptions, String> {
                 return Err(format!(
                     "unknown option '{other}'\n\
                      usage: kobo setup [--volume PATH] [--undo] [--enable-ssh] [--no-key] \
-                     [--no-eject] [--no-wait] [--menu] [--no-menu] [--dry-run]"
+                     [--no-eject] [--no-wait] [--menu] [--no-menu] [--dry-run] [--yes] \
+                     [--non-interactive] [--wait-for-reader] [--release-dir PATH] [--source]"
                 ))
             }
         }
         index += 1;
+    }
+    if options.source && options.release_dir.is_some() {
+        return Err("--source and --release-dir are mutually exclusive".to_owned());
+    }
+    if options.non_interactive && !options.yes && !options.dry_run {
+        return Err("--non-interactive requires --yes for any change".to_owned());
     }
     Ok(options)
 }
@@ -3168,7 +3359,271 @@ fn chosen_reader(volume: Option<&Path>) -> Result<setup::Mounted, String> {
             )
         });
     }
-    let mut found = setup::mounted_readers();
+    choose_discovered_reader()
+}
+
+fn wait_for_mounted_reader(volume: Option<&Path>, wait: bool) -> Result<setup::Mounted, String> {
+    if !wait {
+        return chosen_reader(volume);
+    }
+    println!(
+        "Connect a charged Kobo with a data-capable USB cable, tap Connect on the reader,\n\
+             and leave the mounted volume connected. Waiting up to 10 minutes..."
+    );
+    let deadline = Instant::now() + Duration::from_secs(600);
+    loop {
+        match chosen_reader(volume) {
+            Ok(reader) => return Ok(reader),
+            Err(error) if error.starts_with("No mounted reader found.") => {
+                if Instant::now() >= deadline {
+                    return Err(error);
+                }
+                thread::sleep(Duration::from_secs(2));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+enum SetupPayload {
+    Source,
+    Prebuilt {
+        built: BuiltPackage,
+        version: String,
+        channel: String,
+    },
+}
+
+impl SetupPayload {
+    fn description(&self) -> String {
+        match self {
+            Self::Source => format!(
+                "Cobalt {} from this source checkout",
+                env!("CARGO_PKG_VERSION")
+            ),
+            Self::Prebuilt {
+                version, channel, ..
+            } => format!("Cobalt {version} ({channel})"),
+        }
+    }
+
+    fn into_built(self) -> Result<BuiltPackage, String> {
+        match self {
+            Self::Source => build_package_bytes(),
+            Self::Prebuilt { built, .. } => Ok(built),
+        }
+    }
+}
+
+fn setup_payload(options: &SetupOptions) -> Result<SetupPayload, String> {
+    if options.source {
+        return Ok(SetupPayload::Source);
+    }
+    if let Some(directory) = options
+        .release_dir
+        .clone()
+        .or_else(managed_release_directory)
+    {
+        return load_release_package(&directory);
+    }
+    Ok(SetupPayload::Source)
+}
+
+fn load_release_package(directory: &Path) -> Result<SetupPayload, String> {
+    let manifest_path = directory.join("cobalt-host-manifest.txt");
+    let signature_path = directory.join("cobalt-host-manifest.txt.sig");
+    let manifest_bytes = fs::read(&manifest_path)
+        .map_err(|error| format!("read {}: {error}", manifest_path.display()))?;
+    let signature = fs::read_to_string(&signature_path)
+        .map_err(|error| format!("read {}: {error}", signature_path.display()))?;
+    let manifest = host_release::verify_manifest(&manifest_bytes, &signature)?;
+    load_release_package_from_manifest(directory, manifest)
+}
+
+fn load_release_package_from_manifest(
+    directory: &Path,
+    manifest: host_release::Manifest,
+) -> Result<SetupPayload, String> {
+    if !kobo_app_store::cobalt_version_at_least(env!("CARGO_PKG_VERSION"), &manifest.version) {
+        return Err(format!(
+            "stable setup package {} is newer than this kobo {}; update the host command first",
+            manifest.version,
+            env!("CARGO_PKG_VERSION")
+        ));
+    }
+    let asset = manifest
+        .device()
+        .ok_or("signed release manifest has no device package")?;
+    let channel = fs::read_to_string(directory.join("channel"))
+        .map_err(|error| format!("read release channel: {error}"))?
+        .trim()
+        .to_owned();
+    if channel != "stable" {
+        return Err(
+            "kobo setup installs stable releases only; enable Beta updates later in Cobalt Settings"
+                .to_owned(),
+        );
+    }
+    if !manifest.allows_channel("stable") {
+        return Err("signed release manifest does not allow stable installation".to_owned());
+    }
+    let package_path = directory.join(&asset.name);
+    let compressed = fs::read(&package_path)
+        .map_err(|error| format!("read {}: {error}", package_path.display()))?;
+    let actual_bytes =
+        u64::try_from(compressed.len()).map_err(|_| "device package is too large".to_owned())?;
+    if actual_bytes != asset.bytes {
+        return Err(format!(
+            "{} is truncated: manifest says {} bytes, found {actual_bytes}",
+            package_path.display(),
+            asset.bytes
+        ));
+    }
+    let actual_digest = sha256::hex_digest(&compressed);
+    if actual_digest != asset.sha256 {
+        return Err(format!(
+            "{} checksum failed: expected {}, found {actual_digest}",
+            package_path.display(),
+            asset.sha256
+        ));
+    }
+    gzip_test(&compressed)?;
+    let archive = gunzip(&compressed)?;
+    let members = package::members(&archive)?;
+    let listed = package::list(&archive)?;
+    let outside = members_outside_install_root(&listed);
+    if !outside.is_empty() {
+        return Err(format!(
+            "refusing prebuilt package: {} would be written outside {}",
+            outside.join(", "),
+            package::INSTALL_ROOT
+        ));
+    }
+    let expected_version = format!("{}\n", manifest.version);
+    let packaged_version = members
+        .iter()
+        .find(|member| member.path == format!("{}/VERSION", package::INSTALL_ROOT))
+        .ok_or("prebuilt package has no VERSION file")?;
+    if packaged_version.bytes != expected_version.as_bytes() {
+        return Err("prebuilt package VERSION does not match its signed manifest".to_owned());
+    }
+    Ok(SetupPayload::Prebuilt {
+        built: BuiltPackage {
+            members,
+            listed,
+            compressed,
+        },
+        version: manifest.version,
+        channel,
+    })
+}
+
+fn managed_release_directory() -> Option<PathBuf> {
+    let home = env::var_os("HOME")?;
+    let data = env::var_os("XDG_DATA_HOME")
+        .map_or_else(|| Path::new(&home).join(".local/share"), PathBuf::from);
+    let state = fs::read_to_string(data.join("kobo/install-state")).ok()?;
+    let mut binary = None;
+    let mut release = None;
+    let mut channel = None;
+    for line in state.lines() {
+        if line == "cobalt-kobo-install 1" {
+            continue;
+        }
+        if let Some(value) = line.strip_prefix("binary ") {
+            binary = Some(PathBuf::from(value));
+        } else if let Some(value) = line.strip_prefix("release ") {
+            release = Some(PathBuf::from(value));
+        } else if let Some(value) = line.strip_prefix("channel ") {
+            channel = Some(value.to_owned());
+        }
+    }
+    let current = env::current_exe().ok()?.canonicalize().ok()?;
+    let installed = binary?.canonicalize().ok()?;
+    let root = data.join("kobo");
+    let selected = managed_host_directory(&root)
+        .ok()
+        .and_then(|directory| directory.join("kobo").canonicalize().ok());
+    if current != installed && selected.as_ref() != Some(&current) {
+        return None;
+    }
+    let derived =
+        data.join("kobo/releases")
+            .join(format!("{}-{}", env!("CARGO_PKG_VERSION"), channel?));
+    Some(if derived.is_dir() { derived } else { release? })
+}
+
+fn reader_still_connected(expected: &setup::Mounted) -> Result<(), String> {
+    let current = setup::read_reader(&expected.volume).ok_or_else(|| {
+        format!(
+            "{} was unmounted or is no longer a Kobo; nothing was written",
+            expected.volume.display()
+        )
+    })?;
+    if current.serial != expected.serial || current.firmware != expected.firmware {
+        return Err(format!(
+            "the reader at {} changed after confirmation; nothing was written",
+            expected.volume.display()
+        ));
+    }
+    Ok(())
+}
+
+fn confirmed_setup(
+    options: &SetupOptions,
+    reader: &setup::Mounted,
+    profile: &kobo_profile::DeviceProfile,
+    payload: &SetupPayload,
+) -> Result<bool, String> {
+    println!(
+            "\nReady to {}:\n  Model: {} (device code {}, profile {})\n  Firmware: {}\n  Mount: {}\n  Release: {}\n  Changes: {}\n",
+            if options.mode == SetupMode::Undo {
+                "remove Cobalt"
+            } else {
+                "install Cobalt"
+            },
+            profile.model,
+            profile.device_code,
+            profile.id,
+            reader.firmware,
+            reader.volume.display(),
+            payload.description(),
+            if options.mode == SetupMode::Undo {
+                "remove .adds/cobalt and revert only Cobalt-managed settings/menu/SSH markers"
+            } else {
+                "update Cobalt program files in .adds/cobalt, preserve app data, secrets, owner files and unrelated NickelMenu entries"
+            }
+        );
+    if options.yes {
+        return Ok(true);
+    }
+    if options.non_interactive {
+        return Err("noninteractive setup was not explicitly confirmed with --yes".to_owned());
+    }
+    let tty = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open("/dev/tty")
+            .map_err(|error| format!("open /dev/tty for confirmation: {error}; pass --yes only after reviewing --dry-run"))?;
+    let mut writer = &tty;
+    writer
+        .write_all(b"Continue? [y/N] ")
+        .map_err(|error| format!("write confirmation prompt: {error}"))?;
+    writer
+        .flush()
+        .map_err(|error| format!("flush confirmation prompt: {error}"))?;
+    let mut reader_tty = std::io::BufReader::new(tty);
+    let mut answer = String::new();
+    std::io::BufRead::read_line(&mut reader_tty, &mut answer)
+        .map_err(|error| format!("read confirmation: {error}"))?;
+    Ok(confirmation_answer(&answer))
+}
+
+fn choose_discovered_reader() -> Result<setup::Mounted, String> {
+    choose_reader_list(setup::mounted_readers())
+}
+
+fn choose_reader_list(mut found: Vec<setup::Mounted>) -> Result<setup::Mounted, String> {
     match found.len() {
         0 => Err(NO_READER_FOUND.to_owned()),
         1 => Ok(found.remove(0)),
@@ -3193,23 +3648,60 @@ fn chosen_reader(volume: Option<&Path>) -> Result<setup::Mounted, String> {
 /// SSH server, and the setting that keeps the radio up. Everything after this
 /// happens over Wi-Fi, so everything before it has to happen here.
 fn setup_device(arguments: &[String]) -> Result<(), String> {
+    setup_device_with_confirmation(arguments, confirmed_setup)
+}
+
+fn setup_device_with_confirmation(
+    arguments: &[String],
+    confirm: impl FnOnce(
+        &SetupOptions,
+        &setup::Mounted,
+        &kobo_profile::DeviceProfile,
+        &SetupPayload,
+    ) -> Result<bool, String>,
+) -> Result<(), String> {
     let options = parse_setup(arguments)?;
-    let reader = chosen_reader(options.volume.as_deref())?;
-    println!("found {}", reader.summary());
+    let reader = wait_for_mounted_reader(options.volume.as_deref(), options.wait_for_reader)?;
+    let profile = setup::install_profile(&reader)?;
+    let payload = if options.mode == SetupMode::Undo {
+        SetupPayload::Source
+    } else {
+        setup_payload(&options)?
+    };
+    println!(
+        "found {} ({}, profile {}, device code {}) at {} · firmware {}",
+        profile.model,
+        reader.model_code(),
+        profile.id,
+        profile.device_code,
+        reader.volume.display(),
+        reader.firmware
+    );
 
     if options.dry_run {
-        println!("{}", dry_run_plan(&options, &reader));
+        println!(
+            "{}\nrelease: {}",
+            dry_run_plan(&options, &reader),
+            payload.description()
+        );
         return Ok(());
     }
+    if !confirm(&options, &reader, profile, &payload)? {
+        println!("Declined; nothing was written.");
+        return Ok(());
+    }
+    reader_still_connected(&reader)?;
     if options.mode == SetupMode::Undo {
         return undo_setup(&reader, options.eject);
     }
 
-    // Built before anything is written, so a build that fails leaves the
-    // reader exactly as it was rather than half set up.
-    let built = build_package_bytes()?;
+    // Built or fully verified before anything is written, so a failure leaves
+    // the reader exactly as it was rather than half set up.
+    let built = payload.into_built()?;
+    reader_still_connected(&reader)?;
     let installed = setup::write_payload(&built.members, &reader.volume)?;
     setup::verify_payload(&built.members, &reader.volume)?;
+    reader_still_connected(&reader)?;
     let ssh = options
         .enable_ssh
         .then(|| setup::enable_ssh(&reader.volume))
@@ -3245,7 +3737,7 @@ fn setup_device(arguments: &[String]) -> Result<(), String> {
             ejected,
             waiting,
         }
-        .describe(&reader.volume)
+        .describe_for(&reader)
     );
     if waiting {
         let subnet = subnet.unwrap_or_default();
@@ -4255,12 +4747,24 @@ where
 }
 
 /// Drives a running simulator from a script, and brings the panel back as PNG.
+///
+/// With `--record` it also brings it back as a moving picture. That lives here
+/// rather than in `kobo record` because the division between the two is
+/// deliberate and documented: `drive` is the simulator and `record` is the
+/// device. `record` is a framebuffer reader -- it uploads the doctor, has the
+/// device write `/dev/fb0` into a file, and pulls that file home over SSH --
+/// and there is no framebuffer on this side to point it at. What there is, is
+/// a driver already holding a connection to the process doing the rendering,
+/// which is the only thing that knows when a screen has changed.
 fn drive_command(arguments: &[String]) -> Result<(), String> {
     let mut address = "127.0.0.1:8787".to_owned();
     let mut shots = PathBuf::from("target/kobo-shots");
     let mut script: Option<String> = None;
     let mut steps: Vec<String> = Vec::new();
     let mut ideal = false;
+    let mut record: Option<PathBuf> = None;
+    let mut fps = drive::DEFAULT_RECORD_FPS;
+    let mut ghosting = false;
     let mut index = 0;
     while index < arguments.len() {
         match arguments[index].as_str() {
@@ -4293,6 +4797,21 @@ fn drive_command(arguments: &[String]) -> Result<(), String> {
                 index += 1;
             }
             "--ideal" => ideal = true,
+            "--record" => {
+                record = Some(PathBuf::from(
+                    arguments.get(index + 1).ok_or("--record needs a folder")?,
+                ));
+                index += 1;
+            }
+            "--fps" => {
+                fps = arguments
+                    .get(index + 1)
+                    .ok_or("--fps needs a rate")?
+                    .parse()
+                    .map_err(|_| "--fps takes a whole number".to_owned())?;
+                index += 1;
+            }
+            "--ghosting" => ghosting = true,
             other => return Err(format!("unknown option '{other}'\n{DRIVE_USAGE}")),
         }
         index += 1;
@@ -4300,11 +4819,35 @@ fn drive_command(arguments: &[String]) -> Result<(), String> {
     if script.is_none() && steps.is_empty() {
         return Err(DRIVE_USAGE.to_owned());
     }
-    let mut driver = drive::Driver::new(&address, &shots).ideal(ideal);
-    if let Some(script) = script {
-        driver.run_script(&script)?;
+    // Before the simulator is touched, because the frames are only half of
+    // what `--record` was asked for and finding out at the end costs the whole
+    // run. `kobo record --device` is deliberately softer about this: there the
+    // numbered PNGs are the product and the video is a bonus.
+    if record.is_some() && !ffmpeg_is_available() {
+        return Err(FFMPEG_MISSING.to_owned());
     }
-    driver.run_script(&steps.join("\n"))?;
+    let recorder = record
+        .as_ref()
+        .map(|_| drive::Recorder::start(&address, fps, ghosting))
+        .transpose()?;
+
+    let mut driver = drive::Driver::new(&address, &shots).ideal(ideal);
+    let outcome = script
+        .map_or(Ok(()), |script| driver.run_script(&script))
+        .and_then(|()| driver.run_script(&steps.join("\n")));
+
+    // Written even when a step failed. A recording of the run that went wrong
+    // is the recording worth having, and throwing it away to report the
+    // failure a second later would be the wrong way round.
+    if let (Some(recorder), Some(directory)) = (recorder, record.as_ref()) {
+        match recorder.finish() {
+            Ok(recording) => write_recording(directory, &recording)?,
+            Err(error) if outcome.is_ok() => return Err(error),
+            Err(error) => eprintln!("warning: nothing was recorded: {error}"),
+        }
+    }
+    outcome?;
+
     println!(
         "drive: every step passed; screenshots in {}",
         shots.display()
@@ -4627,25 +5170,32 @@ fn write_recording(
     Ok(())
 }
 
-/// Turns the frames into an mp4, if ffmpeg is available.
+/// Whether ffmpeg can be run at all.
 ///
-/// The frames are not evenly spaced, because only the ones that changed were
-/// kept, so a concat list carrying each frame's real duration is used rather
-/// than a fixed rate. Otherwise a screen held for ten seconds would flash past
-/// in the same time as one held for a tenth of a second.
-fn write_recording_video(
-    directory: &Path,
-    frames: &[RecordedFrame],
-) -> Result<Option<PathBuf>, String> {
-    if std::process::Command::new("ffmpeg")
+/// Asked before a run rather than after it wherever the moving picture is the
+/// point of the run. Discovering that ffmpeg is missing at the end of a script
+/// that took a minute to drive is a minute nobody gets back.
+fn ffmpeg_is_available() -> bool {
+    std::process::Command::new("ffmpeg")
         .arg("-version")
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status()
-        .is_err()
-    {
-        return Ok(None);
-    }
+        .is_ok_and(|status| status.success())
+}
+
+/// What to say when it is not there.
+const FFMPEG_MISSING: &str = "ffmpeg is not on the path, and a recording is assembled with it.\n\
+                              install it with: brew install ffmpeg (macOS) \
+                              or apt install ffmpeg (Debian)";
+
+/// The concat list ffmpeg is fed, holding each frame and how long it was up.
+///
+/// The frames are not evenly spaced, because only the ones that changed were
+/// kept, so a list carrying each frame's real duration is used rather than a
+/// fixed rate. Otherwise a screen held for ten seconds would flash past in the
+/// same time as one held for a tenth of a second.
+fn concat_list(frames: &[RecordedFrame]) -> String {
     let mut list = String::new();
     for (index, frame) in frames.iter().enumerate() {
         let next = frames
@@ -4659,15 +5209,34 @@ fn write_recording_video(
     if let Some(index) = frames.len().checked_sub(1) {
         let _ = writeln!(list, "file 'frame-{index:04}.png'");
     }
+    list
+}
+
+/// Turns the frames into an mp4 and a looping GIF, if ffmpeg is available.
+///
+/// Two files because they are read in two places. The mp4 is what you scrub
+/// through when you are looking for the frame where it went wrong. The GIF is
+/// what goes in a README: a repository path in an `<img>` renders everywhere
+/// and a `<video>` element does not, and a demo that waits to be clicked is a
+/// demo nobody sees.
+fn write_recording_video(
+    directory: &Path,
+    frames: &[RecordedFrame],
+) -> Result<Option<PathBuf>, String> {
+    if !ffmpeg_is_available() {
+        return Ok(None);
+    }
     let list_path = directory.join("frames.txt");
-    fs::write(&list_path, list)
+    fs::write(&list_path, concat_list(frames))
         .map_err(|error| format!("write {}: {error}", list_path.display()))?;
     let video = directory.join("recording.mp4");
-    let status = std::process::Command::new("ffmpeg")
-        .args(["-y", "-f", "concat", "-safe", "0", "-i"])
+    let mut encode = std::process::Command::new("ffmpeg");
+    encode
+        .args(["-nostdin", "-y", "-loglevel", "error"])
+        .args(["-f", "concat", "-safe", "0", "-i"])
         .arg(&list_path)
-        // Even dimensions, because h264 refuses odd ones and 1072x1448 is only
-        // even by luck.
+        // Even dimensions, because h264 refuses odd ones and 1072x1448 is
+        // only even by luck.
         .args([
             "-vf",
             "pad=ceil(iw/2)*2:ceil(ih/2)*2",
@@ -4676,25 +5245,59 @@ fn write_recording_video(
             "-r",
             "10",
         ])
+        .arg(&video);
+    run_ffmpeg(encode)?;
+    // Built from the mp4 rather than from the frames again, the same way
+    // `cut-tour.py` builds the one on the front page, so the two are the same
+    // picture at the same width with the same palette.
+    let loop_path = directory.join("recording.gif");
+    let mut looping = std::process::Command::new("ffmpeg");
+    looping
+        .args(["-nostdin", "-y", "-loglevel", "error", "-i"])
         .arg(&video)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map_err(|error| format!("run ffmpeg: {error}"))?;
-    if !status.success() {
-        return Err("ffmpeg refused the frames".to_owned());
-    }
+        .args([
+            "-vf",
+            "scale=600:-1:flags=lanczos,fps=12,split[a][b];\
+             [a]palettegen=max_colors=64[p];\
+             [b][p]paletteuse=dither=bayer:bayer_scale=3",
+        ])
+        .arg(&loop_path);
+    run_ffmpeg(looping)?;
+    println!("loop {}", loop_path.display());
     Ok(Some(video))
+}
+
+fn run_ffmpeg(command: std::process::Command) -> Result<(), String> {
+    let mut command = command;
+    let output = command
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .output()
+        .map_err(|error| format!("run ffmpeg: {error}"))?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+    if stderr.is_empty() {
+        Err("ffmpeg refused the frames".to_owned())
+    } else {
+        Err(format!("ffmpeg refused the frames: {stderr}"))
+    }
 }
 
 const SHOT_USAGE: &str =
     "usage: kobo shot [--device HOST | --address host:port] [--out PATH] [--ideal]";
 
-const DRIVE_USAGE: &str = "usage: kobo drive [--address host:port] [--shots DIR] [--ideal] \
-                           (--script PATH | --step 'tap Search' ...)\n\
+const DRIVE_USAGE: &str = "usage: kobo drive [--address host:port] [--shots DIR] [--ideal]\n\
+                           \u{20}                 [--record DIR [--fps N] [--ghosting]]\n\
+                           \u{20}                 (--script PATH | --step 'tap Search' ...)\n\
                            steps: tap LABEL | tap-at X,Y | type TEXT | shot NAME | expect TEXT\n\
                            \u{20}       expect-missing TEXT | wait-for TEXT | clean | dump\n\
-                           \u{20}       lifecycle foreground|background | scenario NAME | wait MS";
+                           \u{20}       lifecycle foreground|background | scenario NAME | wait MS\n\
+                           --record films the panel while the script runs and writes numbered\n\
+                           \u{20} PNGs, timings.txt, recording.mp4 and recording.gif into DIR.\n\
+                           \u{20} Frames are residue-free unless --ghosting asks for the real\n\
+                           \u{20} e-ink refresh; --ideal governs the `shot` steps as before.";
 
 /// Where the runtime reads named secrets from, mirrored from `kobod`.
 const DEVICE_SECRETS_DIRECTORY: &str = "/mnt/onboard/.adds/cobalt/secrets";
@@ -5286,6 +5889,7 @@ fn print_help() {
            new <name>             Create a Rust application\n\
            dev [--builtin] [address]  Run this SDK app in the browser simulator\n\
            drive --script PATH    Drive a running simulator and save PNG screenshots\n\
+           drive --script PATH --record DIR  ... and film it, no hardware needed\n\
            shot [--device HOST]   Save a PNG of the panel (device or simulator)\n\
            record --device IP [--seconds N] [--fps F] [--out DIR]  Film the panel, read-only\n\
            present <app> --device IP [--seconds N]  Run one app on the panel\n\
@@ -5315,9 +5919,16 @@ fn print_help() {
                                    Build and verify every registered Store app\n\
            app-release --registry PATH --seed PATH --out PATH --base-url HTTPS_URL [--prebuilt-dir PATH | --artifact-dir PATH]\n\
                                    Build and sign every registered Store app\n\
-           setup [--volume PATH] [--undo] [--enable-ssh] [--no-key]  Prepare a reader\n\
-                                   over USB; root SSH is an explicit opt-in, and it\n\
-                                   installs this machine's key unless --no-key\n\
+           host-release-sign --manifest PATH --seed PATH --signature PATH --ssh-signature PATH\n\
+                                   Sign host release metadata for publishing\n\
+           host-release-verify --manifest PATH --signature PATH\n\
+                                   Verify signed host release metadata\n\
+           update [--channel stable|beta]\n\
+                                   Update only the installed host kobo command; Stable is default\n\
+           setup [--volume PATH] [--undo] [--enable-ssh] [--no-key] [--dry-run]\n\
+                 [--yes] [--non-interactive] [--release-dir PATH | --source]\n\
+                                   Prepare a reader over USB after default-no confirmation;\n\
+                                   installed builds use their verified prebuilt device package\n\
            deploy --device IP [--package PATH]   Install over Wi-Fi, no reboot\n\
            secret set <name> [--from PATH] --device IP   Install a credential an app can name\n\
            secret list --device IP   Name the installed credentials, never their values\n\
@@ -5348,7 +5959,28 @@ mod tests {
             raw.extend_from_slice(&millis.to_le_bytes());
             raw.extend(std::iter::repeat_n(*fill, (width * height) as usize));
         }
+
         raw
+    }
+
+    #[test]
+    fn host_update_defaults_stable_and_requires_explicit_beta() {
+        let arguments = |values: &[&str]| {
+            values
+                .iter()
+                .map(|value| (*value).to_owned())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            super::parse_host_update(&arguments(&[])),
+            Ok(super::HostUpdateChannel::Stable)
+        );
+        assert_eq!(
+            super::parse_host_update(&arguments(&["--channel", "beta"])),
+            Ok(super::HostUpdateChannel::Beta)
+        );
+        assert!(super::parse_host_update(&arguments(&["--beta"])).is_err());
+        assert!(super::parse_host_update(&arguments(&["--channel", "nightly"])).is_err());
     }
 
     #[test]
@@ -5594,6 +6226,38 @@ mod tests {
     fn something_that_is_not_a_recording_is_refused() {
         assert!(super::decode_recording(b"not a recording at all").is_err());
         assert!(super::decode_recording(&recording(2, 3, &[])).is_err());
+    }
+
+    /// The frames are not evenly spaced, because only the ones that moved were
+    /// kept. Handing them to ffmpeg at a fixed rate would play a screen that
+    /// was up for ten seconds in the same time as one that was up for a tenth
+    /// of one, which is a recording of a run that never happened.
+    #[test]
+    fn each_frame_is_played_for_as_long_as_it_was_really_on_the_panel() {
+        let raw = recording(2, 3, &[(0, 0xff), (2_000, 0x40), (2_150, 0x10)]);
+        let (_, _, frames) = super::decode_recording(&raw).expect("decode");
+        assert_eq!(
+            super::concat_list(&frames),
+            "file 'frame-0000.png'\nduration 2.000\n\
+             file 'frame-0001.png'\nduration 0.150\n\
+             file 'frame-0002.png'\nduration 1.000\n\
+             file 'frame-0002.png'\n",
+            "the last frame is named twice because concat ignores the last duration"
+        );
+    }
+
+    /// A frame that was replaced within a tenth of a second is still a frame
+    /// somebody has to be able to see. Played for its real duration it is one
+    /// or two hundredths of a second, which at any sane frame rate is a frame
+    /// the encoder drops entirely.
+    #[test]
+    fn a_screen_that_barely_appeared_is_still_held_long_enough_to_see() {
+        let raw = recording(2, 3, &[(0, 0xff), (20, 0x40)]);
+        let (_, _, frames) = super::decode_recording(&raw).expect("decode");
+        assert!(
+            super::concat_list(&frames).contains("duration 0.100"),
+            "a frame was given less time than the encoder will keep"
+        );
     }
 
     use super::package;
@@ -6645,7 +7309,11 @@ mod tests {
     }
 
     mod preparing {
-        use super::super::{dry_run_plan, parse_setup, setup, SetupMode};
+        use super::super::{
+            choose_reader_list, confirmation_answer, dry_run_plan, gzip,
+            load_release_package_from_manifest, parse_setup, setup, setup_device_with_confirmation,
+            SetupMode, SetupPayload,
+        };
         use std::path::PathBuf;
 
         fn arguments(values: &[&str]) -> Vec<String> {
@@ -6717,6 +7385,133 @@ mod tests {
             assert!(parsed.wait);
             assert!(!parsed.dry_run);
             assert!(!parsed.enable_ssh);
+            assert!(!parsed.yes);
+            assert!(!parsed.non_interactive);
+        }
+
+        #[test]
+        fn automation_requires_an_explicit_confirmation() {
+            let error =
+                parse_setup(&arguments(&["--non-interactive"])).expect_err("confirmation required");
+            assert!(error.contains("--yes"), "{error}");
+            let parsed =
+                parse_setup(&arguments(&["--non-interactive", "--yes"])).expect("confirmed");
+            assert!(parsed.non_interactive);
+            assert!(parsed.yes);
+            for declined in ["", "n", "no", "later"] {
+                assert!(!confirmation_answer(declined));
+            }
+            assert!(confirmation_answer("yes\n"));
+        }
+
+        #[test]
+        fn declined_confirmation_writes_nothing() {
+            let volume = TempVolume::new("declined");
+            let system = volume.path.join(".kobo");
+            std::fs::create_dir_all(&system).expect("system folder");
+            std::fs::write(
+                system.join("version"),
+                "N365410043013,4.9.77,4.45.23697,4.9.77\n",
+            )
+            .expect("version");
+            setup_device_with_confirmation(
+                &arguments(&[
+                    "--volume",
+                    volume.path.to_str().expect("path"),
+                    "--source",
+                    "--no-eject",
+                ]),
+                |_, _, _, _| Ok(false),
+            )
+            .expect("declined cleanly");
+            assert!(!volume.path.join(setup::INSTALL_FOLDER).exists());
+            assert!(!volume.path.join(setup::SETTINGS).exists());
+        }
+
+        #[test]
+        fn several_readers_are_refused_without_printing_full_serials() {
+            let first = mounted(PathBuf::from("/Volumes/ONE"));
+            let mut second = mounted(PathBuf::from("/Volumes/TWO"));
+            second.serial = "N418999999999".to_owned();
+            let error = choose_reader_list(vec![first, second]).expect_err("ambiguous");
+            assert!(error.contains("2 readers"), "{error}");
+            assert!(error.contains("/Volumes/ONE"), "{error}");
+            assert!(!error.contains("N365410043013"), "{error}");
+            assert!(!error.contains("N418999999999"), "{error}");
+        }
+
+        #[test]
+        fn source_build_setup_remains_an_explicit_supported_path() {
+            let parsed = parse_setup(&arguments(&["--source", "--dry-run"])).expect("source");
+            assert!(parsed.source);
+            assert!(parse_setup(&arguments(&["--source", "--release-dir", "release"])).is_err());
+        }
+
+        #[test]
+        fn a_verified_prebuilt_device_package_becomes_direct_writer_members() {
+            let release = TempVolume::new("prebuilt");
+            std::fs::write(release.path.join("channel"), "stable\n").expect("channel");
+            let members = vec![
+                crate::package::Member {
+                    path: format!("{}/bin/kobod", crate::package::INSTALL_ROOT),
+                    bytes: b"prebuilt binary".to_vec(),
+                    program: true,
+                },
+                crate::package::Member {
+                    path: format!("{}/VERSION", crate::package::INSTALL_ROOT),
+                    bytes: format!("{}\n", env!("CARGO_PKG_VERSION")).into_bytes(),
+                    program: false,
+                },
+            ];
+            let archive = crate::package::tar(&members).expect("archive");
+            let compressed = gzip(&archive).expect("gzip");
+            let asset_name = format!("cobalt-{}-KoboRoot.tgz", env!("CARGO_PKG_VERSION"));
+            std::fs::write(release.path.join(&asset_name), &compressed).expect("package");
+            let manifest = crate::host_release::Manifest {
+                version: env!("CARGO_PKG_VERSION").to_owned(),
+                channels: vec!["stable".to_owned(), "beta".to_owned()],
+                source: "0123456789abcdef0123456789abcdef01234567".to_owned(),
+                assets: vec![crate::host_release::Asset {
+                    kind: "device".to_owned(),
+                    platform: None,
+                    name: asset_name,
+                    bytes: compressed.len() as u64,
+                    sha256: crate::sha256::hex_digest(&compressed),
+                }],
+            };
+            let mut damaged = manifest.clone();
+            damaged.assets[0].sha256 = "0".repeat(64);
+            let Err(error) = load_release_package_from_manifest(&release.path, damaged) else {
+                panic!("bad checksum was accepted");
+            };
+            assert!(error.contains("checksum failed"), "{error}");
+            let payload =
+                load_release_package_from_manifest(&release.path, manifest).expect("prebuilt");
+            match payload {
+                SetupPayload::Prebuilt { built, channel, .. } => {
+                    assert_eq!(channel, "stable");
+                    assert_eq!(built.members, members);
+                }
+                SetupPayload::Source => panic!("prebuilt became source build"),
+            }
+
+            std::fs::write(release.path.join("channel"), "beta\n").expect("channel");
+            let manifest = crate::host_release::Manifest {
+                version: env!("CARGO_PKG_VERSION").to_owned(),
+                channels: vec!["stable".to_owned(), "beta".to_owned()],
+                source: "0123456789abcdef0123456789abcdef01234567".to_owned(),
+                assets: vec![crate::host_release::Asset {
+                    kind: "device".to_owned(),
+                    platform: None,
+                    name: format!("cobalt-{}-KoboRoot.tgz", env!("CARGO_PKG_VERSION")),
+                    bytes: compressed.len() as u64,
+                    sha256: crate::sha256::hex_digest(&compressed),
+                }],
+            };
+            let Err(error) = load_release_package_from_manifest(&release.path, manifest) else {
+                panic!("beta USB package was accepted");
+            };
+            assert!(error.contains("stable releases only"), "{error}");
         }
 
         #[test]

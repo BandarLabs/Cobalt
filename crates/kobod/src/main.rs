@@ -60,10 +60,12 @@ use std::process::ExitCode;
 
 mod app_link;
 mod app_store;
+mod autoupdate;
 #[cfg(feature = "device-write")]
 mod blackbox;
 #[cfg(feature = "device-write")]
 mod device;
+mod frame;
 mod update;
 
 fn main() -> ExitCode {
