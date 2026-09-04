@@ -7,42 +7,42 @@
       "files": [
         {
           "path": "Cargo.lock",
-          "base_blob": "6e0752673a601512064dcfb5b8fa993e4886c8ff",
+          "base_blob": "f3f8fd06292b26c5ffab6abf944b73a4e8b31399",
           "compatible_blob": "e45dc3c8359b7b1e1ade2f088e67f6db66205c37"
         },
         {
           "path": "apps/backgammon/Cargo.toml",
-          "base_blob": null,
+          "base_blob": "cb235d72110488dd9e0b2728f17058bec4a1714f",
           "compatible_blob": "cb235d72110488dd9e0b2728f17058bec4a1714f"
         },
         {
           "path": "apps/backgammon/README.md",
-          "base_blob": null,
+          "base_blob": "469bcf33ff96d5f79e338740017fc387d28bb628",
           "compatible_blob": "469bcf33ff96d5f79e338740017fc387d28bb628"
         },
         {
           "path": "apps/backgammon/drive.txt",
-          "base_blob": null,
+          "base_blob": "a33c90db9d65ba8013adde9751113c1bfab0f023",
           "compatible_blob": "a33c90db9d65ba8013adde9751113c1bfab0f023"
         },
         {
           "path": "apps/backgammon/screenshots/backgammon-opening.png",
-          "base_blob": null,
+          "base_blob": "124691746e41145ce2e8ad5dfb4e73ef897cf2e0",
           "compatible_blob": "124691746e41145ce2e8ad5dfb4e73ef897cf2e0"
         },
         {
           "path": "apps/backgammon/screenshots/backgammon-play.png",
-          "base_blob": null,
+          "base_blob": "c27f85ffae06e8280f79ea19baf73a6d4e975e81",
           "compatible_blob": "c27f85ffae06e8280f79ea19baf73a6d4e975e81"
         },
         {
           "path": "apps/backgammon/screenshots/backgammon-selected.png",
-          "base_blob": null,
+          "base_blob": "69db716c1548f72a2f99b8a04a51fc5413fa72b3",
           "compatible_blob": "69db716c1548f72a2f99b8a04a51fc5413fa72b3"
         },
         {
           "path": "apps/backgammon/src/main.rs",
-          "base_blob": null,
+          "base_blob": "8c7a4d85180497a45eee840e22ae3a4ed10d1f36",
           "compatible_blob": "8c7a4d85180497a45eee840e22ae3a4ed10d1f36"
         },
         {
@@ -87,7 +87,7 @@
         },
         {
           "path": "crates/kobo-policy/src/credentials.rs",
-          "base_blob": "229061a856c96fcfbecbd264f65107f0b9d5293c",
+          "base_blob": "8cfe06762b6a039c09c1991e9ad374f3dcbb50a3",
           "compatible_blob": "6ad6e11d12de70eb5a59566ca5ce722f82c152fb"
         },
         {
@@ -142,7 +142,7 @@
         },
         {
           "path": "crates/kobo-ui/src/lib.rs",
-          "base_blob": "b423c372440c61e785db9dd0128eac22343cb9f8",
+          "base_blob": "ce538c70b5779ee482e2b35aa83191eb06b04b4d",
           "compatible_blob": "8ae15c0c4ac8b7eadba44f06d2561edd0d143cd9"
         },
         {

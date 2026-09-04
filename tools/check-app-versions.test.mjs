@@ -29,7 +29,7 @@ import {
   workspacePackageDirectories
 } from "./store-catalog-changes.mjs";
 
-const BETA_RELEASE_BASE = "2b08e793e13d36547fb72841df846774ca69798d";
+const BETA_RELEASE_BASE = "8263fc03c30a937d069157ec96b619da4aeb01d0";
 
 function baseBlob(path) {
   try {
