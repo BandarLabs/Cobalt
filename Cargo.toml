@@ -28,6 +28,7 @@ members = [
     "crates/kobo-ui",
     "crates/kobo-guard",
     "crates/kobo-handoff",
+    "crates/kobo-wifi-trace",
     "crates/kobo-xml",
     "crates/kobod",
     "examples/brief",
@@ -52,7 +53,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.3.5"
+version = "0.3.6"
 edition = "2021"
 rust-version = "1.85.1"
 license = "AGPL-3.0-only"
