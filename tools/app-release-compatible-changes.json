@@ -8,7 +8,7 @@
         {
           "path": "Cargo.lock",
           "base_blob": "98e86504890e59da1755181ad38d7ffaa86c635a",
-          "compatible_blob": "55654f711018b66105d74aa4b07d7e863c6f21e6"
+          "compatible_blob": "f55a8be42e1edce7759feebe0131c9f122b8e7ea"
         },
         {
           "path": "crates/kobo-abi/src/lib.rs",
@@ -48,12 +48,12 @@
         {
           "path": "crates/kobo-policy/src/credentials.rs",
           "base_blob": "229061a856c96fcfbecbd264f65107f0b9d5293c",
-          "compatible_blob": "2309b1dcb50dea3b0c95045c9dd45aa8f9140360"
+          "compatible_blob": "27cd53974bfc486208dc5ab1626d013aa91320da"
         },
         {
           "path": "crates/kobo-policy/src/services.rs",
           "base_blob": "e5b8617ac601332dd9b5d39c8e6ea83d613e171b",
-          "compatible_blob": "48e98006a574b8b6f2b2e52cd0c282d8fe0a7816"
+          "compatible_blob": "52774ba1b53d710bb7179c4f343dc770f16d42dd"
         },
         {
           "path": "crates/kobo-policy/src/tasks.rs",
@@ -63,7 +63,7 @@
         {
           "path": "crates/kobo-protocol/src/lib.rs",
           "base_blob": "f34528d7b407e542a7836b0348b91de043822274",
-          "compatible_blob": "32fecee26bcc28494ce8f4cdcd8bee10e01a8d2a"
+          "compatible_blob": "cf73d3402691def397b8933ef1f4a8de265eb073"
         },
         {
           "path": "crates/kobo-sdk/Cargo.toml",
@@ -73,12 +73,12 @@
         {
           "path": "crates/kobo-sdk/src/lib.rs",
           "base_blob": "9a645f3f3d9c8746dda47d858bb3fcd744621df8",
-          "compatible_blob": "f6fe3ad2810a4ddda2027ad249865f1f14435f3e"
+          "compatible_blob": "b6cfb2f08e91df9e9c1d05bb15b79c2d3eb098a9"
         },
         {
           "path": "crates/kobo-sdk/src/credentials.rs",
           "base_blob": null,
-          "compatible_blob": "7cc2181bdad2e5b580a668283642159d486551e4"
+          "compatible_blob": "7e3fb1a3a490a5c45358056b729182b3b38dfda6"
         },
         {
           "path": "crates/kobo-sdk/src/keyboard.rs",
@@ -103,7 +103,7 @@
         {
           "path": "crates/kobo-ui/src/lib.rs",
           "base_blob": "b423c372440c61e785db9dd0128eac22343cb9f8",
-          "compatible_blob": "b75bcc30db8214785b7881aa476cd4a53d60ae13"
+          "compatible_blob": "ee731d6d51abb75f980d2ccd84c4857661d06a39"
         },
         {
           "path": "crates/kobo-ui/src/vector.rs",
@@ -118,7 +118,7 @@
         {
           "path": "crates/kobod/src/app_store.rs",
           "base_blob": "6e7caa312042f6927fc3da3b0cc71cf69d5be205",
-          "compatible_blob": "342c5225dcb29bd97ee9e5c23e950cda58f31eaa"
+          "compatible_blob": "477535ea1dd2053d5be233c57ff9297007000418"
         },
         {
           "path": "tools/icon-import/icons.txt",
