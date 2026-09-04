@@ -47,6 +47,7 @@ use kobo_protocol::{Frame, Lifecycle, Message, TaskError, TaskOutcome};
 use kobo_ui::{
     ActionId, CellStyle, Chrome, FontHandle, Layout, LayoutKind, PictureCache, Screen, Surface,
 };
+use kobo_wifi_trace::{Lifecycle as WifiTraceEvent, TraceClient};
 use std::collections::BTreeMap;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -59,7 +60,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 const COBALT_ROOT: &str = "/mnt/onboard/.adds/cobalt";
-/// Where owner-managed global and app-scoped credentials live.
+/// Where named credentials live.
 ///
 /// On the book partition, because that is the one place the owner can reach
 /// over USB without a shell, and because `/tmp` is a RAM disk that every
@@ -491,7 +492,11 @@ impl Default for Limits {
 /// Returns an error describing what failed and, always, what state the device
 /// was left in.
 #[allow(clippy::too_many_lines)]
-pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
+pub fn present(
+    application: &Path,
+    limits: Limits,
+    wifi_trace: &mut TraceClient,
+) -> Result<String, String> {
     let limits = Limits {
         idle: limits.idle.min(MAX_SESSION),
         ceiling: limits.ceiling.min(MAX_SESSION),
@@ -603,9 +608,12 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
 
     // The point of no return.
     trace("stopping the reader");
+    wifi_trace.checkpoint(WifiTraceEvent::PreStop);
     reader
         .stop(STOP_GRACE)
         .map_err(|error| format!("stop the reader: {error}"))?;
+    wifi_trace.checkpoint(WifiTraceEvent::NickelStopped);
+    wifi_trace.checkpoint(WifiTraceEvent::RecoveryBegin);
 
     // Nickel owns Wi-Fi while it runs, but its supplicant and DHCP client are
     // detached processes. Capture them before the handoff and restore exactly
@@ -620,6 +628,9 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
         }
     }
     let session_network = network.restore_for_session(Duration::from_secs(30));
+    if network.was_online() && kobo_hal::network::is_online(kobo_hal::network::WIRELESS_LINK) {
+        wifi_trace.checkpoint(WifiTraceEvent::RecoveryFirstSuccess);
+    }
     trace(&format!(
         "session network: {:?}; uncertain captures: {:?}; start errors: {:?}",
         session_network.outcome(),
@@ -784,8 +795,29 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
             )
         });
     }
+    // Nickel launches its radio daemons detached, so stopping the reader never
+    // took them down and they have been running for the whole session. A
+    // restarted Nickel launches its own on top of them, the two fight over one
+    // piece of hardware, and the radio stays down until a reboot. On the
+    // profiles that name one, the leftovers are stopped here, after the panel
+    // is given up and before the reader returns, so the new Nickel comes up
+    // alone. This is a reap, not radio configuration: the interface, the
+    // association and the choice to reconnect stay Nickel's.
+    //
+    // Every one of them goes, not the first: a reader that has handed the
+    // panel back several times has one leftover per session, and stopping only
+    // one leaves the collision in place. Timing is the whole of it on the
+    // MediaTek parts, where the leftover is killable now and, once the new
+    // Nickel has started its own and that one has wedged trying to open a
+    // device node this one still holds, is not killable at all.
+    //
+    // Nothing here is fatal. A daemon that is absent or will not die leaves
+    // the owner exactly where every session left them before this existed:
+    // reconnecting by hand or rebooting.
+    reap_leftover_radio_daemons(profile.leftover_radio_daemons);
     trace("panel and touch released, restarting the reader");
     println!("panel released, restarting the reader");
+    wifi_trace.checkpoint(WifiTraceEvent::NickelStartRequested);
     let restarted = match reader.start(START_GRACE) {
         Ok(pid) => pid,
         Err(error) => {
@@ -803,12 +835,15 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
             });
         }
     };
+    wifi_trace.checkpoint(WifiTraceEvent::NickelPidObserved);
     // Any daemon Cobalt started for the session was stopped by exact captured
     // identity above. A stop or capture uncertainty takes the clean-reboot
     // path, so Nickel is never started on top of an unproven network owner.
     trace("reader restart returned, waiting for it to feed the freeze watchdog");
     println!("waiting for the reader to feed the freeze watchdog");
-    let reader_wifi = restore_reader_wifi(network.was_online(), Duration::from_secs(45));
+    wifi_trace.checkpoint(WifiTraceEvent::NickelRecoveryBegin);
+    let reader_wifi =
+        restore_reader_wifi(network.was_online(), Duration::from_secs(45), wifi_trace);
     if !reader_wifi {
         trace("the reader did not complete Wi-Fi association; requesting a clean reboot");
         watchdog.disarm();
@@ -862,8 +897,9 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
     }
 }
 
-fn restore_reader_wifi(was_online: bool, within: Duration) -> bool {
+fn restore_reader_wifi(was_online: bool, within: Duration, wifi_trace: &mut TraceClient) -> bool {
     if !was_online {
+        wifi_trace.checkpoint(WifiTraceEvent::Current94GateAccepted);
         return true;
     }
     let deadline = Instant::now() + within;
@@ -875,8 +911,13 @@ fn restore_reader_wifi(was_online: bool, within: Duration) -> bool {
             let healthy =
                 associated && kobo_hal::network::is_online(kobo_hal::network::WIRELESS_LINK);
             if healthy {
+                let first_success = healthy_since.is_none();
                 let since = healthy_since.get_or_insert_with(Instant::now);
+                if first_success {
+                    wifi_trace.checkpoint(WifiTraceEvent::NickelRecoveryFirstSuccess);
+                }
                 if since.elapsed() >= Duration::from_secs(10) {
+                    wifi_trace.checkpoint(WifiTraceEvent::Current94GateAccepted);
                     return true;
                 }
             } else {
@@ -1030,8 +1071,6 @@ struct Hosted {
     /// Identity that survives the list being reordered. An index would not:
     /// applications are removed from the middle when they end.
     id: u64,
-    /// Selected at Hello and retained for responses to this application.
-    version: u8,
     name: String,
     path: PathBuf,
     /// Root-owned filesystem visible to this application on the device.
@@ -1211,7 +1250,7 @@ impl Hosted {
         kobo_protocol::write_to(
             &mut self.stream,
             &Frame {
-                version: self.version,
+                version: kobo_protocol::VERSION,
                 request_id: 0,
                 message,
             },
@@ -1802,10 +1841,8 @@ fn host_applications(
                             .is_some_and(|(at, _, _)| at.elapsed() >= HOLD_TIME),
                         _ => false,
                     };
-                    let version = apps[index].version;
                     let disposition = deliver_touch(
                         &mut apps[index].stream,
-                        version,
                         event,
                         screen.as_ref(),
                         &chrome,
@@ -2406,19 +2443,6 @@ fn host_applications(
                                             }
                                         }
                                     }
-                                    kobo_protocol::DeviceRequest::SetSecret { name, value } => {
-                                        match kobo_policy::credentials::install_app_secret(
-                                            Path::new(SECRETS),
-                                            &apps[index].name,
-                                            name,
-                                            value.as_str(),
-                                        ) {
-                                            Ok(()) => kobo_protocol::DeviceResult::Done,
-                                            Err(error) => {
-                                                kobo_protocol::DeviceResult::Failed(error)
-                                            }
-                                        }
-                                    }
                                     // Answered by probing the hardware again
                                     // rather than from anything cached, so
                                     // the screen built from it describes the
@@ -2629,7 +2653,7 @@ fn reply(app: &mut Hosted, request_id: u32, message: Message) -> Result<(), Stri
     kobo_protocol::write_to(
         &mut app.stream,
         &Frame {
-            version: app.version,
+            version: kobo_protocol::VERSION,
             request_id,
             message,
         },
@@ -2743,9 +2767,6 @@ fn system_request_allowed(app: &str, request: &kobo_protocol::DeviceRequest) -> 
         | kobo_protocol::DeviceRequest::SetAutoUpdate { .. }
         | kobo_protocol::DeviceRequest::ReadUpdateChannel
         | kobo_protocol::DeviceRequest::SetUpdateChannel { .. } => app == "settings",
-        kobo_protocol::DeviceRequest::SetSecret { name, .. } => {
-            kobo_policy::credentials::may_set(app, name)
-        }
         kobo_protocol::DeviceRequest::ListInstalledApps => matches!(app, "launcher" | "store"),
         kobo_protocol::DeviceRequest::ReadAppCatalog
         | kobo_protocol::DeviceRequest::RefreshAppCatalog
@@ -3049,7 +3070,7 @@ fn start_application(
     let greeting = greet(&listener, whole_screen, &expected_name);
     drop(listener);
     let _ignored = fs::remove_file(&socket_path);
-    let (stream, name, version) = match greeting {
+    let (stream, name) = match greeting {
         Ok(greeting) => greeting,
         Err(error) => {
             stop_application(&mut child, jail.as_deref());
@@ -3062,7 +3083,7 @@ fn start_application(
     };
     let id = *next_id;
     *next_id += 1;
-    if let Err(error) = pump_application(&stream, sender, id, version) {
+    if let Err(error) = pump_application(&stream, sender, id) {
         stop_application(&mut child, jail.as_deref());
         let error = with_trace_failure(error, &child);
         if let Some(root) = &jail {
@@ -3075,7 +3096,7 @@ fn start_application(
     let tasks = TaskRunner::simulated(std::env::temp_dir())
         .with_fetch(Arc::new(kobo_net::fetch_from))
         .with_post(Arc::new(kobo_net::post))
-        .with_app_secrets(SECRETS, &name)
+        .with_secrets(SECRETS)
         .with_credential_policy(Arc::new(move |credential, url, usage| {
             kobo_policy::credentials::allowed(&credential_app, credential, url, usage)
         }))
@@ -3116,7 +3137,6 @@ fn start_application(
         store: kobo_policy::store::Store::new(Path::new(STATE_ROOT).join(&name)),
         shelf: kobo_policy::shelf::Shelf::new(shelf_root),
         name,
-        version,
         path: path.to_path_buf(),
         jail,
         child,
@@ -3205,7 +3225,12 @@ fn preflight(application: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Stops every leftover radio daemon a profile names before the reader returns.
+/// Stops every leftover radio daemon a profile names, so the reader that is
+/// about to start comes up as the only owner of the hardware.
+///
+/// Called from both paths that restart the reader, because a session that
+/// ended badly leaves the same leftovers as one that ended well, and a reader
+/// recovered by the watchdog deserves its radio back just as much.
 pub(crate) fn reap_leftover_radio_daemons(executables: &[&str]) {
     for executable in executables {
         let leftovers = Reader::find_all_running(executable);
@@ -3299,10 +3324,7 @@ fn installed_name(path: &Path) -> Result<String, String> {
 /// Half a second, which is what every touch platform settled on: shorter and
 /// an unhurried tap becomes a gesture nobody asked for, longer and the reader
 /// concludes the panel is ignoring them and lifts off.
-/// Long enough to distinguish a deliberate contextual hold from the immediate
-/// tap that opens a destination, while remaining inside the observed 1–1.5 s
-/// reader comfort range.
-const HOLD_TIME: Duration = Duration::from_millis(1_100);
+const HOLD_TIME: Duration = Duration::from_millis(500);
 
 /// Briefly holds a release so an application's next screen can carry it.
 ///
@@ -3528,11 +3550,11 @@ fn text_hold_for_oriented(
         return None;
     };
     let screen = screen?;
+    let action = screen.hold?;
     let (Ok(x), Ok(y)) = (i32::try_from(x), i32::try_from(y)) else {
         return None;
     };
     let layout = screen.layout_with(&metrics_for(screen).oriented(orientation), chrome);
-    let action = layout.hold?;
     layout.hit_text(x, y).map(|hit| (action, hit))
 }
 
@@ -3556,7 +3578,7 @@ fn greet(
     listener: &std::os::unix::net::UnixListener,
     whole_screen: Rect,
     expected_name: &str,
-) -> Result<(std::os::unix::net::UnixStream, String, u8), String> {
+) -> Result<(std::os::unix::net::UnixStream, String), String> {
     let (mut stream, _) = listener
         .accept()
         .map_err(|error| format!("application never connected: {error}"))?;
@@ -3588,7 +3610,7 @@ fn greet(
         },
     )
     .map_err(|error| format!("welcome: {error}"))?;
-    Ok((stream, name, hello.version))
+    Ok((stream, name))
 }
 
 /// Keeps the recovery watchdog fed from a thread, for the stretches where the
@@ -3645,13 +3667,8 @@ enum Tap {
 /// inside an application goes back to where it was reached from rather than
 /// out of the application. That is a delivery, not a transfer of ownership:
 /// the caller still leaves if no new screen follows.
-#[allow(
-    clippy::too_many_arguments,
-    reason = "touch delivery needs the negotiated protocol, retained screen, and physical pose"
-)]
 fn deliver_touch(
     stream: &mut std::os::unix::net::UnixStream,
-    version: u8,
     event: TouchEvent,
     current: Option<&Screen>,
     chrome: &Chrome,
@@ -3686,7 +3703,7 @@ fn deliver_touch(
         kobo_protocol::write_to(
             stream,
             &Frame {
-                version,
+                version: kobo_protocol::VERSION,
                 request_id: 0,
                 message: Message::TextHold {
                     action,
@@ -3711,7 +3728,7 @@ fn deliver_touch(
     kobo_protocol::write_to(
         stream,
         &Frame {
-            version,
+            version: kobo_protocol::VERSION,
             request_id: 0,
             message: Message::Action { action },
         },
@@ -4017,7 +4034,6 @@ fn pump_application(
     stream: &std::os::unix::net::UnixStream,
     sender: &Sender<Event>,
     id: u64,
-    version: u8,
 ) -> Result<(), String> {
     let mut reader = stream
         .try_clone()
@@ -4028,10 +4044,6 @@ fn pump_application(
             let _ignored = sender.send(Event::AppGone(id));
             return;
         };
-        if frame.version != version {
-            let _ignored = sender.send(Event::AppGone(id));
-            return;
-        }
         if sender.send(Event::App(id, Box::new(frame))).is_err() {
             return;
         }
@@ -4041,30 +4053,6 @@ fn pump_application(
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn an_application_cannot_change_protocol_version_after_greeting() {
-        let (runtime, mut application) =
-            std::os::unix::net::UnixStream::pair().expect("socket pair");
-        let (sender, receiver) = std::sync::mpsc::channel();
-        super::pump_application(&runtime, &sender, 42, kobo_protocol::VERSION)
-            .expect("start application pump");
-        kobo_protocol::write_to(
-            &mut application,
-            &kobo_protocol::Frame {
-                version: kobo_protocol::LEGACY_VERSION,
-                request_id: 1,
-                message: kobo_protocol::Message::Exit,
-            },
-        )
-        .expect("send mixed-version frame");
-        assert!(matches!(
-            receiver
-                .recv_timeout(std::time::Duration::from_secs(1))
-                .expect("application rejection"),
-            super::Event::AppGone(42)
-        ));
-    }
-
     /// `TZ` is read from the environment, which is process-global, so these
     /// are one test rather than several: two tests setting it at once would
     /// see each other's value.
@@ -4288,67 +4276,6 @@ mod tests {
             action_for(touch, Some(&no_hold), &chrome, true),
             Some(ActionId(12))
         );
-
-        let covered = screen.clone().with_overlay(kobo_ui::Overlay::modal(
-            kobo_ui::NodeId(9),
-            "Question",
-            Vec::new(),
-        ));
-        assert_eq!(
-            text_hold_for_oriented(
-                touch,
-                Some(&covered),
-                &chrome,
-                true,
-                kobo_ui::Orientation::Portrait,
-            ),
-            None,
-            "covered text received a hold through the modal"
-        );
-        assert_ne!(
-            action_for(touch, Some(&covered), &chrome, true),
-            Some(ActionId(13)),
-            "the modal leaked the page hold"
-        );
-    }
-
-    #[test]
-    fn landscape_feedback_rect_matches_the_rotated_control() {
-        let physical = crate::device_metrics();
-        let logical = kobo_ui::Rect {
-            x: 10,
-            y: 20,
-            width: 30,
-            height: 40,
-        };
-        assert_eq!(
-            super::physical_feedback_rect(
-                logical,
-                kobo_ui::Orientation::Landscape,
-                kobo_ui::LandscapeTurn::Clockwise,
-                &physical,
-            ),
-            kobo_ui::Rect {
-                x: physical.width - 60,
-                y: 10,
-                width: 40,
-                height: 30,
-            }
-        );
-        assert_eq!(
-            super::physical_feedback_rect(
-                logical,
-                kobo_ui::Orientation::Landscape,
-                kobo_ui::LandscapeTurn::CounterClockwise,
-                &physical,
-            ),
-            kobo_ui::Rect {
-                x: 20,
-                y: physical.height - 40,
-                width: 40,
-                height: 30,
-            }
-        );
     }
 
     #[test]
@@ -4404,6 +4331,45 @@ mod tests {
                 kobo_ui::LandscapeTurn::CounterClockwise,
             ),
             Some(action)
+        );
+    }
+
+    #[test]
+    fn landscape_feedback_rect_matches_the_rotated_control() {
+        let physical = crate::device_metrics();
+        let logical = kobo_ui::Rect {
+            x: 10,
+            y: 20,
+            width: 30,
+            height: 40,
+        };
+        assert_eq!(
+            super::physical_feedback_rect(
+                logical,
+                kobo_ui::Orientation::Landscape,
+                kobo_ui::LandscapeTurn::Clockwise,
+                &physical,
+            ),
+            kobo_ui::Rect {
+                x: physical.width - 60,
+                y: 10,
+                width: 40,
+                height: 30,
+            }
+        );
+        assert_eq!(
+            super::physical_feedback_rect(
+                logical,
+                kobo_ui::Orientation::Landscape,
+                kobo_ui::LandscapeTurn::CounterClockwise,
+                &physical,
+            ),
+            kobo_ui::Rect {
+                x: 20,
+                y: physical.height - 40,
+                width: 40,
+                height: 30,
+            }
         );
     }
 
@@ -4535,7 +4501,6 @@ mod tests {
         assert_eq!(
             deliver_touch(
                 &mut runtime,
-                kobo_protocol::VERSION,
                 tap,
                 Some(&screen),
                 &chrome,
@@ -4552,7 +4517,6 @@ mod tests {
         assert_eq!(
             deliver_touch(
                 &mut runtime,
-                kobo_protocol::VERSION,
                 tap,
                 Some(&owning),
                 &chrome,
@@ -4752,13 +4716,6 @@ mod hosting_tests {
             assert!(!super::system_request_allowed("todo", &request));
         }
 
-        let secret = DeviceRequest::SetSecret {
-            name: "zotero".to_owned(),
-            value: kobo_protocol::SecretValue::new("token"),
-        };
-        assert!(super::system_request_allowed("zotero-reader", &secret));
-        assert!(!super::system_request_allowed("todo", &secret));
-
         let install = DeviceRequest::InstallApp {
             id: "word-count".to_owned(),
         };
@@ -4784,62 +4741,6 @@ mod hosting_tests {
             assert!(!super::system_request_allowed("settings", &request));
             assert!(!super::system_request_allowed("todo", &request));
         }
-    }
-
-    #[test]
-    fn app_secret_installation_is_scoped_private_and_replaceable() {
-        use std::os::unix::fs::PermissionsExt;
-
-        let directory =
-            std::env::temp_dir().join(format!("kobo-app-secret-{}", std::process::id()));
-        let _ignored = std::fs::remove_dir_all(&directory);
-        kobo_policy::credentials::install_app_secret(
-            &directory,
-            "zotero-reader",
-            "zotero",
-            "first",
-        )
-        .expect("install credential");
-        assert_eq!(
-            std::fs::read(directory.join("apps/zotero-reader/zotero")).expect("read credential"),
-            b"first"
-        );
-        assert_eq!(
-            std::fs::metadata(&directory)
-                .expect("secret directory")
-                .permissions()
-                .mode()
-                & 0o777,
-            0o700
-        );
-        assert_eq!(
-            std::fs::metadata(directory.join("apps/zotero-reader/zotero"))
-                .expect("secret file")
-                .permissions()
-                .mode()
-                & 0o777,
-            0o600
-        );
-        kobo_policy::credentials::install_app_secret(
-            &directory,
-            "zotero-reader",
-            "zotero",
-            "second",
-        )
-        .expect("replace credential");
-        assert_eq!(
-            std::fs::read(directory.join("apps/zotero-reader/zotero")).expect("read replacement"),
-            b"second"
-        );
-        assert!(kobo_policy::credentials::install_app_secret(
-            &directory,
-            "zotero-reader",
-            "openai",
-            "not-authorized"
-        )
-        .is_err());
-        assert!(!directory.join("apps/zotero-reader/openai").exists());
-        let _ignored = std::fs::remove_dir_all(directory);
     }
 
     #[test]

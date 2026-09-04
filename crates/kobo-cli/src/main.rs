@@ -11,6 +11,7 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 mod authorize;
+mod beta_store_smoke;
 mod connect;
 mod devsession;
 mod drive;
@@ -26,7 +27,13 @@ mod panel;
 mod setup;
 mod sha256;
 
-const DEVICE_PACKAGES: &[&str] = &["kobo-doctor", "kobod", "kobo-todo", "kobo-terminal"];
+const DEVICE_PACKAGES: &[&str] = &[
+    "kobo-doctor",
+    "kobod",
+    "kobo-wifi-trace",
+    "kobo-todo",
+    "kobo-terminal",
+];
 /// Everything an owner's device needs, in the order it is packaged, with the
 /// features each one has to be built with.
 ///
@@ -42,6 +49,7 @@ const DEVICE_PACKAGES: &[&str] = &["kobo-doctor", "kobod", "kobo-todo", "kobo-te
 /// the artifact check in `build_package` both exist to keep it shipped.
 const INSTALLED_PACKAGES: &[(&str, Option<&str>)] = &[
     ("kobod", Some("device-write")),
+    ("kobo-wifi-trace", None),
     ("kobo-launcher", None),
     ("kobo-audiobook", None),
     ("kobo-terminal", None),
@@ -76,9 +84,50 @@ const STORE_PACKAGES: &[&str] = &[
     "kobo-sudoku",
     "kobo-tictactoe",
     "kobo-todo",
-    "kobo-paperterm",
     "kobo-zotero-reader",
 ];
+
+/// Store contributions discovered from their one checked-in manifest.
+///
+/// Released host commands may not have a source tree beside them, so the
+/// built-in list remains the fallback. Source builds add every valid
+/// `apps/*/cobalt-app.json` automatically.
+pub(crate) fn contributed_store_packages() -> &'static [String] {
+    static PACKAGES: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    PACKAGES.get_or_init(|| {
+        let apps = workspace_manifest()
+            .parent()
+            .expect("workspace manifest has a parent")
+            .join("apps");
+        let Ok(entries) = fs::read_dir(apps) else {
+            return Vec::new();
+        };
+        let mut packages = entries
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
+            .filter_map(|entry| {
+                let text = fs::read_to_string(entry.path().join("cobalt-app.json")).ok()?;
+                let value = kobo_json::parse(&text).ok()?;
+                let kobo_json::Value::Object(fields) = value else {
+                    return None;
+                };
+                let ids = fields
+                    .iter()
+                    .filter(|(name, _)| name == "id")
+                    .filter_map(|(_, value)| value.as_str())
+                    .collect::<Vec<_>>();
+                let [id] = ids.as_slice() else {
+                    return None;
+                };
+                (kobo_protocol::valid_app_id(id) && entry.file_name().to_str() == Some(*id))
+                    .then(|| format!("kobo-{id}"))
+            })
+            .collect::<Vec<_>>();
+        packages.sort();
+        packages.dedup();
+        packages
+    })
+}
 /// Proof that the daemon in the package can actually take the panel. The
 /// phrase only exists inside `present_on_panel`, which is behind
 /// `device-write`, so finding it in the finished binary is the artifact-level
@@ -392,6 +441,8 @@ fn run(arguments: &[String]) -> Result<(), String> {
         "session" => dev_session(&arguments[1..]),
         "wait" => wait_for_device(&arguments[1..]),
         "logs" => device_logs(&arguments[1..]),
+        "wifi-trace" => wifi_trace_command(&arguments[1..]),
+        "stream" => stream_command(&arguments[1..]),
         // Reached only when something other than main dispatches, which today
         // is the tests. main takes this verb first so that the reader's own
         // exit code survives.
@@ -417,9 +468,9 @@ fn run(arguments: &[String]) -> Result<(), String> {
         "app-bundle" => app_bundle(&arguments[1..]),
         "app-catalog" => app_catalog(&arguments[1..]),
         "app-list" => app_list(&arguments[1..]),
-        "stream" => stream_command(&arguments[1..]),
         "app-check" => app_check(&arguments[1..]),
         "app-release" => app_release(&arguments[1..]),
+        "beta-store-smoke" => beta_store_smoke::command(&arguments[1..]),
         "host-release-sign" => host_release_sign(&arguments[1..]),
         "host-release-verify" => host_release_verify(&arguments[1..]),
         "update" => update_host(&arguments[1..]),
@@ -592,67 +643,6 @@ fn host_release_verify(arguments: &[String]) -> Result<(), String> {
         parsed.version, parsed.source
     );
     Ok(())
-}
-
-/// Runs the host half of a Paperterm session.
-fn stream_command(arguments: &[String]) -> Result<(), String> {
-    const USAGE: &str = "usage: kobo stream init [--host ADDRESS ...]\n\
-                         \x20      kobo stream [--grid COLSxROWS] [--controls | --interactive] \
-                         [--read-only] [--port PORT] -- COMMAND [ARG ...]";
-    if arguments.first().is_some_and(|argument| argument == "init") {
-        return kobo_stream::init(&arguments[1..]);
-    }
-    let separator = arguments
-        .iter()
-        .position(|argument| argument == "--")
-        .ok_or(USAGE)?;
-    let mut grid = kobo_stream::Grid::fallback();
-    let mut controls = false;
-    let mut interactive = false;
-    let mut port = kobo_stream::DEFAULT_PORT;
-    let mut index = 0;
-    while index < separator {
-        match arguments[index].as_str() {
-            "--grid" => {
-                grid = kobo_stream::Grid::parse(arguments.get(index + 1).ok_or(USAGE)?)?;
-                index += 2;
-            }
-            "--controls" => {
-                controls = true;
-                index += 1;
-            }
-            "--interactive" => {
-                interactive = true;
-                controls = true;
-                index += 1;
-            }
-            "--read-only" => {
-                controls = false;
-                interactive = false;
-                index += 1;
-            }
-            "--port" => {
-                port = arguments
-                    .get(index + 1)
-                    .ok_or(USAGE)?
-                    .parse::<u16>()
-                    .map_err(|_| "--port must be 1 through 65535")?;
-                if port == 0 {
-                    return Err("--port must be 1 through 65535".to_owned());
-                }
-                index += 2;
-            }
-            _ => return Err(USAGE.to_owned()),
-        }
-    }
-    kobo_stream::run(kobo_stream::Options {
-        grid,
-        controls,
-        interactive,
-        port,
-        command: arguments[separator + 1..].to_vec(),
-    })
-    .map(|_| ())
 }
 
 fn app_key(arguments: &[String]) -> Result<(), String> {
@@ -1089,9 +1079,9 @@ fn parse_release_app(value: &kobo_json::Value) -> Result<ReleaseApp, String> {
         "glyph",
         "capabilities",
     ];
-    // `setup` and `release_notes` are website-only registry fields. The page
-    // generator validates their metadata; the CLI ignores them when building
-    // signed release manifests.
+    // `setup` is an accepted website-only registry field. The page generator
+    // validates its nested schema; the CLI ignores it and release manifests
+    // deliberately contain none of it.
     let fields = strict_registry_object(value, "app", &FIELDS, &["setup", "release_notes"])?;
     let string = |name| {
         registry_field(fields, name)?
@@ -1999,6 +1989,7 @@ fn device_logs(arguments: &[String]) -> Result<(), String> {
                 request.host
             )));
         }
+
         println!("cleared {DEVICE_TRACE_LOG} on {}", request.host);
         if !request.follow {
             return Ok(());
@@ -2051,6 +2042,117 @@ fn device_logs(arguments: &[String]) -> Result<(), String> {
             "reading the trace from {} failed with status {code}",
             request.host
         ))),
+    }
+}
+
+/// Runs the host half of a Paperterm session.
+fn stream_command(arguments: &[String]) -> Result<(), String> {
+    const USAGE: &str = "usage: kobo stream init [--host ADDRESS ...]\n\
+                         kobo stream [--grid COLSxROWS] [--controls | --interactive] \
+                         [--read-only] [--port PORT] -- COMMAND [ARG ...]";
+    if arguments.first().is_some_and(|argument| argument == "init") {
+        return kobo_stream::init(&arguments[1..]);
+    }
+    let separator = arguments
+        .iter()
+        .position(|argument| argument == "--")
+        .ok_or(USAGE)?;
+    let mut grid = kobo_stream::Grid::fallback();
+    let mut controls = false;
+    let mut interactive = false;
+    let mut port = kobo_stream::DEFAULT_PORT;
+    let mut index = 0;
+    while index < separator {
+        match arguments[index].as_str() {
+            "--grid" => {
+                grid = kobo_stream::Grid::parse(arguments.get(index + 1).ok_or(USAGE)?)?;
+                index += 2;
+            }
+            "--controls" => {
+                controls = true;
+                index += 1;
+            }
+            "--interactive" => {
+                interactive = true;
+                controls = true;
+                index += 1;
+            }
+            "--read-only" => {
+                controls = false;
+                interactive = false;
+                index += 1;
+            }
+            "--port" => {
+                port = arguments
+                    .get(index + 1)
+                    .ok_or(USAGE)?
+                    .parse::<u16>()
+                    .map_err(|_| "--port must be 1 through 65535")?;
+                if port == 0 {
+                    return Err("--port must be 1 through 65535".to_owned());
+                }
+                index += 2;
+            }
+            _ => return Err(USAGE.to_owned()),
+        }
+    }
+    kobo_stream::run(kobo_stream::Options {
+        grid,
+        controls,
+        interactive,
+        port,
+        command: arguments[separator + 1..].to_vec(),
+    })
+    .map(|_| ())
+}
+
+fn wifi_trace_command(arguments: &[String]) -> Result<(), String> {
+    const USAGE: &str = "usage: kobo wifi-trace summarize PATH | \
+                         kobo wifi-trace retrieve --device HOST --out PATH";
+    match arguments {
+        [action, path] if action == "summarize" => {
+            let bytes = fs::read(path).map_err(|error| format!("read {path}: {error}"))?;
+            println!("{}", kobo_wifi_trace::summarize(&bytes).render());
+            Ok(())
+        }
+        [action, device, host, out, path]
+            if action == "retrieve" && is_device_flag(device) && out == "--out" =>
+        {
+            if !valid_device_host(host) {
+                return Err("device host contains unsupported characters".to_owned());
+            }
+            let script = format!(
+                "set -e\n\
+                 dir={directory}\n\
+                 latest=$(ls -1t \"$dir\"/wifi-handoff-v1-*.jsonl 2>/dev/null | head -n 1)\n\
+                 if [ -z \"$latest\" ]; then\n\
+                   echo 'no Wi-Fi handoff trace on this device' >&2\n\
+                   exit 3\n\
+                 fi\n\
+                 cat \"$latest\"\n",
+                directory = kobo_wifi_trace::DIAGNOSTICS_DIR,
+            );
+            let remote = format!("root@{host}");
+            let output = run_remote_shell(&remote, &script, REMOTE_SESSION_TIMEOUT)
+                .map_err(unreachable_device)?;
+            if !output.status.success() {
+                return Err(match output.status.code() {
+                    Some(3) => "no Wi-Fi handoff trace to retrieve".to_owned(),
+                    _ => unreachable_device(format!(
+                        "retrieving the Wi-Fi handoff trace from {host} failed"
+                    )),
+                });
+            }
+            fs::write(path, &output.stdout)
+                .map_err(|error| format!("write retrieved trace to {path}: {error}"))?;
+            println!(
+                "saved {} bytes to {path}\n{}",
+                output.stdout.len(),
+                kobo_wifi_trace::summarize(&output.stdout).render()
+            );
+            Ok(())
+        }
+        _ => Err(USAGE.to_owned()),
     }
 }
 
@@ -2658,7 +2760,7 @@ fn workspace_manifest() -> PathBuf {
         .join("Cargo.toml")
 }
 
-/// Resolves a device binary inside this workspace's own target directory.
+/// Resolves a device binary from this workspace's configured target directory.
 ///
 /// Pinning it to this manifest means an uploaded artifact always comes from the
 /// reviewed source tree rather than whatever workspace the caller stood in.
@@ -4547,6 +4649,7 @@ fn simulated_package(arguments: &[String]) -> Result<&'static str, String> {
         .iter()
         .map(|(package, _)| *package)
         .chain(STORE_PACKAGES.iter().copied())
+        .chain(contributed_store_packages().iter().map(String::as_str))
         .find(|package| {
             *package != "kobod"
                 && (*package == wanted || package.strip_prefix("kobo-") == Some(wanted))
@@ -4561,6 +4664,11 @@ fn simulatable() -> String {
         .filter_map(|(package, _)| package.strip_prefix("kobo-"))
         .chain(
             STORE_PACKAGES
+                .iter()
+                .filter_map(|package| package.strip_prefix("kobo-")),
+        )
+        .chain(
+            contributed_store_packages()
                 .iter()
                 .filter_map(|package| package.strip_prefix("kobo-")),
         )
@@ -5092,6 +5200,15 @@ const RECORD_USAGE: &str = "usage: kobo record --device HOST [--seconds N] [--fp
 /// for reading and never grabs, refreshes or writes, so it can watch our own
 /// application or the stock reader without changing either.
 fn record_command(arguments: &[String]) -> Result<(), String> {
+    record_command_notifying(arguments, None)
+}
+
+/// Runs `kobo record`, optionally notifying a coordinator the instant the
+/// device has finished writing frames and before the slower pull/encode work.
+fn record_command_notifying(
+    arguments: &[String],
+    capture_barrier: Option<(std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>)>,
+) -> Result<(), String> {
     let mut host: Option<String> = None;
     let mut seconds = 20_u64;
     let mut fps = 2_u32;
@@ -5144,6 +5261,12 @@ fn record_command(arguments: &[String]) -> Result<(), String> {
         "device kept {} frames",
         summary.split(' ').nth(1).unwrap_or("?")
     );
+    if let Some((complete, resume)) = capture_barrier {
+        let _ignored = complete.send(());
+        resume
+            .recv_timeout(Duration::from_secs(120))
+            .map_err(|_| "recording coordinator did not release the transfer".to_owned())?;
+    }
 
     let raw = pull_recording(&host)?;
     let frames = decode_recording(&raw)?;
@@ -5682,11 +5805,7 @@ fn secret_command(arguments: &[String]) -> Result<(), String> {
         (SecretAction::List, SecretTarget::Device(host)) => {
             // Names only. A command that can print a key is a command someone
             // will run over a shoulder or paste into a bug report.
-            let script = format!(
-                "for secret in {DEVICE_SECRETS_DIRECTORY}/*; do\n\
-                 \x20 [ -f \"$secret\" ] && [ ! -L \"$secret\" ] && basename \"$secret\"\n\
-                 done\n"
-            );
+            let script = format!("ls -1 {DEVICE_SECRETS_DIRECTORY} 2>/dev/null || true\n");
             let output = run_remote_shell(&format!("root@{host}"), &script, DEVICE_PROBE_TIMEOUT)?;
             if !output.status.success() {
                 return Err(remote_shell_error(
@@ -5703,12 +5822,7 @@ fn secret_command(arguments: &[String]) -> Result<(), String> {
             let mut names = Vec::new();
             if let Ok(entries) = std::fs::read_dir(&directory) {
                 for entry in entries.flatten() {
-                    if entry
-                        .file_type()
-                        .is_ok_and(|kind| kind.is_file() && !kind.is_symlink())
-                    {
-                        names.push(entry.file_name().to_string_lossy().into_owned());
-                    }
+                    names.push(entry.file_name().to_string_lossy().into_owned());
                 }
             }
             names.sort();
@@ -6007,6 +6121,8 @@ fn print_help() {
            session --device IP --hold [minutes]  Keep it reachable for unattended testing\n\
            wait --device IP       Block until a device answers again\n\
            logs --device IP [--follow] [--lines N]  Read the runtime trace from the device\n\
+           wifi-trace summarize PATH  Report handoff generations and first divergence\n\
+           wifi-trace retrieve --device IP --out PATH  Retrieve and summarize the latest trace\n\
            shell --device IP [command ...]  Run one command on the reader, or open a\n\
            \x20                             session when no command is given. Exits with\n\
            \x20                             whatever the reader exited with\n\
@@ -6020,13 +6136,12 @@ fn print_help() {
                                    Build and sign the public app catalog\n\
            app-list --registry PATH\n\
                                    List validated Store app packages as JSON\n\
-           stream init [--host ADDRESS ...]  Create or rotate Paperterm TLS identity\n\
-           stream [--grid COLSxROWS] [--controls | --interactive | --read-only] [--port PORT] -- COMMAND [ARG ...]\n\
-                                   Mirror a host terminal to paired Paperterm readers\n\
            app-check --registry PATH [--package PACKAGE] [--out PATH]\n\
                                    Build and verify every registered Store app\n\
            app-release --registry PATH --seed PATH --out PATH --base-url HTTPS_URL [--prebuilt-dir PATH | --artifact-dir PATH]\n\
                                    Build and sign every registered Store app\n\
+           beta-store-smoke --app ID (--fixture DIR | --beta-catalog URL --device IP) --out DIR [--marketing-route PATH]\n\
+                                   Verify Beta Store lifecycle and required marketing evidence\n\
            host-release-sign --manifest PATH --seed PATH --signature PATH --ssh-signature PATH\n\
                                    Sign host release metadata for publishing\n\
            host-release-verify --manifest PATH --signature PATH\n\
@@ -6123,7 +6238,6 @@ mod tests {
                 "minimum_cobalt_version":"0.2.4",
                 "glyph":"book",
                 "capabilities":["network"],
-                "release_notes":"Adds a faster way to read a personal library.",
                 "setup":{"steps":[{"text":"Create a read-only key."}]}
             }"#,
         )
@@ -6374,15 +6488,16 @@ mod tests {
         build_executables, canonical, configured_target_directory, is_device_flag,
         manifest_uses_sdk, normalise_secret_value, parse_deploy, parse_devices, parse_logs,
         parse_touch_probe, unreachable_device, valid_device_host, valid_slug, verify_arm_elf,
-        wait_for_remote_child, DevSessionGuard, RemoteArtifact, SimulationGuard, ALIASES,
-        DEFAULT_TRACE_LINES, DEPLOY_TIMEOUT, DEVICE_PACKAGES, TOUCH_PROBE_DEFAULT_SECONDS,
-        TOUCH_PROBE_MAXIMUM_SECONDS,
+        wait_for_remote_child, workspace_doctor_binary, DevSessionGuard, RemoteArtifact,
+        SimulationGuard, ALIASES, DEFAULT_TRACE_LINES, DEPLOY_TIMEOUT, DEVICE_PACKAGES,
+        TOUCH_PROBE_DEFAULT_SECONDS, TOUCH_PROBE_MAXIMUM_SECONDS,
     };
     #[cfg(feature = "device-write")]
     use super::{
-        parse_guard_test, parse_smoke_display, run, RemoteArtifactSession, RemoteProgram,
-        SmokeStage, GUARD_TEST_CHILD, GUARD_TEST_CONFIRMATION, REMOTE_CLEANUP_TIMEOUT,
-        REMOTE_COMMAND_TIMEOUT, REMOTE_CONNECT_TIMEOUT_SECONDS, REMOTE_SMOKE_TIMEOUT_SECONDS,
+        parse_guard_test, parse_smoke_display, run, workspace_smoke_binary, RemoteArtifactSession,
+        RemoteProgram, SmokeStage, GUARD_TEST_CHILD, GUARD_TEST_CONFIRMATION,
+        REMOTE_CLEANUP_TIMEOUT, REMOTE_COMMAND_TIMEOUT, REMOTE_CONNECT_TIMEOUT_SECONDS,
+        REMOTE_SMOKE_TIMEOUT_SECONDS,
     };
     use std::fs;
     use std::path::PathBuf;
@@ -6645,8 +6760,8 @@ mod tests {
     fn every_installed_package_is_a_member_of_this_workspace() {
         let manifest = fs::read_to_string(super::workspace_manifest()).expect("read the workspace");
         for (name, _) in super::INSTALLED_PACKAGES {
-            let directory = if *name == "kobod" {
-                "crates/kobod".to_owned()
+            let directory = if matches!(*name, "kobod" | "kobo-wifi-trace") {
+                format!("crates/{name}")
             } else {
                 format!("examples/{}", name.trim_start_matches("kobo-"))
             };
@@ -6856,7 +6971,13 @@ mod tests {
     fn default_device_build_excludes_guard_and_smoke() {
         assert_eq!(
             DEVICE_PACKAGES,
-            ["kobo-doctor", "kobod", "kobo-todo", "kobo-terminal"]
+            [
+                "kobo-doctor",
+                "kobod",
+                "kobo-wifi-trace",
+                "kobo-todo",
+                "kobo-terminal"
+            ]
         );
         assert!(!DEVICE_PACKAGES.contains(&"kobo-guard"));
         assert!(!DEVICE_PACKAGES.contains(&"kobo-smoke"));
@@ -6919,16 +7040,22 @@ mod tests {
     }
 
     #[test]
-    fn remote_doctor_uses_strict_hosts_and_workspace_artifact() {
+    fn remote_doctor_uses_strict_hosts_and_configured_target_artifact() {
         assert!(valid_device_host("192.0.2.1"));
         assert!(valid_device_host("kobo-reader_1"));
         assert!(!valid_device_host(""));
         assert!(!valid_device_host("reader;reboot"));
         assert!(!valid_device_host("reader name"));
+        assert!(workspace_doctor_binary()
+            .ends_with("armv7-unknown-linux-musleabihf/release/kobo-doctor"));
+        #[cfg(feature = "device-write")]
+        assert!(
+            workspace_smoke_binary().ends_with("armv7-unknown-linux-musleabihf/release/kobo-smoke")
+        );
     }
 
     #[test]
-    fn cargo_target_dir_resolves_exactly_like_the_build_invocation() {
+    fn relative_cargo_target_dir_resolves_from_the_build_invocation() {
         let workspace = PathBuf::from("/source/cobalt");
         let invocation = PathBuf::from("/runner/jobs/package");
         let relative = std::ffi::OsStr::new("../../cobalt-targets");
@@ -7393,11 +7520,14 @@ mod tests {
         }
 
         mod app_registry {
-            use super::super::super::{read_release_registry, workspace_manifest, STORE_PACKAGES};
+            use super::super::super::{
+                contributed_store_packages, read_release_registry, workspace_manifest,
+                STORE_PACKAGES,
+            };
             use std::collections::BTreeSet;
 
             #[test]
-            fn checked_in_base_registry_contains_only_store_applications() {
+            fn cobalt_owned_registry_entries_are_known_store_applications() {
                 let registry = workspace_manifest()
                     .parent()
                     .expect("workspace root")
@@ -7407,17 +7537,15 @@ mod tests {
                     .iter()
                     .map(|app| app.package.as_str())
                     .collect::<BTreeSet<_>>();
-                let store_packages = STORE_PACKAGES.iter().copied().collect::<BTreeSet<_>>();
-                assert!(!registered.is_empty());
+                let known = STORE_PACKAGES.iter().copied().collect::<BTreeSet<_>>();
                 assert!(
-                    registered.is_subset(&store_packages),
-                    "base registry contains a non-Store package: {:?}",
-                    registered.difference(&store_packages).collect::<Vec<_>>()
+                    registered.is_subset(&known),
+                    "Cobalt-owned base entries must remain presentable; third-party manifests are collected by tools/app-registry.mjs"
                 );
                 // Versions move with every release, so the check is that
-                // each base entry carries a version rather than which version
-                // it carries. Source-adjacent manifests are collected by the
-                // Node registry checks before the effective catalog is built.
+                // each entry carries a version rather than which version it
+                // carries. A pinned number here broke every routine catalog
+                // bump while catching nothing the shape check misses.
                 for app in &apps {
                     let parts: Vec<&str> = app.version.split('.').collect();
                     assert!(
@@ -7429,6 +7557,22 @@ mod tests {
                         app.id,
                         app.version
                     );
+                }
+            }
+
+            #[test]
+            fn standalone_contributions_are_discovered_without_a_package_list_edit() {
+                let contributed = contributed_store_packages()
+                    .iter()
+                    .map(String::as_str)
+                    .collect::<BTreeSet<_>>();
+                for package in [
+                    "kobo-arxiv",
+                    "kobo-morse",
+                    "kobo-sudoku",
+                    "kobo-zotero-reader",
+                ] {
+                    assert!(contributed.contains(package), "missing {package}");
                 }
             }
         }
