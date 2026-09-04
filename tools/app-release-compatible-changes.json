@@ -61,7 +61,7 @@
         {
           "path": "crates/kobo-policy/src/credentials.rs",
           "base_blob": "229061a856c96fcfbecbd264f65107f0b9d5293c",
-          "compatible_blob": "2fb49ca1faf89f57fd1bfad825466f76835d56b9"
+          "compatible_blob": "ab0d248b65e7cc860bc933cd1d1d6367996461b0"
         },
         {
           "path": "crates/kobo-policy/src/tasks.rs",
