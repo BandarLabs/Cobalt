@@ -13,6 +13,7 @@ import {
   manifestOnlyChangesWorkspaceMembershipOrVersion,
   packagesToBuild,
   registeredConsumers,
+  isFilmingScript,
   releaseDiffArguments,
   releaseNeeded,
   releaseDependencyIds
@@ -255,6 +256,15 @@ test("release input discovery includes deleted paths", () => {
     "--diff-filter=ACDMRT",
     "published...HEAD"
   ]);
+});
+
+test("a drive script next to an application is not a release input", () => {
+  assert.equal(isFilmingScript("examples/todo/drive.txt", "examples/todo"), true);
+  assert.equal(isFilmingScript("examples/todo/drive.kobo", "examples/todo"), true);
+  assert.equal(isFilmingScript("examples/gallery/drive.txt", "examples/gallery"), true);
+  assert.equal(isFilmingScript("examples/todo/src/main.rs", "examples/todo"), false);
+  assert.equal(isFilmingScript("examples/todo/src/drive.txt", "examples/todo"), false);
+  assert.equal(isFilmingScript("examples/todo-extra/drive.txt", "examples/todo"), false);
 });
 
 test("workspace version and member additions do not change existing app release inputs", () => {

@@ -238,6 +238,14 @@ function isInside(path, directory) {
   return path === directory || path.startsWith(`${directory}/`);
 }
 
+// A drive script is the host-side route used to film an application. It is
+// never compiled into the signed bundle, so adding or editing one must not
+// look like a Store package change. That mistake is what turned a simulator
+// recording script into a forced version bump of every example that grew one.
+export function isFilmingScript(path, packageDirectory) {
+  return path === `${packageDirectory}/drive.txt` || path === `${packageDirectory}/drive.kobo`;
+}
+
 // Returns the dependency edges capable of changing a release artifact.
 //
 // Cargo includes dev dependencies in the resolved metadata graph even when
@@ -582,7 +590,10 @@ export function affectedWorkspacePackages(baseRevision, registry) {
     const directory = dirname(package_.manifest_path);
     const relativeDirectory = relative(workspaceRoot, directory).split(sep).join("/");
     const packageChanges = changedPaths.filter(
-      path => isInside(path, relativeDirectory) && !compatiblePaths.has(path)
+      path =>
+        isInside(path, relativeDirectory) &&
+        !compatiblePaths.has(path) &&
+        !isFilmingScript(path, relativeDirectory)
     );
     if (packageChanges.length === 0) continue;
     const relativeManifest = relative(workspaceRoot, package_.manifest_path).split(sep).join("/");
