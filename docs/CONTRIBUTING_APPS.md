@@ -28,9 +28,44 @@ Registry fields:
 | `minimum_cobalt_version` | Oldest platform release that supports the SDK protocol and every runtime service the app uses |
 | `glyph` | A built-in Cobalt glyph name |
 | `capabilities` | Runtime services the app needs |
+| `setup` | Optional website-only prerequisites shown before the install controls |
 
 Public apps cannot use a platform-reserved ID or request the `shell`
 capability. Request only capabilities the app actually uses.
+
+If an app needs an account, API key, named secret, self-hosted service, or
+other preparation outside Cobalt, add a `setup` object to its registry entry.
+The generated install page puts these steps in a **Before you install** panel,
+so owners see the requirements before installing rather than discovering them
+on first launch. Each step has plain `text` and may add one HTTPS `link` and
+one shell `command`:
+
+```json
+"setup": {
+  "steps": [
+    {
+      "text": "Create a dedicated read-only key.",
+      "link": {
+        "label": "Service key settings",
+        "url": "https://example.com/settings/keys"
+      }
+    },
+    {
+      "text": "Install the key under the exact secret name used by the app.",
+      "command": "kobo secret set service --device <address>"
+    },
+    {
+      "text": "Launch the app and finish its on-device setup."
+    }
+  ]
+}
+```
+
+Use one to six short steps. Links must be absolute HTTPS URLs without embedded
+credentials. Do not put HTML or Markdown in these fields; the generator
+escapes all catalog text. The setup block is website metadata and does not
+enter the signed device catalog, so correcting these instructions does not by
+itself require an app version bump.
 
 Apps built from the current SDK require Cobalt 0.2.4 or newer because that is
 the first release supporting the current wire protocol. A newer runtime

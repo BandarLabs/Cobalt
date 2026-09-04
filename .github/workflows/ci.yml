@@ -20,7 +20,16 @@ jobs:
       - name: Install the ARM cross-compiler the packaging tests look for
         run: sudo apt-get update && sudo apt-get install --yes gcc-arm-linux-gnueabihf
       - run: cargo fmt --all -- --check
-      - run: node --test tools/check-app-versions.test.mjs
+      - name: Test the POSIX host installer
+        run: |
+          sh -n install.sh docs/install.sh tools/installer-test.sh tools/build-host-release.sh
+          tools/installer-test.sh
+      - run: node --test tools/*.test.mjs
+      - name: Require current generated app pages
+        run: |
+          node tools/generate-app-pages.mjs
+          git diff --exit-code -- docs/apps docs/sitemap.xml
+          test -z "$(git status --porcelain --untracked-files=all -- docs/apps docs/sitemap.xml)"
       - run: cargo test --workspace --all-targets --all-features
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
@@ -44,20 +53,120 @@ jobs:
           CC_armv7_unknown_linux_musleabihf: arm-linux-gnueabihf-gcc
           CFLAGS_armv7_unknown_linux_musleabihf: -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0
       - name: Require versions for changed app packages
+        # This workflow runs on every push, tags included, and a tag belongs to
+        # no app catalog channel. The gate is about what a merge will publish,
+        # and nothing merges into a tag.
+        if: github.ref_type == 'branch'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          published_sha="$(gh api \
-            "repos/${GITHUB_REPOSITORY}/actions/workflows/apps.yml/runs?status=success&per_page=1" \
-            --jq '.workflow_runs[0].head_sha')"
-          test -n "$published_sha"
-          curl --fail --location --retry 3 \
-            --output published-app-catalog.json \
-            https://github.com/BandarLabs/Cobalt/releases/download/app-catalog/cobalt-app-catalog.json
+          set -o pipefail
+          release_tag="$(node tools/app-catalog-channel.mjs)"
+          echo "Checking app versions against the $release_tag channel."
+          mkdir -p published-state
+          gh release download "$release_tag" \
+            --dir published-state \
+            --pattern cobalt-app-catalog.json
+          catalog_sha256="$(
+            sha256sum published-state/cobalt-app-catalog.json | cut -d' ' -f1
+          )"
+          provenance_count="$(
+            gh release view "$release_tag" --json assets \
+              --jq '[.assets[] | select(.name == "cobalt-app-catalog-provenance.json")] | length'
+          )"
+          # Every publication since the legacy catalog migration writes
+          # provenance, so the migration fallback that read a workflow run's head
+          # SHA is no longer a legitimate answer. A missing asset now means the
+          # channel was published by hand or a run was interrupted, and guessing
+          # a base revision would check this branch against the wrong tree.
+          if [ "$provenance_count" -ne 1 ]; then
+            echo "$release_tag carries $provenance_count catalog provenance assets; exactly one is required" >&2
+            echo "Re-run the app publication workflow on the channel branch to restore it." >&2
+            exit 1
+          fi
+          gh release download "$release_tag" \
+            --dir published-state \
+            --pattern cobalt-app-catalog-provenance.json
+          published_sha="$(
+            # shellcheck disable=SC2016
+            node -e '
+              const fs = require("fs");
+              const value = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+              const channel = process.argv[3];
+              const faults = [];
+              if (value.format_version !== 1) {
+                faults.push(`format_version is ${JSON.stringify(value.format_version)}, and this run only reads 1`);
+              }
+              if (value.channel !== channel) {
+                faults.push(`channel is ${JSON.stringify(value.channel)}, but this asset was downloaded from ${channel}`);
+              }
+              if (!/^[0-9a-f]{40}$/.test(value.source_sha)) {
+                faults.push(`source_sha is ${JSON.stringify(value.source_sha)}, which is not a full commit sha`);
+              }
+              if (value.catalog_sha256 !== process.argv[2]) {
+                faults.push(`catalog_sha256 is ${JSON.stringify(value.catalog_sha256)}, but the catalog published beside it hashes to ${process.argv[2]}`);
+              }
+              if (faults.length > 0) {
+                console.error(`${channel} carries provenance this run cannot read a base revision from:`);
+                for (const fault of faults) console.error(`  ${fault}`);
+                console.error("Re-run the app publication workflow on the channel branch to restore it.");
+                process.exit(1);
+              }
+              process.stdout.write(value.source_sha);
+            ' \
+              published-state/cobalt-app-catalog-provenance.json \
+              "$catalog_sha256" \
+              "$release_tag"
+          )"
+          if ! git cat-file -e "${published_sha}^{commit}" 2>/dev/null; then
+            echo "$release_tag was published from $published_sha, which is not a commit in this checkout" >&2
+            echo "A force-push over the channel branch can strand its published catalog this way." >&2
+            exit 1
+          fi
           node tools/check-app-versions.mjs \
             --registry apps/catalog.json \
-            --published-catalog published-app-catalog.json \
+            --published-catalog published-state/cobalt-app-catalog.json \
             --base "$published_sha"
+
+  host-release-build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-x86_64
+            runner: macos-15-intel
+            target: x86_64-apple-darwin
+            cc: ""
+          - platform: macos-arm64
+            runner: macos-14
+            target: aarch64-apple-darwin
+            cc: ""
+          - platform: linux-x86_64
+            runner: ubuntu-22.04
+            target: x86_64-unknown-linux-musl
+            cc: musl-gcc
+          - platform: linux-arm64
+            runner: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-musl
+            cc: musl-gcc
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: 1.85.1
+          targets: ${{ matrix.target }}
+      - name: Install Linux host tools
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install --yes musl-tools
+      - name: Build release host binary
+        env:
+          CC_x86_64_unknown_linux_musl: ${{ matrix.cc }}
+          CC_aarch64_unknown_linux_musl: ${{ matrix.cc }}
+        run: |
+          cargo build --locked --release -p kobo-cli --target "${{ matrix.target }}"
+          test -x "target/${{ matrix.target }}/release/kobo"
+          echo "built ${{ matrix.platform }}"
 
   advisories:
     runs-on: ubuntu-latest
@@ -88,7 +197,23 @@ jobs:
           elif printf '%s\n' "$output" | grep -Eq \
             'error loading advisory database|expected RUSTSEC-[0-9-]+ to be in'; then
             printf '%s\n' "$output" >&2
-            echo "Current advisory database is malformed; using the last verified snapshot." >&2
+            # Auditing the pinned snapshot is blind to every advisory published
+            # after the pin, and it reported that as a clean audit in a line of
+            # stderr nobody reads. Say so where a run is read from, and refuse
+            # unless somebody has accepted the blind spot with an expiry date.
+            snapshot="$(git -C advisory-db-fallback rev-parse HEAD)"
+            echo "::warning title=Advisory database fallback::The current RustSec database failed to load. This run can only audit the snapshot pinned at ${snapshot}, which cannot see any advisory published after it."
+            {
+              echo "### Advisory database fallback"
+              echo
+              echo "The current RustSec advisory database failed to load."
+              echo "This run can only audit the snapshot pinned at \`${snapshot}\`,"
+              echo "which cannot see any advisory published after it."
+            } >> "$GITHUB_STEP_SUMMARY"
+            node tools/advisory-db-fallback.mjs \
+              --record tools/advisory-db-fallback.json \
+              --snapshot "$snapshot" \
+              --today "$(date -u +%F)"
             cargo audit --db advisory-db-fallback --no-fetch
           else
             printf '%s\n' "$output" >&2

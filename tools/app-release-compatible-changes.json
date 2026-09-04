@@ -1,0 +1,26 @@
+{
+  "format_version": 1,
+  "changes": [
+    {
+      "protocol_version": 11,
+      "reason": "Additive protocol-11 update-channel settings used only by the bundled runtime and Settings app",
+      "files": [
+        {
+          "path": "crates/kobo-protocol/src/lib.rs",
+          "base_blob": "8c30366191af89abc121075544635bf871fdfac4",
+          "compatible_blob": "f34528d7b407e542a7836b0348b91de043822274"
+        },
+        {
+          "path": "crates/kobo-policy/src/services.rs",
+          "base_blob": "d0a852942683f396baaf3803830d9c19c9911f18",
+          "compatible_blob": "e5b8617ac601332dd9b5d39c8e6ea83d613e171b"
+        },
+        {
+          "path": "crates/kobo-sdk/src/lib.rs",
+          "base_blob": "52bd17b242beee85f691ebefdd0083fdabbd4550",
+          "compatible_blob": "9a645f3f3d9c8746dda47d858bb3fcd744621df8"
+        }
+      ]
+    }
+  ]
+}

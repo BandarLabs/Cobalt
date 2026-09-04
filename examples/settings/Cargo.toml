@@ -7,8 +7,11 @@ license.workspace = true
 publish = false
 
 [dependencies]
+kobo-app-store = { path = "../../crates/kobo-app-store" }
 kobo-json = { path = "../../crates/kobo-json" }
-kobo-sdk = { path = "../../crates/kobo-sdk" }
+# The settings screen is the one application the runtime answers automatic
+# update requests for, so it is the one that turns that feature on.
+kobo-sdk = { path = "../../crates/kobo-sdk", features = ["runtime-settings"] }
 
 [lints]
 workspace = true
