@@ -5483,7 +5483,13 @@ pub enum LayoutKind {
     NavDestinationSelected(ActionId, Option<Glyph>),
     Row(ActionId),
     Cell(ActionId, CellStyle),
-    CellLabel,
+    /// A grid cell's label. Carries whether the cell is a board mark (an X,
+    /// an O, a Sudoku digit) rather than a keyboard key: only a board mark
+    /// grows to `FontSize::Heading` when it is one or two characters. A
+    /// keyboard key is also short and square-ish once a row has enough
+    /// columns for its cells to turn taller than they are wide, so the size
+    /// this label draws at cannot be read off its own rectangle.
+    CellLabel(bool),
     /// One cell of a table, drawn in the body face.
     TableCell,
     /// One cell of a table's heading row, drawn muted so the rule under it
@@ -7884,7 +7890,7 @@ fn layout_node(
                     None => layout.nodes.push(LayoutNode {
                         id: *id,
                         rect,
-                        kind: LayoutKind::CellLabel,
+                        kind: LayoutKind::CellLabel(style == CellStyle::Board),
                         text_lines: vec![cell.label.clone()],
                     }),
                 }
@@ -11998,7 +12004,7 @@ const fn is_tappable(kind: LayoutKind) -> bool {
 fn layout_text_style(node: &LayoutNode) -> Option<(FontSize, Face)> {
     let size = match node.kind {
         LayoutKind::Heading(level) => FontSize::for_heading_level(level),
-        LayoutKind::CellLabel
+        LayoutKind::CellLabel(true)
             if node
                 .text_lines
                 .first()
@@ -12035,7 +12041,7 @@ fn layout_text_style(node: &LayoutNode) -> Option<(FontSize, Face)> {
         | LayoutKind::BarAction(_)
         | LayoutKind::RowTitle
         | LayoutKind::RowTitleDone
-        | LayoutKind::CellLabel
+        | LayoutKind::CellLabel(_)
         | LayoutKind::ChoicePrompt
         | LayoutKind::ChoiceOption(_, _)
         | LayoutKind::StepperValue
@@ -12859,19 +12865,22 @@ fn render_all_with_selected_font(
                 tone::SURFACE,
                 clip,
             ),
-            LayoutKind::CellLabel => {
-                // A short label in a tall cell is a mark rather than a word:
-                // an X, an O or a letter key is the content of the cell and
-                // should fill it. A short label in a *wide* cell is one word
-                // among several, and setting it larger than its neighbours is
-                // how a row of `esc tab ctrl up down left right` came out with
-                // one enormous `up` in the middle of it.
+            LayoutKind::CellLabel(board) => {
+                // A short label on a board is a mark rather than a word: an X,
+                // an O or a Sudoku digit is the content of the cell and should
+                // fill it. A short label on a keyboard key is one letter among
+                // several, and setting it larger than its neighbours is how a
+                // row of `esc tab ctrl up down left right` came out with one
+                // enormous `up` in the middle of it, and how a ten-key letter
+                // row -- narrower per cell than the nine-key rows either side
+                // of it, so taller than it is wide -- once came out bold and
+                // oversized while every other row stayed put.
                 //
-                // The cell's own shape is the signal, and the layout has
-                // already decided it: square for a board, a touch target for
-                // a key. Nothing else needs to be threaded through.
-                let mark = node.rect.height >= node.rect.width;
-                let size = if mark
+                // So this is carried rather than read off the cell's own
+                // rectangle: a board cell and a keyboard key can be the same
+                // shape, and only the board's mark is meant to be the size of
+                // the whole cell.
+                let size = if board
                     && node
                         .text_lines
                         .first()
@@ -14821,6 +14830,67 @@ mod tests {
                 node.rect
             );
         }
+    }
+
+    /// A ten-key row on a narrow panel turns each cell taller than it is
+    /// wide -- the same rectangle a Sudoku digit or a tic-tac-toe mark draws
+    /// in -- and a rule that read the cell's own shape once took that as "this
+    /// is a mark" and grew it to heading size, so the qwertyuiop row of a real
+    /// keyboard came out bold and oversized while the row below it, nine keys
+    /// wide and so a little shorter than it is tall, did not.
+    #[test]
+    fn a_keyboard_key_never_becomes_a_board_mark_however_narrow_its_row() {
+        let cells = ["q", "w", "e", "r", "t", "y", "u", "i", "o", "p"]
+            .into_iter()
+            .enumerate()
+            .map(|(index, letter)| Cell::new(ActionId(index as u32 + 1), letter))
+            .collect();
+        let screen = Screen::new(
+            1,
+            vec![Node::Grid {
+                id: NodeId(1),
+                columns: 10,
+                square: false,
+                cells,
+            }],
+        );
+        let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::default());
+        let labels: Vec<_> = layout
+            .nodes
+            .iter()
+            .filter(|node| matches!(node.kind, LayoutKind::CellLabel(_)))
+            .collect();
+        assert_eq!(labels.len(), 10, "every key should have drawn a label");
+        for node in labels {
+            assert_eq!(
+                node.kind,
+                LayoutKind::CellLabel(false),
+                "a keyboard key at {:?} was drawn as though it were a board mark",
+                node.rect
+            );
+        }
+    }
+
+    /// The rule the test above guards against still has to fire for what it
+    /// was written for: a short mark on an actual board.
+    #[test]
+    fn a_mark_on_a_board_still_grows_to_heading_size() {
+        let screen = Screen::new(
+            1,
+            vec![Node::Grid {
+                id: NodeId(1),
+                columns: 3,
+                square: true,
+                cells: vec![Cell::new(ActionId(1), "X")],
+            }],
+        );
+        let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::default());
+        let label = layout
+            .nodes
+            .iter()
+            .find(|node| matches!(node.kind, LayoutKind::CellLabel(_)))
+            .expect("the mark drew a label");
+        assert_eq!(label.kind, LayoutKind::CellLabel(true));
     }
 
     #[test]
