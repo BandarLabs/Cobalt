@@ -7,11 +7,11 @@
       "display_name": "Backgammon",
       "short_label": "Backgammon",
       "summary": "Play complete solo or pass-and-play backgammon on one Kobo.",
-      "version": "0.1.2",
+      "version": "0.1.3",
       "minimum_cobalt_version": "0.3.5",
       "glyph": "circle",
       "capabilities": [],
-      "release_notes": "Keep Backgammon compatible with Cobalt's protocol-12 runtime."
+      "release_notes": "Keep Backgammon compatible with Cobalt's current protocol-12 runtime."
     },
     {
       "package": "kobo-flashcards",
