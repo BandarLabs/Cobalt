@@ -459,6 +459,13 @@ fn wants_help(arguments: &[String]) -> bool {
             .any(|argument| argument == "--help" || argument == "-h")
 }
 
+// Returns a Result it can never fail to produce so every `command` can end
+// with `return print_command_help(USAGE);` rather than a print and a separate
+// Ok, which is the shape all nine callers use.
+#[allow(
+    clippy::unnecessary_wraps,
+    reason = "the Result is the caller's tail expression, not a failure channel"
+)]
 fn print_command_help(usage: &str) -> Result<(), String> {
     println!("{usage}");
     Ok(())

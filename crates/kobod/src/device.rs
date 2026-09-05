@@ -3553,7 +3553,7 @@ fn page_key_message(
     }
 }
 
-fn text_hold_for(
+fn text_hold_for_oriented(
     event: TouchEvent,
     screen: Option<&Screen>,
     chrome: &Chrome,
@@ -3719,7 +3719,9 @@ fn deliver_touch(
         }
         other => other,
     };
-    if let Some((action, hit)) = text_hold_for(logical_event, current, chrome, held, orientation) {
+    if let Some((action, hit)) =
+        text_hold_for_oriented(logical_event, current, chrome, held, orientation)
+    {
         kobo_protocol::write_to(
             stream,
             &Frame {

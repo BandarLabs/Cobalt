@@ -1,12 +1,12 @@
 use kobo_image::encode_png_grey;
 use kobo_sdk::{Glyph, ScreenBuilder};
 use kobo_ui::{render, Surface, CLARA_BW_METRICS};
-fn png_of(screen: kobo_sdk::Screen) -> Vec<u8> {
+fn png_of(screen: &kobo_sdk::Screen) -> Vec<u8> {
     let mut surface = Surface::new(
         CLARA_BW_METRICS.width as usize,
         CLARA_BW_METRICS.height as usize,
     );
-    render(&screen, &mut surface, None);
+    render(screen, &mut surface, None);
     let width = u32::try_from(surface.width).expect("Clara BW width fits u32");
     let height = u32::try_from(surface.height).expect("Clara BW height fits u32");
     let png = encode_png_grey(width, height, &surface.pixels).expect("png");
@@ -24,7 +24,7 @@ fn renders_clean_clara_bw_capture() {
             "Run kobo vault init, then kobo vault push ~/Notes.",
         )
         .build();
-    let _ = png_of(screen);
+    let _ = png_of(&screen);
 }
 #[test]
 fn renders_an_opened_note() {
@@ -37,5 +37,5 @@ fn renders_an_opened_note() {
             ("tags", "Tags".to_owned()),
         ])
         .build();
-    let _ = png_of(screen);
+    let _ = png_of(&screen);
 }

@@ -48,7 +48,11 @@ jobs:
       - run: cargo check --workspace --all-features --target armv7-unknown-linux-musleabihf
         env:
           CC_armv7_unknown_linux_musleabihf: arm-linux-gnueabihf-gcc
-      - run: cargo run --locked -p kobo-cli -- app-check --registry apps/catalog.json
+      # Every Store app is described by a manifest beside its source, so the
+      # registry has to be collected before anything can check it. Reading
+      # apps/catalog.json directly would check the empty base and pass.
+      - run: node tools/collect-app-registry.mjs --out generated-app-registry.json
+      - run: cargo run --locked -p kobo-cli -- app-check --registry generated-app-registry.json
         env:
           CC_armv7_unknown_linux_musleabihf: arm-linux-gnueabihf-gcc
           CFLAGS_armv7_unknown_linux_musleabihf: -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0
@@ -124,7 +128,7 @@ jobs:
             exit 1
           fi
           node tools/check-app-versions.mjs \
-            --registry apps/catalog.json \
+            --registry generated-app-registry.json \
             --published-catalog published-state/cobalt-app-catalog.json \
             --base "$published_sha"
 

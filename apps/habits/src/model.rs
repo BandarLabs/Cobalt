@@ -163,10 +163,10 @@ pub fn decode_with_blank_names(bytes: &[u8]) -> (Vec<Habit>, usize) {
         .unwrap_or("")
         .lines()
         .filter_map(|line| {
-            let fields: Vec<_> = line.split('\t').collect();
-            if fields.len() != 5 {
-                return None;
-            }
+            // A fixed-size array rather than a length check and indexing, so a
+            // short line is rejected by the conversion instead of by a rule a
+            // later reader has to notice before adding a field.
+            let fields: [&str; 5] = line.split('\t').collect::<Vec<_>>().try_into().ok()?;
             if fields[2].trim().is_empty() {
                 blank_names += 1;
                 return None;

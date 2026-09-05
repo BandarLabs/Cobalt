@@ -679,7 +679,7 @@ impl KoboApp for Grimoire {
                             .filter_map(|r| {
                                 let p: Vec<_> = r.split('~').collect();
                                 Some(Combatant {
-                                    name: p.first()?.to_string(),
+                                    name: (*p.first()?).to_string(),
                                     initiative: p.get(1)?.parse().ok()?,
                                 })
                             })
@@ -697,7 +697,7 @@ impl KoboApp for Grimoire {
                                     },
                                 );
                                 Some(Member {
-                                    name: p.first()?.to_string(),
+                                    name: (*p.first()?).to_string(),
                                     ac: p.get(1)?.parse().ok()?,
                                     max_hp: p.get(2)?.parse().ok()?,
                                     hp: p.get(3)?.parse().ok()?,

@@ -506,10 +506,10 @@ pub fn decode_works(bytes: &[u8]) -> Vec<Work> {
     }
     lines
         .filter_map(|line| {
-            let fields = line.split('\t').collect::<Vec<_>>();
-            if fields.len() != 14 {
-                return None;
-            }
+            // A fixed-size array rather than a length check and indexing, so a
+            // short line is rejected by the conversion instead of by a rule a
+            // later reader has to notice before adding a field.
+            let fields: [&str; 14] = line.split('\t').collect::<Vec<_>>().try_into().ok()?;
             let id = fields[0];
             if work_id(id).as_deref() != Some(id) {
                 return None;

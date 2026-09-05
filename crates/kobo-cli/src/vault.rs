@@ -140,7 +140,7 @@ fn visit(root: &Path, dir: &Path, notes: &mut Vec<(String, String)>) -> Result<(
         .map_err(|error| format!("read {}: {error}", dir.display()))?
         .collect::<Result<_, _>>()
         .map_err(|error| format!("read {}: {error}", dir.display()))?;
-    entries.sort_by_key(|entry| entry.file_name());
+    entries.sort_by_key(std::fs::DirEntry::file_name);
     for entry in entries {
         let name = entry.file_name();
         let Some(name) = name.to_str() else {

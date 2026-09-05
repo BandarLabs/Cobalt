@@ -356,21 +356,6 @@ fn store_app_credential_allowed(
                 && url == "https://mealie.local/api/recipes?perPage=20"
                 && has_origin(url, "mealie.local", 443)
         }
-        "lichess" => {
-            credential.secret == "lichess"
-                && credential.header == SecretHeader::Bearer
-                && has_origin(url, "lichess.org", 443)
-                && match usage {
-                    CredentialUse::Fetch => matches!(
-                        parsed_path(url).as_deref(),
-                        Some(
-                            "/api/puzzle/batch/mix?nb=32&difficulty=normal"
-                                | "/api/account/playing"
-                        )
-                    ),
-                    CredentialUse::Post => parsed_path(url).as_deref() == Some("/api/board/seek"),
-                }
-        }
         "needles" => {
             credential.secret == "ravelry"
                 && matches!(credential.header, SecretHeader::Basic)
@@ -716,18 +701,6 @@ mod tests {
                 Credential::bearer("mealie"),
                 "https://mealie.local/api/recipes?perPage=20",
                 CredentialUse::Fetch,
-            ),
-            (
-                "lichess",
-                Credential::bearer("lichess"),
-                "https://lichess.org/api/account/playing",
-                CredentialUse::Fetch,
-            ),
-            (
-                "lichess",
-                Credential::bearer("lichess"),
-                "https://lichess.org/api/board/seek",
-                CredentialUse::Post,
             ),
             (
                 "needles",

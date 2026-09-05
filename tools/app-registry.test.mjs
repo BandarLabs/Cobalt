@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync, readdirSync } from "node:fs";
 import { collectRegistry, currentProtocolVersion, deriveMinimumCobalt, normalizeContribution } from "./app-registry.mjs";
 import {
   contributionPlan,
@@ -130,4 +131,27 @@ test("the one-command plan resolves source manifest package and protocol", () =>
   assert.equal(plan.app.package, "kobo-sudoku");
   assert.equal(plan.protocolVersion, CURRENT_PROTOCOL);
   assert.equal(plan.cargoPath, "apps/sudoku/Cargo.toml");
+});
+
+// Every app moved to a manifest beside its source, which left apps/catalog.json
+// an empty base. A check handed that file instead of the collected registry
+// still exits zero, having validated nothing, so no workflow may name it.
+test("no workflow checks the empty base catalog instead of the collected registry", () => {
+  const base = JSON.parse(readFileSync("apps/catalog.json", "utf8"));
+  const collected = collectRegistry();
+  assert.ok(
+    collected.apps.length > base.apps.length,
+    "the collected registry must carry more than the base catalog"
+  );
+
+  for (const name of readdirSync(".github/workflows")) {
+    const workflow = readFileSync(`.github/workflows/${name}`, "utf8");
+    for (const [line] of workflow.matchAll(/^.*--registry\s+\S+.*$/gm)) {
+      assert.doesNotMatch(
+        line,
+        /--registry\s+apps\/catalog\.json/,
+        `${name} checks the empty base catalog: ${line.trim()}`
+      );
+    }
+  }
 });

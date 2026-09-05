@@ -49,7 +49,7 @@ fn cli_assignment_round_trips_into_the_rendered_grid() {
     let pads = layout
         .nodes
         .iter()
-        .filter(|node| matches!(node.kind, LayoutKind::Cell(_, CellStyle::Pad)))
+        .filter(|node| matches!(node.kind, LayoutKind::Cell(_, CellStyle::Pad, _)))
         .count();
     assert_eq!(pads, PAD_COUNT);
     let issues = screen
@@ -78,7 +78,7 @@ fn clara_bw_portrait_grid_is_tappable() {
         layout
             .nodes
             .iter()
-            .filter(|node| matches!(node.kind, LayoutKind::Cell(_, CellStyle::Pad)))
+            .filter(|node| matches!(node.kind, LayoutKind::Cell(_, CellStyle::Pad, _)))
             .count(),
         PAD_COUNT
     );

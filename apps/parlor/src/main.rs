@@ -12,6 +12,7 @@ mod games;
 use engine::{choose_move, Game, Strength};
 use games::{Draughts, Kalah, Morris, MorrisMove, Reversi, ReversiMove, Rules};
 use kobo_sdk::{action_id, ActionId, Context, Glyph, KoboApp, Screen, ScreenBuilder, StoreResult};
+use std::cmp::Ordering;
 use std::process::ExitCode;
 
 const SAVE: &str = "parlor-autosave-v1";
@@ -396,11 +397,11 @@ impl Parlor {
                 } else if self.selected == Some(at) {
                     ("□", None)
                 } else {
-                    match game.board[at] {
-                        1 => ("", Some(Glyph::BlackDraughtsMan)),
-                        2 => ("", Some(Glyph::BlackDraughtsKing)),
-                        -1 => ("", Some(Glyph::WhiteDraughtsMan)),
-                        -2 => ("", Some(Glyph::WhiteDraughtsKing)),
+                    match game.board.get(at) {
+                        Some(1) => ("", Some(Glyph::BlackDraughtsMan)),
+                        Some(2) => ("", Some(Glyph::BlackDraughtsKing)),
+                        Some(-1) => ("", Some(Glyph::WhiteDraughtsMan)),
+                        Some(-2) => ("", Some(Glyph::WhiteDraughtsKing)),
                         _ => (" ", None),
                     }
                 };
@@ -556,10 +557,10 @@ impl Parlor {
         let Some(score) = self.position.as_ref().and_then(Position::terminal) else {
             return;
         };
-        if score > 0 {
-            self.match_score[0] += 1;
-        } else if score < 0 {
-            self.match_score[1] += 1;
+        match score.cmp(&0) {
+            Ordering::Greater => self.match_score[0] += 1,
+            Ordering::Less => self.match_score[1] += 1,
+            Ordering::Equal => {}
         }
         self.scored = true;
         if self.match_score.contains(&2) {
@@ -779,10 +780,14 @@ impl Parlor {
         }
         if self.scored {
             if let Some(score) = self.position.as_ref().and_then(Position::terminal) {
-                if score > 0 {
-                    self.match_score[0] = self.match_score[0].saturating_sub(1);
-                } else if score < 0 {
-                    self.match_score[1] = self.match_score[1].saturating_sub(1);
+                match score.cmp(&0) {
+                    Ordering::Greater => {
+                        self.match_score[0] = self.match_score[0].saturating_sub(1);
+                    }
+                    Ordering::Less => {
+                        self.match_score[1] = self.match_score[1].saturating_sub(1);
+                    }
+                    Ordering::Equal => {}
                 }
             }
             self.scored = false;
