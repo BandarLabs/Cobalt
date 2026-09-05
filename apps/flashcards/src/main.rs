@@ -1249,12 +1249,15 @@ fn rating_pair(
 }
 
 fn rating_button(screen: ScreenBuilder, grade: Grade, saving: Option<Grade>) -> ScreenBuilder {
-    if saving.is_some() {
-        screen.button_with_state(grade.action(), grade.label(), ControlState::Disabled)
-    } else if grade == Grade::Good {
-        screen.primary_button(grade.action(), grade.label())
+    let state = if saving.is_some() {
+        ControlState::Disabled
     } else {
-        screen.button(grade.action(), grade.label())
+        ControlState::Enabled
+    };
+    if grade == Grade::Good {
+        screen.primary_button_with_state(grade.action(), grade.label(), state)
+    } else {
+        screen.button_with_state(grade.action(), grade.label(), state)
     }
 }
 

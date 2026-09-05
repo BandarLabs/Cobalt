@@ -1174,14 +1174,28 @@ impl ScreenBuilder {
     /// what the platform used to do) leaves the reader with nothing to aim at
     /// and the panel with a slab to erase.
     #[must_use]
-    pub fn primary_button(mut self, name: impl AsRef<str>, label: impl Into<String>) -> Self {
+    pub fn primary_button(self, name: impl AsRef<str>, label: impl Into<String>) -> Self {
+        self.primary_button_with_state(name, label, ControlState::Enabled)
+    }
+
+    /// Adds the primary control with an explicit enabled state.
+    ///
+    /// Emphasis stays Primary so the control keeps its size while it cannot
+    /// be activated, instead of collapsing to a content-width secondary.
+    #[must_use]
+    pub fn primary_button_with_state(
+        mut self,
+        name: impl AsRef<str>,
+        label: impl Into<String>,
+        state: ControlState,
+    ) -> Self {
         let action = self.register(name.as_ref());
         let id = self.next_id();
         self.nodes.push(Node::Button {
             id,
             action,
             label: label.into(),
-            state: ControlState::Enabled,
+            state,
             emphasis: Emphasis::Primary,
         });
         self
