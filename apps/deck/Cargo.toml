@@ -1,0 +1,18 @@
+[package]
+name = "kobo-deck"
+version = "0.2.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+kobo-json = { path = "../../crates/kobo-json" }
+kobo-sdk = { path = "../../crates/kobo-sdk" }
+
+[dev-dependencies]
+kobo-ui = { path = "../../crates/kobo-ui" }
+kobo-image = { path = "../../crates/kobo-image" }
+
+[lints]
+workspace = true

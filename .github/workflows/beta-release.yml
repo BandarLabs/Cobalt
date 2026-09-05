@@ -6,8 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
-  actions: read
+  contents: write
 
 concurrency:
   group: cobalt-beta-platform
@@ -249,9 +248,6 @@ jobs:
     needs: [prepare, device, host]
     if: needs.prepare.outputs.publish == 'true'
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      actions: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4

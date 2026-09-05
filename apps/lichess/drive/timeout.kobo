@@ -1,0 +1,6 @@
+expect KnightReader
+expect White won by time
+shot timeout
+tap White won by time
+wait-for KnightReader
+shot timeout-final-board

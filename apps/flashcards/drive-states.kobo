@@ -1,0 +1,8 @@
+wait 800
+expect Flashcards
+clean
+shot decks
+tap Transfer
+expect Import paused
+clean
+shot transfer

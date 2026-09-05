@@ -1,0 +1,24 @@
+{
+  "id": "readlater",
+  "display_name": "Read Later",
+  "short_label": "Read Later",
+  "summary": "Read your Wallabag articles anywhere.",
+  "page_description": "Bring saved Wallabag articles to your Kobo, then archive or favorite them as you read.",
+  "version": "0.1.0",
+  "release_notes": "Bring saved Wallabag articles to your Kobo, then archive or favorite them as you read.",
+  "glyph": "bookmark",
+  "capabilities": [
+    "network"
+  ],
+  "setup": {
+    "steps": [
+      {
+        "text": "Have an HTTPS Wallabag instance and a bearer credential accepted by its API."
+      },
+      {
+        "text": "Install that credential under the exact name wallabag.",
+        "command": "kobo secret set wallabag --device <address>"
+      }
+    ]
+  }
+}

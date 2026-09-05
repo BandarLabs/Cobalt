@@ -1486,11 +1486,11 @@ pub struct DisplayMetrics {
     pub text_scale: TextScale,
 }
 
-/// Direction of an application's logical viewport.
+/// An application's logical panel direction.
 ///
-/// Portrait keeps the established panel coordinate system. Landscape is
-/// rendered in software into a swapped viewport, then rotated clockwise into
-/// the unchanged physical framebuffer.
+/// Landscape is a software rotation: the physical panel remains portrait and
+/// the runtime rotates the completed logical surface clockwise for display.
+/// Portrait is the zero-copy compatibility default.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 #[repr(u8)]
 pub enum Orientation {
@@ -1499,10 +1499,6 @@ pub enum Orientation {
     Landscape = 1,
 }
 
-/// Which physical side is down while a landscape viewport is displayed.
-///
-/// Sensor-equipped readers may update this during a session. Readers without
-/// an orientation event source use [`LandscapeTurn::Clockwise`].
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub enum LandscapeTurn {
     #[default]
@@ -1672,7 +1668,7 @@ impl Default for DisplayMetrics {
 }
 
 impl DisplayMetrics {
-    /// Metrics in the logical viewport requested by an application.
+    /// The logical viewport for this orientation.
     #[must_use]
     pub const fn oriented(mut self, orientation: Orientation) -> Self {
         if matches!(orientation, Orientation::Landscape) {
@@ -2215,6 +2211,12 @@ pub struct BarAction {
 pub enum CellStyle {
     #[default]
     Board,
+    /// A shaded playable square on a conventional draughts board.
+    BoardDark,
+    /// A point on a conventional backgammon board, broad at the panel edge.
+    BackgammonTop,
+    /// A point on a conventional backgammon board, broad at the panel edge.
+    BackgammonBottom,
     Key,
     /// A cell that is nothing but the picture in it.
     ///
@@ -2224,6 +2226,11 @@ pub enum CellStyle {
     /// finger's width of paper between them are already separate, and putting
     /// each on a grey slab turns a quiet row into four boxes.
     Plain,
+    /// A recessed hardware pad: rounded square, thick ink bezel, paper face.
+    ///
+    /// Fifteen of these in three rows of five is a command deck. Empty pads
+    /// stay as blank keys so the grid does not collapse into a list.
+    Pad,
 }
 
 /// Whether a control can currently be activated.
@@ -3703,7 +3710,7 @@ fn layout_bottom_action(bottom: &BottomAction, metrics: &DisplayMetrics, layout:
                 width: side,
                 height: side,
             },
-            kind: LayoutKind::InlineGlyph(glyph),
+            kind: LayoutKind::InlineGlyph(glyph, false),
             text_lines: Vec::new(),
         });
     }
@@ -4758,6 +4765,8 @@ pub struct Cell {
     /// already knows. Optional because most cells do not: a glyph invented for
     /// a verb nobody draws is worse than the verb written out.
     pub glyph: Option<Glyph>,
+    /// Drawn inverted while this cell is the current board selection.
+    pub selected: bool,
 }
 
 impl Cell {
@@ -4767,6 +4776,7 @@ impl Cell {
             action,
             label: label.into(),
             glyph: None,
+            selected: false,
         }
     }
 
@@ -4779,6 +4789,12 @@ impl Cell {
     #[must_use]
     pub const fn with_glyph(mut self, glyph: Glyph) -> Self {
         self.glyph = Some(glyph);
+        self
+    }
+
+    #[must_use]
+    pub const fn with_selected(mut self, selected: bool) -> Self {
+        self.selected = selected;
         self
     }
 }
@@ -5056,6 +5072,8 @@ pub enum Glyph {
     Download,
     /// A ribbon with a notch cut from its foot: kept, saved, come back to.
     Bookmark,
+    /// The universal favorite mark.
+    Heart,
     /// A funnel: narrow what is listed. Distinct from [`Self::Search`], which
     /// finds something not yet on screen; a filter subtracts from what is.
     Filter,
@@ -5143,6 +5161,22 @@ pub enum Glyph {
     ChessBlackBishop,
     ChessBlackKnight,
     ChessBlackPawn,
+    /// A conventional solid playing disc for Reversi, draughts, and Morris.
+    BlackDisc,
+    /// A conventional outlined playing disc for Reversi, draughts, and Morris.
+    WhiteDisc,
+    /// A stacked solid draughts piece, immediately recognizable as a king.
+    BlackDraughtsKing,
+    /// A stacked outlined draughts piece, immediately recognizable as a king.
+    WhiteDraughtsKing,
+    /// A solid man on a conventional draughts board.
+    BlackDraughtsMan,
+    /// An outlined man on a conventional draughts board.
+    WhiteDraughtsMan,
+    /// An unoccupied intersection on a Nine Men's Morris board.
+    MorrisPoint,
+    /// A legal destination on a Nine Men's Morris board.
+    MorrisLegalPoint,
 }
 
 impl Glyph {
@@ -5153,7 +5187,7 @@ impl Glyph {
     /// the set was twenty-one: `Light` and `Close` were authored, shipped, and
     /// covered by none of the tests that walk every glyph. A glyph nobody
     /// rasterises in a test is a blank space beside a label on the panel.
-    pub const ALL: [Self; 57] = [
+    pub const ALL: [Self; 66] = [
         Self::App,
         Self::Book,
         Self::Note,
@@ -5211,6 +5245,15 @@ impl Glyph {
         Self::ChessBlackBishop,
         Self::ChessBlackKnight,
         Self::ChessBlackPawn,
+        Self::Heart,
+        Self::BlackDisc,
+        Self::WhiteDisc,
+        Self::BlackDraughtsKing,
+        Self::WhiteDraughtsKing,
+        Self::BlackDraughtsMan,
+        Self::WhiteDraughtsMan,
+        Self::MorrisPoint,
+        Self::MorrisLegalPoint,
     ];
 }
 
@@ -5405,6 +5448,11 @@ pub enum LayoutKind {
     /// size without consulting the tree.
     Quote(u8, QuoteRole),
     Button(ActionId, ControlState, Emphasis),
+    /// A checker stack on a backgammon point. `from_top` pins its base to the
+    /// matching board edge so a five-checker point reads as one familiar pile.
+    BackgammonStack(Glyph, u8, bool),
+    /// The enclosing field and central bar of a backgammon board.
+    BackgammonBoard,
     Card,
     /// The extent of a horizontal group. Draws nothing itself: it exists so a
     /// repaint can dirty the whole group rather than each column.
@@ -5482,7 +5530,7 @@ pub enum LayoutKind {
     NavDestination(ActionId, Option<Glyph>),
     NavDestinationSelected(ActionId, Option<Glyph>),
     Row(ActionId),
-    Cell(ActionId, CellStyle),
+    Cell(ActionId, CellStyle, bool),
     /// A grid cell's label. Carries whether the cell is a board mark (an X,
     /// an O, a Sudoku digit) rather than a keyboard key: only a board mark
     /// grows to `FontSize::Heading` when it is one or two characters. A
@@ -5490,6 +5538,8 @@ pub enum LayoutKind {
     /// columns for its cells to turn taller than they are wide, so the size
     /// this label draws at cannot be read off its own rectangle.
     CellLabel(bool),
+    /// The three nested squares and four connectors behind a Morris board.
+    MorrisBoard,
     /// One cell of a table, drawn in the body face.
     TableCell,
     /// One cell of a table's heading row, drawn muted so the rule under it
@@ -5532,7 +5582,7 @@ pub enum LayoutKind {
     /// action's word. Deliberately not a control, so hit testing and press
     /// inversion both belong to the thing underneath it. A glyph that was its
     /// own target would invert a square in the middle of a button.
-    InlineGlyph(Glyph),
+    InlineGlyph(Glyph, bool),
     /// A picture, already placed. `rect` is where it goes; the renderer scales
     /// it to fit only if the application handed over something larger.
     Picture(PictureHandle),
@@ -5585,7 +5635,7 @@ impl LayoutKind {
     #[must_use]
     pub const fn acts_on(&self) -> Option<ActionId> {
         match *self {
-            Self::Button(action, _, _)
+            Self::Button(action, ControlState::Enabled, _)
             | Self::BarAction(action)
             | Self::BarGlyph(action, _)
             | Self::NavDestination(action, ..)
@@ -5850,7 +5900,12 @@ impl Layout {
     /// the button.
     #[must_use]
     pub fn pressed_control(&self, x: i32, y: i32) -> Option<Rect> {
-        self.nodes
+        let visible_start = self
+            .nodes
+            .iter()
+            .rposition(|node| matches!(node.kind, LayoutKind::Scrim { .. }))
+            .map_or(0, |index| index + 1);
+        self.nodes[visible_start..]
             .iter()
             .filter(|node| node.rect.contains(x, y))
             .filter(|node| {
@@ -5858,6 +5913,7 @@ impl Layout {
                     node.kind,
                     LayoutKind::Button(_, ControlState::Enabled, _)
                         | LayoutKind::Back
+                        | LayoutKind::OverlayClose
                         | LayoutKind::BarAction(_)
                         | LayoutKind::BarGlyph(..)
                         | LayoutKind::NavDestination(..)
@@ -6064,23 +6120,7 @@ impl Layout {
     pub fn rect_of_action(&self, action: ActionId) -> Option<Rect> {
         self.nodes
             .iter()
-            .find(|node| match node.kind {
-                LayoutKind::Button(candidate, ControlState::Enabled, _)
-                | LayoutKind::BarAction(candidate)
-                | LayoutKind::BarGlyph(candidate, _)
-                | LayoutKind::NavDestination(candidate, ..)
-                | LayoutKind::NavDestinationSelected(candidate, ..)
-                | LayoutKind::Tile(candidate, ControlState::Enabled)
-                | LayoutKind::Field(candidate)
-                | LayoutKind::FieldClear(candidate)
-                | LayoutKind::Chip(candidate, _)
-                | LayoutKind::Tab(candidate, _)
-                | LayoutKind::ChoiceOption(candidate, _)
-                | LayoutKind::StepperControl(candidate, ControlState::Enabled, _)
-                | LayoutKind::Cell(candidate, ..)
-                | LayoutKind::ChoiceFreeform(candidate) => candidate == action,
-                _ => false,
-            })
+            .find(|node| node.kind.acts_on() == Some(action))
             .map(|node| node.rect)
     }
 }
@@ -7795,17 +7835,31 @@ fn layout_node(
             square,
             cells,
         } => {
-            let gutter = metrics.space(Space::Tight);
+            let tight = metrics.space(Space::Tight);
             let requested = i32::from((*columns).clamp(1, MAX_COLUMNS));
-            let columns = if legacy_typography() {
+            let backgammon_board = *square
+                && requested == 12
+                && cells.len() == 24
+                && cells.iter().all(|cell| cell.label.starts_with("Point "));
+            let pad_deck = *square && requested == 5 && cells.len() == 15;
+            // A board's column count is the board, so narrowing it to the touch
+            // target would deal a different game. Only free-form grids shrink.
+            let columns = if legacy_typography() || backgammon_board || pad_deck {
                 requested
             } else {
                 let fits = width
-                    .saturating_add(gutter)
-                    .checked_div(metrics.touch_target_minimum().saturating_add(gutter).max(1))
+                    .saturating_add(tight)
+                    .checked_div(metrics.touch_target_minimum().saturating_add(tight).max(1))
                     .unwrap_or(1)
                     .max(1);
                 requested.min(fits)
+            };
+            let (x, width, gutter) = if backgammon_board {
+                (0, metrics.width, 0)
+            } else if pad_deck {
+                (x, width, metrics.space(Space::Small))
+            } else {
+                (x, width, tight)
             };
             let block_extra = if *square && columns == 9 && cells.len() >= 81 {
                 gutter
@@ -7824,13 +7878,26 @@ fn layout_node(
                 } else {
                     metrics.touch_target_default()
                 };
-            let (cell_height, style) = if *square {
+            let (cell_height, style) = if backgammon_board {
+                (cell_width.saturating_mul(3), CellStyle::BackgammonTop)
+            } else if pad_deck {
+                (cell_width, CellStyle::Pad)
+            } else if *square {
                 (cell_width, CellStyle::Board)
             } else if cells.iter().all(|cell| cell.glyph.is_some()) {
                 (metrics.touch_target_default(), CellStyle::Plain)
             } else {
                 (key_height, CellStyle::Key)
             };
+            let morris_board = *square
+                && columns == 7
+                && cells.len() == 49
+                && cells.iter().any(|cell| {
+                    matches!(
+                        cell.glyph,
+                        Some(Glyph::MorrisPoint | Glyph::MorrisLegalPoint)
+                    )
+                });
             let index = layout.nodes.len();
             layout.nodes.push(LayoutNode {
                 id: *id,
@@ -7840,10 +7907,29 @@ fn layout_node(
                     width,
                     height: 0,
                 },
-                kind: LayoutKind::Spacer,
+                kind: if backgammon_board {
+                    LayoutKind::BackgammonBoard
+                } else if morris_board {
+                    LayoutKind::MorrisBoard
+                } else {
+                    LayoutKind::Spacer
+                },
                 text_lines: Vec::new(),
             });
             let mut rows = 0;
+            let draughts_board = *square
+                && matches!(columns, 8 | 10)
+                && cells.iter().any(|cell| {
+                    matches!(
+                        cell.glyph,
+                        Some(
+                            Glyph::BlackDraughtsMan
+                                | Glyph::WhiteDraughtsMan
+                                | Glyph::BlackDraughtsKing
+                                | Glyph::WhiteDraughtsKing
+                        )
+                    )
+                });
             for (position, cell) in cells.iter().take(MAX_CELLS).enumerate() {
                 if layout.nodes.len() + 3 > MAX_LAYOUT_NODES {
                     break;
@@ -7851,6 +7937,19 @@ fn layout_node(
                 let position = i32::try_from(position).unwrap_or(0);
                 let column = position % columns;
                 let row = position / columns;
+                let style = if backgammon_board {
+                    if row == 0 {
+                        CellStyle::BackgammonTop
+                    } else {
+                        CellStyle::BackgammonBottom
+                    }
+                } else if morris_board {
+                    CellStyle::Plain
+                } else if draughts_board && (row + column) % 2 == 1 {
+                    CellStyle::BoardDark
+                } else {
+                    style
+                };
                 rows = row + 1;
                 let rect = Rect {
                     x: x.saturating_add(column * (cell_width + gutter) + column / 3 * block_extra),
@@ -7861,7 +7960,7 @@ fn layout_node(
                 layout.nodes.push(LayoutNode {
                     id: *id,
                     rect,
-                    kind: LayoutKind::Cell(cell.action, style),
+                    kind: LayoutKind::Cell(cell.action, style, cell.selected),
                     text_lines: Vec::new(),
                 });
                 // A cell with a picture is drawn as the picture alone. The
@@ -7872,27 +7971,78 @@ fn layout_node(
                 //
                 // So the mark has to be large enough to be the whole control,
                 // not the thumbnail that sat above a caption.
-                match cell.glyph {
-                    Some(glyph) => {
-                        let mark = min(cell_height, cell_width) * 3 / 5;
+                if backgammon_board {
+                    if let Some(glyph) = cell.glyph {
+                        let count = cell
+                            .label
+                            .split_whitespace()
+                            .nth(3)
+                            .and_then(|count| count.parse::<u8>().ok())
+                            .unwrap_or(1)
+                            .clamp(1, 5);
                         layout.nodes.push(LayoutNode {
                             id: *id,
-                            rect: Rect {
-                                x: rect.x.saturating_add((cell_width - mark).max(0) / 2),
-                                y: rect.y.saturating_add((cell_height - mark).max(0) / 2),
-                                width: mark,
-                                height: mark,
-                            },
-                            kind: LayoutKind::InlineGlyph(glyph),
+                            rect,
+                            kind: LayoutKind::BackgammonStack(
+                                glyph,
+                                count,
+                                matches!(style, CellStyle::BackgammonTop),
+                            ),
                             text_lines: vec![cell.label.clone()],
                         });
                     }
-                    None => layout.nodes.push(LayoutNode {
-                        id: *id,
-                        rect,
-                        kind: LayoutKind::CellLabel(style == CellStyle::Board),
-                        text_lines: vec![cell.label.clone()],
-                    }),
+                } else {
+                    match cell.glyph {
+                        Some(glyph) if style == CellStyle::Pad => {
+                            let inset = metrics.tenth_mm(PAD_BORDER_TENTH_MM);
+                            let mark = min(cell_height, cell_width) * 2 / 5;
+                            layout.nodes.push(LayoutNode {
+                                id: *id,
+                                rect: Rect {
+                                    x: rect.x.saturating_add((cell_width - mark).max(0) / 2),
+                                    y: rect.y.saturating_add(inset + cell_height / 8),
+                                    width: mark,
+                                    height: mark,
+                                },
+                                kind: LayoutKind::InlineGlyph(glyph, cell.selected),
+                                text_lines: vec![cell.label.clone()],
+                            });
+                            if !cell.label.is_empty() {
+                                let label_top = rect.y + cell_height * 3 / 5;
+                                layout.nodes.push(LayoutNode {
+                                    id: *id,
+                                    rect: Rect {
+                                        x: rect.x + inset,
+                                        y: label_top,
+                                        width: (cell_width - inset * 2).max(1),
+                                        height: (rect.y + cell_height - inset - label_top).max(1),
+                                    },
+                                    kind: LayoutKind::CellLabel(false),
+                                    text_lines: vec![cell.label.clone()],
+                                });
+                            }
+                        }
+                        Some(glyph) => {
+                            let mark = min(cell_height, cell_width) * 3 / 5;
+                            layout.nodes.push(LayoutNode {
+                                id: *id,
+                                rect: Rect {
+                                    x: rect.x.saturating_add((cell_width - mark).max(0) / 2),
+                                    y: rect.y.saturating_add((cell_height - mark).max(0) / 2),
+                                    width: mark,
+                                    height: mark,
+                                },
+                                kind: LayoutKind::InlineGlyph(glyph, cell.selected),
+                                text_lines: vec![cell.label.clone()],
+                            });
+                        }
+                        None => layout.nodes.push(LayoutNode {
+                            id: *id,
+                            rect,
+                            kind: LayoutKind::CellLabel(style == CellStyle::Board),
+                            text_lines: vec![cell.label.clone()],
+                        }),
+                    }
                 }
             }
             let height = if rows == 0 {
@@ -7968,13 +8118,15 @@ fn layout_node(
                 let text_width = trailing.as_ref().map_or(text_width, |(_, measured)| {
                     max(1, text_width - measured - padding)
                 });
-                let title_lines = wrap_text(&row.title, text_width, FontSize::Body);
+                let title_lines =
+                    wrap_text_in(&row.title, text_width, FontSize::Body, layout.prose_face);
                 let summary_lines = if row.summary.is_empty() {
                     Vec::new()
                 } else {
                     wrap_text(&row.summary, text_width, FontSize::Caption)
                 };
-                let title_height = title_lines.len() as i32 * FontSize::Body.line_height();
+                let title_height =
+                    title_lines.len() as i32 * FontSize::Body.line_height_in(layout.prose_face);
                 let summary_height = summary_lines.len() as i32 * FontSize::Caption.line_height();
                 let content = title_height.saturating_add(summary_height);
                 // Never shorter than a finger, however terse the entry is.
@@ -10062,6 +10214,7 @@ pub fn stamp_format_badge(pixels: &mut [u8], width: u32, height: u32, badge: &st
         width: pixel_width,
         height: pixel_height,
         pixels: pixels.to_vec(),
+        chroma: None,
     };
     stamp_format_badge_on(&mut surface, badge);
     pixels.copy_from_slice(&surface.pixels);
@@ -10741,6 +10894,12 @@ fn force_grapheme_break(
 /// looked like in 1996, and it is most of why these controls read as
 /// wireframes rather than as buttons.
 pub const BUTTON_RADIUS_TENTH_MM: i32 = 10;
+/// Corner radius of a command-deck pad. Larger than a keyboard key so a
+/// fifteen-key grid reads as recessed hardware rather than a ruled board.
+pub const PAD_RADIUS_TENTH_MM: i32 = 28;
+/// Bezel of a command-deck pad, in tenths of a millimetre. Heavier than a
+/// rule so the key sits in a dark frame the way a Stream Deck key does.
+pub const PAD_BORDER_TENTH_MM: i32 = 12;
 
 /// How far a press mark sits inside the control it acknowledges, in tenths of
 /// a millimetre. Enough to clear a row separator and the screen margin, not so
@@ -10766,11 +10925,41 @@ fn corner_inset(radius: i32, from_edge: i32) -> i32 {
     radius - (run + 1) / 2
 }
 
+/// The luminance of one colour, by the weights broadcast television settled
+/// on for the same purpose: turning a colour picture into the grey one a
+/// monochrome set would show.
+///
+/// Used wherever a colour pixel needs the single grey value the rest of the
+/// pipeline reasons about: the planner's grey test, the greyscale panels, the
+/// simulator's monochrome preview. Integer throughout; the weights sum to one
+/// thousand so a grey colour comes back as exactly itself.
+#[must_use]
+pub const fn luma([red, green, blue]: [u8; 3]) -> u8 {
+    let weighted = 299 * red as u32 + 587 * green as u32 + 114 * blue as u32;
+    // Rounded, not truncated, so that (v, v, v) gives v for every v.
+    ((weighted + 500) / 1000) as u8
+}
+
+/// A rendered frame: one grey byte per pixel, and, once anything has been
+/// drawn in colour, three colour bytes per pixel beside it.
+///
+/// `pixels` is the frame as every greyscale panel and every existing caller
+/// sees it, and it is always complete: a colour draw writes the luminance
+/// here and the colour into `chroma`. `chroma` is absent until the first
+/// colour draw and dropped again by [`Surface::clear`], so a frame with no
+/// colour in it costs exactly what it did before colour existed, and a
+/// runtime on a greyscale panel can ignore the plane altogether.
+///
+/// When `chroma` is present every grey write also lands in it as three
+/// equal bytes, so the two planes describe one picture. Code that writes
+/// `pixels` directly, as tests do, keeps that promise only while `chroma` is
+/// `None`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Surface {
     pub width: usize,
     pub height: usize,
     pub pixels: Vec<u8>,
+    pub chroma: Option<Vec<u8>>,
 }
 
 impl Surface {
@@ -10780,11 +10969,114 @@ impl Surface {
             width,
             height,
             pixels: vec![tone::PAPER; width.saturating_mul(height)],
+            chroma: None,
         }
     }
 
     pub fn clear(&mut self, value: u8) {
         self.pixels.fill(value);
+        self.chroma = None;
+    }
+
+    /// The colour of one pixel, whether or not the frame holds any colour.
+    #[must_use]
+    pub fn rgb_at(&self, index: usize) -> Option<[u8; 3]> {
+        match &self.chroma {
+            Some(chroma) => chroma
+                .get(index * 3..index * 3 + 3)
+                .map(|c| [c[0], c[1], c[2]]),
+            None => self.pixels.get(index).map(|grey| [*grey; 3]),
+        }
+    }
+
+    /// Whether any pixel of the frame is a colour rather than a grey.
+    ///
+    /// Cheap when no colour has been drawn; a scan of the colour plane when
+    /// one exists, because a plane that was needed for one picture may since
+    /// have been painted over in grey.
+    #[must_use]
+    pub fn has_colour(&self) -> bool {
+        self.chroma
+            .as_ref()
+            .is_some_and(|chroma| chroma.chunks_exact(3).any(|c| c[0] != c[1] || c[1] != c[2]))
+    }
+
+    /// Whether any pixel inside `region` is a colour rather than a grey.
+    #[must_use]
+    pub fn region_has_colour(&self, region: Rect) -> bool {
+        let Some(chroma) = &self.chroma else {
+            return false;
+        };
+        let Some((left, top, width, height)) = region_extent(region) else {
+            return false;
+        };
+        (top..top.saturating_add(height)).any(|y| {
+            let start = y.saturating_mul(self.width).saturating_add(left) * 3;
+            let end = start.saturating_add(width * 3);
+            chroma
+                .get(start..end)
+                .unwrap_or(&[])
+                .chunks_exact(3)
+                .any(|c| c[0] != c[1] || c[1] != c[2])
+        })
+    }
+
+    /// The colour bytes of `region`, one row at a time with three bytes per
+    /// pixel, when the frame holds colour. The rows are borrowed from the
+    /// frame rather than copied, so a caller writing them elsewhere pays for
+    /// one buffer, not two. `None` for a frame that has no colour, or a
+    /// region that is not inside it: the caller then has exactly the grey
+    /// path it had.
+    #[must_use]
+    pub fn colour_rows(&self, region: Rect) -> Option<impl Iterator<Item = &[u8]> + '_> {
+        let chroma = self.chroma.as_ref()?;
+        let (left, top, width, height) = region_extent(region)?;
+        if left.checked_add(width)? > self.width || top.checked_add(height)? > self.height {
+            return None;
+        }
+        let stride = self.width * 3;
+        Some((top..top + height).map(move |y| {
+            let start = y * stride + left * 3;
+            &chroma[start..start + width * 3]
+        }))
+    }
+
+    /// The colour plane, brought into being from the grey one on first use.
+    fn chroma_mut(&mut self) -> &mut Vec<u8> {
+        if self.chroma.is_none() {
+            let mut plane = Vec::with_capacity(self.pixels.len() * 3);
+            for grey in &self.pixels {
+                plane.extend_from_slice(&[*grey; 3]);
+            }
+            self.chroma = Some(plane);
+        }
+        self.chroma.as_mut().expect("just created")
+    }
+
+    /// Writes one grey value to a pixel of both planes.
+    fn set_grey(&mut self, index: usize, value: u8) {
+        if let Some(pixel) = self.pixels.get_mut(index) {
+            *pixel = value;
+        }
+        if let Some(chroma) = &mut self.chroma {
+            if let Some(colour) = chroma.get_mut(index * 3..index * 3 + 3) {
+                colour.fill(value);
+            }
+        }
+    }
+
+    /// Turns one pixel of both planes to its opposite.
+    fn invert_at(&mut self, index: usize) {
+        if let Some(pixel) = self.pixels.get_mut(index) {
+            *pixel = u8::MAX - *pixel;
+        }
+        if let Some(chroma) = &mut self.chroma {
+            if let Some(colour) = chroma.get_mut(index * 3..index * 3 + 3) {
+                for channel in colour {
+                    *channel = u8::MAX - *channel;
+                }
+            }
+        }
     }
 
     pub fn fill_rect(&mut self, rect: Rect, value: u8) {
@@ -10799,9 +11091,7 @@ impl Surface {
                 let row = usize::try_from(y).unwrap_or(0).saturating_mul(self.width);
                 for x in clipped.x..clipped.x + clipped.width {
                     let index = row.saturating_add(usize::try_from(x).unwrap_or(0));
-                    if let Some(pixel) = self.pixels.get_mut(index) {
-                        *pixel = value;
-                    }
+                    self.set_grey(index, value);
                 }
             }
         }
@@ -10826,9 +11116,7 @@ impl Surface {
                 let row = usize::try_from(y).unwrap_or(0).saturating_mul(self.width);
                 for x in clipped.x..clipped.x + clipped.width {
                     let index = row.saturating_add(usize::try_from(x).unwrap_or(0));
-                    if let Some(pixel) = self.pixels.get_mut(index) {
-                        *pixel = u8::MAX - *pixel;
-                    }
+                    self.invert_at(index);
                 }
             }
         }
@@ -10864,9 +11152,7 @@ impl Surface {
                 .saturating_mul(self.width);
             for x in clipped.x..clipped.x + clipped.width {
                 let index = start.saturating_add(usize::try_from(x).unwrap_or(0));
-                if let Some(pixel) = self.pixels.get_mut(index) {
-                    *pixel = u8::MAX - *pixel;
-                }
+                self.invert_at(index);
             }
         }
     }
@@ -10918,24 +11204,58 @@ impl Surface {
     /// panel resolves sixteen grey levels, so stair-stepped text is visibly
     /// worse than blended text at no extra refresh cost.
     pub fn blend(&mut self, x: i32, y: i32, value: u8, coverage: u8) {
-        if x < 0 || y < 0 {
-            return;
-        }
-        let (Ok(x), Ok(y)) = (usize::try_from(x), usize::try_from(y)) else {
-            return;
-        };
-        if x >= self.width {
-            return;
-        }
-        let Some(index) = y.checked_mul(self.width).and_then(|row| row.checked_add(x)) else {
+        let Some(index) = self.index_of(x, y) else {
             return;
         };
         if let Some(pixel) = self.pixels.get_mut(index) {
-            let destination = i32::from(*pixel);
-            let ink = i32::from(value);
-            let mixed = destination + (ink - destination) * i32::from(coverage) / 255;
-            *pixel = u8::try_from(mixed.clamp(0, 255)).unwrap_or(*pixel);
+            *pixel = mix(*pixel, value, coverage);
         }
+        if let Some(chroma) = &mut self.chroma {
+            if let Some(colour) = chroma.get_mut(index * 3..index * 3 + 3) {
+                for channel in colour {
+                    *channel = mix(*channel, value, coverage);
+                }
+            }
+        }
+    }
+
+    /// [`Self::blend`] for a colour: mixes each channel by `coverage` and
+    /// keeps the grey plane at the result's luminance.
+    ///
+    /// This is the only way colour gets into a frame, which is what lets the
+    /// grey plane stay authoritative for everything that is not a picture.
+    /// The colour plane comes into being on the first call.
+    pub fn blend_colour(&mut self, x: i32, y: i32, colour: [u8; 3], coverage: u8) {
+        let Some(index) = self.index_of(x, y) else {
+            return;
+        };
+        if index >= self.pixels.len() {
+            return;
+        }
+        let chroma = self.chroma_mut();
+        let Some(target) = chroma.get_mut(index * 3..index * 3 + 3) else {
+            return;
+        };
+        for (channel, ink) in target.iter_mut().zip(colour) {
+            *channel = mix(*channel, ink, coverage);
+        }
+        let mixed = [target[0], target[1], target[2]];
+        if let Some(pixel) = self.pixels.get_mut(index) {
+            *pixel = luma(mixed);
+        }
+    }
+
+    fn index_of(&self, x: i32, y: i32) -> Option<usize> {
+        if x < 0 || y < 0 {
+            return None;
+        }
+        let (Ok(x), Ok(y)) = (usize::try_from(x), usize::try_from(y)) else {
+            return None;
+        };
+        if x >= self.width {
+            return None;
+        }
+        y.checked_mul(self.width).and_then(|row| row.checked_add(x))
     }
 
     pub fn stroke_rect(&mut self, rect: Rect, value: u8) {
@@ -10978,6 +11298,25 @@ impl Surface {
     }
 }
 
+/// Mixes `ink` into `destination` by `coverage`, where 0 leaves it untouched
+/// and 255 replaces it.
+fn mix(destination: u8, ink: u8, coverage: u8) -> u8 {
+    let destination = i32::from(destination);
+    let mixed = destination + (i32::from(ink) - destination) * i32::from(coverage) / 255;
+    u8::try_from(mixed.clamp(0, 255)).unwrap_or(u8::MAX)
+}
+
+/// A rectangle as unsigned left, top, width and height, or `None` when any
+/// side is negative and so cannot index a frame.
+fn region_extent(region: Rect) -> Option<(usize, usize, usize, usize)> {
+    Some((
+        usize::try_from(region.x).ok()?,
+        usize::try_from(region.y).ok()?,
+        usize::try_from(region.width).ok()?,
+        usize::try_from(region.height).ok()?,
+    ))
+}
+
 /// How much repainting is permitted before the panel gets a cleaning refresh,
 /// counted in whole panels' worth of changed pixels.
 ///
@@ -11000,6 +11339,14 @@ pub enum PanelWaveform {
     Gl16,
     /// Full sixteen-level refresh that clears accumulated residue.
     Gc16,
+    /// Sixteen-level refresh of a region holding colour, written in colour.
+    ///
+    /// Chosen whenever the changed region has a pixel whose channels differ.
+    /// The runtime writes that region's colour plane to the framebuffer and
+    /// asks the controller to drive the colour filter; on a panel without one
+    /// the runtime writes grey and this is a quality update. Partial unless
+    /// it is also the cleaning refresh, when it covers the whole panel.
+    Colour,
 }
 
 impl PanelWaveform {
@@ -11009,7 +11356,15 @@ impl PanelWaveform {
             Self::Du => "DU",
             Self::Gl16 => "GL16",
             Self::Gc16 => "GC16",
+            Self::Colour => "COLOUR",
         }
+    }
+
+    /// Whether the runtime should write the region's colour plane rather
+    /// than its grey one.
+    #[must_use]
+    pub const fn writes_colour(self) -> bool {
+        matches!(self, Self::Colour)
     }
 }
 
@@ -11036,6 +11391,10 @@ pub struct FramePlanner {
     width: usize,
     height: usize,
     previous: Vec<u8>,
+    /// The colour plane of the last committed frame, kept only while a frame
+    /// with colour has been shown; `None` means every previous pixel was
+    /// the grey in `previous`.
+    previous_chroma: Option<Vec<u8>>,
     dirty: u64,
     refreshes: u64,
     started: bool,
@@ -11048,6 +11407,7 @@ impl FramePlanner {
             width,
             height,
             previous: vec![tone::INK; width.saturating_mul(height)],
+            previous_chroma: None,
             dirty: 0,
             refreshes: 0,
             started: false,
@@ -11072,34 +11432,53 @@ impl FramePlanner {
             width: i32::try_from(self.width).ok()?,
             height: i32::try_from(self.height).ok()?,
         };
-        let (region, waveform, dirty) = if self.started {
+        // A cleaning refresh repaints the whole panel, and a whole panel with
+        // a colour picture on it has to be repainted in colour or the picture
+        // comes back grey.
+        let clean = || {
+            if surface.has_colour() {
+                (whole, PanelWaveform::Colour, 0, true)
+            } else {
+                (whole, PanelWaveform::Gc16, 0, true)
+            }
+        };
+        let (region, waveform, dirty, full) = if self.started {
             let (changed, flipped) = self.changed(surface)?;
             // The budget is checked before this update is added to it, so that
             // a full panel's worth of repainting still buys exactly
             // PANEL_CLEAN_INTERVAL updates before anything flashes, as it did
             // when updates rather than pixels were being counted.
             if self.dirty >= self.clean_after() {
-                (whole, PanelWaveform::Gc16, 0)
+                clean()
+            } else if surface.region_has_colour(changed) {
+                (
+                    changed,
+                    PanelWaveform::Colour,
+                    self.dirty.saturating_add(flipped),
+                    false,
+                )
             } else if Self::has_grey(surface, changed) {
                 (
                     changed,
                     PanelWaveform::Gl16,
                     self.dirty.saturating_add(flipped),
+                    false,
                 )
             } else {
                 (
                     changed,
                     PanelWaveform::Du,
                     self.dirty.saturating_add(flipped),
+                    false,
                 )
             }
         } else {
-            (whole, PanelWaveform::Gc16, 0)
+            clean()
         };
         Some(FrameTransition {
             region,
             waveform,
-            full: waveform == PanelWaveform::Gc16,
+            full,
             refresh: self.refreshes.saturating_add(1),
             dirty,
         })
@@ -11115,6 +11494,13 @@ impl FramePlanner {
             return false;
         }
         self.previous.copy_from_slice(&surface.pixels);
+        // Kept only while there is colour to remember: a frame that has gone
+        // back to grey is fully described by `previous`, and holding a plane
+        // for it would make every later comparison three times the work.
+        self.previous_chroma = surface
+            .has_colour()
+            .then(|| surface.chroma.clone())
+            .flatten();
         self.dirty = transition.dirty;
         self.refreshes = transition.refresh;
         self.started = true;
@@ -11144,12 +11530,29 @@ impl FramePlanner {
         let (mut left, mut right) = (usize::MAX, 0usize);
         let (mut top, mut bottom) = (usize::MAX, 0usize);
         let mut flipped = 0_u64;
+        // A pixel has changed when its grey has, or when either frame holds
+        // colour for it and the colour has. Two greys that match cannot hide
+        // a colour change when neither side has a plane, which is the common
+        // case and stays the single comparison it always was.
+        let colour_differs = |index: usize| -> bool {
+            if surface.chroma.is_none() && self.previous_chroma.is_none() {
+                return false;
+            }
+            let current = surface.rgb_at(index);
+            let previous = match &self.previous_chroma {
+                Some(chroma) => chroma
+                    .get(index * 3..index * 3 + 3)
+                    .map(|c| [c[0], c[1], c[2]]),
+                None => self.previous.get(index).map(|grey| [*grey; 3]),
+            };
+            current != previous
+        };
         for (index, _) in surface
             .pixels
             .iter()
             .zip(self.previous.iter())
             .enumerate()
-            .filter(|(_, (current, previous))| current != previous)
+            .filter(|(index, (current, previous))| current != previous || colour_differs(*index))
         {
             let (x, y) = (index % self.width, index / self.width);
             left = left.min(x);
@@ -11204,12 +11607,53 @@ impl FramePlanner {
     }
 }
 
-/// Eight-bit grey pixels, row major, `width * height` of them.
+/// How the bytes of a picture are laid out.
+///
+/// Grey is what every application has always sent and what every panel can
+/// show. Colour is three bytes per pixel, red then green then blue, and is
+/// only worth sending when the runtime has said the panel can show it; on any
+/// other panel it is drawn as its luminance, which costs three times the
+/// transfer for the same picture.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum PictureFormat {
+    /// One byte per pixel.
+    Grey,
+    /// Three bytes per pixel, red, green, blue.
+    Rgb,
+}
+
+impl PictureFormat {
+    #[must_use]
+    pub const fn bytes_per_pixel(self) -> usize {
+        match self {
+            Self::Grey => 1,
+            Self::Rgb => 3,
+        }
+    }
+
+    /// The byte count of a `width` by `height` picture in this format, or
+    /// `None` when it does not fit in memory arithmetic.
+    #[must_use]
+    pub fn byte_len(self, width: u32, height: u32) -> Option<usize> {
+        usize::try_from(width)
+            .ok()?
+            .checked_mul(usize::try_from(height).ok()?)?
+            .checked_mul(self.bytes_per_pixel())
+    }
+}
+
+/// Eight-bit grey pixels, row major, `width * height` of them, and the same
+/// pixels in colour when the picture arrived that way.
+///
+/// `grey` is always present so that nothing drawing a picture has to know
+/// about colour; `colour` holds three bytes per pixel in the same order and is
+/// what a colour panel draws instead.
 #[derive(Clone, Copy, Debug)]
 pub struct PicturePixels<'a> {
     pub width: u32,
     pub height: u32,
     pub grey: &'a [u8],
+    pub colour: Option<&'a [u8]>,
 }
 
 /// Where the renderer finds the pictures an application handed over.
@@ -11271,7 +11715,18 @@ fn diagnose_screen(
     chrome: &Chrome,
     pictures: Option<&dyn Pictures>,
 ) -> LayoutDiagnostics {
-    let layout = screen.layout_with(metrics, chrome);
+    with_reading_font(screen.reading_font, || {
+        diagnose_screen_with_selected_font(screen, metrics, chrome, pictures)
+    })
+}
+
+fn diagnose_screen_with_selected_font(
+    screen: &Screen,
+    metrics: &DisplayMetrics,
+    chrome: &Chrome,
+    pictures: Option<&dyn Pictures>,
+) -> LayoutDiagnostics {
+    let layout = screen.layout_with_selected_font(metrics, chrome);
     let mut issues = Vec::new();
     let mut nodes = Vec::new();
     collect_nodes(&screen.nodes, 0, &mut nodes, &mut issues);
@@ -11312,7 +11767,7 @@ fn diagnose_screen(
     }
     for node in &nodes {
         check_identifier(node.id(), &mut identifiers, &mut issues);
-        validate_node(node, metrics, pictures, &mut issues);
+        validate_node(node, metrics, layout.prose_face, pictures, &mut issues);
     }
 
     validate_content_bounds(&nodes, &layout, metrics, &mut issues);
@@ -11594,17 +12049,18 @@ fn limit_issue(
 fn validate_node(
     node: &Node,
     metrics: &DisplayMetrics,
+    prose_face: Face,
     pictures: Option<&dyn Pictures>,
     issues: &mut Vec<LayoutIssue>,
 ) {
     let id = node.id();
     match node {
-        Node::Heading { text, .. }
-        | Node::Text { text, .. }
-        | Node::RichText { text, .. }
-        | Node::Secondary { text, .. }
-        | Node::Quote { text, .. }
-        | Node::Banner { text, .. } => check_text_coverage(id, text, Face::Text, issues),
+        Node::Text { text, .. } | Node::RichText { text, .. } | Node::Quote { text, .. } => {
+            check_text_coverage(id, text, prose_face, issues);
+        }
+        Node::Heading { text, .. } | Node::Secondary { text, .. } | Node::Banner { text, .. } => {
+            check_text_coverage(id, text, Face::Text, issues);
+        }
         Node::Section {
             title, value, link, ..
         } => {
@@ -11696,7 +12152,7 @@ fn validate_node(
                 issues.push(limit_issue(id, "rows", rows.len(), MAX_ROWS));
             }
             for row in rows {
-                check_text_coverage(id, &row.title, Face::Text, issues);
+                check_text_coverage(id, &row.title, prose_face, issues);
                 check_text_coverage(id, &row.summary, Face::Text, issues);
             }
         }
@@ -12222,16 +12678,28 @@ struct HeldPicture {
     handle: PictureHandle,
     width: u32,
     height: u32,
+    /// The luminance of every pixel, derived on arrival for a colour picture
+    /// so that drawing never has to convert.
     grey: Vec<u8>,
+    /// Three bytes per pixel when the picture arrived in colour.
+    colour: Option<Vec<u8>>,
     used: std::cell::Cell<u64>,
+}
+
+impl HeldPicture {
+    /// What the budget is charged for this picture: both planes.
+    fn bytes(&self) -> usize {
+        self.grey.len() + self.colour.as_ref().map_or(0, Vec::len)
+    }
 }
 
 struct PendingPicture {
     handle: PictureHandle,
     width: u32,
     height: u32,
+    format: PictureFormat,
     expected: usize,
-    grey: Vec<u8>,
+    bytes: Vec<u8>,
 }
 
 /// The pictures one application has handed over, bounded by total size.
@@ -12298,18 +12766,52 @@ impl PictureCache {
         height: u32,
         grey: Vec<u8>,
     ) -> Option<Vec<PictureHandle>> {
-        let expected = usize::try_from(width).ok().and_then(|width| {
-            usize::try_from(height)
-                .ok()
-                .and_then(|h| width.checked_mul(h))
-        });
-        let expected = expected?;
-        if expected == 0 || expected != grey.len() || grey.len() > self.budget {
+        self.put_report_with(handle, width, height, PictureFormat::Grey, grey)
+    }
+
+    /// [`Self::put_report`] for a picture in any format.
+    ///
+    /// A colour picture is charged for both the colour bytes and the grey
+    /// plane derived from them, because both are held: the grey so that a
+    /// greyscale panel draws without converting, the colour so that a colour
+    /// panel draws what was sent.
+    pub fn put_report_with(
+        &mut self,
+        handle: PictureHandle,
+        width: u32,
+        height: u32,
+        format: PictureFormat,
+        bytes: Vec<u8>,
+    ) -> Option<Vec<PictureHandle>> {
+        let expected = format.byte_len(width, height)?;
+        if expected == 0 || expected != bytes.len() {
+            return None;
+        }
+        let (grey, colour) = match format {
+            PictureFormat::Grey => (bytes, None),
+            PictureFormat::Rgb => (
+                bytes
+                    .chunks_exact(3)
+                    .map(|c| luma([c[0], c[1], c[2]]))
+                    .collect(),
+                Some(bytes),
+            ),
+        };
+        let entry = HeldPicture {
+            handle,
+            width,
+            height,
+            grey,
+            colour,
+            used: std::cell::Cell::new(0),
+        };
+        let size = entry.bytes();
+        if size > self.budget {
             return None;
         }
         self.remove(handle);
         let mut evicted = Vec::new();
-        while self.held + grey.len() > self.budget {
+        while self.held + size > self.budget {
             let Some(oldest) = self
                 .entries
                 .iter()
@@ -12320,18 +12822,13 @@ impl PictureCache {
                 break;
             };
             evicted.push(self.entries[oldest].handle);
-            self.held -= self.entries[oldest].grey.len();
+            self.held -= self.entries[oldest].bytes();
             self.entries.remove(oldest);
         }
-        self.held += grey.len();
+        self.held += size;
         self.clock.set(self.clock.get() + 1);
-        self.entries.push(HeldPicture {
-            handle,
-            width,
-            height,
-            grey,
-            used: std::cell::Cell::new(self.clock.get()),
-        });
+        entry.used.set(self.clock.get());
+        self.entries.push(entry);
         Some(evicted)
     }
 
@@ -12340,12 +12837,23 @@ impl PictureCache {
     /// Starting another upload cancels the incomplete one. The previous live
     /// value under `handle` remains drawable until [`Self::commit_upload`].
     pub fn begin_upload(&mut self, handle: PictureHandle, width: u32, height: u32) -> bool {
-        let expected = usize::try_from(width).ok().and_then(|width| {
-            usize::try_from(height)
-                .ok()
-                .and_then(|height| width.checked_mul(height))
-        });
-        let Some(expected) = expected else {
+        self.begin_upload_with(handle, width, height, PictureFormat::Grey)
+    }
+
+    /// [`Self::begin_upload`] for a picture in any format.
+    ///
+    /// The budget check here is on the bytes in flight. A colour picture is
+    /// charged for its grey plane as well once it lands, so an upload that
+    /// starts may still be refused at commit; the sender learns that from the
+    /// commit result exactly as it would for eviction.
+    pub fn begin_upload_with(
+        &mut self,
+        handle: PictureHandle,
+        width: u32,
+        height: u32,
+        format: PictureFormat,
+    ) -> bool {
+        let Some(expected) = format.byte_len(width, height) else {
             self.pending = None;
             return false;
         };
@@ -12357,8 +12865,9 @@ impl PictureCache {
             handle,
             width,
             height,
+            format,
             expected,
-            grey: Vec::with_capacity(expected),
+            bytes: Vec::with_capacity(expected),
         });
         true
     }
@@ -12369,13 +12878,13 @@ impl PictureCache {
             return false;
         };
         if pending.handle != handle
-            || offset != pending.grey.len()
-            || pending.grey.len().saturating_add(bytes.len()) > pending.expected
+            || offset != pending.bytes.len()
+            || pending.bytes.len().saturating_add(bytes.len()) > pending.expected
         {
             self.pending = None;
             return false;
         }
-        pending.grey.extend_from_slice(bytes);
+        pending.bytes.extend_from_slice(bytes);
         true
     }
 
@@ -12385,15 +12894,21 @@ impl PictureCache {
     /// mismatched upload.
     pub fn commit_upload(&mut self, handle: PictureHandle) -> Option<Vec<PictureHandle>> {
         let pending = self.pending.take()?;
-        if pending.handle != handle || pending.grey.len() != pending.expected {
+        if pending.handle != handle || pending.bytes.len() != pending.expected {
             return None;
         }
-        self.put_report(pending.handle, pending.width, pending.height, pending.grey)
+        self.put_report_with(
+            pending.handle,
+            pending.width,
+            pending.height,
+            pending.format,
+            pending.bytes,
+        )
     }
 
     pub fn remove(&mut self, handle: PictureHandle) {
         if let Some(index) = self.entries.iter().position(|entry| entry.handle == handle) {
-            self.held -= self.entries[index].grey.len();
+            self.held -= self.entries[index].bytes();
             self.entries.remove(index);
         }
     }
@@ -12431,6 +12946,7 @@ impl Pictures for PictureCache {
             width: entry.width,
             height: entry.height,
             grey: &entry.grey,
+            colour: entry.colour.as_deref(),
         })
     }
 
@@ -12469,6 +12985,11 @@ fn draw_picture(surface: &mut Surface, rect: Rect, pixels: PicturePixels<'_>, cl
     if pixels.grey.len() < source_width * source_height {
         return;
     }
+    // Colour is drawn only when the whole plane is there; a short one is
+    // treated as absent rather than read past.
+    let colour = pixels
+        .colour
+        .filter(|colour| colour.len() >= source_width * source_height * 3);
     let target_width = rect.width as usize;
     let target_height = rect.height as usize;
     for y in visible.y..visible.y + visible.height {
@@ -12479,17 +13000,32 @@ fn draw_picture(surface: &mut Surface, rect: Rect, pixels: PicturePixels<'_>, cl
             let column = (x - rect.x) as usize;
             let from_x = column * source_width / target_width;
             let to_x = max(from_x + 1, (column + 1) * source_width / target_width);
-            let mut total = 0u32;
+            let mut total = [0u32; 3];
             let mut counted = 0u32;
             for sample_y in from_y..to_y.min(source_height) {
                 let base = sample_y * source_width;
                 for sample_x in from_x..to_x.min(source_width) {
-                    total += u32::from(pixels.grey[base + sample_x]);
+                    let index = base + sample_x;
+                    match colour {
+                        Some(colour) => {
+                            let pixel = &colour[index * 3..index * 3 + 3];
+                            total[0] += u32::from(pixel[0]);
+                            total[1] += u32::from(pixel[1]);
+                            total[2] += u32::from(pixel[2]);
+                        }
+                        None => total[0] += u32::from(pixels.grey[index]),
+                    }
                     counted += 1;
                 }
             }
-            if let Some(mean) = total.checked_div(counted) {
-                surface.blend(x, y, u8::try_from(mean).unwrap_or(u8::MAX), 255);
+            if counted == 0 {
+                continue;
+            }
+            let mean = |sum: u32| u8::try_from(sum / counted).unwrap_or(u8::MAX);
+            if colour.is_some() {
+                surface.blend_colour(x, y, [mean(total[0]), mean(total[1]), mean(total[2])], 255);
+            } else {
+                surface.blend(x, y, mean(total[0]), 255);
             }
         }
     }
@@ -12511,10 +13047,10 @@ pub fn render_with(
     render_all(screen, metrics, chrome, &(), surface, dirty);
 }
 
-/// Maps a physical touch into the current logical viewport.
+/// Converts a physical panel coordinate into the active logical viewport.
 ///
-/// The clockwise display convention puts logical top-left at physical
-/// top-right; this is its exact inverse.
+/// Landscape follows the clockwise display convention: logical top-left is
+/// displayed at physical top-right. The inverse is applied before hit testing.
 #[must_use]
 pub const fn logical_point(
     orientation: Orientation,
@@ -12532,7 +13068,6 @@ pub const fn logical_point(
     )
 }
 
-/// Maps a physical touch into a logical viewport using the observed side.
 #[must_use]
 pub const fn logical_point_with_turn(
     orientation: Orientation,
@@ -12551,11 +13086,13 @@ pub const fn logical_point_with_turn(
     }
 }
 
-/// Renders into the physical framebuffer, using a full repaint for software
-/// landscape so rotated partial damage can never miss a changed pixel.
+/// Rasterizes into the physical panel in an application's requested direction.
+///
+/// Landscape is deliberately a full logical repaint: a rotated partial damage
+/// rectangle can otherwise leave stale pixels outside its transformed bounds.
 pub fn render_oriented(
     screen: &Screen,
-    metrics: &DisplayMetrics,
+    physical_metrics: &DisplayMetrics,
     chrome: &Chrome,
     pictures: &dyn Pictures,
     surface: &mut Surface,
@@ -12564,7 +13101,7 @@ pub fn render_oriented(
 ) {
     render_oriented_with_turn(
         screen,
-        metrics,
+        physical_metrics,
         chrome,
         pictures,
         surface,
@@ -12574,11 +13111,10 @@ pub fn render_oriented(
     );
 }
 
-/// Renders an oriented viewport using the physical landscape side.
 #[allow(clippy::too_many_arguments)]
 pub fn render_oriented_with_turn(
     screen: &Screen,
-    metrics: &DisplayMetrics,
+    physical_metrics: &DisplayMetrics,
     chrome: &Chrome,
     pictures: &dyn Pictures,
     surface: &mut Surface,
@@ -12587,29 +13123,27 @@ pub fn render_oriented_with_turn(
     turn: LandscapeTurn,
 ) {
     if orientation == Orientation::Portrait {
-        render_all(screen, metrics, chrome, pictures, surface, dirty);
+        render_all(screen, physical_metrics, chrome, pictures, surface, dirty);
         return;
     }
+    let metrics = physical_metrics.oriented(orientation);
     let mut logical = Surface::new(surface.height, surface.width);
-    render_all(
-        screen,
-        &metrics.oriented(orientation),
-        chrome,
-        pictures,
-        &mut logical,
-        None,
-    );
+    render_all(screen, &metrics, chrome, pictures, &mut logical, None);
     rotate_landscape(&logical, surface, turn);
 }
 
 fn rotate_landscape(logical: &Surface, physical: &mut Surface, turn: LandscapeTurn) {
-    for y in 0..logical.height {
-        for x in 0..logical.width {
-            let destination = match turn {
-                LandscapeTurn::Clockwise => x * physical.width + (physical.width - 1 - y),
-                LandscapeTurn::CounterClockwise => (physical.height - 1 - x) * physical.width + y,
+    if logical.width != physical.height || logical.height != physical.width {
+        return;
+    }
+    for logical_y in 0..logical.height {
+        for logical_x in 0..logical.width {
+            let (physical_x, physical_y) = match turn {
+                LandscapeTurn::Clockwise => (physical.width - 1 - logical_y, logical_x),
+                LandscapeTurn::CounterClockwise => (logical_y, physical.height - 1 - logical_x),
             };
-            physical.pixels[destination] = logical.pixels[y * logical.width + x];
+            physical.pixels[physical_y * physical.width + physical_x] =
+                logical.pixels[logical_y * logical.width + logical_x];
         }
     }
 }
@@ -12993,25 +13527,68 @@ fn render_all_with_selected_font(
             // ruled squares and an empty cell stays paper white. Filling would
             // make every move a full-cell change, which is slow on E Ink and
             // looks like a mistake.
-            LayoutKind::Cell(_, CellStyle::Board) => stroke_clipped(
+            LayoutKind::Cell(_, CellStyle::Board, true) => {
+                fill_clipped(surface, node.rect, tone::SURFACE, clip);
+                stroke_clipped(
+                    surface,
+                    node.rect,
+                    tone::INK,
+                    metrics.rule_thickness(),
+                    clip,
+                );
+            }
+            LayoutKind::Cell(_, CellStyle::Board, false) => stroke_clipped(
                 surface,
                 node.rect,
                 tone::RULE,
                 metrics.rule_thickness(),
                 clip,
             ),
+            LayoutKind::Cell(_, CellStyle::BoardDark, _) => {
+                fill_clipped(surface, node.rect, tone::SURFACE, clip);
+                stroke_clipped(
+                    surface,
+                    node.rect,
+                    tone::RULE,
+                    metrics.rule_thickness(),
+                    clip,
+                );
+            }
+            LayoutKind::Cell(_, CellStyle::BackgammonTop, _) => {
+                draw_backgammon_point(surface, node.rect, true, metrics, clip);
+            }
+            LayoutKind::Cell(_, CellStyle::BackgammonBottom, _) => {
+                draw_backgammon_point(surface, node.rect, false, metrics, clip);
+            }
+            LayoutKind::BackgammonStack(glyph, count, from_top) => {
+                draw_backgammon_stack(surface, glyph, count, from_top, node.rect, clip);
+            }
+            LayoutKind::BackgammonBoard => draw_backgammon_board(surface, node.rect, metrics, clip),
+            LayoutKind::MorrisBoard => draw_morris_board(surface, node.rect, metrics, clip),
             // A key is the field it is printed on, with no rule at all. The
             // gaps between the keys separate them, which is how a keyboard has
             // always been read, and it takes forty-five outlines off the panel.
             // Nothing at all: the picture is the whole of it.
-            LayoutKind::Cell(_, CellStyle::Plain) => {}
-            LayoutKind::Cell(_, CellStyle::Key) => fill_rounded_clipped(
+            LayoutKind::Cell(_, CellStyle::Plain, _) => {}
+            LayoutKind::Cell(_, CellStyle::Key, _) => fill_rounded_clipped(
                 surface,
                 node.rect,
                 metrics.tenth_mm(BUTTON_RADIUS_TENTH_MM),
                 tone::SURFACE,
                 clip,
             ),
+            LayoutKind::Cell(_, CellStyle::Pad, _) => {
+                let radius = metrics.tenth_mm(PAD_RADIUS_TENTH_MM);
+                fill_rounded_clipped(surface, node.rect, radius, tone::PAPER, clip);
+                stroke_rounded_clipped(
+                    surface,
+                    node.rect,
+                    radius,
+                    tone::INK,
+                    metrics.tenth_mm(PAD_BORDER_TENTH_MM),
+                    clip,
+                );
+            }
             LayoutKind::CellLabel(board) => {
                 // A short label on a board is a mark rather than a word: an X,
                 // an O or a Sudoku digit is the content of the cell and should
@@ -13403,12 +13980,13 @@ fn render_all_with_selected_font(
             // enough separation, and a box around each one would add weight
             // that a list of several entries cannot carry.
             LayoutKind::Row(_) => {}
-            LayoutKind::RowTitle => draw_lines(
+            LayoutKind::RowTitle => draw_lines_in(
                 surface,
                 &node.text_lines,
                 node.rect.x,
                 node.rect.y,
                 FontSize::Body,
+                prose,
                 tone::INK,
                 clip,
             ),
@@ -13418,6 +13996,7 @@ fn render_all_with_selected_font(
                 node.rect,
                 metrics,
                 FontSize::Body,
+                prose,
                 clip,
             ),
             LayoutKind::RowSummary => draw_lines(
@@ -13447,8 +14026,11 @@ fn render_all_with_selected_font(
                     tone::MUTED,
                 );
             }
-            LayoutKind::TileGlyph(glyph) | LayoutKind::InlineGlyph(glyph) => {
+            LayoutKind::TileGlyph(glyph) | LayoutKind::InlineGlyph(glyph, false) => {
                 draw_glyph_icon(surface, glyph, node.rect, clip);
+            }
+            LayoutKind::InlineGlyph(glyph, true) => {
+                draw_glyph_icon_in(surface, glyph, node.rect, clip, tone::PAPER);
             }
             LayoutKind::TileGlyphMuted(glyph) => {
                 draw_glyph_icon_in(surface, glyph, node.rect, clip, tone::MUTED);
@@ -14264,6 +14846,183 @@ fn stroke_clipped(surface: &mut Surface, rect: Rect, tone: u8, thickness: i32, c
     }
 }
 
+fn draw_morris_board(surface: &mut Surface, rect: Rect, metrics: &DisplayMetrics, clip: Rect) {
+    let thickness = metrics.rule_thickness().max(2);
+    let point = |column: i32, row: i32| {
+        (
+            rect.x + (2 * column + 1) * rect.width / 14,
+            rect.y + (2 * row + 1) * rect.height / 14,
+        )
+    };
+    let mut line = |from: (i32, i32), to: (i32, i32)| {
+        let x = from.0.min(to.0);
+        let y = from.1.min(to.1);
+        let width = (from.0 - to.0).abs().max(thickness);
+        let height = (from.1 - to.1).abs().max(thickness);
+        fill_clipped(
+            surface,
+            Rect {
+                x,
+                y,
+                width,
+                height,
+            },
+            tone::RULE,
+            clip,
+        );
+    };
+    for inset in 0..3 {
+        let far = 6 - inset;
+        let top_left = point(inset, inset);
+        let top_right = point(far, inset);
+        let bottom_left = point(inset, far);
+        let bottom_right = point(far, far);
+        line(top_left, top_right);
+        line(top_right, bottom_right);
+        line(bottom_right, bottom_left);
+        line(bottom_left, top_left);
+    }
+    line(point(3, 0), point(3, 2));
+    line(point(3, 4), point(3, 6));
+    line(point(0, 3), point(2, 3));
+    line(point(4, 3), point(6, 3));
+}
+
+fn draw_backgammon_point(
+    surface: &mut Surface,
+    rect: Rect,
+    from_top: bool,
+    metrics: &DisplayMetrics,
+    clip: Rect,
+) {
+    let paper_point = (rect.x / rect.width.max(1)).rem_euclid(2) == 0;
+    let fill = if paper_point {
+        tone::SURFACE
+    } else {
+        tone::PAPER
+    };
+    let height = rect.height.max(1);
+    let centre = rect.x + rect.width / 2;
+    for row in 0..height {
+        let depth = if from_top { row } else { height - 1 - row };
+        let half = (rect.width * (height - depth) / (2 * height)).max(1);
+        fill_clipped(
+            surface,
+            Rect {
+                x: centre - half,
+                y: rect.y + row,
+                width: half * 2,
+                height: 1,
+            },
+            fill,
+            clip,
+        );
+    }
+    let rule = metrics.rule_thickness();
+    let mut edge = |x0: i32, y0: i32, x1: i32, y1: i32| {
+        let steps = (x1 - x0).abs().max((y1 - y0).abs()).max(1);
+        for step in 0..=steps {
+            fill_clipped(
+                surface,
+                Rect {
+                    x: x0 + (x1 - x0) * step / steps,
+                    y: y0 + (y1 - y0) * step / steps,
+                    width: rule,
+                    height: rule,
+                },
+                tone::RULE,
+                clip,
+            );
+        }
+    };
+    let apex = if from_top {
+        (centre, rect.y + height - 1)
+    } else {
+        (centre, rect.y)
+    };
+    let base_y = if from_top {
+        rect.y
+    } else {
+        rect.y + height - 1
+    };
+    edge(rect.x, base_y, apex.0, apex.1);
+    edge(rect.x + rect.width - 1, base_y, apex.0, apex.1);
+}
+
+fn draw_backgammon_board(surface: &mut Surface, rect: Rect, metrics: &DisplayMetrics, clip: Rect) {
+    fill_clipped(surface, rect, tone::PAPER, clip);
+    stroke_clipped(
+        surface,
+        rect,
+        tone::RULE,
+        metrics.rule_thickness() * 2,
+        clip,
+    );
+    let bar_width = (rect.width / 28).max(metrics.rule_thickness() * 3);
+    fill_clipped(
+        surface,
+        Rect {
+            x: rect.x + (rect.width - bar_width) / 2,
+            y: rect.y,
+            width: bar_width,
+            height: rect.height,
+        },
+        tone::MUTED,
+        clip,
+    );
+    for (x, width) in [
+        (rect.x, (rect.width / 24).max(1)),
+        (
+            rect.x + rect.width - (rect.width / 24).max(1),
+            (rect.width / 24).max(1),
+        ),
+    ] {
+        stroke_clipped(
+            surface,
+            Rect {
+                x,
+                y: rect.y + rect.height / 8,
+                width,
+                height: rect.height * 3 / 4,
+            },
+            tone::MUTED,
+            metrics.rule_thickness(),
+            clip,
+        );
+    }
+}
+
+fn draw_backgammon_stack(
+    surface: &mut Surface,
+    glyph: Glyph,
+    count: u8,
+    from_top: bool,
+    rect: Rect,
+    clip: Rect,
+) {
+    let side = (rect.width * 7 / 10).max(1);
+    let step = (side * 2 / 3).max(1);
+    for index in 0..i32::from(count) {
+        let y = if from_top {
+            rect.y + 4 + index * step
+        } else {
+            rect.y + rect.height - side - 4 - index * step
+        };
+        draw_vector(
+            surface,
+            &vector::shapes(glyph),
+            Rect {
+                x: rect.x + (rect.width - side) / 2,
+                y,
+                width: side,
+                height: side,
+            },
+            clip,
+            tone::INK,
+        );
+    }
+}
+
 /// The horizontal run of a rounded rectangle on one of its rows, as a rect one
 /// pixel tall, or `None` for a row outside the shape.
 fn rounded_row(rect: Rect, radius: i32, row: i32) -> Option<Rect> {
@@ -14389,17 +15148,18 @@ fn draw_struck_lines(
     rect: Rect,
     metrics: &DisplayMetrics,
     size: FontSize,
+    face: Face,
     clip: Rect,
 ) {
     let mut y = rect.y;
     let thickness = metrics.rule_thickness();
     for line in lines {
-        draw_text(surface, line, rect.x, y, size, tone::MUTED, clip);
-        let width = min(measure_text(line, size).0, rect.width);
+        draw_text_in(surface, line, rect.x, y, size, face, tone::MUTED, clip);
+        let width = min(measure_text_in(line, size, face).0, rect.width);
         // Through the middle of the letters rather than the middle of the line
         // box, which sits under the baseline and reads as an underline.
         let middle = y
-            .saturating_add(size.line_height() / 2)
+            .saturating_add(size.line_height_in(face) / 2)
             .saturating_sub(thickness / 2);
         fill_clipped(
             surface,
@@ -14412,7 +15172,7 @@ fn draw_struck_lines(
             tone::MUTED,
             clip,
         );
-        y = y.saturating_add(size.line_height());
+        y = y.saturating_add(size.line_height_in(face));
     }
 }
 
@@ -14952,7 +15712,7 @@ mod tests {
             .nodes
             .iter()
             .filter_map(|node| match node.kind {
-                LayoutKind::InlineGlyph(glyph) => Some(glyph),
+                LayoutKind::InlineGlyph(glyph, _) => Some(glyph),
                 _ => None,
             })
             .collect();
@@ -14966,7 +15726,7 @@ mod tests {
         for node in layout
             .nodes
             .iter()
-            .filter(|node| matches!(node.kind, LayoutKind::InlineGlyph(_)))
+            .filter(|node| matches!(node.kind, LayoutKind::InlineGlyph(..)))
         {
             assert!(
                 layout.nodes.iter().any(|other| {
@@ -15733,6 +16493,191 @@ mod tests {
         frame.pixels[0] = tone::INK;
         let grey_outside_change = planner.plan(&frame).expect("black pixel changed");
         assert_eq!(grey_outside_change.waveform, PanelWaveform::Du);
+    }
+
+    #[test]
+    fn a_colour_picture_plans_a_colour_update_and_grey_over_it_does_not() {
+        let mut planner = FramePlanner::new(8, 4);
+        let mut frame = Surface::new(8, 4);
+        let first = planner.plan(&frame).expect("first frame refreshes");
+        assert!(planner.commit(&frame, first));
+        assert!(frame.chroma.is_none(), "a grey frame has no colour plane");
+
+        // One red pixel: the changed region is that pixel and it is colour.
+        frame.blend_colour(3, 2, [200, 20, 20], 255);
+        assert_eq!(frame.pixels[2 * 8 + 3], luma([200, 20, 20]));
+        let colour = planner.plan(&frame).expect("colour changed");
+        assert_eq!(colour.waveform, PanelWaveform::Colour);
+        assert!(!colour.full);
+        assert_eq!(
+            colour.region,
+            Rect {
+                x: 3,
+                y: 2,
+                width: 1,
+                height: 1
+            }
+        );
+        assert!(planner.commit(&frame, colour));
+        assert!(planner.plan(&frame).is_none(), "unchanged frame refreshes");
+
+        // A different colour with the same luminance is still a change: the
+        // grey plane alone would have missed it.
+        let same_luma = [20, 200, 20];
+        let candidate = [0u8, 255, 0];
+        let green = if luma(candidate) == luma([200, 20, 20]) {
+            candidate
+        } else {
+            same_luma
+        };
+        frame.blend_colour(3, 2, green, 255);
+        let recoloured = planner.plan(&frame).expect("hue changed");
+        assert_eq!(recoloured.waveform, PanelWaveform::Colour);
+        assert!(planner.commit(&frame, recoloured));
+
+        // Grey elsewhere is planned as grey: colour on the panel does not
+        // make every later update a colour one.
+        frame.fill_rect(
+            Rect {
+                x: 0,
+                y: 0,
+                width: 1,
+                height: 1,
+            },
+            tone::INK,
+        );
+        let ink = planner.plan(&frame).expect("ink changed");
+        assert_eq!(ink.waveform, PanelWaveform::Du);
+        assert!(planner.commit(&frame, ink));
+
+        // Painting grey over the colour pixel is a grey update of that pixel,
+        // and the frame no longer holds colour.
+        frame.fill_rect(
+            Rect {
+                x: 3,
+                y: 2,
+                width: 1,
+                height: 1,
+            },
+            tone::MUTED,
+        );
+        assert!(!frame.has_colour());
+        let covered = planner.plan(&frame).expect("colour covered");
+        assert_eq!(covered.waveform, PanelWaveform::Gl16);
+        assert!(planner.commit(&frame, covered));
+
+        // And a cleared frame drops the plane altogether.
+        frame.clear(tone::PAPER);
+        assert!(frame.chroma.is_none());
+    }
+
+    #[test]
+    fn a_cleaning_refresh_over_colour_is_planned_in_colour() {
+        let mut planner = FramePlanner::new(2, 1);
+        let mut frame = Surface::new(2, 1);
+        let first = planner.plan(&frame).expect("first");
+        assert!(planner.commit(&frame, first));
+        frame.blend_colour(1, 0, [10, 90, 200], 255);
+        let colour = planner.plan(&frame).expect("colour");
+        assert!(planner.commit(&frame, colour));
+        // Each flip repaints one of the two pixels, so the budget of eight
+        // panels' worth is sixteen flips.
+        for index in 0..=2 * PANEL_CLEAN_INTERVAL {
+            frame.fill_rect(
+                Rect {
+                    x: 0,
+                    y: 0,
+                    width: 1,
+                    height: 1,
+                },
+                if index % 2 == 0 {
+                    tone::INK
+                } else {
+                    tone::PAPER
+                },
+            );
+            let update = planner.plan(&frame).expect("update");
+            assert!(planner.commit(&frame, update));
+            if update.full {
+                assert_eq!(update.waveform, PanelWaveform::Colour);
+                assert_eq!(update.region.width, 2);
+                return;
+            }
+            assert_eq!(update.waveform, PanelWaveform::Du);
+        }
+        panic!("the panel was never cleaned");
+    }
+
+    #[test]
+    fn colour_and_grey_planes_describe_one_picture() {
+        let mut frame = Surface::new(4, 1);
+        frame.blend_colour(0, 0, [255, 0, 0], 255);
+        frame.blend_colour(1, 0, [0, 255, 0], 255);
+        frame.fill_rect(
+            Rect {
+                x: 2,
+                y: 0,
+                width: 1,
+                height: 1,
+            },
+            40,
+        );
+        frame.blend(3, 0, 0, 128);
+        let chroma = frame.chroma.as_ref().expect("colour drawn");
+        assert_eq!(&chroma[6..9], &[40, 40, 40]);
+        assert_eq!(chroma[9], chroma[10]);
+        assert_eq!(chroma[10], chroma[11]);
+        for index in 0..4 {
+            assert_eq!(
+                frame.pixels[index],
+                luma(frame.rgb_at(index).expect("inside")),
+                "pixel {index}"
+            );
+        }
+        frame.invert_rect(Rect {
+            x: 0,
+            y: 0,
+            width: 4,
+            height: 1,
+        });
+        assert_eq!(frame.rgb_at(0), Some([0, 255, 255]));
+        assert_eq!(frame.rgb_at(2), Some([215, 215, 215]));
+        assert_eq!(frame.pixels[2], 215);
+        assert!(frame.region_has_colour(Rect {
+            x: 0,
+            y: 0,
+            width: 2,
+            height: 1
+        }));
+        assert!(!frame.region_has_colour(Rect {
+            x: 2,
+            y: 0,
+            width: 2,
+            height: 1
+        }));
+        let rows: Option<Vec<&[u8]>> = frame
+            .colour_rows(Rect {
+                x: 1,
+                y: 0,
+                width: 2,
+                height: 1,
+            })
+            .map(Iterator::collect);
+        assert_eq!(rows, Some(vec![&[255, 0, 255, 215, 215, 215][..]]));
+        assert!(
+            frame
+                .colour_rows(Rect {
+                    x: 3,
+                    y: 0,
+                    width: 2,
+                    height: 1,
+                })
+                .is_none(),
+            "a region past the edge is refused"
+        );
+        for v in [0_u8, 1, 17, 137, 254, 255] {
+            assert_eq!(luma([v, v, v]), v, "grey survives the round trip");
+        }
     }
 
     #[test]
@@ -18370,6 +19315,97 @@ mod prose_tests {
     }
 
     #[test]
+    fn a_colour_picture_is_held_with_its_grey_and_drawn_in_colour() {
+        let mut cache = PictureCache::new(64);
+        let rgb = vec![255, 0, 0, 0, 255, 0, 0, 0, 255, 90, 90, 90];
+        assert_eq!(
+            cache.put_report_with(PictureHandle(1), 2, 2, PictureFormat::Rgb, rgb.clone()),
+            Some(Vec::new())
+        );
+        // Charged for both planes: twelve colour bytes and four grey ones.
+        assert_eq!(cache.bytes_held(), 16);
+        let held = cache.get(PictureHandle(1)).expect("held");
+        assert_eq!(held.colour, Some(rgb.as_slice()));
+        assert_eq!(
+            held.grey,
+            &[luma([255, 0, 0]), luma([0, 255, 0]), luma([0, 0, 255]), 90]
+        );
+        // The declared size is checked against the format's byte count.
+        assert!(cache
+            .put_report_with(PictureHandle(2), 2, 2, PictureFormat::Rgb, vec![0; 4])
+            .is_none());
+        assert!(cache
+            .put_report_with(PictureHandle(2), 2, 2, PictureFormat::Grey, vec![0; 12])
+            .is_none());
+
+        let mut surface = Surface::new(4, 4);
+        draw_picture(
+            &mut surface,
+            Rect {
+                x: 1,
+                y: 1,
+                width: 2,
+                height: 2,
+            },
+            cache.get(PictureHandle(1)).expect("held"),
+            Rect {
+                x: 0,
+                y: 0,
+                width: 4,
+                height: 4,
+            },
+        );
+        assert_eq!(surface.rgb_at(5), Some([255, 0, 0]));
+        assert_eq!(surface.rgb_at(6), Some([0, 255, 0]));
+        assert_eq!(surface.rgb_at(9), Some([0, 0, 255]));
+        assert_eq!(surface.rgb_at(10), Some([90, 90, 90]));
+        assert_eq!(surface.pixels[5], luma([255, 0, 0]));
+        assert_eq!(surface.rgb_at(0), Some([tone::PAPER; 3]));
+
+        // Shrunk, the colours average per channel.
+        let mut small = Surface::new(1, 1);
+        draw_picture(
+            &mut small,
+            Rect {
+                x: 0,
+                y: 0,
+                width: 1,
+                height: 1,
+            },
+            cache.get(PictureHandle(1)).expect("held"),
+            Rect {
+                x: 0,
+                y: 0,
+                width: 1,
+                height: 1,
+            },
+        );
+        assert_eq!(
+            small.rgb_at(0),
+            Some([86, 86, 86]),
+            "each channel is the mean of 255, 0, 0 and 90"
+        );
+    }
+
+    #[test]
+    fn a_colour_upload_is_committed_in_its_format() {
+        let mut cache = PictureCache::new(64);
+        assert!(cache.begin_upload_with(PictureHandle(3), 2, 1, PictureFormat::Rgb));
+        assert!(cache.upload_chunk(PictureHandle(3), 0, &[255, 0, 0]));
+        assert!(cache.upload_chunk(PictureHandle(3), 3, &[0, 0, 255]));
+        assert_eq!(cache.commit_upload(PictureHandle(3)), Some(Vec::new()));
+        let held = cache.get(PictureHandle(3)).expect("held");
+        assert_eq!(held.colour, Some(&[255, 0, 0, 0, 0, 255][..]));
+        assert_eq!(held.grey.len(), 2);
+        // A colour picture whose two planes overflow the budget is refused at
+        // commit even though its bytes alone fitted in flight.
+        let mut tight = PictureCache::new(12);
+        assert!(tight.begin_upload_with(PictureHandle(4), 2, 2, PictureFormat::Rgb));
+        assert!(tight.upload_chunk(PictureHandle(4), 0, &[0; 12]));
+        assert_eq!(tight.commit_upload(PictureHandle(4)), None);
+    }
+
+    #[test]
     fn shrinking_a_picture_averages_rather_than_drops_pixels() {
         // Half the source is black and half white. Sampling would give one or
         // the other; averaging gives the grey that is actually there.
@@ -19191,6 +20227,14 @@ mod prose_tests {
                     ),
                     Some(ActionId::BACK),
                     "{name}: the cross does not answer"
+                );
+                assert_eq!(
+                    layout.pressed_control(
+                        cross.rect.x + cross.rect.width / 2,
+                        cross.rect.y + cross.rect.height / 2
+                    ),
+                    Some(cross.rect),
+                    "{name}: pressing the cross marked a control behind the modal"
                 );
                 let target = metrics.touch_target_default();
                 assert!(
@@ -20700,6 +21744,7 @@ mod orientation_tests {
             width: 3,
             height: 2,
             pixels: vec![1, 2, 3, 4, 5, 6],
+            chroma: None,
         };
         let mut clockwise = Surface::new(2, 3);
         rotate_landscape(&logical, &mut clockwise, LandscapeTurn::Clockwise);
@@ -21694,5 +22739,29 @@ mod figure_tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn landscape_swaps_the_logical_viewport_and_inverts_touch_clockwise() {
+        let landscape = CLARA_BW_METRICS.oriented(Orientation::Landscape);
+        assert_eq!((landscape.width, landscape.height), (1448, 1072));
+        assert_eq!(logical_point(Orientation::Landscape, 1072, 1071, 0), (0, 0));
+        assert_eq!(
+            logical_point(Orientation::Landscape, 1072, 0, 1447),
+            (1447, 1071)
+        );
+        assert_eq!(
+            logical_point(Orientation::Landscape, 1072, 536, 724),
+            (724, 535)
+        );
+    }
+
+    #[test]
+    fn landscape_rotation_maps_each_logical_corner_to_its_physical_corner() {
+        let mut logical = Surface::new(3, 2);
+        logical.pixels = vec![1, 2, 3, 4, 5, 6];
+        let mut physical = Surface::new(2, 3);
+        rotate_landscape(&logical, &mut physical, LandscapeTurn::Clockwise);
+        assert_eq!(physical.pixels, vec![4, 1, 5, 2, 6, 3]);
     }
 }

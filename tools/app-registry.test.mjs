@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync, readdirSync } from "node:fs";
 import { collectRegistry, currentProtocolVersion, deriveMinimumCobalt, normalizeContribution } from "./app-registry.mjs";
 import {
   contributionPlan,
@@ -33,13 +34,13 @@ test("a concise contribution derives package and minimum Cobalt", () => {
 test("protocol and capability policy derive the strictest minimum", () => {
   const policy = {
     format_version: 1,
-    protocols: { "11": "0.3.1" },
+    protocols: { "11": "0.3.1", "12": "0.3.5" },
     capabilities: { "future-service": "0.4.2" }
   };
   assert.equal(deriveMinimumCobalt(["network", "future-service"], 11, policy), "0.4.2");
   assert.throws(
-    () => deriveMinimumCobalt([], 12, policy),
-    /protocol 12 has no Cobalt minimum/
+    () => deriveMinimumCobalt([], 13, policy),
+    /protocol 13 has no Cobalt minimum/
   );
 });
 
@@ -130,4 +131,30 @@ test("the one-command plan resolves source manifest package and protocol", () =>
   assert.equal(plan.app.package, "kobo-sudoku");
   assert.equal(plan.protocolVersion, CURRENT_PROTOCOL);
   assert.equal(plan.cargoPath, "apps/sudoku/Cargo.toml");
+});
+
+// Every app moved to a manifest beside its source, which left apps/catalog.json
+// an empty base. A check handed that file instead of the collected registry
+// still exits zero, having validated nothing, so no workflow may name it.
+test("no workflow checks the empty base catalog instead of the collected registry", () => {
+  const base = JSON.parse(readFileSync("apps/catalog.json", "utf8"));
+  const collected = collectRegistry();
+  assert.ok(
+    collected.apps.length > base.apps.length,
+    "the collected registry must carry more than the base catalog"
+  );
+
+  // Not just `--registry`: the publish job read the file inline with
+  // readFileSync, emitted no packages, copied nothing, and failed on an empty
+  // upload. Any mention outside a comment is the same mistake.
+  for (const name of readdirSync(".github/workflows")) {
+    const workflow = readFileSync(`.github/workflows/${name}`, "utf8");
+    for (const line of workflow.split("\n")) {
+      if (line.trimStart().startsWith("#")) continue;
+      assert.ok(
+        !line.includes("apps/catalog.json"),
+        `${name} reads the empty base catalog instead of the collected registry: ${line.trim()}`
+      );
+    }
+  }
 });

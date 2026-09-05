@@ -1,0 +1,5 @@
+expect Backgammon
+tap Roll
+expect White opened
+clean
+shot backgammon-opening

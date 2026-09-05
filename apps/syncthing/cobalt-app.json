@@ -1,0 +1,28 @@
+{
+  "id": "syncthing",
+  "display_name": "Sync",
+  "short_label": "Sync",
+  "summary": "Choose folders and a battery-friendly sync schedule.",
+  "page_description": "Keep selected folders in sync while controlling when your Kobo uses Wi-Fi.",
+  "version": "0.2.0",
+  "release_notes": "Keep selected folders in sync while controlling when your Kobo uses Wi-Fi.",
+  "glyph": "refresh",
+  "capabilities": [
+    "scheduled-wake"
+  ],
+  "setup": {
+    "steps": [
+      {
+        "text": "Sync requires a Cobalt platform build containing the pinned ARMv7 Syncthing engine and a package-manager-installed Syncthing binary on your computer."
+      },
+      {
+        "text": "Pair exactly one local directory to a fixed safe folder while the Kobo is awake on Wi-Fi.",
+        "command": "kobo sync setup LOCAL_DIR --folder vault --device <address>"
+      },
+      {
+        "text": "Resume Sync on the Kobo, then start the private host peer. It does not modify another Syncthing installation.",
+        "command": "kobo sync run"
+      }
+    ]
+  }
+}

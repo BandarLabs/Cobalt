@@ -74,6 +74,7 @@ struct Choice {
 struct Ask {
     id: u32,
     source: String,
+    session: String,
     tool: String,
     detail: String,
     /// The answers this question brought with it. Empty is the usual case.
@@ -97,6 +98,9 @@ enum View {
     Code,
     /// Paired, polling, nothing to decide.
     Watching,
+    /// More than one terminal is waiting; choose the question before
+    /// deciding it so one terminal cannot answer another's prompt.
+    Board,
     /// A question is on the panel.
     Asking,
     /// An answer is on its way to the daemon.
@@ -113,6 +117,9 @@ struct Sidekick {
     code: String,
     /// The question on the panel, while there is one.
     ask: Option<Ask>,
+    /// The current daemon snapshot. It is deliberately display-only: the
+    /// daemon remains the sole owner of questions and their answers.
+    board: Vec<Ask>,
     /// Which choices are ticked, for a question that takes more than one.
     /// Cleared with every new question rather than carried between them.
     ticked: Vec<bool>,
@@ -142,6 +149,7 @@ impl Sidekick {
             View::Address => self.address_screen(),
             View::Code => self.code_screen(),
             View::Watching => self.watching(),
+            View::Board => self.board(),
             View::Asking => self.asking(),
             View::Sending => ScreenBuilder::new("sidekick-sending")
                 .top_bar(TITLE)
@@ -155,10 +163,7 @@ impl Sidekick {
         let mut screen = ScreenBuilder::new("sidekick-address")
             .top_bar(TITLE)
             .heading("Pair with your computer")
-            .text(
-                "Run kobo-sidekickd init there, then type the address it \
-                 prints. The port is filled in if you leave it off.",
-            );
+            .text("Open Sidekick in the Cobalt desktop app, then enter the address shown.");
         if let Some(trouble) = &self.trouble {
             screen = screen.banner(BannerLevel::Attention, trouble.clone());
         }
@@ -175,9 +180,8 @@ impl Sidekick {
             .top_bar(TITLE)
             .heading("Now the pairing code")
             .text(format!(
-                "The six characters kobo-sidekickd init printed beside \
-                 {}. They keep anyone else on the network from answering \
-                 for you.",
+                "Enter the six-character code shown beside {}. This keeps \
+                 your answers private.",
                 self.address
             ));
         if let Some(trouble) = &self.trouble {
@@ -210,6 +214,7 @@ impl Sidekick {
         if let Some(trouble) = &self.trouble {
             screen = screen.banner(BannerLevel::Attention, trouble.clone());
         }
+
         if let Some(last) = &self.last {
             screen = screen.section("Last answer").text(last.clone());
         }
@@ -218,6 +223,28 @@ impl Sidekick {
             .text(self.address.clone())
             .spacer(Space::Small)
             .button(REPAIR, "Change pairing")
+            .build()
+    }
+
+    /// One row per waiting terminal. The common one-question case still
+    /// opens its question directly; this board exists only for a fleet.
+    fn board(&self) -> Screen {
+        let mut screen = ScreenBuilder::new("sidekick-board")
+            .top_bar(TITLE)
+            .heading("Waiting questions")
+            .text("Choose a terminal to answer.");
+        if let Some(trouble) = &self.trouble {
+            screen = screen.banner(BannerLevel::Attention, trouble.clone());
+        }
+        screen
+            .rows(self.board.iter().enumerate().map(|(index, ask)| {
+                (
+                    board_action(index),
+                    format!("{}{}", agent_name(&ask.source), session_suffix(ask)),
+                    format!("{} · {}", ask.tool, trimmed_to(&ask.detail, 72)),
+                    Glyph::Chat,
+                )
+            }))
             .build()
     }
 
@@ -282,7 +309,7 @@ impl Sidekick {
             return;
         }
         let url = format!(
-            "https://{}/pending?token={}&wait={POLL_WAIT}",
+            "https://{}/pending?token={}&all=true&wait={POLL_WAIT}",
             self.address, self.code
         );
         self.poll = context.spawn(Task::Fetch {
@@ -362,7 +389,7 @@ impl Sidekick {
 
     /// What came back from a poll.
     fn on_poll(&mut self, context: &mut Context, outcome: TaskOutcome) {
-        if self.view != View::Watching {
+        if !matches!(self.view, View::Watching | View::Board) {
             // The pairing screens are up mid-poll. Nothing is shown over the
             // typing and nothing spins the loop; a question stays queued on
             // its daemon, for the next poll of whatever pairing wins.
@@ -371,13 +398,22 @@ impl Sidekick {
         match outcome {
             TaskOutcome::Completed(bytes) => {
                 let repaint = self.trouble.take().is_some();
-                if let Some(ask) = read_ask(&bytes) {
+                let asks = read_asks(&bytes);
+                if asks.len() == 1 {
+                    let ask = asks.into_iter().next().expect("one ask");
                     self.ticked = vec![false; ask.choices.len()];
                     self.ask = Some(ask);
                     self.view = View::Asking;
                     self.show(context);
                     // Deliberately no next poll: the daemon queues anything
                     // else that arrives until this question is decided.
+                    return;
+                }
+                if asks.len() > 1 {
+                    self.board = asks;
+                    self.view = View::Board;
+                    self.show(context);
+                    self.poll(context);
                     return;
                 }
                 if repaint {
@@ -449,7 +485,7 @@ impl Sidekick {
             self.trouble = None;
             Some(address)
         } else {
-            self.trouble = Some("That does not look like host:port.".to_owned());
+            self.trouble = Some("Enter the address shown on your computer.".to_owned());
             None
         }
     }
@@ -552,7 +588,7 @@ fn answer_landed(bytes: &[u8]) -> bool {
 fn read_ask(bytes: &[u8]) -> Option<Ask> {
     let text = std::str::from_utf8(bytes).ok()?;
     let body = kobo_json::parse(text).ok()?;
-    let ask = body.get("ask")?;
+    let ask = body.get("ask").unwrap_or(&body);
     let id = u32::try_from(ask.get("id").and_then(kobo_json::Value::as_i64)?).ok()?;
     let field = |name: &str| {
         ask.get(name)
@@ -585,6 +621,7 @@ fn read_ask(bytes: &[u8]) -> Option<Ask> {
     Some(Ask {
         id,
         source: field("source"),
+        session: field("session"),
         tool: field("tool"),
         detail: field("detail"),
         choices,
@@ -592,6 +629,41 @@ fn read_ask(bytes: &[u8]) -> Option<Ask> {
         permission: ask.get("permission").and_then(kobo_json::Value::as_bool) != Some(false),
         multi: ask.get("multi").and_then(kobo_json::Value::as_bool) == Some(true),
     })
+}
+
+/// The new board envelope, while accepting the old single-question response
+/// during daemon upgrades.
+fn read_asks(bytes: &[u8]) -> Vec<Ask> {
+    let Ok(text) = std::str::from_utf8(bytes) else {
+        return Vec::new();
+    };
+    let Ok(body) = kobo_json::parse(text) else {
+        return Vec::new();
+    };
+    let items = body
+        .get("asks")
+        .and_then(kobo_json::Value::as_array)
+        .map(<[kobo_json::Value]>::to_vec)
+        .unwrap_or_default();
+    if !items.is_empty() {
+        return items
+            .into_iter()
+            .filter_map(|ask| read_ask(&ask.to_json().into_bytes()))
+            .collect();
+    }
+    read_ask(bytes).into_iter().collect()
+}
+
+fn board_action(index: usize) -> String {
+    format!("board.{index}")
+}
+
+fn session_suffix(ask: &Ask) -> String {
+    if ask.session.is_empty() {
+        String::new()
+    } else {
+        format!(" · {}", ask.session)
+    }
 }
 
 /// The action name for the nth offered answer. Positional because a label
@@ -662,6 +734,18 @@ impl KoboApp for Sidekick {
             self.keyboard = Keyboard::with_text(&self.address);
             self.view = View::Address;
             self.show(context);
+            return;
+        }
+        if self.view == View::Board {
+            if let Some(index) =
+                (0..self.board.len()).find(|index| action == action_id(&board_action(*index)))
+            {
+                let ask = self.board[index].clone();
+                self.ticked = vec![false; ask.choices.len()];
+                self.ask = Some(ask);
+                self.view = View::Asking;
+                self.show(context);
+            }
             return;
         }
         if self.view == View::Asking {
@@ -1024,9 +1108,7 @@ mod tests {
         assert!(fetched(&commands).is_none(), "polled before pairing");
         let lines = shown(&painted(&commands).expect("a screen"));
         assert!(
-            lines
-                .iter()
-                .any(|line| line.contains("kobo-sidekickd init")),
+            lines.iter().any(|line| line.contains("Cobalt desktop app")),
             "the screen never says where the address comes from: {lines:?}"
         );
     }
@@ -1046,7 +1128,10 @@ mod tests {
         );
         let commands = context.take_commands();
         let (_, url) = fetched(&commands).expect("watching starts a poll");
-        assert_eq!(url, "https://192.168.1.5:9331/pending?token=abc123&wait=25");
+        assert_eq!(
+            url,
+            "https://192.168.1.5:9331/pending?token=abc123&all=true&wait=25"
+        );
         assert_eq!(app.view, View::Watching);
     }
 
@@ -1065,7 +1150,10 @@ mod tests {
         );
         let commands = context.take_commands();
         let (_, url) = fetched(&commands).expect("watching starts a poll");
-        assert_eq!(url, "https://192.168.1.5:9331/pending?token=abc123&wait=25");
+        assert_eq!(
+            url,
+            "https://192.168.1.5:9331/pending?token=abc123&all=true&wait=25"
+        );
     }
 
     #[test]
@@ -1152,7 +1240,9 @@ mod tests {
         assert_eq!(app.view, View::Address, "a nonsense address moved on");
         let lines = shown(&painted(&commands).expect("a repaint with the reason"));
         assert!(
-            lines.iter().any(|line| line.contains("host:port")),
+            lines
+                .iter()
+                .any(|line| line.contains("address shown on your computer")),
             "no reason shown: {lines:?}"
         );
     }
@@ -1403,5 +1493,17 @@ mod tests {
                 .any(|line| line.contains("Left at the terminal")),
             "{lines:?}"
         );
+    }
+
+    #[test]
+    fn a_fleet_snapshot_preserves_session_identity_for_each_board_row() {
+        let snapshot = r#"{"version":"4","asks":[
+                {"id":1,"source":"claude","session":"cobalt · ab12","tool":"Bash","detail":"cargo test"},
+                {"id":2,"source":"codex","session":"cobalt · cd34","tool":"shell","detail":"git status"}
+            ]}"#;
+        let asks = super::read_asks(snapshot.as_bytes());
+        assert_eq!(asks.len(), 2);
+        assert_eq!(super::session_suffix(&asks[0]), " · cobalt · ab12");
+        assert_eq!(asks[1].source, "codex");
     }
 }

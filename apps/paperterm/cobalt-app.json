@@ -1,0 +1,17 @@
+{
+  "id": "paperterm",
+  "display_name": "Paperterm",
+  "short_label": "Paperterm",
+  "summary": "Pair with a computer to mirror a terminal session on e-ink.",
+  "version": "0.1.1",
+  "glyph": "terminal",
+  "capabilities": ["network"],
+  "release_notes": "Mirror a host terminal on e-ink with landscape controls and an optional keyboard.",
+  "setup": {
+    "steps": [
+      {
+        "text": "Run kobo stream init on the computer, install its stream trust root on the Kobo, then start kobo stream."
+      }
+    ]
+  }
+}

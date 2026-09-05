@@ -1,0 +1,4 @@
+expect Challenge player
+expect KnightReader
+expect Next
+shot challenge-player

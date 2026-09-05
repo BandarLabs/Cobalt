@@ -60,7 +60,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 const COBALT_ROOT: &str = "/mnt/onboard/.adds/cobalt";
-/// Where owner-managed global and app-scoped credentials live.
+/// Where named credentials live.
 ///
 /// On the book partition, because that is the one place the owner can reach
 /// over USB without a shell, and because `/tmp` is a RAM disk that every
@@ -111,6 +111,10 @@ const STATE_ROOT: &str = "/mnt/onboard/.adds/cobalt/state";
 /// plugged in -- not one of the internal partitions the firmware lives on.
 /// Nothing here can stop the device booting.
 const DATA_ROOT: &str = "/mnt/onboard/.adds/cobalt/data";
+
+fn app_data_root(name: &str) -> PathBuf {
+    Path::new(DATA_ROOT).join(name)
+}
 
 /// The panel metrics a screen is drawn and hit-tested with.
 ///
@@ -1071,8 +1075,6 @@ struct Hosted {
     /// Identity that survives the list being reordered. An index would not:
     /// applications are removed from the middle when they end.
     id: u64,
-    /// Selected at Hello and retained for responses to this application.
-    version: u8,
     name: String,
     path: PathBuf,
     /// Root-owned filesystem visible to this application on the device.
@@ -1100,10 +1102,9 @@ struct Hosted {
     pictures: PictureCache,
     /// Application-local font handles mapped onto runtime-global handles.
     fonts: BTreeMap<FontHandle, FontHandle>,
-    /// Logical direction requested by this application.
+    /// Logical direction is app-session scoped and therefore vanishes when
+    /// this hosted process exits or the reader resumes.
     orientation: kobo_ui::Orientation,
-    /// Physical side selected by a verified orientation event, or the fixed
-    /// fallback on readers without an orientation sensor.
     landscape_turn: kobo_ui::LandscapeTurn,
     painted: u32,
     /// When this was last on the panel, for deciding what to stop first.
@@ -1252,7 +1253,7 @@ impl Hosted {
         kobo_protocol::write_to(
             &mut self.stream,
             &Frame {
-                version: self.version,
+                version: kobo_protocol::VERSION,
                 request_id: 0,
                 message,
             },
@@ -1349,9 +1350,9 @@ fn host_applications(
             // different things everywhere else, but `DeviceError` is the radio
             // vocabulary and has one word for both. Unreachable is the honest
             // one: from the player's point of view the bytes cannot be got.
-            kobo_protocol::TaskError::Offline | kobo_protocol::TaskError::Unreachable => {
-                kobo_protocol::DeviceError::Unreachable
-            }
+            kobo_protocol::TaskError::Offline
+            | kobo_protocol::TaskError::Unreachable
+            | kobo_protocol::TaskError::RateLimited(_) => kobo_protocol::DeviceError::Unreachable,
             kobo_protocol::TaskError::TimedOut => kobo_protocol::DeviceError::TimedOut,
             kobo_protocol::TaskError::NotFound => kobo_protocol::DeviceError::NotFound,
             kobo_protocol::TaskError::TooLarge => kobo_protocol::DeviceError::InvalidInput,
@@ -1659,9 +1660,13 @@ fn host_applications(
                             // then the press is at least on the record.
                             trace(&format!("power button pressed={pressed}"));
                         }
-                        // Sensor-equipped readers report which physical side
-                        // is down. Readers without these events keep the fixed
-                        // clockwise software-landscape fallback.
+                        // The kernel's digested accelerometer verdict. Only
+                        // the two portrait poses move the key mapping; the
+                        // image itself does not rotate mid-session yet.
+                        // The pose each MSC_RAW value names was measured here
+                        // by a rotation-only capture, and then confirmed in
+                        // use: a reader turned end for end mid-session, with
+                        // no restart, goes on paging the way it is now held.
                         GpioEvent::Orientation(gpio::Orientation::PortraitUp) => {
                             forward_is_194 = true;
                         }
@@ -1734,13 +1739,27 @@ fn host_applications(
                             TouchEvent::Down { x, y } => {
                                 if let (Ok(x), Ok(y)) = (i32::try_from(x), i32::try_from(y)) {
                                     landed = Some((Instant::now(), x, y));
-                                    if orientation == kobo_ui::Orientation::Landscape {
-                                        continue;
-                                    }
-                                    let layout =
-                                        current.layout_with(&metrics_for(current), &chrome);
-                                    if let Some(rect) = layout.pressed_control(x, y) {
-                                        let metrics = metrics_for(current);
+                                    let physical = crate::device_metrics();
+                                    let (logical_x, logical_y) = kobo_ui::logical_point_with_turn(
+                                        orientation,
+                                        landscape_turn,
+                                        physical.width,
+                                        physical.height,
+                                        x,
+                                        y,
+                                    );
+                                    let metrics = metrics_for(current);
+                                    let logical_metrics = metrics.oriented(orientation);
+                                    let layout = current.layout_with(&logical_metrics, &chrome);
+                                    if let Some(logical_rect) =
+                                        layout.pressed_control(logical_x, logical_y)
+                                    {
+                                        let rect = physical_feedback_rect(
+                                            logical_rect,
+                                            orientation,
+                                            landscape_turn,
+                                            &metrics,
+                                        );
                                         // An exact-damage feedback frame does
                                         // not carry pixels outside its own
                                         // rectangle, so an older deferred
@@ -1764,8 +1783,11 @@ fn host_applications(
                                             &surface,
                                             rect,
                                         )?;
-                                        pressed =
-                                            Some((rect, metrics, feedback_kind(&layout, rect)));
+                                        pressed = Some((
+                                            rect,
+                                            metrics,
+                                            feedback_kind(&layout, logical_rect),
+                                        ));
                                     }
                                 }
                             }
@@ -1827,10 +1849,9 @@ fn host_applications(
                             .is_some_and(|(at, _, _)| at.elapsed() >= HOLD_TIME),
                         _ => false,
                     };
-                    let version = apps[index].version;
+                    let orientation = apps[index].orientation;
                     let disposition = deliver_touch(
                         &mut apps[index].stream,
-                        version,
                         event,
                         screen.as_ref(),
                         &chrome,
@@ -1945,8 +1966,12 @@ fn host_applications(
                             handle,
                             width,
                             height,
-                            grey,
-                        } => match apps[index].pictures.put_report(handle, width, height, grey) {
+                            format,
+                            pixels,
+                        } => match apps[index]
+                            .pictures
+                            .put_report_with(handle, width, height, format, pixels)
+                        {
                             None => trace(&format!("picture {} refused", handle.0)),
                             Some(evicted) => trace_picture_evictions(handle, &evicted),
                         },
@@ -1954,20 +1979,24 @@ fn host_applications(
                             handle,
                             width,
                             height,
+                            format,
                         } => {
-                            if !apps[index].pictures.begin_upload(handle, width, height) {
+                            if !apps[index]
+                                .pictures
+                                .begin_upload_with(handle, width, height, format)
+                            {
                                 trace(&format!("picture {} upload refused", handle.0));
                             }
                         }
                         Message::PictureChunk {
                             handle,
                             offset,
-                            grey,
+                            pixels,
                         } => {
                             if !apps[index].pictures.upload_chunk(
                                 handle,
                                 usize::try_from(offset).unwrap_or(usize::MAX),
-                                &grey,
+                                &pixels,
                             ) {
                                 trace(&format!("picture {} chunk refused", handle.0));
                             }
@@ -2431,19 +2460,6 @@ fn host_applications(
                                             }
                                         }
                                     }
-                                    kobo_protocol::DeviceRequest::SetSecret { name, value } => {
-                                        match kobo_policy::credentials::install_app_secret(
-                                            Path::new(SECRETS),
-                                            &apps[index].name,
-                                            name,
-                                            value.as_str(),
-                                        ) {
-                                            Ok(()) => kobo_protocol::DeviceResult::Done,
-                                            Err(error) => {
-                                                kobo_protocol::DeviceResult::Failed(error)
-                                            }
-                                        }
-                                    }
                                     // Answered by probing the hardware again
                                     // rather than from anything cached, so
                                     // the screen built from it describes the
@@ -2654,7 +2670,7 @@ fn reply(app: &mut Hosted, request_id: u32, message: Message) -> Result<(), Stri
     kobo_protocol::write_to(
         &mut app.stream,
         &Frame {
-            version: app.version,
+            version: kobo_protocol::VERSION,
             request_id,
             message,
         },
@@ -2768,9 +2784,6 @@ fn system_request_allowed(app: &str, request: &kobo_protocol::DeviceRequest) -> 
         | kobo_protocol::DeviceRequest::SetAutoUpdate { .. }
         | kobo_protocol::DeviceRequest::ReadUpdateChannel
         | kobo_protocol::DeviceRequest::SetUpdateChannel { .. } => app == "settings",
-        kobo_protocol::DeviceRequest::SetSecret { name, .. } => {
-            kobo_policy::credentials::may_set(app, name)
-        }
         kobo_protocol::DeviceRequest::ListInstalledApps => matches!(app, "launcher" | "store"),
         kobo_protocol::DeviceRequest::ReadAppCatalog
         | kobo_protocol::DeviceRequest::RefreshAppCatalog
@@ -3097,7 +3110,8 @@ fn start_application(
     }
     let waker = sender.clone();
     let credential_app = name.clone();
-    let tasks = TaskRunner::simulated(std::env::temp_dir())
+    let app_data_root = app_data_root(&name);
+    let tasks = TaskRunner::simulated(&app_data_root)
         .with_fetch(Arc::new(kobo_net::fetch_from_controlled))
         .with_post(Arc::new(kobo_net::post_controlled))
         .with_line_streams(Arc::new(kobo_net::LineStreams::default()))
@@ -3125,7 +3139,7 @@ fn start_application(
         // remains confined to its private Cobalt data directory.
         PathBuf::from("/mnt/onboard/Audiobooks")
     } else {
-        Path::new(DATA_ROOT).join(&name)
+        app_data_root
     };
     apps.push(Hosted {
         id,
@@ -3151,7 +3165,6 @@ fn start_application(
         store: kobo_policy::store::Store::new(Path::new(STATE_ROOT).join(&name)),
         shelf: kobo_policy::shelf::Shelf::new(shelf_root),
         name,
-        version,
         path: path.to_path_buf(),
         jail,
         child,
@@ -3339,10 +3352,7 @@ fn installed_name(path: &Path) -> Result<String, String> {
 /// Half a second, which is what every touch platform settled on: shorter and
 /// an unhurried tap becomes a gesture nobody asked for, longer and the reader
 /// concludes the panel is ignoring them and lifts off.
-/// Long enough to distinguish a deliberate contextual hold from the immediate
-/// tap that opens a destination, while remaining inside the observed 1–1.5 s
-/// reader comfort range.
-const HOLD_TIME: Duration = Duration::from_millis(1_100);
+const HOLD_TIME: Duration = Duration::from_millis(500);
 
 /// Briefly holds a release so an application's next screen can carry it.
 ///
@@ -3358,12 +3368,39 @@ enum FeedbackKind {
     KeyboardKey,
 }
 
+fn physical_feedback_rect(
+    rect: kobo_ui::Rect,
+    orientation: kobo_ui::Orientation,
+    turn: kobo_ui::LandscapeTurn,
+    physical: &kobo_ui::DisplayMetrics,
+) -> kobo_ui::Rect {
+    if orientation == kobo_ui::Orientation::Portrait {
+        return rect;
+    }
+    match turn {
+        kobo_ui::LandscapeTurn::Clockwise => kobo_ui::Rect {
+            x: physical
+                .width
+                .saturating_sub(rect.y.saturating_add(rect.height)),
+            y: rect.x,
+            width: rect.height,
+            height: rect.width,
+        },
+        kobo_ui::LandscapeTurn::CounterClockwise => kobo_ui::Rect {
+            x: rect.y,
+            y: physical
+                .height
+                .saturating_sub(rect.x.saturating_add(rect.width)),
+            width: rect.height,
+            height: rect.width,
+        },
+    }
+}
+
 fn feedback_kind(layout: &Layout, rect: kobo_ui::Rect) -> FeedbackKind {
-    if layout
-        .nodes
-        .iter()
-        .any(|node| node.rect == rect && matches!(node.kind, LayoutKind::Cell(_, CellStyle::Key)))
-    {
+    if layout.nodes.iter().any(|node| {
+        node.rect == rect && matches!(node.kind, LayoutKind::Cell(_, CellStyle::Key, _))
+    }) {
         FeedbackKind::KeyboardKey
     } else {
         FeedbackKind::Control
@@ -3539,6 +3576,7 @@ fn text_hold_for_oriented(
         return None;
     };
     let screen = screen?;
+    screen.hold?;
     let (Ok(x), Ok(y)) = (i32::try_from(x), i32::try_from(y)) else {
         return None;
     };
@@ -3662,7 +3700,6 @@ enum Tap {
 )]
 fn deliver_touch(
     stream: &mut std::os::unix::net::UnixStream,
-    version: u8,
     event: TouchEvent,
     current: Option<&Screen>,
     chrome: &Chrome,
@@ -3697,7 +3734,7 @@ fn deliver_touch(
         kobo_protocol::write_to(
             stream,
             &Frame {
-                version,
+                version: kobo_protocol::VERSION,
                 request_id: 0,
                 message: Message::TextHold {
                     action,
@@ -3722,7 +3759,7 @@ fn deliver_touch(
     kobo_protocol::write_to(
         stream,
         &Frame {
-            version,
+            version: kobo_protocol::VERSION,
             request_id: 0,
             message: Message::Action { action },
         },
@@ -3826,10 +3863,20 @@ impl Painter {
             width: u32::try_from(update.region.width).unwrap_or(0),
             height: u32::try_from(update.region.height).unwrap_or(0),
         };
+        // A region is written in colour only where the panel can show it.
+        // Everywhere else it is the quality update it would have been before
+        // colour existed, drawn from the grey plane, which is what the session
+        // would downgrade it to anyway.
+        let colour = update
+            .waveform
+            .writes_colour()
+            .then(|| display.colour())
+            .flatten();
         let intent = match update.waveform {
             PanelWaveform::Du => RefreshIntent::FastFeedback,
             PanelWaveform::Gl16 => RefreshIntent::TextContent,
-            PanelWaveform::Gc16 => RefreshIntent::QualityContent,
+            PanelWaveform::Colour if colour.is_some() => RefreshIntent::ColourContent,
+            PanelWaveform::Gc16 | PanelWaveform::Colour => RefreshIntent::QualityContent,
         };
 
         let started = Instant::now();
@@ -3837,8 +3884,13 @@ impl Painter {
         // path runs at a few megabytes per second on the i.MX6's uncached
         // framebuffer, so writing the whole screen for every frame cost about
         // 1.6 seconds per tap regardless of how small the change was.
-        let region_gray = {
-            let out_of_surface = || "the transition region is not inside the surface".to_owned();
+        let out_of_surface = || "the transition region is not inside the surface".to_owned();
+        let frame = if let Some(order) = colour {
+            let rows = surface
+                .colour_rows(update.region)
+                .ok_or_else(out_of_surface)?;
+            RegionSnapshot::from_rgb_rows(display.geometry(), region, rows, order)
+        } else {
             let x = usize::try_from(update.region.x).map_err(|_| out_of_surface())?;
             let y = usize::try_from(update.region.y).map_err(|_| out_of_surface())?;
             let width = usize::try_from(update.region.width).map_err(|_| out_of_surface())?;
@@ -3849,10 +3901,9 @@ impl Painter {
                 let end = start + width;
                 gray.extend_from_slice(surface.pixels.get(start..end).ok_or_else(out_of_surface)?);
             }
-            gray
-        };
-        let frame = RegionSnapshot::from_grayscale(display.geometry(), region, &region_gray)
-            .map_err(|error| format!("prepare the frame: {error}"))?;
+            RegionSnapshot::from_grayscale(display.geometry(), region, &gray)
+        }
+        .map_err(|error| format!("prepare the frame: {error}"))?;
         let converted = started.elapsed();
         let fence = display
             .restore_timed(&frame)
@@ -3861,7 +3912,7 @@ impl Painter {
         let plan = RefreshPlan::new(
             region,
             intent,
-            update.waveform == PanelWaveform::Gc16,
+            matches!(update.waveform, PanelWaveform::Gc16 | PanelWaveform::Colour),
             whole_screen.width,
             whole_screen.height,
         )
@@ -4399,6 +4450,17 @@ mod tests {
         std::fs::remove_dir_all(root).expect("remove test state");
     }
 
+    #[test]
+    fn app_file_roots_are_private_per_app() {
+        let nonograms = super::app_data_root("nonograms");
+        let panels = super::app_data_root("panels");
+        assert_ne!(nonograms, panels);
+        assert_eq!(
+            nonograms,
+            std::path::Path::new("/mnt/onboard/.adds/cobalt/data/nonograms")
+        );
+    }
+
     /// `TZ` is read from the environment, which is process-global, so these
     /// are one test rather than several: two tests setting it at once would
     /// see each other's value.
@@ -4702,6 +4764,45 @@ mod tests {
         );
     }
 
+    #[test]
+    fn landscape_feedback_rect_matches_the_rotated_control() {
+        let physical = crate::device_metrics();
+        let logical = kobo_ui::Rect {
+            x: 10,
+            y: 20,
+            width: 30,
+            height: 40,
+        };
+        assert_eq!(
+            super::physical_feedback_rect(
+                logical,
+                kobo_ui::Orientation::Landscape,
+                kobo_ui::LandscapeTurn::Clockwise,
+                &physical,
+            ),
+            kobo_ui::Rect {
+                x: physical.width - 60,
+                y: 10,
+                width: 40,
+                height: 30,
+            }
+        );
+        assert_eq!(
+            super::physical_feedback_rect(
+                logical,
+                kobo_ui::Orientation::Landscape,
+                kobo_ui::LandscapeTurn::CounterClockwise,
+                &physical,
+            ),
+            kobo_ui::Rect {
+                x: 20,
+                y: physical.height - 40,
+                width: 40,
+                height: 30,
+            }
+        );
+    }
+
     /// The three states a page key can land in, and the one that used to be
     /// wrong: a press while a dialog is up is dropped, not passed on raw.
     #[test]
@@ -4830,7 +4931,6 @@ mod tests {
         assert_eq!(
             deliver_touch(
                 &mut runtime,
-                kobo_protocol::VERSION,
                 tap,
                 Some(&screen),
                 &chrome,
@@ -4847,7 +4947,6 @@ mod tests {
         assert_eq!(
             deliver_touch(
                 &mut runtime,
-                kobo_protocol::VERSION,
                 tap,
                 Some(&owning),
                 &chrome,
@@ -5047,13 +5146,6 @@ mod hosting_tests {
             assert!(!super::system_request_allowed("todo", &request));
         }
 
-        let secret = DeviceRequest::SetSecret {
-            name: "zotero".to_owned(),
-            value: kobo_protocol::SecretValue::new("token"),
-        };
-        assert!(super::system_request_allowed("zotero-reader", &secret));
-        assert!(!super::system_request_allowed("todo", &secret));
-
         let install = DeviceRequest::InstallApp {
             id: "word-count".to_owned(),
         };
@@ -5081,6 +5173,51 @@ mod hosting_tests {
         }
     }
 
+    #[test]
+    fn keyboard_release_gets_one_short_app_response_window() {
+        assert_eq!(
+            super::release_grace(super::FeedbackKind::Control),
+            super::CONTROL_RELEASE_GRACE
+        );
+        assert_eq!(
+            super::release_grace(super::FeedbackKind::KeyboardKey),
+            super::KEYBOARD_RELEASE_GRACE
+        );
+        assert!(super::KEYBOARD_RELEASE_GRACE > super::CONTROL_RELEASE_GRACE);
+        assert!(super::KEYBOARD_RELEASE_GRACE < std::time::Duration::from_millis(50));
+    }
+
+    #[test]
+    fn keyboard_cells_use_the_keyboard_feedback_window() {
+        let screen = kobo_ui::Screen::new(
+            1,
+            vec![kobo_ui::Node::Grid {
+                id: kobo_ui::NodeId(1),
+                columns: 2,
+                square: false,
+                cells: vec![
+                    kobo_ui::Cell::new(kobo_ui::ActionId(1), "A"),
+                    kobo_ui::Cell::new(kobo_ui::ActionId(2), "B"),
+                ],
+            }],
+        );
+        let layout = screen.layout();
+        let key = layout
+            .nodes
+            .iter()
+            .find(|node| {
+                matches!(
+                    node.kind,
+                    kobo_ui::LayoutKind::Cell(_, kobo_ui::CellStyle::Key, _)
+                )
+            })
+            .expect("keyboard key")
+            .rect;
+        assert_eq!(
+            super::feedback_kind(&layout, key),
+            super::FeedbackKind::KeyboardKey
+        );
+    }
     #[test]
     fn app_secret_installation_is_scoped_private_and_replaceable() {
         use std::os::unix::fs::PermissionsExt;
@@ -5135,51 +5272,5 @@ mod hosting_tests {
         .is_err());
         assert!(!directory.join("apps/zotero-reader/openai").exists());
         let _ignored = std::fs::remove_dir_all(directory);
-    }
-
-    #[test]
-    fn keyboard_release_gets_one_short_app_response_window() {
-        assert_eq!(
-            super::release_grace(super::FeedbackKind::Control),
-            super::CONTROL_RELEASE_GRACE
-        );
-        assert_eq!(
-            super::release_grace(super::FeedbackKind::KeyboardKey),
-            super::KEYBOARD_RELEASE_GRACE
-        );
-        assert!(super::KEYBOARD_RELEASE_GRACE > super::CONTROL_RELEASE_GRACE);
-        assert!(super::KEYBOARD_RELEASE_GRACE < std::time::Duration::from_millis(50));
-    }
-
-    #[test]
-    fn keyboard_cells_use_the_keyboard_feedback_window() {
-        let screen = kobo_ui::Screen::new(
-            1,
-            vec![kobo_ui::Node::Grid {
-                id: kobo_ui::NodeId(1),
-                columns: 2,
-                square: false,
-                cells: vec![
-                    kobo_ui::Cell::new(kobo_ui::ActionId(1), "A"),
-                    kobo_ui::Cell::new(kobo_ui::ActionId(2), "B"),
-                ],
-            }],
-        );
-        let layout = screen.layout();
-        let key = layout
-            .nodes
-            .iter()
-            .find(|node| {
-                matches!(
-                    node.kind,
-                    kobo_ui::LayoutKind::Cell(_, kobo_ui::CellStyle::Key)
-                )
-            })
-            .expect("keyboard key")
-            .rect;
-        assert_eq!(
-            super::feedback_kind(&layout, key),
-            super::FeedbackKind::KeyboardKey
-        );
     }
 }

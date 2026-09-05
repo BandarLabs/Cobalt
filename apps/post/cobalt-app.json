@@ -1,0 +1,24 @@
+{
+  "id": "post",
+  "display_name": "Post",
+  "short_label": "Post",
+  "summary": "Read and reply to letters from Hermes.",
+  "page_description": "A calm, letter-style inbox for thoughtful messages you can read anywhere.",
+  "version": "0.1.0",
+  "release_notes": "A calm, letter-style inbox for thoughtful messages you can read anywhere.",
+  "glyph": "chat",
+  "capabilities": [
+    "network"
+  ],
+  "setup": {
+    "steps": [
+      {
+        "text": "Deploy a compatible Hermes gateway behind HTTPS and note its public URL."
+      },
+      {
+        "text": "Install the gateway bearer token under the exact name hermes-post.",
+        "command": "kobo secret set hermes-post --device <address>"
+      }
+    ]
+  }
+}

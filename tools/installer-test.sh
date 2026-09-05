@@ -19,10 +19,6 @@ size_file() {
     wc -c < "$1" | tr -d ' '
 }
 
-file_url() {
-    printf 'file://%s\n' "$1" | sed 's/ /%20/g'
-}
-
 ssh-keygen -q -t ed25519 -N '' -f "$WORK/signing" >/dev/null
 SIGNER="cobalt-release $(cat "$WORK/signing.pub")"
 SIGNER=$(printf '%s\n' "$SIGNER" | awk '{print $1 " " $2 " " $3}')
@@ -92,7 +88,7 @@ run_install() {
     XDG_CACHE_HOME=$home/cache \
     PATH=/usr/bin:/bin:/usr/sbin:/sbin \
     KOBO_INSTALLER_TESTING=1 \
-    KOBO_INSTALLER_BASE_URL="$(file_url "$release")" \
+    KOBO_INSTALLER_BASE_URL="file://$release" \
     sh "$INSTALLER" --yes --no-setup --no-path "$@"
 }
 
@@ -107,7 +103,7 @@ run_host_update() {
     XDG_CACHE_HOME=$home/cache \
     PATH=/usr/bin:/bin:/usr/sbin:/sbin \
     KOBO_INSTALLER_TESTING=1 \
-    KOBO_INSTALLER_BASE_URL="$(file_url "$release")" \
+    KOBO_INSTALLER_BASE_URL="file://$release" \
     "$@" sh "$home/data/kobo/hosts/$selected/updater.sh" \
         --host-update --channel "$channel" --platform linux-x86_64
 }
@@ -265,7 +261,7 @@ activation_failure() {
     XDG_CACHE_HOME=$host_update_home/cache \
     PATH=/usr/bin:/bin:/usr/sbin:/sbin \
     KOBO_INSTALLER_TESTING=1 KOBO_TEST_FAIL_AT=$point \
-    KOBO_INSTALLER_BASE_URL="$(file_url "$release")" \
+    KOBO_INSTALLER_BASE_URL="file://$release" \
     sh "$updater" \
         --host-update --channel stable --platform linux-x86_64 \
         >"$WORK/activation-$point.out" 2>&1
@@ -331,7 +327,7 @@ expect_failure "host update command conflict" env \
     PATH="$conflicting_path:/usr/bin:/bin:/usr/sbin:/sbin" \
     HOME="$host_update_home" XDG_DATA_HOME="$host_update_home/data" \
     XDG_CACHE_HOME="$host_update_home/cache" KOBO_INSTALLER_TESTING=1 \
-    KOBO_INSTALLER_BASE_URL="$(file_url "$beta")" \
+    KOBO_INSTALLER_BASE_URL="file://$beta" \
     sh "$host_update_home/data/kobo/hosts/$selected/updater.sh" \
     --host-update --channel beta
 
@@ -355,12 +351,12 @@ path_home=$WORK/home-path
 HOME=$path_home XDG_DATA_HOME=$path_home/data XDG_CACHE_HOME=$path_home/cache \
 PATH=/usr/bin:/bin:/usr/sbin:/sbin SHELL=/bin/sh \
 KOBO_INSTALLER_TESTING=1 \
-KOBO_INSTALLER_BASE_URL="$(file_url "$stable")" \
+KOBO_INSTALLER_BASE_URL="file://$stable" \
 sh "$INSTALLER" --yes --no-setup --platform linux-x86_64 >/dev/null
 HOME=$path_home XDG_DATA_HOME=$path_home/data XDG_CACHE_HOME=$path_home/cache \
 PATH=/usr/bin:/bin:/usr/sbin:/sbin SHELL=/bin/sh \
 KOBO_INSTALLER_TESTING=1 \
-KOBO_INSTALLER_BASE_URL="$(file_url "$stable")" \
+KOBO_INSTALLER_BASE_URL="file://$stable" \
 sh "$INSTALLER" --yes --no-setup --platform linux-x86_64 >/dev/null
 [ "$(grep -Fc '# >>> Cobalt kobo installer >>>' "$path_home/.profile")" -eq 1 ]
 
@@ -406,7 +402,7 @@ XDG_DATA_HOME=$WORK/home-rosetta/data \
 XDG_CACHE_HOME=$WORK/home-rosetta/cache \
 PATH=/usr/bin:/bin:/usr/sbin:/sbin \
 KOBO_INSTALLER_TESTING=1 \
-KOBO_INSTALLER_BASE_URL="$(file_url "$stable")" \
+KOBO_INSTALLER_BASE_URL="file://$stable" \
 KOBO_TEST_UNAME_S=Darwin KOBO_TEST_UNAME_M=x86_64 KOBO_TEST_ROSETTA=1 \
 sh "$INSTALLER" --yes --no-setup --no-path > "$WORK/rosetta.out"
 grep -F "native Apple Silicon" "$WORK/rosetta.out" >/dev/null
@@ -419,7 +415,7 @@ XDG_DATA_HOME=$WORK/home-wsl/data \
 XDG_CACHE_HOME=$WORK/home-wsl/cache \
 PATH=/usr/bin:/bin:/usr/sbin:/sbin \
 KOBO_INSTALLER_TESTING=1 \
-KOBO_INSTALLER_BASE_URL="$(file_url "$stable")" \
+KOBO_INSTALLER_BASE_URL="file://$stable" \
 KOBO_TEST_UNAME_S=Linux KOBO_TEST_UNAME_M=x86_64 KOBO_TEST_WSL=1 \
 sh "$INSTALLER" --yes --no-setup --no-path > "$WORK/wsl.out"
 grep -F "eject them from Windows, not WSL" "$WORK/wsl.out" >/dev/null
@@ -442,7 +438,7 @@ chmod 755 "$path_conflict/bin/kobo"
 expect_failure "PATH conflict" env PATH="$path_conflict/bin:$PATH" \
     HOME="$path_conflict/home" XDG_DATA_HOME="$path_conflict/home/data" \
     XDG_CACHE_HOME="$path_conflict/home/cache" KOBO_INSTALLER_TESTING=1 \
-    KOBO_INSTALLER_BASE_URL="$(file_url "$stable")" \
+    KOBO_INSTALLER_BASE_URL="file://$stable" \
     sh "$INSTALLER" --yes --no-setup --no-path --platform linux-x86_64
 
 # Truncation, checksum damage, and signature damage are independently refused.

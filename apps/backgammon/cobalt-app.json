@@ -1,0 +1,10 @@
+{
+  "id": "backgammon",
+  "display_name": "Backgammon",
+  "short_label": "Backgammon",
+  "summary": "Play complete solo or pass-and-play backgammon on one Kobo.",
+  "version": "0.1.3",
+  "release_notes": "Move Backgammon's Store metadata into a manifest beside its source. The game itself is unchanged.",
+  "glyph": "circle",
+  "capabilities": []
+}

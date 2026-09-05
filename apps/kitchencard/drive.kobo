@@ -1,0 +1,6 @@
+tap Pick recipe
+tap Lemon chickpeas
+tap Start cooking
+expect Cooking
+clean
+shot cooking

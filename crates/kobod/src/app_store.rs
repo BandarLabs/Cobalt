@@ -1,4 +1,5 @@
 //! Runtime-owned public application catalog and atomic app transactions.
+#![allow(dead_code)]
 
 use kobo_app_store::{
     parse_public_bundle, verify, Catalog, DetachedSignature, Ed25519PublicKey, Manifest,
@@ -1198,6 +1199,7 @@ fn network_error(error: kobo_protocol::TaskError) -> DeviceError {
         kobo_protocol::TaskError::NoCredential | kobo_protocol::TaskError::Unauthorized => {
             DeviceError::Authentication
         }
+        kobo_protocol::TaskError::RateLimited(_) => DeviceError::Unreachable,
     }
 }
 
@@ -1226,6 +1228,7 @@ fn glyph(name: &str) -> Option<Glyph> {
         "close" => Glyph::Close,
         "download" => Glyph::Download,
         "bookmark" => Glyph::Bookmark,
+        "heart" => Glyph::Heart,
         "filter" => Glyph::Filter,
         "person" => Glyph::Person,
         "tag" => Glyph::Tag,

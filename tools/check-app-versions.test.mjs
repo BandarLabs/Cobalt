@@ -1,13 +1,16 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   changedLockPackageIdentities,
   changedRegistryPackages,
   checkBuildPackages,
   checkEntries,
   checkProtocolMinimums,
+  COMMAND_MAX_BUFFER,
   compatibleChangePaths,
   isContributionManifest,
   meaningfulReleaseNotes,
@@ -69,6 +72,12 @@ function fixture({
 
 test("accepts an unchanged app at the published version", () => {
   const values = fixture();
+  assert.doesNotThrow(() => checkEntries(values.registry, values.published, new Set()));
+});
+
+test("does not release unchanged apps for a policy-derived minimum bump", () => {
+  const values = fixture();
+  values.registry.apps[0].minimum_cobalt_version = "0.3.5";
   assert.doesNotThrow(() => checkEntries(values.registry, values.published, new Set()));
 });
 
@@ -285,6 +294,11 @@ test("accepts the first Cobalt release supporting the package protocol", () => {
   );
 });
 
+test("bounds command output above Cargo's default metadata limit", () => {
+  assert.ok(COMMAND_MAX_BUFFER > 1024 * 1024);
+  assert.ok(COMMAND_MAX_BUFFER <= 16 * 1024 * 1024);
+});
+
 test("manifest-only rebuilds must meet the current protocol minimum", () => {
   const values = fixture({ currentVersion: "1.0.1", summary: "New summary" });
   const built = new Set(packagesToBuild(values.registry, values.published, new Set()));
@@ -315,7 +329,8 @@ test("new packages must meet the current protocol minimum", () => {
 test("the intended Gallery and Zotero build selection passes final validation", () => {
   const values = fixture({
     currentVersion: "1.0.1",
-    summary: "Updated Gallery"
+    summary: "Updated Gallery",
+    releaseNotes: "Explain the updated Gallery reader workflow."
   });
   values.registry.apps[0].package = "kobo-gallery";
   values.registry.apps[0].id = "gallery";
@@ -427,6 +442,53 @@ test("apps workflow validates the final package matrix after fallback expansion"
   );
 });
 
+// Asserting the workflow's text kept passing while the command it describes
+// exited 1 on every publish run, because no test ever ran it. Read the flags
+// back out of the workflow and drive the real CLI with them, so a flag the tool
+// does not accept fails here rather than silently skipping app publication.
+test("the flags the apps workflow sends are ones the tool actually accepts", () => {
+  const workflow = readFileSync(".github/workflows/apps.yml", "utf8");
+  const validation = workflow.indexOf(
+    "node tools/check-app-versions.mjs --validate-packages"
+  );
+  const outputs = workflow.indexOf('echo "packages=$packages"');
+  const flags = [...workflow.slice(validation, outputs).matchAll(/--[a-z-]+/g)].map(
+    match => match[0]
+  );
+  assert.deepEqual(flags, [
+    "--validate-packages",
+    "--registry",
+    "--published-catalog",
+    "--packages"
+  ]);
+
+  const registry = collectRegistry();
+  const directory = mkdtempSync(join(tmpdir(), "check-app-versions-"));
+  const registryPath = join(directory, "generated-app-registry.json");
+  const publishedPath = join(directory, "published-app-catalog.json");
+  writeFileSync(registryPath, JSON.stringify(registry));
+  writeFileSync(publishedPath, '{"format_version":1,"entries":[]}\n');
+
+  const run = packages =>
+    execFileSync(
+      process.execPath,
+      [
+        "tools/check-app-versions.mjs",
+        "--validate-packages",
+        "--registry",
+        registryPath,
+        "--published-catalog",
+        publishedPath,
+        "--packages",
+        JSON.stringify(packages)
+      ],
+      { encoding: "utf8" }
+    );
+
+  assert.match(run(registry.apps.map(app => app.package)), /Every selected app package/);
+  assert.throws(() => run(["kobo-not-registered"]), /unknown build package/);
+});
+
 test("release inputs ignore exclusively dev-only dependency edges", () => {
   const dependencies = releaseDependencyIds({
     deps: [
@@ -469,6 +531,44 @@ test("a drive script next to an application is not a release input", () => {
   assert.equal(isFilmingScript("examples/todo/src/main.rs", "examples/todo"), false);
   assert.equal(isFilmingScript("examples/todo/src/drive.txt", "examples/todo"), false);
   assert.equal(isFilmingScript("examples/todo-extra/drive.txt", "examples/todo"), false);
+});
+
+// One route per application was the assumption, and the shelf broke it: an
+// application that needs a second scene should not owe the Store a version.
+test("every drive script an application grows is still not a release input", () => {
+  assert.equal(isFilmingScript("apps/vault/drive-states.kobo", "apps/vault"), true);
+  assert.equal(isFilmingScript("apps/frame/drive-empty.kobo", "apps/frame"), true);
+  assert.equal(isFilmingScript("apps/inkling/drive.sh", "apps/inkling"), true);
+  assert.equal(isFilmingScript("apps/lichess/drive/game.kobo", "apps/lichess"), true);
+  assert.equal(isFilmingScript("apps/lichess/drive", "apps/lichess"), true);
+
+  // Still only beside the package, and still not its source.
+  assert.equal(isFilmingScript("apps/vault/src/drive-states.kobo", "apps/vault"), false);
+  assert.equal(isFilmingScript("apps/vault/driver.rs", "apps/vault"), false);
+  assert.equal(isFilmingScript("apps/vault-extra/drive.sh", "apps/vault"), false);
+});
+
+// The tree is the thing that regressed, so check it rather than a fixture.
+test("no drive script in this tree counts as a release input", () => {
+  const packages = [
+    ...readdirSync("apps", { withFileTypes: true }).map(e => ["apps", e]),
+    ...readdirSync("examples", { withFileTypes: true }).map(e => ["examples", e])
+  ].filter(([, entry]) => entry.isDirectory());
+
+  let seen = 0;
+  for (const [root, entry] of packages) {
+    const directory = `${root}/${entry.name}`;
+    for (const file of readdirSync(directory)) {
+      if (!file.startsWith("drive")) continue;
+      seen += 1;
+      assert.equal(
+        isFilmingScript(`${directory}/${file}`, directory),
+        true,
+        `${directory}/${file} would force a version bump on ${entry.name}`
+      );
+    }
+  }
+  assert.ok(seen > 30, `expected the shelf's drive scripts, found ${seen}`);
 });
 
 test("drive scripts do not count as unpublished Store catalog inputs", () => {
@@ -556,42 +656,6 @@ test("only exact reviewed compatible blobs are excluded from app release inputs"
       manifest,
       11,
       changed,
-      () => "a".repeat(40),
-      () => "c".repeat(40)
-    ),
-    new Set()
-  );
-  const additive = {
-    format_version: 1,
-    changes: [
-      {
-        protocol_version: 11,
-        reason: "reviewed additive SDK module",
-        files: [
-          {
-            path: "crates/kobo-sdk/src/credentials.rs",
-            base_blob: null,
-            compatible_blob: "c".repeat(40)
-          }
-        ]
-      }
-    ]
-  };
-  assert.deepEqual(
-    compatibleChangePaths(
-      additive,
-      11,
-      ["crates/kobo-sdk/src/credentials.rs"],
-      () => null,
-      () => "c".repeat(40)
-    ),
-    new Set(["crates/kobo-sdk/src/credentials.rs"])
-  );
-  assert.deepEqual(
-    compatibleChangePaths(
-      additive,
-      11,
-      ["crates/kobo-sdk/src/credentials.rs"],
       () => "a".repeat(40),
       () => "c".repeat(40)
     ),

@@ -48,6 +48,7 @@ pub(super) fn outline(glyph: Glyph) -> &'static [&'static [Cmd]] {
         Glyph::Close => CLOSE,
         Glyph::Download => DOWNLOAD,
         Glyph::Bookmark => BOOKMARK,
+        Glyph::Heart => HEART,
         Glyph::Filter => FILTER,
         Glyph::Person => PERSON,
         Glyph::Tag => TAG,
@@ -84,6 +85,16 @@ pub(super) fn outline(glyph: Glyph) -> &'static [&'static [Cmd]] {
         Glyph::ChessBlackBishop => CHESS_BLACK_BISHOP,
         Glyph::ChessBlackKnight => CHESS_BLACK_KNIGHT,
         Glyph::ChessBlackPawn => CHESS_BLACK_PAWN,
+        // Board pieces are discs and rings rather than line art, so they are
+        // filled in `game_piece_shapes` instead of stroked from an outline.
+        Glyph::BlackDisc
+        | Glyph::WhiteDisc
+        | Glyph::BlackDraughtsKing
+        | Glyph::WhiteDraughtsKing
+        | Glyph::BlackDraughtsMan
+        | Glyph::WhiteDraughtsMan
+        | Glyph::MorrisPoint
+        | Glyph::MorrisLegalPoint => &[],
     }
 }
 
@@ -506,6 +517,19 @@ static BOOKMARK: &[&[Cmd]] = &[&[
     Cmd::Cubic(250, 200, 325, 125, 417, 125),
     Cmd::Line(583, 125),
     Cmd::Cubic(675, 125, 750, 200, 750, 292),
+]];
+
+/// `heart` from Tabler Icons.
+static HEART: &[&[Cmd]] = &[&[
+    Cmd::Move(813, 524),
+    Cmd::Line(500, 833),
+    Cmd::Line(188, 524),
+    Cmd::Cubic(131, 469, 111, 388, 134, 313),
+    Cmd::Cubic(157, 238, 220, 182, 298, 169),
+    Cmd::Cubic(375, 156, 453, 187, 500, 250),
+    Cmd::Cubic(547, 188, 625, 157, 702, 170),
+    Cmd::Cubic(779, 183, 842, 239, 865, 313),
+    Cmd::Cubic(889, 388, 868, 469, 813, 524),
 ]];
 
 /// `filter` from Tabler Icons.

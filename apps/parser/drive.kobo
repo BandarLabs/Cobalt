@@ -1,0 +1,5 @@
+# Empty private shelf: first-run transfer instructions, not a toy story.
+expect Interactive fiction
+expect parser push
+clean
+shot parser-library-empty

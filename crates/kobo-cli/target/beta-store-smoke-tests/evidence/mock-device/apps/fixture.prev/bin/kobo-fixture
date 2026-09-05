@@ -1,0 +1,4 @@
+#!/bin/sh
+# deterministic Beta Store acceptance fixture
+printf 'app=fixture version=1.1.0\n'
+exit 23

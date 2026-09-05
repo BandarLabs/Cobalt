@@ -7,10 +7,17 @@ on:
         description: Full 40-character beta commit whose Store catalog was tested
         required: true
         type: string
+      expected_catalog_sha256:
+        description: SHA-256 of the tested beta cobalt-app-catalog.json
+        required: true
+        type: string
+      confirmation:
+        description: Type promote-apps-SHORTSHA using the first 12 commit characters
+        required: true
+        type: string
 
 permissions:
-  contents: read
-  actions: read
+  contents: write
 
 concurrency:
   group: cobalt-stable-app-promotion
@@ -20,10 +27,6 @@ jobs:
   promote:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    environment: app-store-stable
-    permissions:
-      contents: write
-      actions: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -36,78 +39,39 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TESTED_COMMIT: ${{ inputs.tested_commit }}
+          EXPECTED_CATALOG_SHA256: ${{ inputs.expected_catalog_sha256 }}
+          CONFIRMATION: ${{ inputs.confirmation }}
         run: |
           set -eu
           printf '%s\n' "$TESTED_COMMIT" | grep -Eq '^[0-9a-f]{40}$'
+          printf '%s\n' "$EXPECTED_CATALOG_SHA256" | grep -Eq '^[0-9a-f]{64}$'
+          short_commit="$(printf '%s' "$TESTED_COMMIT" | cut -c1-12)"
+          test "$CONFIRMATION" = "promote-apps-${short_commit}"
           git cat-file -e "${TESTED_COMMIT}^{commit}"
           git merge-base --is-ancestor "$TESTED_COMMIT" HEAD
           mkdir -p dist/beta dist/packages dist/stable
           gh release download app-catalog-beta \
             --dir dist/beta \
-            --pattern 'cobalt-app-catalog-provenance*.json'
-          transaction="$(
-            node - "$TESTED_COMMIT" dist/beta <<'NODE'
-          const fs = require("fs");
-          const path = require("path");
-          const commit = process.argv[2];
-          const directory = process.argv[3];
-          const candidates = fs.readdirSync(directory)
-            .filter(name => /^cobalt-app-catalog-provenance(?:-\d+-\d+)?\.json$/.test(name))
-            .map(name => JSON.parse(fs.readFileSync(path.join(directory, name), "utf8")))
-            .filter(value =>
-              value.format_version === 1 &&
-              value.channel === "app-catalog-beta" &&
-              value.source_sha === commit &&
-              Number.isSafeInteger(value.workflow_run_id) &&
-              Number.isSafeInteger(value.workflow_run_attempt) &&
-              /^[0-9a-f]{64}$/.test(value.catalog_sha256)
-            )
-            .sort((a, b) =>
-              a.workflow_run_id - b.workflow_run_id ||
-              a.workflow_run_attempt - b.workflow_run_attempt
-            );
-          const digests = new Set(candidates.map(value => value.catalog_sha256));
-          if (digests.size !== 1) {
-            throw new Error(
-              `tested commit resolves to ${digests.size} distinct Beta catalogs; refusing ambiguity`
-            );
-          }
-          const selected = candidates.at(-1);
-          if (!selected) process.exit(1);
-          process.stdout.write(
-            `${selected.workflow_run_id}\t${selected.workflow_run_attempt}\t${selected.catalog_sha256}`
-          );
-          NODE
-          )"
-          IFS=$'\t' read -r beta_run beta_attempt expected_catalog_sha256 <<< "$transaction"
-          if gh release download app-catalog-beta \
-            --dir dist/beta \
-            --pattern "cobalt-app-catalog-${beta_run}-${beta_attempt}.json" \
-            --pattern "cobalt-app-catalog-${beta_run}-${beta_attempt}.json.sig"
-          then
-            mv \
-              "dist/beta/cobalt-app-catalog-${beta_run}-${beta_attempt}.json" \
-              dist/beta/cobalt-app-catalog.json
-            mv \
-              "dist/beta/cobalt-app-catalog-${beta_run}-${beta_attempt}.json.sig" \
-              dist/beta/cobalt-app-catalog.json.sig
-          else
-            # Compatibility for transactions published before versioned
-            # catalog archives existed. The digest check below permits the
-            # mutable pointer only while it is still the exact tested catalog.
-            rm -f \
-              "dist/beta/cobalt-app-catalog-${beta_run}-${beta_attempt}.json" \
-              "dist/beta/cobalt-app-catalog-${beta_run}-${beta_attempt}.json.sig"
-            gh release download app-catalog-beta \
-              --dir dist/beta \
-              --pattern cobalt-app-catalog.json \
-              --pattern cobalt-app-catalog.json.sig
-          fi
+            --pattern cobalt-app-catalog.json \
+            --pattern cobalt-app-catalog.json.sig \
+            --pattern cobalt-app-catalog-provenance.json
           actual_catalog_sha256="$(
             sha256sum dist/beta/cobalt-app-catalog.json | cut -d' ' -f1
           )"
-          test "$actual_catalog_sha256" = "$expected_catalog_sha256"
-          printf '%s\n' "$expected_catalog_sha256" > dist/beta/tested-catalog-sha256
+          test "$actual_catalog_sha256" = "$EXPECTED_CATALOG_SHA256"
+          node -e '
+            const fs = require("fs");
+            const provenance = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+            if (
+              provenance.format_version !== 1 ||
+              provenance.channel !== "app-catalog-beta" ||
+              provenance.source_sha !== process.argv[2] ||
+              provenance.catalog_sha256 !== process.argv[3]
+            ) process.exit(1);
+          ' \
+            dist/beta/cobalt-app-catalog-provenance.json \
+            "$TESTED_COMMIT" \
+            "$EXPECTED_CATALOG_SHA256"
       - name: Download the exact beta app packages
         env:
           GH_TOKEN: ${{ github.token }}
@@ -204,10 +168,8 @@ jobs:
       - name: Record stable catalog provenance
         env:
           TESTED_COMMIT: ${{ inputs.tested_commit }}
+          EXPECTED_CATALOG_SHA256: ${{ inputs.expected_catalog_sha256 }}
         run: |
-          expected_catalog_sha256="$(
-            cat dist/beta/tested-catalog-sha256
-          )"
           stable_sha256="$(
             sha256sum dist/stable/cobalt-app-catalog.json | cut -d' ' -f1
           )"
@@ -228,19 +190,13 @@ jobs:
           ' \
             dist/stable/cobalt-app-catalog-provenance.json \
             "$TESTED_COMMIT" \
-            "$expected_catalog_sha256" \
+            "$EXPECTED_CATALOG_SHA256" \
             "$stable_sha256" \
             "$GITHUB_RUN_ID" \
             "$GITHUB_RUN_ATTEMPT"
           cp \
             dist/stable/cobalt-app-catalog-provenance.json \
             "dist/stable/cobalt-app-catalog-provenance-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
-          cp \
-            dist/stable/cobalt-app-catalog.json \
-            "dist/stable/cobalt-app-catalog-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
-          cp \
-            dist/stable/cobalt-app-catalog.json.sig \
-            "dist/stable/cobalt-app-catalog-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json.sig"
       - name: Publish exact packages and switch the stable catalog
         env:
           GH_TOKEN: ${{ github.token }}
@@ -280,10 +236,6 @@ jobs:
           done < dist/beta/packages.tsv
           gh release upload app-catalog \
             "dist/stable/cobalt-app-catalog-provenance-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
-          gh release upload app-catalog \
-            "dist/stable/cobalt-app-catalog-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
-          gh release upload app-catalog \
-            "dist/stable/cobalt-app-catalog-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json.sig"
           gh release upload app-catalog \
             dist/stable/cobalt-app-catalog.json.sig --clobber
           gh release upload app-catalog \

@@ -1,0 +1,11 @@
+expect KnightReader
+tap-at 102,423
+wait-for a7 →
+shot promotion-selected
+tap-at 102,301
+wait-for a7 → a8
+shot promotion-choices
+tap-at 895,590
+expect-missing Choose promotion
+wait-for none
+shot promotion-dismissed

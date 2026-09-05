@@ -1,0 +1,10 @@
+expect Offline
+expect Account/Games
+expect Puzzles
+expect 10+0
+expect Rapid
+shot unavailable-home
+tap 10+0
+wait 300
+expect Offline
+shot unavailable-still

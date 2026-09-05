@@ -1192,6 +1192,62 @@ mod tests {
     }
 
     #[test]
+    fn separate_app_roots_cannot_read_each_others_files_or_escape() {
+        let root = temp_root("app-isolation");
+        let nonograms = root.join("nonograms");
+        let panels = root.join("panels");
+        std::fs::create_dir_all(&nonograms).expect("nonograms directory");
+        std::fs::create_dir_all(&panels).expect("panels directory");
+        std::fs::write(nonograms.join("photo.png"), b"nonograms").expect("photo");
+
+        let mut own = TaskRunner::simulated(&nonograms);
+        own.submit(
+            TaskId(1),
+            Task::ReadFile {
+                path: "photo.png".into(),
+            },
+        )
+        .expect("own read");
+        assert_eq!(
+            collect(&mut own, 1)[0].outcome,
+            TaskOutcome::Completed(b"nonograms".to_vec())
+        );
+
+        let mut other = TaskRunner::simulated(&panels);
+        other
+            .submit(
+                TaskId(2),
+                Task::ReadFile {
+                    path: "../nonograms/photo.png".into(),
+                },
+            )
+            .expect("escape request");
+        assert_eq!(
+            collect(&mut other, 1)[0].outcome,
+            TaskOutcome::Failed(TaskError::Denied)
+        );
+
+        let store = crate::store::Store::new(&nonograms);
+        for key in [
+            "progress-photo-5-0123456789abcdef01234567",
+            "progress-photo-5-89abcdef0123456789abcdef",
+        ] {
+            assert!(key.len() <= 64);
+            assert!(matches!(
+                store.handle(&kobo_protocol::StoreRequest::Save {
+                    key: key.to_owned(),
+                    value: b"state".to_vec(),
+                }),
+                kobo_protocol::StoreResult::Saved { key: saved } if saved == key
+            ));
+        }
+        drop(store);
+        drop(other);
+        drop(own);
+        std::fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
     fn paths_that_climb_out_of_the_sandbox_are_refused() {
         for escape in [
             "../../../etc/passwd",

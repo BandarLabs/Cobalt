@@ -1,0 +1,4 @@
+wait 800
+expect Morse
+clean
+shot writing

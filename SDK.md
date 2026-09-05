@@ -1366,7 +1366,18 @@ book partition and run from there.
 this will not connect. **Cobalt does not install an SSH server and does not
 need one to run.** SSH is only how a developer's machine reaches a device.
 
-### Driving it, and photographing the result
+The default simulator profile is the 1072x1448 Clara BW. Set
+`KOBO_SIM_PROFILE` to a supported profile id to verify another panel:
+
+```sh
+KOBO_SIM_PROFILE=libra-2-388 kobo dev
+KOBO_SIM_PROFILE=elipsa-2e-389 kobo dev
+```
+
+The selected profile controls the framebuffer dimensions, density, touch
+transform and runtime layout metrics together; it is not a browser-only scale.
+
+## Driving it, and photographing the result
 
 Everything above tells you how to *run* an application. This is how to check
 what it actually looks like, without a person watching it.

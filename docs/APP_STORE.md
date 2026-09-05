@@ -3,8 +3,10 @@
 Cobalt platform releases and Store app releases are separate:
 
 - Tagged `v*` releases publish the USB-installable Cobalt platform package.
-- Every accepted merge to `beta` runs the app publishing workflow; Stable is
-  promoted from tested Beta bytes.
+- Every accepted merge to `beta` runs the app publishing workflow.
+- `.github/workflows/apps.yml` publishes signed **beta** packages only.
+- Stable apps are promoted from the exact physically tested beta packages by
+  the `promote-beta-apps` workflow; they are not rebuilt from `main`.
 - App-only changes do not require a Cobalt version bump or platform update.
 - Every changed app package requires a new app version, including changes from
   a shared SDK or protocol dependency.
@@ -63,16 +65,22 @@ kobo app-link unpair --device <reader-address>
 
 ## Registry
 
-Every Store app provides one source-adjacent `cobalt-app.json`.
-`tools/collect-app-registry.mjs` combines manifests under `apps/` and
-`examples/` into the effective registry; `apps/catalog.json` is an empty
-compatibility container, not an author-edited catalog. Package name and
-minimum compatible Cobalt release are derived. Binary size and SHA-256 come
-from the exact ARM release binary during publishing.
+Store apps are workspace packages declared in `apps/catalog.json`. The
+registry supplies public metadata; binary size and SHA-256 are calculated from
+the exact ARM release binary during publishing.
 
 `tools/protocol-minimums.json` maps SDK protocols and newer capabilities to
 their first compatible Cobalt release. A future protocol cannot publish until
 that Cobalt-owned policy is updated.
+`minimum_cobalt_version` must cover both the SDK wire protocol and the runtime
+services used by the app. Protocol 11 SDK builds require Cobalt 0.3.1 or newer.
+The 0.3.5 runtime deliberately accepts both protocol 11 and 12: installed
+protocol-11 apps, their state, secrets, update preferences, rollback path, and
+Nickel handoff remain usable after its OTA. Those frames retain legacy
+Atkinson metrics so their local pagination stays correct. Protocol-12 apps use
+Folio fields and typography and must declare `minimum_cobalt_version` 0.3.5;
+old runtimes may reject them. Protocol 13 is the current Lichess/Folio runtime
+and uses the same 0.3.5 Cobalt floor. The publishing check rejects a lower value.
 
 The initial Cobalt applications are registered too. Their `0.2.0` copies are
 bundled for a useful first boot, appear as installed in Store, and can later be
@@ -84,6 +92,7 @@ See [CONTRIBUTING_APPS.md](CONTRIBUTING_APPS.md) for the contribution format.
 
 ## Publishing workflow
 
+Developers open app pull requests against `beta`. After a tested beta merge,
 `.github/workflows/apps.yml` runs on pushes to `beta` and publishes only the
 isolated `app-catalog-beta` release. Stable is changed solely by the protected
 exact-byte promotion workflow. Beta publication:
@@ -115,9 +124,8 @@ fails if the seed does not derive the public key pinned in released runtimes.
 For local release validation:
 
 ```sh
-node tools/collect-app-registry.mjs --out generated-app-registry.json
 kobo app-release \
-  --registry generated-app-registry.json \
+  --registry apps/catalog.json \
   --seed /secure/cobalt-app-signing-seed \
   --out dist/apps \
   --base-url https://github.com/BandarLabs/Cobalt/releases/download/app-catalog
@@ -141,11 +149,6 @@ reviewed assets signed by the production app key.
 
 Use `app-catalog-beta` for beta testing instead; it cannot overwrite the
 Stable catalog.
-
-For repeatable release acceptance, including signed artifact evidence,
-transaction failures, state-preservation proof, and the bounded attended
-device command with mandatory public-route marketing capture, see
-[Beta Store acceptance](BETA-STORE-ACCEPTANCE.md).
 
 ## Runtime verification
 

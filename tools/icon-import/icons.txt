@@ -29,6 +29,7 @@ Light               bulb
 Close               x
 Download            download
 Bookmark            bookmark
+Heart               heart
 Filter              filter
 Person              user
 Tag                 tag

@@ -10,9 +10,6 @@ license.workspace = true
 name = "kobod"
 path = "src/main.rs"
 
-[lib]
-path = "src/lib.rs"
-
 [dependencies]
 kobo-abi = { path = "../kobo-abi" }
 kobo-app-store = { path = "../kobo-app-store" }
