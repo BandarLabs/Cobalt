@@ -175,7 +175,17 @@ export function collectRegistry({
         if (error.code === "ENOENT") continue;
         throw error;
       }
-      apps.push(normalizeContribution(JSON.parse(source), entry.name));
+      const contribution = normalizeContribution(JSON.parse(source), entry.name);
+      const existing = apps.find(
+        app => app.id === contribution.id || app.package === contribution.package
+      );
+      if (existing) {
+        if (JSON.stringify(existing) !== JSON.stringify(contribution)) {
+          throw new Error(`duplicate app id '${contribution.id}'`);
+        }
+        continue;
+      }
+      apps.push(contribution);
     }
   }
   const ids = new Set();
