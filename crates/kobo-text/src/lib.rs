@@ -97,6 +97,19 @@ pub const DISPLAY_FONT: &[u8] = include_bytes!("../fonts/AtkinsonHyperlegible-Bo
 pub const DEVICE_DISPLAY_FONT_CANDIDATES: &[&str] =
     &["/usr/local/Trolltech/QtEmbedded-4.6.2-arm/lib/fonts/AtkinsonHyperlegible-Bold.ttf"];
 
+/// Device-owned serif cuts used only for Folio display typography. The regular
+/// and bold searches are separate: a firmware missing either cut falls back
+/// to the corresponding bundled Atkinson cut rather than synthesising weight
+/// or silently measuring in one face and drawing in another.
+pub const DISPLAY_SERIF_REGULAR_CANDIDATES: &[&str] = &[
+    "/usr/local/Trolltech/QtEmbedded-4.6.2-arm/lib/fonts/Bitter-Regular.ttf",
+    "/usr/local/Trolltech/QtEmbedded-4.6.2-arm/lib/fonts/Vollkorn-Regular.ttf",
+];
+pub const DISPLAY_SERIF_BOLD_CANDIDATES: &[&str] = &[
+    "/usr/local/Trolltech/QtEmbedded-4.6.2-arm/lib/fonts/Bitter-Bold.ttf",
+    "/usr/local/Trolltech/QtEmbedded-4.6.2-arm/lib/fonts/Vollkorn-Bold.ttf",
+];
+
 /// Faces to look for for prose, best first.
 ///
 /// A different job from the interface, so a different list. The interface face
@@ -238,6 +251,28 @@ impl Typeface {
             }
         }
         Self::from_bytes(DISPLAY_FONT, "AtkinsonHyperlegible-Bold.ttf", metrics)
+    }
+
+    /// Loads a device serif cut for interface display type, if that precise
+    /// cut is present and usable. No device font is ever bundled or copied.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::NoFontFound`] when none of the requested device cuts
+    /// exists or can be parsed.
+    pub fn discover_display_serif(
+        metrics: DisplayMetrics,
+        candidates: &[&str],
+    ) -> Result<Self, Error> {
+        for candidate in candidates {
+            let path = Path::new(candidate);
+            if path.exists() {
+                if let Ok(face) = Self::load(path, metrics) {
+                    return Ok(face);
+                }
+            }
+        }
+        Err(Error::NoFontFound)
     }
 
     /// Loads the device's own face for prose, falling back to the interface
@@ -564,7 +599,9 @@ impl Typeface {
 /// screen that overlaps itself.
 pub struct SystemFonts {
     text: Typeface,
-    display: Typeface,
+    legacy_display: Typeface,
+    display_title: Typeface,
+    display_heading: Typeface,
     mono: Typeface,
     reading: Typeface,
 }
@@ -668,11 +705,20 @@ impl SystemFonts {
         };
         Ok(Self {
             text,
-            // Same reasoning as prose: a bold cut that will not load means
-            // headings are set in the regular weight, which is the interface
-            // as it was last week. It must not cost the whole set.
-            display: Typeface::discover_display(metrics)
+            legacy_display: Typeface::discover_display(metrics)
                 .or_else(|_| Typeface::discover(metrics))?,
+            // Each display cut falls back independently. A simulator sees
+            // Atkinson Bold; a panel with Bitter/Vollkorn sees its own serif.
+            display_title: Typeface::discover_display_serif(
+                metrics,
+                DISPLAY_SERIF_REGULAR_CANDIDATES,
+            )
+            .or_else(|_| Typeface::discover_display(metrics))?,
+            display_heading: Typeface::discover_display_serif(
+                metrics,
+                DISPLAY_SERIF_BOLD_CANDIDATES,
+            )
+            .or_else(|_| Typeface::discover_display(metrics))?,
             mono: Typeface::from_bytes(MONO_FONT, "DejaVuSansMono.ttf", metrics)?,
             reading,
         })
@@ -705,8 +751,15 @@ impl SystemFonts {
     /// Only the interface face has two cuts. A book is one weight throughout,
     /// and a terminal has no headings.
     fn cut(&self, size: FontSize, face: Face) -> &Typeface {
+        if kobo_ui::legacy_typography()
+            && face == Face::Text
+            && matches!(size, FontSize::Title | FontSize::Heading)
+        {
+            return &self.legacy_display;
+        }
         match (face, size) {
-            (Face::Text, FontSize::Title | FontSize::Heading) => &self.display,
+            (Face::Text, FontSize::Title) => &self.display_title,
+            (Face::Text, FontSize::Heading) => &self.display_heading,
             _ => self.face(face),
         }
     }
@@ -2004,5 +2057,30 @@ mod tests {
             let (plain, _) = regular.measure_run("Connections", size, Face::Text, None, None);
             assert_eq!(through, plain, "{size:?} was not set in the regular cut");
         }
+    }
+
+    #[test]
+    fn a_missing_display_serif_cut_falls_back_without_loading_or_vendoring_one() {
+        assert!(matches!(
+            Typeface::discover_display_serif(CLARA, &[]),
+            Err(Error::NoFontFound)
+        ));
+        // The complete system remains available after that absence; this is
+        // the simulator path and is deliberately Atkinson, not a copied serif.
+        let fonts = SystemFonts::discover(CLARA).expect("display fallback");
+        assert!(fonts.measure("Folio", FontSize::Title, Face::Text).0 > 0);
+    }
+
+    #[test]
+    fn legacy_screens_select_atkinson_display_metrics_inside_their_scope() {
+        let fonts = SystemFonts::discover(CLARA).expect("fonts");
+        let atkinson = Typeface::from_bytes(DISPLAY_FONT, "legacy", CLARA).expect("Atkinson");
+        let expected =
+            atkinson.measure_run("Existing app", FontSize::Heading, Face::Text, None, None);
+        let measured = kobo_ui::with_legacy_typography(true, || {
+            fonts.measure("Existing app", FontSize::Heading, Face::Text)
+        });
+        assert_eq!(measured, expected);
+        assert!(!kobo_ui::legacy_typography(), "the v11 selection leaked");
     }
 }

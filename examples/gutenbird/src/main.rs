@@ -5617,7 +5617,7 @@ Please read this before you distribute or use this work.\n";
     fn a_summary_under_a_cover_is_divided_rather_than_drawn_off_the_panel() {
         let long = "This is the summary of a book, written by whoever catalogued it, at \
                     whatever length they felt the book deserved. "
-            .repeat(12);
+            .repeat(200);
         let mut book = publication(
             "Moby Dick; Or, The Whale",
             vec![text_acquisition("https://x/moby.txt")],
@@ -5629,7 +5629,7 @@ Please read this before you distribute or use this work.\n";
             complete: true,
             ..Gutenbird::default()
         };
-        app.open_cover = Some(TilePicture::new(PictureHandle(0), 306, 484));
+        app.open_cover = Some(TilePicture::new(PictureHandle(0), 80, 120));
         let context = kobo_sdk::Context::default();
         let publication = app.open.clone().unwrap();
         let blocks = Gutenbird::detail_blocks(&publication);
