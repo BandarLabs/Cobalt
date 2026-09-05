@@ -2,23 +2,23 @@
   "format_version": 1,
   "changes": [
     {
-      "protocol_version": 11,
-      "reason": "Additive protocol-11 orientation command is opt-in; existing Store apps keep their existing messages and portrait rendering",
+      "protocol_version": 12,
+      "reason": "Additive protocol-12 Japanese text-coverage for Flashcards prose keeps existing Store apps on Face::Text. The protocol-11 orientation command remains opt-in.",
       "files": [
         {
           "path": "crates/kobo-protocol/src/lib.rs",
-          "base_blob": "f34528d7b407e542a7836b0348b91de043822274",
-          "compatible_blob": "50e99c1933462675c1a9f1e368023c375775d10b"
+          "base_blob": "30b4c1dabdbf9b22b3b3599d4f149052348bdd25",
+          "compatible_blob": "30b4c1dabdbf9b22b3b3599d4f149052348bdd25"
         },
         {
           "path": "crates/kobo-sdk/src/lib.rs",
-          "base_blob": "9a645f3f3d9c8746dda47d858bb3fcd744621df8",
-          "compatible_blob": "1ff0ec9725746213be19556b1c035de890878c34"
+          "base_blob": "83bd312d2e1eb3c9e71963aa22a07990b6ec187d",
+          "compatible_blob": "83bd312d2e1eb3c9e71963aa22a07990b6ec187d"
         },
         {
           "path": "crates/kobo-ui/src/lib.rs",
-          "base_blob": "ce538c70b5779ee482e2b35aa83191eb06b04b4d",
-          "compatible_blob": "bdfcf41374026cefa18ab706f23665d82485e374"
+          "base_blob": "6e67b3eda3cccdaeae1b64dc1411d71cd9c6e257",
+          "compatible_blob": "b18e0d422e7e4635cb0fc1a620a707244c02640f"
         }
       ]
     }

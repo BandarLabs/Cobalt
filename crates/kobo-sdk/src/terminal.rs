@@ -248,6 +248,7 @@ mod tests {
         for metrics in [
             kobo_ui::CLARA_BW_METRICS,
             kobo_ui::DisplayMetrics::default(),
+            kobo_ui::CLARA_BW_METRICS.oriented(kobo_ui::Orientation::Landscape),
         ] {
             let keys = TerminalKeys::new();
             let compose = |rows: Vec<String>| {
@@ -261,6 +262,18 @@ mod tests {
             assert!(columns > 0 && rows > 0, "a terminal was given no grid");
             let full = compose(vec!["x".repeat(columns as usize); rows as usize]);
             let layout = full.layout_with(&metrics, &kobo_ui::Chrome::measuring(true));
+            let visible_rows = layout
+                .nodes
+                .iter()
+                .find(|node| node.kind == kobo_ui::LayoutKind::TerminalGrid)
+                .expect("terminal")
+                .text_lines
+                .len();
+            assert_eq!(
+                visible_rows,
+                usize::from(rows),
+                "the negotiated grid included terminal rows the layout clipped"
+            );
             let overflow = layout
                 .nodes
                 .iter()

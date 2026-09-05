@@ -1,1 +1,1 @@
-{"id":"todo","display_name":"Todo","short_label":"Todo","summary":"Keep a simple to-do list that stays on your Kobo.","version":"1.0.7","glyph":"check","capabilities":[],"release_notes":"Rebuild after shared workspace changes on the current Cobalt release."}
+{"id":"todo","display_name":"Todo","short_label":"Todo","summary":"Keep a simple to-do list that stays on your Kobo.","version":"1.0.7","glyph":"check","capabilities":[],"release_notes":"Keep Todo compatible with Cobalt's protocol-12 runtime."}

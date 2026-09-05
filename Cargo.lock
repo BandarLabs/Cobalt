@@ -759,6 +759,7 @@ dependencies = [
  "kobo-profile",
  "kobo-protocol",
  "kobo-sim",
+ "kobo-stream",
  "kobo-wifi-trace",
  "kobod",
  "ring",
@@ -945,6 +946,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "kobo-paperterm"
+version = "0.1.0"
+dependencies = [
+ "kobo-json",
+ "kobo-profile",
+ "kobo-sdk",
+ "kobo-stream",
+ "kobo-ui",
+]
+
+[[package]]
 name = "kobo-policy"
 version = "0.3.6"
 dependencies = [
@@ -1061,6 +1073,16 @@ dependencies = [
  "kobo-sdk",
  "kobo-ui",
  "qrcodegen",
+]
+
+[[package]]
+name = "kobo-stream"
+version = "0.3.6"
+dependencies = [
+ "kobo-abi",
+ "kobo-json",
+ "kobo-net",
+ "vt100",
 ]
 
 [[package]]

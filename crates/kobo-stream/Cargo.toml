@@ -1,5 +1,5 @@
 [package]
-name = "kobo-example"
+name = "kobo-stream"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -7,7 +7,10 @@ license.workspace = true
 publish = false
 
 [dependencies]
-kobo-sdk = { path = "../../crates/kobo-sdk" }
+kobo-abi = { path = "../kobo-abi" }
+kobo-json = { path = "../kobo-json" }
+kobo-net = { path = "../kobo-net" }
+vt100 = "0.16"
 
 [lints]
 workspace = true

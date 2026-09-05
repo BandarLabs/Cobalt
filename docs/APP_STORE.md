@@ -3,8 +3,9 @@
 Cobalt platform releases and Store app releases are separate:
 
 - Tagged `v*` releases publish the USB-installable Cobalt platform package.
-- Every accepted merge to `beta` runs the app publishing workflow; Stable is
-  promoted from tested Beta bytes.
+- `.github/workflows/apps.yml` publishes signed **beta** packages only.
+- Stable apps are promoted from the exact physically tested beta packages by
+  the `promote-beta-apps` workflow; they are not rebuilt from `main`.
 - App-only changes do not require a Cobalt version bump or platform update.
 - Every changed app package requires a new app version, including changes from
   a shared SDK or protocol dependency.
@@ -20,6 +21,21 @@ cached separately from Stable, and both channels are verified with the same
 public Ed25519 release key. Switching back to Stable changes future refreshes
 only: installed apps are not removed or downgraded. A higher beta app version
 remains installed until Stable publishes a strictly newer version.
+
+Beta is an explicit opt-in in Software Update; neither a platform OTA nor an
+app refresh moves a Stable reader to Beta. Switching Beta back to Stable also
+does not force a downgrade: future Stable checks resume, and Stable takes over
+only when its GA release equals or exceeds the installed beta. OTA delivery is
+over Wi-Fi and needs no USB connection. Before activation the archive digest is
+verified, unpacked into a staged sibling, and synced. The updater moves
+`secrets`, `trust`, `state`, `data`, `apps`, and `store` into a temporary
+owner-data holder before changing the active version. A synced direction
+journal is advanced by atomic renames; normal daemon startup completes an
+interrupted forward activation or rollback before launching an app. An
+in-process preservation failure reverses the transaction and restores every
+owner folder to the prior installation rather than claiming success. The
+previous managed installation remains beside the active one, and Nickel
+handoff remains the normal exit path throughout.
 
 ## Install links
 
@@ -63,16 +79,18 @@ kobo app-link unpair --device <reader-address>
 
 ## Registry
 
-Every Store app provides one source-adjacent `cobalt-app.json`.
-`tools/collect-app-registry.mjs` combines manifests under `apps/` and
-`examples/` into the effective registry; `apps/catalog.json` is an empty
-compatibility container, not an author-edited catalog. Package name and
-minimum compatible Cobalt release are derived. Binary size and SHA-256 come
-from the exact ARM release binary during publishing.
+Store apps are workspace packages declared in `apps/catalog.json`. The
+registry supplies public metadata; binary size and SHA-256 are calculated from
+the exact ARM release binary during publishing.
 
-`tools/protocol-minimums.json` maps SDK protocols and newer capabilities to
-their first compatible Cobalt release. A future protocol cannot publish until
-that Cobalt-owned policy is updated.
+`minimum_cobalt_version` must cover both the SDK wire protocol and the runtime
+services used by the app. Protocol 11 SDK builds require Cobalt 0.3.1 or newer.
+The 0.3.5 runtime deliberately accepts both protocol 11 and 12: installed
+protocol-11 apps, their state, secrets, update preferences, rollback path, and
+Nickel handoff remain usable after its OTA. Those frames retain legacy
+Atkinson metrics so their local pagination stays correct. Protocol-12 apps use
+Folio fields and typography and must declare `minimum_cobalt_version` 0.3.5;
+old runtimes may reject them. The publishing check rejects a lower value.
 
 The initial Cobalt applications are registered too. Their `0.2.0` copies are
 bundled for a useful first boot, appear as installed in Store, and can later be
@@ -84,9 +102,9 @@ See [CONTRIBUTING_APPS.md](CONTRIBUTING_APPS.md) for the contribution format.
 
 ## Publishing workflow
 
-`.github/workflows/apps.yml` runs on pushes to `beta` and publishes only the
-isolated `app-catalog-beta` release. Stable is changed solely by the protected
-exact-byte promotion workflow. Beta publication:
+Developers open app pull requests against `beta`. After a tested beta merge,
+`.github/workflows/apps.yml` builds, verifies, signs, and publishes changed
+packages plus `app-catalog-beta`. It:
 
 1. Validates the registry and creates a matrix only for new or affected
    packages by comparing with the previous successful run on the same branch.
@@ -106,8 +124,14 @@ exact-byte promotion workflow. Beta publication:
    exact old/new Git blob pair in `tools/app-release-compatible-changes.json`;
    any later edit stops matching and is treated as an app release input.
 7. Builds and signs the packages and catalog only after that isolation.
-8. Replaces only changed app bundles plus the catalog, signature, and
-   publication provenance on the fixed release for the branch's channel.
+8. Replaces only changed beta bundles plus the catalog, signature, and
+   publication provenance on `app-catalog-beta`.
+
+Record the beta catalog digest, each package digest, and physical-device
+evidence. Promote the tested `beta` commit to `main`, then run
+`promote-beta-apps`; it verifies those records and copies the exact tested
+packages to the Stable catalog. App-only work follows this path and never
+requires a platform version bump.
 
 The workflow uses the protected `COBALT_APP_SIGNING_SEED` secret. Publishing
 fails if the seed does not derive the public key pinned in released runtimes.
@@ -115,9 +139,8 @@ fails if the seed does not derive the public key pinned in released runtimes.
 For local release validation:
 
 ```sh
-node tools/collect-app-registry.mjs --out generated-app-registry.json
 kobo app-release \
-  --registry generated-app-registry.json \
+  --registry apps/catalog.json \
   --seed /secure/cobalt-app-signing-seed \
   --out dist/apps \
   --base-url https://github.com/BandarLabs/Cobalt/releases/download/app-catalog
@@ -130,22 +153,22 @@ A local Clara BW can run the complete flow without a tagged Cobalt release:
 1. Install or deploy the current development platform build with `kobo setup`
    over USB or `kobo deploy --device <address>` over SSH.
 2. Build signed app assets with `kobo app-release`.
-3. Upload those assets to the fixed `app-catalog` release with
-   `gh release upload app-catalog dist/apps/* --clobber`.
+3. Upload those assets to the fixed `app-catalog-beta` release with
+   `gh release upload app-catalog-beta dist/apps/* --clobber`.
 4. On the reader, refresh Store and test install, update, uninstall, and
    reinstall.
 
-This does not create a `v*` platform tag. Updating `app-catalog` affects every
-reader already running a Store-capable development build, so use it only with
-reviewed assets signed by the production app key.
+For a protocol-12 beta candidate, first OTA a reader that already has a
+protocol-11 app and stored state. Confirm it launches, pages identically,
+retains its secrets and preferences, can roll back, and still returns to
+Nickel. Then install the protocol-12 build from `app-catalog-beta`; its
+`minimum_cobalt_version` gate must prevent installation on an older runtime.
+
+This does not create a `v*` platform tag. Record the resulting catalog and
+package digests with physical evidence before `beta` → `main` promotion.
 
 Use `app-catalog-beta` for beta testing instead; it cannot overwrite the
 Stable catalog.
-
-For repeatable release acceptance, including signed artifact evidence,
-transaction failures, state-preservation proof, and the bounded attended
-device command with mandatory public-route marketing capture, see
-[Beta Store acceptance](BETA-STORE-ACCEPTANCE.md).
 
 ## Runtime verification
 
