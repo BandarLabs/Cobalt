@@ -1,7 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   changedLockPackageIdentities,
   changedRegistryPackages,
@@ -438,6 +440,53 @@ test("apps workflow validates the final package matrix after fallback expansion"
     workflow.slice(validation, outputs),
     /--published-catalog published-app-catalog\.json \\\n\s+--packages "\$packages"/
   );
+});
+
+// Asserting the workflow's text kept passing while the command it describes
+// exited 1 on every publish run, because no test ever ran it. Read the flags
+// back out of the workflow and drive the real CLI with them, so a flag the tool
+// does not accept fails here rather than silently skipping app publication.
+test("the flags the apps workflow sends are ones the tool actually accepts", () => {
+  const workflow = readFileSync(".github/workflows/apps.yml", "utf8");
+  const validation = workflow.indexOf(
+    "node tools/check-app-versions.mjs --validate-packages"
+  );
+  const outputs = workflow.indexOf('echo "packages=$packages"');
+  const flags = [...workflow.slice(validation, outputs).matchAll(/--[a-z-]+/g)].map(
+    match => match[0]
+  );
+  assert.deepEqual(flags, [
+    "--validate-packages",
+    "--registry",
+    "--published-catalog",
+    "--packages"
+  ]);
+
+  const registry = collectRegistry();
+  const directory = mkdtempSync(join(tmpdir(), "check-app-versions-"));
+  const registryPath = join(directory, "generated-app-registry.json");
+  const publishedPath = join(directory, "published-app-catalog.json");
+  writeFileSync(registryPath, JSON.stringify(registry));
+  writeFileSync(publishedPath, '{"format_version":1,"entries":[]}\n');
+
+  const run = packages =>
+    execFileSync(
+      process.execPath,
+      [
+        "tools/check-app-versions.mjs",
+        "--validate-packages",
+        "--registry",
+        registryPath,
+        "--published-catalog",
+        publishedPath,
+        "--packages",
+        JSON.stringify(packages)
+      ],
+      { encoding: "utf8" }
+    );
+
+  assert.match(run(registry.apps.map(app => app.package)), /Every selected app package/);
+  assert.throws(() => run(["kobo-not-registered"]), /unknown build package/);
 });
 
 test("release inputs ignore exclusively dev-only dependency edges", () => {
