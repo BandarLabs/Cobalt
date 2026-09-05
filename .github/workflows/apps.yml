@@ -543,7 +543,7 @@ jobs:
           fi
           node -e '
             const fs = require("fs");
-            const registry = JSON.parse(fs.readFileSync("apps/catalog.json", "utf8"));
+            const registry = JSON.parse(fs.readFileSync("generated-app-registry.json", "utf8"));
             for (const app of registry.apps) console.log(app.package);
           ' | while IFS= read -r package; do
             artifact="verified-app-${package}"

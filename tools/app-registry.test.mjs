@@ -144,13 +144,16 @@ test("no workflow checks the empty base catalog instead of the collected registr
     "the collected registry must carry more than the base catalog"
   );
 
+  // Not just `--registry`: the publish job read the file inline with
+  // readFileSync, emitted no packages, copied nothing, and failed on an empty
+  // upload. Any mention outside a comment is the same mistake.
   for (const name of readdirSync(".github/workflows")) {
     const workflow = readFileSync(`.github/workflows/${name}`, "utf8");
-    for (const [line] of workflow.matchAll(/^.*--registry\s+\S+.*$/gm)) {
-      assert.doesNotMatch(
-        line,
-        /--registry\s+apps\/catalog\.json/,
-        `${name} checks the empty base catalog: ${line.trim()}`
+    for (const line of workflow.split("\n")) {
+      if (line.trimStart().startsWith("#")) continue;
+      assert.ok(
+        !line.includes("apps/catalog.json"),
+        `${name} reads the empty base catalog instead of the collected registry: ${line.trim()}`
       );
     }
   }
