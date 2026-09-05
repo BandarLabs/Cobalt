@@ -23,20 +23,20 @@ function manifest(overrides = {}) {
 test("a concise contribution derives package and minimum Cobalt", () => {
   const app = normalizeContribution(manifest(), "notes");
   assert.equal(app.package, "kobo-notes");
-  assert.equal(app.minimum_cobalt_version, "0.3.1");
+  assert.equal(app.minimum_cobalt_version, "0.3.5");
   assert.equal(app.version, "1.2.3");
 });
 
 test("protocol and capability policy derive the strictest minimum", () => {
   const policy = {
     format_version: 1,
-    protocols: { "11": "0.3.1" },
+    protocols: { "11": "0.3.1", "12": "0.3.5" },
     capabilities: { "future-service": "0.4.2" }
   };
   assert.equal(deriveMinimumCobalt(["network", "future-service"], 11, policy), "0.4.2");
   assert.throws(
-    () => deriveMinimumCobalt([], 12, policy),
-    /protocol 12 has no Cobalt minimum/
+    () => deriveMinimumCobalt([], 13, policy),
+    /protocol 13 has no Cobalt minimum/
   );
 });
 
@@ -56,7 +56,7 @@ test("an explicit minimum Cobalt version can only raise the derived floor", () =
   assert.equal(
     normalizeContribution(manifest({ minimum_cobalt_version: "0.1.0" }), "notes")
       .minimum_cobalt_version,
-    "0.3.1"
+    "0.3.5"
   );
 });
 
@@ -87,7 +87,7 @@ test("directory identity and versions fail with actionable errors", () => {
 test("local release manifest binds the derived metadata and exact binary", () => {
   const app = normalizeContribution(manifest(), "notes");
   const release = manifestForBinary(app, Buffer.from("arm binary"));
-  assert.equal(release.minimum_cobalt_version, "0.3.1");
+  assert.equal(release.minimum_cobalt_version, "0.3.5");
   assert.equal(release.binary_bytes, 10);
   assert.match(release.binary_sha256, /^[0-9a-f]{64}$/);
 });
@@ -114,17 +114,17 @@ test("the effective repository registry includes standalone contributions", () =
     const app = registry.apps.find(candidate => candidate.id === id);
     assert.ok(app, `missing ${id}`);
     assert.equal(app.package, `kobo-${id}`);
-    assert.equal(app.minimum_cobalt_version, "0.3.1");
+    assert.equal(app.minimum_cobalt_version, "0.3.5");
   }
   assert.equal(
     registry.apps.find(candidate => candidate.id === "chat")?.minimum_cobalt_version,
-    "0.3.4"
+    "0.3.5"
   );
 });
 
 test("the one-command plan resolves source manifest package and protocol", () => {
   const plan = contributionPlan("apps/sudoku/cobalt-app.json");
   assert.equal(plan.app.package, "kobo-sudoku");
-  assert.equal(plan.protocolVersion, 11);
+  assert.equal(plan.protocolVersion, 12);
   assert.equal(plan.cargoPath, "apps/sudoku/Cargo.toml");
 });

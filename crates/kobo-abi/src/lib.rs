@@ -9,7 +9,24 @@ use std::io;
 use std::mem::MaybeUninit;
 use std::os::fd::AsRawFd;
 use std::os::unix::ffi::OsStrExt;
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
+
+/// Opens an existing file for reading without following a final symlink.
+///
+/// This is kept in the ABI crate so policy code can use the platform's
+/// `O_NOFOLLOW` value without adding another direct native dependency.
+///
+/// # Errors
+///
+/// Returns the operating system error when the path cannot be opened or its
+/// final component is a symbolic link.
+pub fn open_read_nofollow(path: &Path) -> io::Result<File> {
+    File::options()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path)
+}
 
 /// How many bytes are still free on the filesystem `path` lives on.
 ///

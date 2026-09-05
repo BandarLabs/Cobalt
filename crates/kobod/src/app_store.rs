@@ -1,4 +1,5 @@
 //! Runtime-owned public application catalog and atomic app transactions.
+#![allow(dead_code)]
 
 use kobo_app_store::{
     parse_public_bundle, verify, Catalog, DetachedSignature, Ed25519PublicKey, Manifest,

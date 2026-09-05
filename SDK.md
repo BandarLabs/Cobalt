@@ -163,8 +163,9 @@ still statically linked. Section 11 has the rest of the device story, section
 
 An application is a process. It connects to the runtime over a Unix socket,
 sends whole screens, and receives actions. It never opens the framebuffer,
-never touches the input device, never opens a socket to the internet, and never
-sees a credential.
+never touches the input device and never opens a socket to the internet. It
+cannot read a stored credential. If the owner chooses in-app setup, the app
+holds only what is being typed until it hands that value to the runtime.
 
 ```
 your binary ── kobo-sdk ──socket── kobod ── panel, touch, network, secrets
@@ -181,6 +182,26 @@ hand it over:
 ```rust
 context.set_screen(ScreenBuilder::new("results").heading("Results").build());
 ```
+
+### Portrait and landscape
+
+Portrait is the compatibility default. An application that genuinely benefits
+from a wide viewport may request landscape for its current app session:
+
+```rust
+context.set_orientation(kobo_sdk::Orientation::Landscape);
+let metrics = context
+    .metrics()
+    .oriented(kobo_sdk::Orientation::Landscape);
+```
+
+The runtime keeps the framebuffer in its verified native mode and rotates the
+rendered surface in software when a hardware backend has not been independently
+validated for quarter turns. Touch coordinates are transformed through the
+same mapping. On readers that report a verified physical landscape side, the
+runtime follows that side; readers without orientation events use a fixed
+clockwise convention. Returning to the reader or starting another application
+restores the portrait default automatically.
 
 The runtime diffs it against the last one and picks an E Ink waveform from the
 pixels that changed. This is not a stylistic preference. A retained tree
@@ -900,13 +921,14 @@ Task::Post { secret: Some("openai".into()), .. }
 Task::Post { credential: Some(Credential::in_header("anthropic", "x-api-key")), .. }
 ```
 
-The application names a secret; the runtime reads
-`/mnt/onboard/.adds/cobalt/secrets/<name>` and attaches it, either as a bearer
-token or under the header the application named, which is what lets a request
-go straight to Anthropic or Gemini rather than through a proxy.
-The value is never in the application's memory, its logs, or its crash dump,
-and it cannot be sent anywhere the application did not name: the request is
-not replayed across a redirect.
+The application names a secret; the runtime reads its private app namespace,
+with an owner-installed global credential as fallback, and attaches the value
+either as a bearer token or under the header the application named. That is
+what lets a request go straight to Anthropic or Gemini rather than through a
+proxy.
+A value already stored by the runtime is never in the application's memory,
+logs, or crash dump, and it cannot be sent anywhere the application did not
+name: the request is not replayed across a redirect.
 
 `Failure::of(error)` turns a task failure into a state, a sentence and an
 honest answer about whether a Retry control would help. For a missing
@@ -931,6 +953,31 @@ an argument, so it does not reach a process table or a shell history, and it is
 never printed. A one-line `NAME=value` file is accepted as well as a raw key;
 only the value is installed. `--volume` does the same thing over USB for a
 reader that is not yet on Wi-Fi.
+
+Credentials entered inside an application are stored under that runtime-
+verified app ID (`secrets/apps/<app-id>/<name>`). Task lookup checks that
+private namespace first. A file installed by `kobo secret set` remains a
+global owner credential at `secrets/<name>` and is used only when the calling
+app has no private value. Thus Chat and Audiobook may hold different `openai`
+credentials, while existing CLI-installed credentials continue to work.
+Applications cannot name or write another app's namespace, and secret paths
+and symbolic links are refused rather than followed.
+
+Protocol-12 apps may also offer attended setup on the reader:
+
+```rust
+use kobo_sdk::credentials::CredentialSetup;
+
+let mut setup = CredentialSetup::new("openai", "OpenAI");
+setup.open();
+context.set_screen(setup.screen("My app"));
+```
+
+Pass actions to `setup.on_action(...)` and device replies to
+`setup.on_device_result(...)`. Entry is masked on screen, the runtime accepts
+only credential names authorized for the calling app, and the app cannot read
+the stored value back. The setup prompt also shows the CLI alternative and
+instructs the owner to restart the app after using it.
 
 ### Owner trust roots
 
@@ -1472,7 +1519,9 @@ protocol and policies but is not an operating-system security boundary.
 
 - **You cannot draw.** No pixels, no colour, no fonts, no coordinates.
 - **You cannot block the panel.** Long work is a task or it does not happen.
-- **You cannot hold a credential.** You may name one.
+- **You cannot read a stored credential.** You may name one. During attended
+  in-app setup you may briefly hold what the owner is typing solely to submit
+  it to the runtime.
 - **You cannot remove Back.** The runtime owns it, draws it, and leaves to the
   launcher if you do not answer it. You may ask to answer it first.
 - **You cannot open a socket, a file outside your directory, or a device node.**

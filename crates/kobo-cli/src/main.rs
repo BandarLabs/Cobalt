@@ -442,6 +442,7 @@ fn run(arguments: &[String]) -> Result<(), String> {
         "wait" => wait_for_device(&arguments[1..]),
         "logs" => device_logs(&arguments[1..]),
         "wifi-trace" => wifi_trace_command(&arguments[1..]),
+        "stream" => stream_command(&arguments[1..]),
         // Reached only when something other than main dispatches, which today
         // is the tests. main takes this verb first so that the reader's own
         // exit code survives.
@@ -2044,6 +2045,67 @@ fn device_logs(arguments: &[String]) -> Result<(), String> {
     }
 }
 
+/// Runs the host half of a Paperterm session.
+fn stream_command(arguments: &[String]) -> Result<(), String> {
+    const USAGE: &str = "usage: kobo stream init [--host ADDRESS ...]\n\
+                         kobo stream [--grid COLSxROWS] [--controls | --interactive] \
+                         [--read-only] [--port PORT] -- COMMAND [ARG ...]";
+    if arguments.first().is_some_and(|argument| argument == "init") {
+        return kobo_stream::init(&arguments[1..]);
+    }
+    let separator = arguments
+        .iter()
+        .position(|argument| argument == "--")
+        .ok_or(USAGE)?;
+    let mut grid = kobo_stream::Grid::fallback();
+    let mut controls = false;
+    let mut interactive = false;
+    let mut port = kobo_stream::DEFAULT_PORT;
+    let mut index = 0;
+    while index < separator {
+        match arguments[index].as_str() {
+            "--grid" => {
+                grid = kobo_stream::Grid::parse(arguments.get(index + 1).ok_or(USAGE)?)?;
+                index += 2;
+            }
+            "--controls" => {
+                controls = true;
+                index += 1;
+            }
+            "--interactive" => {
+                interactive = true;
+                controls = true;
+                index += 1;
+            }
+            "--read-only" => {
+                controls = false;
+                interactive = false;
+                index += 1;
+            }
+            "--port" => {
+                port = arguments
+                    .get(index + 1)
+                    .ok_or(USAGE)?
+                    .parse::<u16>()
+                    .map_err(|_| "--port must be 1 through 65535")?;
+                if port == 0 {
+                    return Err("--port must be 1 through 65535".to_owned());
+                }
+                index += 2;
+            }
+            _ => return Err(USAGE.to_owned()),
+        }
+    }
+    kobo_stream::run(kobo_stream::Options {
+        grid,
+        controls,
+        interactive,
+        port,
+        command: arguments[separator + 1..].to_vec(),
+    })
+    .map(|_| ())
+}
+
 fn wifi_trace_command(arguments: &[String]) -> Result<(), String> {
     const USAGE: &str = "usage: kobo wifi-trace summarize PATH | \
                          kobo wifi-trace retrieve --device HOST --out PATH";
@@ -2705,6 +2767,16 @@ fn workspace_manifest() -> PathBuf {
 /// Cargo resolves a relative `CARGO_TARGET_DIR` from its invoking current
 /// directory, not from the manifest's workspace.
 fn workspace_device_binary(name: &str) -> PathBuf {
+    workspace_target_directory()
+        .join("armv7-unknown-linux-musleabihf/release")
+        .join(name)
+}
+
+fn workspace_host_binary(name: &str) -> PathBuf {
+    workspace_target_directory().join("debug").join(name)
+}
+
+fn workspace_target_directory() -> PathBuf {
     let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let invocation = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     configured_target_directory(
@@ -2712,8 +2784,6 @@ fn workspace_device_binary(name: &str) -> PathBuf {
         &invocation,
         env::var_os("CARGO_TARGET_DIR").as_deref(),
     )
-    .join("armv7-unknown-linux-musleabihf/release")
-    .join(name)
 }
 
 fn configured_target_directory(
@@ -4518,7 +4588,7 @@ fn run_simulation(arguments: &[String]) -> Result<(), String> {
         ));
     }
 
-    let app_status = Command::new(format!("target/debug/{package}"))
+    let app_status = Command::new(workspace_host_binary(package))
         .env("KOBO_SOCKET", &simulation.socket)
         .env("KOBO_SIM_ONESHOT", "1")
         .status()
@@ -4637,7 +4707,7 @@ impl SimulationGuard {
     }
 
     fn spawn_daemon(&mut self) -> Result<(), String> {
-        let daemon = Command::new("target/debug/kobod")
+        let daemon = Command::new(workspace_host_binary("kobod"))
             .args(["--sim-socket"])
             .arg(&self.socket)
             .arg("--frame")

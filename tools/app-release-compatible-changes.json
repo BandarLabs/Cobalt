@@ -2,13 +2,13 @@
   "format_version": 1,
   "changes": [
     {
-      "protocol_version": 11,
-      "reason": "Additive protocol-11 colour-picture support preserves every existing grayscale picture/frame path. Only Gallery opts into RGB pictures, so previously published Store artifacts remain valid and only its changed manifest selects a rebuild.",
+      "protocol_version": 12,
+      "reason": "Additive protocol-12 colour-picture support preserves every existing grayscale picture/frame path, and the protocol-11 orientation command remains opt-in. Only Gallery opts into RGB pictures, so previously published Store artifacts remain valid and only its changed manifest selects a rebuild.",
       "files": [
         {
           "path": "crates/kobo-abi/src/lib.rs",
-          "base_blob": "2e3e88db5ba1fd08feed46fd65b0f502dd7f8dfb",
-          "compatible_blob": "3a5959b77fe68bc2a59b8beff790f4832c09c515"
+          "base_blob": "3f4c4c11e78686f10dbea1456d911dcc03ce3f7f",
+          "compatible_blob": "78a7786ebe5fec7930858303b36f887adb37e469"
         },
         {
           "path": "crates/kobo-bookview/src/lib.rs",
@@ -22,18 +22,18 @@
         },
         {
           "path": "crates/kobo-protocol/src/lib.rs",
-          "base_blob": "f34528d7b407e542a7836b0348b91de043822274",
-          "compatible_blob": "101b59d92cc98176b1c8c51b75f42538cb5ae802"
+          "base_blob": "30b4c1dabdbf9b22b3b3599d4f149052348bdd25",
+          "compatible_blob": "d8f3ea64ee80a403523c854d159705c58c99afa0"
         },
         {
           "path": "crates/kobo-sdk/src/lib.rs",
-          "base_blob": "9a645f3f3d9c8746dda47d858bb3fcd744621df8",
-          "compatible_blob": "cbf828c46df7fcc783288facb7edf308b2b7eea2"
+          "base_blob": "83bd312d2e1eb3c9e71963aa22a07990b6ec187d",
+          "compatible_blob": "fbe753a74a80ae048910225d5eac9cf0cdad4039"
         },
         {
           "path": "crates/kobo-ui/src/lib.rs",
-          "base_blob": "ce538c70b5779ee482e2b35aa83191eb06b04b4d",
-          "compatible_blob": "d200c94e6487800f6aba7378efa1a29bcccf25c0"
+          "base_blob": "6e67b3eda3cccdaeae1b64dc1411d71cd9c6e257",
+          "compatible_blob": "6277c4aacdcd06a3e4cfa3ea5b07b42ca559e245"
         }
       ]
     }
