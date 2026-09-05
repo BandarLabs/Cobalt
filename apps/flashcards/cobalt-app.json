@@ -4,8 +4,8 @@
   "short_label": "Flashcards",
   "summary": "Review flashcards anywhere, even without Wi-Fi.",
   "page_description": "Study with large reveal and answer controls designed for a Kobo screen.",
-  "version": "0.1.0",
-  "release_notes": "Study with large reveal and answer controls designed for a Kobo screen.",
+  "version": "0.2.0",
+  "release_notes": "Review real Anki decks: import a package on the host, then study question, answer and ratings offline with bounded Japanese text.",
   "glyph": "bookmark",
   "capabilities": []
 }

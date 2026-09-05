@@ -7,6 +7,7 @@ members = [
     "crates/kobo-doc",
     "crates/kobo-doctor",
     "crates/kobo-dict",
+    "crates/kobo-flashcards-format",
     "crates/kobo-frame-host",
     "crates/kobo-hal",
     "crates/kobo-html",

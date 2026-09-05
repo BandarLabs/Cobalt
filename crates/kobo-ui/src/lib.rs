@@ -5635,7 +5635,7 @@ impl LayoutKind {
     #[must_use]
     pub const fn acts_on(&self) -> Option<ActionId> {
         match *self {
-            Self::Button(action, _, _)
+            Self::Button(action, ControlState::Enabled, _)
             | Self::BarAction(action)
             | Self::BarGlyph(action, _)
             | Self::NavDestination(action, ..)
@@ -6120,23 +6120,7 @@ impl Layout {
     pub fn rect_of_action(&self, action: ActionId) -> Option<Rect> {
         self.nodes
             .iter()
-            .find(|node| match node.kind {
-                LayoutKind::Button(candidate, ControlState::Enabled, _)
-                | LayoutKind::BarAction(candidate)
-                | LayoutKind::BarGlyph(candidate, _)
-                | LayoutKind::NavDestination(candidate, ..)
-                | LayoutKind::NavDestinationSelected(candidate, ..)
-                | LayoutKind::Tile(candidate, ControlState::Enabled)
-                | LayoutKind::Field(candidate)
-                | LayoutKind::FieldClear(candidate)
-                | LayoutKind::Chip(candidate, _)
-                | LayoutKind::Tab(candidate, _)
-                | LayoutKind::ChoiceOption(candidate, _)
-                | LayoutKind::StepperControl(candidate, ControlState::Enabled, _)
-                | LayoutKind::Cell(candidate, ..)
-                | LayoutKind::ChoiceFreeform(candidate) => candidate == action,
-                _ => false,
-            })
+            .find(|node| node.kind.acts_on() == Some(action))
             .map(|node| node.rect)
     }
 }
@@ -8134,13 +8118,15 @@ fn layout_node(
                 let text_width = trailing.as_ref().map_or(text_width, |(_, measured)| {
                     max(1, text_width - measured - padding)
                 });
-                let title_lines = wrap_text(&row.title, text_width, FontSize::Body);
+                let title_lines =
+                    wrap_text_in(&row.title, text_width, FontSize::Body, layout.prose_face);
                 let summary_lines = if row.summary.is_empty() {
                     Vec::new()
                 } else {
                     wrap_text(&row.summary, text_width, FontSize::Caption)
                 };
-                let title_height = title_lines.len() as i32 * FontSize::Body.line_height();
+                let title_height =
+                    title_lines.len() as i32 * FontSize::Body.line_height_in(layout.prose_face);
                 let summary_height = summary_lines.len() as i32 * FontSize::Caption.line_height();
                 let content = title_height.saturating_add(summary_height);
                 // Never shorter than a finger, however terse the entry is.
@@ -11581,7 +11567,18 @@ fn diagnose_screen(
     chrome: &Chrome,
     pictures: Option<&dyn Pictures>,
 ) -> LayoutDiagnostics {
-    let layout = screen.layout_with(metrics, chrome);
+    with_reading_font(screen.reading_font, || {
+        diagnose_screen_with_selected_font(screen, metrics, chrome, pictures)
+    })
+}
+
+fn diagnose_screen_with_selected_font(
+    screen: &Screen,
+    metrics: &DisplayMetrics,
+    chrome: &Chrome,
+    pictures: Option<&dyn Pictures>,
+) -> LayoutDiagnostics {
+    let layout = screen.layout_with_selected_font(metrics, chrome);
     let mut issues = Vec::new();
     let mut nodes = Vec::new();
     collect_nodes(&screen.nodes, 0, &mut nodes, &mut issues);
@@ -11622,7 +11619,7 @@ fn diagnose_screen(
     }
     for node in &nodes {
         check_identifier(node.id(), &mut identifiers, &mut issues);
-        validate_node(node, metrics, pictures, &mut issues);
+        validate_node(node, metrics, layout.prose_face, pictures, &mut issues);
     }
 
     validate_content_bounds(&nodes, &layout, metrics, &mut issues);
@@ -11904,17 +11901,18 @@ fn limit_issue(
 fn validate_node(
     node: &Node,
     metrics: &DisplayMetrics,
+    prose_face: Face,
     pictures: Option<&dyn Pictures>,
     issues: &mut Vec<LayoutIssue>,
 ) {
     let id = node.id();
     match node {
-        Node::Heading { text, .. }
-        | Node::Text { text, .. }
-        | Node::RichText { text, .. }
-        | Node::Secondary { text, .. }
-        | Node::Quote { text, .. }
-        | Node::Banner { text, .. } => check_text_coverage(id, text, Face::Text, issues),
+        Node::Text { text, .. } | Node::RichText { text, .. } | Node::Quote { text, .. } => {
+            check_text_coverage(id, text, prose_face, issues);
+        }
+        Node::Heading { text, .. } | Node::Secondary { text, .. } | Node::Banner { text, .. } => {
+            check_text_coverage(id, text, Face::Text, issues);
+        }
         Node::Section {
             title, value, link, ..
         } => {
@@ -12006,7 +12004,7 @@ fn validate_node(
                 issues.push(limit_issue(id, "rows", rows.len(), MAX_ROWS));
             }
             for row in rows {
-                check_text_coverage(id, &row.title, Face::Text, issues);
+                check_text_coverage(id, &row.title, prose_face, issues);
                 check_text_coverage(id, &row.summary, Face::Text, issues);
             }
         }
@@ -13834,12 +13832,13 @@ fn render_all_with_selected_font(
             // enough separation, and a box around each one would add weight
             // that a list of several entries cannot carry.
             LayoutKind::Row(_) => {}
-            LayoutKind::RowTitle => draw_lines(
+            LayoutKind::RowTitle => draw_lines_in(
                 surface,
                 &node.text_lines,
                 node.rect.x,
                 node.rect.y,
                 FontSize::Body,
+                prose,
                 tone::INK,
                 clip,
             ),
@@ -13849,6 +13848,7 @@ fn render_all_with_selected_font(
                 node.rect,
                 metrics,
                 FontSize::Body,
+                prose,
                 clip,
             ),
             LayoutKind::RowSummary => draw_lines(
@@ -15000,17 +15000,18 @@ fn draw_struck_lines(
     rect: Rect,
     metrics: &DisplayMetrics,
     size: FontSize,
+    face: Face,
     clip: Rect,
 ) {
     let mut y = rect.y;
     let thickness = metrics.rule_thickness();
     for line in lines {
-        draw_text(surface, line, rect.x, y, size, tone::MUTED, clip);
-        let width = min(measure_text(line, size).0, rect.width);
+        draw_text_in(surface, line, rect.x, y, size, face, tone::MUTED, clip);
+        let width = min(measure_text_in(line, size, face).0, rect.width);
         // Through the middle of the letters rather than the middle of the line
         // box, which sits under the baseline and reads as an underline.
         let middle = y
-            .saturating_add(size.line_height() / 2)
+            .saturating_add(size.line_height_in(face) / 2)
             .saturating_sub(thickness / 2);
         fill_clipped(
             surface,
@@ -15023,7 +15024,7 @@ fn draw_struck_lines(
             tone::MUTED,
             clip,
         );
-        y = y.saturating_add(size.line_height());
+        y = y.saturating_add(size.line_height_in(face));
     }
 }
 
