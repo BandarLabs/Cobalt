@@ -15,6 +15,7 @@ use std::cmp::{max, min};
 use std::collections::BTreeMap;
 use std::sync::{Mutex, OnceLock};
 use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 pub const DISPLAY_WIDTH: i32 = 1072;
 pub const DISPLAY_HEIGHT: i32 = 1448;
@@ -648,6 +649,614 @@ mod folio_tests {
     }
 }
 
+#[cfg(test)]
+mod responsive_profile_tests {
+    use super::*;
+
+    fn panels() -> Vec<(String, DisplayMetrics)> {
+        kobo_profile::SUPPORTED_PROFILES
+            .iter()
+            .flat_map(|profile| {
+                let portrait = DisplayMetrics {
+                    width: i32::try_from(profile.width).expect("profile width fits layout"),
+                    height: i32::try_from(profile.height).expect("profile height fits layout"),
+                    pixels_per_inch: i32::from(profile.pixels_per_inch),
+                    text_scale: TextScale::Default,
+                };
+                let landscape = DisplayMetrics {
+                    width: portrait.height,
+                    height: portrait.width,
+                    ..portrait
+                };
+                [
+                    (format!("{} portrait", profile.id), portrait),
+                    (format!("{} landscape", profile.id), landscape),
+                ]
+            })
+            .collect()
+    }
+
+    fn navigation() -> NavBar {
+        NavBar::new(
+            NodeId(90),
+            [
+                ("Home", Glyph::App),
+                ("Library", Glyph::Reader),
+                ("Search", Glyph::Search),
+                ("Settings", Glyph::Settings),
+            ]
+            .into_iter()
+            .enumerate()
+            .map(|(index, (label, glyph))| {
+                BarAction::new(ActionId(100 + index as u32), label).with_glyph(glyph)
+            })
+            .collect(),
+            Some(0),
+        )
+    }
+
+    fn showcase() -> Screen {
+        Screen::new(
+            1,
+            vec![
+                Node::Heading {
+                    id: NodeId(1),
+                    text: "A responsive Folio screen".into(),
+                    level: 1,
+                },
+                Node::Text {
+                    id: NodeId(2),
+                    text: "Interface prose keeps a readable measure instead of stretching from bezel to bezel on a large or rotated reader.".into(),
+                    links: Vec::new(),
+                },
+                Node::Secondary {
+                    id: NodeId(3),
+                    text: "Profile-driven typography and spacing".into(),
+                },
+                Node::Section {
+                    id: NodeId(4),
+                    title: "Controls".into(),
+                    value: Some("Responsive".into()),
+                    link: None,
+                },
+                Node::Field {
+                    id: NodeId(5),
+                    action: ActionId(5),
+                    value: "Search Kobo".into(),
+                    placeholder: "Search".into(),
+                    clear: Some(ActionId(6)),
+                },
+                Node::Button {
+                    id: NodeId(6),
+                    action: ActionId(7),
+                    label: "Continue".into(),
+                    state: ControlState::Enabled,
+                    emphasis: Emphasis::Primary,
+                },
+                Node::Progress {
+                    id: NodeId(7),
+                    value: Percent::new(55),
+                },
+            ],
+        )
+        .with_top_bar(
+            TopBar::new(NodeId(80), "Folio")
+                .action(ActionId(80), "Display settings and reading preferences"),
+        )
+        .with_nav_bar(navigation())
+    }
+
+    fn assert_safe_layout(name: &str, metrics: &DisplayMetrics, screen: &Screen) {
+        let layout = screen.layout_with(metrics, &Chrome::with_back(true));
+        for node in &layout.nodes {
+            assert!(
+                node.rect.x >= 0
+                    && node.rect.y >= 0
+                    && node.rect.x.saturating_add(node.rect.width) <= metrics.width
+                    && node.rect.y.saturating_add(node.rect.height) <= metrics.height,
+                "{name}: {:?} is outside {metrics:?}: {:?}",
+                node.kind,
+                node.rect
+            );
+            if node.kind.acts_on().is_some() {
+                assert!(
+                    node.rect.width >= metrics.touch_target_minimum()
+                        && node.rect.height >= metrics.touch_target_minimum(),
+                    "{name}: {:?} is smaller than a touch target: {:?}",
+                    node.kind,
+                    node.rect
+                );
+            }
+            if matches!(
+                node.kind,
+                LayoutKind::Heading(_)
+                    | LayoutKind::Text
+                    | LayoutKind::Secondary
+                    | LayoutKind::Quote(..)
+                    | LayoutKind::FactLabel
+                    | LayoutKind::FactValue
+                    | LayoutKind::PagedList
+                    | LayoutKind::Banner(_)
+                    | LayoutKind::SplashTitle
+                    | LayoutKind::SplashText
+                    | LayoutKind::ActivityLabel
+                    | LayoutKind::ActivityBytes
+                    | LayoutKind::ActivityFailure
+            ) {
+                assert!(
+                    node.rect.width <= metrics.readable_width(),
+                    "{name}: {:?} uses an unreadable {}px measure",
+                    node.kind,
+                    node.rect.width
+                );
+            }
+        }
+
+        let controls = layout
+            .nodes
+            .iter()
+            .filter(|node| node.kind.acts_on().is_some())
+            .collect::<Vec<_>>();
+        for (index, left) in controls.iter().enumerate() {
+            for right in &controls[index + 1..] {
+                if left.id == right.id {
+                    continue;
+                }
+                assert!(
+                    left.rect.intersection(right.rect).is_none(),
+                    "{name}: {:?} overlaps {:?}",
+                    left.kind,
+                    right.kind
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn every_supported_profile_and_orientation_has_safe_responsive_primitives() {
+        for (name, metrics) in panels() {
+            let screen = showcase();
+            assert_safe_layout(&name, &metrics, &screen);
+
+            let mut surface = Surface::new(
+                usize::try_from(metrics.width).expect("positive profile width"),
+                usize::try_from(metrics.height).expect("positive profile height"),
+            );
+            render_with(
+                &screen,
+                &metrics,
+                &Chrome::with_back(true),
+                &mut surface,
+                None,
+            );
+            assert!(surface.pixels.iter().any(|pixel| *pixel != tone::PAPER));
+
+            let dialog = Screen::new(2, Vec::new()).with_overlay(Overlay::modal(
+                NodeId(20),
+                "Responsive dialog",
+                vec![
+                    Node::Text {
+                        id: NodeId(21),
+                        text: "Dialog copy keeps a readable line length on every supported panel."
+                            .into(),
+                        links: Vec::new(),
+                    },
+                    Node::Button {
+                        id: NodeId(22),
+                        action: ActionId(22),
+                        label: "Done".into(),
+                        state: ControlState::Enabled,
+                        emphasis: Emphasis::Primary,
+                    },
+                ],
+            ));
+            assert_safe_layout(&format!("{name} dialog"), &metrics, &dialog);
+            let overlay = dialog
+                .layout_for(&metrics)
+                .nodes
+                .into_iter()
+                .find(|node| node.kind == LayoutKind::Overlay)
+                .expect("dialog overlay");
+            assert!(overlay.rect.width <= metrics.readable_width());
+        }
+    }
+
+    #[test]
+    fn tile_columns_follow_the_allocated_width_on_every_profile() {
+        for (name, metrics) in panels() {
+            for shape in [TileShape::Square, TileShape::Portrait, TileShape::Card] {
+                let screen = Screen::new(
+                    1,
+                    vec![Node::TileGrid {
+                        id: NodeId(1),
+                        tiles: (0..20)
+                            .map(|index| {
+                                Tile::new(ActionId(index + 1), format!("Tile {index}"), Glyph::App)
+                            })
+                            .collect(),
+                        shape,
+                    }],
+                );
+                let layout = screen.layout_for(&metrics);
+                let tiles = layout
+                    .nodes
+                    .iter()
+                    .filter(|node| matches!(node.kind, LayoutKind::Tile(..)))
+                    .collect::<Vec<_>>();
+                assert!(!tiles.is_empty(), "{name} {shape:?}: no tiles");
+                let first_y = tiles[0].rect.y;
+                let first_row = tiles
+                    .iter()
+                    .take_while(|tile| tile.rect.y == first_y)
+                    .count();
+                assert_eq!(
+                    first_row,
+                    metrics.grid_columns_for_width(shape, metrics.content_width()),
+                    "{name} {shape:?}: wrong column count"
+                );
+                assert_safe_layout(&format!("{name} {shape:?} tiles"), &metrics, &screen);
+            }
+
+            let half = metrics.content_width() / 2 - metrics.space(Space::Small) / 2;
+            assert!(
+                metrics.grid_columns_for_width(TileShape::Card, half)
+                    <= metrics.grid_columns(TileShape::Card),
+                "{name}: a half-width band gained tile columns"
+            );
+        }
+    }
+
+    #[test]
+    fn legacy_flow_keeps_the_uncapped_panel_width() {
+        let (_, metrics) = panels()
+            .into_iter()
+            .max_by_key(|(_, metrics)| metrics.width_tenth_mm())
+            .expect("supported profiles");
+        let screen = Screen::new(
+            1,
+            vec![
+                Node::Text {
+                    id: NodeId(1),
+                    text: "Legacy prose uses the full content width.".into(),
+                    links: Vec::new(),
+                },
+                Node::Section {
+                    id: NodeId(2),
+                    title: "Legacy section".into(),
+                    value: Some("Full width".into()),
+                    link: None,
+                },
+                Node::Band {
+                    id: NodeId(3),
+                    align: BandAlign::Top,
+                    slots: vec![BandSlot::fill(vec![Node::Secondary {
+                        id: NodeId(4),
+                        text: "Legacy band".into(),
+                    }])],
+                },
+            ],
+        );
+        let content_width = metrics.content_width();
+        assert_eq!(
+            metrics.prose_area(false, false).width,
+            content_width.min(metrics.readable_width())
+        );
+        assert_eq!(
+            with_legacy_typography(true, || metrics.prose_area(false, false).width),
+            content_width
+        );
+        let narrow_area = ProseArea {
+            width: content_width / 2,
+            height: 0,
+            gap: 0,
+            face: Face::Text,
+        };
+        let modern_columns = paginate_tiles(100, &metrics, TileShape::Card, narrow_area)[0].len();
+        let legacy_columns = with_legacy_typography(true, || {
+            paginate_tiles(100, &metrics, TileShape::Card, narrow_area)[0].len()
+        });
+        assert_eq!(
+            modern_columns,
+            metrics.grid_columns_for_width(TileShape::Card, narrow_area.width)
+        );
+        assert_eq!(legacy_columns, metrics.grid_columns(TileShape::Card));
+        assert!(legacy_columns > modern_columns);
+
+        let modern = screen.layout_for(&metrics);
+        let legacy = screen.with_legacy_typography(true).layout_for(&metrics);
+
+        for id in [NodeId(1), NodeId(2), NodeId(3)] {
+            let rect = legacy
+                .nodes
+                .iter()
+                .find(|node| node.id == id)
+                .unwrap_or_else(|| panic!("legacy node {id:?}"));
+            assert_eq!(rect.rect.width, content_width, "legacy node {id:?}");
+        }
+        assert_eq!(
+            modern
+                .nodes
+                .iter()
+                .find(|node| node.id == NodeId(1))
+                .expect("modern text")
+                .rect
+                .width,
+            content_width.min(metrics.readable_width())
+        );
+        for id in [NodeId(2), NodeId(3)] {
+            assert_eq!(
+                modern
+                    .nodes
+                    .iter()
+                    .find(|node| node.id == id)
+                    .unwrap_or_else(|| panic!("modern node {id:?}"))
+                    .rect
+                    .width,
+                content_width.min(metrics.control_width()),
+                "modern node {id:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn long_document_regions_yield_to_trailing_controls() {
+        for (name, metrics) in panels() {
+            let screen = Screen::new(
+                1,
+                vec![
+                    Node::Text {
+                        id: NodeId(1),
+                        text: "A long document line ".repeat(500),
+                        links: Vec::new(),
+                    },
+                    Node::Grid {
+                        id: NodeId(2),
+                        columns: 3,
+                        square: false,
+                        cells: ["Previous", "Continue", "Close"]
+                            .into_iter()
+                            .enumerate()
+                            .map(|(index, label)| Cell::new(ActionId(index as u32 + 1), label))
+                            .collect(),
+                    },
+                ],
+            );
+            let diagnostics = screen.diagnostics(&metrics, &Chrome::with_back(false));
+            assert!(
+                diagnostics.issues.iter().any(|issue| {
+                    issue.node == Some(NodeId(1))
+                        && issue.severity == DiagnosticSeverity::Error
+                        && issue.kind == LayoutIssueKind::TextOverflow
+                }),
+                "{name}: truncated document text was not reported"
+            );
+            assert!(
+                !diagnostics
+                    .issues
+                    .iter()
+                    .any(|issue| issue.kind == LayoutIssueKind::InteractiveOffscreen),
+                "{name}: {:?}",
+                diagnostics.issues
+            );
+            let controls = diagnostics
+                .layout
+                .nodes
+                .iter()
+                .filter(|node| matches!(node.kind, LayoutKind::Cell(..)))
+                .collect::<Vec<_>>();
+            assert_eq!(controls.len(), 3, "{name}");
+            for control in controls {
+                assert!(
+                    rect_is_inside(control.rect, diagnostics.layout.content),
+                    "{name}: {:?} is outside {:?}",
+                    control.rect,
+                    diagnostics.layout.content
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn section_action_labels_have_one_render_source_on_every_panel() {
+        for (name, metrics) in panels() {
+            let labels = ["Details", "View all ↗"];
+            let screen = Screen::new(
+                1,
+                labels
+                    .iter()
+                    .enumerate()
+                    .map(|(index, label)| Node::Section {
+                        id: NodeId(index as u32 + 1),
+                        title: if index == 0 {
+                            "Continue".into()
+                        } else {
+                            "Featured".into()
+                        },
+                        value: None,
+                        link: Some(BarAction::new(ActionId(index as u32 + 1), *label)),
+                    })
+                    .collect(),
+            );
+            let chrome = Chrome::with_back(false);
+            let diagnostics = screen.diagnostics(&metrics, &chrome);
+            assert!(
+                diagnostics
+                    .issues
+                    .iter()
+                    .all(|issue| issue.severity != DiagnosticSeverity::Error),
+                "{name}: {:?}",
+                diagnostics.issues
+            );
+            for label in labels {
+                let sources = diagnostics
+                    .layout
+                    .nodes
+                    .iter()
+                    .flat_map(|node| &node.text_lines)
+                    .filter(|line| line.as_str() == label)
+                    .count();
+                assert_eq!(sources, 1, "{name}: {label:?} has {sources} render sources");
+            }
+            assert!(
+                diagnostics
+                    .layout
+                    .nodes
+                    .iter()
+                    .filter(|node| node.kind == LayoutKind::Section)
+                    .all(|node| node.text_lines.len() == 1),
+                "{name}: a section body still carries its action label"
+            );
+
+            let mut surface = Surface::new(
+                usize::try_from(metrics.width).expect("positive profile width"),
+                usize::try_from(metrics.height).expect("positive profile height"),
+            );
+            render_with(&screen, &metrics, &chrome, &mut surface, None);
+            assert!(surface.pixels.iter().any(|pixel| *pixel != tone::PAPER));
+            if metrics == CLARA_BW_METRICS {
+                for (index, label) in labels.into_iter().enumerate() {
+                    let id = NodeId(index as u32 + 1);
+                    let section = diagnostics
+                        .layout
+                        .nodes
+                        .iter()
+                        .find(|node| node.id == id && node.kind == LayoutKind::Section)
+                        .expect("section");
+                    let link = diagnostics
+                        .layout
+                        .nodes
+                        .iter()
+                        .find(|node| {
+                            matches!(node.kind, LayoutKind::SectionLink(_)) && node.id == id
+                        })
+                        .expect("section link");
+                    let label_width = measure_text(label, FontSize::Caption).0;
+                    let label_top =
+                        link.rect.y + (link.rect.height - FontSize::Caption.line_height()) / 2;
+                    let label_left = link.rect.x + link.rect.width - label_width;
+                    for y in section.rect.y..label_top {
+                        for x in label_left..link.rect.x + link.rect.width {
+                            let offset = usize::try_from(y).expect("visible y") * surface.width
+                                + usize::try_from(x).expect("visible x");
+                            assert_eq!(
+                                surface.pixels[offset],
+                                tone::PAPER,
+                                "{label:?} was also painted above its control"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn rich_document_overflow_is_reported_without_sacrificing_controls() {
+        for (name, metrics) in panels() {
+            let styled = |text: String, presentation| {
+                let strong = text.find("styled").expect("strong run");
+                let emphasis = text.find("document").expect("emphasis run");
+                Node::RichText {
+                    id: NodeId(1),
+                    text,
+                    spans: vec![
+                        RichTextSpan {
+                            start: strong,
+                            end: strong + "styled".len(),
+                            presentation: TextPresentation {
+                                strong: true,
+                                ..TextPresentation::default()
+                            },
+                        },
+                        RichTextSpan {
+                            start: emphasis,
+                            end: emphasis + "document".len(),
+                            presentation: TextPresentation {
+                                emphasis: true,
+                                ..TextPresentation::default()
+                            },
+                        },
+                    ],
+                    links: Vec::new(),
+                    presentation,
+                    selection: None,
+                    formulae: Vec::new(),
+                }
+            };
+            let presentation = ParagraphPresentation {
+                line_height_percent: 120,
+                margin_before_em: 25,
+                margin_after_em: 25,
+                first_line_indent_em: 100,
+                ..ParagraphPresentation::default()
+            };
+            let screen = Screen::new(
+                1,
+                vec![
+                    styled("A long styled document line ".repeat(500), presentation),
+                    Node::Grid {
+                        id: NodeId(2),
+                        columns: 3,
+                        square: false,
+                        cells: ["Previous", "Continue", "Close"]
+                            .into_iter()
+                            .enumerate()
+                            .map(|(index, label)| Cell::new(ActionId(index as u32 + 1), label))
+                            .collect(),
+                    },
+                ],
+            );
+            let diagnostics = screen.diagnostics(&metrics, &Chrome::with_back(false));
+            assert!(
+                diagnostics.issues.iter().any(|issue| {
+                    issue.node == Some(NodeId(1))
+                        && issue.severity == DiagnosticSeverity::Error
+                        && issue.kind == LayoutIssueKind::TextOverflow
+                }),
+                "{name}: truncated rich text was not reported: {:?}",
+                diagnostics.issues
+            );
+            assert!(
+                !diagnostics.issues.iter().any(|issue| matches!(
+                    issue.kind,
+                    LayoutIssueKind::InteractiveOffscreen | LayoutIssueKind::Clipped
+                )),
+                "{name}: {:?}",
+                diagnostics.issues
+            );
+            let bounded =
+                diagnostics.layout.nodes.iter().filter(|node| {
+                    node.id == NodeId(1) || matches!(node.kind, LayoutKind::Cell(..))
+                });
+            for node in bounded {
+                assert!(
+                    rect_is_inside(node.rect, diagnostics.layout.content),
+                    "{name}: {:?} is outside {:?}",
+                    node.rect,
+                    diagnostics.layout.content
+                );
+            }
+
+            let fitting = Screen::new(
+                2,
+                vec![styled(
+                    "A styled document line remains fully visible.".into(),
+                    presentation,
+                )],
+            )
+            .diagnostics(&metrics, &Chrome::with_back(false));
+            assert!(
+                !fitting
+                    .issues
+                    .iter()
+                    .any(|issue| issue.kind == LayoutIssueKind::TextOverflow),
+                "{name}: fully visible rich text reported overflow: {:?}",
+                fitting.issues
+            );
+        }
+    }
+}
+
 /// A stacked cell written with the heading its column was under.
 ///
 /// A table's meaning is entirely in which value sits under which heading, so
@@ -812,6 +1421,44 @@ pub fn terminal_grid(width: i32, height: i32) -> (u16, u16) {
     let columns = (max(0, width) / max(1, cell_width)).clamp(0, MAX_TERMINAL_COLUMNS as i32);
     let rows = (max(0, height) / max(1, cell_height)).clamp(0, MAX_TERMINAL_ROWS as i32);
     (columns as u16, rows as u16)
+}
+
+fn terminal_row_prefix(row: &str, columns: usize) -> String {
+    let mut used = 0_usize;
+    let mut clipped = String::new();
+    for character in row.chars() {
+        let width = UnicodeWidthChar::width(character).unwrap_or(0);
+        if width == 0 {
+            if !clipped.is_empty() {
+                clipped.push(character);
+            }
+            continue;
+        }
+        if used.saturating_add(width) > columns {
+            break;
+        }
+        clipped.push(character);
+        used = used.saturating_add(width);
+    }
+    clipped
+}
+
+fn terminal_cell_at(row: &str, column: usize) -> (char, usize) {
+    let mut used = 0_usize;
+    for character in row.chars() {
+        let width = UnicodeWidthChar::width(character).unwrap_or(0);
+        if width == 0 {
+            continue;
+        }
+        if column == used {
+            return (character, width);
+        }
+        if column < used.saturating_add(width) {
+            return (' ', 1);
+        }
+        used = used.saturating_add(width);
+    }
+    (' ', 1)
 }
 
 /// Terminal text is set at the smallest size, because a terminal's value is in
@@ -1033,6 +1680,7 @@ impl DisplayMetrics {
         }
         self
     }
+
     /// Converts a tenth of a millimetre to whole pixels, rounding to nearest.
     ///
     /// Tenths because whole millimetres are too coarse for a type scale, and
@@ -1056,6 +1704,44 @@ impl DisplayMetrics {
     #[must_use]
     pub const fn width_tenth_mm(&self) -> i32 {
         (self.width * 254) / self.pixels_per_inch
+    }
+
+    /// The width inside the bezel margins.
+    #[must_use]
+    pub const fn content_width(&self) -> i32 {
+        let width = self.width - 2 * self.screen_margin();
+        if width < 0 {
+            0
+        } else {
+            width
+        }
+    }
+
+    /// The widest comfortable measure for interface prose.
+    ///
+    /// Wide readers should add columns or leave paper rather than turn one
+    /// paragraph into a line the eye has to track across the whole panel.
+    #[must_use]
+    pub const fn readable_width(&self) -> i32 {
+        let physical_limit = self.tenth_mm(1_050);
+        let content = self.content_width();
+        if content < physical_limit {
+            content
+        } else {
+            physical_limit
+        }
+    }
+
+    /// The widest ordinary control should become while retaining its target.
+    #[must_use]
+    pub const fn control_width(&self) -> i32 {
+        let physical_limit = self.tenth_mm(1_200);
+        let content = self.content_width();
+        if content < physical_limit {
+            content
+        } else {
+            physical_limit
+        }
     }
 
     /// The smallest target a finger can reliably hit, seven millimetres.
@@ -1174,6 +1860,26 @@ impl DisplayMetrics {
         let minimum = shape.minimum_cell_tenth_mm();
         let usable = self.width_tenth_mm() - 80;
         let columns = (usable / minimum) as usize;
+        if columns < 1 {
+            1
+        } else if columns > 5 {
+            5
+        } else {
+            columns
+        }
+    }
+
+    /// How many tile columns fit inside an actual allocated region.
+    ///
+    /// Tile grids can sit inside bands and dialogs, where the panel width is
+    /// not the width they receive. Using the whole panel there produces tiny
+    /// cells and overlapping labels on wide devices.
+    #[must_use]
+    pub const fn grid_columns_for_width(&self, shape: TileShape, width: i32) -> usize {
+        let minimum = shape.minimum_cell_tenth_mm();
+        let width = if width < 0 { 0 } else { width };
+        let usable_tenth_mm = (width * 254) / self.pixels_per_inch;
+        let columns = (usable_tenth_mm / minimum) as usize;
         if columns < 1 {
             1
         } else if columns > 5 {
@@ -2263,30 +2969,29 @@ impl Screen {
                 cursor = max(cursor, content_bottom.saturating_sub(trailing));
                 continue;
             }
-            let bottom = if matches!(node, Node::Splash { .. } | Node::Terminal { .. }) {
-                content_bottom.saturating_sub(trailing_height(
-                    &self.nodes[position + 1..],
-                    margin,
-                    flow_width,
-                    content_bottom,
-                    metrics,
-                    prose,
-                    gap,
-                ))
-            } else {
-                content_bottom
-            };
-            cursor = layout_node(
+            let bottom = flow_node_bottom(
                 node,
+                &self.nodes[position + 1..],
                 margin,
-                cursor,
                 flow_width,
-                bottom,
-                0,
+                content_bottom,
                 metrics,
                 prose,
-                &mut layout,
+                gap,
             );
+            cursor = with_flow_height_bound(bottom < content_bottom, || {
+                layout_flow_node(
+                    node,
+                    margin,
+                    cursor,
+                    flow_width,
+                    bottom,
+                    0,
+                    metrics,
+                    prose,
+                    &mut layout,
+                )
+            });
             cursor = cursor.saturating_add(gap);
         }
 
@@ -2357,6 +3062,26 @@ impl Screen {
             width: metrics.width,
             height: max(0, content_bottom - content_top),
         };
+        let panel = Rect {
+            x: 0,
+            y: 0,
+            width: metrics.width,
+            height: metrics.height,
+        };
+        let content_bounds = layout.content;
+        let pinned_bottom = self.bottom_action.as_ref().map(|action| action.id);
+        layout.nodes.retain(|node| {
+            if !is_enabled_interactive(node.kind) {
+                return true;
+            }
+            let bounds =
+                if interaction_uses_panel_bounds(node.kind) || pinned_bottom == Some(node.id) {
+                    panel
+                } else {
+                    content_bounds
+                };
+            rect_is_inside(node.rect, bounds)
+        });
         // Last, so it is on top of everything -- including the bars, which a
         // popover hanging off a top-bar control has to cover to be readable --
         // and so hit testing, which walks the list backwards, reaches it first.
@@ -2393,6 +3118,11 @@ fn layout_overlay(overlay: &Overlay, metrics: &DisplayMetrics, prose: Face, layo
     // be: the reader has to be able to see that what they were looking at is
     // still there.
     let widest = min(metrics.width - 4 * margin, metrics.width * 5 / 6);
+    let widest = if legacy_typography() {
+        widest
+    } else {
+        widest.min(metrics.readable_width())
+    };
     // A modal takes all of that, because a modal is a dialogue and its prose
     // wants the room. A popover takes what it needs, because a popover is
     // usually a short menu: a box of that width holding the word "Delete" is a
@@ -2448,23 +3178,34 @@ fn layout_overlay(overlay: &Overlay, metrics: &DisplayMetrics, prose: Face, layo
     if header > 0 {
         cursor = cursor.saturating_add(header).saturating_add(gap);
     }
-    for node in &overlay.nodes {
+    let overlay_bottom = metrics.height.saturating_sub(2 * margin + padding);
+    for (position, node) in overlay.nodes.iter().enumerate() {
         if scratch.nodes.len() >= MAX_LAYOUT_NODES {
             break;
         }
-        cursor = layout_node(
+        let bottom = flow_node_bottom(
             node,
+            &overlay.nodes[position + 1..],
             padding,
-            cursor,
             inner,
-            // A popover is measured by its contents, so there is no band to
-            // fill and a splash inside one would have nothing to centre in.
-            metrics.height,
-            0,
+            overlay_bottom,
             metrics,
             prose,
-            &mut scratch,
+            gap,
         );
+        cursor = with_flow_height_bound(bottom < overlay_bottom, || {
+            layout_flow_node(
+                node,
+                padding,
+                cursor,
+                inner,
+                bottom,
+                0,
+                metrics,
+                prose,
+                &mut scratch,
+            )
+        });
         cursor = cursor.saturating_add(gap);
     }
     let height = min(cursor - gap + padding, metrics.height - 2 * margin);
@@ -2789,7 +3530,7 @@ fn layout_top_bar(
     // must still find it there on the next screen that carries it.
     let mut action_right = metrics.width - margin;
     for action in top_bar.actions.iter().take(MAX_BAR_ACTIONS) {
-        let action_width = if action.glyph.is_some() {
+        let wanted = if action.glyph.is_some() {
             // Square. A picture has no natural width to measure, and a target
             // narrower than the bar is tall is one a thumb misses.
             control
@@ -2799,6 +3540,15 @@ fn layout_top_bar(
                 control,
                 text_width.saturating_add(metrics.space(Space::Medium)),
             )
+        };
+        let available = action_right.saturating_sub(margin);
+        let action_width = if legacy_typography() {
+            wanted
+        } else {
+            if available <= 0 {
+                break;
+            }
+            wanted.min(available)
         };
         layout.nodes.push(LayoutNode {
             id: top_bar.id,
@@ -2909,7 +3659,19 @@ fn layout_bottom_action(bottom: &BottomAction, metrics: &DisplayMetrics, layout:
     let y = top
         .saturating_add(rule)
         .saturating_add((band - rule - height) / 2);
-    let label = one_line(&bottom.action.label, width - 32, FontSize::Body);
+    let inset = if legacy_typography() {
+        16
+    } else {
+        metrics.tenth_mm(BUTTON_HORIZONTAL_PADDING_TENTH_MM)
+    };
+    let label_width = if legacy_typography() {
+        width - 32
+    } else {
+        width
+            .saturating_sub(inset.saturating_mul(2))
+            .min(metrics.readable_width())
+    };
+    let label = one_line(&bottom.action.label, label_width, FontSize::Body);
     layout.nodes.push(LayoutNode {
         id: bottom.id,
         rect: Rect {
@@ -2941,7 +3703,7 @@ fn layout_bottom_action(bottom: &BottomAction, metrics: &DisplayMetrics, layout:
                 width: side,
                 height: side,
             },
-            kind: LayoutKind::InlineGlyph(glyph),
+            kind: LayoutKind::InlineGlyph(glyph, false),
             text_lines: Vec::new(),
         });
     }
@@ -3996,6 +4758,8 @@ pub struct Cell {
     /// already knows. Optional because most cells do not: a glyph invented for
     /// a verb nobody draws is worse than the verb written out.
     pub glyph: Option<Glyph>,
+    /// Drawn inverted while this cell is the current board selection.
+    pub selected: bool,
 }
 
 impl Cell {
@@ -4005,6 +4769,7 @@ impl Cell {
             action,
             label: label.into(),
             glyph: None,
+            selected: false,
         }
     }
 
@@ -4017,6 +4782,12 @@ impl Cell {
     #[must_use]
     pub const fn with_glyph(mut self, glyph: Glyph) -> Self {
         self.glyph = Some(glyph);
+        self
+    }
+
+    #[must_use]
+    pub const fn with_selected(mut self, selected: bool) -> Self {
+        self.selected = selected;
         self
     }
 }
@@ -4369,6 +5140,18 @@ pub enum Glyph {
     /// to draw it: "Dimmer" and "Smaller" are words somebody has to read, and
     /// a reader adjusting the light in the dark is not reading anything.
     Minus,
+    ChessWhiteKing,
+    ChessWhiteQueen,
+    ChessWhiteRook,
+    ChessWhiteBishop,
+    ChessWhiteKnight,
+    ChessWhitePawn,
+    ChessBlackKing,
+    ChessBlackQueen,
+    ChessBlackRook,
+    ChessBlackBishop,
+    ChessBlackKnight,
+    ChessBlackPawn,
 }
 
 impl Glyph {
@@ -4379,7 +5162,7 @@ impl Glyph {
     /// the set was twenty-one: `Light` and `Close` were authored, shipped, and
     /// covered by none of the tests that walk every glyph. A glyph nobody
     /// rasterises in a test is a blank space beside a label on the panel.
-    pub const ALL: [Self; 45] = [
+    pub const ALL: [Self; 57] = [
         Self::App,
         Self::Book,
         Self::Note,
@@ -4425,6 +5208,18 @@ impl Glyph {
         Self::Plus,
         Self::Headphones,
         Self::Minus,
+        Self::ChessWhiteKing,
+        Self::ChessWhiteQueen,
+        Self::ChessWhiteRook,
+        Self::ChessWhiteBishop,
+        Self::ChessWhiteKnight,
+        Self::ChessWhitePawn,
+        Self::ChessBlackKing,
+        Self::ChessBlackQueen,
+        Self::ChessBlackRook,
+        Self::ChessBlackBishop,
+        Self::ChessBlackKnight,
+        Self::ChessBlackPawn,
     ];
 }
 
@@ -4696,7 +5491,7 @@ pub enum LayoutKind {
     NavDestination(ActionId, Option<Glyph>),
     NavDestinationSelected(ActionId, Option<Glyph>),
     Row(ActionId),
-    Cell(ActionId, CellStyle),
+    Cell(ActionId, CellStyle, bool),
     /// A grid cell's label. Carries whether the cell is a board mark (an X,
     /// an O, a Sudoku digit) rather than a keyboard key: only a board mark
     /// grows to `FontSize::Heading` when it is one or two characters. A
@@ -4721,7 +5516,12 @@ pub enum LayoutKind {
     /// tile is still drawn, still occupies its place in the grid, and still
     /// must not answer a tap.
     Tile(ActionId, ControlState),
+    /// The visible boundary of a Folio card tile. Separate from the tap target
+    /// so hit testing continues to use the complete card rectangle.
+    TileOutline(ControlState),
     TileLabel,
+    /// A disabled card tile's title.
+    TileLabelMuted,
     /// A tile's second line. Muted, one line, and only emitted when at least
     /// one tile in the grid asked for one.
     TileSubtitle,
@@ -4734,12 +5534,14 @@ pub enum LayoutKind {
     /// A count or a word in the tile's leading corner, in the same chip.
     TileBadge,
     TileGlyph(Glyph),
+    /// A disabled card tile's icon.
+    TileGlyphMuted(Glyph),
     /// A picture drawn inside another control's rect, carrying no action of
     /// its own: the mark above a grid cell's label, or the one beside a bottom
     /// action's word. Deliberately not a control, so hit testing and press
     /// inversion both belong to the thing underneath it. A glyph that was its
     /// own target would invert a square in the middle of a button.
-    InlineGlyph(Glyph),
+    InlineGlyph(Glyph, bool),
     /// A picture, already placed. `rect` is where it goes; the renderer scales
     /// it to fit only if the application handed over something larger.
     Picture(PictureHandle),
@@ -4866,6 +5668,7 @@ pub enum LayoutIssueKind {
         hidden_nodes: usize,
     },
     Clipped,
+    InteractiveOffscreen,
     TouchTargetTooSmall {
         minimum: i32,
     },
@@ -4957,12 +5760,15 @@ impl std::fmt::Display for LayoutIssue {
             LayoutIssueKind::Clipped => {
                 write!(formatter, "{node}: content is clipped by a panel edge")
             }
+            LayoutIssueKind::InteractiveOffscreen => {
+                write!(formatter, "{node}: interactive control is outside the visible panel")
+            }
             LayoutIssueKind::TouchTargetTooSmall { minimum } => write!(
                 formatter,
                 "{node}: touch target is smaller than the {minimum}px minimum"
             ),
             LayoutIssueKind::TextOverflow => {
-                write!(formatter, "{node}: rendered text exceeds its rectangle")
+                write!(formatter, "{node}: text does not fit its rectangle")
             }
             LayoutIssueKind::MissingPicture(handle) => {
                 write!(
@@ -5053,7 +5859,12 @@ impl Layout {
     /// the button.
     #[must_use]
     pub fn pressed_control(&self, x: i32, y: i32) -> Option<Rect> {
-        self.nodes
+        let visible_start = self
+            .nodes
+            .iter()
+            .rposition(|node| matches!(node.kind, LayoutKind::Scrim { .. }))
+            .map_or(0, |index| index + 1);
+        self.nodes[visible_start..]
             .iter()
             .filter(|node| node.rect.contains(x, y))
             .filter(|node| {
@@ -5061,6 +5872,7 @@ impl Layout {
                     node.kind,
                     LayoutKind::Button(_, ControlState::Enabled, _)
                         | LayoutKind::Back
+                        | LayoutKind::OverlayClose
                         | LayoutKind::BarAction(_)
                         | LayoutKind::BarGlyph(..)
                         | LayoutKind::NavDestination(..)
@@ -5226,7 +6038,9 @@ impl Layout {
             // control: what the reader touched was not the page.
             if matches!(
                 node.kind,
-                LayoutKind::Button(_, ControlState::Disabled, _) | LayoutKind::Scrim { .. }
+                LayoutKind::Button(_, ControlState::Disabled, _)
+                    | LayoutKind::Tile(_, ControlState::Disabled)
+                    | LayoutKind::Scrim { .. }
             ) {
                 return true;
             }
@@ -5639,6 +6453,73 @@ fn rich_run_at(start: usize, line_end: usize, spans: &[RichTextSpan]) -> (usize,
     (line_end.max(start + 1), TextPresentation::default())
 }
 
+fn rich_text_spacing(presentation: ParagraphPresentation, prose: Face) -> (i32, i32, i32, i32) {
+    let natural = FontSize::Body.line_height_in(prose).max(1);
+    let line_height =
+        natural.saturating_mul(i32::from(presentation.line_height_percent.clamp(80, 250))) / 100;
+    let before = natural.saturating_mul(i32::from(presentation.margin_before_em)) / 100;
+    let after = natural.saturating_mul(i32::from(presentation.margin_after_em)) / 100;
+    let indent = measure_text_in("M", FontSize::Body, prose)
+        .0
+        .saturating_mul(i32::from(presentation.first_line_indent_em))
+        / 100;
+    (line_height, before, after, indent)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn layout_flow_node(
+    node: &Node,
+    x: i32,
+    y: i32,
+    width: i32,
+    bottom: i32,
+    depth: usize,
+    metrics: &DisplayMetrics,
+    prose: Face,
+    layout: &mut Layout,
+) -> i32 {
+    let maximum = if legacy_typography() {
+        width
+    } else {
+        match node {
+            Node::Heading { .. }
+            | Node::Text { .. }
+            | Node::RichText { .. }
+            | Node::Secondary { .. }
+            | Node::Quote { .. }
+            | Node::Facts { .. }
+            | Node::PagedList { .. }
+            | Node::Banner { .. }
+            | Node::Splash { .. }
+            | Node::Skeleton { .. }
+            | Node::Activity { .. } => width.min(metrics.readable_width()),
+            Node::Section { .. }
+            | Node::Button { .. }
+            | Node::Field { .. }
+            | Node::Chips { .. }
+            | Node::Tabs { .. }
+            | Node::Band { .. }
+            | Node::Rows { .. }
+            | Node::Progress { .. }
+            | Node::Stepper { .. } => width.min(metrics.control_width()),
+            Node::Card { .. }
+            | Node::Divider { .. }
+            | Node::Spacer { .. }
+            | Node::Flex { .. }
+            | Node::Grid { .. }
+            | Node::Table { .. }
+            | Node::Picture { .. }
+            | Node::TileGrid { .. }
+            | Node::PageRail { .. }
+            | Node::Choice { .. }
+            | Node::Terminal { .. } => width,
+        }
+    }
+    .max(0);
+    let x = x.saturating_add(width.saturating_sub(maximum) / 2);
+    layout_node(node, x, y, maximum, bottom, depth, metrics, prose, layout)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn layout_node(
     node: &Node,
@@ -5677,19 +6558,34 @@ fn layout_node(
             y.saturating_add(height)
         }
         Node::Text { id, text, links } => {
-            let ranges = wrap_ranges(text, width, FontSize::Body, prose);
+            let line_height = FontSize::Body.line_height_in(prose).max(1);
+            let visible_lines = if legacy_typography() && !flow_height_bound() {
+                usize::MAX
+            } else {
+                usize::try_from(max(0, bottom.saturating_sub(y)) / line_height).unwrap_or(0)
+            };
+            let ranges = wrap_ranges(text, width, FontSize::Body, prose)
+                .into_iter()
+                .take(visible_lines)
+                .collect::<Vec<_>>();
             let lines: Vec<String> = if ranges.is_empty() {
-                vec![String::new()]
+                if text.is_empty() && visible_lines > 0 {
+                    vec![String::new()]
+                } else {
+                    Vec::new()
+                }
             } else {
                 ranges
                     .iter()
                     .map(|line| text[line.0..line.1].to_owned())
                     .collect()
             };
-            let height = max(
-                MIN_TEXT_HEIGHT,
-                lines.len() as i32 * FontSize::Body.line_height_in(prose),
-            );
+            let natural_height = max(MIN_TEXT_HEIGHT, lines.len() as i32 * line_height);
+            let height = if legacy_typography() && !flow_height_bound() {
+                natural_height
+            } else {
+                min(natural_height, max(0, bottom.saturating_sub(y)))
+            };
             layout.nodes.push(LayoutNode {
                 id: *id,
                 rect: Rect {
@@ -5717,7 +6613,6 @@ fn layout_node(
                     }
                     let before = measure_text_in(&text[from..start], FontSize::Body, prose).0;
                     let through = measure_text_in(&text[from..end], FontSize::Body, prose).0;
-                    let line_height = FontSize::Body.line_height_in(prose);
                     layout.nodes.push(LayoutNode {
                         id: *id,
                         rect: Rect {
@@ -5742,21 +6637,34 @@ fn layout_node(
             selection,
             formulae,
         } => {
-            let natural = FontSize::Body.line_height_in(prose).max(1);
-            let line_height = natural
-                .saturating_mul(i32::from(presentation.line_height_percent.clamp(80, 250)))
-                / 100;
-            let before = natural.saturating_mul(i32::from(presentation.margin_before_em)) / 100;
-            let after = natural.saturating_mul(i32::from(presentation.margin_after_em)) / 100;
-            let indent = measure_text_in("M", FontSize::Body, prose)
-                .0
-                .saturating_mul(i32::from(presentation.first_line_indent_em))
-                / 100;
+            // Rich text is emitted as one node per styled run, so keep one
+            // empty run carrying the paragraph's actual layout bounds. It
+            // draws nothing, but lets diagnostics distinguish several runs
+            // on one line from wrapped lines discarded at the height bound.
+            let rich_text_limit = MAX_LAYOUT_NODES.saturating_sub(1);
+            let (line_height, before, after, indent) = rich_text_spacing(*presentation, prose);
             let measure = width.saturating_sub(indent.max(0)).max(1);
             let ranges =
                 wrap_ranges_with(text, measure, FontSize::Body, prose, formulae, line_height);
+            let visible_lines = if legacy_typography() && !flow_height_bound() {
+                usize::MAX
+            } else {
+                usize::try_from(
+                    max(
+                        0,
+                        bottom
+                            .saturating_sub(y)
+                            .saturating_sub(before)
+                            .saturating_sub(after),
+                    ) / line_height.max(1),
+                )
+                .unwrap_or(0)
+            };
             let mut line_y = y.saturating_add(before);
-            for (line_index, &(from, to)) in ranges.iter().enumerate() {
+            for (line_index, &(from, to)) in ranges.iter().take(visible_lines).enumerate() {
+                if layout.nodes.len() >= rich_text_limit {
+                    break;
+                }
                 let line = &text[from..to];
                 let line_width =
                     measure_range_in(text, from, to, FontSize::Body, prose, formulae, line_height);
@@ -5795,7 +6703,7 @@ fn layout_node(
                     // it here instead would take the mathematics off the page
                     // and leave the sentence with a hole in it.
                     if let Some(formula) = formula_at(cursor, formulae)
-                        .filter(|_| layout.nodes.len().saturating_add(1) < MAX_LAYOUT_NODES)
+                        .filter(|_| layout.nodes.len().saturating_add(2) < MAX_LAYOUT_NODES)
                     {
                         let end = formula.end.min(to).max(cursor + 1);
                         if formula.start == cursor {
@@ -5846,7 +6754,7 @@ fn layout_node(
                     // block after it would be dropped without a word. The rest
                     // of the line goes out as a single plain run instead, which
                     // loses emphasis rather than losing the book.
-                    if layout.nodes.len().saturating_add(1) >= MAX_LAYOUT_NODES {
+                    if layout.nodes.len().saturating_add(2) >= MAX_LAYOUT_NODES {
                         end = to;
                         styled = TextPresentation::default();
                     }
@@ -5867,6 +6775,9 @@ fn layout_node(
                     cursor = end;
                 }
                 for link in links.iter().take(MAX_TEXT_LINKS) {
+                    if layout.nodes.len() >= rich_text_limit {
+                        break;
+                    }
                     let start = max(from, link.start);
                     let end = min(to, link.end);
                     if start < end && text.is_char_boundary(start) && text.is_char_boundary(end) {
@@ -5952,7 +6863,23 @@ fn layout_node(
                 }
                 line_y = line_y.saturating_add(line_height);
             }
-            line_y.saturating_add(after)
+            let end = if legacy_typography() && !flow_height_bound() {
+                line_y.saturating_add(after)
+            } else {
+                min(line_y.saturating_add(after), bottom)
+            };
+            layout.nodes.push(LayoutNode {
+                id: *id,
+                rect: Rect {
+                    x,
+                    y,
+                    width,
+                    height: end.saturating_sub(y),
+                },
+                kind: LayoutKind::RichText(TextPresentation::default()),
+                text_lines: Vec::new(),
+            });
+            end
         }
         Node::Secondary { id, text } => {
             // Measured at its own size, and with no minimum height. The floor
@@ -6016,15 +6943,22 @@ fn layout_node(
                 FontSize::Caption,
             );
             let mut text_lines = vec![title];
-            if let Some(value) = trailing {
-                text_lines.push(value);
+            if link.is_none() {
+                if let Some(value) = &trailing {
+                    text_lines.push(value.clone());
+                }
             }
+            let section_width = if link.is_some() {
+                width.saturating_sub(trailing_width).saturating_sub(gap)
+            } else {
+                width
+            };
             layout.nodes.push(LayoutNode {
                 id: *id,
                 rect: Rect {
                     x,
                     y: y.saturating_add(lead),
-                    width,
+                    width: section_width,
                     height: line,
                 },
                 kind: LayoutKind::Section,
@@ -6042,7 +6976,7 @@ fn layout_node(
                         height: target_height,
                     },
                     kind: LayoutKind::SectionLink(link.action),
-                    text_lines: vec![link.label.clone()],
+                    text_lines: vec![trailing.unwrap_or_default()],
                 });
             }
             y.saturating_add(lead)
@@ -6370,21 +7304,34 @@ fn layout_node(
             let padding = metrics.space(Space::Small);
             let inner_gap = metrics.space(Space::Tight);
             let mut cursor = y.saturating_add(padding);
-            for child in children {
+            let child_width = width.saturating_sub(2 * padding);
+            for (position, child) in children.iter().enumerate() {
                 if layout.nodes.len() >= MAX_LAYOUT_NODES {
                     break;
                 }
-                cursor = layout_node(
+                let child_bottom = flow_node_bottom(
                     child,
+                    &children[position + 1..],
                     x.saturating_add(padding),
-                    cursor,
-                    width.saturating_sub(2 * padding),
+                    child_width,
                     bottom,
-                    depth + 1,
                     metrics,
                     prose,
-                    layout,
-                )
+                    inner_gap,
+                );
+                cursor = with_flow_height_bound(child_bottom < bottom, || {
+                    layout_flow_node(
+                        child,
+                        x.saturating_add(padding),
+                        cursor,
+                        child_width,
+                        child_bottom,
+                        depth + 1,
+                        metrics,
+                        prose,
+                        layout,
+                    )
+                })
                 .saturating_add(inner_gap);
             }
             let height = max(
@@ -6472,21 +7419,33 @@ fn layout_node(
             let mut cursor = y;
             if stacked {
                 for slot in slots {
-                    for node in &slot.nodes {
+                    for (position, node) in slot.nodes.iter().enumerate() {
                         if layout.nodes.len() >= MAX_LAYOUT_NODES {
                             break;
                         }
-                        cursor = layout_node(
+                        let node_bottom = flow_node_bottom(
                             node,
+                            &slot.nodes[position + 1..],
                             x,
-                            cursor,
                             width,
                             bottom,
-                            depth + 1,
                             metrics,
                             prose,
-                            layout,
+                            gap,
                         );
+                        cursor = with_flow_height_bound(node_bottom < bottom, || {
+                            layout_flow_node(
+                                node,
+                                x,
+                                cursor,
+                                width,
+                                node_bottom,
+                                depth + 1,
+                                metrics,
+                                prose,
+                                layout,
+                            )
+                        });
                     }
                 }
             } else {
@@ -6498,21 +7457,33 @@ fn layout_node(
                     }
                     let first = layout.nodes.len();
                     let mut end = y;
-                    for node in &slot.nodes {
+                    for (position, node) in slot.nodes.iter().enumerate() {
                         if layout.nodes.len() >= MAX_LAYOUT_NODES {
                             break;
                         }
-                        end = layout_node(
+                        let node_bottom = flow_node_bottom(
                             node,
+                            &slot.nodes[position + 1..],
                             slot_x,
-                            end,
                             widths[slot_index],
                             bottom,
-                            depth + 1,
                             metrics,
                             prose,
-                            layout,
+                            gap,
                         );
+                        end = with_flow_height_bound(node_bottom < bottom, || {
+                            layout_flow_node(
+                                node,
+                                slot_x,
+                                end,
+                                widths[slot_index],
+                                node_bottom,
+                                depth + 1,
+                                metrics,
+                                prose,
+                                layout,
+                            )
+                        });
                     }
                     placed.push((first, layout.nodes.len(), end.saturating_sub(y)));
                     cursor = max(cursor, end);
@@ -6801,16 +7772,25 @@ fn layout_node(
         Node::PagedList { id, page, items } => {
             let per_page = 8_usize;
             let start = usize::from(*page).saturating_mul(per_page);
+            let line_height = FontSize::Body.line_height().max(1);
+            let visible_lines = if legacy_typography() && !flow_height_bound() {
+                usize::MAX
+            } else {
+                usize::try_from(max(0, bottom.saturating_sub(y)) / line_height).unwrap_or(0)
+            };
             let lines = items
                 .iter()
                 .skip(start)
                 .take(per_page)
                 .flat_map(|item| wrap_text(item, width, FontSize::Body))
+                .take(visible_lines)
                 .collect::<Vec<_>>();
-            let height = max(
-                MIN_TEXT_HEIGHT,
-                lines.len() as i32 * FontSize::Body.line_height(),
-            );
+            let natural_height = max(MIN_TEXT_HEIGHT, lines.len() as i32 * line_height);
+            let height = if legacy_typography() && !flow_height_bound() {
+                natural_height
+            } else {
+                min(natural_height, max(0, bottom.saturating_sub(y)))
+            };
             layout.nodes.push(LayoutNode {
                 id: *id,
                 rect: Rect {
@@ -6830,8 +7810,18 @@ fn layout_node(
             square,
             cells,
         } => {
-            let columns = i32::from((*columns).clamp(1, MAX_COLUMNS));
             let gutter = metrics.space(Space::Tight);
+            let requested = i32::from((*columns).clamp(1, MAX_COLUMNS));
+            let columns = if legacy_typography() {
+                requested
+            } else {
+                let fits = width
+                    .saturating_add(gutter)
+                    .checked_div(metrics.touch_target_minimum().saturating_add(gutter).max(1))
+                    .unwrap_or(1)
+                    .max(1);
+                requested.min(fits)
+            };
             let block_extra = if *square && columns == 9 && cells.len() >= 81 {
                 gutter
             } else {
@@ -6843,12 +7833,18 @@ fn layout_node(
             // is exactly right and anything taller wastes the panel.
             // A row whose every cell carries a picture is a row of actions,
             // not a keyboard, and it is drawn as the pictures alone.
+            let key_height =
+                if !legacy_typography() && metrics.width > metrics.height && columns >= 7 {
+                    metrics.touch_target_minimum()
+                } else {
+                    metrics.touch_target_default()
+                };
             let (cell_height, style) = if *square {
                 (cell_width, CellStyle::Board)
             } else if cells.iter().all(|cell| cell.glyph.is_some()) {
                 (metrics.touch_target_default(), CellStyle::Plain)
             } else {
-                (metrics.touch_target_default(), CellStyle::Key)
+                (key_height, CellStyle::Key)
             };
             let index = layout.nodes.len();
             layout.nodes.push(LayoutNode {
@@ -6880,7 +7876,7 @@ fn layout_node(
                 layout.nodes.push(LayoutNode {
                     id: *id,
                     rect,
-                    kind: LayoutKind::Cell(cell.action, style),
+                    kind: LayoutKind::Cell(cell.action, style, cell.selected),
                     text_lines: Vec::new(),
                 });
                 // A cell with a picture is drawn as the picture alone. The
@@ -6902,7 +7898,7 @@ fn layout_node(
                                 width: mark,
                                 height: mark,
                             },
-                            kind: LayoutKind::InlineGlyph(glyph),
+                            kind: LayoutKind::InlineGlyph(glyph, cell.selected),
                             text_lines: vec![cell.label.clone()],
                         });
                     }
@@ -7122,7 +8118,11 @@ fn layout_node(
             y.saturating_add(drawn_height)
         }
         Node::TileGrid { id, tiles, shape } => {
-            let columns = metrics.grid_columns(*shape) as i32;
+            let columns = if legacy_typography() {
+                metrics.grid_columns(*shape)
+            } else {
+                metrics.grid_columns_for_width(*shape, width)
+            } as i32;
             let gutter = metrics.space(Space::Small);
             // Rows are set tighter than columns, and deliberately so. A cell
             // is taller than its mark (the glyph and its name are centred as a
@@ -7213,7 +8213,7 @@ fn layout_node(
             });
             let mut rows = 0;
             for (position, tile) in tiles.iter().enumerate() {
-                if layout.nodes.len() + 6 > MAX_LAYOUT_NODES {
+                if layout.nodes.len() + 7 > MAX_LAYOUT_NODES {
                     break;
                 }
                 let column = position as i32 % columns;
@@ -7227,6 +8227,13 @@ fn layout_node(
                     break;
                 }
                 rows = row + 1;
+                let state = if tile.state.is_tappable() {
+                    ControlState::Enabled
+                } else {
+                    ControlState::Disabled
+                };
+                let outlined = *shape == TileShape::Card;
+                let muted = outlined && state == ControlState::Disabled;
                 layout.nodes.push(LayoutNode {
                     id: *id,
                     rect: Rect {
@@ -7235,16 +8242,22 @@ fn layout_node(
                         width: cell,
                         height: cell_height,
                     },
-                    kind: LayoutKind::Tile(
-                        tile.action,
-                        if tile.state.is_tappable() {
-                            ControlState::Enabled
-                        } else {
-                            ControlState::Disabled
-                        },
-                    ),
+                    kind: LayoutKind::Tile(tile.action, state),
                     text_lines: Vec::new(),
                 });
+                if outlined {
+                    layout.nodes.push(LayoutNode {
+                        id: *id,
+                        rect: Rect {
+                            x: cell_x,
+                            y: cell_y,
+                            width: cell,
+                            height: cell_height,
+                        },
+                        kind: LayoutKind::TileOutline(state),
+                        text_lines: Vec::new(),
+                    });
+                }
                 if tile.state.is_tappable() {
                     if let Some(menu) = tile.menu {
                         layout.context_actions.push((
@@ -7272,7 +8285,15 @@ fn layout_node(
                     } else {
                         metrics.tenth_mm(70)
                     };
-                    (LayoutKind::TileGlyph(tile.glyph), size, size)
+                    (
+                        if muted {
+                            LayoutKind::TileGlyphMuted(tile.glyph)
+                        } else {
+                            LayoutKind::TileGlyph(tile.glyph)
+                        },
+                        size,
+                        size,
+                    )
                 };
                 let inset = metrics.space(Space::Tight);
                 // Mark and name are one object, centred together, rather than
@@ -7288,11 +8309,7 @@ fn layout_node(
                     .saturating_add(inset)
                     .saturating_add(names)
                     .min(cell_height);
-                let group_y = if *shape == TileShape::Card {
-                    cell_y.saturating_add(inset)
-                } else {
-                    cell_y.saturating_add((cell_height - group) / 2)
-                };
+                let group_y = cell_y.saturating_add((cell_height - group) / 2);
                 layout.nodes.push(LayoutNode {
                     id: *id,
                     rect: Rect {
@@ -7321,7 +8338,11 @@ fn layout_node(
                         width: label_width,
                         height: title_size.line_height() * title_lines,
                     },
-                    kind: LayoutKind::TileLabel,
+                    kind: if muted {
+                        LayoutKind::TileLabelMuted
+                    } else {
+                        LayoutKind::TileLabel
+                    },
                     text_lines: label,
                 });
                 if subtitled {
@@ -7364,7 +8385,7 @@ fn layout_node(
                 // is the one part of the tile that is certainly text.
                 let chip = caption.saturating_add(inset);
                 let chip_inset = metrics.rule_thickness().saturating_mul(2);
-                if tile.state.glyph().is_some() {
+                if tile.state.glyph().is_some() && !muted {
                     layout.nodes.push(LayoutNode {
                         id: *id,
                         rect: Rect {
@@ -7771,15 +8792,19 @@ fn layout_node(
         Node::Terminal { id, rows, cursor } => {
             let (cell_width, cell_height) = mono_cell(TERMINAL_SIZE);
             let columns = (width / max(1, cell_width)).clamp(0, MAX_TERMINAL_COLUMNS as i32);
-            let visible_rows =
-                (bottom.saturating_sub(y) / max(1, cell_height)).clamp(0, MAX_TERMINAL_ROWS as i32);
+            let visible_rows = if legacy_typography() && !flow_height_bound() {
+                usize::MAX
+            } else {
+                usize::try_from(max(0, bottom.saturating_sub(y)) / max(1, cell_height)).unwrap_or(0)
+            };
             let lines: Vec<String> = rows
                 .iter()
-                .take(visible_rows as usize)
+                .take(MAX_TERMINAL_ROWS)
+                .take(visible_rows)
                 // Clipped, never wrapped. A row that overflowed onto the next
                 // one would shift every row below it and the grid would stop
                 // being a grid.
-                .map(|row| row.chars().take(columns as usize).collect())
+                .map(|row| terminal_row_prefix(row, columns as usize))
                 .collect();
             let height = lines.len() as i32 * cell_height;
             layout.nodes.push(LayoutNode {
@@ -7801,16 +8826,15 @@ fn layout_node(
                     // cell can be repainted on its own: a cursor that needed
                     // its row redrawn would cost a refresh the width of the
                     // panel every time it moved one place.
-                    let under = lines
+                    let (under, under_width) = lines
                         .get(row as usize)
-                        .and_then(|line| line.chars().nth(column as usize))
-                        .unwrap_or(' ');
+                        .map_or((' ', 1), |line| terminal_cell_at(line, column as usize));
                     layout.nodes.push(LayoutNode {
                         id: *id,
                         rect: Rect {
                             x: x.saturating_add(column * cell_width),
                             y: y.saturating_add(row * cell_height),
-                            width: cell_width,
+                            width: cell_width.saturating_mul(under_width as i32),
                             height: cell_height,
                         },
                         kind: LayoutKind::TerminalCursor,
@@ -7852,49 +8876,33 @@ pub fn terminal_grid_for(screen: &Screen, metrics: &DisplayMetrics) -> (u16, u16
         return (0, 0);
     };
     let bottom = content.y.saturating_add(content.height);
-    let Some(position) = screen
+    // The room between the top of the terminal and whatever is under it,
+    // rather than what is left at the bottom of the panel. Those were the same
+    // number until the keys were anchored to the foot: now the last thing on
+    // the screen always ends at the bottom edge, and measuring the remainder
+    // there says a terminal gets no rows at all.
+    // The flow gap between the terminal and that next node is not a terminal
+    // row. Including it can negotiate one row more than layout can draw.
+    let floor = layout
         .nodes
         .iter()
-        .position(|node| matches!(node, Node::Terminal { .. }))
-    else {
-        return (0, 0);
-    };
-    // Ask the same measurement routine the real layout uses. Looking for the
-    // first rectangle after an empty terminal is subtly wrong for composite
-    // controls: a grid's container starts immediately after the terminal even
-    // though its measured height is reserved at the foot of the viewport.
-    let margin = metrics.screen_margin();
-    let gap = metrics.space(Space::Tight);
-    let prose = if screen.reading {
-        Face::Reading
-    } else {
-        Face::Text
-    };
-    let rail_reserved = if !screen.legacy_typography
-        && screen
-            .nodes
-            .iter()
-            .any(|node| matches!(node, Node::PageRail { of, .. } if *of > 1))
-    {
-        metrics.tenth_mm(4).max(1) + gap
-    } else {
-        0
-    };
-    let flow_width = metrics.width - 2 * margin - rail_reserved;
-    let trailing = trailing_height(
-        &screen.nodes[position + 1..],
-        margin,
-        flow_width,
-        bottom,
-        metrics,
-        prose,
-        gap,
+        .filter(|node| {
+            !matches!(
+                node.kind,
+                LayoutKind::TerminalGrid | LayoutKind::TerminalCursor
+            ) && node.rect.y >= terminal.rect.y.saturating_add(terminal.rect.height)
+        })
+        .map(|node| node.rect.y)
+        .min();
+    let available = floor.map_or_else(
+        || bottom.saturating_sub(terminal.rect.y),
+        |floor| {
+            min(floor, bottom)
+                .saturating_sub(terminal.rect.y)
+                .saturating_sub(metrics.space(Space::Tight))
+        },
     );
-    let terminal_bottom = bottom.saturating_sub(trailing);
-    terminal_grid(
-        terminal.rect.width,
-        min(terminal_bottom, bottom).saturating_sub(terminal.rect.y),
-    )
+    terminal_grid(terminal.rect.width, available)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -8166,6 +9174,27 @@ static BOOK_TYPESETTERS: OnceLock<Mutex<BTreeMap<FontHandle, Box<dyn Typesetter>
 thread_local! {
     static READING_FONT: std::cell::Cell<Option<FontHandle>> = const { std::cell::Cell::new(None) };
     static LEGACY_TYPOGRAPHY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static FLOW_HEIGHT_BOUND: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+fn with_flow_height_bound<T>(bounded: bool, body: impl FnOnce() -> T) -> T {
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            FLOW_HEIGHT_BOUND.with(|slot| slot.set(self.0));
+        }
+    }
+    let previous = FLOW_HEIGHT_BOUND.with(|slot| {
+        let previous = slot.get();
+        slot.set(bounded || previous);
+        previous
+    });
+    let _restore = Restore(previous);
+    body()
+}
+
+fn flow_height_bound() -> bool {
+    FLOW_HEIGHT_BOUND.with(std::cell::Cell::get)
 }
 
 /// Runs layout or painting with pre-Folio interface typography selected.
@@ -8540,7 +9569,11 @@ impl DisplayMetrics {
             self.height - margin
         };
         ProseArea {
-            width: max_i32(0, self.width - 2 * margin),
+            width: if legacy_typography() {
+                self.content_width()
+            } else {
+                self.readable_width()
+            },
             height: max_i32(0, bottom - top),
             gap,
             face: Face::Text,
@@ -9072,10 +10105,35 @@ fn row_title_width_beside(
 /// same wrapping and spacing the layout engine uses, so a page that fits here
 /// is a page that will be drawn whole.
 #[must_use]
-/// How much room the nodes after a splash need, so the splash can leave it.
+/// How much room trailing nodes need, so flexible content can leave it.
 ///
 /// Measured by laying them out into a layout that is thrown away, which is the
 /// only measurement that cannot drift from the one that gets drawn.
+#[allow(clippy::too_many_arguments)]
+fn flow_node_bottom(
+    node: &Node,
+    following: &[Node],
+    margin: i32,
+    width: i32,
+    bottom: i32,
+    metrics: &DisplayMetrics,
+    prose: Face,
+    gap: i32,
+) -> i32 {
+    let flexible = matches!(
+        node,
+        Node::Text { .. } | Node::RichText { .. } | Node::PagedList { .. } | Node::Terminal { .. }
+    );
+    let protects_interaction = following.iter().any(node_has_enabled_interaction);
+    if matches!(node, Node::Splash { .. }) || (flexible && protects_interaction) {
+        bottom.saturating_sub(trailing_height(
+            following, margin, width, bottom, metrics, prose, gap,
+        ))
+    } else {
+        bottom
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn trailing_height(
     nodes: &[Node],
@@ -9095,7 +10153,7 @@ fn trailing_height(
         if scratch.nodes.len() >= MAX_LAYOUT_NODES {
             break;
         }
-        cursor = layout_node(
+        cursor = layout_flow_node(
             node,
             margin,
             cursor,
@@ -9303,7 +10361,14 @@ pub fn paginate_tiles(
     shape: TileShape,
     area: ProseArea,
 ) -> Vec<Vec<usize>> {
-    let columns = max(1, metrics.grid_columns(shape));
+    let columns = max(
+        1,
+        if legacy_typography() {
+            metrics.grid_columns(shape)
+        } else {
+            metrics.grid_columns_for_width(shape, area.width)
+        },
+    );
     let gutter = metrics.space(Space::Small);
     // Rows are set on the tight step and columns on the small one, which is
     // what the grid itself does: a cell is much taller than the mark inside
@@ -10581,7 +11646,7 @@ fn validate_node(
             }
             for row in rows {
                 check_text_coverage(id, row, Face::Mono, issues);
-                let columns = row.chars().count();
+                let columns = UnicodeWidthStr::width(row.as_str());
                 if columns > MAX_TERMINAL_COLUMNS {
                     issues.push(limit_issue(
                         id,
@@ -10645,19 +11710,42 @@ fn validate_content_bounds(
     let mut clipped = Vec::new();
     for node in nodes {
         let id = node.id();
-        let laid_out = layout.nodes.iter().filter(|laid_out| laid_out.id == id);
-        let rects = laid_out.map(|laid_out| laid_out.rect).collect::<Vec<_>>();
+        let laid_out = layout
+            .nodes
+            .iter()
+            .filter(|laid_out| laid_out.id == id)
+            .collect::<Vec<_>>();
+        let rects = laid_out
+            .iter()
+            .map(|laid_out| laid_out.rect)
+            .collect::<Vec<_>>();
+        let offscreen_interactive = laid_out.iter().find(|laid_out| {
+            is_enabled_interactive(laid_out.kind) && !rect_is_inside(laid_out.rect, layout.content)
+        });
+        let expected_interactions = node_enabled_interaction_count(node);
+        let visible_interactions = laid_out
+            .iter()
+            .filter(|laid_out| is_enabled_interactive(laid_out.kind))
+            .count();
         // A flex draws nothing by design: it moves the cursor and leaves. So
         // does an empty list. Neither is content that layout hid.
         let expects_rect = !matches!(node, Node::Rows { rows, .. } if rows.is_empty())
             && !matches!(node, Node::Flex { .. });
-        if expects_rect
+        let completely_hidden = expects_rect
             && (rects.is_empty()
                 || rects
                     .iter()
-                    .all(|rect| rect.intersection(layout.content).is_none()))
-        {
+                    .all(|rect| rect.intersection(layout.content).is_none()));
+        if completely_hidden {
             hidden.push(id);
+            if expected_interactions > 0 {
+                issues.push(LayoutIssue {
+                    severity: DiagnosticSeverity::Error,
+                    node: Some(id),
+                    kind: LayoutIssueKind::InteractiveOffscreen,
+                    rect: None,
+                });
+            }
         } else if rects
             .iter()
             .any(|rect| !rect_is_inside(*rect, layout.content))
@@ -10673,6 +11761,86 @@ fn validate_content_bounds(
                 node: Some(id),
                 kind: LayoutIssueKind::Clipped,
                 rect,
+            });
+        }
+        if !completely_hidden {
+            if let Node::Text { text, .. } = node {
+                if let Some(text_layout) = laid_out
+                    .iter()
+                    .find(|laid_out| laid_out.kind == LayoutKind::Text)
+                {
+                    let required = wrap_ranges(
+                        text,
+                        text_layout.rect.width,
+                        FontSize::Body,
+                        layout.prose_face,
+                    )
+                    .len();
+                    if required > text_layout.text_lines.len() {
+                        issues.push(LayoutIssue {
+                            severity: DiagnosticSeverity::Error,
+                            node: Some(id),
+                            kind: LayoutIssueKind::TextOverflow,
+                            rect: Some(text_layout.rect),
+                        });
+                    }
+                }
+            } else if let Node::RichText {
+                text,
+                presentation,
+                formulae,
+                ..
+            } = node
+            {
+                if let Some(text_layout) = laid_out.iter().find(|laid_out| {
+                    matches!(laid_out.kind, LayoutKind::RichText(_))
+                        && laid_out.text_lines.is_empty()
+                }) {
+                    let (line_height, before, after, indent) =
+                        rich_text_spacing(*presentation, layout.prose_face);
+                    let measure = text_layout.rect.width.saturating_sub(indent.max(0)).max(1);
+                    let required = wrap_ranges_with(
+                        text,
+                        measure,
+                        FontSize::Body,
+                        layout.prose_face,
+                        formulae,
+                        line_height,
+                    )
+                    .len();
+                    let rendered = usize::try_from(
+                        text_layout
+                            .rect
+                            .height
+                            .saturating_sub(before)
+                            .saturating_sub(after)
+                            / line_height.max(1),
+                    )
+                    .unwrap_or(0);
+                    if required > rendered {
+                        issues.push(LayoutIssue {
+                            severity: DiagnosticSeverity::Error,
+                            node: Some(id),
+                            kind: LayoutIssueKind::TextOverflow,
+                            rect: Some(text_layout.rect),
+                        });
+                    }
+                }
+            }
+        }
+        if let Some(offscreen) = offscreen_interactive {
+            issues.push(LayoutIssue {
+                severity: DiagnosticSeverity::Error,
+                node: Some(id),
+                kind: LayoutIssueKind::InteractiveOffscreen,
+                rect: Some(offscreen.rect),
+            });
+        } else if !completely_hidden && visible_interactions < expected_interactions {
+            issues.push(LayoutIssue {
+                severity: DiagnosticSeverity::Error,
+                node: Some(id),
+                kind: LayoutIssueKind::InteractiveOffscreen,
+                rect: None,
             });
         }
     }
@@ -10695,6 +11863,85 @@ fn validate_content_bounds(
         ));
     }
     let _ = metrics;
+}
+
+fn node_has_enabled_interaction(node: &Node) -> bool {
+    match node {
+        Node::Card { children, .. } => children.iter().any(node_has_enabled_interaction),
+        Node::Band { slots, .. } => slots
+            .iter()
+            .flat_map(|slot| &slot.nodes)
+            .any(node_has_enabled_interaction),
+        _ => node_enabled_interaction_count(node) > 0,
+    }
+}
+
+fn node_enabled_interaction_count(node: &Node) -> usize {
+    match node {
+        Node::Text { links, .. } | Node::RichText { links, .. } => links.len(),
+        Node::Section { link, .. } => usize::from(link.is_some()),
+        Node::Quote { fold, .. } => usize::from(fold.is_some()),
+        Node::Button { state, .. } => usize::from(state.is_enabled()),
+        Node::Field { clear, .. } => 1 + usize::from(clear.is_some()),
+        Node::Chips { chips, .. } | Node::Tabs { tabs: chips, .. } => chips.len(),
+        Node::Card { .. } | Node::Band { .. } => 0,
+        Node::Grid { cells, .. } => cells.len(),
+        Node::Rows { rows, .. } => rows
+            .iter()
+            .map(|row| 1 + usize::from(row.menu.is_some()))
+            .sum(),
+        Node::TileGrid { tiles, .. } => tiles
+            .iter()
+            .filter(|tile| tile.state != TileState::Unavailable)
+            .count(),
+        Node::Stepper {
+            less_state,
+            more_state,
+            ..
+        } => usize::from(less_state.is_enabled()) + usize::from(more_state.is_enabled()),
+        Node::Choice {
+            options, freeform, ..
+        } => options.len() + usize::from(freeform.is_some()),
+        Node::Activity { cancel, .. } => usize::from(cancel.is_some()),
+        Node::Heading { .. }
+        | Node::Secondary { .. }
+        | Node::Facts { .. }
+        | Node::Divider { .. }
+        | Node::Spacer { .. }
+        | Node::Flex { .. }
+        | Node::Progress { .. }
+        | Node::PagedList { .. }
+        | Node::Table { .. }
+        | Node::PageRail { .. }
+        | Node::Banner { .. }
+        | Node::Splash { .. }
+        | Node::Skeleton { .. }
+        | Node::Picture { .. }
+        | Node::Terminal { .. } => 0,
+    }
+}
+
+const fn is_enabled_interactive(kind: LayoutKind) -> bool {
+    kind.acts_on().is_some()
+        && !matches!(
+            kind,
+            LayoutKind::Button(_, ControlState::Disabled, _)
+                | LayoutKind::Tile(_, ControlState::Disabled)
+                | LayoutKind::StepperControl(_, ControlState::Disabled, _)
+        )
+}
+
+const fn interaction_uses_panel_bounds(kind: LayoutKind) -> bool {
+    matches!(
+        kind,
+        LayoutKind::Back
+            | LayoutKind::BarAction(_)
+            | LayoutKind::BarGlyph(..)
+            | LayoutKind::NavDestination(..)
+            | LayoutKind::NavDestinationSelected(..)
+            | LayoutKind::PagePrevious(_)
+            | LayoutKind::PageNext(_)
+    )
 }
 
 fn validate_layout_nodes(layout: &Layout, metrics: &DisplayMetrics, issues: &mut Vec<LayoutIssue>) {
@@ -10789,6 +12036,7 @@ fn layout_text_style(node: &LayoutNode) -> Option<(FontSize, Face)> {
         | LayoutKind::RowTrailing
         | LayoutKind::RowSummary
         | LayoutKind::TileLabel
+        | LayoutKind::TileLabelMuted
         | LayoutKind::TileSubtitle
         | LayoutKind::TileBadge
         | LayoutKind::Chip(_, _)
@@ -11613,7 +12861,17 @@ fn render_all_with_selected_font(
             // ruled squares and an empty cell stays paper white. Filling would
             // make every move a full-cell change, which is slow on E Ink and
             // looks like a mistake.
-            LayoutKind::Cell(_, CellStyle::Board) => stroke_clipped(
+            LayoutKind::Cell(_, CellStyle::Board, true) => {
+                fill_clipped(surface, node.rect, tone::SURFACE, clip);
+                stroke_clipped(
+                    surface,
+                    node.rect,
+                    tone::INK,
+                    metrics.rule_thickness(),
+                    clip,
+                );
+            }
+            LayoutKind::Cell(_, CellStyle::Board, false) => stroke_clipped(
                 surface,
                 node.rect,
                 tone::RULE,
@@ -11624,8 +12882,8 @@ fn render_all_with_selected_font(
             // gaps between the keys separate them, which is how a keyboard has
             // always been read, and it takes forty-five outlines off the panel.
             // Nothing at all: the picture is the whole of it.
-            LayoutKind::Cell(_, CellStyle::Plain) => {}
-            LayoutKind::Cell(_, CellStyle::Key) => fill_rounded_clipped(
+            LayoutKind::Cell(_, CellStyle::Plain, _) => {}
+            LayoutKind::Cell(_, CellStyle::Key, _) => fill_rounded_clipped(
                 surface,
                 node.rect,
                 metrics.tenth_mm(BUTTON_RADIUS_TENTH_MM),
@@ -12008,6 +13266,17 @@ fn render_all_with_selected_font(
                 clip,
             ),
             LayoutKind::Tile(..) => {}
+            LayoutKind::TileOutline(state) => stroke_clipped(
+                surface,
+                node.rect,
+                if state == ControlState::Enabled {
+                    tone::INK
+                } else {
+                    tone::RULE
+                },
+                metrics.button_border(),
+                clip,
+            ),
             // The tap target itself draws nothing. A hairline between rows is
             // enough separation, and a box around each one would add weight
             // that a list of several entries cannot carry.
@@ -12056,8 +13325,14 @@ fn render_all_with_selected_font(
                     tone::MUTED,
                 );
             }
-            LayoutKind::TileGlyph(glyph) | LayoutKind::InlineGlyph(glyph) => {
+            LayoutKind::TileGlyph(glyph) | LayoutKind::InlineGlyph(glyph, false) => {
                 draw_glyph_icon(surface, glyph, node.rect, clip);
+            }
+            LayoutKind::InlineGlyph(glyph, true) => {
+                draw_glyph_icon_in(surface, glyph, node.rect, clip, tone::PAPER);
+            }
+            LayoutKind::TileGlyphMuted(glyph) => {
+                draw_glyph_icon_in(surface, glyph, node.rect, clip, tone::MUTED);
             }
             // Bare, because a formula is part of a sentence and a rule round
             // one would read as a box drawn in the middle of the words.
@@ -12091,6 +13366,18 @@ fn render_all_with_selected_font(
                     FontSize::Caption
                 },
                 tone::INK,
+                clip,
+            ),
+            LayoutKind::TileLabelMuted => draw_centered(
+                surface,
+                &node.text_lines,
+                node.rect,
+                if node.rect.height > FontSize::Caption.line_height() {
+                    FontSize::Body
+                } else {
+                    FontSize::Caption
+                },
+                tone::MUTED,
                 clip,
             ),
             LayoutKind::TileSubtitle => draw_centered(
@@ -13546,7 +14833,7 @@ mod tests {
             .nodes
             .iter()
             .filter_map(|node| match node.kind {
-                LayoutKind::InlineGlyph(glyph) => Some(glyph),
+                LayoutKind::InlineGlyph(glyph, _) => Some(glyph),
                 _ => None,
             })
             .collect();
@@ -13560,7 +14847,7 @@ mod tests {
         for node in layout
             .nodes
             .iter()
-            .filter(|node| matches!(node.kind, LayoutKind::InlineGlyph(_)))
+            .filter(|node| matches!(node.kind, LayoutKind::InlineGlyph(..)))
         {
             assert!(
                 layout.nodes.iter().any(|other| {
@@ -13669,7 +14956,7 @@ mod tests {
     }
 
     #[test]
-    fn validation_reports_truncation_and_undersized_targets() {
+    fn validation_reports_truncation_and_clamps_grid_targets() {
         let screen = Screen::new(
             1,
             vec![
@@ -13698,7 +14985,7 @@ mod tests {
                 ..
             }
         )));
-        assert!(issues
+        assert!(!issues
             .iter()
             .any(|issue| matches!(issue.kind, LayoutIssueKind::TouchTargetTooSmall { .. })));
     }
@@ -14205,12 +15492,12 @@ mod tests {
             }],
         );
         let metrics = DisplayMetrics {
-            width: 128,
-            height: 128,
+            width: 300,
+            height: 300,
             pixels_per_inch: 300,
             text_scale: TextScale::Default,
         };
-        let mut surface = Surface::new(128, 128);
+        let mut surface = Surface::new(300, 300);
         surface.clear(77);
         // On the button's left edge, halfway down it: the corners are rounded
         // now, so a point near one is outside the shape and would prove
@@ -14235,7 +15522,9 @@ mod tests {
                 height: 1,
             }),
         );
-        let at = |x: i32, y: i32| surface.pixels[usize::try_from(y * 128 + x).expect("inside")];
+        let at = |x: i32, y: i32| {
+            surface.pixels[usize::try_from(y * metrics.width + x).expect("inside")]
+        };
         assert_eq!(at(x, y), tone::INK);
         assert_eq!(at(0, 0), 77);
     }
@@ -14999,7 +16288,11 @@ mod row_tests {
 
     #[test]
     fn the_list_length_is_bounded() {
-        let layout = list(MAX_ROWS as u32 + 10, "Summary.").layout_for(&CLARA_BW_METRICS);
+        let metrics = DisplayMetrics {
+            height: 8_000,
+            ..CLARA_BW_METRICS
+        };
+        let layout = list(MAX_ROWS as u32 + 10, "Summary.").layout_for(&metrics);
         assert_eq!(rects(&layout).len(), MAX_ROWS);
     }
 }
@@ -17780,6 +19073,14 @@ mod prose_tests {
                     Some(ActionId::BACK),
                     "{name}: the cross does not answer"
                 );
+                assert_eq!(
+                    layout.pressed_control(
+                        cross.rect.x + cross.rect.width / 2,
+                        cross.rect.y + cross.rect.height / 2
+                    ),
+                    Some(cross.rect),
+                    "{name}: pressing the cross marked a control behind the modal"
+                );
                 let target = metrics.touch_target_default();
                 assert!(
                     cross.rect.width >= target && cross.rect.height >= target,
@@ -19216,6 +20517,59 @@ mod prose_tests {
             together <= node.rect.width,
             "a title and its value together ran past the right margin"
         );
+    }
+}
+
+#[cfg(test)]
+mod orientation_tests {
+    use super::*;
+
+    #[test]
+    fn landscape_swaps_metrics_and_maps_both_physical_sides() {
+        let landscape = CLARA_BW_METRICS.oriented(Orientation::Landscape);
+        assert_eq!((landscape.width, landscape.height), (1448, 1072));
+        assert_eq!(
+            logical_point_with_turn(
+                Orientation::Landscape,
+                LandscapeTurn::Clockwise,
+                1072,
+                1448,
+                1071,
+                0,
+            ),
+            (0, 0)
+        );
+        assert_eq!(
+            logical_point_with_turn(
+                Orientation::Landscape,
+                LandscapeTurn::CounterClockwise,
+                1072,
+                1448,
+                0,
+                1447,
+            ),
+            (0, 0)
+        );
+    }
+
+    #[test]
+    fn software_rotation_places_every_corner_for_both_landscape_sides() {
+        let logical = Surface {
+            width: 3,
+            height: 2,
+            pixels: vec![1, 2, 3, 4, 5, 6],
+        };
+        let mut clockwise = Surface::new(2, 3);
+        rotate_landscape(&logical, &mut clockwise, LandscapeTurn::Clockwise);
+        assert_eq!(clockwise.pixels, [4, 1, 5, 2, 6, 3]);
+
+        let mut counter_clockwise = Surface::new(2, 3);
+        rotate_landscape(
+            &logical,
+            &mut counter_clockwise,
+            LandscapeTurn::CounterClockwise,
+        );
+        assert_eq!(counter_clockwise.pixels, [3, 6, 2, 5, 1, 4]);
     }
 }
 

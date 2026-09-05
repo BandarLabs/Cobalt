@@ -125,6 +125,6 @@ test("the effective repository registry includes standalone contributions", () =
 test("the one-command plan resolves source manifest package and protocol", () => {
   const plan = contributionPlan("apps/sudoku/cobalt-app.json");
   assert.equal(plan.app.package, "kobo-sudoku");
-  assert.equal(plan.protocolVersion, 12);
+  assert.equal(plan.protocolVersion, 13);
   assert.equal(plan.cargoPath, "apps/sudoku/Cargo.toml");
 });

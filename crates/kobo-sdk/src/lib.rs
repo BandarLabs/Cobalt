@@ -2303,6 +2303,36 @@ impl ScreenBuilder {
         self
     }
 
+    /// A board whose current source cell is drawn inverted.
+    #[must_use]
+    pub fn board_with_selection<I, N, L>(mut self, columns: u8, cells: I) -> Self
+    where
+        I: IntoIterator<Item = (N, L, Option<Glyph>, bool)>,
+        N: AsRef<str>,
+        L: Into<String>,
+    {
+        let id = self.next_id();
+        let mut source = cells.into_iter();
+        let mut cells = Vec::new();
+        for (name, label, glyph, selected) in source.by_ref().take(MAX_CELLS) {
+            let cell = Cell::new(self.register(name.as_ref()), label).with_selected(selected);
+            cells.push(match glyph {
+                Some(glyph) => cell.with_glyph(glyph),
+                None => cell,
+            });
+        }
+        if source.next().is_some() {
+            self.warn_limit(id, "grid cells", MAX_CELLS);
+        }
+        self.nodes.push(Node::Grid {
+            id,
+            columns: columns.clamp(1, MAX_COLUMNS),
+            square: true,
+            cells,
+        });
+        self
+    }
+
     /// A row of buttons that each have a picture as well as a word.
     ///
     /// For the handful of actions that have a drawing everybody already knows:
@@ -2827,6 +2857,7 @@ impl Context {
     pub fn set_orientation(&mut self, orientation: Orientation) {
         self.commands.push(Command::SetOrientation(orientation));
     }
+
     /// The panel this application is drawing to.
     ///
     /// An application never positions anything, so this is not for layout. It
@@ -5232,6 +5263,16 @@ impl Client {
 mod tests {
     use super::*;
     use std::thread;
+
+    #[test]
+    fn orientation_request_is_queued_as_a_protocol_command() {
+        let mut context = Context::default();
+        context.set_orientation(Orientation::Landscape);
+        assert_eq!(
+            context.take_commands(),
+            vec![Command::SetOrientation(Orientation::Landscape)]
+        );
+    }
 
     #[test]
     fn an_update_that_could_not_possibly_verify_is_refused_before_the_wire() {

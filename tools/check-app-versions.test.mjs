@@ -5,6 +5,7 @@ import { readFileSync } from "node:fs";
 import {
   changedLockPackageIdentities,
   changedRegistryPackages,
+  checkBuildPackages,
   checkEntries,
   checkProtocolMinimums,
   compatibleChangePaths,
@@ -17,6 +18,7 @@ import {
   registeredConsumers,
   isFilmingScript,
   releaseDiffArguments,
+  releaseLockPackageIdentities,
   releaseNeeded,
   releaseDependencyIds,
   storeImpactOfChangedPaths
@@ -67,6 +69,12 @@ function fixture({
 
 test("accepts an unchanged app at the published version", () => {
   const values = fixture();
+  assert.doesNotThrow(() => checkEntries(values.registry, values.published, new Set()));
+});
+
+test("does not release unchanged apps for a policy-derived minimum bump", () => {
+  const values = fixture();
+  values.registry.apps[0].minimum_cobalt_version = "0.3.5";
   assert.doesNotThrow(() => checkEntries(values.registry, values.published, new Set()));
 });
 
@@ -283,6 +291,149 @@ test("accepts the first Cobalt release supporting the package protocol", () => {
   );
 });
 
+test("manifest-only rebuilds must meet the current protocol minimum", () => {
+  const values = fixture({ currentVersion: "1.0.1", summary: "New summary" });
+  const built = new Set(packagesToBuild(values.registry, values.published, new Set()));
+  assert.deepEqual([...built], ["kobo-notes"]);
+  assert.throws(
+    () => checkProtocolMinimums(values.registry, 12, new Map([[12, "0.3.5"]]), built),
+    /minimum Cobalt 0\.3\.0 is older than protocol 12/
+  );
+});
+
+test("new packages must meet the current protocol minimum", () => {
+  const values = fixture();
+  values.registry.apps.push({
+    ...values.registry.apps[0],
+    package: "kobo-reader",
+    id: "reader",
+    display_name: "Reader",
+    short_label: "Reader"
+  });
+  const built = new Set(packagesToBuild(values.registry, values.published, new Set()));
+  assert.deepEqual([...built], ["kobo-reader"]);
+  assert.throws(
+    () => checkProtocolMinimums(values.registry, 12, new Map([[12, "0.3.5"]]), built),
+    /reader: minimum Cobalt 0\.3\.0 is older than protocol 12/
+  );
+});
+
+test("the intended Gallery and Zotero build selection passes final validation", () => {
+  const values = fixture({
+    currentVersion: "1.0.1",
+    summary: "Updated Gallery",
+    releaseNotes: "Explain the updated Gallery reader workflow."
+  });
+  values.registry.apps[0].package = "kobo-gallery";
+  values.registry.apps[0].id = "gallery";
+  values.registry.apps[0].minimum_cobalt_version = "0.3.5";
+  values.published.entries[0].manifest.id = "gallery";
+  values.registry.apps.push({
+    ...values.registry.apps[0],
+    package: "kobo-zotero-reader",
+    id: "zotero-reader",
+    display_name: "Zotero Reader",
+    short_label: "Zotero"
+  });
+  values.published.entries.push({
+    manifest: {
+      ...values.published.entries[0].manifest,
+      id: "zotero-reader",
+      display_name: "Zotero Reader",
+      short_label: "Zotero"
+    }
+  });
+
+  assert.doesNotThrow(() =>
+    checkBuildPackages(
+      values.registry,
+      values.published,
+      ["kobo-gallery", "kobo-zotero-reader"],
+      12,
+      new Map([[12, "0.3.5"]])
+    )
+  );
+});
+
+test("fallback expansion rejects a legacy app with an obsolete platform minimum", () => {
+  const values = fixture({ currentVersion: "1.0.1", summary: "Updated Gallery" });
+  values.registry.apps[0].minimum_cobalt_version = "0.3.5";
+  values.registry.apps.push({
+    ...values.registry.apps[0],
+    package: "kobo-legacy",
+    id: "legacy",
+    version: "1.0.0",
+    minimum_cobalt_version: "0.3.1"
+  });
+  values.published.entries.push({
+    manifest: {
+      ...values.published.entries[0].manifest,
+      id: "legacy",
+      minimum_cobalt_version: "0.3.1"
+    }
+  });
+
+  assert.throws(
+    () =>
+      checkBuildPackages(
+        values.registry,
+        values.published,
+        ["kobo-notes", "kobo-legacy"],
+        12,
+        new Map([[12, "0.3.5"]])
+      ),
+    /legacy: minimum Cobalt 0\.3\.1 is older than protocol 12/
+  );
+});
+
+test("fallback expansion rejects rebuilding an unchanged legacy app version", () => {
+  const values = fixture({ currentVersion: "1.0.1", summary: "Updated Gallery" });
+  values.registry.apps[0].minimum_cobalt_version = "0.3.5";
+  values.registry.apps.push({
+    ...values.registry.apps[0],
+    package: "kobo-legacy",
+    id: "legacy",
+    version: "1.0.0",
+    summary: "Summary"
+  });
+  values.published.entries.push({
+    manifest: {
+      ...values.published.entries[0].manifest,
+      id: "legacy",
+      minimum_cobalt_version: "0.3.5"
+    }
+  });
+
+  assert.throws(
+    () =>
+      checkBuildPackages(
+        values.registry,
+        values.published,
+        ["kobo-notes", "kobo-legacy"],
+        12,
+        new Map([[12, "0.3.5"]])
+      ),
+    /legacy: package inputs changed \(release inputs\).*version 1\.0\.0 is not newer than 1\.0\.0/s
+  );
+});
+
+test("apps workflow validates the final package matrix after fallback expansion", () => {
+  const workflow = readFileSync(".github/workflows/apps.yml", "utf8");
+  const expansion = workflow.lastIndexOf('packages="$all_packages"');
+  const validation = workflow.indexOf(
+    "node tools/check-app-versions.mjs --validate-packages"
+  );
+  const outputs = workflow.indexOf('echo "packages=$packages"');
+
+  assert.notEqual(expansion, -1);
+  assert.ok(validation > expansion);
+  assert.ok(outputs > validation);
+  assert.match(
+    workflow.slice(validation, outputs),
+    /--published-catalog published-app-catalog\.json \\\n\s+--packages "\$packages"/
+  );
+});
+
 test("release inputs ignore exclusively dev-only dependency edges", () => {
   const dependencies = releaseDependencyIds({
     deps: [
@@ -468,11 +619,147 @@ test("reviewed compatible-change entries name the exact current files", () => {
   }
 });
 
+test("responsive SDK release isolation covers only exact reviewed inputs", () => {
+  const manifest = JSON.parse(
+    readFileSync("tools/app-release-compatible-changes.json", "utf8")
+  );
+  const responsivePaths = [
+    "Cargo.lock",
+    "crates/kobo-sdk/Cargo.toml",
+    "crates/kobo-sdk/src/keyboard.rs",
+    "crates/kobo-sdk/src/terminal.rs",
+    "crates/kobo-ui/Cargo.toml",
+    "crates/kobo-ui/src/lib.rs"
+  ];
+  const files = new Map(
+    manifest.changes
+      .find(change => change.protocol_version === 12)
+      .files.map(file => [file.path, file])
+  );
+  assert.deepEqual(
+    compatibleChangePaths(
+      manifest,
+      12,
+      responsivePaths,
+      path => files.get(path)?.base_blob,
+      path => files.get(path)?.compatible_blob
+    ),
+    new Set(responsivePaths)
+  );
+
+  for (const path of responsivePaths) {
+    assert.equal(
+      compatibleChangePaths(
+        manifest,
+        12,
+        [path],
+        candidate => files.get(candidate)?.base_blob,
+        () => "f".repeat(40)
+      ).size,
+      0,
+      `${path} must fail closed when its reviewed blob changes`
+    );
+  }
+});
+
+test("Gutenbird test-only changes are isolated by exact reviewed blobs", () => {
+  const manifest = JSON.parse(
+    readFileSync("tools/app-release-compatible-changes.json", "utf8")
+  );
+  const paths = [
+    "examples/gutenbird/Cargo.toml",
+    "examples/gutenbird/src/main.rs"
+  ];
+  const files = new Map(
+    manifest.changes
+      .find(change => change.protocol_version === 12)
+      .files.map(file => [file.path, file])
+  );
+  assert.deepEqual(
+    compatibleChangePaths(
+      manifest,
+      12,
+      paths,
+      path => files.get(path)?.base_blob,
+      path => files.get(path)?.compatible_blob
+    ),
+    new Set(paths)
+  );
+  assert.equal(
+    compatibleChangePaths(
+      manifest,
+      12,
+      ["examples/gutenbird/src/main.rs"],
+      path => files.get(path)?.base_blob,
+      () => "f".repeat(40)
+    ).size,
+    0
+  );
+});
+
+test("Lichess runtime prerequisites are isolated by exact reviewed blobs", () => {
+  const manifest = JSON.parse(
+    readFileSync("tools/app-release-compatible-changes.json", "utf8")
+  );
+  const paths = [
+    "crates/kobo-net/src/lib.rs",
+    "crates/kobo-net/src/lines.rs",
+    "crates/kobo-net/tests/fixtures/localhost-ca.der",
+    "crates/kobo-net/tests/fixtures/localhost-cert.der",
+    "crates/kobo-net/tests/fixtures/localhost-key.der",
+    "crates/kobo-net/tests/lichess_stream_mock.rs",
+    "crates/kobo-policy/src/credentials.rs",
+    "crates/kobo-policy/src/tasks.rs"
+  ];
+  const files = new Map(
+    manifest.changes
+      .find(change => change.protocol_version === 12)
+      .files.map(file => [file.path, file])
+  );
+  assert.deepEqual(
+    compatibleChangePaths(
+      manifest,
+      12,
+      paths,
+      path => files.get(path)?.base_blob,
+      path => files.get(path)?.compatible_blob
+    ),
+    new Set(paths)
+  );
+  assert.equal(
+    compatibleChangePaths(
+      manifest,
+      12,
+      ["crates/kobo-net/src/lines.rs"],
+      () => null,
+      () => "f".repeat(40)
+    ).size,
+    0
+  );
+});
+
 test("new lockfile package blocks do not change existing app release inputs", () => {
   const previous = `version = 4\n\n[[package]]\nname = "notes"\nversion = "1.0.0"\n`;
   const current = `${previous}\n[[package]]\nname = "reader"\nversion = "1.0.0"\n`;
 
   assert.equal(lockfileOnlyAddsPackages(previous, current), true);
+});
+
+test("Cargo.lock changes are isolated only after exact compatible review", () => {
+  const previous = `version = 4\n\n[[package]]\nname = "kobo-ui"\nversion = "0.3.4"\ndependencies = [\n "unicode-segmentation",\n]\n`;
+  const current = previous.replace(
+    ' "unicode-segmentation",',
+    ' "unicode-segmentation",\n "unicode-width",'
+  );
+
+  assert.notDeepEqual(
+    releaseLockPackageIdentities(previous, current, new Set()),
+    new Set()
+  );
+  assert.deepEqual(
+    releaseLockPackageIdentities(previous, current, new Set(["Cargo.lock"])),
+    new Set()
+  );
 });
 
 function metadata() {

@@ -39,6 +39,21 @@ fn profile_metrics() -> DisplayMetrics {
     }
 }
 
+fn physical_rect(orientation: kobo_ui::Orientation, rect: kobo_ui::Rect) -> kobo_ui::Rect {
+    match orientation {
+        kobo_ui::Orientation::Portrait => rect,
+        kobo_ui::Orientation::Landscape => kobo_ui::Rect {
+            x: profile_metrics()
+                .width
+                .saturating_sub(rect.y)
+                .saturating_sub(rect.height),
+            y: rect.x,
+            width: rect.height,
+            height: rect.width,
+        },
+    }
+}
+
 /// A deterministic failure mode selected from the simulator controls.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 enum Scenario {
@@ -396,7 +411,7 @@ impl Server {
                 )
             }
             ("GET", "/layout") => {
-                let body = layout_json(self.simulator.screen(), 0);
+                let body = layout_json(self.simulator.screen(), 0, kobo_ui::Orientation::Portrait);
                 write_response(
                     &mut stream,
                     200,
@@ -405,8 +420,11 @@ impl Server {
                 )
             }
             ("GET", "/diagnostics") => {
-                let body =
-                    diagnostics_json(self.simulator.screen(), &kobo_ui::PictureCache::default());
+                let body = diagnostics_json(
+                    self.simulator.screen(),
+                    &kobo_ui::PictureCache::default(),
+                    kobo_ui::Orientation::Portrait,
+                );
                 write_response(
                     &mut stream,
                     200,
@@ -1157,9 +1175,20 @@ impl AppSession {
             display: mapped,
             raw,
         });
+        let physical = profile_metrics();
+        let (x, y) = kobo_ui::logical_point(
+            state.orientation,
+            physical.width,
+            i32::try_from(mapped.0).ok()?,
+            i32::try_from(mapped.1).ok()?,
+        );
         state
             .screen
-            .hit_test(i32::try_from(mapped.0).ok()?, i32::try_from(mapped.1).ok()?)
+            .layout_with(
+                &physical.oriented(state.orientation),
+                &kobo_ui::Chrome::default(),
+            )
+            .hit_test(x, y)
     }
 
     #[allow(clippy::too_many_lines, reason = "one explicit route table")]
@@ -1206,7 +1235,7 @@ impl AppSession {
                         .state
                         .lock()
                         .unwrap_or_else(std::sync::PoisonError::into_inner);
-                    layout_json(&state.screen, state.paints)
+                    layout_json(&state.screen, state.paints, state.orientation)
                 };
                 write_response(
                     &mut stream,
@@ -1221,7 +1250,7 @@ impl AppSession {
                         .state
                         .lock()
                         .unwrap_or_else(std::sync::PoisonError::into_inner);
-                    diagnostics_json(&state.screen, state.active_pictures())
+                    diagnostics_json(&state.screen, state.active_pictures(), state.orientation)
                 };
                 write_response(
                     &mut stream,
@@ -1283,9 +1312,16 @@ impl AppSession {
     }
 }
 
-fn diagnostics_json(screen: &Screen, pictures: &kobo_ui::PictureCache) -> String {
-    let diagnostics =
-        screen.diagnostics_with_pictures(&profile_metrics(), &kobo_ui::Chrome::default(), pictures);
+fn diagnostics_json(
+    screen: &Screen,
+    pictures: &kobo_ui::PictureCache,
+    orientation: kobo_ui::Orientation,
+) -> String {
+    let diagnostics = screen.diagnostics_with_pictures(
+        &profile_metrics().oriented(orientation),
+        &kobo_ui::Chrome::default(),
+        pictures,
+    );
     let mut json = String::from("{\"issues\":[");
     for (index, issue) in diagnostics.issues.iter().enumerate() {
         if index > 0 {
@@ -1298,15 +1334,18 @@ fn diagnostics_json(screen: &Screen, pictures: &kobo_ui::PictureCache) -> String
         let node = issue
             .node
             .map_or_else(|| "null".to_owned(), |node| node.0.to_string());
-        let rect = issue.rect.map_or_else(
-            || "null".to_owned(),
-            |rect| {
-                format!(
-                    "{{\"x\":{},\"y\":{},\"width\":{},\"height\":{}}}",
-                    rect.x, rect.y, rect.width, rect.height
-                )
-            },
-        );
+        let rect = issue
+            .rect
+            .map(|rect| physical_rect(orientation, rect))
+            .map_or_else(
+                || "null".to_owned(),
+                |rect| {
+                    format!(
+                        "{{\"x\":{},\"y\":{},\"width\":{},\"height\":{}}}",
+                        rect.x, rect.y, rect.width, rect.height
+                    )
+                },
+            );
         let _ = std::fmt::Write::write_fmt(
             &mut json,
             format_args!(
@@ -1428,8 +1467,8 @@ fn parse_lifecycle(bytes: &[u8]) -> Option<Lifecycle> {
 /// actions directly would pass happily on a screen whose button had been laid
 /// out three millimetres off the bottom of the panel, which is exactly the
 /// class of fault worth catching.
-fn layout_json(screen: &Screen, paints: u64) -> String {
-    let metrics = profile_metrics();
+fn layout_json(screen: &Screen, paints: u64, orientation: kobo_ui::Orientation) -> String {
+    let metrics = profile_metrics().oriented(orientation);
     let layout = screen.layout_with(&metrics, &kobo_ui::Chrome::default());
     let mut json = format!("{{\"paints\":{paints},\"nodes\":[");
     for (index, node) in layout.nodes.iter().enumerate() {
@@ -1442,23 +1481,25 @@ fn layout_json(screen: &Screen, paints: u64) -> String {
             .map(|line| json_string(line))
             .collect::<Vec<_>>()
             .join(",");
-        let centre = (
+        let logical_centre = (
             node.rect.x + node.rect.width / 2,
             node.rect.y + node.rect.height / 2,
         );
         let action = layout
-            .hit_test(centre.0, centre.1)
+            .hit_test(logical_centre.0, logical_centre.1)
             .map_or_else(|| "null".to_owned(), |action| action.0.to_string());
+        let rect = physical_rect(orientation, node.rect);
+        let centre = (rect.x + rect.width / 2, rect.y + rect.height / 2);
         let _ = std::fmt::Write::write_fmt(
             &mut json,
             format_args!(
                 "{{\"kind\":{},\"x\":{},\"y\":{},\"width\":{},\"height\":{},\
                  \"centre\":{{\"x\":{},\"y\":{}}},\"action\":{action},\"lines\":[{lines}]}}",
                 json_string(&format!("{:?}", node.kind)),
-                node.rect.x,
-                node.rect.y,
-                node.rect.width,
-                node.rect.height,
+                rect.x,
+                rect.y,
+                rect.width,
+                rect.height,
                 centre.0,
                 centre.1,
             ),
@@ -2196,11 +2237,21 @@ fn simulated_tasks(name: &str) -> TaskRunner {
     // and could only ever be run on hardware.
     let app = name.to_owned();
     runner
-        .with_fetch(Arc::new(kobo_net::fetch_from))
-        .with_post(Arc::new(kobo_net::post))
-        .with_credential_policy(Arc::new(move |credential, url, usage| {
-            kobo_policy::credentials::allowed(&app, credential, url, usage)
-        }))
+        .with_fetch(Arc::new(kobo_net::fetch_from_controlled))
+        .with_post(Arc::new(kobo_net::post_controlled))
+        .with_line_streams(Arc::new(kobo_net::LineStreams::default()))
+        .with_credential_policy(Arc::new(
+            move |credential, url, usage, body, content_type| {
+                kobo_policy::credentials::allowed_request(
+                    &app,
+                    credential,
+                    url,
+                    usage,
+                    body,
+                    content_type,
+                )
+            },
+        ))
         .with_capabilities([kobo_policy::Capability::Network])
 }
 
@@ -3015,6 +3066,63 @@ mod tests {
     }
 
     #[test]
+    fn rendered_landscape_control_accepts_a_tap_at_its_physical_centre() {
+        let action = ActionId(77);
+        let screen = Screen::new(
+            1,
+            vec![Node::Button {
+                id: NodeId(1),
+                action,
+                label: "Open".to_owned(),
+                state: kobo_ui::ControlState::Enabled,
+                emphasis: kobo_ui::Emphasis::Primary,
+            }],
+        );
+        let orientation = kobo_ui::Orientation::Landscape;
+        let logical = screen
+            .layout_with(
+                &profile_metrics().oriented(orientation),
+                &kobo_ui::Chrome::default(),
+            )
+            .rect_of_action(action)
+            .expect("button");
+        let physical = physical_rect(orientation, logical);
+        let (client, server) = UnixStream::pair().expect("socket pair");
+        drop(client);
+        let session = AppSession {
+            state: Arc::new(Mutex::new(AppState {
+                screen: screen.clone(),
+                orientation,
+                ..AppState::default()
+            })),
+            writer: AppWriter::spawn_for(server, kobo_protocol::VERSION),
+        };
+
+        let frame = session.render_frame(false);
+        let width = usize::try_from(profile_metrics().width).expect("panel width");
+        let inked = (physical.y..physical.y + physical.height)
+            .flat_map(|y| (physical.x..physical.x + physical.width).map(move |x| (x, y)))
+            .filter(|&(x, y)| {
+                frame[usize::try_from(y).expect("positive y") * width
+                    + usize::try_from(x).expect("positive x")]
+                    != kobo_ui::tone::PAPER
+            })
+            .count();
+        assert!(inked > 0, "the transformed control was not rendered");
+        assert_eq!(
+            session.touch_action(
+                physical.x + physical.width / 2,
+                physical.y + physical.height / 2,
+            ),
+            Some(action)
+        );
+
+        let layout = layout_json(&screen, 1, orientation);
+        assert!(layout.contains(&format!("\"x\":{}", physical.x)));
+        assert!(layout.contains(&format!("\"y\":{}", physical.y)));
+    }
+
+    #[test]
     fn diagnostics_endpoint_payload_names_layout_failures() {
         let screen = Screen::new(
             1,
@@ -3026,10 +3134,71 @@ mod tests {
                 })
                 .collect(),
         );
-        let payload = diagnostics_json(&screen, &kobo_ui::PictureCache::default());
+        let payload = diagnostics_json(
+            &screen,
+            &kobo_ui::PictureCache::default(),
+            kobo_ui::Orientation::Portrait,
+        );
         assert!(payload.starts_with("{\"issues\":["));
         assert!(payload.contains("below the content area"));
         assert!(payload.contains("\"severity\":\"error\""));
+    }
+
+    #[test]
+    fn diagnostics_fail_when_an_interactive_control_is_offscreen() {
+        let screen = Screen::new(
+            1,
+            vec![Node::Grid {
+                id: NodeId(100),
+                columns: 1,
+                square: false,
+                cells: (0..81)
+                    .map(|index| kobo_ui::Cell::new(ActionId(index + 1), index.to_string()))
+                    .collect(),
+            }],
+        );
+        let payload = diagnostics_json(
+            &screen,
+            &kobo_ui::PictureCache::default(),
+            kobo_ui::Orientation::Portrait,
+        );
+        assert!(
+            payload.contains("interactive control is outside the visible panel"),
+            "{payload}"
+        );
+        assert!(payload.contains("\"severity\":\"error\""));
+    }
+
+    #[test]
+    fn landscape_diagnostics_report_physical_framebuffer_rectangles() {
+        let screen = Screen::new(
+            1,
+            vec![Node::Grid {
+                id: NodeId(100),
+                columns: 1,
+                square: false,
+                cells: (0..81)
+                    .map(|index| kobo_ui::Cell::new(ActionId(index + 1), index.to_string()))
+                    .collect(),
+            }],
+        );
+        let orientation = kobo_ui::Orientation::Landscape;
+        let diagnostics = screen.diagnostics_with_pictures(
+            &profile_metrics().oriented(orientation),
+            &kobo_ui::Chrome::default(),
+            &kobo_ui::PictureCache::default(),
+        );
+        let logical = diagnostics
+            .issues
+            .iter()
+            .find_map(|issue| issue.rect)
+            .expect("diagnostic rectangle");
+        let physical = physical_rect(orientation, logical);
+        let payload = diagnostics_json(&screen, &kobo_ui::PictureCache::default(), orientation);
+        assert!(payload.contains(&format!(
+            "\"rect\":{{\"x\":{},\"y\":{},\"width\":{},\"height\":{}}}",
+            physical.x, physical.y, physical.width, physical.height
+        )));
     }
 
     #[test]

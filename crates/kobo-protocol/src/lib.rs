@@ -52,11 +52,12 @@ pub const MAGIC: [u8; 4] = *b"KOBO";
 /// both tags an older side has no reading for. Update-channel requests were
 /// later added on new tags without changing the shapes of existing frames.
 /// Version 12 adds Folio tile values, card tiles, section links and page rails.
-/// Its runtime retains a version-11 reader so upgraded devices keep installed
-/// applications and their locally measured Atkinson layouts intact.
-pub const VERSION: u8 = 12;
-/// The most recent protocol emitted before Folio's schema and metrics change.
-/// A 0.3.5 runtime reads this version during the OTA compatibility window.
+/// Version 13 adds persistent selected state to grid cells. Its runtime retains
+/// a version-12 reader so already installed Folio applications keep working.
+pub const VERSION: u8 = 13;
+/// Folio's tile, section, and page-rail protocol.
+pub const FOLIO_VERSION: u8 = 12;
+/// The pre-Folio protocol retained during the compatibility window.
 pub const LEGACY_VERSION: u8 = 11;
 pub const HEADER_LEN: usize = 14;
 /// The largest single frame either side will read.
@@ -1753,7 +1754,7 @@ impl From<io::Error> for StreamError {
 /// Returns an error when a message exceeds protocol limits.
 #[allow(clippy::too_many_lines)]
 pub fn encode(frame: &Frame) -> Result<Vec<u8>, ProtocolError> {
-    if !matches!(frame.version, LEGACY_VERSION | VERSION) {
+    if !matches!(frame.version, LEGACY_VERSION | FOLIO_VERSION | VERSION) {
         return Err(ProtocolError::UnsupportedVersion(frame.version));
     }
     let (kind, payload_len) = encoded_message_layout(&frame.message, frame.version)?;
@@ -2577,7 +2578,7 @@ fn encode_device_request(
             output.extend_from_slice(&[46, channel.wire()]);
         }
         DeviceRequest::SetSecret { name, value }
-            if version == VERSION
+            if version >= FOLIO_VERSION
                 && valid_app_id(name)
                 && !value.as_str().is_empty()
                 && value.as_str().len() <= MAX_APP_SECRET_BYTES
@@ -2897,7 +2898,7 @@ fn decode_device_request(
         46 => Ok(DeviceRequest::SetUpdateChannel {
             channel: UpdateChannel::from_wire(reader.u8()?)?,
         }),
-        47 if version == VERSION => {
+        47 if version >= FOLIO_VERSION => {
             let name = reader.string()?;
             let value = reader.string()?;
             if !valid_app_id(&name)
@@ -3828,6 +3829,9 @@ fn encoded_node_len(
                 add_encoded_len(&mut length, 4)?;
                 add_encoded_len(&mut length, encoded_string_len(&cell.label)?)?;
                 add_encoded_len(&mut length, if cell.glyph.is_some() { 2 } else { 1 })?;
+                if version >= 13 {
+                    add_encoded_len(&mut length, 1)?;
+                }
             }
             length
         }
@@ -4049,7 +4053,7 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, ProtocolError> {
         return Err(ProtocolError::BadMagic);
     }
     let version = bytes[4];
-    if !matches!(version, LEGACY_VERSION | VERSION) {
+    if !matches!(version, LEGACY_VERSION | FOLIO_VERSION | VERSION) {
         return Err(ProtocolError::UnsupportedVersion(bytes[4]));
     }
     let payload_len = u32::from_be_bytes([bytes[6], bytes[7], bytes[8], bytes[9]]) as usize;
@@ -4466,7 +4470,7 @@ pub fn read_from<R: Read>(reader: &mut R) -> Result<Frame, StreamError> {
     if header[..4] != MAGIC {
         return Err(ProtocolError::BadMagic.into());
     }
-    if !matches!(header[4], LEGACY_VERSION | VERSION) {
+    if !matches!(header[4], LEGACY_VERSION | FOLIO_VERSION | VERSION) {
         return Err(ProtocolError::UnsupportedVersion(header[4]).into());
     }
     let payload_len = u32::from_be_bytes([header[6], header[7], header[8], header[9]]) as usize;
@@ -5077,6 +5081,9 @@ fn encode_node(
                         output.push(encode_glyph(glyph));
                     }
                 }
+                if version >= 13 {
+                    output.push(u8::from(cell.selected));
+                }
             }
         }
         Node::Rows { id, rows } => {
@@ -5512,6 +5519,18 @@ const fn encode_glyph(glyph: Glyph) -> u8 {
         Glyph::Plus => 42,
         Glyph::Headphones => 43,
         Glyph::Minus => 44,
+        Glyph::ChessWhiteKing => 45,
+        Glyph::ChessWhiteQueen => 46,
+        Glyph::ChessWhiteRook => 47,
+        Glyph::ChessWhiteBishop => 48,
+        Glyph::ChessWhiteKnight => 49,
+        Glyph::ChessWhitePawn => 50,
+        Glyph::ChessBlackKing => 51,
+        Glyph::ChessBlackQueen => 52,
+        Glyph::ChessBlackRook => 53,
+        Glyph::ChessBlackBishop => 54,
+        Glyph::ChessBlackKnight => 55,
+        Glyph::ChessBlackPawn => 56,
     }
 }
 
@@ -5562,6 +5581,18 @@ const fn decode_glyph(tag: u8) -> Option<Glyph> {
         42 => Glyph::Plus,
         43 => Glyph::Headphones,
         44 => Glyph::Minus,
+        45 => Glyph::ChessWhiteKing,
+        46 => Glyph::ChessWhiteQueen,
+        47 => Glyph::ChessWhiteRook,
+        48 => Glyph::ChessWhiteBishop,
+        49 => Glyph::ChessWhiteKnight,
+        50 => Glyph::ChessWhitePawn,
+        51 => Glyph::ChessBlackKing,
+        52 => Glyph::ChessBlackQueen,
+        53 => Glyph::ChessBlackRook,
+        54 => Glyph::ChessBlackBishop,
+        55 => Glyph::ChessBlackKnight,
+        56 => Glyph::ChessBlackPawn,
 
         _ => return None,
     })
@@ -6128,7 +6159,7 @@ fn decode_node(
             let shape = match reader.u8()? {
                 0 => TileShape::Square,
                 1 => TileShape::Portrait,
-                2 if version == VERSION => TileShape::Card,
+                2 if version >= FOLIO_VERSION => TileShape::Card,
                 _ => return Err(ProtocolError::InvalidValue("tile shape")),
             };
             let len = usize::from(reader.u8()?);
@@ -6192,7 +6223,7 @@ fn decode_node(
             }
             Ok(Node::TileGrid { id, tiles, shape })
         }
-        31 if version == VERSION => Ok(Node::PageRail {
+        31 if version >= FOLIO_VERSION => Ok(Node::PageRail {
             id,
             page: reader.u16()?,
             of: reader.u16()?,
@@ -6418,12 +6449,21 @@ fn decode_node(
                 }
                 let label = reader.string()?;
                 let cell = Cell::new(action, label);
-                cells.push(match reader.u8()? {
+                let cell = match reader.u8()? {
                     0 => cell,
                     1 => cell.with_glyph(
                         decode_glyph(reader.u8()?).ok_or(ProtocolError::InvalidValue("glyph"))?,
                     ),
                     _ => return Err(ProtocolError::InvalidValue("cell glyph flag")),
+                };
+                cells.push(if version >= 13 {
+                    cell.with_selected(match reader.u8()? {
+                        0 => false,
+                        1 => true,
+                        _ => return Err(ProtocolError::InvalidValue("cell selected flag")),
+                    })
+                } else {
+                    cell
                 });
             }
             Ok(Node::Grid {
@@ -8295,7 +8335,9 @@ mod node_coverage_tests {
         // byte of the next cell's action, so the second button of a transport
         // row would fire something nobody named. VERSION went to 3 for this.
         let cells = vec![
-            kobo_ui::Cell::new(ActionId(11), "Back 30 sec").with_glyph(Glyph::Rewind30),
+            kobo_ui::Cell::new(ActionId(11), "Back 30 sec")
+                .with_glyph(Glyph::Rewind30)
+                .with_selected(true),
             kobo_ui::Cell::new(ActionId(12), "Play"),
             kobo_ui::Cell::new(ActionId(13), "Louder").with_glyph(Glyph::VolumeUp),
         ];

@@ -521,11 +521,24 @@ fn add_span(accumulator: &mut [i64], from: i64, to: i64) {
 /// a square box, which is exactly what this rasteriser already draws.
 #[must_use]
 pub fn shapes(glyph: Glyph) -> Vec<Shape> {
+    let width = if matches!(
+        glyph,
+        Glyph::ChessBlackKing
+            | Glyph::ChessBlackQueen
+            | Glyph::ChessBlackRook
+            | Glyph::ChessBlackBishop
+            | Glyph::ChessBlackKnight
+            | Glyph::ChessBlackPawn
+    ) {
+        WEIGHT * 2
+    } else {
+        WEIGHT
+    };
     tabler::outline(glyph)
         .iter()
         .map(|commands| Shape::Stroke {
             path: Path::from_commands(commands),
-            width: WEIGHT,
+            width,
         })
         .collect()
 }
@@ -709,6 +722,20 @@ mod tests {
         }
         let to_units = |value: i32| value * UNITS / SIZE;
         (to_units(top), to_units(bottom))
+    }
+
+    #[test]
+    fn black_chess_pieces_carry_more_ink_than_white_pieces() {
+        for (white, black) in [
+            (Glyph::ChessWhiteKing, Glyph::ChessBlackKing),
+            (Glyph::ChessWhiteQueen, Glyph::ChessBlackQueen),
+            (Glyph::ChessWhiteRook, Glyph::ChessBlackRook),
+            (Glyph::ChessWhiteBishop, Glyph::ChessBlackBishop),
+            (Glyph::ChessWhiteKnight, Glyph::ChessBlackKnight),
+            (Glyph::ChessWhitePawn, Glyph::ChessBlackPawn),
+        ] {
+            assert!(inked(black, 96) > inked(white, 96));
+        }
     }
 
     #[test]

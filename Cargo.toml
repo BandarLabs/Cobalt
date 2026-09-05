@@ -50,6 +50,7 @@ members = [
     "examples/store",
     "apps/arxiv",
     "apps/backgammon",
+    "apps/lichess",
     "apps/morse",
     "apps/paperterm",
     "apps/sudoku",

@@ -1,0 +1,3 @@
+expect Offline
+expect Refresh
+shot credential

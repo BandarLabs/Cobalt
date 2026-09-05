@@ -25,16 +25,22 @@
 //! maintained ring provider instead of an experimental provider.
 
 pub mod gzip;
+mod lines;
 pub mod pem;
 pub mod serve;
 pub mod sha256;
+
+pub use lines::{LineStreamAction, LineStreamOwner, LineStreams, MAX_RETAINED_STREAMS};
 
 use kobo_protocol::TaskError;
 use std::borrow::Cow;
 use std::fmt::Write as _;
 use std::io::{Read, Write};
-use std::net::{TcpStream, ToSocketAddrs};
+use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::mpsc::{sync_channel, Receiver, RecvTimeoutError, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex, OnceLock};
+use std::thread;
 use std::time::{Duration, Instant};
 
 /// How long opening a connection may take before the host is called
@@ -44,6 +50,24 @@ use std::time::{Duration, Instant};
 /// a network that goes nowhere, should be told so in seconds rather than
 /// minutes, and nothing has been said yet that would be worth waiting for.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// One socket attempt before trying another resolved address or checking the
+/// shared connection deadline again.
+const CONNECT_ATTEMPT: Duration = Duration::from_millis(500);
+
+/// A request head is small and must not pin application shutdown.
+const REQUEST_HEAD_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// DNS can return many addresses; attempting an unbounded list would turn one
+/// application task into an unbounded number of sockets.
+const MAX_RESOLVED_ADDRESSES: usize = 8;
+
+/// Blocking system resolution is confined to this many process-wide workers.
+const RESOLVER_WORKERS: usize = 2;
+
+/// Canceled lookups can wait behind a blocked resolver, but never without a
+/// strict process-wide bound.
+const RESOLVER_QUEUE: usize = 8;
 
 /// How long a server that has accepted the connection may stay silent.
 ///
@@ -56,8 +80,25 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 /// was the runtime giving up, not the network.
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(180);
 
+/// How often a blocking socket wakes to notice task cancellation.
+const IO_POLL: Duration = Duration::from_millis(250);
+
 /// The largest response header block accepted before the body is refused.
 const MAX_HEADER_BYTES: usize = 32 * 1024;
+
+/// A malicious server cannot ask an e-reader UI to suppress retry forever.
+const MAX_RETRY_AFTER_SECONDS: u32 = 60 * 60;
+
+/// Runtime-only behavior layered on the existing protocol-11 request shape.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct RequestOptions {
+    /// Return a small status envelope for HTTP 429 instead of flattening it
+    /// into `NotFound`, so an opted-in application can honor `Retry-After`.
+    pub report_rate_limit: bool,
+    /// Keep a successful POST open until its task is cancelled, discarding
+    /// blank keepalives. This is for APIs whose open request is the resource.
+    pub wait_until_cancelled: bool,
+}
 
 /// Where Linux lists the routes it holds, and so whether there is a network.
 const ROUTE_TABLE: &str = "/proc/net/route";
@@ -190,6 +231,46 @@ pub enum Response<'a> {
     Body(Cow<'a, [u8]>),
     /// The value of the `Location` header, which may be relative.
     Redirect(String),
+}
+
+/// A protocol-neutral body used only by requests that explicitly opt in to
+/// HTTP rate-limit metadata.
+///
+/// It travels as ordinary task bytes, so the protocol remains version 11.
+/// The upstream response body is deliberately omitted: rate-limit pages often
+/// contain request identifiers and are not needed to decide when to retry.
+fn rate_limit_envelope(seconds: Option<u32>) -> Vec<u8> {
+    format!(
+        "COBALT-HTTP/1 429\nRetry-After: {}\n\n",
+        seconds.map_or_else(|| "-".to_owned(), |seconds| seconds.to_string())
+    )
+    .into_bytes()
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RateLimit {
+    No,
+    Limited(Option<u32>),
+}
+
+/// Reads bounded rate-limit metadata without retaining the response body.
+fn rate_limit(response: &[u8]) -> Result<RateLimit, TaskError> {
+    let mut headers = [httparse::EMPTY_HEADER; MAX_RESPONSE_HEADERS];
+    let mut parsed = httparse::Response::new(&mut headers);
+    match parsed.parse(response) {
+        Ok(httparse::Status::Complete(end)) if end <= MAX_HEADER_BYTES => {}
+        Ok(httparse::Status::Complete(_) | httparse::Status::Partial) | Err(_) => {
+            return Err(TaskError::Unreachable);
+        }
+    }
+    if parsed.code != Some(429) {
+        return Ok(RateLimit::No);
+    }
+    Ok(RateLimit::Limited(
+        header(parsed.headers, "retry-after")
+            .and_then(|value| value.parse::<u32>().ok())
+            .map(|seconds| seconds.min(MAX_RETRY_AFTER_SECONDS)),
+    ))
 }
 
 /// Separates a response into its status code and its body.
@@ -430,7 +511,16 @@ fn decode_chunked(mut body: &[u8]) -> Result<Vec<u8>, TaskError> {
 /// past the ceiling is [`TaskError::TooLarge`], and a refusal by the server is
 /// [`TaskError::NotFound`].
 pub fn fetch(url: &str, max_bytes: u32) -> Result<Vec<u8>, TaskError> {
-    get(url, None, max_bytes, None, &[])
+    let cancel = AtomicBool::new(false);
+    get(
+        url,
+        None,
+        max_bytes,
+        None,
+        &[],
+        RequestOptions::default(),
+        &cancel,
+    )
 }
 
 /// Fetches `url` starting `offset` bytes in, returning at most `max_bytes`.
@@ -468,6 +558,36 @@ pub fn fetch_from(
     credential: Option<(&str, &str)>,
     headers: &[(&str, &str)],
 ) -> Result<Vec<u8>, TaskError> {
+    let cancel = AtomicBool::new(false);
+    fetch_from_controlled(
+        url,
+        offset,
+        max_bytes,
+        credential,
+        headers,
+        RequestOptions::default(),
+        &cancel,
+    )
+}
+
+/// The cancellable runtime form of [`fetch_from`].
+///
+/// Applications cannot call this function: the policy runner supplies both
+/// the resolved credential and the runtime-only options.
+///
+/// # Errors
+///
+/// Returns the same bounded transport failures as [`fetch_from`], plus
+/// cancellation as [`TaskError::TimedOut`] for the policy runner to translate.
+pub fn fetch_from_controlled(
+    url: &str,
+    offset: u32,
+    max_bytes: u32,
+    credential: Option<(&str, &str)>,
+    headers: &[(&str, &str)],
+    options: RequestOptions,
+    cancel: &AtomicBool,
+) -> Result<Vec<u8>, TaskError> {
     // The last gate before the socket, and the same one `post` applies to its
     // own headers: both names and values may ultimately originate outside the
     // runtime, so grammar is checked here rather than trusted from upstream.
@@ -481,7 +601,18 @@ pub fn fetch_from(
     {
         return Err(TaskError::Denied);
     }
-    get(url, Some(offset), max_bytes, credential, headers)
+    if options.wait_until_cancelled {
+        return Err(TaskError::Denied);
+    }
+    get(
+        url,
+        Some(offset),
+        max_bytes,
+        credential,
+        headers,
+        options,
+        cancel,
+    )
 }
 
 /// The one implementation behind [`fetch`] and [`fetch_from`].
@@ -491,6 +622,8 @@ fn get(
     max_bytes: u32,
     credential: Option<(&str, &str)>,
     headers: &[(&str, &str)],
+    options: RequestOptions,
+    cancel: &AtomicBool,
 ) -> Result<Vec<u8>, TaskError> {
     let mut target = url.to_string();
     let mut forwarded = headers;
@@ -502,9 +635,16 @@ fn get(
                 offset,
                 credential,
                 headers: forwarded,
+                streaming: false,
             },
             max_bytes,
+            cancel,
         )?;
+        if options.report_rate_limit {
+            if let RateLimit::Limited(delay) = rate_limit(&response)? {
+                return Ok(rate_limit_envelope(delay));
+            }
+        }
         match split_response(&response, max_bytes)? {
             Response::Body(body) => {
                 return if body.len() > max_bytes as usize {
@@ -555,6 +695,9 @@ enum Method<'a> {
         /// them `Range`: that one is derived from `offset` alone, in [`head`],
         /// so an application cannot widen or move the piece it was granted.
         headers: &'a [(&'a str, &'a str)],
+        /// A retained line stream asks for identity encoding and is never put
+        /// in the ordinary idle-connection cache.
+        streaming: bool,
     },
     Post {
         body: &'a [u8],
@@ -604,6 +747,44 @@ pub fn post(
     headers: &[(&str, &str)],
     max_bytes: u32,
 ) -> Result<Vec<u8>, TaskError> {
+    let cancel = AtomicBool::new(false);
+    post_controlled(
+        url,
+        body,
+        content_type,
+        credential,
+        headers,
+        max_bytes,
+        RequestOptions::default(),
+        &cancel,
+    )
+}
+
+/// The cancellable runtime form of [`post`].
+///
+/// A wait-until-cancelled POST is sent exactly once. Once the server accepts
+/// it, body bytes are discarded until the task is cancelled; neither stale
+/// connections nor transport failures ever replay the request.
+///
+/// # Errors
+///
+/// Returns the same bounded transport failures as [`post`]. Cancellation is
+/// returned as [`TaskError::TimedOut`] so the policy runner can report the
+/// task's explicit cancelled outcome.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the runtime transport boundary keeps body, credential, headers, limits, options, and cancellation explicit"
+)]
+pub fn post_controlled(
+    url: &str,
+    body: &[u8],
+    content_type: &str,
+    credential: Option<(&str, &str)>,
+    headers: &[(&str, &str)],
+    max_bytes: u32,
+    options: RequestOptions,
+    cancel: &AtomicBool,
+) -> Result<Vec<u8>, TaskError> {
     // Header grammar is checked by the same maintained types used for URI
     // syntax. This is the last gate before the socket, and both names and
     // values may ultimately originate outside the runtime.
@@ -625,6 +806,17 @@ pub fn post(
         return Err(TaskError::Denied);
     }
     let address = parse(url)?;
+    if options.wait_until_cancelled {
+        return post_until_cancelled(
+            &address,
+            body,
+            content_type,
+            credential,
+            headers,
+            options,
+            cancel,
+        );
+    }
     let response = request(
         &address,
         &Method::Post {
@@ -634,7 +826,13 @@ pub fn post(
             headers,
         },
         max_bytes,
+        cancel,
     )?;
+    if options.report_rate_limit {
+        if let RateLimit::Limited(delay) = rate_limit(&response)? {
+            return Ok(rate_limit_envelope(delay));
+        }
+    }
     match split_response(&response, max_bytes)? {
         Response::Body(body) => {
             if body.len() > max_bytes as usize {
@@ -644,6 +842,117 @@ pub fn post(
             }
         }
         Response::Redirect(_) => Err(TaskError::NotFound),
+    }
+}
+
+fn post_until_cancelled(
+    address: &Address,
+    body: &[u8],
+    content_type: &str,
+    credential: Option<(&str, &str)>,
+    headers: &[(&str, &str)],
+    options: RequestOptions,
+    cancel: &AtomicBool,
+) -> Result<Vec<u8>, TaskError> {
+    let method = Method::Post {
+        body,
+        content_type,
+        credential,
+        headers,
+    };
+    let cancelled = || cancel.load(Ordering::SeqCst);
+    let mut held = connect(address, &cancelled)?;
+    let mut tls = rustls::Stream::new(&mut held.connection, &mut held.socket);
+    write_request_head(&mut tls, &head(address, &method, 1), &cancelled)
+        .map_err(WriteFailure::task_error)?;
+    let body_deadline = Instant::now() + RESPONSE_TIMEOUT;
+    write_all_cancellable(&mut tls, body, body_deadline, &cancelled)
+        .and_then(|()| flush_cancellable(&mut tls, body_deadline, &cancelled))
+        .map_err(WriteFailure::task_error)?;
+
+    let mut response = Vec::new();
+    let mut buffer = [0_u8; 4096];
+    let mut last_progress = Instant::now();
+    let status = loop {
+        if cancel.load(Ordering::SeqCst) {
+            return Err(TaskError::TimedOut);
+        }
+        let mut parsed_headers = [httparse::EMPTY_HEADER; MAX_RESPONSE_HEADERS];
+        let mut parsed = httparse::Response::new(&mut parsed_headers);
+        match parsed.parse(&response) {
+            Ok(httparse::Status::Complete(end)) if end <= MAX_HEADER_BYTES => {
+                let status = parsed.code.ok_or(TaskError::Unreachable)?;
+                let delay = (status == 429).then(|| {
+                    header(parsed.headers, "retry-after")
+                        .and_then(|value| value.parse::<u32>().ok())
+                        .map(|seconds| seconds.min(MAX_RETRY_AFTER_SECONDS))
+                });
+                let complete =
+                    matches!(status, 204 | 205) || content_length(parsed.headers)? == Some(0);
+                break (status, delay, complete);
+            }
+            Ok(httparse::Status::Complete(_)) | Err(_) => return Err(TaskError::Unreachable),
+            Ok(httparse::Status::Partial) => {}
+        }
+        match tls.read(&mut buffer) {
+            Ok(0) => return Err(TaskError::Unreachable),
+            Ok(read) => {
+                response.extend_from_slice(&buffer[..read]);
+                last_progress = Instant::now();
+                if response.len() > MAX_HEADER_BYTES {
+                    return Err(TaskError::Unreachable);
+                }
+            }
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) =>
+            {
+                if last_progress.elapsed() >= RESPONSE_TIMEOUT {
+                    return Err(TaskError::TimedOut);
+                }
+            }
+            Err(_) => return Err(TaskError::Unreachable),
+        }
+    };
+
+    match status {
+        (200..=299, _, true) => return Ok(Vec::new()),
+        (200..=299, _, false) => {}
+        (401 | 403, _, _) => return Err(TaskError::Unauthorized),
+        (429, Some(delay), _) if options.report_rate_limit => {
+            return Ok(rate_limit_envelope(delay));
+        }
+        (301..=303 | 307 | 308 | 400..=599, _, _) => return Err(TaskError::NotFound),
+        _ => return Err(TaskError::Unreachable),
+    }
+
+    loop {
+        if cancel.load(Ordering::SeqCst) {
+            return Err(TaskError::TimedOut);
+        }
+        match tls.read(&mut buffer) {
+            // The authenticated 2xx already says the seek was accepted.
+            // Turning its normal end into a retryable transport failure could
+            // make the application submit the non-idempotent seek twice.
+            Ok(0) => return Ok(Vec::new()),
+            Ok(_) => last_progress = Instant::now(),
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) =>
+            {
+                if last_progress.elapsed() >= RESPONSE_TIMEOUT {
+                    return Err(TaskError::TimedOut);
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => {
+                return Ok(Vec::new());
+            }
+            Err(_) => return Err(TaskError::Unreachable),
+        }
     }
 }
 
@@ -669,8 +978,16 @@ fn head(address: &Address, method: &Method<'_>, max_bytes: u32) -> String {
     let encoding = match method {
         Method::Get {
             offset: Some(_), ..
+        }
+        | Method::Get {
+            streaming: true, ..
         } => "identity",
-        Method::Get { offset: None, .. } | Method::Post { .. } => "gzip",
+        Method::Get {
+            offset: None,
+            streaming: false,
+            ..
+        }
+        | Method::Post { .. } => "gzip",
     };
     // A POST hangs up after its answer; a GET does not. HTTP/1.1 is
     // persistent by default, so the difference is whether `close` is said at
@@ -688,6 +1005,7 @@ fn head(address: &Address, method: &Method<'_>, max_bytes: u32) -> String {
             offset,
             credential,
             headers,
+            ..
         } => {
             // Closed at both ends, because an open-ended range invites the
             // server to send the rest of a book that does not fit. Sent for
@@ -695,7 +1013,7 @@ fn head(address: &Address, method: &Method<'_>, max_bytes: u32) -> String {
             // 256 KB of a 738 KB novel without a range is answered with the
             // whole novel, and then rejected by the ceiling.
             if let Some(start) = offset {
-                let last = u64::from(*start) + u64::from(max_bytes) - 1;
+                let last = u64::from(*start) + u64::from(max_bytes.saturating_sub(1));
                 write!(head, "Range: bytes={start}-{last}\r\n")
                     .expect("writing to a String cannot fail");
             }
@@ -830,6 +1148,12 @@ fn tls_config() -> Result<Arc<rustls::ClientConfig>, TaskError> {
     let mut roots = rustls::RootCertStore {
         roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
     };
+    #[cfg(test)]
+    roots
+        .add(rustls::pki_types::CertificateDer::from(
+            include_bytes!("../tests/fixtures/localhost-ca.der").to_vec(),
+        ))
+        .map_err(|_| TaskError::Unreachable)?;
     {
         let owner = OWNER_ROOTS
             .lock()
@@ -928,7 +1252,91 @@ enum Failed {
     Real(TaskError),
 }
 
-fn request(address: &Address, method: &Method<'_>, max_bytes: u32) -> Result<Vec<u8>, TaskError> {
+#[derive(Clone, Copy)]
+enum WriteFailure {
+    Cancelled,
+    TimedOut,
+    Io,
+}
+
+impl WriteFailure {
+    fn task_error(self) -> TaskError {
+        match self {
+            Self::Cancelled | Self::TimedOut => TaskError::TimedOut,
+            Self::Io => TaskError::Unreachable,
+        }
+    }
+}
+
+fn write_all_cancellable(
+    writer: &mut impl Write,
+    mut bytes: &[u8],
+    deadline: Instant,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<(), WriteFailure> {
+    while !bytes.is_empty() {
+        if cancelled() {
+            return Err(WriteFailure::Cancelled);
+        }
+        if Instant::now() >= deadline {
+            return Err(WriteFailure::TimedOut);
+        }
+        match writer.write(bytes) {
+            Ok(0) => return Err(WriteFailure::Io),
+            Ok(written) => bytes = &bytes[written..],
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) => {}
+            Err(_) => return Err(WriteFailure::Io),
+        }
+    }
+    Ok(())
+}
+
+fn flush_cancellable(
+    writer: &mut impl Write,
+    deadline: Instant,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<(), WriteFailure> {
+    loop {
+        if cancelled() {
+            return Err(WriteFailure::Cancelled);
+        }
+        if Instant::now() >= deadline {
+            return Err(WriteFailure::TimedOut);
+        }
+        match writer.flush() {
+            Ok(()) => return Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) => {}
+            Err(_) => return Err(WriteFailure::Io),
+        }
+    }
+}
+
+fn write_request_head(
+    writer: &mut impl Write,
+    request: &str,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<(), WriteFailure> {
+    let deadline = Instant::now() + REQUEST_HEAD_TIMEOUT;
+    write_all_cancellable(writer, request.as_bytes(), deadline, cancelled)?;
+    flush_cancellable(writer, deadline, cancelled)
+}
+
+fn request(
+    address: &Address,
+    method: &Method<'_>,
+    max_bytes: u32,
+    cancel: &AtomicBool,
+) -> Result<Vec<u8>, TaskError> {
     // Only a GET is replayed. A POST that failed after leaving this machine
     // may have been acted on by the far end, and asking a model to answer
     // twice or a daemon to run a command twice is a worse failure than the one
@@ -936,7 +1344,7 @@ fn request(address: &Address, method: &Method<'_>, max_bytes: u32) -> Result<Vec
     let reusable = matches!(method, Method::Get { .. });
     if reusable {
         if let Some(mut held) = take_idle(address) {
-            match exchange(&mut held, address, method, max_bytes) {
+            match exchange(&mut held, address, method, max_bytes, cancel) {
                 Ok((response, again)) => {
                     if again {
                         keep_idle(address, held);
@@ -948,8 +1356,9 @@ fn request(address: &Address, method: &Method<'_>, max_bytes: u32) -> Result<Vec
             }
         }
     }
-    let mut held = connect(address)?;
-    match exchange(&mut held, address, method, max_bytes) {
+    let cancelled = || cancel.load(Ordering::SeqCst);
+    let mut held = connect(address, &cancelled)?;
+    match exchange(&mut held, address, method, max_bytes, cancel) {
         Ok((response, again)) => {
             if reusable && again {
                 keep_idle(address, held);
@@ -963,8 +1372,16 @@ fn request(address: &Address, method: &Method<'_>, max_bytes: u32) -> Result<Vec
     }
 }
 
-/// Opens a socket to `address` and completes a TLS handshake on it.
-fn connect(address: &Address) -> Result<Held, TaskError> {
+/// Opens a socket to `address`.
+///
+/// Name resolution runs in a fixed-size service because the standard resolver
+/// has no cancellation API. The application task polls its bounded reply and
+/// performs socket attempts in short intervals, so either phase can stop
+/// promptly without creating an unbounded number of resolver threads.
+fn connect(address: &Address, cancelled: &dyn Fn() -> bool) -> Result<Held, TaskError> {
+    if cancelled() {
+        return Err(TaskError::TimedOut);
+    }
     let config = tls_config()?;
     let name = address
         .host
@@ -981,20 +1398,217 @@ fn connect(address: &Address) -> Result<Held, TaskError> {
     // asked which kind of failure it was, because a name that will not resolve
     // and a socket that will not open are the same event on a reader whose
     // radio is off, and different events on one that is on a network.
-    let mut addresses = (address.host.as_str(), address.port)
-        .to_socket_addrs()
-        .map_err(|_| could_not_connect())?;
-    let socket = addresses
-        .find_map(|address| TcpStream::connect_timeout(&address, CONNECT_TIMEOUT).ok())
-        .ok_or_else(could_not_connect)?;
+    let socket = connect_socket(address, cancelled)?;
+    if cancelled() {
+        return Err(TaskError::TimedOut);
+    }
     socket
-        .set_read_timeout(Some(RESPONSE_TIMEOUT))
-        .and_then(|()| socket.set_write_timeout(Some(RESPONSE_TIMEOUT)))
+        .set_read_timeout(Some(IO_POLL))
+        .and_then(|()| socket.set_write_timeout(Some(IO_POLL)))
         .map_err(|_| TaskError::Unreachable)?;
     // Nagle's algorithm holds a small write back waiting for company. A
     // request head is exactly that write, and there is no company coming.
     let _ = socket.set_nodelay(true);
     Ok(Held { connection, socket })
+}
+
+fn connect_socket(address: &Address, cancelled: &dyn Fn() -> bool) -> Result<TcpStream, TaskError> {
+    let deadline = Instant::now() + CONNECT_TIMEOUT;
+    let addresses = resolve_addresses(resolver_service()?, address, deadline, cancelled)?;
+    connect_resolved(&addresses, deadline, cancelled)
+}
+
+type Resolver = dyn Fn(&str, u16) -> Result<Vec<SocketAddr>, ()> + Send + Sync;
+
+struct ResolveJob {
+    host: String,
+    port: u16,
+    deadline: Instant,
+    stop: Arc<AtomicBool>,
+    reply: SyncSender<Result<Vec<SocketAddr>, ()>>,
+}
+
+struct ResolverService {
+    sender: SyncSender<ResolveJob>,
+    live_workers: Arc<AtomicUsize>,
+}
+
+impl ResolverService {
+    fn system() -> Option<Self> {
+        let resolver: Arc<Resolver> = Arc::new(|host, port| {
+            (host, port)
+                .to_socket_addrs()
+                .map_err(|_| ())
+                .map(|addresses| addresses.take(MAX_RESOLVED_ADDRESSES).collect())
+        });
+        Self::with_resolver(&resolver, RESOLVER_WORKERS, RESOLVER_QUEUE)
+    }
+
+    fn with_resolver(resolver: &Arc<Resolver>, workers: usize, queue: usize) -> Option<Self> {
+        if workers == 0 || queue == 0 {
+            return None;
+        }
+        let (sender, receiver) = sync_channel::<ResolveJob>(queue);
+        let receiver = Arc::new(Mutex::new(receiver));
+        let live_workers = Arc::new(AtomicUsize::new(0));
+        for index in 0..workers {
+            let receiver = Arc::clone(&receiver);
+            let resolver = Arc::clone(resolver);
+            let live = Arc::clone(&live_workers);
+            live_workers.fetch_add(1, Ordering::SeqCst);
+            if thread::Builder::new()
+                .name(format!("kobo-resolver-{index}"))
+                .spawn(move || resolver_worker(&receiver, &resolver, &live))
+                .is_err()
+            {
+                live_workers.fetch_sub(1, Ordering::SeqCst);
+                return None;
+            }
+        }
+        Some(Self {
+            sender,
+            live_workers,
+        })
+    }
+}
+
+struct ResolverWorkerGuard {
+    live: Arc<AtomicUsize>,
+}
+
+impl ResolverWorkerGuard {
+    fn new(live: &Arc<AtomicUsize>) -> Self {
+        Self {
+            live: Arc::clone(live),
+        }
+    }
+}
+
+impl Drop for ResolverWorkerGuard {
+    fn drop(&mut self) {
+        self.live.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+fn resolver_worker(
+    receiver: &Mutex<Receiver<ResolveJob>>,
+    resolver: &Arc<Resolver>,
+    live: &Arc<AtomicUsize>,
+) {
+    let _worker = ResolverWorkerGuard::new(live);
+    loop {
+        let job = {
+            let Ok(receiver) = receiver.lock() else {
+                return;
+            };
+            let Ok(job) = receiver.recv() else {
+                return;
+            };
+            job
+        };
+        if job.stop.load(Ordering::SeqCst) || Instant::now() >= job.deadline {
+            let _ = job.reply.send(Err(()));
+            continue;
+        }
+        let result = resolver(&job.host, job.port).map(|mut addresses| {
+            addresses.truncate(MAX_RESOLVED_ADDRESSES);
+            addresses
+        });
+        let result = if job.stop.load(Ordering::SeqCst) || Instant::now() >= job.deadline {
+            Err(())
+        } else {
+            result
+        };
+        let _ = job.reply.send(result);
+    }
+}
+
+static RESOLVER_SERVICE: OnceLock<Option<ResolverService>> = OnceLock::new();
+
+fn resolver_service() -> Result<&'static ResolverService, TaskError> {
+    RESOLVER_SERVICE
+        .get_or_init(ResolverService::system)
+        .as_ref()
+        .ok_or(TaskError::Unreachable)
+}
+
+fn resolve_addresses(
+    service: &ResolverService,
+    address: &Address,
+    deadline: Instant,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<Vec<SocketAddr>, TaskError> {
+    if service.live_workers.load(Ordering::SeqCst) == 0 {
+        return Err(TaskError::Unreachable);
+    }
+    let stop = Arc::new(AtomicBool::new(false));
+    let (reply, result) = sync_channel(1);
+    let job = ResolveJob {
+        host: address.host.clone(),
+        port: address.port,
+        deadline,
+        stop: Arc::clone(&stop),
+        reply,
+    };
+    match service.sender.try_send(job) {
+        Ok(()) => {}
+        Err(TrySendError::Full(_) | TrySendError::Disconnected(_)) => {
+            return Err(TaskError::Unreachable);
+        }
+    }
+    loop {
+        if cancelled() {
+            stop.store(true, Ordering::SeqCst);
+            return Err(TaskError::TimedOut);
+        }
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            stop.store(true, Ordering::SeqCst);
+            return Err(could_not_connect());
+        }
+        match result.recv_timeout(remaining.min(IO_POLL)) {
+            Ok(Ok(addresses)) if !addresses.is_empty() => return Ok(addresses),
+            Ok(Ok(_) | Err(())) | Err(RecvTimeoutError::Disconnected) => {
+                return Err(could_not_connect());
+            }
+            Err(RecvTimeoutError::Timeout) => {}
+        }
+    }
+}
+
+fn connect_resolved(
+    addresses: &[SocketAddr],
+    deadline: Instant,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<TcpStream, TaskError> {
+    while Instant::now() < deadline {
+        let mut timed_out = false;
+        for address in addresses {
+            if cancelled() {
+                return Err(TaskError::TimedOut);
+            }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(could_not_connect());
+            }
+            match TcpStream::connect_timeout(address, remaining.min(CONNECT_ATTEMPT)) {
+                Ok(socket) => return Ok(socket),
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
+                    ) =>
+                {
+                    timed_out = true;
+                }
+                Err(_) => {}
+            }
+        }
+        if !timed_out {
+            return Err(could_not_connect());
+        }
+    }
+    Err(could_not_connect())
 }
 
 /// Sends one request on `held` and reads exactly one response back.
@@ -1005,24 +1619,45 @@ fn exchange(
     address: &Address,
     method: &Method<'_>,
     max_bytes: u32,
+    cancel: &AtomicBool,
 ) -> Result<(Vec<u8>, bool), Failed> {
     let mut tls = rustls::Stream::new(&mut held.connection, &mut held.socket);
+    let cancelled = || cancel.load(Ordering::SeqCst);
     // A write failure here is the ordinary way a pooled connection reports
     // that the far end closed it while it was idle, so it is not fatal on its
     // own; the caller decides, knowing whether this socket was reused.
-    tls.write_all(head(address, method, max_bytes).as_bytes())
-        .map_err(|_| Failed::Stale)?;
+    write_request_head(&mut tls, &head(address, method, max_bytes), &cancelled).map_err(
+        |error| match error {
+            WriteFailure::Io => Failed::Stale,
+            WriteFailure::Cancelled | WriteFailure::TimedOut => Failed::Real(TaskError::TimedOut),
+        },
+    )?;
     if let Method::Post { body, .. } = method {
-        tls.write_all(body).map_err(|_| Failed::Stale)?;
+        let body_deadline = Instant::now() + RESPONSE_TIMEOUT;
+        write_all_cancellable(&mut tls, body, body_deadline, &cancelled).map_err(|error| {
+            match error {
+                WriteFailure::Io => Failed::Stale,
+                WriteFailure::Cancelled | WriteFailure::TimedOut => {
+                    Failed::Real(TaskError::TimedOut)
+                }
+            }
+        })?;
+        flush_cancellable(&mut tls, body_deadline, &cancelled).map_err(|error| match error {
+            WriteFailure::Io => Failed::Stale,
+            WriteFailure::Cancelled | WriteFailure::TimedOut => Failed::Real(TaskError::TimedOut),
+        })?;
     }
-    tls.flush().map_err(|_| Failed::Stale)?;
 
     // The ceiling is applied to the whole response as it arrives, so a server
     // that never stops sending cannot fill memory before the body is examined.
     let ceiling = (max_bytes as usize).saturating_add(MAX_HEADER_BYTES);
     let mut response = Vec::new();
     let mut buffer = [0_u8; 8192];
+    let mut last_progress = Instant::now();
     loop {
+        if cancel.load(Ordering::SeqCst) {
+            return Err(Failed::Real(TaskError::TimedOut));
+        }
         // Asked before each read rather than after, so a response that is
         // already complete never waits on a socket that has nothing more to
         // send. Reading to the end of the socket is what made every request
@@ -1049,12 +1684,20 @@ fn exchange(
             }
             Ok(read) => {
                 response.extend_from_slice(&buffer[..read]);
+                last_progress = Instant::now();
                 if response.len() > ceiling {
                     return Err(Failed::Real(TaskError::TooLarge));
                 }
             }
-            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                return Err(Failed::Real(TaskError::TimedOut))
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) =>
+            {
+                if last_progress.elapsed() >= RESPONSE_TIMEOUT {
+                    return Err(Failed::Real(TaskError::TimedOut));
+                }
             }
             Err(_) if response.is_empty() => return Err(Failed::Stale),
             Err(_) => return Ok((response, false)),
@@ -1160,6 +1803,142 @@ mod tests {
     /// A ceiling for tests that are about framing rather than size. Large
     /// enough that nothing in this module ever reaches it.
     const CEILING: u32 = 64 * 1024;
+
+    #[test]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one fixture covers worker, queue, cancellation, cleanup, and service shutdown bounds"
+    )]
+    fn repeated_cancelled_resolutions_stay_within_the_worker_and_queue_bounds() {
+        use std::net::SocketAddr;
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+        use std::sync::{Arc, Condvar, Mutex};
+        use std::time::{Duration, Instant};
+
+        const WORKERS: usize = 2;
+        const QUEUE: usize = 4;
+        const CALLERS: usize = 20;
+
+        let release = Arc::new((Mutex::new(false), Condvar::new()));
+        let active = Arc::new(AtomicUsize::new(0));
+        let maximum = Arc::new(AtomicUsize::new(0));
+        let calls = Arc::new(AtomicUsize::new(0));
+        let resolver: Arc<super::Resolver> = {
+            let release = Arc::clone(&release);
+            let active = Arc::clone(&active);
+            let maximum = Arc::clone(&maximum);
+            let calls = Arc::clone(&calls);
+            Arc::new(move |_: &str, _: u16| {
+                calls.fetch_add(1, Ordering::SeqCst);
+                let now = active.fetch_add(1, Ordering::SeqCst) + 1;
+                maximum.fetch_max(now, Ordering::SeqCst);
+                let (lock, ready) = &*release;
+                let mut released = lock.lock().expect("release lock");
+                while !*released {
+                    released = ready.wait(released).expect("release wait");
+                }
+                active.fetch_sub(1, Ordering::SeqCst);
+                Ok(vec![SocketAddr::from(([127, 0, 0, 1], 443))])
+            })
+        };
+        let service = Arc::new(
+            super::ResolverService::with_resolver(&resolver, WORKERS, QUEUE)
+                .expect("resolver service"),
+        );
+        let live = Arc::clone(&service.live_workers);
+        let live_deadline = Instant::now() + Duration::from_secs(2);
+        while live.load(Ordering::SeqCst) != WORKERS && Instant::now() < live_deadline {
+            std::thread::yield_now();
+        }
+        assert_eq!(live.load(Ordering::SeqCst), WORKERS);
+
+        let mut cancellations = Vec::new();
+        let mut callers = Vec::new();
+        for index in 0..CALLERS {
+            let service = Arc::clone(&service);
+            let cancel = Arc::new(AtomicBool::new(false));
+            cancellations.push(Arc::clone(&cancel));
+            callers.push(std::thread::spawn(move || {
+                let address =
+                    super::parse(&format!("https://blocked-{index}.invalid/")).expect("URL");
+                super::resolve_addresses(
+                    &service,
+                    &address,
+                    Instant::now() + super::CONNECT_TIMEOUT,
+                    &|| cancel.load(Ordering::SeqCst),
+                )
+            }));
+        }
+
+        let active_deadline = Instant::now() + Duration::from_secs(2);
+        while active.load(Ordering::SeqCst) != WORKERS && Instant::now() < active_deadline {
+            std::thread::yield_now();
+        }
+        assert_eq!(active.load(Ordering::SeqCst), WORKERS);
+        assert_eq!(maximum.load(Ordering::SeqCst), WORKERS);
+        assert_eq!(live.load(Ordering::SeqCst), WORKERS);
+
+        let cancelled_at = Instant::now();
+        for cancel in cancellations {
+            cancel.store(true, Ordering::SeqCst);
+        }
+        let results = callers
+            .into_iter()
+            .map(|caller| caller.join().expect("resolver caller"))
+            .collect::<Vec<_>>();
+        assert!(cancelled_at.elapsed() < Duration::from_secs(1));
+        let waiting = results
+            .iter()
+            .filter(|result| matches!(result, Err(TaskError::TimedOut)))
+            .count();
+        assert!((WORKERS..=WORKERS + QUEUE).contains(&waiting));
+        assert!(results.iter().all(|result| matches!(
+            result,
+            Err(TaskError::TimedOut | TaskError::Unreachable | TaskError::Offline)
+        )));
+        assert_eq!(maximum.load(Ordering::SeqCst), WORKERS);
+        assert_eq!(live.load(Ordering::SeqCst), WORKERS);
+
+        {
+            let (lock, ready) = &*release;
+            *lock.lock().expect("release lock") = true;
+            ready.notify_all();
+        }
+        let cleanup_deadline = Instant::now() + Duration::from_secs(2);
+        while active.load(Ordering::SeqCst) != 0 && Instant::now() < cleanup_deadline {
+            std::thread::yield_now();
+        }
+        assert_eq!(active.load(Ordering::SeqCst), 0);
+
+        let probe = super::parse("https://probe.invalid/").expect("probe URL");
+        let probe_deadline = Instant::now() + Duration::from_secs(2);
+        let probe_addresses = loop {
+            match super::resolve_addresses(&service, &probe, probe_deadline, &|| false) {
+                Ok(addresses) => break addresses,
+                Err(TaskError::Unreachable) if Instant::now() < probe_deadline => {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                other => panic!("resolver queue did not recover: {other:?}"),
+            }
+        };
+        assert_eq!(
+            probe_addresses,
+            vec![SocketAddr::from(([127, 0, 0, 1], 443))]
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), WORKERS + 1);
+        assert_eq!(maximum.load(Ordering::SeqCst), WORKERS);
+
+        drop(service);
+        let shutdown_deadline = Instant::now() + Duration::from_secs(2);
+        while live.load(Ordering::SeqCst) != 0 && Instant::now() < shutdown_deadline {
+            std::thread::yield_now();
+        }
+        assert_eq!(
+            live.load(Ordering::SeqCst),
+            0,
+            "resolver workers survived service shutdown"
+        );
+    }
 
     #[test]
     fn runtime_credentials_are_refused_on_any_redirect() {
@@ -1396,7 +2175,8 @@ mod tests {
             &Method::Get {
                 offset: None,
                 credential: None,
-                headers: &[]
+                headers: &[],
+                streaming: false,
             },
             1024
         )
@@ -1406,7 +2186,8 @@ mod tests {
             &Method::Get {
                 offset: Some(1024),
                 credential: None,
-                headers: &[]
+                headers: &[],
+                streaming: false,
             },
             1024
         )
@@ -1452,6 +2233,7 @@ mod tests {
                 offset: Some(0),
                 credential: None,
                 headers: &[],
+                streaming: false,
             },
             262_144,
         );
@@ -1469,6 +2251,7 @@ mod tests {
                 offset: Some(262_144),
                 credential: None,
                 headers: &[],
+                streaming: false,
             },
             262_144,
         );
@@ -1488,6 +2271,7 @@ mod tests {
                 offset: None,
                 credential: None,
                 headers: &[],
+                streaming: false,
             },
             262_144,
         );
@@ -1590,6 +2374,7 @@ mod tests {
                 offset: None,
                 credential: None,
                 headers: &[],
+                streaming: false,
             },
             1024,
         );
@@ -1609,6 +2394,28 @@ mod tests {
     fn a_server_refusal_is_reported_as_such() {
         let response = b"HTTP/1.1 404 Not Found\r\n\r\nmissing";
         assert_eq!(split_response(response, CEILING), Err(TaskError::NotFound));
+    }
+
+    #[test]
+    fn rate_limit_metadata_is_bounded_and_contains_no_server_body() {
+        let response =
+            b"HTTP/1.1 429 Too Many Requests\r\nRetry-After: 17\r\nContent-Length: 18\r\n\r\nprivate request id";
+        assert_eq!(
+            super::rate_limit(response),
+            Ok(super::RateLimit::Limited(Some(17)))
+        );
+        assert_eq!(
+            String::from_utf8(super::rate_limit_envelope(Some(17))).expect("envelope"),
+            "COBALT-HTTP/1 429\nRetry-After: 17\n\n"
+        );
+        let huge =
+            b"HTTP/1.1 429 Too Many Requests\r\nRetry-After: 999999\r\nContent-Length: 0\r\n\r\n";
+        assert_eq!(
+            super::rate_limit(huge),
+            Ok(super::RateLimit::Limited(Some(
+                super::MAX_RETRY_AFTER_SECONDS
+            )))
+        );
     }
 
     #[test]
@@ -1731,6 +2538,7 @@ mod tests {
                 offset: None,
                 credential: None,
                 headers: &[],
+                streaming: false,
             },
             512 * 1024,
         );
@@ -1764,6 +2572,7 @@ mod tests {
                 offset: Some(262_144),
                 credential: None,
                 headers: &[],
+                streaming: false,
             },
             262_144,
         );
@@ -1967,6 +2776,7 @@ mod tests {
                 offset: None,
                 credential: Some(("x-api-key", "not-a-real-key")),
                 headers: &[("anthropic-version", "2023-06-01")],
+                streaming: false,
             },
             1024,
         );
