@@ -71,12 +71,16 @@ impl Backend {
             Self::Hwtcon => match intent {
                 RefreshIntent::FastFeedback => hwtcon::WAVEFORM_DU,
                 RefreshIntent::TextContent => hwtcon::WAVEFORM_GL16,
-                RefreshIntent::QualityContent => hwtcon::WAVEFORM_GC16,
+                RefreshIntent::QualityContent | RefreshIntent::ColourContent => {
+                    hwtcon::WAVEFORM_GC16
+                }
             },
             Self::Mxcfb => match intent {
                 RefreshIntent::FastFeedback => mxcfb::WAVEFORM_DU,
                 RefreshIntent::TextContent => mxcfb::WAVEFORM_GL16,
-                RefreshIntent::QualityContent => mxcfb::WAVEFORM_GC16,
+                RefreshIntent::QualityContent | RefreshIntent::ColourContent => {
+                    mxcfb::WAVEFORM_GC16
+                }
             },
         }
     }
@@ -136,6 +140,51 @@ pub enum RefreshIntent {
     TextContent,
     /// A complete replacement that also clears accumulated ghosting.
     QualityContent,
+    /// A change whose pixels carry colour, on a panel that can show it.
+    ///
+    /// The framebuffer holds red, green and blue separately for this region
+    /// and the controller is asked to drive the colour filter from them. It
+    /// runs the same sixteen-level waveform as [`Self::QualityContent`]: the
+    /// controller's colour-specific waveforms are not present in every
+    /// firmware's waveform table, and a missing one fails after the ioctl has
+    /// returned success. On a greyscale panel or an i.MX6 backend this is a
+    /// quality update and nothing more; the session downgrades it before it
+    /// gets here.
+    ColourContent,
+}
+
+impl RefreshIntent {
+    /// Whether the update writes anything other than equal red, green and
+    /// blue, and so needs a panel that can tell them apart.
+    #[must_use]
+    pub const fn needs_colour_panel(self) -> bool {
+        matches!(self, Self::ColourContent)
+    }
+
+    /// The intent to submit when the panel cannot show colour.
+    #[must_use]
+    pub const fn without_colour(self) -> Self {
+        match self {
+            Self::ColourContent => Self::QualityContent,
+            other => other,
+        }
+    }
+
+    /// The update flags an hwtcon controller needs for this intent.
+    ///
+    /// Greyscale updates keep sending zero, exactly what every validated
+    /// device has been receiving: the driver's global colour setting decides
+    /// and equal channels look the same either way. A colour update names
+    /// the standard colour processing mode explicitly so that it does not
+    /// depend on what the previous owner of the panel left configured.
+    /// Dithering stays off on both; the surface already quantised.
+    #[must_use]
+    pub const fn hwtcon_flags(self) -> u32 {
+        match self {
+            Self::ColourContent => hwtcon::FLAG_COLOUR_FILTER_STANDARD,
+            Self::FastFeedback | Self::TextContent | Self::QualityContent => 0,
+        }
+    }
 }
 
 /// A clipped region and what is to be done to it.
@@ -189,7 +238,7 @@ impl RefreshPlan {
                 hwtcon::UPDATE_MODE_PARTIAL
             },
             update_marker: marker,
-            flags: 0,
+            flags: self.intent.hwtcon_flags(),
             dither_mode: 0,
         }
     }
@@ -347,6 +396,44 @@ mod tests {
         assert_eq!(update.dither_mode, 0);
         assert_eq!(update.quant_bit, 0);
         assert_eq!(update.alt_buffer_data, mxcfb::MxcfbAltBufferData::default());
+    }
+
+    #[test]
+    fn only_a_colour_update_sets_hwtcon_flags() {
+        let region = Rect {
+            x: 0,
+            y: 0,
+            width: 64,
+            height: 64,
+        };
+        for intent in [
+            RefreshIntent::FastFeedback,
+            RefreshIntent::TextContent,
+            RefreshIntent::QualityContent,
+        ] {
+            let plan = RefreshPlan::new(region, intent, false, 1072, 1448).expect("on screen");
+            assert_eq!(plan.hwtcon_update_data(1).flags, 0, "{intent:?}");
+            assert!(!intent.needs_colour_panel());
+            assert_eq!(intent.without_colour(), intent);
+        }
+
+        let colour = RefreshPlan::new(region, RefreshIntent::ColourContent, false, 1072, 1448)
+            .expect("on screen");
+        let update = colour.hwtcon_update_data(1);
+        assert_eq!(update.flags, hwtcon::FLAG_COLOUR_FILTER_STANDARD);
+        assert_eq!(update.flags & hwtcon::FLAG_COLOUR_FILTER_MASK, update.flags);
+        assert_eq!(update.flags & hwtcon::FLAG_MONOCHROME_ONLY, 0);
+        assert_eq!(update.dither_mode, 0);
+        // The same sixteen-level waveform as a quality update on both
+        // backends: colour is carried by the flags and the pixels, not by a
+        // waveform the firmware may not have.
+        assert_eq!(update.waveform_mode, hwtcon::WAVEFORM_GC16);
+        assert_eq!(colour.waveform(Backend::Mxcfb), mxcfb::WAVEFORM_GC16);
+        assert!(RefreshIntent::ColourContent.needs_colour_panel());
+        assert_eq!(
+            RefreshIntent::ColourContent.without_colour(),
+            RefreshIntent::QualityContent
+        );
     }
 
     #[test]

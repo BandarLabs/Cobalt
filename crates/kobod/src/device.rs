@@ -1965,8 +1965,12 @@ fn host_applications(
                             handle,
                             width,
                             height,
-                            grey,
-                        } => match apps[index].pictures.put_report(handle, width, height, grey) {
+                            format,
+                            pixels,
+                        } => match apps[index]
+                            .pictures
+                            .put_report_with(handle, width, height, format, pixels)
+                        {
                             None => trace(&format!("picture {} refused", handle.0)),
                             Some(evicted) => trace_picture_evictions(handle, &evicted),
                         },
@@ -1974,20 +1978,24 @@ fn host_applications(
                             handle,
                             width,
                             height,
+                            format,
                         } => {
-                            if !apps[index].pictures.begin_upload(handle, width, height) {
+                            if !apps[index]
+                                .pictures
+                                .begin_upload_with(handle, width, height, format)
+                            {
                                 trace(&format!("picture {} upload refused", handle.0));
                             }
                         }
                         Message::PictureChunk {
                             handle,
                             offset,
-                            grey,
+                            pixels,
                         } => {
                             if !apps[index].pictures.upload_chunk(
                                 handle,
                                 usize::try_from(offset).unwrap_or(usize::MAX),
-                                &grey,
+                                &pixels,
                             ) {
                                 trace(&format!("picture {} chunk refused", handle.0));
                             }
@@ -3854,10 +3862,20 @@ impl Painter {
             width: u32::try_from(update.region.width).unwrap_or(0),
             height: u32::try_from(update.region.height).unwrap_or(0),
         };
+        // A region is written in colour only where the panel can show it.
+        // Everywhere else it is the quality update it would have been before
+        // colour existed, drawn from the grey plane, which is what the session
+        // would downgrade it to anyway.
+        let colour = update
+            .waveform
+            .writes_colour()
+            .then(|| display.colour())
+            .flatten();
         let intent = match update.waveform {
             PanelWaveform::Du => RefreshIntent::FastFeedback,
             PanelWaveform::Gl16 => RefreshIntent::TextContent,
-            PanelWaveform::Gc16 => RefreshIntent::QualityContent,
+            PanelWaveform::Colour if colour.is_some() => RefreshIntent::ColourContent,
+            PanelWaveform::Gc16 | PanelWaveform::Colour => RefreshIntent::QualityContent,
         };
 
         let started = Instant::now();
@@ -3865,8 +3883,13 @@ impl Painter {
         // path runs at a few megabytes per second on the i.MX6's uncached
         // framebuffer, so writing the whole screen for every frame cost about
         // 1.6 seconds per tap regardless of how small the change was.
-        let region_gray = {
-            let out_of_surface = || "the transition region is not inside the surface".to_owned();
+        let out_of_surface = || "the transition region is not inside the surface".to_owned();
+        let frame = if let Some(order) = colour {
+            let rows = surface
+                .colour_rows(update.region)
+                .ok_or_else(out_of_surface)?;
+            RegionSnapshot::from_rgb_rows(display.geometry(), region, rows, order)
+        } else {
             let x = usize::try_from(update.region.x).map_err(|_| out_of_surface())?;
             let y = usize::try_from(update.region.y).map_err(|_| out_of_surface())?;
             let width = usize::try_from(update.region.width).map_err(|_| out_of_surface())?;
@@ -3877,10 +3900,9 @@ impl Painter {
                 let end = start + width;
                 gray.extend_from_slice(surface.pixels.get(start..end).ok_or_else(out_of_surface)?);
             }
-            gray
-        };
-        let frame = RegionSnapshot::from_grayscale(display.geometry(), region, &region_gray)
-            .map_err(|error| format!("prepare the frame: {error}"))?;
+            RegionSnapshot::from_grayscale(display.geometry(), region, &gray)
+        }
+        .map_err(|error| format!("prepare the frame: {error}"))?;
         let converted = started.elapsed();
         let fence = display
             .restore_timed(&frame)
@@ -3889,7 +3911,7 @@ impl Painter {
         let plan = RefreshPlan::new(
             region,
             intent,
-            update.waveform == PanelWaveform::Gc16,
+            matches!(update.waveform, PanelWaveform::Gc16 | PanelWaveform::Colour),
             whole_screen.width,
             whole_screen.height,
         )

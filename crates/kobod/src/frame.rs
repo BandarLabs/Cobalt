@@ -18,6 +18,14 @@ pub enum PanelWaveform {
     Gl16,
     /// Full sixteen-level refresh that clears accumulated residue.
     Gc16,
+    /// A region whose pixels carry colour, on a panel that can show it.
+    ///
+    /// Runs the same sixteen-level waveform as [`Self::Gc16`]. The
+    /// controller's colour-specific waveforms are not present in every
+    /// firmware's waveform table, and a missing one fails after the ioctl has
+    /// returned success, so the difference is carried in the update flags
+    /// instead. A greyscale panel downgrades this to a quality update.
+    Colour,
 }
 
 impl PanelWaveform {
@@ -27,7 +35,15 @@ impl PanelWaveform {
             Self::Du => "DU",
             Self::Gl16 => "GL16",
             Self::Gc16 => "GC16",
+            Self::Colour => "COLOUR",
         }
+    }
+
+    /// Whether the runtime should write the region's colour plane rather than
+    /// its grey one.
+    #[must_use]
+    pub const fn writes_colour(self) -> bool {
+        matches!(self, Self::Colour)
     }
 }
 
@@ -114,7 +130,7 @@ impl FramePlanner {
             return None;
         }
         let whole = self.whole()?;
-        let (regions, dirty) = if self.started {
+        let (regions, dirty, cleaning) = if self.started {
             let (changed, flipped) = self.changed_regions(surface)?;
             // The budget is checked before this update is added to it, so that
             // a full panel's worth of repainting still buys exactly
@@ -124,9 +140,10 @@ impl FramePlanner {
                 (
                     vec![FrameRegion {
                         region: whole,
-                        waveform: PanelWaveform::Gc16,
+                        waveform: Self::clean_waveform(surface),
                     }],
                     0,
+                    true,
                 )
             } else {
                 (
@@ -134,7 +151,9 @@ impl FramePlanner {
                         .into_iter()
                         .map(|region| FrameRegion {
                             region,
-                            waveform: if self.two_level_transition(surface, region) {
+                            waveform: if surface.region_has_colour(region) {
+                                PanelWaveform::Colour
+                            } else if self.two_level_transition(surface, region) {
                                 PanelWaveform::Du
                             } else {
                                 PanelWaveform::Gl16
@@ -142,18 +161,20 @@ impl FramePlanner {
                         })
                         .collect(),
                     self.dirty.saturating_add(flipped),
+                    false,
                 )
             }
         } else {
             (
                 vec![FrameRegion {
                     region: whole,
-                    waveform: PanelWaveform::Gc16,
+                    waveform: Self::clean_waveform(surface),
                 }],
                 0,
+                true,
             )
         };
-        self.transition(regions, dirty, false)
+        self.transition(regions, dirty, false, cleaning)
     }
 
     /// Plans an update for a region whose pixels and waveform are already
@@ -178,10 +199,11 @@ impl FramePlanner {
             return self.transition(
                 vec![FrameRegion {
                     region: whole,
-                    waveform: PanelWaveform::Gc16,
+                    waveform: Self::clean_waveform(surface),
                 }],
                 0,
                 false,
+                true,
             );
         }
         let region = Self::align_to_panel(damage.intersection(whole)?, whole);
@@ -202,7 +224,20 @@ impl FramePlanner {
             vec![FrameRegion { region, waveform }],
             self.dirty.saturating_add(area),
             true,
+            false,
         )
+    }
+
+    /// The waveform for a refresh that repaints the whole panel.
+    ///
+    /// A whole panel carrying a colour picture has to be repainted in colour
+    /// or the picture comes back grey.
+    fn clean_waveform(surface: &Surface) -> PanelWaveform {
+        if surface.has_colour() {
+            PanelWaveform::Colour
+        } else {
+            PanelWaveform::Gc16
+        }
     }
 
     /// Records a successfully applied transition.
@@ -257,11 +292,17 @@ impl FramePlanner {
         })
     }
 
+    // `cleaning` is passed rather than read back off the waveform: a colour
+    // region is planned both for a whole-panel cleaning refresh and for a
+    // partial one, so the waveform alone no longer says which this is, and
+    // sending UPDATE_MODE_FULL for a partial region would flash the panel on
+    // every colour change.
     fn transition(
         &self,
         regions: Vec<FrameRegion>,
         dirty: u64,
         exact_damage: bool,
+        cleaning: bool,
     ) -> Option<FrameTransition> {
         let region = Self::bounding_region(&regions)?;
         let waveform = regions
@@ -271,11 +312,12 @@ impl FramePlanner {
                 PanelWaveform::Du => 0,
                 PanelWaveform::Gl16 => 1,
                 PanelWaveform::Gc16 => 2,
+                PanelWaveform::Colour => 3,
             })?;
         Some(FrameTransition {
             region,
             waveform,
-            full: waveform == PanelWaveform::Gc16,
+            full: cleaning,
             regions,
             refresh: self.refreshes.saturating_add(1),
             dirty,
@@ -589,6 +631,75 @@ mod tests {
         assert!(first.full);
         assert!(planner.commit(&frame, &first));
         (planner, frame)
+    }
+
+    // kobo-ui keeps a parallel planner that nothing drives any more, and the
+    // colour tests live over there. This is the planner the runtime actually
+    // calls, so colour has to be proved here or it is proved nowhere.
+    #[test]
+    fn a_colour_region_is_planned_in_colour_and_stays_partial() {
+        let (mut planner, mut frame) = started(8, 4);
+        frame.blend_colour(3, 2, [200, 20, 20], 255);
+
+        let colour = planner.plan(&frame).expect("colour changed");
+        assert_eq!(colour.regions[0].waveform, PanelWaveform::Colour);
+        assert!(
+            !colour.full,
+            "a partial colour update must not flash the whole panel"
+        );
+        assert!(planner.commit(&frame, &colour));
+    }
+
+    // The reason the grey path is worth a test of its own: a Clara BW has no
+    // colour plane, and nothing about it should have moved.
+    #[test]
+    fn a_grey_frame_is_planned_exactly_as_it_was_before_colour() {
+        let (planner, mut frame) = started(32, 32);
+        for x in 4..12 {
+            frame.pixels[8 * 32 + x] = 128;
+        }
+
+        let grey = planner.plan(&frame).expect("grey changed");
+        assert!(frame.chroma.is_none(), "a grey frame has no colour plane");
+        assert_eq!(grey.regions[0].waveform, PanelWaveform::Gl16);
+        assert!(
+            grey.regions
+                .iter()
+                .all(|update| update.waveform != PanelWaveform::Colour),
+            "a frame without colour must never plan a colour update"
+        );
+    }
+
+    // A cleaning refresh repaints the whole panel, and a panel carrying a
+    // colour picture has to be repainted in colour or the picture comes back
+    // grey.
+    #[test]
+    fn a_cleaning_refresh_over_colour_is_planned_in_colour() {
+        let (mut planner, mut frame) = started(8, 4);
+        let mut cleaning = None;
+        for step in 0..64 {
+            // Both shades are chromatic: a grey triple would leave the frame
+            // with no colour at all and prove nothing about the clean.
+            let shade = if step % 2 == 0 {
+                [200, 20, 20]
+            } else {
+                [20, 200, 20]
+            };
+            for y in 0..4 {
+                for x in 0..8 {
+                    frame.blend_colour(x, y, shade, 255);
+                }
+            }
+            let update = planner.plan(&frame).expect("the panel changed");
+            let full = update.full;
+            assert!(planner.commit(&frame, &update));
+            if full {
+                cleaning = Some(update);
+                break;
+            }
+        }
+        let cleaning = cleaning.expect("the planner owed the panel a cleaning refresh");
+        assert_eq!(cleaning.regions[0].waveform, PanelWaveform::Colour);
     }
 
     #[test]

@@ -807,8 +807,9 @@ fn serve_application(
                 handle,
                 width,
                 height,
-                grey,
-            } => match pictures.put_report(handle, width, height, grey) {
+                format,
+                pixels,
+            } => match pictures.put_report_with(handle, width, height, format, pixels) {
                 None => println!("picture {} refused", handle.0),
                 Some(evicted) if !evicted.is_empty() => {
                     println!("picture {} evicted {evicted:?}", handle.0);
@@ -819,20 +820,21 @@ fn serve_application(
                 handle,
                 width,
                 height,
+                format,
             } => {
-                if !pictures.begin_upload(handle, width, height) {
+                if !pictures.begin_upload_with(handle, width, height, format) {
                     println!("picture {} upload refused", handle.0);
                 }
             }
             Message::PictureChunk {
                 handle,
                 offset,
-                grey,
+                pixels,
             } => {
                 if !pictures.upload_chunk(
                     handle,
                     usize::try_from(offset).unwrap_or(usize::MAX),
-                    &grey,
+                    &pixels,
                 ) {
                     println!("picture {} chunk refused", handle.0);
                 }

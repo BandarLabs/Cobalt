@@ -909,7 +909,7 @@ mod tests {
         assert_eq!(game.route, Route::Reveal);
         assert!(context.commands().iter().any(|command| matches!(
             command,
-            kobo_sdk::Command::PutPicture { grey, .. } if grey == source.grey()
+            kobo_sdk::Command::PutPicture { pixels, .. } if pixels == source.grey()
         )));
 
         game.load_photo(&mut context, &photo_png(u8::MAX));

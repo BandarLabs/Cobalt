@@ -325,6 +325,36 @@ impl DisplaySession {
         self.geometry
     }
 
+    /// How to lay colour pixels out for this panel, when it can show them.
+    ///
+    /// `None` on a greyscale panel, and on a colour panel whose framebuffer
+    /// bitfields do not resolve to one byte per channel. Callers that get
+    /// `None` render in grey exactly as before; callers that get `Some` may
+    /// build regions with [`surface::RegionSnapshot::from_rgb`] and submit
+    /// them with [`crate::refresh::RefreshIntent::ColourContent`].
+    #[must_use]
+    pub fn colour(&self) -> Option<surface::ChannelOrder> {
+        self.profile
+            .colour_panel
+            .then(|| surface::ChannelOrder::from_profile(self.profile))
+            .flatten()
+    }
+
+    /// The plan as this panel can run it: a colour intent on a panel without
+    /// a colour filter becomes the quality update it would have been anyway,
+    /// so the flags asking for colour processing never reach a driver that
+    /// was not written to expect them.
+    fn for_this_panel(&self, plan: RefreshPlan) -> RefreshPlan {
+        if self.colour().is_some() {
+            plan
+        } else {
+            RefreshPlan {
+                intent: plan.intent.without_colour(),
+                ..plan
+            }
+        }
+    }
+
     /// Captures the exact current bytes of `region` so they can be restored.
     ///
     /// # Errors
@@ -472,6 +502,7 @@ impl DisplaySession {
     }
 
     fn issue(&self, plan: RefreshPlan) -> Result<IssuedRefresh, DisplayError> {
+        let plan = self.for_this_panel(plan);
         let marker = unique_marker()?;
         let submitted_waveform = plan.waveform(self.backend);
         let (translated_waveform, submit) = match self.backend {
@@ -690,7 +721,8 @@ fn smoke_wait_timing(session: &DisplaySession) -> Result<String, DisplayError> {
                         lines,
                         "{update:>6}  {:<8} {:>8}  {:>10}  {:>9}  {:>7}",
                         match intent {
-                            crate::refresh::RefreshIntent::QualityContent => "GC16",
+                            crate::refresh::RefreshIntent::QualityContent
+                            | crate::refresh::RefreshIntent::ColourContent => "GC16",
                             crate::refresh::RefreshIntent::TextContent => "GL16",
                             crate::refresh::RefreshIntent::FastFeedback => "DU",
                         },
@@ -1035,6 +1067,63 @@ mod tests {
                 Err(DisplayError::WriteRejected(_))
             ));
         }
+    }
+
+    #[test]
+    fn colour_is_offered_only_by_a_colour_panel_and_downgraded_elsewhere() {
+        use crate::refresh::RefreshIntent;
+        use kobo_profile::CLARA_COLOUR_393;
+
+        let grey = DisplaySession::open_verified(
+            &CLARA_BW_391,
+            matched_snapshot(),
+            Path::new("/dev/null"),
+            WritePolicy::ReadyOnly,
+        )
+        .expect("matched device opens");
+        assert!(grey.colour().is_none());
+
+        let colour = DisplaySession::open_verified(
+            &CLARA_COLOUR_393,
+            snapshot_for(
+                &CLARA_COLOUR_393,
+                IdentitySnapshot {
+                    serial_prefix: Some(CLARA_COLOUR_393.serial_prefix.into()),
+                    firmware_version: Some(CLARA_COLOUR_393.firmware_versions[0].into()),
+                    kernel_release: Some(CLARA_COLOUR_393.kernel_release.into()),
+                    device_code: Some(393),
+                },
+            ),
+            Path::new("/dev/null"),
+            WritePolicy::ReadyOnly,
+        )
+        .expect("matched device opens");
+        assert!(colour.colour().is_some());
+
+        let plan = RefreshPlan::new(
+            SMOKE_FIXED_REGION,
+            RefreshIntent::ColourContent,
+            false,
+            CLARA_BW_391.width,
+            CLARA_BW_391.height,
+        )
+        .expect("on screen");
+        assert_eq!(
+            grey.for_this_panel(plan).intent,
+            RefreshIntent::QualityContent
+        );
+        assert_eq!(grey.for_this_panel(plan).hwtcon_update_data(1).flags, 0);
+        assert_eq!(
+            colour.for_this_panel(plan).intent,
+            RefreshIntent::ColourContent
+        );
+        // Greyscale intents pass through both untouched.
+        let text = RefreshPlan {
+            intent: RefreshIntent::TextContent,
+            ..plan
+        };
+        assert_eq!(grey.for_this_panel(text), text);
+        assert_eq!(colour.for_this_panel(text), text);
     }
 
     #[test]
