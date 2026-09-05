@@ -1822,7 +1822,7 @@ fn build_device(device: bool) -> Result<(), String> {
     run_status(&mut command, "cargo build")?;
     if device {
         for name in DEVICE_PACKAGES {
-            let binary = cargo_target_directory()
+            let binary = workspace_target_directory()
                 .join("armv7-unknown-linux-musleabihf/release")
                 .join(name);
             verify_arm_elf(&binary)?;
@@ -3528,7 +3528,7 @@ fn build_package_bytes() -> Result<BuiltPackage, String> {
             &mut device_build_command(name, *features)?,
             format!("cargo build {name}"),
         )?;
-        let binary = cargo_target_directory()
+        let binary = workspace_target_directory()
             .join("armv7-unknown-linux-musleabihf/release")
             .join(name);
         // The same check the device build already applies, repeated here
@@ -4851,7 +4851,7 @@ fn pipe_through(command: &mut Command, input: &[u8]) -> Result<Vec<u8>, String> 
 
 fn run_simulation(arguments: &[String]) -> Result<(), String> {
     let package = simulated_package(arguments)?;
-    let target = cargo_target_directory();
+    let target = workspace_target_directory();
     let mut build = Command::new("cargo");
     build.args(["build", "-p", "kobod", "-p", package]);
     run_status(&mut build, "build host simulation")?;
@@ -4905,10 +4905,6 @@ fn run_simulation(arguments: &[String]) -> Result<(), String> {
         output.display()
     );
     Ok(())
-}
-
-fn cargo_target_directory() -> PathBuf {
-    std::env::var_os("CARGO_TARGET_DIR").map_or_else(|| PathBuf::from("target"), PathBuf::from)
 }
 
 /// The package `--app` named, checked against built-in and Store applications.
@@ -7512,13 +7508,13 @@ mod tests {
         assert!(!valid_device_host("reader name"));
         assert_eq!(
             workspace_doctor_binary(),
-            super::cargo_target_directory()
+            super::workspace_target_directory()
                 .join("armv7-unknown-linux-musleabihf/release/kobo-doctor")
         );
         #[cfg(feature = "device-write")]
         assert_eq!(
             workspace_smoke_binary(),
-            super::cargo_target_directory()
+            super::workspace_target_directory()
                 .join("armv7-unknown-linux-musleabihf/release/kobo-smoke")
         );
     }

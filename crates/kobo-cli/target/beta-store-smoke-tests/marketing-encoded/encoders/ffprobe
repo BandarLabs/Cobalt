@@ -1,0 +1,2 @@
+#!/bin/sh
+printf 'width=320\nheight=240\nduration=4.400000\n'

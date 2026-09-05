@@ -340,8 +340,17 @@ export function isContributionManifest(path, directory) {
 // never compiled into the signed bundle, so adding or editing one must not
 // look like a Store package change. That mistake is what turned a simulator
 // recording script into a forced version bump of every example that grew one.
+//
+// Matching only drive.txt and drive.kobo let it happen again as soon as an
+// application needed more than one route: a shelf of thirty-six applications
+// grew drive.sh, drive-states.kobo, drive-empty.kobo, and a drive/ directory
+// of scenes, and every one of those counted as a release input. So the whole
+// family beside the package is named here, and only beside the package —
+// src/drive.txt is source and a sibling directory is another package.
 export function isFilmingScript(path, packageDirectory) {
-  return path === `${packageDirectory}/drive.txt` || path === `${packageDirectory}/drive.kobo`;
+  if (!path.startsWith(`${packageDirectory}/`)) return false;
+  const beside = path.slice(packageDirectory.length + 1);
+  return beside === "drive" || beside.startsWith("drive/") || /^drive[-.][^/]*$/.test(beside);
 }
 
 // Returns the dependency edges capable of changing a release artifact.

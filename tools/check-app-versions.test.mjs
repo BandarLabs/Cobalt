@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -531,6 +531,44 @@ test("a drive script next to an application is not a release input", () => {
   assert.equal(isFilmingScript("examples/todo/src/main.rs", "examples/todo"), false);
   assert.equal(isFilmingScript("examples/todo/src/drive.txt", "examples/todo"), false);
   assert.equal(isFilmingScript("examples/todo-extra/drive.txt", "examples/todo"), false);
+});
+
+// One route per application was the assumption, and the shelf broke it: an
+// application that needs a second scene should not owe the Store a version.
+test("every drive script an application grows is still not a release input", () => {
+  assert.equal(isFilmingScript("apps/vault/drive-states.kobo", "apps/vault"), true);
+  assert.equal(isFilmingScript("apps/frame/drive-empty.kobo", "apps/frame"), true);
+  assert.equal(isFilmingScript("apps/inkling/drive.sh", "apps/inkling"), true);
+  assert.equal(isFilmingScript("apps/lichess/drive/game.kobo", "apps/lichess"), true);
+  assert.equal(isFilmingScript("apps/lichess/drive", "apps/lichess"), true);
+
+  // Still only beside the package, and still not its source.
+  assert.equal(isFilmingScript("apps/vault/src/drive-states.kobo", "apps/vault"), false);
+  assert.equal(isFilmingScript("apps/vault/driver.rs", "apps/vault"), false);
+  assert.equal(isFilmingScript("apps/vault-extra/drive.sh", "apps/vault"), false);
+});
+
+// The tree is the thing that regressed, so check it rather than a fixture.
+test("no drive script in this tree counts as a release input", () => {
+  const packages = [
+    ...readdirSync("apps", { withFileTypes: true }).map(e => ["apps", e]),
+    ...readdirSync("examples", { withFileTypes: true }).map(e => ["examples", e])
+  ].filter(([, entry]) => entry.isDirectory());
+
+  let seen = 0;
+  for (const [root, entry] of packages) {
+    const directory = `${root}/${entry.name}`;
+    for (const file of readdirSync(directory)) {
+      if (!file.startsWith("drive")) continue;
+      seen += 1;
+      assert.equal(
+        isFilmingScript(`${directory}/${file}`, directory),
+        true,
+        `${directory}/${file} would force a version bump on ${entry.name}`
+      );
+    }
+  }
+  assert.ok(seen > 30, `expected the shelf's drive scripts, found ${seen}`);
 });
 
 test("drive scripts do not count as unpublished Store catalog inputs", () => {
