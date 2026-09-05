@@ -3070,7 +3070,7 @@ fn start_application(
     let greeting = greet(&listener, whole_screen, &expected_name);
     drop(listener);
     let _ignored = fs::remove_file(&socket_path);
-    let (stream, name) = match greeting {
+    let (stream, name, version) = match greeting {
         Ok(greeting) => greeting,
         Err(error) => {
             stop_application(&mut child, jail.as_deref());
@@ -3083,7 +3083,7 @@ fn start_application(
     };
     let id = *next_id;
     *next_id += 1;
-    if let Err(error) = pump_application(&stream, sender, id) {
+    if let Err(error) = pump_application(&stream, sender, id, version) {
         stop_application(&mut child, jail.as_deref());
         let error = with_trace_failure(error, &child);
         if let Some(root) = &jail {
@@ -3558,7 +3558,7 @@ fn text_hold_for_oriented(
         return None;
     };
     let screen = screen?;
-    let action = screen.hold?;
+    screen.hold?;
     let (Ok(x), Ok(y)) = (i32::try_from(x), i32::try_from(y)) else {
         return None;
     };
@@ -3587,7 +3587,7 @@ fn greet(
     listener: &std::os::unix::net::UnixListener,
     whole_screen: Rect,
     expected_name: &str,
-) -> Result<(std::os::unix::net::UnixStream, String), String> {
+) -> Result<(std::os::unix::net::UnixStream, String, u8), String> {
     let (mut stream, _) = listener
         .accept()
         .map_err(|error| format!("application never connected: {error}"))?;
@@ -3619,7 +3619,7 @@ fn greet(
         },
     )
     .map_err(|error| format!("welcome: {error}"))?;
-    Ok((stream, name))
+    Ok((stream, name, hello.version))
 }
 
 /// Keeps the recovery watchdog fed from a thread, for the stretches where the
@@ -4047,6 +4047,7 @@ fn pump_application(
     stream: &std::os::unix::net::UnixStream,
     sender: &Sender<Event>,
     id: u64,
+    version: u8,
 ) -> Result<(), String> {
     let mut reader = stream
         .try_clone()
@@ -4057,6 +4058,10 @@ fn pump_application(
             let _ignored = sender.send(Event::AppGone(id));
             return;
         };
+        if frame.version != version {
+            let _ignored = sender.send(Event::AppGone(id));
+            return;
+        }
         if sender.send(Event::App(id, Box::new(frame))).is_err() {
             return;
         }
