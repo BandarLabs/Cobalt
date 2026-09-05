@@ -21,6 +21,7 @@ members = [
     "crates/kobo-protocol",
     "crates/kobo-sdk",
     "crates/kobo-shell",
+    "crates/kobo-stream",
     "crates/kobo-sidekickd",
     "crates/kobo-sim",
     "crates/kobo-smoke",
@@ -47,7 +48,13 @@ members = [
     "examples/settings",
     "examples/sidekick",
     "examples/store",
-    "apps/*",
+    "apps/arxiv",
+    "apps/backgammon",
+    "apps/lichess",
+    "apps/morse",
+    "apps/paperterm",
+    "apps/sudoku",
+    "apps/zotero-reader",
     "tools/icon-import",
 ]
 resolver = "2"

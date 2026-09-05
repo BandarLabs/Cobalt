@@ -169,6 +169,7 @@ impl RegionPlacement {
             .and_then(|delta| self.first_row_offset.checked_add(delta))
     }
 
+    #[cfg_attr(not(feature = "device-write"), allow(dead_code))]
     fn is_contiguous(&self) -> bool {
         self.region.x == 0 && self.row_bytes as u64 == self.stride
     }

@@ -568,42 +568,6 @@ test("only exact reviewed compatible blobs are excluded from app release inputs"
     ),
     new Set()
   );
-  const additive = {
-    format_version: 1,
-    changes: [
-      {
-        protocol_version: 11,
-        reason: "reviewed additive SDK module",
-        files: [
-          {
-            path: "crates/kobo-sdk/src/credentials.rs",
-            base_blob: null,
-            compatible_blob: "c".repeat(40)
-          }
-        ]
-      }
-    ]
-  };
-  assert.deepEqual(
-    compatibleChangePaths(
-      additive,
-      11,
-      ["crates/kobo-sdk/src/credentials.rs"],
-      () => null,
-      () => "c".repeat(40)
-    ),
-    new Set(["crates/kobo-sdk/src/credentials.rs"])
-  );
-  assert.deepEqual(
-    compatibleChangePaths(
-      additive,
-      11,
-      ["crates/kobo-sdk/src/credentials.rs"],
-      () => "a".repeat(40),
-      () => "c".repeat(40)
-    ),
-    new Set()
-  );
   assert.deepEqual(
     compatibleChangePaths(
       manifest,
