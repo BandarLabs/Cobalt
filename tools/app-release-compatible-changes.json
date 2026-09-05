@@ -271,6 +271,11 @@
           "path": "crates/kobo-ui/src/vector/tabler.rs",
           "base_blob": "d624ad9689802c8fc8c964c600cdd1e65db38b07",
           "compatible_blob": "d624ad9689802c8fc8c964c600cdd1e65db38b07"
+        },
+        {
+          "path": "crates/kobo-image/src/lib.rs",
+          "base_blob": "438aa86c74e92de05580d226de70669bf5329798",
+          "compatible_blob": "5e49d7d853385130e11ca2bc66b512d02d21c2c9"
         }
       ]
     }
