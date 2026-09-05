@@ -20,6 +20,7 @@ const MANIFEST_FIELDS = [
 const COMPATIBLE_RELEASE_PATHS = new Set([
   "Cargo.lock",
   "crates/kobo-abi/src/lib.rs",
+  "crates/kobo-image/src/lib.rs",
   "crates/kobo-net/src/lib.rs",
   "crates/kobo-net/src/lines.rs",
   "crates/kobo-net/tests/fixtures/localhost-ca.der",

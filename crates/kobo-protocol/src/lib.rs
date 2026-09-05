@@ -8,9 +8,9 @@ use std::io::{self, Read, Write};
 use kobo_ui::{
     ActionId, BannerLevel, BarAction, BarStyle, BottomAction, Caret, Cell, ControlState,
     FontHandle, Freeform, Glyph, NavBar, Node, NodeId, Orientation, PageTurns, Percent,
-    PictureHandle, Row, RowLead, RowState, Screen, Space, TextScale, Tile, TilePicture, TileShape,
-    TileState, TopBar, TransferFailure, MAX_BAR_ACTIONS, MAX_TERMINAL_COLUMNS, MAX_TERMINAL_ROWS,
-    MIN_NAV_DESTINATIONS,
+    PictureFormat, PictureHandle, Row, RowLead, RowState, Screen, Space, TextScale, Tile,
+    TilePicture, TileShape, TileState, TopBar, TransferFailure, MAX_BAR_ACTIONS,
+    MAX_TERMINAL_COLUMNS, MAX_TERMINAL_ROWS, MIN_NAV_DESTINATIONS,
 };
 use std::cmp::min;
 
@@ -55,6 +55,10 @@ pub const MAGIC: [u8; 4] = *b"KOBO";
 /// Version 12 adds Folio tile values, card tiles, section links and page rails.
 /// Version 13 adds persistent selected state to grid cells. Its runtime retains
 /// a version-12 reader so already installed Folio applications keep working.
+///
+/// A colour picture travels the same way: a grey picture still uses the tags it
+/// always did, byte for byte, and a colour one uses tags of its own that an
+/// older runtime refuses rather than misreads.
 pub const VERSION: u8 = 13;
 /// Folio's tile, section, and page-rail protocol.
 pub const FOLIO_VERSION: u8 = 12;
@@ -69,10 +73,12 @@ pub const HEADER_LEN: usize = 14;
 /// Eight megabytes bounds a runaway peer just as well and costs nothing when
 /// frames stay small, which every frame except an audio reply does.
 pub const MAX_FRAME_LEN: usize = 8 * 1_048_576;
-/// The largest decoded picture accepted from one application.
+/// The largest decoded picture accepted from one application, in bytes.
 ///
 /// Four Clara panels is the same bound used by `kobo-image`: enough headroom
-/// for a high-resolution source while remaining below the per-app cache.
+/// for a high-resolution source while remaining below the per-app cache. A
+/// bound on bytes rather than pixels, so a colour picture, at three bytes a
+/// pixel, fits a third as many of them; one Clara panel of colour fits.
 pub const MAX_PICTURE_BYTES: usize = 4 * 1072 * 1448;
 /// Largest picture sent as one legacy `PutPicture` frame.
 pub const MAX_INLINE_PICTURE_BYTES: usize = 768 * 1024;
@@ -686,20 +692,28 @@ pub enum Message {
         handle: PictureHandle,
         width: u32,
         height: u32,
-        /// Eight-bit grey, row major, exactly `width * height` bytes.
-        grey: Vec<u8>,
+        /// How `pixels` is laid out. Grey travels on the tag it always has;
+        /// colour on one of its own, so the field costs nothing on the wire.
+        format: PictureFormat,
+        /// Row major, exactly `width * height * format.bytes_per_pixel()`
+        /// bytes: one grey byte, or red, green and blue.
+        pixels: Vec<u8>,
     },
     /// Starts an atomic picture upload larger than one protocol frame.
     BeginPicture {
         handle: PictureHandle,
         width: u32,
         height: u32,
+        format: PictureFormat,
     },
     /// One in-order span of a picture started by [`Message::BeginPicture`].
+    ///
+    /// Bytes in the format the upload was begun with; a chunk does not carry
+    /// the format itself, so its boundaries need not fall on a pixel.
     PictureChunk {
         handle: PictureHandle,
         offset: u32,
-        grey: Vec<u8>,
+        pixels: Vec<u8>,
     },
     /// Makes a completely received upload visible to screens.
     CommitPicture {
@@ -1331,6 +1345,28 @@ pub struct DeviceIdentity {
     pub panel_height: u32,
 }
 
+impl DeviceIdentity {
+    /// Whether the reader's panel can show colour.
+    ///
+    /// Read from the profile name rather than a field of its own, because the
+    /// identity frame is a fixed shape older runtimes already send and an
+    /// added field would be misread by them rather than refused. The profile
+    /// names follow the products, and every panel with a colour filter is
+    /// sold with "Colour" in its name; the profile crate holds a test that
+    /// keeps its colour flag and its names in step, so this stays true as
+    /// panels are added. An application that gets `true` may send a picture
+    /// with `PictureFormat::Rgb`; one that gets `false` should not, since it
+    /// would cost three times the bytes to be drawn as grey.
+    #[must_use]
+    pub fn colour_panel(&self) -> bool {
+        const NAME: &[u8] = b"colour";
+        self.profile_id
+            .as_bytes()
+            .windows(NAME.len())
+            .any(|window| window.eq_ignore_ascii_case(NAME))
+    }
+}
+
 fn validate_identity(identity: &DeviceIdentity) -> Result<(), ProtocolError> {
     for text in [
         &identity.profile_id,
@@ -1823,17 +1859,19 @@ pub fn encode(frame: &Frame) -> Result<Vec<u8>, ProtocolError> {
             handle,
             width,
             height,
-            grey,
+            pixels,
+            ..
         } => {
             push_u32(&mut payload, handle.0);
             push_u32(&mut payload, *width);
             push_u32(&mut payload, *height);
-            payload.extend_from_slice(grey);
+            payload.extend_from_slice(pixels);
         }
         Message::BeginPicture {
             handle,
             width,
             height,
+            ..
         } => {
             push_u32(&mut payload, handle.0);
             push_u32(&mut payload, *width);
@@ -1842,11 +1880,11 @@ pub fn encode(frame: &Frame) -> Result<Vec<u8>, ProtocolError> {
         Message::PictureChunk {
             handle,
             offset,
-            grey,
+            pixels,
         } => {
             push_u32(&mut payload, handle.0);
             push_u32(&mut payload, *offset);
-            payload.extend_from_slice(grey);
+            payload.extend_from_slice(pixels);
         }
         Message::CommitPicture { handle } | Message::DropPicture { handle } => {
             push_u32(&mut payload, handle.0);
@@ -2330,6 +2368,37 @@ fn encoded_task_len(work: &Task) -> Result<usize, ProtocolError> {
     Ok(length)
 }
 
+fn put_picture_layout(
+    width: u32,
+    height: u32,
+    format: PictureFormat,
+    pixels: &[u8],
+) -> Result<(u8, usize), ProtocolError> {
+    // The declared size and the bytes must agree before anything is
+    // allocated on the strength of either, or a decoder reading by
+    // dimension would run off the end of a short payload.
+    let expected = picture_len(width, height, format)?;
+    if expected != pixels.len() {
+        return Err(ProtocolError::InvalidValue("picture size"));
+    }
+    if pixels.len() > MAX_INLINE_PICTURE_BYTES {
+        return Err(ProtocolError::FrameTooLarge);
+    }
+    Ok((put_picture_tag(format), 12 + pixels.len()))
+}
+
+fn begin_picture_layout(
+    width: u32,
+    height: u32,
+    format: PictureFormat,
+) -> Result<(u8, usize), ProtocolError> {
+    let expected = picture_len(width, height, format)?;
+    if expected == 0 || expected > MAX_PICTURE_BYTES {
+        return Err(ProtocolError::FrameTooLarge);
+    }
+    Ok((begin_picture_tag(format), 12))
+}
+
 fn encoded_message_layout(message: &Message, version: u8) -> Result<(u8, usize), ProtocolError> {
     match message {
         Message::Hello { name } => Ok((1, encoded_string_len(name)?)),
@@ -2370,41 +2439,28 @@ fn encoded_message_layout(message: &Message, version: u8) -> Result<(u8, usize),
         Message::PutPicture {
             width,
             height,
-            grey,
+            format,
+            pixels,
             ..
-        } => {
-            // The declared size and the bytes must agree before anything is
-            // allocated on the strength of either, or a decoder reading by
-            // dimension would run off the end of a short payload.
-            let expected = picture_len(*width, *height)?;
-            if expected != grey.len() {
-                return Err(ProtocolError::InvalidValue("picture size"));
-            }
-
-            if grey.len() > MAX_INLINE_PICTURE_BYTES {
-                return Err(ProtocolError::FrameTooLarge);
-            }
-            Ok((18, 12 + grey.len()))
-        }
+        } => put_picture_layout(*width, *height, *format, pixels),
         Message::DropPicture { .. } => Ok((19, 4)),
-        Message::BeginPicture { width, height, .. } => {
-            let expected = picture_len(*width, *height)?;
-            if expected == 0 || expected > MAX_PICTURE_BYTES {
-                return Err(ProtocolError::FrameTooLarge);
-            }
-            Ok((20, 12))
-        }
-        Message::PictureChunk { offset, grey, .. } => {
-            if grey.is_empty()
-                || grey.len() > MAX_PICTURE_CHUNK_BYTES
+        Message::BeginPicture {
+            width,
+            height,
+            format,
+            ..
+        } => begin_picture_layout(*width, *height, *format),
+        Message::PictureChunk { offset, pixels, .. } => {
+            if pixels.is_empty()
+                || pixels.len() > MAX_PICTURE_CHUNK_BYTES
                 || usize::try_from(*offset)
                     .ok()
-                    .and_then(|offset| offset.checked_add(grey.len()))
+                    .and_then(|offset| offset.checked_add(pixels.len()))
                     .is_none_or(|end| end > MAX_PICTURE_BYTES)
             {
                 return Err(ProtocolError::FrameTooLarge);
             }
-            Ok((21, 8 + grey.len()))
+            Ok((21, 8 + pixels.len()))
         }
         Message::CommitPicture { .. } => Ok((22, 4)),
         Message::CoverChanged { .. } => Ok((23, 1)),
@@ -2448,11 +2504,27 @@ fn orientation_layout(version: u8) -> Result<(u8, usize), ProtocolError> {
     }
 }
 
-fn picture_len(width: u32, height: u32) -> Result<usize, ProtocolError> {
-    usize::try_from(width)
-        .ok()
-        .and_then(|width| width.checked_mul(usize::try_from(height).ok()?))
+fn picture_len(width: u32, height: u32, format: PictureFormat) -> Result<usize, ProtocolError> {
+    format
+        .byte_len(width, height)
         .ok_or(ProtocolError::FrameTooLarge)
+}
+
+/// Grey pictures keep the tag they have always had; colour ones take a tag of
+/// their own, so an older runtime refuses the frame instead of reading three
+/// bytes a pixel as one.
+const fn put_picture_tag(format: PictureFormat) -> u8 {
+    match format {
+        PictureFormat::Grey => 18,
+        PictureFormat::Rgb => 28,
+    }
+}
+
+const fn begin_picture_tag(format: PictureFormat) -> u8 {
+    match format {
+        PictureFormat::Grey => 20,
+        PictureFormat::Rgb => 29,
+    }
 }
 
 #[allow(
@@ -4369,30 +4441,41 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, ProtocolError> {
             3 => ShellEvent::Refused(ShellError::try_from(reader.u8()?)?),
             _ => return Err(ProtocolError::InvalidValue("shell event")),
         }),
-        18 => {
+        tag @ (18 | 28) => {
+            let format = if tag == 18 {
+                PictureFormat::Grey
+            } else {
+                PictureFormat::Rgb
+            };
             let handle = PictureHandle(reader.u32()?);
             let width = reader.u32()?;
             let height = reader.u32()?;
-            let expected = picture_len(width, height)?;
+            let expected = picture_len(width, height, format)?;
             if expected > MAX_INLINE_PICTURE_BYTES {
                 return Err(ProtocolError::FrameTooLarge);
             }
-            let grey = reader.take(expected)?.to_vec();
+            let pixels = reader.take(expected)?.to_vec();
             Message::PutPicture {
                 handle,
                 width,
                 height,
-                grey,
+                format,
+                pixels,
             }
         }
         19 => Message::DropPicture {
             handle: PictureHandle(reader.u32()?),
         },
-        20 => {
+        tag @ (20 | 29) => {
+            let format = if tag == 20 {
+                PictureFormat::Grey
+            } else {
+                PictureFormat::Rgb
+            };
             let handle = PictureHandle(reader.u32()?);
             let width = reader.u32()?;
             let height = reader.u32()?;
-            let expected = picture_len(width, height)?;
+            let expected = picture_len(width, height, format)?;
             if expected == 0 || expected > MAX_PICTURE_BYTES {
                 return Err(ProtocolError::FrameTooLarge);
             }
@@ -4400,6 +4483,7 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, ProtocolError> {
                 handle,
                 width,
                 height,
+                format,
             }
         }
         21 => {
@@ -4419,7 +4503,7 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, ProtocolError> {
             Message::PictureChunk {
                 handle,
                 offset,
-                grey: reader.take(length)?.to_vec(),
+                pixels: reader.take(length)?.to_vec(),
             }
         }
         22 => Message::CommitPicture {
@@ -9486,11 +9570,130 @@ mod picture_tests {
                 handle: PictureHandle(4),
                 width: 3,
                 height: 2,
-                grey: vec![0, 32, 64, 96, 128, 160],
+                format: PictureFormat::Grey,
+                pixels: vec![0, 32, 64, 96, 128, 160],
             },
         };
         let bytes = encode(&frame).expect("encode");
         assert_eq!(decode(&bytes).expect("decode"), frame);
+    }
+
+    /// Where the message tag sits in a frame: after the magic and the version.
+    const TAG_INDEX: usize = MAGIC.len() + 1;
+
+    #[test]
+    fn a_grey_picture_is_the_same_bytes_it_was_before_colour_existed() {
+        // The frame an application built last year, byte for byte: magic,
+        // version, request id, tag 18, length, then the handle, the size and
+        // the pixels. A runtime from before colour reads it unchanged.
+        let frame = Frame {
+            version: VERSION,
+            request_id: 1,
+            message: Message::PutPicture {
+                handle: PictureHandle(4),
+                width: 2,
+                height: 1,
+                format: PictureFormat::Grey,
+                pixels: vec![7, 9],
+            },
+        };
+        let bytes = encode(&frame).expect("encode");
+        assert_eq!(bytes[MAGIC.len()], VERSION);
+        assert_eq!(bytes[TAG_INDEX], 18, "the grey tag did not move");
+        assert_eq!(
+            &bytes[HEADER_LEN..],
+            &[0, 0, 0, 4, 0, 0, 0, 2, 0, 0, 0, 1, 7, 9]
+        );
+
+        let begin = encode(&Frame {
+            version: VERSION,
+            request_id: 1,
+            message: Message::BeginPicture {
+                handle: PictureHandle(4),
+                width: 2,
+                height: 1,
+                format: PictureFormat::Grey,
+            },
+        })
+        .expect("encode");
+        assert_eq!(begin[TAG_INDEX], 20);
+    }
+
+    #[test]
+    fn a_colour_picture_travels_on_its_own_tag_at_three_bytes_a_pixel() {
+        let frame = Frame {
+            version: VERSION,
+            request_id: 1,
+            message: Message::PutPicture {
+                handle: PictureHandle(4),
+                width: 2,
+                height: 1,
+                format: PictureFormat::Rgb,
+                pixels: vec![255, 0, 0, 0, 0, 255],
+            },
+        };
+        let bytes = encode(&frame).expect("encode");
+        assert_eq!(bytes[TAG_INDEX], 28);
+        assert_eq!(decode(&bytes).expect("decode"), frame);
+
+        // The same pixels declared grey are the wrong length and refused; a
+        // colour picture short of three bytes a pixel likewise.
+        assert!(matches!(
+            encode(&Frame {
+                version: VERSION,
+                request_id: 1,
+                message: Message::PutPicture {
+                    handle: PictureHandle(4),
+                    width: 2,
+                    height: 1,
+                    format: PictureFormat::Grey,
+                    pixels: vec![255, 0, 0, 0, 0, 255],
+                },
+            }),
+            Err(ProtocolError::InvalidValue(_))
+        ));
+        assert!(matches!(
+            encode(&Frame {
+                version: VERSION,
+                request_id: 1,
+                message: Message::PutPicture {
+                    handle: PictureHandle(4),
+                    width: 2,
+                    height: 1,
+                    format: PictureFormat::Rgb,
+                    pixels: vec![255, 0, 0, 0],
+                },
+            }),
+            Err(ProtocolError::InvalidValue(_))
+        ));
+
+        let begin = Frame {
+            version: VERSION,
+            request_id: 1,
+            message: Message::BeginPicture {
+                handle: PictureHandle(4),
+                width: 1072,
+                height: 1448,
+                format: PictureFormat::Rgb,
+            },
+        };
+        let bytes = encode(&begin).expect("a full colour panel fits the byte bound");
+        assert_eq!(bytes[TAG_INDEX], 29);
+        assert_eq!(decode(&bytes).expect("decode"), begin);
+        // Two colour panels do not: the bound is on bytes, not pixels.
+        assert!(matches!(
+            encode(&Frame {
+                version: VERSION,
+                request_id: 1,
+                message: Message::BeginPicture {
+                    handle: PictureHandle(4),
+                    width: 1072,
+                    height: 1448 * 2,
+                    format: PictureFormat::Rgb,
+                },
+            }),
+            Err(ProtocolError::FrameTooLarge)
+        ));
     }
 
     #[test]
@@ -9504,7 +9707,8 @@ mod picture_tests {
                 handle: PictureHandle(4),
                 width: 100,
                 height: 100,
-                grey: vec![0; 99],
+                format: PictureFormat::Grey,
+                pixels: vec![0; 99],
             },
         });
         assert!(matches!(refused, Err(ProtocolError::InvalidValue(_))));
@@ -9519,7 +9723,8 @@ mod picture_tests {
                 handle: PictureHandle(4),
                 width: u32::try_from(MAX_INLINE_PICTURE_BYTES + 1).expect("fits"),
                 height: 1,
-                grey: vec![0; MAX_INLINE_PICTURE_BYTES + 1],
+                format: PictureFormat::Grey,
+                pixels: vec![0; MAX_INLINE_PICTURE_BYTES + 1],
             },
         });
         assert!(matches!(refused, Err(ProtocolError::FrameTooLarge)));
@@ -9532,11 +9737,12 @@ mod picture_tests {
                 handle: PictureHandle(4),
                 width: 1072,
                 height: 1448,
+                format: PictureFormat::Grey,
             },
             Message::PictureChunk {
                 handle: PictureHandle(4),
                 offset: 0,
-                grey: vec![17; 4096],
+                pixels: vec![17; 4096],
             },
             Message::CommitPicture {
                 handle: PictureHandle(4),
@@ -9561,7 +9767,7 @@ mod picture_tests {
             message: Message::PictureChunk {
                 handle: PictureHandle(4),
                 offset: 0,
-                grey: vec![0; MAX_PICTURE_CHUNK_BYTES + 1],
+                pixels: vec![0; MAX_PICTURE_CHUNK_BYTES + 1],
             },
         });
         assert!(matches!(refused, Err(ProtocolError::FrameTooLarge)));

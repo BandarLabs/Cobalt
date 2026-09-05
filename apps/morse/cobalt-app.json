@@ -1,1 +1,13 @@
-{"id":"morse","display_name":"Morse","short_label":"Morse","summary":"Type a message and send it in Morse code with the front light.","version":"1.0.9","glyph":"light","capabilities":["frontlight-control","keep-awake"],"release_notes":"Keep Morse compatible with Cobalt's protocol-12 runtime."}
+{
+  "id": "morse",
+  "display_name": "Morse",
+  "short_label": "Morse",
+  "summary": "Type a message and send it in Morse code with the front light.",
+  "version": "1.0.10",
+  "glyph": "light",
+  "capabilities": [
+    "frontlight-control",
+    "keep-awake"
+  ],
+  "release_notes": "Rebuild Morse against the picture field renamed for colour. The app behaves exactly as it did."
+}

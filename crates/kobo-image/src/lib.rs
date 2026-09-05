@@ -13,7 +13,7 @@
 
 use image::imageops::FilterType;
 use image::metadata::Orientation;
-use image::{DynamicImage, ImageDecoder, ImageEncoder, ImageReader};
+use image::{DynamicImage, ImageDecoder, ImageEncoder, ImageReader, RgbImage};
 use std::fmt;
 use std::io::Cursor;
 
@@ -77,6 +77,33 @@ pub fn encode_png_grey(width: u32, height: u32, grey: &[u8]) -> Result<Vec<u8>, 
     Ok(png)
 }
 
+/// Wraps colour panel bytes up as a PNG: three bytes per pixel, red, green,
+/// blue, the layout a colour frame off the simulator or the panel holds.
+///
+/// # Errors
+///
+/// Returns [`ImageError::Undecodable`] when `rgb` is not exactly
+/// `width * height * 3` bytes, and [`ImageError::TooManyPixels`] past
+/// [`MAX_PIXELS`].
+pub fn encode_png_rgb(width: u32, height: u32, rgb: &[u8]) -> Result<Vec<u8>, ImageError> {
+    let pixels = u64::from(width) * u64::from(height);
+    if pixels > MAX_PIXELS {
+        return Err(ImageError::TooManyPixels { pixels });
+    }
+    if rgb.len() as u64 != pixels * 3 {
+        return Err(ImageError::Undecodable(format!(
+            "{} bytes for a {width} by {height} colour frame, which needs {}",
+            rgb.len(),
+            pixels * 3
+        )));
+    }
+    let mut png = Vec::new();
+    image::codecs::png::PngEncoder::new(&mut png)
+        .write_image(rgb, width, height, image::ExtendedColorType::Rgb8)
+        .map_err(|error| ImageError::Undecodable(error.to_string()))?;
+    Ok(png)
+}
+
 /// How a picture should occupy the rectangle a component assigned to it.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub enum FitMode {
@@ -127,16 +154,21 @@ impl fmt::Display for ImageError {
 
 impl std::error::Error for ImageError {}
 
-/// One picture, in the only form the panel has any use for: eight bit grey,
-/// one byte per pixel, top row first, no padding.
+/// One picture, in the form the panel has use for: eight bit grey, one byte
+/// per pixel, top row first, no padding, and beside it, when the picture was
+/// read for a panel that can show it, the same pixels in colour.
 ///
-/// The same layout the drawing surface uses, so painting one is a copy rather
-/// than a conversion.
+/// The grey is always there and is the same layout the drawing surface uses,
+/// so painting one is a copy rather than a conversion. The colour is three
+/// bytes per pixel, red, green, blue, and is present only for pictures made
+/// by [`decode_colour`] or [`Picture::from_rgb`]; every other path produces a
+/// picture that is grey and nothing else, exactly as before colour existed.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Picture {
     width: u32,
     height: u32,
     grey: Vec<u8>,
+    colour: Option<Vec<u8>>,
 }
 
 impl Picture {
@@ -162,7 +194,56 @@ impl Picture {
             width,
             height,
             grey,
+            colour: None,
         })
+    }
+
+    /// Builds a colour picture from red, green, blue bytes, deriving the grey
+    /// the same way [`decode`] would have.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ImageError::TooManyPixels`] when the dimensions exceed
+    /// [`MAX_PIXELS`], and [`ImageError::Undecodable`] when `rgb` is not
+    /// exactly `width * height * 3` bytes.
+    pub fn from_rgb(width: u32, height: u32, rgb: Vec<u8>) -> Result<Self, ImageError> {
+        let pixels = checked_pixels(width, height)?;
+        if rgb.len() as u64 != pixels * 3 {
+            return Err(ImageError::Undecodable(format!(
+                "{} bytes for a {width} by {height} colour picture, which needs {}",
+                rgb.len(),
+                pixels * 3
+            )));
+        }
+        let source = RgbImage::from_raw(width, height, rgb)
+            .ok_or_else(|| ImageError::Undecodable("the picture is not its own size".to_owned()))?;
+        let grey = image::imageops::grayscale(&source);
+        Ok(Self {
+            width,
+            height,
+            grey: grey.into_raw(),
+            colour: Some(source.into_raw()),
+        })
+    }
+
+    /// The pixels in colour, three bytes each, row by row from the top, when
+    /// the picture was read for a colour panel.
+    #[must_use]
+    pub fn colour(&self) -> Option<&[u8]> {
+        self.colour.as_deref()
+    }
+
+    /// The colour bytes, giving up the picture; `None` for a grey one.
+    #[must_use]
+    pub fn into_colour(self) -> Option<Vec<u8>> {
+        self.colour
+    }
+
+    /// The same picture with its colour discarded.
+    #[must_use]
+    pub fn into_grey_picture(mut self) -> Self {
+        self.colour = None;
+        self
     }
 
     #[must_use]
@@ -308,7 +389,18 @@ impl Picture {
         let left = (scaled_width - width) / 2;
         let top = (scaled_height - height) / 2;
         let cropped = image::imageops::crop_imm(&scaled, left, top, width, height).to_image();
-        Self::from_grey(width, height, cropped.into_raw())
+        let mut picture = Self::from_grey(width, height, cropped.into_raw())?;
+        if let Some(colour) = &self.colour {
+            let source =
+                RgbImage::from_raw(self.width, self.height, colour.clone()).ok_or_else(|| {
+                    ImageError::Undecodable("the colour is not its own size".to_owned())
+                })?;
+            let scaled =
+                image::imageops::resize(&source, scaled_width, scaled_height, FilterType::Lanczos3);
+            let cropped = image::imageops::crop_imm(&scaled, left, top, width, height).to_image();
+            picture.colour = Some(cropped.into_raw());
+        }
+        Ok(picture)
     }
 
     /// Resamples to the largest size inside the box, in either direction.
@@ -325,10 +417,32 @@ impl Picture {
             .ok_or_else(|| ImageError::Undecodable("the picture is not its own size".to_owned()))?;
         let scaled =
             image::imageops::resize(&source, target_width, target_height, FilterType::Lanczos3);
+        // The colour plane is resampled on its own with the same filter, so a
+        // grey picture pays nothing and a colour one keeps its two planes the
+        // same size.
+        let colour = match &self.colour {
+            Some(colour) => {
+                let source = RgbImage::from_raw(self.width, self.height, colour.clone())
+                    .ok_or_else(|| {
+                        ImageError::Undecodable("the colour is not its own size".to_owned())
+                    })?;
+                Some(
+                    image::imageops::resize(
+                        &source,
+                        target_width,
+                        target_height,
+                        FilterType::Lanczos3,
+                    )
+                    .into_raw(),
+                )
+            }
+            None => None,
+        };
         Ok(Self {
             width: target_width,
             height: target_height,
             grey: scaled.into_raw(),
+            colour,
         })
     }
 
@@ -339,6 +453,11 @@ impl Picture {
     /// is banding, and a band across a photograph is far more obvious than the
     /// grain this leaves. Fewer than two levels is treated as two: one grey is
     /// not a picture.
+    ///
+    /// Only the grey plane is dithered. The colour plane, when there is one,
+    /// is quantised by the panel controller against its own colour filter,
+    /// and a picture dithered for sixteen greys and then drawn through that
+    /// filter would carry the grain twice.
     pub fn dither(&mut self, levels: u8) {
         let levels = u32::from(levels.max(2));
         let width = self.width as usize;
@@ -543,11 +662,77 @@ pub fn decode(bytes: &[u8]) -> Result<Picture, ImageError> {
     Picture::from_grey(luma.width(), luma.height(), grey)
 }
 
+/// Reads a picture that arrived over the network, keeping its colour.
+///
+/// The same refusals and the same grey as [`decode`]: the grey plane of the
+/// result is byte for byte what [`decode`] would have produced, so a caller
+/// that switches between the two on the panel's say-so draws the same picture
+/// on a greyscale reader either way. Transparency is composited onto white
+/// per channel before anything else, for the reason given in [`decode`].
+///
+/// Costs more memory than [`decode`] at its peak, four bytes a pixel rather
+/// than two, which is why it is a separate function and not a flag: a reader
+/// without a colour panel has no reason to pay it.
+///
+/// # Errors
+///
+/// As for [`decode`].
+pub fn decode_colour(bytes: &[u8]) -> Result<Picture, ImageError> {
+    if bytes.len() > MAX_SOURCE_BYTES {
+        return Err(ImageError::TooManyBytes { bytes: bytes.len() });
+    }
+    let reader = ImageReader::new(Cursor::new(bytes))
+        .with_guessed_format()
+        .map_err(|error| ImageError::Undecodable(error.to_string()))?;
+    if reader.format().is_none() {
+        return Err(ImageError::UnknownFormat);
+    }
+    let (width, height) = reader
+        .into_dimensions()
+        .map_err(|error| ImageError::Undecodable(error.to_string()))?;
+    let pixels = u64::from(width) * u64::from(height);
+    if pixels > MAX_PIXELS {
+        return Err(ImageError::TooManyPixels { pixels });
+    }
+    let mut decoder = ImageReader::new(Cursor::new(bytes))
+        .with_guessed_format()
+        .map_err(|error| ImageError::Undecodable(error.to_string()))?
+        .into_decoder()
+        .map_err(|error| ImageError::Undecodable(error.to_string()))?;
+    let orientation = decoder
+        .orientation()
+        .map_err(|error| ImageError::Undecodable(error.to_string()))?;
+    let mut image = DynamicImage::from_decoder(decoder)
+        .map_err(|error| ImageError::Undecodable(error.to_string()))?;
+    image.apply_orientation(orientation);
+
+    let rgba = image.to_rgba8();
+    let (width, height) = rgba.dimensions();
+    let mut rgb = Vec::with_capacity(width as usize * height as usize * 3);
+    let mut grey = Vec::with_capacity(width as usize * height as usize);
+    // Luminance first, exactly as `decode` computes it, then each channel
+    // composited onto white, so the grey plane matches `decode` and the
+    // colour plane matches what the grey was taken from.
+    let luma = image.to_luma_alpha8();
+    for (pixel, luma) in rgba.pixels().zip(luma.pixels()) {
+        let alpha = u32::from(pixel[3]);
+        let on_paper = |value: u8| {
+            u8::try_from((u32::from(value) * alpha + 255 * (255 - alpha) + 127) / 255)
+                .unwrap_or(255)
+        };
+        rgb.extend_from_slice(&[on_paper(pixel[0]), on_paper(pixel[1]), on_paper(pixel[2])]);
+        grey.push(on_paper(luma[0]));
+    }
+    let mut picture = Picture::from_grey(width, height, grey)?;
+    picture.colour = Some(rgb);
+    Ok(picture)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        decode, fitted_size, size, FitMode, ImageError, Picture, MAX_ENLARGEMENT, MAX_PIXELS,
-        PANEL_GREYS,
+        decode, decode_colour, encode_png_rgb, fitted_size, size, FitMode, ImageError, Picture,
+        MAX_ENLARGEMENT, MAX_PIXELS, PANEL_GREYS,
     };
     use image::{DynamicImage, ImageFormat, RgbImage, RgbaImage};
     use std::io::Cursor;
@@ -651,6 +836,54 @@ mod tests {
         let half = decode(&png(1, 1, vec![0, 0, 0, 128])).expect("png");
         assert_eq!(opaque.grey(), &[0]);
         assert_eq!(half.grey(), &[127]);
+    }
+
+    #[test]
+    fn decoding_in_colour_keeps_the_colour_and_the_very_same_grey() {
+        let bytes = png(3, 1, vec![255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 128]);
+        let grey = decode(&bytes).expect("grey");
+        let colour = decode_colour(&bytes).expect("colour");
+        assert_eq!(colour.grey(), grey.grey(), "the two decoders must agree");
+        assert!(grey.colour().is_none());
+        // Opaque red and green survive; the half-transparent blue is laid on
+        // white per channel, so it comes out a pale blue and not a dark one.
+        assert_eq!(
+            colour.colour(),
+            Some(&[255, 0, 0, 0, 255, 0, 127, 127, 255][..])
+        );
+        assert_eq!(colour.width(), 3);
+
+        let jpeg = decode_colour(&tiny_jpeg()).expect("jpeg");
+        assert_eq!(jpeg.colour().map(<[u8]>::len), Some(4 * 4 * 3));
+        assert_eq!(jpeg.grey(), decode(&tiny_jpeg()).expect("grey").grey());
+    }
+
+    #[test]
+    fn a_colour_picture_scales_both_planes_together_and_can_drop_one() {
+        let mut rgb = Vec::new();
+        for _ in 0..8 * 8 {
+            rgb.extend_from_slice(&[200, 40, 40]);
+        }
+        let picture = Picture::from_rgb(8, 8, rgb).expect("sized");
+        assert!(Picture::from_rgb(8, 8, vec![0; 64]).is_err());
+        let fitted = picture.fit(4, 4).expect("fit");
+        assert_eq!((fitted.width(), fitted.height()), (4, 4));
+        assert_eq!(fitted.grey().len(), 16);
+        let colour = fitted.colour().expect("kept");
+        assert_eq!(colour.len(), 48);
+        // A flat colour resamples to itself.
+        assert!(colour.chunks_exact(3).all(|c| c == [200, 40, 40]));
+        let covered = picture.cover(2, 4).expect("cover");
+        assert_eq!(covered.colour().map(<[u8]>::len), Some(2 * 4 * 3));
+        let grey_only = fitted.clone().into_grey_picture();
+        assert!(grey_only.colour().is_none());
+        assert_eq!(grey_only.grey(), fitted.grey());
+        assert_eq!(fitted.into_colour().map(|c| c.len()), Some(48));
+
+        let png = encode_png_rgb(1, 1, &[1, 2, 3]).expect("png");
+        let back = decode_colour(&png).expect("round trip");
+        assert_eq!(back.colour(), Some(&[1, 2, 3][..]));
+        assert!(encode_png_rgb(1, 1, &[1, 2]).is_err());
     }
 
     #[test]
