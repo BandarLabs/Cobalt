@@ -336,6 +336,7 @@ fn long_lived_seek_cancels_promptly_and_is_sent_exactly_once() {
         let (mut stream, request) = accept(&listener, config);
         observed.fetch_add(1, Ordering::SeqCst);
         assert!(request.starts_with(b"POST /api/board/seek HTTP/1.1\r\n"));
+        assert!(contains_header(&request, "Connection: keep-alive"));
         assert!(!contains_header(&request, "X-Cobalt-"));
         stream
             .write_all(

@@ -174,7 +174,7 @@ export function changedRegistryPackages(previousRegistry, currentRegistry) {
   );
 }
 
-export function checkEntries(registry, published, affectedPackages) {
+export function checkEntries(registry, published, affectedPackages, requireReleaseNotes = true) {
   if (!Array.isArray(registry.apps) || !Array.isArray(published.entries)) {
     throw new Error("registry apps and published catalog entries must be arrays");
   }
@@ -214,7 +214,7 @@ export function checkEntries(registry, published, affectedPackages) {
           `${app.id}: package inputs changed (${changed.join(", ")}) but version ` +
             `${app.version} is not newer than ${previous.version}`
         );
-      } else if (!meaningfulReleaseNotes(app.release_notes)) {
+      } else if (requireReleaseNotes && !meaningfulReleaseNotes(app.release_notes)) {
         failures.push(
           `${app.id}: version ${app.version} needs meaningful release_notes because ${changed.join(", ")} changed`
         );
@@ -296,7 +296,7 @@ export function checkBuildPackages(
     if (!registered.has(package_)) throw new Error(`unknown build package ${package_}`);
   }
   checkProtocolMinimums(registry, protocolVersion, baselines, selected);
-  checkEntries(registry, published, selected);
+  checkEntries(registry, published, selected, false);
 }
 
 function currentProtocolVersion() {
@@ -333,10 +333,10 @@ function isInside(path, directory) {
   return path === directory || path.startsWith(`${directory}/`);
 }
 
+
 export function isContributionManifest(path, directory) {
   return path === `${directory}/cobalt-app.json`;
 }
-
 // A drive script is the host-side route used to film an application. It is
 // never compiled into the signed bundle, so adding or editing one must not
 // look like a Store package change. That mistake is what turned a simulator
@@ -672,8 +672,9 @@ export function lockfileOnlyAddsPackages(previousSource, currentSource) {
 }
 
 // Given an explicit change list, decide whether the catalog must move.
-// CI and documentation stay quiet. Workspace packages and build inputs still
-// reach the Cargo dependency walk because Store binaries statically link them.
+// Platform-only paths (crates/, Cargo.toml, Cargo.lock, CI, docs) produce an
+// empty affected set. The cargo walk that names individual Store packages is
+// reached only when a Store catalog input actually changed.
 export function storeImpactOfChangedPaths(changedPaths, packageDirectories, registeredPackages) {
   const storeDirectories = storeWatchDirectories(packageDirectories, registeredPackages);
   const storeChanges = storeCatalogChanges(changedPaths, storeDirectories).filter(path => {
@@ -703,7 +704,7 @@ export function storeImpactOfChangedPaths(changedPaths, packageDirectories, regi
   };
 }
 
-export function analyzeAppReleaseInputs(baseRevision, registry, strictUnknown = true) {
+export function analyzeAppReleaseInputs(baseRevision, registry) {
   const metadata = JSON.parse(command("cargo", ["metadata", "--format-version", "1", "--locked"]));
   const workspaceRoot = resolve(metadata.workspace_root);
   const changedPaths = command("git", releaseDiffArguments(baseRevision))
@@ -723,6 +724,10 @@ export function analyzeAppReleaseInputs(baseRevision, registry, strictUnknown = 
   );
   const impact = storeImpactOfChangedPaths(changedPaths, packageDirectories, registeredPackages);
   const storeChanges = impact.storeChanges;
+  // A platform-only push must not force every Store app to bump. Device-package
+  // inputs (crates/, Cargo.toml, Cargo.lock, the toolchain pin) reach readers
+  // through beta-vX.Y.Z. The next catalog publication of an actually edited
+  // app compiles against whatever the platform then is.
   if (impact.catalogQuiet) {
     return { affected: impact.affected, storeChanges };
   }
@@ -771,12 +776,12 @@ export function analyzeAppReleaseInputs(baseRevision, registry, strictUnknown = 
     );
   }
   for (const package_ of workspacePackages) {
+    if (!registered.has(package_.name)) continue;
     const directory = dirname(package_.manifest_path);
     const relativeDirectory = relative(workspaceRoot, directory).split(sep).join("/");
     const packageChanges = changedPaths.filter(
       path =>
         isInside(path, relativeDirectory) &&
-        !isContributionManifest(path, relativeDirectory) &&
         !compatiblePaths.has(path) &&
         !isFilmingScript(path, relativeDirectory)
     );
@@ -815,13 +820,13 @@ export function analyzeAppReleaseInputs(baseRevision, registry, strictUnknown = 
   }
 
   return {
-    affected: registeredConsumers(metadata, registeredPackages, changedIdentities, strictUnknown),
+    affected: registeredConsumers(metadata, registeredPackages, changedIdentities),
     storeChanges
   };
 }
 
-export function affectedWorkspacePackages(baseRevision, registry, strictUnknown = true) {
-  return analyzeAppReleaseInputs(baseRevision, registry, strictUnknown).affected;
+export function affectedWorkspacePackages(baseRevision, registry) {
+  return analyzeAppReleaseInputs(baseRevision, registry).affected;
 }
 
 const DIFF_MODES = new Set(["--list-packages", "--publish-needed"]);

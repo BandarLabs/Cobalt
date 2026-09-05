@@ -128,6 +128,10 @@ impl CredentialSetup {
         action: ActionId,
     ) -> Option<CredentialEvent> {
         if self.view == View::Entry {
+            if action == ActionId::BACK {
+                self.view = View::Prompt;
+                return Some(CredentialEvent::Changed);
+            }
             return match self.entry.handle(action) {
                 Some(Typing::Submitted(value)) => {
                     context.secrets().set(self.name.clone(), value);

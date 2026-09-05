@@ -74,6 +74,7 @@ const INSTALLED_PACKAGES: &[(&str, Option<&str>)] = &[
     ("kobo-hn", None),
     ("kobo-rss", None),
     ("kobo-settings", None),
+    ("kobo-books", None),
     ("kobo-sidekick", None),
     ("kobo-store", None),
 ];
@@ -125,7 +126,6 @@ const STORE_PACKAGES: &[&str] = &[
     "kobo-verses",
     "kobo-zotero-reader",
 ];
-
 /// Store contributions discovered from their one checked-in manifest.
 ///
 /// Released host commands may not have a source tree beside them, so the
@@ -670,6 +670,56 @@ fn validate_parser_story(bytes: &[u8]) -> Result<(), String> {
 }
 
 /// Runs the host half of a Paperterm session.
+fn wifi_trace_command(arguments: &[String]) -> Result<(), String> {
+    const USAGE: &str = "usage: kobo wifi-trace summarize PATH | \
+                         kobo wifi-trace retrieve --device HOST --out PATH";
+    match arguments {
+        [action, path] if action == "summarize" => {
+            let bytes = fs::read(path).map_err(|error| format!("read {path}: {error}"))?;
+            println!("{}", kobo_wifi_trace::summarize(&bytes).render());
+            Ok(())
+        }
+        [action, device, host, out, path]
+            if action == "retrieve" && is_device_flag(device) && out == "--out" =>
+        {
+            if !valid_device_host(host) {
+                return Err("device host contains unsupported characters".to_owned());
+            }
+            let script = format!(
+                "set -e\n\
+                 dir={directory}\n\
+                 latest=$(ls -1t \"$dir\"/wifi-handoff-v1-*.jsonl 2>/dev/null | head -n 1)\n\
+                 if [ -z \"$latest\" ]; then\n\
+                   echo 'no Wi-Fi handoff trace on this device' >&2\n\
+                   exit 3\n\
+                 fi\n\
+                 cat \"$latest\"\n",
+                directory = kobo_wifi_trace::DIAGNOSTICS_DIR,
+            );
+            let remote = format!("root@{host}");
+            let output = run_remote_shell(&remote, &script, REMOTE_SESSION_TIMEOUT)
+                .map_err(unreachable_device)?;
+            if !output.status.success() {
+                return Err(match output.status.code() {
+                    Some(3) => "no Wi-Fi handoff trace to retrieve".to_owned(),
+                    _ => unreachable_device(format!(
+                        "retrieving the Wi-Fi handoff trace from {host} failed"
+                    )),
+                });
+            }
+            fs::write(path, &output.stdout)
+                .map_err(|error| format!("write retrieved trace to {path}: {error}"))?;
+            println!(
+                "saved {} bytes to {path}\n{}",
+                output.stdout.len(),
+                kobo_wifi_trace::summarize(&output.stdout).render()
+            );
+            Ok(())
+        }
+        _ => Err(USAGE.to_owned()),
+    }
+}
+
 fn stream_command(arguments: &[String]) -> Result<(), String> {
     const USAGE: &str = "usage: kobo stream init [--host ADDRESS ...]\n\
                          \x20      kobo stream [--grid COLSxROWS] [--controls | --interactive] \
@@ -2282,56 +2332,6 @@ fn device_logs(arguments: &[String]) -> Result<(), String> {
             "reading the trace from {} failed with status {code}",
             request.host
         ))),
-    }
-}
-
-fn wifi_trace_command(arguments: &[String]) -> Result<(), String> {
-    const USAGE: &str = "usage: kobo wifi-trace summarize PATH | \
-                         kobo wifi-trace retrieve --device HOST --out PATH";
-    match arguments {
-        [action, path] if action == "summarize" => {
-            let bytes = fs::read(path).map_err(|error| format!("read {path}: {error}"))?;
-            println!("{}", kobo_wifi_trace::summarize(&bytes).render());
-            Ok(())
-        }
-        [action, device, host, out, path]
-            if action == "retrieve" && is_device_flag(device) && out == "--out" =>
-        {
-            if !valid_device_host(host) {
-                return Err("device host contains unsupported characters".to_owned());
-            }
-            let script = format!(
-                "set -e\n\
-                 dir={directory}\n\
-                 latest=$(ls -1t \"$dir\"/wifi-handoff-v1-*.jsonl 2>/dev/null | head -n 1)\n\
-                 if [ -z \"$latest\" ]; then\n\
-                   echo 'no Wi-Fi handoff trace on this device' >&2\n\
-                   exit 3\n\
-                 fi\n\
-                 cat \"$latest\"\n",
-                directory = kobo_wifi_trace::DIAGNOSTICS_DIR,
-            );
-            let remote = format!("root@{host}");
-            let output = run_remote_shell(&remote, &script, REMOTE_SESSION_TIMEOUT)
-                .map_err(unreachable_device)?;
-            if !output.status.success() {
-                return Err(match output.status.code() {
-                    Some(3) => "no Wi-Fi handoff trace to retrieve".to_owned(),
-                    _ => unreachable_device(format!(
-                        "retrieving the Wi-Fi handoff trace from {host} failed"
-                    )),
-                });
-            }
-            fs::write(path, &output.stdout)
-                .map_err(|error| format!("write retrieved trace to {path}: {error}"))?;
-            println!(
-                "saved {} bytes to {path}\n{}",
-                output.stdout.len(),
-                kobo_wifi_trace::summarize(&output.stdout).render()
-            );
-            Ok(())
-        }
-        _ => Err(USAGE.to_owned()),
     }
 }
 
@@ -4939,7 +4939,6 @@ fn simulated_package(arguments: &[String]) -> Result<&'static str, String> {
         .iter()
         .map(|(package, _)| *package)
         .chain(STORE_PACKAGES.iter().copied())
-        .chain(contributed_store_packages().iter().map(String::as_str))
         .find(|package| {
             *package != "kobod"
                 && (*package == wanted || package.strip_prefix("kobo-") == Some(wanted))
@@ -4954,11 +4953,6 @@ fn simulatable() -> String {
         .filter_map(|(package, _)| package.strip_prefix("kobo-"))
         .chain(
             STORE_PACKAGES
-                .iter()
-                .filter_map(|package| package.strip_prefix("kobo-")),
-        )
-        .chain(
-            contributed_store_packages()
                 .iter()
                 .filter_map(|package| package.strip_prefix("kobo-")),
         )
@@ -6457,8 +6451,6 @@ fn print_help() {
                                    Build and verify every registered Store app\n\
            app-release --registry PATH --seed PATH --out PATH --base-url HTTPS_URL [--prebuilt-dir PATH | --artifact-dir PATH]\n\
                                    Build and sign every registered Store app\n\
-           beta-store-smoke --app ID (--fixture DIR | --beta-catalog URL --device IP) --out DIR [--marketing-route PATH]\n\
-                                   Verify Beta Store lifecycle and required marketing evidence\n\
            host-release-sign --manifest PATH --seed PATH --signature PATH --ssh-signature PATH\n\
                                    Sign host release metadata for publishing\n\
            host-release-verify --manifest PATH --signature PATH\n\
@@ -6831,12 +6823,12 @@ mod tests {
 
     use super::package;
     use super::{
-        build_executables, canonical, is_device_flag, manifest_uses_sdk, normalise_secret_value,
-        parse_deploy, parse_devices, parse_logs, parse_touch_probe, unreachable_device,
-        valid_device_host, valid_slug, verify_arm_elf, wait_for_remote_child,
-        workspace_doctor_binary, DevSessionGuard, RemoteArtifact, SimulationGuard, ALIASES,
-        DEFAULT_TRACE_LINES, DEPLOY_TIMEOUT, DEVICE_PACKAGES, TOUCH_PROBE_DEFAULT_SECONDS,
-        TOUCH_PROBE_MAXIMUM_SECONDS,
+        build_executables, canonical, configured_target_directory, is_device_flag,
+        manifest_uses_sdk, normalise_secret_value, parse_deploy, parse_devices, parse_logs,
+        parse_touch_probe, unreachable_device, valid_device_host, valid_slug, verify_arm_elf,
+        wait_for_remote_child, workspace_doctor_binary, DevSessionGuard, RemoteArtifact,
+        SimulationGuard, ALIASES, DEFAULT_TRACE_LINES, DEPLOY_TIMEOUT, DEVICE_PACKAGES,
+        TOUCH_PROBE_DEFAULT_SECONDS, TOUCH_PROBE_MAXIMUM_SECONDS,
     };
     #[cfg(feature = "device-write")]
     use super::{
@@ -7516,6 +7508,34 @@ mod tests {
             workspace_smoke_binary(),
             super::workspace_target_directory()
                 .join("armv7-unknown-linux-musleabihf/release/kobo-smoke")
+        );
+    }
+
+    #[test]
+    fn cargo_target_dir_resolves_exactly_like_the_build_invocation() {
+        let workspace = PathBuf::from("/source/cobalt");
+        let invocation = PathBuf::from("/runner/jobs/package");
+        let relative = std::ffi::OsStr::new("../../cobalt-targets");
+        let resolved = configured_target_directory(&workspace, &invocation, Some(relative));
+        assert_eq!(resolved, invocation.join(relative));
+        assert_ne!(resolved, workspace.join(relative));
+        assert_eq!(
+            resolved.join("armv7-unknown-linux-musleabihf/release/kobod"),
+            invocation
+                .join(relative)
+                .join("armv7-unknown-linux-musleabihf/release/kobod")
+        );
+        assert_eq!(
+            configured_target_directory(&workspace, &invocation, None),
+            workspace.join("target")
+        );
+        assert_eq!(
+            configured_target_directory(
+                &workspace,
+                &invocation,
+                Some(std::ffi::OsStr::new("/external/cobalt-targets"))
+            ),
+            PathBuf::from("/external/cobalt-targets")
         );
     }
 

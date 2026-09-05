@@ -1343,6 +1343,7 @@ fn host_applications(
             None
         }
     };
+    backends.push(Capability::Library);
     let audio_fetcher: kobo_hal::audio::StreamFetcher = Arc::new(|url, offset, max_bytes| {
         kobo_net::fetch_from(url, offset, max_bytes, None, &[]).map_err(|error| match error {
             // A reader with no route and a service that will not answer are
@@ -5216,5 +5217,60 @@ mod hosting_tests {
             super::feedback_kind(&layout, key),
             super::FeedbackKind::KeyboardKey
         );
+    }
+    #[test]
+    fn app_secret_installation_is_scoped_private_and_replaceable() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory =
+            std::env::temp_dir().join(format!("kobo-app-secret-{}", std::process::id()));
+        let _ignored = std::fs::remove_dir_all(&directory);
+        kobo_policy::credentials::install_app_secret(
+            &directory,
+            "zotero-reader",
+            "zotero",
+            "first",
+        )
+        .expect("install credential");
+        assert_eq!(
+            std::fs::read(directory.join("apps/zotero-reader/zotero")).expect("read credential"),
+            b"first"
+        );
+        assert_eq!(
+            std::fs::metadata(&directory)
+                .expect("secret directory")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o700
+        );
+        assert_eq!(
+            std::fs::metadata(directory.join("apps/zotero-reader/zotero"))
+                .expect("secret file")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+        kobo_policy::credentials::install_app_secret(
+            &directory,
+            "zotero-reader",
+            "zotero",
+            "second",
+        )
+        .expect("replace credential");
+        assert_eq!(
+            std::fs::read(directory.join("apps/zotero-reader/zotero")).expect("read replacement"),
+            b"second"
+        );
+        assert!(kobo_policy::credentials::install_app_secret(
+            &directory,
+            "zotero-reader",
+            "openai",
+            "not-authorized"
+        )
+        .is_err());
+        assert!(!directory.join("apps/zotero-reader/openai").exists());
+        let _ignored = std::fs::remove_dir_all(directory);
     }
 }
