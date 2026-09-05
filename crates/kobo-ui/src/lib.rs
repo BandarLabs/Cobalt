@@ -20617,6 +20617,7 @@ mod figure_tests {
             width: 3,
             height: 2,
             pixels: vec![1, 2, 3, 4, 5, 6],
+            rgb: None,
         };
         let mut clockwise = super::Surface::new(2, 3);
         super::rotate_landscape(&logical, &mut clockwise, super::LandscapeTurn::Clockwise);
