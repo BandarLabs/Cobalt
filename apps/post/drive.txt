@@ -1,0 +1,5 @@
+# Run after configuring a trusted local Hermes gateway and its named secret.
+wait-for Release notes
+expect Morning letter
+clean
+shot inbox

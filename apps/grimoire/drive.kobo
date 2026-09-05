@@ -1,0 +1,13 @@
+wait 500
+expect Grimoire
+clean
+shot home
+tap Spells
+expect 2014
+tap Class
+tap Level
+tap School
+tap Ritual
+tap Concentration
+clean
+shot spell-filters

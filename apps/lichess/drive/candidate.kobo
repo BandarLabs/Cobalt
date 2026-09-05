@@ -1,0 +1,9 @@
+expect Game started
+expect 10+5 Rapid · Rated
+expect Open game
+expect Keep waiting
+expect Cancel
+shot confirm-global-game
+tap Keep waiting
+wait-for 10+5 Rapid · Rated
+shot continued-seek

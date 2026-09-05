@@ -1007,17 +1007,10 @@ mod tests {
         }
     }
 
-    /// A missing API key is not a permission the application lacks, and the
-    /// screen has to say which thing is actually wrong.
+    /// Missing account setup should use the shared customer-facing remedy.
     #[test]
-    fn a_missing_key_names_the_key_rather_than_blaming_the_application() {
-        // Each stage asks a different provider, so the sentence has to name the
-        // one that was actually missing rather than "that service".
-        for (stage, key) in [
-            (Stage::Research, "exa"),
-            (Stage::Write, "openai"),
-            (Stage::Narrate, "elevenlabs"),
-        ] {
+    fn missing_account_setup_uses_consumer_copy() {
+        for stage in [Stage::Research, Stage::Write, Stage::Narrate] {
             let mut app = Audiobook {
                 stage,
                 ..Audiobook::default()
@@ -1025,15 +1018,7 @@ mod tests {
             app.fail_with(Failure::of(kobo_sdk::TaskError::NoCredential));
             let (state, advice) = app.trouble.clone().expect("a failure was recorded");
             assert_eq!(state, StandardState::PermissionDenied);
-            assert!(advice.contains(key), "{stage:?}: {advice}");
-            assert!(
-                advice.contains(&format!("kobo secret set {key}")),
-                "{stage:?}: {advice}"
-            );
-            assert!(
-                !advice.contains("does not hold this permission"),
-                "{advice}"
-            );
+            assert_eq!(advice, "Finish account setup on your computer.");
         }
     }
 }

@@ -112,6 +112,10 @@ const STATE_ROOT: &str = "/mnt/onboard/.adds/cobalt/state";
 /// Nothing here can stop the device booting.
 const DATA_ROOT: &str = "/mnt/onboard/.adds/cobalt/data";
 
+fn app_data_root(name: &str) -> PathBuf {
+    Path::new(DATA_ROOT).join(name)
+}
+
 /// The panel metrics a screen is drawn and hit-tested with.
 ///
 /// A screen may ask for a text size other than the reader's own, a reader
@@ -1098,10 +1102,9 @@ struct Hosted {
     pictures: PictureCache,
     /// Application-local font handles mapped onto runtime-global handles.
     fonts: BTreeMap<FontHandle, FontHandle>,
-    /// Logical direction requested by this application.
+    /// Logical direction is app-session scoped and therefore vanishes when
+    /// this hosted process exits or the reader resumes.
     orientation: kobo_ui::Orientation,
-    /// Physical side selected by a verified orientation event, or the fixed
-    /// fallback on readers without an orientation sensor.
     landscape_turn: kobo_ui::LandscapeTurn,
     painted: u32,
     /// When this was last on the panel, for deciding what to stop first.
@@ -1346,9 +1349,9 @@ fn host_applications(
             // different things everywhere else, but `DeviceError` is the radio
             // vocabulary and has one word for both. Unreachable is the honest
             // one: from the player's point of view the bytes cannot be got.
-            kobo_protocol::TaskError::Offline | kobo_protocol::TaskError::Unreachable => {
-                kobo_protocol::DeviceError::Unreachable
-            }
+            kobo_protocol::TaskError::Offline
+            | kobo_protocol::TaskError::Unreachable
+            | kobo_protocol::TaskError::RateLimited(_) => kobo_protocol::DeviceError::Unreachable,
             kobo_protocol::TaskError::TimedOut => kobo_protocol::DeviceError::TimedOut,
             kobo_protocol::TaskError::NotFound => kobo_protocol::DeviceError::NotFound,
             kobo_protocol::TaskError::TooLarge => kobo_protocol::DeviceError::InvalidInput,
@@ -1656,9 +1659,13 @@ fn host_applications(
                             // then the press is at least on the record.
                             trace(&format!("power button pressed={pressed}"));
                         }
-                        // Sensor-equipped readers report which physical side
-                        // is down. Readers without these events keep the fixed
-                        // clockwise software-landscape fallback.
+                        // The kernel's digested accelerometer verdict. Only
+                        // the two portrait poses move the key mapping; the
+                        // image itself does not rotate mid-session yet.
+                        // The pose each MSC_RAW value names was measured here
+                        // by a rotation-only capture, and then confirmed in
+                        // use: a reader turned end for end mid-session, with
+                        // no restart, goes on paging the way it is now held.
                         GpioEvent::Orientation(gpio::Orientation::PortraitUp) => {
                             forward_is_194 = true;
                         }
@@ -1841,6 +1848,7 @@ fn host_applications(
                             .is_some_and(|(at, _, _)| at.elapsed() >= HOLD_TIME),
                         _ => false,
                     };
+                    let orientation = apps[index].orientation;
                     let disposition = deliver_touch(
                         &mut apps[index].stream,
                         event,
@@ -1957,8 +1965,12 @@ fn host_applications(
                             handle,
                             width,
                             height,
-                            grey,
-                        } => match apps[index].pictures.put_report(handle, width, height, grey) {
+                            format,
+                            pixels,
+                        } => match apps[index]
+                            .pictures
+                            .put_report_with(handle, width, height, format, pixels)
+                        {
                             None => trace(&format!("picture {} refused", handle.0)),
                             Some(evicted) => trace_picture_evictions(handle, &evicted),
                         },
@@ -1966,20 +1978,24 @@ fn host_applications(
                             handle,
                             width,
                             height,
+                            format,
                         } => {
-                            if !apps[index].pictures.begin_upload(handle, width, height) {
+                            if !apps[index]
+                                .pictures
+                                .begin_upload_with(handle, width, height, format)
+                            {
                                 trace(&format!("picture {} upload refused", handle.0));
                             }
                         }
                         Message::PictureChunk {
                             handle,
                             offset,
-                            grey,
+                            pixels,
                         } => {
                             if !apps[index].pictures.upload_chunk(
                                 handle,
                                 usize::try_from(offset).unwrap_or(usize::MAX),
-                                &grey,
+                                &pixels,
                             ) {
                                 trace(&format!("picture {} chunk refused", handle.0));
                             }
@@ -3070,7 +3086,7 @@ fn start_application(
     let greeting = greet(&listener, whole_screen, &expected_name);
     drop(listener);
     let _ignored = fs::remove_file(&socket_path);
-    let (stream, name) = match greeting {
+    let (stream, name, version) = match greeting {
         Ok(greeting) => greeting,
         Err(error) => {
             stop_application(&mut child, jail.as_deref());
@@ -3083,7 +3099,7 @@ fn start_application(
     };
     let id = *next_id;
     *next_id += 1;
-    if let Err(error) = pump_application(&stream, sender, id) {
+    if let Err(error) = pump_application(&stream, sender, id, version) {
         stop_application(&mut child, jail.as_deref());
         let error = with_trace_failure(error, &child);
         if let Some(root) = &jail {
@@ -3093,13 +3109,24 @@ fn start_application(
     }
     let waker = sender.clone();
     let credential_app = name.clone();
-    let tasks = TaskRunner::simulated(std::env::temp_dir())
-        .with_fetch(Arc::new(kobo_net::fetch_from))
-        .with_post(Arc::new(kobo_net::post))
-        .with_secrets(SECRETS)
-        .with_credential_policy(Arc::new(move |credential, url, usage| {
-            kobo_policy::credentials::allowed(&credential_app, credential, url, usage)
-        }))
+    let app_data_root = app_data_root(&name);
+    let tasks = TaskRunner::simulated(&app_data_root)
+        .with_fetch(Arc::new(kobo_net::fetch_from_controlled))
+        .with_post(Arc::new(kobo_net::post_controlled))
+        .with_line_streams(Arc::new(kobo_net::LineStreams::default()))
+        .with_app_secrets(SECRETS, &name)
+        .with_credential_policy(Arc::new(
+            move |credential, url, usage, body, content_type| {
+                kobo_policy::credentials::allowed_request(
+                    &credential_app,
+                    credential,
+                    url,
+                    usage,
+                    body,
+                    content_type,
+                )
+            },
+        ))
         .with_wake(Arc::new(move || {
             let _ = waker.send(Event::TaskReady);
         }))
@@ -3111,7 +3138,7 @@ fn start_application(
         // remains confined to its private Cobalt data directory.
         PathBuf::from("/mnt/onboard/Audiobooks")
     } else {
-        Path::new(DATA_ROOT).join(&name)
+        app_data_root
     };
     apps.push(Hosted {
         id,
@@ -3370,11 +3397,9 @@ fn physical_feedback_rect(
 }
 
 fn feedback_kind(layout: &Layout, rect: kobo_ui::Rect) -> FeedbackKind {
-    if layout
-        .nodes
-        .iter()
-        .any(|node| node.rect == rect && matches!(node.kind, LayoutKind::Cell(_, CellStyle::Key)))
-    {
+    if layout.nodes.iter().any(|node| {
+        node.rect == rect && matches!(node.kind, LayoutKind::Cell(_, CellStyle::Key, _))
+    }) {
         FeedbackKind::KeyboardKey
     } else {
         FeedbackKind::Control
@@ -3550,11 +3575,12 @@ fn text_hold_for_oriented(
         return None;
     };
     let screen = screen?;
-    let action = screen.hold?;
+    screen.hold?;
     let (Ok(x), Ok(y)) = (i32::try_from(x), i32::try_from(y)) else {
         return None;
     };
     let layout = screen.layout_with(&metrics_for(screen).oriented(orientation), chrome);
+    let action = layout.hold?;
     layout.hit_text(x, y).map(|hit| (action, hit))
 }
 
@@ -3578,7 +3604,7 @@ fn greet(
     listener: &std::os::unix::net::UnixListener,
     whole_screen: Rect,
     expected_name: &str,
-) -> Result<(std::os::unix::net::UnixStream, String), String> {
+) -> Result<(std::os::unix::net::UnixStream, String, u8), String> {
     let (mut stream, _) = listener
         .accept()
         .map_err(|error| format!("application never connected: {error}"))?;
@@ -3610,7 +3636,7 @@ fn greet(
         },
     )
     .map_err(|error| format!("welcome: {error}"))?;
-    Ok((stream, name))
+    Ok((stream, name, hello.version))
 }
 
 /// Keeps the recovery watchdog fed from a thread, for the stretches where the
@@ -3667,6 +3693,10 @@ enum Tap {
 /// inside an application goes back to where it was reached from rather than
 /// out of the application. That is a delivery, not a transfer of ownership:
 /// the caller still leaves if no new screen follows.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "touch delivery needs the negotiated protocol, retained screen, and physical pose"
+)]
 fn deliver_touch(
     stream: &mut std::os::unix::net::UnixStream,
     event: TouchEvent,
@@ -3832,10 +3862,20 @@ impl Painter {
             width: u32::try_from(update.region.width).unwrap_or(0),
             height: u32::try_from(update.region.height).unwrap_or(0),
         };
+        // A region is written in colour only where the panel can show it.
+        // Everywhere else it is the quality update it would have been before
+        // colour existed, drawn from the grey plane, which is what the session
+        // would downgrade it to anyway.
+        let colour = update
+            .waveform
+            .writes_colour()
+            .then(|| display.colour())
+            .flatten();
         let intent = match update.waveform {
             PanelWaveform::Du => RefreshIntent::FastFeedback,
             PanelWaveform::Gl16 => RefreshIntent::TextContent,
-            PanelWaveform::Gc16 => RefreshIntent::QualityContent,
+            PanelWaveform::Colour if colour.is_some() => RefreshIntent::ColourContent,
+            PanelWaveform::Gc16 | PanelWaveform::Colour => RefreshIntent::QualityContent,
         };
 
         let started = Instant::now();
@@ -3843,8 +3883,13 @@ impl Painter {
         // path runs at a few megabytes per second on the i.MX6's uncached
         // framebuffer, so writing the whole screen for every frame cost about
         // 1.6 seconds per tap regardless of how small the change was.
-        let region_gray = {
-            let out_of_surface = || "the transition region is not inside the surface".to_owned();
+        let out_of_surface = || "the transition region is not inside the surface".to_owned();
+        let frame = if let Some(order) = colour {
+            let rows = surface
+                .colour_rows(update.region)
+                .ok_or_else(out_of_surface)?;
+            RegionSnapshot::from_rgb_rows(display.geometry(), region, rows, order)
+        } else {
             let x = usize::try_from(update.region.x).map_err(|_| out_of_surface())?;
             let y = usize::try_from(update.region.y).map_err(|_| out_of_surface())?;
             let width = usize::try_from(update.region.width).map_err(|_| out_of_surface())?;
@@ -3855,10 +3900,9 @@ impl Painter {
                 let end = start + width;
                 gray.extend_from_slice(surface.pixels.get(start..end).ok_or_else(out_of_surface)?);
             }
-            gray
-        };
-        let frame = RegionSnapshot::from_grayscale(display.geometry(), region, &region_gray)
-            .map_err(|error| format!("prepare the frame: {error}"))?;
+            RegionSnapshot::from_grayscale(display.geometry(), region, &gray)
+        }
+        .map_err(|error| format!("prepare the frame: {error}"))?;
         let converted = started.elapsed();
         let fence = display
             .restore_timed(&frame)
@@ -3867,7 +3911,7 @@ impl Painter {
         let plan = RefreshPlan::new(
             region,
             intent,
-            update.waveform == PanelWaveform::Gc16,
+            matches!(update.waveform, PanelWaveform::Gc16 | PanelWaveform::Colour),
             whole_screen.width,
             whole_screen.height,
         )
@@ -4034,6 +4078,7 @@ fn pump_application(
     stream: &std::os::unix::net::UnixStream,
     sender: &Sender<Event>,
     id: u64,
+    version: u8,
 ) -> Result<(), String> {
     let mut reader = stream
         .try_clone()
@@ -4044,6 +4089,10 @@ fn pump_application(
             let _ignored = sender.send(Event::AppGone(id));
             return;
         };
+        if frame.version != version {
+            let _ignored = sender.send(Event::AppGone(id));
+            return;
+        }
         if sender.send(Event::App(id, Box::new(frame))).is_err() {
             return;
         }
@@ -4053,6 +4102,364 @@ fn pump_application(
 
 #[cfg(test)]
 mod tests {
+    use kobo_policy::{Capability, TaskRunner};
+    use kobo_protocol::{
+        Credential, CredentialUse, Frame, Header, Message, Task, TaskId, TaskOutcome,
+    };
+    use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
+    use rustls::{ServerConfig, ServerConnection, StreamOwned};
+    use std::io::{Read, Write};
+    use std::net::{TcpListener, TcpStream};
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{mpsc, Arc, Once};
+    use std::thread;
+    use std::time::Duration;
+
+    const MOCK_CA: &[u8] = include_bytes!("../../kobo-net/tests/fixtures/localhost-ca.der");
+    const MOCK_CERTIFICATE: &[u8] =
+        include_bytes!("../../kobo-net/tests/fixtures/localhost-cert.der");
+    const MOCK_PRIVATE_KEY: &[u8] =
+        include_bytes!("../../kobo-net/tests/fixtures/localhost-key.der");
+    const SEEK_BODY: &str = "rated=true&time=10&increment=0&variant=standard&color=random";
+    const FORM: &str = "application/x-www-form-urlencoded";
+
+    fn trust_mock_root() {
+        static TRUST: Once = Once::new();
+        TRUST.call_once(|| {
+            kobo_net::trust_owner_root(MOCK_CA.to_vec()).expect("install mock root");
+        });
+    }
+
+    fn mock_server_config() -> Arc<ServerConfig> {
+        let certificate = CertificateDer::from(MOCK_CERTIFICATE.to_vec());
+        let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(MOCK_PRIVATE_KEY.to_vec()));
+        Arc::new(
+            ServerConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
+                .with_safe_default_protocol_versions()
+                .expect("protocol versions")
+                .with_no_client_auth()
+                .with_single_cert(vec![certificate], key)
+                .expect("mock certificate"),
+        )
+    }
+
+    fn accept_mock(
+        listener: &TcpListener,
+        config: Arc<ServerConfig>,
+    ) -> (StreamOwned<ServerConnection, TcpStream>, Vec<u8>) {
+        let (socket, _) = listener.accept().expect("accept mock client");
+        socket
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .expect("read timeout");
+        let connection = ServerConnection::new(config).expect("server connection");
+        let mut stream = StreamOwned::new(connection, socket);
+        let mut request = Vec::new();
+        let mut buffer = [0_u8; 2048];
+        loop {
+            let read = stream.read(&mut buffer).expect("read request");
+            assert!(read > 0, "client closed before request");
+            request.extend_from_slice(&buffer[..read]);
+            assert!(request.len() < 32 * 1024, "oversized test request");
+            let Some(head_end) = request
+                .windows(4)
+                .position(|window| window == b"\r\n\r\n")
+                .map(|position| position + 4)
+            else {
+                continue;
+            };
+            let head = std::str::from_utf8(&request[..head_end]).expect("request head");
+            let content_length = head
+                .split("\r\n")
+                .find_map(|line| {
+                    line.strip_prefix("Content-Length: ")
+                        .and_then(|value| value.parse::<usize>().ok())
+                })
+                .unwrap_or(0);
+            if request.len() >= head_end + content_length {
+                return (stream, request);
+            }
+        }
+    }
+
+    fn has_header(request: &[u8], prefix: &str) -> bool {
+        std::str::from_utf8(request)
+            .is_ok_and(|request| request.split("\r\n").any(|line| line.starts_with(prefix)))
+    }
+
+    fn request_body(request: &[u8]) -> &[u8] {
+        let start = request
+            .windows(4)
+            .position(|window| window == b"\r\n\r\n")
+            .expect("request separator")
+            + 4;
+        &request[start..]
+    }
+
+    fn test_root(name: &str) -> PathBuf {
+        let target = std::env::var_os("CARGO_TARGET_DIR").map_or_else(
+            || {
+                std::env::current_dir()
+                    .expect("current directory")
+                    .join("target")
+            },
+            PathBuf::from,
+        );
+        target
+            .join("kobod-test-state")
+            .join(format!("{name}-{}", std::process::id()))
+    }
+
+    fn through_protocol_11(task: TaskId, work: Task) -> (TaskId, Task) {
+        let mut encoded = Vec::new();
+        kobo_protocol::write_to(
+            &mut encoded,
+            &Frame {
+                version: kobo_protocol::LEGACY_VERSION,
+                request_id: task.0,
+                message: Message::Spawn { task, work },
+            },
+        )
+        .expect("encode protocol-11 task");
+        let decoded =
+            kobo_protocol::read_from(&mut std::io::Cursor::new(encoded)).expect("decode task");
+        assert_eq!(decoded.version, kobo_protocol::LEGACY_VERSION);
+        assert_eq!(decoded.request_id, task.0);
+        match decoded.message {
+            Message::Spawn { task, work } => (task, work),
+            other => panic!("decoded the wrong message: {other:?}"),
+        }
+    }
+
+    fn stream_work(url: &str, action: &str) -> Task {
+        Task::Fetch {
+            url: url.to_owned(),
+            offset: 0,
+            max_bytes: 128 * 1024,
+            credential: Some(Credential::bearer("lichess")),
+            headers: vec![
+                Header::new("Accept", "application/x-ndjson"),
+                Header::new("X-Cobalt-Line-Stream", action),
+                Header::new("X-Cobalt-Rate-Limit", "1"),
+            ],
+        }
+    }
+
+    struct EventMock {
+        url: String,
+        release: mpsc::Sender<()>,
+        server: thread::JoinHandle<()>,
+    }
+
+    fn start_event_mock(config: Arc<ServerConfig>) -> EventMock {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind event mock");
+        let port = listener.local_addr().expect("event address").port();
+        let (release, wait) = mpsc::channel();
+        let server = thread::spawn(move || {
+            let (mut stream, request) = accept_mock(&listener, config);
+            assert!(request.starts_with(b"GET /api/stream/event HTTP/1.1\r\n"));
+            assert!(has_header(&request, "Authorization: Bearer "));
+            assert!(has_header(&request, "Accept: application/x-ndjson"));
+            assert!(!has_header(&request, "X-Cobalt-"));
+            stream
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\nTransfer-Encoding: chunked\r\nConnection: keep-alive\r\n\r\n",
+                )
+                .expect("event response head");
+            stream.write_all(b"1\r\n\n\r\n").expect("event keepalive");
+            let event = br#"{"type":"gameStart","game":{"id":"abcdEF12"}}"#;
+            write!(stream, "{:x}\r\n", event.len() + 1).expect("event chunk size");
+            stream.write_all(event).expect("event record");
+            stream.write_all(b"\n\r\n").expect("event frame");
+            stream.flush().expect("flush event");
+            let _ = wait.recv_timeout(Duration::from_secs(5));
+        });
+        EventMock {
+            url: format!("https://localhost:{port}/api/stream/event"),
+            release,
+            server,
+        }
+    }
+
+    struct SeekMock {
+        url: String,
+        requests: Arc<AtomicUsize>,
+        started: mpsc::Receiver<()>,
+        release: mpsc::Sender<()>,
+        server: thread::JoinHandle<()>,
+    }
+
+    fn start_seek_mock(config: Arc<ServerConfig>) -> SeekMock {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind seek mock");
+        let port = listener.local_addr().expect("seek address").port();
+        let requests = Arc::new(AtomicUsize::new(0));
+        let observed_requests = Arc::clone(&requests);
+        let (report_start, started) = mpsc::channel();
+        let (release, wait) = mpsc::channel();
+        let server = thread::spawn(move || {
+            let (mut stream, request) = accept_mock(&listener, config);
+            observed_requests.fetch_add(1, Ordering::SeqCst);
+            assert!(request.starts_with(b"POST /api/board/seek HTTP/1.1\r\n"));
+            assert!(has_header(
+                &request,
+                "Content-Type: application/x-www-form-urlencoded"
+            ));
+            assert!(has_header(&request, "Authorization: Bearer "));
+            assert!(!has_header(&request, "X-Cobalt-"));
+            assert_eq!(request_body(&request), SEEK_BODY.as_bytes());
+            stream
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\nTransfer-Encoding: chunked\r\nConnection: keep-alive\r\n\r\n1\r\n\n\r\n",
+                )
+                .expect("seek response");
+            stream.flush().expect("flush seek response");
+            report_start.send(()).expect("report seek");
+            let _ = wait.recv_timeout(Duration::from_secs(5));
+        });
+        SeekMock {
+            url: format!("https://localhost:{port}/api/board/seek"),
+            requests,
+            started,
+            release,
+            server,
+        }
+    }
+
+    fn assert_outcome(runner: &mut TaskRunner, task: TaskId, expected: &TaskOutcome) {
+        let finished = runner
+            .wait(Duration::from_secs(5))
+            .unwrap_or_else(|| panic!("task {} did not finish", task.0));
+        assert_eq!(finished.task, task);
+        assert_eq!(&finished.outcome, expected);
+    }
+
+    #[test]
+    fn an_application_cannot_change_protocol_version_after_greeting() {
+        let (runtime, mut application) =
+            std::os::unix::net::UnixStream::pair().expect("socket pair");
+        let (sender, receiver) = std::sync::mpsc::channel();
+        super::pump_application(&runtime, &sender, 42, kobo_protocol::VERSION)
+            .expect("start application pump");
+        kobo_protocol::write_to(
+            &mut application,
+            &kobo_protocol::Frame {
+                version: kobo_protocol::LEGACY_VERSION,
+                request_id: 1,
+                message: kobo_protocol::Message::Exit,
+            },
+        )
+        .expect("send mixed-version frame");
+        assert!(matches!(
+            receiver
+                .recv_timeout(std::time::Duration::from_secs(1))
+                .expect("application rejection"),
+            super::Event::AppGone(42)
+        ));
+    }
+
+    #[test]
+    fn protocol_11_lichess_consumes_host_secret_for_stream_and_cancellable_seek() {
+        trust_mock_root();
+        let config = mock_server_config();
+        let event = start_event_mock(Arc::clone(&config));
+        let seek_mock = start_seek_mock(config);
+
+        let root = test_root("protocol-11-lichess");
+        let _ignored = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("test secret root");
+        std::fs::write(root.join("lichess"), "generated-test-credential").expect("test credential");
+        assert!(!root.join("apps/lichess/lichess").exists());
+        let allowed_event = event.url.clone();
+        let allowed_seek = seek_mock.url.clone();
+        let mut runner = TaskRunner::simulated(root.join("data"))
+            .with_fetch(Arc::new(kobo_net::fetch_from_controlled))
+            .with_post(Arc::new(kobo_net::post_controlled))
+            .with_line_streams(Arc::new(kobo_net::LineStreams::default()))
+            .with_app_secrets(&root, "lichess")
+            .with_credential_policy(Arc::new(
+                move |credential, url, usage, body, content_type| {
+                    credential == &Credential::bearer("lichess")
+                        && match usage {
+                            CredentialUse::Fetch => {
+                                url == allowed_event && body.is_none() && content_type.is_none()
+                            }
+                            CredentialUse::Post => {
+                                url == allowed_seek
+                                    && body == Some(SEEK_BODY)
+                                    && content_type == Some(FORM)
+                            }
+                        }
+                },
+            ))
+            .with_capabilities([Capability::Network]);
+
+        for (id, action, expected) in [
+            (TaskId(1), "open", TaskOutcome::Completed(Vec::new())),
+            (
+                TaskId(2),
+                "next",
+                TaskOutcome::Completed(
+                    br#"{"type":"gameStart","game":{"id":"abcdEF12"}}"#.to_vec(),
+                ),
+            ),
+        ] {
+            let (task, work) = through_protocol_11(id, stream_work(&event.url, action));
+            runner.submit(task, work).expect("submit stream task");
+            assert_outcome(&mut runner, task, &expected);
+        }
+
+        let seek = TaskId(3);
+        let (seek, work) = through_protocol_11(
+            seek,
+            Task::Post {
+                url: seek_mock.url.clone(),
+                body: SEEK_BODY.to_owned(),
+                content_type: FORM.to_owned(),
+                credential: Some(Credential::bearer("lichess")),
+                headers: vec![
+                    Header::new("X-Cobalt-Wait-Until-Cancelled", "1"),
+                    Header::new("X-Cobalt-Rate-Limit", "1"),
+                ],
+                max_bytes: 4096,
+            },
+        );
+        runner.submit(seek, work).expect("submit seek");
+        seek_mock
+            .started
+            .recv_timeout(Duration::from_secs(5))
+            .expect("seek reached mock");
+        runner.cancel(seek);
+        assert_outcome(&mut runner, seek, &TaskOutcome::Cancelled);
+        assert_eq!(
+            seek_mock.requests.load(Ordering::SeqCst),
+            1,
+            "the non-idempotent seek was replayed"
+        );
+
+        let close = TaskId(4);
+        let (close, work) = through_protocol_11(close, stream_work(&event.url, "close"));
+        runner.submit(close, work).expect("submit stream close");
+        assert_outcome(&mut runner, close, &TaskOutcome::Completed(Vec::new()));
+
+        seek_mock.release.send(()).expect("release seek mock");
+        event.release.send(()).expect("release event mock");
+        seek_mock.server.join().expect("seek mock");
+        event.server.join().expect("event mock");
+        drop(runner);
+        std::fs::remove_dir_all(root).expect("remove test state");
+    }
+
+    #[test]
+    fn app_file_roots_are_private_per_app() {
+        let nonograms = super::app_data_root("nonograms");
+        let panels = super::app_data_root("panels");
+        assert_ne!(nonograms, panels);
+        assert_eq!(
+            nonograms,
+            std::path::Path::new("/mnt/onboard/.adds/cobalt/data/nonograms")
+        );
+    }
+
     /// `TZ` is read from the environment, which is process-global, so these
     /// are one test rather than several: two tests setting it at once would
     /// see each other's value.
@@ -4275,6 +4682,28 @@ mod tests {
         assert_eq!(
             action_for(touch, Some(&no_hold), &chrome, true),
             Some(ActionId(12))
+        );
+
+        let covered = screen.clone().with_overlay(kobo_ui::Overlay::modal(
+            kobo_ui::NodeId(9),
+            "Question",
+            Vec::new(),
+        ));
+        assert_eq!(
+            text_hold_for_oriented(
+                touch,
+                Some(&covered),
+                &chrome,
+                true,
+                kobo_ui::Orientation::Portrait,
+            ),
+            None,
+            "covered text received a hold through the modal"
+        );
+        assert_ne!(
+            action_for(touch, Some(&covered), &chrome, true),
+            Some(ActionId(13)),
+            "the modal leaked the page hold"
         );
     }
 
@@ -4778,7 +5207,7 @@ mod hosting_tests {
             .find(|node| {
                 matches!(
                     node.kind,
-                    kobo_ui::LayoutKind::Cell(_, kobo_ui::CellStyle::Key)
+                    kobo_ui::LayoutKind::Cell(_, kobo_ui::CellStyle::Key, _)
                 )
             })
             .expect("keyboard key")

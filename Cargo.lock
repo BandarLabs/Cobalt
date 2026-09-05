@@ -103,6 +103,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b588b76d00fde79687d7646a9b5bdf3cc0f655e0bbd080335a95d7e96f3587da"
 
 [[package]]
+name = "blake3"
+version = "1.8.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6d9e454fc11f76977dc803893aff6304ed33d6a26efae8696573bea74baa27ae"
+dependencies = [
+ "arrayvec",
+ "cc",
+ "cfg-if",
+ "constant_time_eq",
+ "cpufeatures 0.3.1",
+]
+
+[[package]]
 name = "block-buffer"
 version = "0.10.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -118,6 +131,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d2f6c7dbe95a6ed67ad9f18e57daf93a2f034c524b99fd2b76d18fdfeb6660aa"
 dependencies = [
  "hybrid-array",
+]
+
+[[package]]
+name = "btoi"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9dd6407f73a9b8b6162d8a2ef999fe6afd7cc15902ebf42c5cd296addf17e0ad"
+dependencies = [
+ "num-traits",
 ]
 
 [[package]]
@@ -172,6 +194,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "color_quant"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3d7b894f5411737b7867f4827955924d7c254fc9f4d91a6aad6b097804b1018b"
+
+[[package]]
+name = "command-group"
+version = "5.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a68fa787550392a9d58f44c21a3022cfb3ea3e2458b7f85d3b399d0ceeccf409"
+dependencies = [
+ "nix",
+ "winapi",
+]
+
+[[package]]
 name = "const-oid"
 version = "0.9.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -182,6 +220,12 @@ name = "const-oid"
 version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a6ef517f0926dd24a1582492c791b6a4818a4d94e789a334894aa15b0d12f55c"
+
+[[package]]
+name = "constant_time_eq"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3d52eff69cd5e647efe296129160853a42795992097e8af39800e1060caeea9b"
 
 [[package]]
 name = "core_maths"
@@ -372,6 +416,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "fallible-iterator"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2acce4a10f12dc2fb14a218589d4f1f62ef011b2d0cc4b3cb1bba8e94da14649"
+
+[[package]]
+name = "fallible-streaming-iterator"
+version = "0.1.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7360491ce676a36bf9bb3c56c1aa791658183a54d2744120f27285738d90465a"
+
+[[package]]
 name = "fancy-regex"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -537,6 +593,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "gif"
+version = "0.13.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4ae047235e33e2829703574b54fdec96bfbad892062d97fed2f76022287de61b"
+dependencies = [
+ "color_quant",
+ "weezl",
+]
+
+[[package]]
 name = "group"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -563,6 +629,15 @@ name = "hashbrown"
 version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
+
+[[package]]
+name = "hashlink"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7382cf6263419f2d8df38c55d7da83da5c18aef87fc7a7fc1fb1e344edfe14c1"
+dependencies = [
+ "hashbrown 0.15.5",
+]
 
 [[package]]
 name = "heck"
@@ -605,6 +680,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6dbf3de79e51f3d586ab4cb9d5c3e2c14aa28ed23d180cf89b4df0454a69cc87"
 
 [[package]]
+name = "httpdate"
+version = "1.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "df3b46402a9d5adb4c86a0cf463f42e19994e3ee891101b1841f30a545cb49a9"
+
+[[package]]
 name = "hybrid-array"
 version = "0.4.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -625,11 +706,24 @@ checksum = "529feb3e6769d234375c4cf1ee2ce713682b8e76538cb13f9fc23e1400a591e7"
 dependencies = [
  "bytemuck",
  "byteorder-lite",
+ "color_quant",
+ "gif",
+ "image-webp",
  "moxcms",
  "num-traits",
  "png 0.18.1",
  "zune-core",
  "zune-jpeg",
+]
+
+[[package]]
+name = "image-webp"
+version = "0.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "525e9ff3e1a4be2fbea1fdf0e98686a6d98b4d8f937e1bf7402245af1909e8c3"
+dependencies = [
+ "byteorder-lite",
+ "quick-error",
 ]
 
 [[package]]
@@ -640,9 +734,9 @@ checksum = "edcd27d72f2f071c64249075f42e205ff93c9a4c5f6c6da53e79ed9f9832c285"
 
 [[package]]
 name = "indexmap"
-version = "2.14.1"
+version = "2.14.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "07aa2048142242915a31d35844fb311e0e53fcca590c3a0a40dcf1b841fa09eb"
+checksum = "cc4e190f5d26ca7051642629da2c52fc03bde85a03197c99408dcd291734c855"
 dependencies = [
  "equivalent",
  "hashbrown 0.17.1",
@@ -740,6 +834,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "kobo-calibre-web"
+version = "0.1.0"
+dependencies = [
+ "kobo-sdk",
+ "kobo-ui",
+]
+
+[[package]]
 name = "kobo-chat"
 version = "0.3.6"
 dependencies = [
@@ -753,6 +855,8 @@ name = "kobo-cli"
 version = "0.3.6"
 dependencies = [
  "kobo-app-store",
+ "kobo-doc",
+ "kobo-frame-host",
  "kobo-image",
  "kobo-json",
  "kobo-net",
@@ -763,6 +867,26 @@ dependencies = [
  "kobo-wifi-trace",
  "kobod",
  "ring",
+ "rusqlite",
+ "serde_json",
+]
+
+[[package]]
+name = "kobo-crossword"
+version = "0.1.0"
+dependencies = [
+ "kobo-sdk",
+ "kobo-ui",
+]
+
+[[package]]
+name = "kobo-deck"
+version = "0.2.0"
+dependencies = [
+ "kobo-image",
+ "kobo-json",
+ "kobo-sdk",
+ "kobo-ui",
 ]
 
 [[package]]
@@ -790,8 +914,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "kobo-fanshelf"
+version = "0.2.0"
+dependencies = [
+ "kobo-bookview",
+ "kobo-read",
+ "kobo-sdk",
+ "kobo-ui",
+ "kobo-xml",
+]
+
+[[package]]
+name = "kobo-fieldbook"
+version = "0.1.0"
+dependencies = [
+ "kobo-sdk",
+ "kobo-ui",
+]
+
+[[package]]
 name = "kobo-flashcards"
-version = "0.3.6"
+version = "0.1.0"
 dependencies = [
  "fsrs",
  "kobo-flashcards-format",
@@ -818,10 +961,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "kobo-frame"
+version = "1.0.1"
+dependencies = [
+ "kobo-image",
+ "kobo-sdk",
+ "kobo-ui",
+]
+
+[[package]]
+name = "kobo-frame-host"
+version = "0.3.6"
+dependencies = [
+ "blake3",
+ "image",
+]
+
+[[package]]
 name = "kobo-gallery"
 version = "0.3.6"
 dependencies = [
  "kobo-sdk",
+]
+
+[[package]]
+name = "kobo-grimoire"
+version = "0.1.0"
+dependencies = [
+ "kobo-sdk",
+ "kobo-ui",
 ]
 
 [[package]]
@@ -840,7 +1008,17 @@ dependencies = [
  "kobo-doc",
  "kobo-image",
  "kobo-opds",
+ "kobo-profile",
  "kobo-read",
+ "kobo-sdk",
+ "kobo-ui",
+]
+
+[[package]]
+name = "kobo-habits"
+version = "0.1.1"
+dependencies = [
+ "kobo-image",
  "kobo-sdk",
  "kobo-ui",
 ]
@@ -881,6 +1059,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "kobo-homepanel"
+version = "0.1.0"
+dependencies = [
+ "kobo-json",
+ "kobo-sdk",
+ "kobo-ui",
+]
+
+[[package]]
 name = "kobo-html"
 version = "0.3.6"
 dependencies = [
@@ -898,12 +1085,48 @@ dependencies = [
 ]
 
 [[package]]
+name = "kobo-inkling"
+version = "0.1.0"
+dependencies = [
+ "kobo-sdk",
+ "kobo-ui",
+]
+
+[[package]]
 name = "kobo-json"
 version = "0.3.6"
 
 [[package]]
+name = "kobo-kitchencard"
+version = "0.1.0"
+dependencies = [
+ "kobo-sdk",
+ "kobo-ui",
+]
+
+[[package]]
 name = "kobo-launcher"
 version = "0.3.6"
+dependencies = [
+ "kobo-profile",
+ "kobo-sdk",
+ "kobo-ui",
+]
+
+[[package]]
+name = "kobo-lichess"
+version = "1.0.2"
+dependencies = [
+ "kobo-json",
+ "kobo-profile",
+ "kobo-sdk",
+ "kobo-ui",
+ "shakmaty",
+]
+
+[[package]]
+name = "kobo-logicpack"
+version = "0.1.0"
 dependencies = [
  "kobo-sdk",
  "kobo-ui",
@@ -926,15 +1149,45 @@ dependencies = [
 ]
 
 [[package]]
+name = "kobo-musicstand"
+version = "0.1.0"
+dependencies = [
+ "kobo-sdk",
+ "kobo-ui",
+]
+
+[[package]]
+name = "kobo-needles"
+version = "0.1.0"
+dependencies = [
+ "kobo-bookview",
+ "kobo-json",
+ "kobo-read",
+ "kobo-sdk",
+ "kobo-ui",
+]
+
+[[package]]
 name = "kobo-net"
 version = "0.3.6"
 dependencies = [
  "http",
  "httparse",
+ "httpdate",
  "kobo-protocol",
  "miniz_oxide 0.9.1",
  "rustls",
  "webpki-roots",
+]
+
+[[package]]
+name = "kobo-nonograms"
+version = "0.1.1"
+dependencies = [
+ "kobo-image",
+ "kobo-net",
+ "kobo-sdk",
+ "kobo-ui",
 ]
 
 [[package]]
@@ -943,6 +1196,18 @@ version = "0.3.6"
 dependencies = [
  "kobo-json",
  "kobo-xml",
+]
+
+[[package]]
+name = "kobo-panels"
+version = "0.1.0"
+dependencies = [
+ "kobo-doc",
+ "kobo-image",
+ "kobo-json",
+ "kobo-opds",
+ "kobo-sdk",
+ "kobo-ui",
 ]
 
 [[package]]
@@ -957,6 +1222,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "kobo-parlor"
+version = "0.1.0"
+dependencies = [
+ "kobo-sdk",
+ "kobo-ui",
+]
+
+[[package]]
+name = "kobo-parser"
+version = "0.1.0"
+dependencies = [
+ "kobo-sdk",
+ "kobo-ui",
+]
+
+[[package]]
 name = "kobo-policy"
 version = "0.3.6"
 dependencies = [
@@ -967,6 +1248,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "kobo-post"
+version = "0.1.0"
+dependencies = [
+ "kobo-json",
+ "kobo-sdk",
+ "kobo-ui",
+]
+
+[[package]]
 name = "kobo-profile"
 version = "0.3.6"
 
@@ -974,6 +1264,14 @@ version = "0.3.6"
 name = "kobo-protocol"
 version = "0.3.6"
 dependencies = [
+ "kobo-ui",
+]
+
+[[package]]
+name = "kobo-pubquiz"
+version = "0.1.0"
+dependencies = [
+ "kobo-sdk",
  "kobo-ui",
 ]
 
@@ -991,6 +1289,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "kobo-readlater"
+version = "0.1.0"
+dependencies = [
+ "kobo-html",
+ "kobo-json",
+ "kobo-sdk",
+ "kobo-ui",
+]
+
+[[package]]
 name = "kobo-rss"
 version = "0.3.6"
 dependencies = [
@@ -1002,13 +1310,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "kobo-rss-miniflux"
+version = "0.1.0"
+dependencies = [
+ "kobo-html",
+ "kobo-json",
+ "kobo-sdk",
+ "kobo-ui",
+]
+
+[[package]]
 name = "kobo-sdk"
 version = "0.3.6"
 dependencies = [
  "kobo-policy",
+ "kobo-profile",
  "kobo-protocol",
  "kobo-text",
  "kobo-ui",
+ "unicode-width",
 ]
 
 [[package]]
@@ -1042,8 +1362,12 @@ dependencies = [
 name = "kobo-sidekickd"
 version = "0.3.6"
 dependencies = [
+ "command-group",
  "kobo-json",
  "kobo-net",
+ "serde",
+ "sha2 0.10.9",
+ "toml",
 ]
 
 [[package]]
@@ -1088,6 +1412,14 @@ dependencies = [
 [[package]]
 name = "kobo-sudoku"
 version = "0.3.6"
+dependencies = [
+ "kobo-sdk",
+ "kobo-ui",
+]
+
+[[package]]
+name = "kobo-syncthing"
+version = "0.2.0"
 dependencies = [
  "kobo-sdk",
  "kobo-ui",
@@ -1151,7 +1483,30 @@ dependencies = [
 name = "kobo-ui"
 version = "0.3.6"
 dependencies = [
+ "kobo-profile",
  "unicode-segmentation",
+ "unicode-width",
+]
+
+[[package]]
+name = "kobo-vault"
+version = "0.1.0"
+dependencies = [
+ "kobo-html",
+ "kobo-image",
+ "kobo-sdk",
+ "kobo-ui",
+ "pulldown-cmark",
+]
+
+[[package]]
+name = "kobo-verses"
+version = "0.1.0"
+dependencies = [
+ "kobo-sdk",
+ "kobo-ui",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -1222,6 +1577,17 @@ name = "libm"
 version = "0.2.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
+
+[[package]]
+name = "libsqlite3-sys"
+version = "0.35.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "133c182a6a2c87864fe97778797e46c7e999672690dc9fa3ee8e241aa4a9c13f"
+dependencies = [
+ "cc",
+ "pkg-config",
+ "vcpkg",
+]
 
 [[package]]
 name = "log"
@@ -1343,6 +1709,23 @@ dependencies = [
  "portable-atomic-util",
  "rawpointer",
 ]
+
+[[package]]
+name = "nix"
+version = "0.27.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2eb04e9c688eff1c89d72b407f168cf79bb9e867a9d3323ed6c01519eb9cc053"
+dependencies = [
+ "bitflags 2.13.1",
+ "cfg-if",
+ "libc",
+]
+
+[[package]]
+name = "nohash-hasher"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2bf50223579dc7cdcfb3bfcacf7069ff68243f8c363f62ffa99cf000a6b9c451"
 
 [[package]]
 name = "num-complex"
@@ -1472,6 +1855,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "pkg-config"
+version = "0.3.34"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f6b464fbc74e149a392436b17d523f769e057cb6877f6a5c4618bc6f11800548"
+
+[[package]]
 name = "png"
 version = "0.17.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1505,9 +1894,9 @@ checksum = "05c8b63e8d9609db387f0324918f81d68fe27748f084ef092fb35954d0539a85"
 
 [[package]]
 name = "portable-atomic-util"
-version = "0.2.7"
+version = "0.2.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c2a106d1259c23fac8e543272398ae0e3c0b8d33c88ed73d0cc71b0f1d902618"
+checksum = "10ab3eb7f3becc3a1cbc4f2c6f20267996cfc1a6467a873763411b136a122715"
 dependencies = [
  "portable-atomic",
 ]
@@ -1549,8 +1938,15 @@ checksum = "e9f068eba8e7071c5f9511831b44f32c740d5adf574e990f946ddb53db2f314e"
 dependencies = [
  "bitflags 2.13.1",
  "memchr",
+ "pulldown-cmark-escape",
  "unicase",
 ]
+
+[[package]]
+name = "pulldown-cmark-escape"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "007d8adb5ddab6f8e3f491ac63566a7d5002cc7ed73901f72057943fa71ae1ae"
 
 [[package]]
 name = "pxfm"
@@ -1563,6 +1959,12 @@ name = "qrcodegen"
 version = "1.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4339fc7a1021c9c1621d87f5e3505f2805c8c105420ba2f2a4df86814590c142"
+
+[[package]]
+name = "quick-error"
+version = "2.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a993555f31e5a609f617c12db6250dedcac1b0a85076912c436e6fc9b2c8e6a3"
 
 [[package]]
 name = "quote"
@@ -1842,6 +2244,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6c20b6793b5c2fa6553b250154b78d6d0db37e72700ae35fad9387a46f487c97"
 
 [[package]]
+name = "rusqlite"
+version = "0.37.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "165ca6e57b20e1351573e3729b958bc62f0e48025386970b6e4d29e7a7e71f3f"
+dependencies = [
+ "bitflags 2.13.1",
+ "fallible-iterator",
+ "fallible-streaming-iterator",
+ "hashlink",
+ "libsqlite3-sys",
+ "smallvec",
+]
+
+[[package]]
 name = "rust-embed"
 version = "8.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2001,6 +2417,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_spanned"
+version = "0.6.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bf41e0cfaf7226dca15e8197172c295a782857fcb97fad1808a166870dee75a3"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "sha2"
 version = "0.10.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2020,6 +2445,19 @@ dependencies = [
  "cfg-if",
  "cpufeatures 0.3.1",
  "digest 0.11.3",
+]
+
+[[package]]
+name = "shakmaty"
+version = "0.27.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f414cadc4e727893d1a3b0dca62aaef4c1c821dcbd969f0b10a92e12d684d53a"
+dependencies = [
+ "arrayvec",
+ "bitflags 2.13.1",
+ "btoi",
+ "nohash-hasher",
+ "serde",
 ]
 
 [[package]]
@@ -2272,6 +2710,47 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 
 [[package]]
+name = "toml"
+version = "0.8.23"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dc1beb996b9d83529a9e75c17a1686767d148d70663143c7854d8b4a09ced362"
+dependencies = [
+ "serde",
+ "serde_spanned",
+ "toml_datetime",
+ "toml_edit",
+]
+
+[[package]]
+name = "toml_datetime"
+version = "0.6.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "22cddaf88f4fbc13c51aebbf5f8eceb5c7c5a9da2ac40a13519eb5b0a0e8f11c"
+dependencies = [
+ "serde",
+]
+
+[[package]]
+name = "toml_edit"
+version = "0.22.27"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "41fe8c660ae4257887cf66394862d21dbca4a6ddd26f04a3560410406a2f819a"
+dependencies = [
+ "indexmap",
+ "serde",
+ "serde_spanned",
+ "toml_datetime",
+ "toml_write",
+ "winnow",
+]
+
+[[package]]
+name = "toml_write"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5d99f8c9a7727884afe522e9bd5edbfc91a3312b36a77b5fb8926e4c31a41801"
+
+[[package]]
 name = "ttf-parser"
 version = "0.21.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2401,6 +2880,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "vcpkg"
+version = "0.2.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
+
+[[package]]
 name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2506,6 +2991,12 @@ checksum = "7dcd9d09a39985f5344844e66b0c530a33843579125f23e21e9f0f220850f22a"
 dependencies = [
  "rustls-pki-types",
 ]
+
+[[package]]
+name = "weezl"
+version = "0.1.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a28ac98ddc8b9274cb41bb4d9d4d5c425b6020c50c46f25559911905610b4a88"
 
 [[package]]
 name = "winapi"
@@ -2625,6 +3116,15 @@ name = "windows_x86_64_msvc"
 version = "0.52.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "589f6da84c646204747d1270a2a5661ea66ed1cced2631d546fdfb155959f9ec"
+
+[[package]]
+name = "winnow"
+version = "0.7.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "df79d97927682d2fd8adb29682d1140b343be4ac0f08fd68b7765d9c059d3945"
+dependencies = [
+ "memchr",
+]
 
 [[package]]
 name = "xmlwriter"

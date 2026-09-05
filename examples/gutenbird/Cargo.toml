@@ -15,6 +15,7 @@ kobo-read = { path = "../../crates/kobo-read", features = ["raster"] }
 kobo-sdk = { path = "../../crates/kobo-sdk" }
 
 [dev-dependencies]
+kobo-profile = { path = "../../crates/kobo-profile" }
 kobo-ui = { path = "../../crates/kobo-ui" }
 
 [lints]

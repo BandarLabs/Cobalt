@@ -8,9 +8,9 @@ use std::io::{self, Read, Write};
 use kobo_ui::{
     ActionId, BannerLevel, BarAction, BarStyle, BottomAction, Caret, Cell, ControlState,
     FontHandle, Freeform, Glyph, NavBar, Node, NodeId, Orientation, PageTurns, Percent,
-    PictureHandle, Row, RowLead, RowState, Screen, Space, TextScale, Tile, TilePicture, TileShape,
-    TileState, TopBar, TransferFailure, MAX_BAR_ACTIONS, MAX_TERMINAL_COLUMNS, MAX_TERMINAL_ROWS,
-    MIN_NAV_DESTINATIONS,
+    PictureFormat, PictureHandle, Row, RowLead, RowState, Screen, Space, TextScale, Tile,
+    TilePicture, TileShape, TileState, TopBar, TransferFailure, MAX_BAR_ACTIONS,
+    MAX_TERMINAL_COLUMNS, MAX_TERMINAL_ROWS, MIN_NAV_DESTINATIONS,
 };
 use std::cmp::min;
 
@@ -51,12 +51,18 @@ pub const MAGIC: [u8; 4] = *b"KOBO";
 /// requests/results. Version 11 adds the identity request and its result,
 /// both tags an older side has no reading for. Update-channel requests were
 /// later added on new tags without changing the shapes of existing frames.
+/// Version 12 adds the explicit rate-limit task error and its retry delay.
 /// Version 12 adds Folio tile values, card tiles, section links and page rails.
-/// Its runtime retains a version-11 reader so upgraded devices keep installed
-/// applications and their locally measured Atkinson layouts intact.
-pub const VERSION: u8 = 12;
-/// The most recent protocol emitted before Folio's schema and metrics change.
-/// A 0.3.5 runtime reads this version during the OTA compatibility window.
+/// Version 13 adds persistent selected state to grid cells. Its runtime retains
+/// a version-12 reader so already installed Folio applications keep working.
+///
+/// A colour picture travels the same way: a grey picture still uses the tags it
+/// always did, byte for byte, and a colour one uses tags of its own that an
+/// older runtime refuses rather than misreads.
+pub const VERSION: u8 = 13;
+/// Folio's tile, section, and page-rail protocol.
+pub const FOLIO_VERSION: u8 = 12;
+/// The pre-Folio protocol retained during the compatibility window.
 pub const LEGACY_VERSION: u8 = 11;
 pub const HEADER_LEN: usize = 14;
 /// The largest single frame either side will read.
@@ -67,10 +73,12 @@ pub const HEADER_LEN: usize = 14;
 /// Eight megabytes bounds a runaway peer just as well and costs nothing when
 /// frames stay small, which every frame except an audio reply does.
 pub const MAX_FRAME_LEN: usize = 8 * 1_048_576;
-/// The largest decoded picture accepted from one application.
+/// The largest decoded picture accepted from one application, in bytes.
 ///
 /// Four Clara panels is the same bound used by `kobo-image`: enough headroom
-/// for a high-resolution source while remaining below the per-app cache.
+/// for a high-resolution source while remaining below the per-app cache. A
+/// bound on bytes rather than pixels, so a colour picture, at three bytes a
+/// pixel, fits a third as many of them; one Clara panel of colour fits.
 pub const MAX_PICTURE_BYTES: usize = 4 * 1072 * 1448;
 /// Largest picture sent as one legacy `PutPicture` frame.
 pub const MAX_INLINE_PICTURE_BYTES: usize = 768 * 1024;
@@ -524,6 +532,12 @@ pub enum TaskError {
     /// Kept apart from [`TaskError::NoCredential`] as well: that one is the
     /// device having no key, this one is the host refusing the request.
     Unauthorized,
+    /// The host asked this client to wait before trying again.
+    ///
+    /// The value is the bounded `Retry-After` delay in seconds. Keeping it on
+    /// the error lets an application honor the archive's own instruction
+    /// without exposing response headers generally.
+    RateLimited(u32),
 }
 
 impl TaskError {
@@ -540,7 +554,7 @@ impl TaskError {
     /// not here for the same reason as `Denied`: a key does not install itself
     /// between two attempts three seconds apart.
     #[must_use]
-    pub const fn worth_retrying(self) -> bool {
+    pub const fn worth_retrying(&self) -> bool {
         matches!(self, Self::Offline | Self::Unreachable | Self::TimedOut)
     }
 }
@@ -556,6 +570,7 @@ impl fmt::Display for TaskError {
             Self::TimedOut => "the task ran out of time",
             Self::NotFound => "not found",
             Self::Unauthorized => "the host will not answer without a credential",
+            Self::RateLimited(_) => "the host asked this client to slow down",
         })
     }
 }
@@ -582,8 +597,9 @@ pub enum Message {
         text_scale: TextScale,
     },
     SetScreen(Screen),
-    /// Changes the logical direction for this application session. Omission
-    /// keeps the portrait-compatible default.
+    /// Selects the application's logical viewport for subsequent screens.
+    ///
+    /// Portrait is the default for clients that never send this message.
     SetOrientation(Orientation),
     Action {
         action: ActionId,
@@ -676,20 +692,28 @@ pub enum Message {
         handle: PictureHandle,
         width: u32,
         height: u32,
-        /// Eight-bit grey, row major, exactly `width * height` bytes.
-        grey: Vec<u8>,
+        /// How `pixels` is laid out. Grey travels on the tag it always has;
+        /// colour on one of its own, so the field costs nothing on the wire.
+        format: PictureFormat,
+        /// Row major, exactly `width * height * format.bytes_per_pixel()`
+        /// bytes: one grey byte, or red, green and blue.
+        pixels: Vec<u8>,
     },
     /// Starts an atomic picture upload larger than one protocol frame.
     BeginPicture {
         handle: PictureHandle,
         width: u32,
         height: u32,
+        format: PictureFormat,
     },
     /// One in-order span of a picture started by [`Message::BeginPicture`].
+    ///
+    /// Bytes in the format the upload was begun with; a chunk does not carry
+    /// the format itself, so its boundaries need not fall on a pixel.
     PictureChunk {
         handle: PictureHandle,
         offset: u32,
-        grey: Vec<u8>,
+        pixels: Vec<u8>,
     },
     /// Makes a completely received upload visible to screens.
     CommitPicture {
@@ -1321,6 +1345,28 @@ pub struct DeviceIdentity {
     pub panel_height: u32,
 }
 
+impl DeviceIdentity {
+    /// Whether the reader's panel can show colour.
+    ///
+    /// Read from the profile name rather than a field of its own, because the
+    /// identity frame is a fixed shape older runtimes already send and an
+    /// added field would be misread by them rather than refused. The profile
+    /// names follow the products, and every panel with a colour filter is
+    /// sold with "Colour" in its name; the profile crate holds a test that
+    /// keeps its colour flag and its names in step, so this stays true as
+    /// panels are added. An application that gets `true` may send a picture
+    /// with `PictureFormat::Rgb`; one that gets `false` should not, since it
+    /// would cost three times the bytes to be drawn as grey.
+    #[must_use]
+    pub fn colour_panel(&self) -> bool {
+        const NAME: &[u8] = b"colour";
+        self.profile_id
+            .as_bytes()
+            .windows(NAME.len())
+            .any(|window| window.eq_ignore_ascii_case(NAME))
+    }
+}
+
 fn validate_identity(identity: &DeviceIdentity) -> Result<(), ProtocolError> {
     for text in [
         &identity.profile_id,
@@ -1753,7 +1799,7 @@ impl From<io::Error> for StreamError {
 /// Returns an error when a message exceeds protocol limits.
 #[allow(clippy::too_many_lines)]
 pub fn encode(frame: &Frame) -> Result<Vec<u8>, ProtocolError> {
-    if !matches!(frame.version, LEGACY_VERSION | VERSION) {
+    if !matches!(frame.version, LEGACY_VERSION | FOLIO_VERSION | VERSION) {
         return Err(ProtocolError::UnsupportedVersion(frame.version));
     }
     let (kind, payload_len) = encoded_message_layout(&frame.message, frame.version)?;
@@ -1813,17 +1859,19 @@ pub fn encode(frame: &Frame) -> Result<Vec<u8>, ProtocolError> {
             handle,
             width,
             height,
-            grey,
+            pixels,
+            ..
         } => {
             push_u32(&mut payload, handle.0);
             push_u32(&mut payload, *width);
             push_u32(&mut payload, *height);
-            payload.extend_from_slice(grey);
+            payload.extend_from_slice(pixels);
         }
         Message::BeginPicture {
             handle,
             width,
             height,
+            ..
         } => {
             push_u32(&mut payload, handle.0);
             push_u32(&mut payload, *width);
@@ -1832,11 +1880,11 @@ pub fn encode(frame: &Frame) -> Result<Vec<u8>, ProtocolError> {
         Message::PictureChunk {
             handle,
             offset,
-            grey,
+            pixels,
         } => {
             push_u32(&mut payload, handle.0);
             push_u32(&mut payload, *offset);
-            payload.extend_from_slice(grey);
+            payload.extend_from_slice(pixels);
         }
         Message::CommitPicture { handle } | Message::DropPicture { handle } => {
             push_u32(&mut payload, handle.0);
@@ -1995,7 +2043,7 @@ fn encode_task_message(payload: &mut Vec<u8>, message: &Message) -> Result<(), P
                 }
                 TaskOutcome::Failed(error) => {
                     payload.push(1);
-                    payload.push(encode_task_error(*error));
+                    encode_task_error(payload, *error);
                 }
                 TaskOutcome::Cancelled => payload.push(2),
             }
@@ -2320,6 +2368,37 @@ fn encoded_task_len(work: &Task) -> Result<usize, ProtocolError> {
     Ok(length)
 }
 
+fn put_picture_layout(
+    width: u32,
+    height: u32,
+    format: PictureFormat,
+    pixels: &[u8],
+) -> Result<(u8, usize), ProtocolError> {
+    // The declared size and the bytes must agree before anything is
+    // allocated on the strength of either, or a decoder reading by
+    // dimension would run off the end of a short payload.
+    let expected = picture_len(width, height, format)?;
+    if expected != pixels.len() {
+        return Err(ProtocolError::InvalidValue("picture size"));
+    }
+    if pixels.len() > MAX_INLINE_PICTURE_BYTES {
+        return Err(ProtocolError::FrameTooLarge);
+    }
+    Ok((put_picture_tag(format), 12 + pixels.len()))
+}
+
+fn begin_picture_layout(
+    width: u32,
+    height: u32,
+    format: PictureFormat,
+) -> Result<(u8, usize), ProtocolError> {
+    let expected = picture_len(width, height, format)?;
+    if expected == 0 || expected > MAX_PICTURE_BYTES {
+        return Err(ProtocolError::FrameTooLarge);
+    }
+    Ok((begin_picture_tag(format), 12))
+}
+
 fn encoded_message_layout(message: &Message, version: u8) -> Result<(u8, usize), ProtocolError> {
     match message {
         Message::Hello { name } => Ok((1, encoded_string_len(name)?)),
@@ -2351,21 +2430,7 @@ fn encoded_message_layout(message: &Message, version: u8) -> Result<(u8, usize),
         Message::DeviceResult(result) => Ok((8, device_result_len(result)?)),
         Message::Spawn { work, .. } => Ok((9, encoded_task_len(work)?)),
         Message::Cancel { .. } => Ok((10, 4)),
-        Message::TaskOutcome { outcome, .. } => {
-            let mut length = 5;
-            match outcome {
-                TaskOutcome::Completed(bytes) => {
-                    if bytes.len() > MAX_TASK_BYTES {
-                        return Err(ProtocolError::FrameTooLarge);
-                    }
-                    add_encoded_len(&mut length, 4)?;
-                    add_encoded_len(&mut length, bytes.len())?;
-                }
-                TaskOutcome::Failed(_) => add_encoded_len(&mut length, 1)?,
-                TaskOutcome::Cancelled => {}
-            }
-            Ok((11, length))
-        }
+        Message::TaskOutcome { outcome, .. } => Ok((11, task_outcome_len(outcome)?)),
         Message::StoreRequest(request) => Ok((13, store_request_len(request)?)),
         Message::StoreResult(result) => Ok((14, store_result_len(result)?)),
         Message::Lifecycle(_) => Ok((15, 1)),
@@ -2374,40 +2439,28 @@ fn encoded_message_layout(message: &Message, version: u8) -> Result<(u8, usize),
         Message::PutPicture {
             width,
             height,
-            grey,
+            format,
+            pixels,
             ..
-        } => {
-            // The declared size and the bytes must agree before anything is
-            // allocated on the strength of either, or a decoder reading by
-            // dimension would run off the end of a short payload.
-            let expected = picture_len(*width, *height)?;
-            if expected != grey.len() {
-                return Err(ProtocolError::InvalidValue("picture size"));
-            }
-            if grey.len() > MAX_INLINE_PICTURE_BYTES {
-                return Err(ProtocolError::FrameTooLarge);
-            }
-            Ok((18, 12 + grey.len()))
-        }
+        } => put_picture_layout(*width, *height, *format, pixels),
         Message::DropPicture { .. } => Ok((19, 4)),
-        Message::BeginPicture { width, height, .. } => {
-            let expected = picture_len(*width, *height)?;
-            if expected == 0 || expected > MAX_PICTURE_BYTES {
-                return Err(ProtocolError::FrameTooLarge);
-            }
-            Ok((20, 12))
-        }
-        Message::PictureChunk { offset, grey, .. } => {
-            if grey.is_empty()
-                || grey.len() > MAX_PICTURE_CHUNK_BYTES
+        Message::BeginPicture {
+            width,
+            height,
+            format,
+            ..
+        } => begin_picture_layout(*width, *height, *format),
+        Message::PictureChunk { offset, pixels, .. } => {
+            if pixels.is_empty()
+                || pixels.len() > MAX_PICTURE_CHUNK_BYTES
                 || usize::try_from(*offset)
                     .ok()
-                    .and_then(|offset| offset.checked_add(grey.len()))
+                    .and_then(|offset| offset.checked_add(pixels.len()))
                     .is_none_or(|end| end > MAX_PICTURE_BYTES)
             {
                 return Err(ProtocolError::FrameTooLarge);
             }
-            Ok((21, 8 + grey.len()))
+            Ok((21, 8 + pixels.len()))
         }
         Message::CommitPicture { .. } => Ok((22, 4)),
         Message::CoverChanged { .. } => Ok((23, 1)),
@@ -2425,6 +2478,24 @@ fn encoded_message_layout(message: &Message, version: u8) -> Result<(u8, usize),
     }
 }
 
+fn task_outcome_len(outcome: &TaskOutcome) -> Result<usize, ProtocolError> {
+    let mut length = 5;
+    match outcome {
+        TaskOutcome::Completed(bytes) => {
+            if bytes.len() > MAX_TASK_BYTES {
+                return Err(ProtocolError::FrameTooLarge);
+            }
+            add_encoded_len(&mut length, 4)?;
+            add_encoded_len(&mut length, bytes.len())?;
+        }
+        TaskOutcome::Failed(error) => {
+            add_encoded_len(&mut length, encoded_task_error_len(*error))?;
+        }
+        TaskOutcome::Cancelled => {}
+    }
+    Ok(length)
+}
+
 fn orientation_layout(version: u8) -> Result<(u8, usize), ProtocolError> {
     if version == LEGACY_VERSION {
         Err(ProtocolError::InvalidValue("protocol 12 orientation"))
@@ -2433,11 +2504,27 @@ fn orientation_layout(version: u8) -> Result<(u8, usize), ProtocolError> {
     }
 }
 
-fn picture_len(width: u32, height: u32) -> Result<usize, ProtocolError> {
-    usize::try_from(width)
-        .ok()
-        .and_then(|width| width.checked_mul(usize::try_from(height).ok()?))
+fn picture_len(width: u32, height: u32, format: PictureFormat) -> Result<usize, ProtocolError> {
+    format
+        .byte_len(width, height)
         .ok_or(ProtocolError::FrameTooLarge)
+}
+
+/// Grey pictures keep the tag they have always had; colour ones take a tag of
+/// their own, so an older runtime refuses the frame instead of reading three
+/// bytes a pixel as one.
+const fn put_picture_tag(format: PictureFormat) -> u8 {
+    match format {
+        PictureFormat::Grey => 18,
+        PictureFormat::Rgb => 28,
+    }
+}
+
+const fn begin_picture_tag(format: PictureFormat) -> u8 {
+    match format {
+        PictureFormat::Grey => 20,
+        PictureFormat::Rgb => 29,
+    }
 }
 
 #[allow(
@@ -2577,7 +2664,7 @@ fn encode_device_request(
             output.extend_from_slice(&[46, channel.wire()]);
         }
         DeviceRequest::SetSecret { name, value }
-            if version == VERSION
+            if version >= FOLIO_VERSION
                 && valid_app_id(name)
                 && !value.as_str().is_empty()
                 && value.as_str().len() <= MAX_APP_SECRET_BYTES
@@ -2897,7 +2984,7 @@ fn decode_device_request(
         46 => Ok(DeviceRequest::SetUpdateChannel {
             channel: UpdateChannel::from_wire(reader.u8()?)?,
         }),
-        47 if version == VERSION => {
+        47 if version >= FOLIO_VERSION => {
             let name = reader.string()?;
             let value = reader.string()?;
             if !valid_app_id(&name)
@@ -3828,6 +3915,9 @@ fn encoded_node_len(
                 add_encoded_len(&mut length, 4)?;
                 add_encoded_len(&mut length, encoded_string_len(&cell.label)?)?;
                 add_encoded_len(&mut length, if cell.glyph.is_some() { 2 } else { 1 })?;
+                if version >= 13 {
+                    add_encoded_len(&mut length, 1)?;
+                }
             }
             length
         }
@@ -4049,7 +4139,7 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, ProtocolError> {
         return Err(ProtocolError::BadMagic);
     }
     let version = bytes[4];
-    if !matches!(version, LEGACY_VERSION | VERSION) {
+    if !matches!(version, LEGACY_VERSION | FOLIO_VERSION | VERSION) {
         return Err(ProtocolError::UnsupportedVersion(bytes[4]));
     }
     let payload_len = u32::from_be_bytes([bytes[6], bytes[7], bytes[8], bytes[9]]) as usize;
@@ -4197,7 +4287,7 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, ProtocolError> {
                     }
                     TaskOutcome::Completed(reader.take(length)?.to_vec())
                 }
-                1 => TaskOutcome::Failed(decode_task_error(reader.u8()?)?),
+                1 => TaskOutcome::Failed(decode_task_error(&mut reader)?),
                 2 => TaskOutcome::Cancelled,
                 _ => return Err(ProtocolError::InvalidValue("task outcome")),
             };
@@ -4351,30 +4441,41 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, ProtocolError> {
             3 => ShellEvent::Refused(ShellError::try_from(reader.u8()?)?),
             _ => return Err(ProtocolError::InvalidValue("shell event")),
         }),
-        18 => {
+        tag @ (18 | 28) => {
+            let format = if tag == 18 {
+                PictureFormat::Grey
+            } else {
+                PictureFormat::Rgb
+            };
             let handle = PictureHandle(reader.u32()?);
             let width = reader.u32()?;
             let height = reader.u32()?;
-            let expected = picture_len(width, height)?;
+            let expected = picture_len(width, height, format)?;
             if expected > MAX_INLINE_PICTURE_BYTES {
                 return Err(ProtocolError::FrameTooLarge);
             }
-            let grey = reader.take(expected)?.to_vec();
+            let pixels = reader.take(expected)?.to_vec();
             Message::PutPicture {
                 handle,
                 width,
                 height,
-                grey,
+                format,
+                pixels,
             }
         }
         19 => Message::DropPicture {
             handle: PictureHandle(reader.u32()?),
         },
-        20 => {
+        tag @ (20 | 29) => {
+            let format = if tag == 20 {
+                PictureFormat::Grey
+            } else {
+                PictureFormat::Rgb
+            };
             let handle = PictureHandle(reader.u32()?);
             let width = reader.u32()?;
             let height = reader.u32()?;
-            let expected = picture_len(width, height)?;
+            let expected = picture_len(width, height, format)?;
             if expected == 0 || expected > MAX_PICTURE_BYTES {
                 return Err(ProtocolError::FrameTooLarge);
             }
@@ -4382,6 +4483,7 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, ProtocolError> {
                 handle,
                 width,
                 height,
+                format,
             }
         }
         21 => {
@@ -4401,7 +4503,7 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, ProtocolError> {
             Message::PictureChunk {
                 handle,
                 offset,
-                grey: reader.take(length)?.to_vec(),
+                pixels: reader.take(length)?.to_vec(),
             }
         }
         22 => Message::CommitPicture {
@@ -4466,7 +4568,7 @@ pub fn read_from<R: Read>(reader: &mut R) -> Result<Frame, StreamError> {
     if header[..4] != MAGIC {
         return Err(ProtocolError::BadMagic.into());
     }
-    if !matches!(header[4], LEGACY_VERSION | VERSION) {
+    if !matches!(header[4], LEGACY_VERSION | FOLIO_VERSION | VERSION) {
         return Err(ProtocolError::UnsupportedVersion(header[4]).into());
     }
     let payload_len = u32::from_be_bytes([header[6], header[7], header[8], header[9]]) as usize;
@@ -5077,6 +5179,9 @@ fn encode_node(
                         output.push(encode_glyph(glyph));
                     }
                 }
+                if version >= 13 {
+                    output.push(u8::from(cell.selected));
+                }
             }
         }
         Node::Rows { id, rows } => {
@@ -5512,6 +5617,27 @@ const fn encode_glyph(glyph: Glyph) -> u8 {
         Glyph::Plus => 42,
         Glyph::Headphones => 43,
         Glyph::Minus => 44,
+        Glyph::ChessWhiteKing => 45,
+        Glyph::ChessWhiteQueen => 46,
+        Glyph::ChessWhiteRook => 47,
+        Glyph::ChessWhiteBishop => 48,
+        Glyph::ChessWhiteKnight => 49,
+        Glyph::ChessWhitePawn => 50,
+        Glyph::ChessBlackKing => 51,
+        Glyph::ChessBlackQueen => 52,
+        Glyph::ChessBlackRook => 53,
+        Glyph::ChessBlackBishop => 54,
+        Glyph::ChessBlackKnight => 55,
+        Glyph::ChessBlackPawn => 56,
+        Glyph::Heart => 57,
+        Glyph::BlackDisc => 58,
+        Glyph::WhiteDisc => 59,
+        Glyph::BlackDraughtsKing => 60,
+        Glyph::WhiteDraughtsKing => 61,
+        Glyph::BlackDraughtsMan => 62,
+        Glyph::WhiteDraughtsMan => 63,
+        Glyph::MorrisPoint => 64,
+        Glyph::MorrisLegalPoint => 65,
     }
 }
 
@@ -5562,6 +5688,27 @@ const fn decode_glyph(tag: u8) -> Option<Glyph> {
         42 => Glyph::Plus,
         43 => Glyph::Headphones,
         44 => Glyph::Minus,
+        45 => Glyph::ChessWhiteKing,
+        46 => Glyph::ChessWhiteQueen,
+        47 => Glyph::ChessWhiteRook,
+        48 => Glyph::ChessWhiteBishop,
+        49 => Glyph::ChessWhiteKnight,
+        50 => Glyph::ChessWhitePawn,
+        51 => Glyph::ChessBlackKing,
+        52 => Glyph::ChessBlackQueen,
+        53 => Glyph::ChessBlackRook,
+        54 => Glyph::ChessBlackBishop,
+        55 => Glyph::ChessBlackKnight,
+        56 => Glyph::ChessBlackPawn,
+        57 => Glyph::Heart,
+        58 => Glyph::BlackDisc,
+        59 => Glyph::WhiteDisc,
+        60 => Glyph::BlackDraughtsKing,
+        61 => Glyph::WhiteDraughtsKing,
+        62 => Glyph::BlackDraughtsMan,
+        63 => Glyph::WhiteDraughtsMan,
+        64 => Glyph::MorrisPoint,
+        65 => Glyph::MorrisLegalPoint,
 
         _ => return None,
     })
@@ -6128,7 +6275,7 @@ fn decode_node(
             let shape = match reader.u8()? {
                 0 => TileShape::Square,
                 1 => TileShape::Portrait,
-                2 if version == VERSION => TileShape::Card,
+                2 if version >= FOLIO_VERSION => TileShape::Card,
                 _ => return Err(ProtocolError::InvalidValue("tile shape")),
             };
             let len = usize::from(reader.u8()?);
@@ -6192,7 +6339,7 @@ fn decode_node(
             }
             Ok(Node::TileGrid { id, tiles, shape })
         }
-        31 if version == VERSION => Ok(Node::PageRail {
+        31 if version >= FOLIO_VERSION => Ok(Node::PageRail {
             id,
             page: reader.u16()?,
             of: reader.u16()?,
@@ -6418,12 +6565,21 @@ fn decode_node(
                 }
                 let label = reader.string()?;
                 let cell = Cell::new(action, label);
-                cells.push(match reader.u8()? {
+                let cell = match reader.u8()? {
                     0 => cell,
                     1 => cell.with_glyph(
                         decode_glyph(reader.u8()?).ok_or(ProtocolError::InvalidValue("glyph"))?,
                     ),
                     _ => return Err(ProtocolError::InvalidValue("cell glyph flag")),
+                };
+                cells.push(if version >= 13 {
+                    cell.with_selected(match reader.u8()? {
+                        0 => false,
+                        1 => true,
+                        _ => return Err(ProtocolError::InvalidValue("cell selected flag")),
+                    })
+                } else {
+                    cell
                 });
             }
             Ok(Node::Grid {
@@ -6724,8 +6880,9 @@ mod tests {
         unique.sort_unstable();
         unique.dedup();
         assert_eq!(unique.len(), tags.len(), "two glyphs share one wire tag");
+        let highest = tags.iter().copied().max().expect("glyphs have tags");
         assert_eq!(
-            decode_glyph(u8::try_from(Glyph::ALL.len()).expect("small set")),
+            decode_glyph(highest.checked_add(1).expect("glyph tag space remains")),
             None,
             "a tag one past the end decoded as a glyph"
         );
@@ -8295,7 +8452,9 @@ mod node_coverage_tests {
         // byte of the next cell's action, so the second button of a transport
         // row would fire something nobody named. VERSION went to 3 for this.
         let cells = vec![
-            kobo_ui::Cell::new(ActionId(11), "Back 30 sec").with_glyph(Glyph::Rewind30),
+            kobo_ui::Cell::new(ActionId(11), "Back 30 sec")
+                .with_glyph(Glyph::Rewind30)
+                .with_selected(true),
             kobo_ui::Cell::new(ActionId(12), "Play"),
             kobo_ui::Cell::new(ActionId(13), "Louder").with_glyph(Glyph::VolumeUp),
         ];
@@ -8885,6 +9044,10 @@ mod store_tests {
                 task: TaskId(15),
                 outcome: TaskOutcome::Cancelled,
             },
+            Message::TaskOutcome {
+                task: TaskId(16),
+                outcome: TaskOutcome::Failed(TaskError::RateLimited(37)),
+            },
         ] {
             let (_, predicted) = encoded_message_layout(&message, VERSION)
                 .expect("the message is within the limits");
@@ -9213,24 +9376,36 @@ mod store_tests {
     }
 }
 
-const fn encode_task_error(error: TaskError) -> u8 {
+fn encode_task_error(payload: &mut Vec<u8>, error: TaskError) {
     match error {
-        TaskError::Denied => 0,
-        TaskError::Unreachable => 1,
-        TaskError::TooLarge => 2,
-        TaskError::TimedOut => 3,
-        TaskError::NotFound => 4,
+        TaskError::Denied => payload.push(0),
+        TaskError::Unreachable => payload.push(1),
+        TaskError::TooLarge => payload.push(2),
+        TaskError::TimedOut => payload.push(3),
+        TaskError::NotFound => payload.push(4),
         // Appended rather than inserted. The tags are the wire, and renumbering
         // them would make a new daemon and an older app disagree about what
         // went wrong without either of them noticing.
-        TaskError::Offline => 5,
-        TaskError::NoCredential => 6,
-        TaskError::Unauthorized => 7,
+        TaskError::Offline => payload.push(5),
+        TaskError::NoCredential => payload.push(6),
+        TaskError::Unauthorized => payload.push(7),
+        TaskError::RateLimited(seconds) => {
+            payload.push(8);
+            push_u32(payload, seconds);
+        }
     }
 }
 
-const fn decode_task_error(tag: u8) -> Result<TaskError, ProtocolError> {
-    Ok(match tag {
+fn encoded_task_error_len(error: TaskError) -> usize {
+    if matches!(error, TaskError::RateLimited(_)) {
+        5
+    } else {
+        1
+    }
+}
+
+fn decode_task_error(reader: &mut Reader<'_>) -> Result<TaskError, ProtocolError> {
+    Ok(match reader.u8()? {
         0 => TaskError::Denied,
         1 => TaskError::Unreachable,
         2 => TaskError::TooLarge,
@@ -9239,13 +9414,14 @@ const fn decode_task_error(tag: u8) -> Result<TaskError, ProtocolError> {
         5 => TaskError::Offline,
         6 => TaskError::NoCredential,
         7 => TaskError::Unauthorized,
+        8 => TaskError::RateLimited(reader.u32()?),
         _ => return Err(ProtocolError::InvalidValue("task error")),
     })
 }
 
 #[cfg(test)]
 mod task_error_tests {
-    use super::{decode_task_error, encode_task_error, ProtocolError, TaskError};
+    use super::{decode_task_error, encode_task_error, Reader, TaskError};
 
     /// Every variant, so that adding one without a tag fails here.
     const EVERY: &[TaskError] = &[
@@ -9256,12 +9432,16 @@ mod task_error_tests {
         TaskError::TooLarge,
         TaskError::TimedOut,
         TaskError::NotFound,
+        TaskError::Unauthorized,
+        TaskError::RateLimited(37),
     ];
 
     #[test]
     fn every_task_error_survives_the_wire() {
         for error in EVERY {
-            assert_eq!(decode_task_error(encode_task_error(*error)), Ok(*error));
+            let mut bytes = Vec::new();
+            encode_task_error(&mut bytes, *error);
+            assert_eq!(decode_task_error(&mut Reader::new(&bytes)), Ok(*error));
         }
     }
 
@@ -9269,7 +9449,11 @@ mod task_error_tests {
     fn no_two_task_errors_share_a_tag() {
         let mut tags: Vec<u8> = EVERY
             .iter()
-            .map(|error| encode_task_error(*error))
+            .map(|error| {
+                let mut bytes = Vec::new();
+                encode_task_error(&mut bytes, *error);
+                bytes[0]
+            })
             .collect();
         tags.sort_unstable();
         let count = tags.len();
@@ -9282,13 +9466,19 @@ mod task_error_tests {
         // An app built before Offline existed is still talking to this daemon
         // over these numbers. Renumbering would make the two disagree about
         // what went wrong without either of them noticing.
-        assert_eq!(encode_task_error(TaskError::Denied), 0);
-        assert_eq!(encode_task_error(TaskError::Unreachable), 1);
-        assert_eq!(encode_task_error(TaskError::TooLarge), 2);
-        assert_eq!(encode_task_error(TaskError::TimedOut), 3);
-        assert_eq!(encode_task_error(TaskError::NotFound), 4);
-        assert_eq!(encode_task_error(TaskError::Offline), 5);
-        assert_eq!(encode_task_error(TaskError::NoCredential), 6);
+        let tag = |error: TaskError| {
+            let mut bytes = Vec::new();
+            encode_task_error(&mut bytes, error);
+            bytes[0]
+        };
+        assert_eq!(tag(TaskError::Denied), 0);
+        assert_eq!(tag(TaskError::Unreachable), 1);
+        assert_eq!(tag(TaskError::TooLarge), 2);
+        assert_eq!(tag(TaskError::TimedOut), 3);
+        assert_eq!(tag(TaskError::NotFound), 4);
+        assert_eq!(tag(TaskError::Offline), 5);
+        assert_eq!(tag(TaskError::NoCredential), 6);
+        assert_eq!(tag(TaskError::Unauthorized), 7);
     }
 
     /// The two refusals have to stay distinguishable in words as well as on
@@ -9306,12 +9496,8 @@ mod task_error_tests {
     #[test]
     fn a_tag_from_the_future_is_refused_rather_than_guessed() {
         assert_eq!(
-            decode_task_error(8),
-            Err(ProtocolError::InvalidValue("task error"))
-        );
-        assert_eq!(
-            decode_task_error(255),
-            Err(ProtocolError::InvalidValue("task error"))
+            decode_task_error(&mut Reader::new(&[255])),
+            Err(super::ProtocolError::InvalidValue("task error"))
         );
     }
 
@@ -9384,11 +9570,130 @@ mod picture_tests {
                 handle: PictureHandle(4),
                 width: 3,
                 height: 2,
-                grey: vec![0, 32, 64, 96, 128, 160],
+                format: PictureFormat::Grey,
+                pixels: vec![0, 32, 64, 96, 128, 160],
             },
         };
         let bytes = encode(&frame).expect("encode");
         assert_eq!(decode(&bytes).expect("decode"), frame);
+    }
+
+    /// Where the message tag sits in a frame: after the magic and the version.
+    const TAG_INDEX: usize = MAGIC.len() + 1;
+
+    #[test]
+    fn a_grey_picture_is_the_same_bytes_it_was_before_colour_existed() {
+        // The frame an application built last year, byte for byte: magic,
+        // version, request id, tag 18, length, then the handle, the size and
+        // the pixels. A runtime from before colour reads it unchanged.
+        let frame = Frame {
+            version: VERSION,
+            request_id: 1,
+            message: Message::PutPicture {
+                handle: PictureHandle(4),
+                width: 2,
+                height: 1,
+                format: PictureFormat::Grey,
+                pixels: vec![7, 9],
+            },
+        };
+        let bytes = encode(&frame).expect("encode");
+        assert_eq!(bytes[MAGIC.len()], VERSION);
+        assert_eq!(bytes[TAG_INDEX], 18, "the grey tag did not move");
+        assert_eq!(
+            &bytes[HEADER_LEN..],
+            &[0, 0, 0, 4, 0, 0, 0, 2, 0, 0, 0, 1, 7, 9]
+        );
+
+        let begin = encode(&Frame {
+            version: VERSION,
+            request_id: 1,
+            message: Message::BeginPicture {
+                handle: PictureHandle(4),
+                width: 2,
+                height: 1,
+                format: PictureFormat::Grey,
+            },
+        })
+        .expect("encode");
+        assert_eq!(begin[TAG_INDEX], 20);
+    }
+
+    #[test]
+    fn a_colour_picture_travels_on_its_own_tag_at_three_bytes_a_pixel() {
+        let frame = Frame {
+            version: VERSION,
+            request_id: 1,
+            message: Message::PutPicture {
+                handle: PictureHandle(4),
+                width: 2,
+                height: 1,
+                format: PictureFormat::Rgb,
+                pixels: vec![255, 0, 0, 0, 0, 255],
+            },
+        };
+        let bytes = encode(&frame).expect("encode");
+        assert_eq!(bytes[TAG_INDEX], 28);
+        assert_eq!(decode(&bytes).expect("decode"), frame);
+
+        // The same pixels declared grey are the wrong length and refused; a
+        // colour picture short of three bytes a pixel likewise.
+        assert!(matches!(
+            encode(&Frame {
+                version: VERSION,
+                request_id: 1,
+                message: Message::PutPicture {
+                    handle: PictureHandle(4),
+                    width: 2,
+                    height: 1,
+                    format: PictureFormat::Grey,
+                    pixels: vec![255, 0, 0, 0, 0, 255],
+                },
+            }),
+            Err(ProtocolError::InvalidValue(_))
+        ));
+        assert!(matches!(
+            encode(&Frame {
+                version: VERSION,
+                request_id: 1,
+                message: Message::PutPicture {
+                    handle: PictureHandle(4),
+                    width: 2,
+                    height: 1,
+                    format: PictureFormat::Rgb,
+                    pixels: vec![255, 0, 0, 0],
+                },
+            }),
+            Err(ProtocolError::InvalidValue(_))
+        ));
+
+        let begin = Frame {
+            version: VERSION,
+            request_id: 1,
+            message: Message::BeginPicture {
+                handle: PictureHandle(4),
+                width: 1072,
+                height: 1448,
+                format: PictureFormat::Rgb,
+            },
+        };
+        let bytes = encode(&begin).expect("a full colour panel fits the byte bound");
+        assert_eq!(bytes[TAG_INDEX], 29);
+        assert_eq!(decode(&bytes).expect("decode"), begin);
+        // Two colour panels do not: the bound is on bytes, not pixels.
+        assert!(matches!(
+            encode(&Frame {
+                version: VERSION,
+                request_id: 1,
+                message: Message::BeginPicture {
+                    handle: PictureHandle(4),
+                    width: 1072,
+                    height: 1448 * 2,
+                    format: PictureFormat::Rgb,
+                },
+            }),
+            Err(ProtocolError::FrameTooLarge)
+        ));
     }
 
     #[test]
@@ -9402,7 +9707,8 @@ mod picture_tests {
                 handle: PictureHandle(4),
                 width: 100,
                 height: 100,
-                grey: vec![0; 99],
+                format: PictureFormat::Grey,
+                pixels: vec![0; 99],
             },
         });
         assert!(matches!(refused, Err(ProtocolError::InvalidValue(_))));
@@ -9417,7 +9723,8 @@ mod picture_tests {
                 handle: PictureHandle(4),
                 width: u32::try_from(MAX_INLINE_PICTURE_BYTES + 1).expect("fits"),
                 height: 1,
-                grey: vec![0; MAX_INLINE_PICTURE_BYTES + 1],
+                format: PictureFormat::Grey,
+                pixels: vec![0; MAX_INLINE_PICTURE_BYTES + 1],
             },
         });
         assert!(matches!(refused, Err(ProtocolError::FrameTooLarge)));
@@ -9430,11 +9737,12 @@ mod picture_tests {
                 handle: PictureHandle(4),
                 width: 1072,
                 height: 1448,
+                format: PictureFormat::Grey,
             },
             Message::PictureChunk {
                 handle: PictureHandle(4),
                 offset: 0,
-                grey: vec![17; 4096],
+                pixels: vec![17; 4096],
             },
             Message::CommitPicture {
                 handle: PictureHandle(4),
@@ -9459,7 +9767,7 @@ mod picture_tests {
             message: Message::PictureChunk {
                 handle: PictureHandle(4),
                 offset: 0,
-                grey: vec![0; MAX_PICTURE_CHUNK_BYTES + 1],
+                pixels: vec![0; MAX_PICTURE_CHUNK_BYTES + 1],
             },
         });
         assert!(matches!(refused, Err(ProtocolError::FrameTooLarge)));

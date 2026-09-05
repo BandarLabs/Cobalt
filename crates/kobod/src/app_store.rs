@@ -1190,6 +1190,7 @@ fn network_error(error: kobo_protocol::TaskError) -> DeviceError {
         kobo_protocol::TaskError::NoCredential | kobo_protocol::TaskError::Unauthorized => {
             DeviceError::Authentication
         }
+        kobo_protocol::TaskError::RateLimited(_) => DeviceError::Unreachable,
     }
 }
 
@@ -1218,6 +1219,7 @@ fn glyph(name: &str) -> Option<Glyph> {
         "close" => Glyph::Close,
         "download" => Glyph::Download,
         "bookmark" => Glyph::Bookmark,
+        "heart" => Glyph::Heart,
         "filter" => Glyph::Filter,
         "person" => Glyph::Person,
         "tag" => Glyph::Tag,
@@ -1240,6 +1242,18 @@ fn glyph(name: &str) -> Option<Glyph> {
         "plus" => Glyph::Plus,
         "headphones" => Glyph::Headphones,
         "minus" => Glyph::Minus,
+        "chess-white-king" => Glyph::ChessWhiteKing,
+        "chess-white-queen" => Glyph::ChessWhiteQueen,
+        "chess-white-rook" => Glyph::ChessWhiteRook,
+        "chess-white-bishop" => Glyph::ChessWhiteBishop,
+        "chess-white-knight" => Glyph::ChessWhiteKnight,
+        "chess-white-pawn" => Glyph::ChessWhitePawn,
+        "chess-black-king" => Glyph::ChessBlackKing,
+        "chess-black-queen" => Glyph::ChessBlackQueen,
+        "chess-black-rook" => Glyph::ChessBlackRook,
+        "chess-black-bishop" => Glyph::ChessBlackBishop,
+        "chess-black-knight" => Glyph::ChessBlackKnight,
+        "chess-black-pawn" => Glyph::ChessBlackPawn,
         _ => return None,
     })
 }

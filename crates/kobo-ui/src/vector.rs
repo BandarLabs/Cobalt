@@ -521,13 +521,67 @@ fn add_span(accumulator: &mut [i64], from: i64, to: i64) {
 /// a square box, which is exactly what this rasteriser already draws.
 #[must_use]
 pub fn shapes(glyph: Glyph) -> Vec<Shape> {
+    if let Some(shapes) = game_piece_shapes(glyph) {
+        return shapes;
+    }
+    let width = if matches!(
+        glyph,
+        Glyph::ChessBlackKing
+            | Glyph::ChessBlackQueen
+            | Glyph::ChessBlackRook
+            | Glyph::ChessBlackBishop
+            | Glyph::ChessBlackKnight
+            | Glyph::ChessBlackPawn
+    ) {
+        WEIGHT * 2
+    } else {
+        WEIGHT
+    };
     tabler::outline(glyph)
         .iter()
         .map(|commands| Shape::Stroke {
             path: Path::from_commands(commands),
-            width: WEIGHT,
+            width,
         })
         .collect()
+}
+
+fn game_piece_shapes(glyph: Glyph) -> Option<Vec<Shape>> {
+    let (black, king) = match glyph {
+        Glyph::BlackDisc => (true, false),
+        Glyph::WhiteDisc => (false, false),
+        Glyph::BlackDraughtsKing => (true, true),
+        Glyph::WhiteDraughtsKing => (false, true),
+        Glyph::BlackDraughtsMan => (true, false),
+        Glyph::WhiteDraughtsMan => (false, false),
+        Glyph::MorrisPoint => {
+            return Some(vec![Shape::Fill(Path::circle(500, 500, 55))]);
+        }
+        Glyph::MorrisLegalPoint => {
+            return Some(vec![Shape::Stroke {
+                path: Path::circle(500, 500, 175),
+                width: 54,
+            }]);
+        }
+        _ => return None,
+    };
+    let paths = if king {
+        vec![Path::circle(500, 590, 270), Path::circle(500, 385, 215)]
+    } else {
+        vec![Path::circle(500, 500, 300)]
+    };
+    Some(
+        paths
+            .into_iter()
+            .map(|path| {
+                if black {
+                    Shape::Fill(path)
+                } else {
+                    Shape::Stroke { path, width: 64 }
+                }
+            })
+            .collect(),
+    )
 }
 
 /// The back control, drawn rather than typed.
@@ -712,6 +766,20 @@ mod tests {
     }
 
     #[test]
+    fn black_chess_pieces_carry_more_ink_than_white_pieces() {
+        for (white, black) in [
+            (Glyph::ChessWhiteKing, Glyph::ChessBlackKing),
+            (Glyph::ChessWhiteQueen, Glyph::ChessBlackQueen),
+            (Glyph::ChessWhiteRook, Glyph::ChessBlackRook),
+            (Glyph::ChessWhiteBishop, Glyph::ChessBlackBishop),
+            (Glyph::ChessWhiteKnight, Glyph::ChessBlackKnight),
+            (Glyph::ChessWhitePawn, Glyph::ChessBlackPawn),
+        ] {
+            assert!(inked(black, 96) > inked(white, 96));
+        }
+    }
+
+    #[test]
     fn the_status_marks_sit_on_one_line() {
         // These are drawn side by side in a strip eight pixels tall, where a
         // mark hung fifty units low out of a thousand is plainly crooked to
@@ -787,6 +855,30 @@ mod tests {
             .filter(|&&value| value > 0 && value < 255)
             .count();
         assert!(partial > 40, "only {partial} grey pixels");
+    }
+
+    #[test]
+    fn chess_pieces_are_vector_art_with_distinct_sides() {
+        let white = inked(Glyph::ChessWhiteQueen, 64);
+        let black = inked(Glyph::ChessBlackQueen, 64);
+        assert!(white > 200, "white queen is too faint: {white}");
+        assert!(black > white, "black queen must read darker than white");
+        for glyph in [
+            Glyph::ChessWhiteKing,
+            Glyph::ChessWhiteQueen,
+            Glyph::ChessWhiteRook,
+            Glyph::ChessWhiteBishop,
+            Glyph::ChessWhiteKnight,
+            Glyph::ChessWhitePawn,
+            Glyph::ChessBlackKing,
+            Glyph::ChessBlackQueen,
+            Glyph::ChessBlackRook,
+            Glyph::ChessBlackBishop,
+            Glyph::ChessBlackKnight,
+            Glyph::ChessBlackPawn,
+        ] {
+            assert!(inked(glyph, 64) > 150, "{glyph:?} did not render");
+        }
     }
 
     #[test]

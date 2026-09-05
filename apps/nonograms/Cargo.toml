@@ -1,0 +1,18 @@
+[package]
+name = "kobo-nonograms"
+version = "0.1.1"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+kobo-image = { path = "../../crates/kobo-image" }
+kobo-net = { path = "../../crates/kobo-net" }
+kobo-sdk = { path = "../../crates/kobo-sdk" }
+
+[dev-dependencies]
+kobo-ui = { path = "../../crates/kobo-ui" }
+
+[lints]
+workspace = true

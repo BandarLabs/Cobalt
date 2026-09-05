@@ -16,8 +16,8 @@
 //! exactly where the reliability is wanted.
 
 use kobo_sdk::{
-    action_id, ActionId, AppInfo, Context, DeviceIdentity, DeviceRequest, DeviceResult, Glyph,
-    KoboApp, ScreenBuilder, Tile, TileShape, TileState,
+    action_id, ActionId, AppInfo, BandAlign, Context, DeviceIdentity, DeviceRequest, DeviceResult,
+    Glyph, KoboApp, ScreenBuilder, SlotWidth, Tile, TileShape, TileState,
 };
 use std::process::ExitCode;
 
@@ -140,6 +140,67 @@ impl Launcher {
         }
     }
 
+    fn continue_panel(
+        screen: ScreenBuilder,
+        entry: DisplayEntry,
+        caption: &'static str,
+        continuing: bool,
+    ) -> ScreenBuilder {
+        screen
+            .section("Continue")
+            .section_link("continue-details", "Details")
+            .tile_grid(
+                TileShape::Card,
+                [(
+                    opening(&entry.name),
+                    entry.label,
+                    entry.glyph,
+                    move |tile: Tile| {
+                        let tile = tile
+                            .with_caption(caption)
+                            .with_menu(action_id("continue-details"));
+                        if continuing {
+                            tile.with_state(TileState::Busy)
+                        } else {
+                            tile
+                        }
+                    },
+                )],
+            )
+    }
+
+    fn featured_entries(&self, excluding: usize) -> Vec<(DisplayEntry, bool)> {
+        (0..self.entry_count())
+            .filter(|index| *index != excluding)
+            .take(4)
+            .map(|index| (self.entry(index), self.working == Some(index)))
+            .collect()
+    }
+
+    fn featured_panel(screen: ScreenBuilder, featured: Vec<(DisplayEntry, bool)>) -> ScreenBuilder {
+        screen
+            .section("Featured")
+            .section_link("apps", "View all ↗")
+            .tile_grid(
+                TileShape::Card,
+                featured.into_iter().map(|(entry, busy)| {
+                    (
+                        opening(&entry.name),
+                        entry.label,
+                        entry.glyph,
+                        move |tile: Tile| {
+                            let tile = tile.with_caption(entry.summary);
+                            if busy {
+                                tile.with_state(TileState::Busy)
+                            } else {
+                                tile
+                            }
+                        },
+                    )
+                }),
+            )
+    }
+
     /// The home screen: a grid of icons and names, and nothing else.
     ///
     /// Tiles rather than rows, which is a reversal. Rows were chosen because a
@@ -159,7 +220,7 @@ impl Launcher {
     /// undo.
     /// Folio's desk: one honest continuation, a small featured set, and the
     /// runtime-owned status strip above it. The full catalogue is Apps.
-    fn home(&mut self, _context: &Context) -> kobo_sdk::Screen {
+    fn home(&mut self, context: &Context) -> kobo_sdk::Screen {
         let continue_index = self.working.unwrap_or(1);
         let continue_entry = self.entry(continue_index);
         let continue_caption = if self.working.is_some() {
@@ -171,62 +232,41 @@ impl Launcher {
         let screen = ScreenBuilder::new("launcher")
             .heading("COBALT")
             .secondary("Your Folio desk")
-            .divider()
-            .section("Continue")
-            .section_link("continue-details", "Details")
-            .tile_grid(
-                TileShape::Card,
-                [(
-                    opening(&continue_entry.name),
-                    continue_entry.label.clone(),
-                    continue_entry.glyph,
-                    move |tile: Tile| {
-                        let tile = tile
-                            .with_caption(continue_caption)
-                            .with_menu(action_id("continue-details"));
-                        if continuing {
-                            tile.with_state(TileState::Busy)
-                        } else {
-                            tile
-                        }
-                    },
-                )],
-            )
-            .section("Featured")
-            .section_link("apps", "View all ↗")
-            .tile_grid(
-                TileShape::Card,
-                (0..self.entry_count())
-                    .filter(|index| *index != continue_index)
-                    .take(4)
-                    .map(|index| {
-                        let entry = self.entry(index);
-                        let busy = self.working == Some(index);
-                        (
-                            opening(&entry.name),
-                            entry.label,
-                            entry.glyph,
-                            move |tile: Tile| {
-                                let tile = tile.with_caption(entry.summary);
-                                if busy {
-                                    tile.with_state(TileState::Busy)
-                                } else {
-                                    tile
-                                }
-                            },
-                        )
-                    }),
-            )
-            .secondary(self.folio_line())
-            .nav_bar_marked(
-                0,
+            .divider();
+        let featured = self.featured_entries(continue_index);
+        let screen = if context.metrics().width > context.metrics().height {
+            let continuation = continue_entry.clone();
+            screen.band(
+                BandAlign::Top,
                 [
-                    ("home", "Home", Glyph::App),
-                    ("apps", "Apps", Glyph::App),
-                    ("settings", "Settings", Glyph::Settings),
-                    ("reader", "Kobo reader", Glyph::Reader),
+                    (
+                        SlotWidth::Fill,
+                        Box::new(move |slot: ScreenBuilder| {
+                            Self::continue_panel(slot, continuation, continue_caption, continuing)
+                        })
+                            as Box<dyn FnOnce(ScreenBuilder) -> ScreenBuilder>,
+                    ),
+                    (
+                        SlotWidth::Fill,
+                        Box::new(move |slot: ScreenBuilder| Self::featured_panel(slot, featured)),
+                    ),
                 ],
-            );
+            )
+        } else {
+            let screen =
+                Self::continue_panel(screen, continue_entry.clone(), continue_caption, continuing);
+            Self::featured_panel(screen, featured)
+        }
+        .secondary(self.folio_line())
+        .nav_bar_marked(
+            0,
+            [
+                ("home", "Home", Glyph::App),
+                ("apps", "Apps", Glyph::App),
+                ("settings", "Settings", Glyph::Settings),
+                ("reader", "Kobo reader", Glyph::Reader),
+            ],
+        );
         let screen = if self.details == Some(continue_index) {
             screen.popover(opening(&continue_entry.name), |menu| {
                 menu.rows([
@@ -376,6 +416,7 @@ impl Launcher {
     }
 }
 
+#[derive(Clone)]
 struct DisplayEntry {
     name: String,
     title: String,
@@ -533,30 +574,32 @@ mod tests {
         Lifecycle,
     };
     use kobo_ui::{
-        Chrome, DisplayMetrics, LayoutKind, Node, TextScale, TileShape, TileState, CLARA_BW_METRICS,
+        render_with, tone, Chrome, DisplayMetrics, LayoutKind, Node, Surface, TextScale, TileShape,
+        TileState, CLARA_BW_METRICS,
     };
 
-    const PANELS: [(&str, DisplayMetrics); 3] = [
-        ("clara-bw", CLARA_BW_METRICS),
-        (
-            "nia",
-            DisplayMetrics {
-                width: 758,
-                height: 1024,
-                pixels_per_inch: 212,
-                text_scale: TextScale::Default,
-            },
-        ),
-        (
-            "sage",
-            DisplayMetrics {
-                width: 1440,
-                height: 1920,
-                pixels_per_inch: 300,
-                text_scale: TextScale::Default,
-            },
-        ),
-    ];
+    fn panels() -> Vec<(String, DisplayMetrics)> {
+        kobo_profile::SUPPORTED_PROFILES
+            .iter()
+            .flat_map(|profile| {
+                let portrait = DisplayMetrics {
+                    width: i32::try_from(profile.width).expect("profile width fits layout"),
+                    height: i32::try_from(profile.height).expect("profile height fits layout"),
+                    pixels_per_inch: i32::from(profile.pixels_per_inch),
+                    text_scale: TextScale::Default,
+                };
+                let landscape = DisplayMetrics {
+                    width: portrait.height,
+                    height: portrait.width,
+                    ..portrait
+                };
+                [
+                    (format!("{} portrait", profile.id), portrait),
+                    (format!("{} landscape", profile.id), landscape),
+                ]
+            })
+            .collect()
+    }
 
     fn painted(commands: Vec<Command>) -> kobo_sdk::Screen {
         repainted(commands).expect("a screen was painted")
@@ -605,7 +648,7 @@ mod tests {
         // the flow it is the first thing a long catalogue pushes off the
         // bottom, and the layout engine drops what does not fit in silence,
         // so the failure would look like a launcher that cannot be left.
-        for (name, metrics) in PANELS {
+        for (name, metrics) in panels() {
             let mut runner = AppRunner::with_metrics(Launcher::default(), metrics);
             let mut seen = 0;
             let mut screen = painted(runner.start());
@@ -640,7 +683,7 @@ mod tests {
         // on every page sent "Previous" and "More apps" to the same screen,
         // and on the last page "More apps" promised applications that were not
         // there and jumped back to the first page instead.
-        for (name, metrics) in PANELS {
+        for (name, metrics) in panels() {
             let mut runner = AppRunner::with_metrics(Launcher::default(), metrics);
             let mut screen = painted(runner.start());
             let mut page = 0;
@@ -698,7 +741,7 @@ mod tests {
     fn every_entry_appears_on_exactly_one_page() {
         // An entry that lands on no page is an application that cannot be
         // started at all, and one on two pages is a list that never ends.
-        for (name, metrics) in PANELS {
+        for (name, metrics) in panels() {
             let mut runner = AppRunner::with_metrics(Launcher::default(), metrics);
             let mut runs = 0;
             let mut found = Vec::new();
@@ -740,9 +783,10 @@ mod tests {
 
     #[test]
     fn every_tile_on_a_page_is_drawn_rather_than_dropped() {
-        for (name, metrics) in PANELS {
+        for (name, metrics) in panels() {
             let mut runner = AppRunner::with_metrics(Launcher::default(), metrics);
-            let screen = painted(runner.start());
+            runner.start();
+            let screen = painted(runner.action(action_id("apps")));
             let layout = screen.layout_with(&metrics, &Chrome::with_back(false));
             let rows = layout
                 .nodes
@@ -751,10 +795,121 @@ mod tests {
                 .collect::<Vec<_>>();
             assert!(!rows.is_empty(), "{name}: the first page drew no entries");
             let floor = metrics.height - metrics.nav_bar_height();
-            for row in rows {
+            for row in &rows {
                 assert!(
                     row.rect.y + row.rect.height <= floor,
                     "{name}: an entry ran under the pinned bar"
+                );
+            }
+            let first_y = rows[0].rect.y;
+            let columns = rows
+                .iter()
+                .take_while(|tile| tile.rect.y == first_y)
+                .count();
+            assert!(
+                (2..=4).contains(&columns),
+                "{name}: the app drawer chose {columns} columns"
+            );
+        }
+    }
+
+    #[test]
+    fn folio_home_keeps_its_complete_hierarchy_on_every_panel() {
+        for (name, metrics) in panels() {
+            let mut runner = AppRunner::with_metrics(Launcher::default(), metrics);
+            let screen = painted(runner.start());
+            let layout = screen.layout_with(&metrics, &Chrome::with_back(false));
+            let sections = layout
+                .nodes
+                .iter()
+                .filter(|node| node.kind == LayoutKind::Section)
+                .count();
+            let tiles = layout
+                .nodes
+                .iter()
+                .filter(|node| matches!(node.kind, LayoutKind::Tile(..)))
+                .count();
+            let destinations = layout
+                .nodes
+                .iter()
+                .filter(|node| {
+                    matches!(
+                        node.kind,
+                        LayoutKind::NavDestination(..) | LayoutKind::NavDestinationSelected(..)
+                    )
+                })
+                .count();
+            assert_eq!(sections, 2, "{name}: a Folio section was dropped");
+            assert_eq!(tiles, ENTRIES.len(), "{name}: a Folio card was dropped");
+            assert_eq!(destinations, 4, "{name}: launcher navigation changed");
+            for label in ["Details", "View all ↗"] {
+                let sources = layout
+                    .nodes
+                    .iter()
+                    .flat_map(|node| &node.text_lines)
+                    .filter(|line| line.as_str() == label)
+                    .count();
+                assert_eq!(sources, 1, "{name}: {label:?} has {sources} render sources");
+            }
+            for link in layout
+                .nodes
+                .iter()
+                .filter(|node| matches!(node.kind, LayoutKind::SectionLink(_)))
+            {
+                assert!(
+                    link.rect.x >= layout.content.x
+                        && link.rect.y >= layout.content.y
+                        && link.rect.x + link.rect.width <= layout.content.x + layout.content.width
+                        && link.rect.y + link.rect.height
+                            <= layout.content.y + layout.content.height,
+                    "{name}: {:?} is outside the content bounds",
+                    link.kind
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn launcher_home_and_apps_are_tappable_and_render_on_every_panel() {
+        for (name, metrics) in panels() {
+            let mut runner = AppRunner::with_metrics(Launcher::default(), metrics);
+            let home = painted(runner.start());
+            let apps = painted(runner.action(action_id("apps")));
+            for (view, screen) in [("home", home), ("apps", apps)] {
+                let chrome = Chrome::with_back(false);
+                let layout = screen.layout_with(&metrics, &chrome);
+                let controls = layout
+                    .nodes
+                    .iter()
+                    .filter(|node| node.kind.acts_on().is_some())
+                    .collect::<Vec<_>>();
+                for (index, control) in controls.iter().enumerate() {
+                    assert!(
+                        control.rect.width >= metrics.touch_target_minimum()
+                            && control.rect.height >= metrics.touch_target_minimum(),
+                        "{name} {view}: {:?} is smaller than a touch target",
+                        control.kind
+                    );
+                    for other in &controls[index + 1..] {
+                        if control.id != other.id {
+                            assert!(
+                                control.rect.intersection(other.rect).is_none(),
+                                "{name} {view}: {:?} overlaps {:?}",
+                                control.kind,
+                                other.kind
+                            );
+                        }
+                    }
+                }
+
+                let mut surface = Surface::new(
+                    usize::try_from(metrics.width).expect("positive profile width"),
+                    usize::try_from(metrics.height).expect("positive profile height"),
+                );
+                render_with(&screen, &metrics, &chrome, &mut surface, None);
+                assert!(
+                    surface.pixels.iter().any(|pixel| *pixel != tone::PAPER),
+                    "{name} {view}: rendering produced a blank frame"
                 );
             }
         }
@@ -812,7 +967,7 @@ mod tests {
     /// panel read as a page that failed to load.
     #[test]
     fn the_splash_is_centred_on_every_panel() {
-        for (name, metrics) in PANELS {
+        for (name, metrics) in panels() {
             let mut runner = AppRunner::new(Launcher::default());
             runner.start();
             let shown = painted(runner.action(action_id(&opening(ENTRIES[0].name))));
@@ -937,7 +1092,7 @@ mod tests {
 
     #[test]
     fn nothing_is_drawn_past_the_edge_of_the_panel() {
-        for (name, metrics) in PANELS {
+        for (name, metrics) in panels() {
             let mut runner = AppRunner::with_metrics(Launcher::default(), metrics);
             let mut screen = painted(runner.start());
             for page in 0..=ENTRIES.len() {

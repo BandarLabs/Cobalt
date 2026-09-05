@@ -1,0 +1,28 @@
+{
+  "id": "calibre-web",
+  "display_name": "calibre-web",
+  "short_label": "calibre-web",
+  "summary": "Browse and read books from your calibre-web library.",
+  "page_description": "Connect your calibre-web library and browse its books from your Kobo.",
+  "version": "0.1.1",
+  "release_notes": "Connect your calibre-web library and browse its books from your Kobo.",
+  "glyph": "book",
+  "capabilities": [
+    "network"
+  ],
+  "setup": {
+    "steps": [
+      {
+        "text": "Have an HTTPS calibre-web or calibre content-server OPDS endpoint ready."
+      },
+      {
+        "text": "For a private library, install its username and password as the named Basic credential used by the app.",
+        "command": "kobo secret set calibre --device <address>"
+      },
+      {
+        "text": "If the server uses a private certificate authority, install that trust root separately.",
+        "command": "kobo trust set calibre --device <address>"
+      }
+    ]
+  }
+}

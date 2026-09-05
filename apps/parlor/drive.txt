@@ -1,0 +1,6 @@
+expect Pass-and-play classics
+tap Reversi
+expect Set the table
+tap Start game
+expect Tap a hollow destination
+shot reversi

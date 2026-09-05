@@ -713,7 +713,7 @@ fn remote_install_notice(outcome: &RemoteInstallOutcome, entries: &[AppInfo]) ->
 
 fn denied(reason: DenyReason) -> &'static str {
     match reason {
-        DenyReason::NotDeclared => "This application is not allowed to manage installed apps.",
+        DenyReason::NotDeclared => "App management isn't available.",
         DenyReason::WithheldForBattery => {
             "Charge the reader before downloading or changing applications."
         }

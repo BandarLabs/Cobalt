@@ -1,29 +1,4 @@
 {
   "format_version": 1,
-  "apps": [
-    {
-      "package": "kobo-backgammon",
-      "id": "backgammon",
-      "display_name": "Backgammon",
-      "short_label": "Backgammon",
-      "summary": "Play complete solo or pass-and-play backgammon on one Kobo.",
-      "version": "0.1.3",
-      "minimum_cobalt_version": "0.3.5",
-      "glyph": "circle",
-      "capabilities": [],
-      "release_notes": "Keep Backgammon compatible with Cobalt's current protocol-12 runtime."
-    },
-    {
-      "package": "kobo-flashcards",
-      "id": "flashcards",
-      "display_name": "Flashcards",
-      "short_label": "Flashcards",
-      "summary": "Review prepared offline decks in a focused due queue with safe side-specific text and media.",
-      "version": "0.3.4",
-      "minimum_cobalt_version": "0.3.5",
-      "glyph": "note",
-      "capabilities": [],
-      "release_notes": "Review prepared offline decks in a focused due queue with safe side-specific text and media."
-    }
-  ]
+  "apps": []
 }

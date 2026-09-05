@@ -8,6 +8,7 @@
 //! `device-write` feature, so a default build has no callable pixel-write path.
 
 use crate::refresh::Rect;
+use kobo_profile::{Bitfield, DeviceProfile};
 use std::fs::File;
 use std::io;
 use std::os::unix::fs::FileExt;
@@ -20,6 +21,53 @@ pub const SUPPORTED_BYTES_PER_PIXEL: usize = 4;
 /// The verified Clara BW surface reports red/green/blue/alpha at bit offsets
 /// 0/8/16/24, which on this little-endian device places alpha in the last byte.
 pub const ALPHA_BYTE_INDEX: usize = 3;
+
+/// Which byte of a supported pixel holds each colour channel.
+///
+/// A greyscale write never needs this: it puts the same value in every
+/// non-alpha byte and the order cannot matter. A colour write does, and the
+/// answer comes from the framebuffer's reported bitfields rather than an
+/// assumption. The two controller families disagree: the `MediaTek` panels
+/// report red at bit 0 and the i.MX6 panels report blue there.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ChannelOrder {
+    red: usize,
+    green: usize,
+    blue: usize,
+}
+
+impl ChannelOrder {
+    /// Resolves the byte of each channel from the framebuffer's bitfields.
+    ///
+    /// `None` when any channel is not a whole byte inside the four, or two
+    /// channels share one, or one of them sits where alpha does. Every
+    /// supported profile resolves; the check is there for the snapshot a
+    /// future device reports.
+    #[must_use]
+    pub fn from_bitfields(red: Bitfield, green: Bitfield, blue: Bitfield) -> Option<Self> {
+        let byte = |field: Bitfield| {
+            (field.length == 8 && field.offset % 8 == 0 && field.msb_right == 0)
+                .then_some(field.offset as usize / 8)
+                .filter(|index| *index < SUPPORTED_BYTES_PER_PIXEL && *index != ALPHA_BYTE_INDEX)
+        };
+        let (red, green, blue) = (byte(red)?, byte(green)?, byte(blue)?);
+        (red != green && green != blue && red != blue).then_some(Self { red, green, blue })
+    }
+
+    /// The order a profile's framebuffer facts describe.
+    #[must_use]
+    pub fn from_profile(profile: &DeviceProfile) -> Option<Self> {
+        Self::from_bitfields(profile.red, profile.green, profile.blue)
+    }
+
+    /// Writes one colour into the four bytes of a pixel, opaque.
+    fn store(self, pixel: &mut [u8], [red, green, blue]: [u8; 3]) {
+        pixel[self.red] = red;
+        pixel[self.green] = green;
+        pixel[self.blue] = blue;
+        pixel[ALPHA_BYTE_INDEX] = u8::MAX;
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SurfaceGeometry {
@@ -252,6 +300,77 @@ impl RegionSnapshot {
         }
         Ok(Self { placement, pixels })
     }
+
+    /// Builds a writable region from one rendered 8-bit RGB image.
+    ///
+    /// The colour counterpart of [`Self::from_grayscale`], with the same
+    /// guarantees: a validated placement, and a rejection when `rgb` does not
+    /// hold exactly three bytes per pixel of `region`. Each channel goes to
+    /// the byte `order` names, so the same rendered image lands correctly on
+    /// either channel layout.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the region is invalid for `geometry` or `rgb`
+    /// does not hold exactly three bytes per pixel of `region`.
+    pub fn from_rgb(
+        geometry: SurfaceGeometry,
+        region: Rect,
+        rgb: &[u8],
+        order: ChannelOrder,
+    ) -> Result<Self, SurfaceError> {
+        let row_bytes = (region.width as usize).saturating_mul(3);
+        let expected = row_bytes.saturating_mul(region.height as usize);
+        if row_bytes == 0 || rgb.len() != expected {
+            return Err(SurfaceError::RegionMismatch);
+        }
+        Self::from_rgb_rows(geometry, region, rgb.chunks_exact(row_bytes), order)
+    }
+
+    /// Builds a writable region from RGB rows read straight out of a larger
+    /// image.
+    ///
+    /// The same as [`Self::from_rgb`] for an image that already lives row by
+    /// row inside something wider, such as a rendered frame, so the region
+    /// need not be copied out into its own buffer first. Every row must hold
+    /// exactly three bytes per pixel of `region.width`, and there must be
+    /// exactly `region.height` of them.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the region is invalid for `geometry`, a row is
+    /// the wrong length, or the row count differs from the region's height.
+    pub fn from_rgb_rows<'a>(
+        geometry: SurfaceGeometry,
+        region: Rect,
+        rows: impl IntoIterator<Item = &'a [u8]>,
+        order: ChannelOrder,
+    ) -> Result<Self, SurfaceError> {
+        let placement = RegionPlacement::new(geometry, region)?;
+        let row_bytes = (region.width as usize).saturating_mul(3);
+        let mut pixels = vec![0_u8; placement.total_bytes()];
+        let mut targets = pixels.chunks_exact_mut(placement.row_bytes);
+        let mut written = 0_usize;
+        for source in rows {
+            // A source with more rows than the region is as wrong as one
+            // with fewer; neither may be quietly cropped to fit.
+            let target = targets.next().ok_or(SurfaceError::RegionMismatch)?;
+            if source.len() != row_bytes {
+                return Err(SurfaceError::RegionMismatch);
+            }
+            for (pixel, colour) in target
+                .chunks_exact_mut(SUPPORTED_BYTES_PER_PIXEL)
+                .zip(source.chunks_exact(3))
+            {
+                order.store(pixel, [colour[0], colour[1], colour[2]]);
+            }
+            written += 1;
+        }
+        if written != region.height as usize {
+            return Err(SurfaceError::RegionMismatch);
+        }
+        Ok(Self { placement, pixels })
+    }
 }
 
 /// Reads the exact bytes of `region`.
@@ -321,10 +440,135 @@ pub fn write_region(
 #[cfg(test)]
 mod tests {
     use super::{
-        read_region, RegionPlacement, RegionSnapshot, SurfaceError, SurfaceGeometry,
+        read_region, ChannelOrder, RegionPlacement, RegionSnapshot, SurfaceError, SurfaceGeometry,
         ALPHA_BYTE_INDEX, SUPPORTED_BYTES_PER_PIXEL,
     };
     use crate::refresh::Rect;
+    use kobo_profile::{
+        Bitfield, CLARA_COLOUR_393, ELIPSA_2E_389, LIBRA_2_388, SUPPORTED_PROFILES,
+    };
+
+    #[test]
+    fn every_colour_profile_names_a_byte_for_each_channel() {
+        for profile in SUPPORTED_PROFILES {
+            if profile.colour_panel {
+                assert!(
+                    ChannelOrder::from_profile(profile).is_some(),
+                    "{} channel layout",
+                    profile.id
+                );
+            }
+        }
+        // The Elipsa 2E reports no bitfields at all. It is greyscale, so
+        // nothing asks; the point is that the answer is `None`, not a guess.
+        assert!(ChannelOrder::from_profile(&ELIPSA_2E_389).is_none());
+        let mediatek = ChannelOrder::from_profile(&CLARA_COLOUR_393).expect("resolves");
+        assert_eq!((mediatek.red, mediatek.green, mediatek.blue), (0, 1, 2));
+        let imx = ChannelOrder::from_profile(&LIBRA_2_388).expect("resolves");
+        assert_eq!((imx.red, imx.green, imx.blue), (2, 1, 0));
+    }
+
+    #[test]
+    fn a_channel_layout_that_is_not_whole_bytes_is_refused() {
+        let byte = |offset| Bitfield {
+            offset,
+            length: 8,
+            msb_right: 0,
+        };
+        assert!(ChannelOrder::from_bitfields(byte(0), byte(8), byte(16)).is_some());
+        // 5-6-5 packing, two channels in one byte, and a channel over alpha.
+        assert!(ChannelOrder::from_bitfields(
+            Bitfield {
+                offset: 11,
+                length: 5,
+                msb_right: 0
+            },
+            Bitfield {
+                offset: 5,
+                length: 6,
+                msb_right: 0
+            },
+            Bitfield {
+                offset: 0,
+                length: 5,
+                msb_right: 0
+            },
+        )
+        .is_none());
+        assert!(ChannelOrder::from_bitfields(byte(0), byte(0), byte(16)).is_none());
+        assert!(ChannelOrder::from_bitfields(byte(0), byte(8), byte(24)).is_none());
+    }
+
+    #[test]
+    fn colour_pixels_land_in_the_bytes_the_layout_names() {
+        let region = Rect {
+            x: 4,
+            y: 4,
+            width: 2,
+            height: 1,
+        };
+        let rgb = [10, 20, 30, 40, 50, 60];
+        let mediatek = ChannelOrder::from_profile(&CLARA_COLOUR_393).expect("resolves");
+        let snapshot = RegionSnapshot::from_rgb(CLARA, region, &rgb, mediatek).expect("built");
+        assert_eq!(snapshot.pixels(), &[10, 20, 30, 255, 40, 50, 60, 255]);
+
+        let imx = ChannelOrder::from_profile(&LIBRA_2_388).expect("resolves");
+        let snapshot = RegionSnapshot::from_rgb(CLARA, region, &rgb, imx).expect("built");
+        assert_eq!(snapshot.pixels(), &[30, 20, 10, 255, 60, 50, 40, 255]);
+
+        // A grey image written through either path is byte-identical.
+        let grey = RegionSnapshot::from_grayscale(CLARA, region, &[7, 9]).expect("built");
+        let as_colour =
+            RegionSnapshot::from_rgb(CLARA, region, &[7, 7, 7, 9, 9, 9], imx).expect("built");
+        assert!(grey.matches(&as_colour));
+
+        assert!(matches!(
+            RegionSnapshot::from_rgb(CLARA, region, &rgb[..5], mediatek),
+            Err(SurfaceError::RegionMismatch)
+        ));
+    }
+
+    #[test]
+    fn colour_rows_from_a_wider_image_match_the_copied_region() {
+        let region = Rect {
+            x: 4,
+            y: 4,
+            width: 2,
+            height: 2,
+        };
+        let order = ChannelOrder::from_profile(&LIBRA_2_388).expect("resolves");
+        // A three-pixel-wide image of which the middle two columns are wanted.
+        let image = [
+            [0, 0, 0, 10, 20, 30, 40, 50, 60, 0, 0, 0],
+            [0, 0, 0, 70, 80, 90, 11, 12, 13, 0, 0, 0],
+        ];
+        let rows = image.iter().map(|row| &row[3..9]);
+        let from_rows = RegionSnapshot::from_rgb_rows(CLARA, region, rows, order).expect("built");
+        let copied = RegionSnapshot::from_rgb(
+            CLARA,
+            region,
+            &[10, 20, 30, 40, 50, 60, 70, 80, 90, 11, 12, 13],
+            order,
+        )
+        .expect("built");
+        assert!(from_rows.matches(&copied));
+
+        let short = image.iter().take(1).map(|row| &row[3..9]);
+        assert!(matches!(
+            RegionSnapshot::from_rgb_rows(CLARA, region, short, order),
+            Err(SurfaceError::RegionMismatch)
+        ));
+        let narrow = image.iter().map(|row| &row[3..8]);
+        assert!(matches!(
+            RegionSnapshot::from_rgb_rows(CLARA, region, narrow, order),
+            Err(SurfaceError::RegionMismatch)
+        ));
+        let long = image.iter().chain(image.iter()).map(|row| &row[3..9]);
+        assert!(matches!(
+            RegionSnapshot::from_rgb_rows(CLARA, region, long, order),
+            Err(SurfaceError::RegionMismatch)
+        ));
+    }
 
     const CLARA: SurfaceGeometry = SurfaceGeometry {
         width: 1072,

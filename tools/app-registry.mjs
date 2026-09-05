@@ -11,6 +11,7 @@ const APP_FIELDS = new Set([
   "display_name",
   "short_label",
   "summary",
+  "page_description",
   "version",
   "release_notes",
   "minimum_cobalt_version",
@@ -146,6 +147,9 @@ export function normalizeContribution(value, directoryName) {
     display_name: app.display_name,
     short_label: app.short_label,
     summary: app.summary,
+    ...(app.page_description === undefined
+      ? {}
+      : { page_description: app.page_description }),
     version: app.version,
     ...(app.release_notes === undefined ? {} : { release_notes: app.release_notes }),
     minimum_cobalt_version,
@@ -175,7 +179,17 @@ export function collectRegistry({
         if (error.code === "ENOENT") continue;
         throw error;
       }
-      apps.push(normalizeContribution(JSON.parse(source), entry.name));
+      const contribution = normalizeContribution(JSON.parse(source), entry.name);
+      const existing = apps.find(
+        app => app.id === contribution.id || app.package === contribution.package
+      );
+      if (existing) {
+        if (JSON.stringify(existing) !== JSON.stringify(contribution)) {
+          throw new Error(`duplicate app id '${contribution.id}'`);
+        }
+        continue;
+      }
+      apps.push(contribution);
     }
   }
   const ids = new Set();

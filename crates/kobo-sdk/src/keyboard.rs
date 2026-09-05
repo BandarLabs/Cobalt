@@ -319,13 +319,13 @@ impl TextEntry {
 
 const CANCEL: &str = "kb.cancel";
 
-const SHIFT: &str = "kb.shift";
-const LAYER: &str = "kb.layer";
-const SPACE: &str = "kb.space";
-const BACKSPACE: &str = "kb.backspace";
-const ENTER: &str = "kb.enter";
+pub(crate) const SHIFT: &str = "kb.shift";
+pub(crate) const LAYER: &str = "kb.layer";
+pub(crate) const SPACE: &str = "kb.space";
+pub(crate) const BACKSPACE: &str = "kb.backspace";
+pub(crate) const ENTER: &str = "kb.enter";
 
-fn key_name(row: usize, column: usize) -> String {
+pub(crate) fn key_name(row: usize, column: usize) -> String {
     format!("kb.r{row}c{column}")
 }
 
@@ -446,7 +446,30 @@ mod tests {
     use super::TextEntry;
     use super::{Keyboard, Layer, Pressed, MAX_TEXT};
     use crate::{action_id, ScreenBuilder};
-    use kobo_ui::{Chrome, LayoutKind, CLARA_BW_METRICS};
+    use kobo_ui::{Chrome, DisplayMetrics, LayoutKind, TextScale};
+
+    fn panels() -> Vec<(String, DisplayMetrics)> {
+        kobo_profile::SUPPORTED_PROFILES
+            .iter()
+            .flat_map(|profile| {
+                let portrait = DisplayMetrics {
+                    width: i32::try_from(profile.width).expect("profile width fits layout"),
+                    height: i32::try_from(profile.height).expect("profile height fits layout"),
+                    pixels_per_inch: i32::from(profile.pixels_per_inch),
+                    text_scale: TextScale::Default,
+                };
+                let landscape = DisplayMetrics {
+                    width: portrait.height,
+                    height: portrait.width,
+                    ..portrait
+                };
+                [
+                    (format!("{} portrait", profile.id), portrait),
+                    (format!("{} landscape", profile.id), landscape),
+                ]
+            })
+            .collect()
+    }
 
     fn tap(keyboard: &mut Keyboard, name: &str) -> Option<Pressed> {
         keyboard.press(action_id(name))
@@ -465,19 +488,21 @@ mod tests {
             .top_bar("Todo")
             .text_entry(&entry, "New item", "Add")
             .build();
-        let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::measuring(true));
-        let bottom = layout
-            .nodes
-            .iter()
-            .map(|node| node.rect.y + node.rect.height)
-            .max()
-            .unwrap_or(0);
-        let content = layout.content;
-        let spare = content.y + content.height - bottom;
-        assert!(
-            (0..=CLARA_BW_METRICS.touch_target_default()).contains(&spare),
-            "a compose screen left {spare} pixels of paper under its keyboard"
-        );
+        for (name, metrics) in panels() {
+            let layout = screen.layout_with(&metrics, &Chrome::measuring(true));
+            let bottom = layout
+                .nodes
+                .iter()
+                .map(|node| node.rect.y + node.rect.height)
+                .max()
+                .unwrap_or(0);
+            let content = layout.content;
+            let spare = content.y + content.height - bottom;
+            assert!(
+                (0..=metrics.touch_target_default()).contains(&spare),
+                "{name}: a compose screen left {spare} pixels of paper under its keyboard"
+            );
+        }
     }
 
     #[test]
@@ -566,52 +591,59 @@ mod tests {
         // The keyboard is drawn by one function and decoded by another, and
         // nothing but this test stops them drifting apart. It lays the real
         // screen out and taps the middle of every cell.
-        for layer in [Layer::Letters, Layer::Symbols] {
-            let mut drawn = Keyboard::new();
-            if layer == Layer::Symbols {
-                drawn.press(action_id("kb.layer"));
-            }
-            let screen = ScreenBuilder::new("keyboard")
-                .keyboard(&drawn, "Send")
-                .build();
-            let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::default());
-            let cells = layout
-                .nodes
-                .iter()
-                .filter_map(|node| match node.kind {
-                    LayoutKind::Cell(action, ..) => Some((action, node.rect)),
-                    _ => None,
-                })
-                .collect::<Vec<_>>();
-            assert!(!cells.is_empty(), "the keyboard drew no keys at all");
-            let mut typed = String::new();
-            for (action, rect) in &cells {
-                let x = rect.x + rect.width / 2;
-                let y = rect.y + rect.height / 2;
-                let hit = layout.hit_test(x, y).expect("a tap inside a key hits it");
-                assert_eq!(
-                    hit, *action,
-                    "a key was covered by something drawn after it"
-                );
-                let mut keyboard = drawn.clone();
-                let outcome = keyboard.press(hit).expect("every drawn key decodes");
-                if outcome == Pressed::Edited {
-                    typed.push_str(keyboard.text());
+        for (name, metrics) in panels() {
+            for layer in [Layer::Letters, Layer::Symbols] {
+                let mut drawn = Keyboard::new();
+                if layer == Layer::Symbols {
+                    drawn.press(action_id("kb.layer"));
                 }
+                let screen = ScreenBuilder::new("keyboard")
+                    .keyboard(&drawn, "Send")
+                    .build();
+                let layout = screen.layout_with(&metrics, &Chrome::default());
+                let cells = layout
+                    .nodes
+                    .iter()
+                    .filter_map(|node| match node.kind {
+                        LayoutKind::Cell(action, ..) => Some((action, node.rect)),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>();
+                assert!(!cells.is_empty(), "{name}: the keyboard drew no keys");
+                let mut typed = String::new();
+                for (action, rect) in &cells {
+                    assert!(
+                        rect.width >= metrics.touch_target_minimum()
+                            && rect.height >= metrics.touch_target_minimum(),
+                        "{name}: key {action:?} is smaller than a touch target"
+                    );
+                    let x = rect.x + rect.width / 2;
+                    let y = rect.y + rect.height / 2;
+                    let hit = layout.hit_test(x, y).expect("a tap inside a key hits it");
+                    assert_eq!(
+                        hit, *action,
+                        "{name}: a key was covered by something drawn after it"
+                    );
+                    let mut keyboard = drawn.clone();
+                    let outcome = keyboard.press(hit).expect("every drawn key decodes");
+                    if outcome == Pressed::Edited {
+                        typed.push_str(keyboard.text());
+                    }
+                }
+                // Every character of the layer, plus the space the space bar types.
+                for character in match layer {
+                    Layer::Letters => "qwertyuiopasdfghjklzxcvbnm",
+                    Layer::Symbols => "1234567890-/:;()&@\".,?!'+=",
+                }
+                .chars()
+                {
+                    assert!(
+                        typed.contains(character),
+                        "{name}: {character} is drawn but cannot be typed"
+                    );
+                }
+                assert!(typed.contains(' '), "{name}: the space bar types a space");
             }
-            // Every character of the layer, plus the space the space bar types.
-            for character in match layer {
-                Layer::Letters => "qwertyuiopasdfghjklzxcvbnm",
-                Layer::Symbols => "1234567890-/:;()&@\".,?!'+=",
-            }
-            .chars()
-            {
-                assert!(
-                    typed.contains(character),
-                    "{character} is drawn but cannot be typed"
-                );
-            }
-            assert!(typed.contains(' '), "the space bar types a space");
         }
     }
 }

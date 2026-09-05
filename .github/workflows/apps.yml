@@ -35,6 +35,10 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
+      - name: Collect the Store registry from the app manifests
+        # Each app is described beside its source; apps/catalog.json is an
+        # empty base, and a check handed it validates nothing and passes.
+        run: node tools/collect-app-registry.mjs --out generated-app-registry.json
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
         with:
           toolchain: 1.85.1
@@ -45,7 +49,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          all_packages="$(target/debug/kobo app-list --registry apps/catalog.json)"
+          all_packages="$(target/debug/kobo app-list --registry generated-app-registry.json)"
           if [ "$GITHUB_REF_NAME" = beta ]; then
             release_tag=app-catalog-beta
           else
@@ -294,11 +298,11 @@ jobs:
             fi
           fi
           packages="$(node tools/check-app-versions.mjs --list-packages \
-            --registry apps/catalog.json \
+            --registry generated-app-registry.json \
             --published-catalog published-app-catalog.json \
             --base "$base")"
           publish="$(node tools/check-app-versions.mjs --publish-needed \
-            --registry apps/catalog.json \
+            --registry generated-app-registry.json \
             --published-catalog published-app-catalog.json \
             --base "$base")"
           if [ "$repair" = true ]; then
@@ -318,7 +322,7 @@ jobs:
             node tools/verify-published-catalog.mjs \
               --catalog published-app-catalog.json \
               --signature published-app-catalog.json.sig \
-              --registry apps/catalog.json \
+              --registry generated-app-registry.json \
               --release "$release_state"
             # Having nothing to publish is not the same as Store inputs being
             # unchanged. The platform used to skip a release while crates/
@@ -348,6 +352,10 @@ jobs:
               fi
             fi
           fi
+          node tools/check-app-versions.mjs --validate-packages \
+            --registry generated-app-registry.json \
+            --published-catalog published-app-catalog.json \
+            --packages "$packages"
           if [ "$packages" = "$all_packages" ]; then
             previous_run=
             previous_artifact=
@@ -385,6 +393,10 @@ jobs:
         package: ${{ fromJSON(needs.trusted-tool.outputs.packages) }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Collect the Store registry from the app manifests
+        # Each app is described beside its source; apps/catalog.json is an
+        # empty base, and a check handed it validates nothing and passes.
+        run: node tools/collect-app-registry.mjs --out generated-app-registry.json
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
         with:
           toolchain: 1.85.1
@@ -403,7 +415,7 @@ jobs:
         run: |
           chmod +x trusted/kobo
           trusted/kobo app-check \
-            --registry apps/catalog.json \
+            --registry generated-app-registry.json \
             --package "${{ matrix.package }}" \
             --out dist/prebuilt
       - name: Save verified app binaries
@@ -489,6 +501,10 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
+      - name: Collect the Store registry from the app manifests
+        # Each app is described beside its source; apps/catalog.json is an
+        # empty base, and a check handed it validates nothing and passes.
+        run: node tools/collect-app-registry.mjs --out generated-app-registry.json
       - name: Load the release tool
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
@@ -527,7 +543,7 @@ jobs:
           fi
           node -e '
             const fs = require("fs");
-            const registry = JSON.parse(fs.readFileSync("apps/catalog.json", "utf8"));
+            const registry = JSON.parse(fs.readFileSync("generated-app-registry.json", "utf8"));
             for (const app of registry.apps) console.log(app.package);
           ' | while IFS= read -r package; do
             artifact="verified-app-${package}"
@@ -619,7 +635,7 @@ jobs:
             fi
           fi
           node tools/check-app-versions.mjs \
-            --registry apps/catalog.json \
+            --registry generated-app-registry.json \
             --published-catalog published-app-catalog.json \
             --base "${{ needs.trusted-tool.outputs.published-sha }}"
       - name: Sign the app packages and catalog
@@ -642,7 +658,7 @@ jobs:
           printf '%s' "$COBALT_APP_SIGNING_SEED" > "$seed"
           chmod 600 "$seed"
           trusted/kobo app-release \
-            --registry apps/catalog.json \
+            --registry generated-app-registry.json \
             --seed "$seed" \
             --out dist/apps \
             --base-url "https://github.com/${GITHUB_REPOSITORY}/releases/download/${release_tag}" \

@@ -1,0 +1,13 @@
+{
+  "id": "fanshelf",
+  "display_name": "Fanshelf",
+  "short_label": "Fanshelf",
+  "summary": "Save public AO3 works to a shelf made for offline reading.",
+  "page_description": "Add an AO3 work and keep it ready for comfortable reading on your Kobo.",
+  "version": "0.2.0",
+  "release_notes": "Add an AO3 work and keep it ready for comfortable reading on your Kobo.",
+  "glyph": "book",
+  "capabilities": [
+    "network"
+  ]
+}

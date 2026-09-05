@@ -1,0 +1,1 @@
+{"format_version":1,"id":"fixture","display_name":"Beta acceptance fixture","short_label":"Beta fixture","summary":"Exercises the signed Beta Store transaction without owner data.","version":"1.1.0","minimum_cobalt_version":"0.3.6","glyph":"check","capabilities":[],"binary_sha256":"b65874d64d5a85c2cba07a8e7c1a53bdaeaf9137749d8e68070944b235f8529a","binary_bytes":100}

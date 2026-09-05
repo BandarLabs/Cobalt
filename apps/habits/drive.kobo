@@ -1,0 +1,10 @@
+expect Habits
+tap Manage
+tap Add
+type Tea
+tap Add
+tap Today
+expect Tea
+expect daily
+clean
+shot today

@@ -1,0 +1,9 @@
+wait 800
+expect Pass-and-play classics
+tap Draughts
+expect Set the table
+clean
+shot draughts-setup
+tap Start game
+expect Draughts
+shot draughts

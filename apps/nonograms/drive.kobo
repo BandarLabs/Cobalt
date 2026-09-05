@@ -1,0 +1,9 @@
+expect Nonograms
+tap Harbor dawn
+expect Harbor dawn · free mode
+tap Free
+expect guided mode
+tap Run entry: off
+expect Run entry: on
+clean
+shot nonograms-play

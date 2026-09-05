@@ -1,0 +1,19 @@
+[package]
+name = "kobo-vault"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+kobo-sdk = { path = "../../crates/kobo-sdk" }
+kobo-html = { path = "../../crates/kobo-html" }
+pulldown-cmark = { version = "0.13.4", default-features = false, features = ["html"] }
+
+[dev-dependencies]
+kobo-ui = { path = "../../crates/kobo-ui" }
+kobo-image = { path = "../../crates/kobo-image" }
+
+[lints]
+workspace = true

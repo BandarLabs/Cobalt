@@ -1,0 +1,4 @@
+# Honest first-run without a named Hermes secret.
+expect Connect a Hermes gateway
+clean
+shot setup
