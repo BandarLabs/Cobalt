@@ -807,58 +807,88 @@ export function affectedWorkspacePackages(baseRevision, registry, strictUnknown 
   return analyzeAppReleaseInputs(baseRevision, registry, strictUnknown).affected;
 }
 
+const DIFF_MODES = new Set(["--list-packages", "--publish-needed"]);
+const USAGE = [
+  "usage: node tools/check-app-versions.mjs [--list-packages|--publish-needed]",
+  "         --registry PATH --published-catalog PATH --base GIT_REVISION [--package NAME]",
+  "   or: node tools/check-app-versions.mjs --validate-packages",
+  "         --registry PATH --published-catalog PATH --packages JSON_ARRAY"
+].join("\n");
+
+// --validate-packages judges a package list the caller already settled on, so it
+// takes that list instead of deriving one from a base revision. The publish
+// workflow reaches it after it may have expanded an incremental selection back
+// to every package, at which point there is no single base the list came from.
 function argumentsFrom(argv) {
-  const mode = argv[0] === "--list-packages" || argv[0] === "--publish-needed" ? argv[0] : null;
+  const mode = DIFF_MODES.has(argv[0]) || argv[0] === "--validate-packages" ? argv[0] : null;
   if (mode) argv = argv.slice(1);
-  const required = ["--registry", "--published-catalog", "--base"];
-  const allowed = [...required, "--package"];
+  const validating = mode === "--validate-packages";
+  const required = validating
+    ? ["--registry", "--published-catalog", "--packages"]
+    : ["--registry", "--published-catalog", "--base"];
+  const allowed = validating ? required : [...required, "--package"];
   const values = new Map();
   for (let index = 0; index < argv.length; index += 2) {
     const flag = argv[index];
     const value = argv[index + 1];
-    if (!allowed.includes(flag) || !value) {
-      throw new Error(
-        "usage: node tools/check-app-versions.mjs --registry PATH --published-catalog PATH --base GIT_REVISION"
-      );
-    }
+    if (!allowed.includes(flag) || !value) throw new Error(USAGE);
     values.set(flag, value);
   }
-  if (!required.every(flag => values.has(flag))) {
-    throw new Error(
-      "usage: node tools/check-app-versions.mjs --registry PATH --published-catalog PATH --base GIT_REVISION"
-    );
-  }
+  if (!required.every(flag => values.has(flag))) throw new Error(USAGE);
   return { values, mode };
+}
+
+function requestedPackages(raw) {
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error("--packages must be a JSON array of package names");
+  }
+  if (!Array.isArray(parsed) || parsed.some(name => typeof name !== "string")) {
+    throw new Error("--packages must be a JSON array of package names");
+  }
+  return parsed;
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
     const { values, mode } = argumentsFrom(process.argv.slice(2));
     const registry = readJson(resolve(values.get("--registry")), "app registry");
-    const selectedPackage = values.get("--package");
-    if (selectedPackage !== undefined) {
-      registry.apps = registry.apps.filter(app => app.package === selectedPackage);
-      if (registry.apps.length !== 1) {
-        throw new Error(`package ${selectedPackage} does not name exactly one registered app`);
-      }
-    }
     const published = readJson(resolve(values.get("--published-catalog")), "published catalog");
-    const { affected, storeChanges } = analyzeAppReleaseInputs(
-      values.get("--base"),
-      registry,
-      selectedPackage === undefined
-    );
-    checkProtocolMinimums(registry, currentProtocolVersion(), PROTOCOL_MINIMUMS, affected);
-    if (mode === "--list-packages") {
-      console.log(JSON.stringify(packagesToBuild(registry, published, affected)));
-    } else if (mode === "--publish-needed") {
-      console.log(releaseNeeded(registry, published, affected) ? "true" : "false");
+    if (mode === "--validate-packages") {
+      checkBuildPackages(
+        registry,
+        published,
+        requestedPackages(values.get("--packages")),
+        currentProtocolVersion()
+      );
+      console.log("Every selected app package is registered and carries a new version.");
     } else {
-      checkEntries(registry, published, affected);
-      if (storeChanges.length > 0 && !releaseNeeded(registry, published, affected)) {
-        throw new Error(unpublishedStoreChangeReport("the app catalog", storeChanges));
+      const selectedPackage = values.get("--package");
+      if (selectedPackage !== undefined) {
+        registry.apps = registry.apps.filter(app => app.package === selectedPackage);
+        if (registry.apps.length !== 1) {
+          throw new Error(`package ${selectedPackage} does not name exactly one registered app`);
+        }
       }
-      console.log("Every changed app package has a new version.");
+      const { affected, storeChanges } = analyzeAppReleaseInputs(
+        values.get("--base"),
+        registry,
+        selectedPackage === undefined
+      );
+      checkProtocolMinimums(registry, currentProtocolVersion(), PROTOCOL_MINIMUMS, affected);
+      if (mode === "--list-packages") {
+        console.log(JSON.stringify(packagesToBuild(registry, published, affected)));
+      } else if (mode === "--publish-needed") {
+        console.log(releaseNeeded(registry, published, affected) ? "true" : "false");
+      } else {
+        checkEntries(registry, published, affected);
+        if (storeChanges.length > 0 && !releaseNeeded(registry, published, affected)) {
+          throw new Error(unpublishedStoreChangeReport("the app catalog", storeChanges));
+        }
+        console.log("Every changed app package has a new version.");
+      }
     }
   } catch (error) {
     console.error(error.message);
