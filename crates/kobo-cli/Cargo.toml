@@ -16,12 +16,16 @@ kobo-sim = { path = "../kobo-sim" }
 kobo-image = { path = "../kobo-image" }
 kobo-json = { path = "../kobo-json" }
 kobo-net = { path = "../kobo-net" }
+kobo-stream = { path = "../kobo-stream" }
+kobo-doc = { path = "../kobo-doc" }
+kobo-frame-host = { path = "../kobo-frame-host" }
 kobo-profile = { path = "../kobo-profile" }
 kobo-protocol = { path = "../kobo-protocol" }
 kobod = { path = "../kobod" }
-ring = "0.17"
-kobo-stream = { path = "../kobo-stream" }
 kobo-wifi-trace = { path = "../kobo-wifi-trace" }
+ring = "0.17"
+rusqlite = { version = "0.37.0", features = ["bundled", "serialize"] }
+serde_json = "1.0"
 
 [features]
 default = []

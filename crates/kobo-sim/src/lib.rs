@@ -9,7 +9,7 @@ use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::thread;
 
 // Panel policy belongs to the runtime, but the simulator compiles the same
@@ -18,17 +18,33 @@ use std::thread;
 mod frame;
 use frame::{FramePlanner, FrameTransition, PanelWaveform};
 use kobo_policy::{shelf::Shelf, store::Store, DeviceServices, TaskRunner};
-use kobo_profile::{DeviceProfile, PanelPose, CLARA_BW_391};
+use kobo_profile::{DeviceProfile, PanelPose, CLARA_BW_391, SUPPORTED_PROFILES};
 use kobo_protocol::{read_from, write_to, Frame, Lifecycle, Message};
 use kobo_ui::{ActionId, DisplayMetrics, Node, NodeId, Screen, Surface};
 
 const MAX_HTTP_HEADER: usize = 8 * 1024;
-const PROFILE: &DeviceProfile = &CLARA_BW_391;
+static PROFILE: LazyLock<&'static DeviceProfile> = LazyLock::new(|| {
+    let requested = std::env::var("KOBO_SIM_PROFILE").ok();
+    requested
+        .as_deref()
+        .and_then(|id| {
+            SUPPORTED_PROFILES
+                .iter()
+                .copied()
+                .find(|profile| profile.id == id)
+        })
+        .unwrap_or(&CLARA_BW_391)
+});
 /// The simulator asserts an orientation rather than observing one, because it
 /// has no device. That is legitimate here and nowhere near a real framebuffer:
-/// it means the browser exercises exactly the transform the Clara BW profile
+/// it means the browser exercises exactly the transform the selected profile
 /// was measured at.
-const POSE: PanelPose<'static> = PanelPose::reference(PROFILE);
+static POSE: LazyLock<PanelPose<'static>> = LazyLock::new(|| PanelPose::reference(*PROFILE));
+
+#[must_use]
+pub fn selected_profile() -> &'static DeviceProfile {
+    *PROFILE
+}
 
 fn profile_metrics() -> DisplayMetrics {
     DisplayMetrics {
@@ -591,6 +607,12 @@ impl AppServer {
                 "SDK must send Hello before other messages",
             ));
         };
+        if !valid_app_name(&name) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "SDK application name is not a safe data directory name",
+            ));
+        }
         write_protocol_frame(
             stream,
             &Frame {
@@ -1848,14 +1870,14 @@ fn read_app_messages(
     // Kept outside the process so state survives a reload, which is the whole
     // point of a store: a developer restarting the application should see what
     // the owner would see after closing and reopening it.
-    let store = Store::new(std::env::temp_dir().join("cobalt-sim-state"));
+    let store = Store::new(std::env::temp_dir().join("cobalt-sim-state").join(name));
     // The shelf is where an application keeps what will not fit in a message:
     // an audiobook, a downloaded book. Without one here every shelf request
     // came back `Unwritable`, so the one class of application that most needs
     // to be developed off the device -- the ones that take four minutes and a
     // dozen network calls to produce a file -- was the one class that could
     // not be run in the simulator at all.
-    let shelf = Shelf::new(std::env::temp_dir().join("cobalt-sim-data"));
+    let shelf = Shelf::new(simulated_data_root(name));
     let shells = simulated_shells(writer);
     loop {
         let frame = read_protocol_frame(&mut stream)?;
@@ -1869,10 +1891,10 @@ fn read_app_messages(
                 state.paints = state.paints.saturating_add(1);
             }
             Message::SetOrientation(orientation) => {
-                state
+                let mut state = state
                     .lock()
-                    .map_err(|_| io::Error::other("app state lock poisoned"))?
-                    .orientation = orientation;
+                    .map_err(|_| io::Error::other("app state lock poisoned"))?;
+                state.orientation = orientation;
             }
             // The simulator hosts exactly one application, so a launch is
             // reported rather than performed. Pretending it worked would hide
@@ -2225,7 +2247,7 @@ fn simulated_tasks(name: &str) -> TaskRunner {
         );
         let _ = kobo_net::trust_owner_roots_from_dir(&directory);
     });
-    let runner = TaskRunner::simulated(std::env::temp_dir())
+    let runner = TaskRunner::simulated(simulated_data_root(name))
         .with_app_secrets(std::env::temp_dir().join(SIM_SECRETS), name);
     if std::env::var_os(OFFLINE).is_some() {
         return runner;
@@ -2253,6 +2275,23 @@ fn simulated_tasks(name: &str) -> TaskRunner {
             },
         ))
         .with_capabilities([kobo_policy::Capability::Network])
+}
+
+/// Directory the host simulator uses for one application's shelf.
+///
+/// Companion commands such as `kobo frame push --sim` write here so a `kobo
+/// dev` session sees the same files the reader would after an SSH push.
+#[must_use]
+pub fn simulated_data_root(name: &str) -> std::path::PathBuf {
+    std::env::temp_dir().join("cobalt-sim-data").join(name)
+}
+
+fn valid_app_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 32
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
 }
 
 /// Gives the simulator the same type the panel gets.
@@ -2486,7 +2525,7 @@ figcaption { margin-top:12px; color:var(--muted); font-size:.875rem; }
 <div class="workspace">
   <figure class="device">
     <div class="screen"><canvas id="display" width="1072" height="1448" tabindex="0" role="application" aria-label="Kobo grayscale display" aria-describedby="instructions"></canvas></div>
-    <figcaption id="instructions">Kobo Clara BW panel preview. Click or tap to exercise the measured controller transform and SDK hit testing.</figcaption>
+    <figcaption id="instructions">Kobo panel preview. Click or tap to exercise the selected profile's measured controller transform and SDK hit testing.</figcaption>
   </figure>
   <aside class="inspector" aria-label="Simulator inspector">
     <section class="card">
@@ -2553,7 +2592,7 @@ function drawOverlays(){if(refreshRegion.checked&&transition)for(const update of
 function showSimulation(sim){profile=sim.profile;transition=sim.transition;scenario.value=sim.scenario;document.getElementById("profile-badge").textContent=profile.id;document.getElementById("geometry").textContent=profile.width+" × "+profile.height;document.getElementById("density").textContent=profile.pixelsPerInch+" PPI";document.getElementById("rotation").textContent=profile.rotation;document.getElementById("lifecycle").textContent=sim.lifecycle;const touch=sim.touch;document.getElementById("display-touch").textContent=touch?touch.display.x+", "+touch.display.y:"—";document.getElementById("raw-touch").textContent=touch?touch.raw.x+", "+touch.raw.y:"—";document.getElementById("waveform").textContent=transition?transition.waveform:"—";document.getElementById("update-kind").textContent=transition?(transition.full?"full / cleaning":"partial"):"unchanged";document.getElementById("region").textContent=transition?(transition.regions.length===1?transition.region.width+"×"+transition.region.height+" @ "+transition.region.x+","+transition.region.y:transition.regions.length+" regions"):"—";document.getElementById("refresh-count").textContent=sim.refreshCount;document.getElementById("partial-count").textContent=sim.partialsSinceClean+" / 8";}
 async function frame(){const path=ideal.checked?"/ideal-frame":"/frame";const response=checked(await fetch(path,{cache:"no-store"}));const raw=new Uint8Array(await response.arrayBuffer());const [diagnostics,simulation]=await Promise.all([fetch("/diagnostics",{cache:"no-store"}).then(checked).then(r=>r.json()),fetch("/simulation",{cache:"no-store"}).then(checked).then(r=>r.json())]);issues=diagnostics.issues;showSimulation(simulation);if(raw.length!==profile.width*profile.height)throw Error("Invalid "+profile.id+" frame");if(canvas.width!==profile.width||canvas.height!==profile.height){canvas.width=profile.width;canvas.height=profile.height;}const image=ctx.createImageData(profile.width,profile.height);for(let i=0;i<raw.length;i++){const p=i*4;image.data[p]=image.data[p+1]=image.data[p+2]=raw[i];image.data[p+3]=255;}ctx.putImageData(image,0,0);showDiagnostics();drawOverlays();if(!ideal.checked&&transition&&transition.full&&transition.refresh!==lastFlash){lastFlash=transition.refresh;canvas.classList.remove("clean-flash");void canvas.offsetWidth;canvas.classList.add("clean-flash");}status.textContent=issues.length?"Frame loaded with "+issues.length+" diagnostic"+(issues.length===1?"":"s")+".":"Frame loaded; layout clean.";}
 function touchLocation(event){const rect=canvas.getBoundingClientRect();return{x:Math.floor((event.clientX-rect.left)*profile.width/rect.width),y:Math.floor((event.clientY-rect.top)*profile.height/rect.height)};}
-async function touch(next){point=next;checked(await fetch("/touch",{method:"POST",headers:{"Content-Type":"text/plain"},body:"x="+point.x+"&y="+point.y}));await frame();status.textContent="Touch delivered through the Clara BW transform.";}
+async function touch(next){point=next;checked(await fetch("/touch",{method:"POST",headers:{"Content-Type":"text/plain"},body:"x="+point.x+"&y="+point.y}));await frame();status.textContent="Touch delivered through the selected profile transform.";}
 async function post(path,body){checked(await fetch(path,{method:"POST",headers:{"Content-Type":"text/plain"},body}));await frame();}
 canvas.addEventListener("pointerup",event=>{event.preventDefault();touch(touchLocation(event)).catch(error=>status.textContent=error.message);});
 canvas.addEventListener("keydown",event=>{if(event.key==="Enter"||event.key===" "){event.preventDefault();touch(point).catch(error=>status.textContent=error.message);}});
@@ -2569,6 +2608,15 @@ frame().catch(error=>status.textContent=error.message);
 mod tests {
     use super::*;
     use std::io::{Read, Write};
+
+    #[test]
+    fn simulated_app_data_is_private_to_each_app() {
+        let nonograms = simulated_data_root("nonograms");
+        let panels = simulated_data_root("panels");
+        assert_ne!(nonograms, panels);
+        assert!(nonograms.ends_with("cobalt-sim-data/nonograms"));
+        assert!(panels.ends_with("cobalt-sim-data/panels"));
+    }
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::mpsc;
     use std::time::Duration;
@@ -2584,6 +2632,14 @@ mod tests {
         simulated_app_request(state, caller, scenario, request)
             .expect("simulate request")
             .expect("app-store request")
+    }
+
+    #[test]
+    fn simulated_app_names_cannot_escape_their_data_root() {
+        for name in ["../outside", "/absolute", "two/parts", "", "UPPER"] {
+            assert!(!valid_app_name(name), "{name:?} was accepted");
+        }
+        assert!(valid_app_name("nonograms"));
     }
 
     #[test]
@@ -3289,7 +3345,7 @@ mod tests {
                     version: kobo_protocol::VERSION,
                     request_id: 7,
                     message: Message::Hello {
-                        name: "test app".into(),
+                        name: "test-app".into(),
                     },
                 },
             )?;
@@ -3395,5 +3451,13 @@ mod tests {
         );
         fs::remove_file(socket_path).expect("remove replacement");
         fs::remove_dir(root).expect("remove private directory");
+    }
+
+    #[test]
+    fn each_simulated_app_session_starts_in_portrait() {
+        assert_eq!(
+            AppState::default().orientation,
+            kobo_ui::Orientation::Portrait
+        );
     }
 }

@@ -1,0 +1,12 @@
+wait 800
+expect Today
+clean
+shot today
+tap Browse
+expect Browse
+clean
+shot browse
+tap Search
+expect Search
+clean
+shot search

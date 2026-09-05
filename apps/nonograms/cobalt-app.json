@@ -1,0 +1,11 @@
+{
+  "id": "nonograms",
+  "display_name": "Nonograms",
+  "short_label": "Nonograms",
+  "summary": "Solve a bundled touch-first picture grid offline.",
+  "page_description": "Solve a touch-first picture grid by cycling each square through fill, X, and blank.",
+  "version": "0.1.1",
+  "release_notes": "Solve a touch-first picture grid by cycling each square through fill, X, and blank.",
+  "glyph": "grid",
+  "capabilities": []
+}

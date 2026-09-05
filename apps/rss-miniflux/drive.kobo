@@ -1,0 +1,6 @@
+expect Connect Miniflux
+expect secret set
+tap Suggested feeds
+expect Suggested feeds
+clean
+shot rss-miniflux-directory

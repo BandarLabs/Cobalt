@@ -1,0 +1,6 @@
+# Run with two pending daemon questions after pairing.
+wait-for Waiting questions
+expect Claude Code
+expect Codex
+clean
+shot board

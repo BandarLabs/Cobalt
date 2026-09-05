@@ -1,0 +1,13 @@
+{
+  "id": "pubquiz",
+  "display_name": "Pub Quiz",
+  "short_label": "Pub Quiz",
+  "summary": "Play offline solo or pass-around trivia rounds.",
+  "page_description": "Offline trivia rounds for one reader or a table passing one Kobo between players.",
+  "version": "0.1.0",
+  "release_notes": "Offline trivia rounds for one reader or a table passing one Kobo between players.",
+  "glyph": "chat",
+  "capabilities": [
+    "network"
+  ]
+}

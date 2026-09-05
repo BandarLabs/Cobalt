@@ -11,6 +11,7 @@ const APP_FIELDS = new Set([
   "display_name",
   "short_label",
   "summary",
+  "page_description",
   "version",
   "release_notes",
   "minimum_cobalt_version",
@@ -146,6 +147,9 @@ export function normalizeContribution(value, directoryName) {
     display_name: app.display_name,
     short_label: app.short_label,
     summary: app.summary,
+    ...(app.page_description === undefined
+      ? {}
+      : { page_description: app.page_description }),
     version: app.version,
     ...(app.release_notes === undefined ? {} : { release_notes: app.release_notes }),
     minimum_cobalt_version,

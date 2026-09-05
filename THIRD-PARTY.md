@@ -17,7 +17,7 @@ cargo metadata --format-version 1 --all-features
 | Selected licence | Crates |
 | --- | --- |
 | Apache-2.0 | dependencies that offer Apache-2.0 as an alternative, including `image`, `http`, `rustls`, `libc`, `png`, `flate2`, `ttf-parser`, and their transitive dependencies |
-| MIT | `bytes`, `byteorder-lite`, `memchr`, `minimp3`, `minimp3-sys`, `pulldown-cmark`, `simd-adler32`, `slice-ring-buffer`, `vt100` |
+| MIT | `bytes`, `byteorder-lite`, `memchr`, `minimp3`, `minimp3-sys`, `pulldown-cmark`, `pulldown-cmark-escape`, `simd-adler32`, `slice-ring-buffer`, `vt100` |
 | Apache-2.0 and ISC | `ring` |
 | ISC | `rustls-webpki`, `untrusted` |
 | BSD-3-Clause | `subtle` |
@@ -34,6 +34,14 @@ notices in `licenses/LICENSE-Rust-dependencies.txt`. That includes `ring`'s
 Apache-2.0 and ISC terms and the CDLA-Permissive-2.0 agreement for the Mozilla
 CA data bundled by `webpki-roots`. The GPL-3.0-or-later terms selected for
 `shakmaty` ship separately in `licenses/LICENSE-shakmaty.txt`.
+
+## Bundled content
+
+| Application | Content | Terms |
+| --- | --- | --- |
+| `grimoire` | Excerpts from the System Reference Document 5.1 and 5.2 by Wizards of the Coast LLC | Creative Commons Attribution 4.0 International; attribution is also included in the app |
+| `pubquiz` | Starter questions sourced from Open Trivia DB | Creative Commons Attribution-ShareAlike 4.0; the app carries `QUESTION-DATA-LICENSE.md` |
+| `verses` | Short poems by Emily Dickinson, William Blake and Percy Bysshe Shelley | Public domain; source and publication year are retained with each poem |
 
 ## Icons
 
@@ -79,6 +87,17 @@ The example applications talk to services this project does not own.
 | `gutenbird` | Gutendex and Project Gutenberg | Public; Gutenberg texts are public domain in the US |
 | `lichess` | Lichess Board and puzzle APIs | Official HTTPS origin; Board API access uses a runtime-held personal token |
 | `rss` | Feedsearch | Public; the search screen carries the attribution its terms ask for |
+| `calibre-web` | calibre-web or calibre content-server OPDS | Owner-supplied HTTPS service; optional HTTP Basic credential |
+| `fanshelf` | Archive of Our Own public work pages | Public, unauthenticated lookups with an identifying user agent |
+| `homepanel` | Home Assistant API | Owner-supplied HTTPS service using a runtime-held long-lived token |
+| `kitchencard` | Mealie API | Owner-supplied service; Mealie is AGPL-3.0 |
+| `lichess` | Lichess API | Public puzzle access; optional personal access token for account features |
+| `needles` | Ravelry API | Account access through a runtime-held HTTP Basic credential |
+| `panels` | Komga OPDS | Optional owner-supplied service; Komga is MIT licensed |
+| `post` | Hermes gateway | Owner-supplied HTTPS gateway; Hermes Agent is MIT licensed |
+| `pubquiz` | Open Trivia DB | Public question-pack API; returned question content is CC-BY-SA-4.0 |
+| `readlater` | Wallabag API | Owner-supplied or hosted service; Wallabag is MIT licensed |
+| `rss-miniflux` | Miniflux API | Owner-supplied or hosted service; Miniflux is Apache-2.0 licensed |
 
 None of them is paid for or rate-limit-exempt. An application that hammers
 them is your responsibility, not theirs.

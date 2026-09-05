@@ -14,11 +14,17 @@ mod authorize;
 mod beta_store_smoke;
 mod bootstrap;
 mod connect;
+mod deck;
 mod devsession;
 mod drive;
+mod flashcards;
+mod frame;
 mod host_release;
 mod menu;
+mod needles;
+mod nonograms;
 mod package;
+mod vault;
 // Only the `device-write` build dispatches to this, but its tests decide what
 // gets sent to a reader and are worth running on every build. So it compiles
 // either way, and the unused warning is silenced rather than the module gated
@@ -27,14 +33,19 @@ mod package;
 mod panel;
 mod setup;
 mod sha256;
+mod sync;
 
-const DEVICE_PACKAGES: &[&str] = &[
-    "kobo-doctor",
-    "kobod",
-    "kobo-wifi-trace",
-    "kobo-todo",
-    "kobo-terminal",
-];
+const DEVICE_PACKAGES: &[&str] = &["kobo-doctor", "kobod", "kobo-todo", "kobo-terminal"];
+const SYNCTHING_ARTIFACT_ENV: &str = "COBALT_SYNCTHING_ARTIFACT";
+const SYNCTHING_SHA256: &str = "845336fa67494f38ecb69dfaa0a81de6e33e9b5427bd707385d85051596641a1";
+const SYNCTHING_SOURCE_RECORD: &str = "\
+Syncthing source: https://github.com/syncthing/syncthing.git
+Tag: v2.0.9
+Commit: 3382ccc3f16536b5a7b6df7c8212951f7d4d3a9f
+License: MPL-2.0
+Build: GOOS=linux GOARCH=arm GOARM=7 CGO_ENABLED=0 go run build.go -goos linux -goarch arm build
+SHA-256: 845336fa67494f38ecb69dfaa0a81de6e33e9b5427bd707385d85051596641a1
+";
 /// Everything an owner's device needs, in the order it is packaged, with the
 /// features each one has to be built with.
 ///
@@ -50,7 +61,6 @@ const DEVICE_PACKAGES: &[&str] = &[
 /// the artifact check in `build_package` both exist to keep it shipped.
 const INSTALLED_PACKAGES: &[(&str, Option<&str>)] = &[
     ("kobod", Some("device-write")),
-    ("kobo-wifi-trace", None),
     ("kobo-launcher", None),
     ("kobo-audiobook", None),
     ("kobo-terminal", None),
@@ -74,18 +84,45 @@ const STORE_PACKAGES: &[&str] = &[
     "kobo-audiobook",
     "kobo-backgammon",
     "kobo-brief",
+    "kobo-calibre-web",
     "kobo-chat",
+    "kobo-crossword",
+    "kobo-deck",
+    "kobo-fanshelf",
+    "kobo-fieldbook",
+    "kobo-flashcards",
+    "kobo-frame",
     "kobo-gallery",
+    "kobo-grimoire",
     "kobo-gutenbird",
+    "kobo-habits",
     "kobo-hn",
+    "kobo-homepanel",
+    "kobo-inkling",
+    "kobo-kitchencard",
     "kobo-lichess",
+    "kobo-logicpack",
     "kobo-magnet",
     "kobo-morse",
+    "kobo-musicstand",
+    "kobo-needles",
+    "kobo-nonograms",
+    "kobo-panels",
+    "kobo-paperterm",
+    "kobo-parlor",
+    "kobo-parser",
+    "kobo-post",
+    "kobo-pubquiz",
+    "kobo-readlater",
     "kobo-rss",
+    "kobo-rss-miniflux",
     "kobo-sidekick",
     "kobo-sudoku",
+    "kobo-syncthing",
     "kobo-tictactoe",
     "kobo-todo",
+    "kobo-vault",
+    "kobo-verses",
     "kobo-zotero-reader",
 ];
 
@@ -414,6 +451,26 @@ fn is_device_flag(argument: &str) -> bool {
     argument == "--device" || argument == "-s"
 }
 
+/// Whether a companion command should print its usage and exit successfully.
+fn wants_help(arguments: &[String]) -> bool {
+    arguments.is_empty()
+        || arguments
+            .iter()
+            .any(|argument| argument == "--help" || argument == "-h")
+}
+
+// Returns a Result it can never fail to produce so every `command` can end
+// with `return print_command_help(USAGE);` rather than a print and a separate
+// Ok, which is the shape all nine callers use.
+#[allow(
+    clippy::unnecessary_wraps,
+    reason = "the Result is the caller's tail expression, not a failure channel"
+)]
+fn print_command_help(usage: &str) -> Result<(), String> {
+    println!("{usage}");
+    Ok(())
+}
+
 /// Resolves an alias to the command it stands for.
 fn canonical(command: &str) -> &str {
     ALIASES
@@ -431,6 +488,14 @@ fn run(arguments: &[String]) -> Result<(), String> {
         "new" => create_app(arguments.get(1).ok_or("usage: kobo new <name>")?),
         "dev" => dev(&arguments[1..]),
         "drive" => drive_command(&arguments[1..]),
+        "deck" => deck::command(&arguments[1..]),
+        "flashcards" => flashcards::command(&arguments[1..]),
+        "frame" => frame::command(&arguments[1..]),
+        "vault" => vault::command(&arguments[1..]),
+        "sync" => sync::command(&arguments[1..]),
+        "needles" => needles::command(&arguments[1..]),
+        "nonograms" => nonograms::command(&arguments[1..]),
+        "parser" => parser_command(&arguments[1..]),
         "shot" => shot_command(&arguments[1..]),
         #[cfg(feature = "device-write")]
         "tap" => tap_command(&arguments[1..]),
@@ -492,9 +557,11 @@ fn run(arguments: &[String]) -> Result<(), String> {
         "run" if arguments.get(1).is_some_and(|value| value == "--sim") => {
             run_simulation(&arguments[2..])
         }
+
         "run" => {
             Err("device execution is safety-gated; use 'kobo run --sim' on the host".to_owned())
         }
+
         "help" | "--help" | "-h" => {
             print_help();
             Ok(())
@@ -505,6 +572,166 @@ fn run(arguments: &[String]) -> Result<(), String> {
         }
         unknown => Err(format!("unknown command '{unknown}'")),
     }
+}
+
+fn parser_command(arguments: &[String]) -> Result<(), String> {
+    const USAGE: &str = "usage: kobo parser check FILE\n\
+                         \x20      kobo parser push FILE --device IP\n\
+                         check validates a .z3, .z5 or .z8 story on the host.\n\
+                         push transfers a checked story to the reader's Parser shelf.";
+    if wants_help(arguments) {
+        return print_command_help(USAGE);
+    }
+    if let [verb, file] = arguments {
+        if verb == "check" {
+            let path = Path::new(file);
+            let bytes = fs::read(path)
+                .map_err(|error| format!("could not read {}: {error}", path.display()))?;
+            validate_parser_story(&bytes)?;
+            println!(
+                "Parser story is a Z-machine v{} file ({} bytes).",
+                bytes[0],
+                bytes.len()
+            );
+            return Ok(());
+        }
+    }
+    let [verb, file, device, host] = arguments else {
+        return Err(USAGE.to_owned());
+    };
+    if verb != "push" || !is_device_flag(device) {
+        return Err(USAGE.to_owned());
+    }
+    let path = Path::new(file);
+    let bytes =
+        fs::read(path).map_err(|error| format!("could not read {}: {error}", path.display()))?;
+    validate_parser_story(&bytes)?;
+    let file_name = path
+        .file_name()
+        .and_then(OsStr::to_str)
+        .ok_or("story file name is not valid UTF-8")?;
+    let mut safe = file_name
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || matches!(character, '.' | '-' | '_') {
+                character.to_ascii_lowercase()
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    safe.truncate(50);
+    if safe.is_empty() {
+        return Err("story file name has no usable characters".to_owned());
+    }
+    let name = format!("story-{safe}");
+    let encoded = base64_encode(&bytes);
+    let script = format!(
+        "set -e\n\
+         root=/mnt/onboard/.adds/cobalt/data/parser\n\
+         mkdir -p \"$root\"\n\
+         partial=\"$root/.{name}.writing\"\n\
+         base64 -d > \"$partial\" <<'KOBO_PARSER_STORY'\n\
+         {encoded}\n\
+         KOBO_PARSER_STORY\n\
+         chmod 600 \"$partial\"\n\
+         mv -f \"$partial\" \"$root/{name}\"\n\
+         sync\n\
+         printf 'Transferred {name}\\n'\n"
+    );
+    let output = run_remote_shell(&format!("root@{host}"), &script, REMOTE_COMMAND_TIMEOUT)
+        .map_err(unreachable_device)?;
+    if !output.status.success() {
+        return Err(format!(
+            "the reader refused the story transfer: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    print!("{}", String::from_utf8_lossy(&output.stdout));
+    Ok(())
+}
+
+fn validate_parser_story(bytes: &[u8]) -> Result<(), String> {
+    if bytes.starts_with(b"Glul") {
+        return Err("this is a Glulx story — Parser does not support it yet".to_owned());
+    }
+    let Some(version) = bytes.first().copied() else {
+        return Err("the file is empty".to_owned());
+    };
+    if !matches!(version, 3 | 5 | 8) {
+        return Err(format!(
+            "unsupported story format: Z-machine version {version}; Parser accepts v3, v5 and v8"
+        ));
+    }
+    if bytes.len() < 64 {
+        return Err("the file is too short to contain a Z-machine header".to_owned());
+    }
+    Ok(())
+}
+
+/// Runs the host half of a Paperterm session.
+fn stream_command(arguments: &[String]) -> Result<(), String> {
+    const USAGE: &str = "usage: kobo stream init [--host ADDRESS ...]\n\
+                         \x20      kobo stream [--grid COLSxROWS] [--controls | --interactive] \
+                         [--read-only] [--port PORT] -- COMMAND [ARG ...]\n\
+                         Host-only. The reader never opens a shell; it paints rows this command serves.";
+    if wants_help(arguments) {
+        return print_command_help(USAGE);
+    }
+    if arguments.first().is_some_and(|argument| argument == "init") {
+        return kobo_stream::init(&arguments[1..]);
+    }
+    let separator = arguments
+        .iter()
+        .position(|argument| argument == "--")
+        .ok_or(USAGE)?;
+    let mut grid = kobo_stream::Grid::fallback();
+    let mut controls = false;
+    let mut interactive = false;
+    let mut port = kobo_stream::DEFAULT_PORT;
+    let mut index = 0;
+    while index < separator {
+        match arguments[index].as_str() {
+            "--grid" => {
+                grid = kobo_stream::Grid::parse(arguments.get(index + 1).ok_or(USAGE)?)?;
+                index += 2;
+            }
+            "--controls" => {
+                controls = true;
+                index += 1;
+            }
+            "--interactive" => {
+                interactive = true;
+                controls = true;
+                index += 1;
+            }
+            "--read-only" => {
+                controls = false;
+                interactive = false;
+                index += 1;
+            }
+            "--port" => {
+                port = arguments
+                    .get(index + 1)
+                    .ok_or(USAGE)?
+                    .parse::<u16>()
+                    .map_err(|_| "--port must be 1 through 65535")?;
+                if port == 0 {
+                    return Err("--port must be 1 through 65535".to_owned());
+                }
+                index += 2;
+            }
+            _ => return Err(USAGE.to_owned()),
+        }
+    }
+    kobo_stream::run(kobo_stream::Options {
+        grid,
+        controls,
+        interactive,
+        port,
+        command: arguments[separator + 1..].to_vec(),
+    })
+    .map(|_| ())
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -653,7 +880,6 @@ fn host_release_verify(arguments: &[String]) -> Result<(), String> {
     );
     Ok(())
 }
-
 fn app_key(arguments: &[String]) -> Result<(), String> {
     let seed_path = single_path_flag(arguments, "--seed", "usage: kobo app-key --seed PATH")?;
     let seed = read_signing_seed(&seed_path)?;
@@ -1088,10 +1314,14 @@ fn parse_release_app(value: &kobo_json::Value) -> Result<ReleaseApp, String> {
         "glyph",
         "capabilities",
     ];
-    // `setup` is an accepted website-only registry field. The page generator
-    // validates its nested schema; the CLI ignores it and release manifests
-    // deliberately contain none of it.
-    let fields = strict_registry_object(value, "app", &FIELDS, &["setup", "release_notes"])?;
+    // These are website-only registry fields. The page generator validates
+    // them; the CLI ignores them and release manifests contain neither.
+    let fields = strict_registry_object(
+        value,
+        "app",
+        &FIELDS,
+        &["page_description", "setup", "release_notes"],
+    )?;
     let string = |name| {
         registry_field(fields, name)?
             .as_str()
@@ -1592,7 +1822,9 @@ fn build_device(device: bool) -> Result<(), String> {
     run_status(&mut command, "cargo build")?;
     if device {
         for name in DEVICE_PACKAGES {
-            let binary = workspace_device_binary(name);
+            let binary = workspace_target_directory()
+                .join("armv7-unknown-linux-musleabihf/release")
+                .join(name);
             verify_arm_elf(&binary)?;
             println!(
                 "verified static ARMv7 hard-float binary: {}",
@@ -1998,7 +2230,6 @@ fn device_logs(arguments: &[String]) -> Result<(), String> {
                 request.host
             )));
         }
-
         println!("cleared {DEVICE_TRACE_LOG} on {}", request.host);
         if !request.follow {
             return Ok(());
@@ -2052,67 +2283,6 @@ fn device_logs(arguments: &[String]) -> Result<(), String> {
             request.host
         ))),
     }
-}
-
-/// Runs the host half of a Paperterm session.
-fn stream_command(arguments: &[String]) -> Result<(), String> {
-    const USAGE: &str = "usage: kobo stream init [--host ADDRESS ...]\n\
-                         kobo stream [--grid COLSxROWS] [--controls | --interactive] \
-                         [--read-only] [--port PORT] -- COMMAND [ARG ...]";
-    if arguments.first().is_some_and(|argument| argument == "init") {
-        return kobo_stream::init(&arguments[1..]);
-    }
-    let separator = arguments
-        .iter()
-        .position(|argument| argument == "--")
-        .ok_or(USAGE)?;
-    let mut grid = kobo_stream::Grid::fallback();
-    let mut controls = false;
-    let mut interactive = false;
-    let mut port = kobo_stream::DEFAULT_PORT;
-    let mut index = 0;
-    while index < separator {
-        match arguments[index].as_str() {
-            "--grid" => {
-                grid = kobo_stream::Grid::parse(arguments.get(index + 1).ok_or(USAGE)?)?;
-                index += 2;
-            }
-            "--controls" => {
-                controls = true;
-                index += 1;
-            }
-            "--interactive" => {
-                interactive = true;
-                controls = true;
-                index += 1;
-            }
-            "--read-only" => {
-                controls = false;
-                interactive = false;
-                index += 1;
-            }
-            "--port" => {
-                port = arguments
-                    .get(index + 1)
-                    .ok_or(USAGE)?
-                    .parse::<u16>()
-                    .map_err(|_| "--port must be 1 through 65535")?;
-                if port == 0 {
-                    return Err("--port must be 1 through 65535".to_owned());
-                }
-                index += 2;
-            }
-            _ => return Err(USAGE.to_owned()),
-        }
-    }
-    kobo_stream::run(kobo_stream::Options {
-        grid,
-        controls,
-        interactive,
-        port,
-        command: arguments[separator + 1..].to_vec(),
-    })
-    .map(|_| ())
 }
 
 fn wifi_trace_command(arguments: &[String]) -> Result<(), String> {
@@ -2769,12 +2939,10 @@ fn workspace_manifest() -> PathBuf {
         .join("Cargo.toml")
 }
 
-/// Resolves a device binary from this workspace's configured target directory.
+/// Resolves a device binary inside this workspace's own target directory.
 ///
 /// Pinning it to this manifest means an uploaded artifact always comes from the
 /// reviewed source tree rather than whatever workspace the caller stood in.
-/// Cargo resolves a relative `CARGO_TARGET_DIR` from its invoking current
-/// directory, not from the manifest's workspace.
 fn workspace_device_binary(name: &str) -> PathBuf {
     workspace_target_directory()
         .join("armv7-unknown-linux-musleabihf/release")
@@ -3360,7 +3528,9 @@ fn build_package_bytes() -> Result<BuiltPackage, String> {
             &mut device_build_command(name, *features)?,
             format!("cargo build {name}"),
         )?;
-        let binary = workspace_device_binary(name);
+        let binary = workspace_target_directory()
+            .join("armv7-unknown-linux-musleabihf/release")
+            .join(name);
         // The same check the device build already applies, repeated here
         // because this is the artifact somebody else's device will run.
         verify_arm_elf(&binary)?;
@@ -3375,6 +3545,22 @@ fn build_package_bytes() -> Result<BuiltPackage, String> {
             program: true,
         });
     }
+    let (syncthing, checksum) = verified_syncthing_artifact()?;
+    members.push(package::Member {
+        path: format!("{}/bin/syncthing", package::INSTALL_ROOT),
+        bytes: syncthing,
+        program: true,
+    });
+    members.push(package::Member {
+        path: format!("{}/bin/syncthing.sha256", package::INSTALL_ROOT),
+        bytes: checksum,
+        program: false,
+    });
+    members.push(text_member(
+        "licenses/SYNCTHING.md",
+        SYNCTHING_SOURCE_RECORD,
+        false,
+    ));
     members.push(text_member("start.sh", START_SCRIPT, true));
     members.push(text_member("README.txt", INSTALL_README, false));
     members.push(text_member(
@@ -3416,6 +3602,7 @@ fn build_package_bytes() -> Result<BuiltPackage, String> {
     if readback_members != members {
         return Err("refusing to build: archive readback differs from its inputs".to_owned());
     }
+
     let compressed = gzip(&archive)?;
     // Exactly what `rcS` does before it extracts anything. A tarball that
     // fails this is silently ignored on the device, which looks like an
@@ -3426,6 +3613,34 @@ fn build_package_bytes() -> Result<BuiltPackage, String> {
         listed,
         compressed,
     })
+}
+
+fn verified_syncthing_artifact() -> Result<(Vec<u8>, Vec<u8>), String> {
+    let binary = std::env::var_os(SYNCTHING_ARTIFACT_ENV)
+        .map(PathBuf::from)
+        .ok_or_else(|| {
+            format!("{SYNCTHING_ARTIFACT_ENV} must name the reviewed Syncthing v2.0.9 ARM artifact")
+        })?;
+    let bytes = fs::read(&binary).map_err(|error| format!("read {}: {error}", binary.display()))?;
+    if !matching_sha256(&bytes, SYNCTHING_SHA256) {
+        return Err(
+            "Syncthing artifact did not match the repository-pinned v2.0.9 digest".to_owned(),
+        );
+    }
+    // Pure-Go ARM executables do not advertise a C floating-point ABI. The
+    // pinned digest authenticates this exact reviewed artifact; retain all
+    // other static ARM ELF checks without requiring the Rust hard-float flag.
+    verify_arm_elf_bytes(&bytes, false)
+        .map_err(|error| format!("verify {}: {error}", binary.display()))?;
+    Ok((bytes, format!("{SYNCTHING_SHA256}\n").into_bytes()))
+}
+
+fn matching_sha256(bytes: &[u8], expected: &str) -> bool {
+    expected.len() == 64
+        && expected
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        && expected == sha256::hex_digest(bytes)
 }
 
 /// What to say when the cable is in but nothing usable is behind it.
@@ -4636,6 +4851,7 @@ fn pipe_through(command: &mut Command, input: &[u8]) -> Result<Vec<u8>, String> 
 
 fn run_simulation(arguments: &[String]) -> Result<(), String> {
     let package = simulated_package(arguments)?;
+    let target = workspace_target_directory();
     let mut build = Command::new("cargo");
     build.args(["build", "-p", "kobod", "-p", package]);
     run_status(&mut build, "build host simulation")?;
@@ -4671,7 +4887,8 @@ fn run_simulation(arguments: &[String]) -> Result<(), String> {
             "simulation failed: app={app_status}, daemon={daemon_status}"
         ));
     }
-    let expected = 1072_usize * 1448;
+    let profile = kobo_sim::selected_profile();
+    let expected = profile.width as usize * profile.height as usize;
     let actual = fs::metadata(&simulation.frame)
         .map_err(|error| format!("inspect rendered frame: {error}"))?
         .len();
@@ -4680,8 +4897,9 @@ fn run_simulation(arguments: &[String]) -> Result<(), String> {
             "rendered frame is {actual} bytes; expected {expected}"
         ));
     }
-    let output = Path::new("target/kobo-sim-last.raw");
-    fs::copy(&simulation.frame, output).map_err(|error| format!("save rendered frame: {error}"))?;
+    let output = target.join("kobo-sim-last.raw");
+    fs::copy(&simulation.frame, &output)
+        .map_err(|error| format!("save rendered frame: {error}"))?;
     println!(
         "host runtime completed for {package}; frame: {}",
         output.display()
@@ -4915,32 +5133,36 @@ fn find_device_ar() -> Result<String, String> {
 
 fn verify_arm_elf(path: &Path) -> Result<(), String> {
     let bytes = fs::read(path).map_err(|error| format!("read {}: {error}", path.display()))?;
+    verify_arm_elf_bytes(&bytes, true).map_err(|error| format!("{}: {error}", path.display()))
+}
+
+fn verify_arm_elf_bytes(bytes: &[u8], require_hard_float: bool) -> Result<(), String> {
     if bytes.len() < 52 || &bytes[..4] != b"\x7fELF" {
-        return Err(format!("{} is not an ELF binary", path.display()));
+        return Err("not an ELF binary".to_owned());
     }
     if bytes[4] != 1 || bytes[5] != 1 {
         return Err("expected a little-endian ELF32 binary".to_owned());
     }
-    if read_u16(&bytes, 16)? != 2 {
+    if read_u16(bytes, 16)? != 2 {
         return Err("expected an executable ELF file".to_owned());
     }
-    if read_u16(&bytes, 18)? != 40 {
+    if read_u16(bytes, 18)? != 40 {
         return Err("expected an ARM ELF binary".to_owned());
     }
-    let flags = read_u32(&bytes, 36)?;
-    if flags & 0x400 == 0 || flags & 0x200 != 0 {
+    let flags = read_u32(bytes, 36)?;
+    if require_hard_float && (flags & 0x400 == 0 || flags & 0x200 != 0) {
         return Err(format!(
             "expected ARM hard-float ABI flags, found 0x{flags:08x}"
         ));
     }
     let program_offset =
-        usize::try_from(read_u32(&bytes, 28)?).map_err(|_| "program offset overflow")?;
-    let entry_size = usize::from(read_u16(&bytes, 42)?);
-    let entry_count = usize::from(read_u16(&bytes, 44)?);
+        usize::try_from(read_u32(bytes, 28)?).map_err(|_| "program offset overflow")?;
+    let entry_size = usize::from(read_u16(bytes, 42)?);
+    let entry_count = usize::from(read_u16(bytes, 44)?);
     if entry_size < 32 {
         return Err("invalid ELF program header size".to_owned());
     }
-    let entry = read_u32(&bytes, 24)?;
+    let entry = read_u32(bytes, 24)?;
     let mut executable_entry = false;
     for index in 0..entry_count {
         let offset = program_offset
@@ -4950,18 +5172,18 @@ fn verify_arm_elf(path: &Path) -> Result<(), String> {
                     .ok_or("program header overflow")?,
             )
             .ok_or("program header overflow")?;
-        let kind = read_u32(&bytes, offset)?;
+        let kind = read_u32(bytes, offset)?;
         if kind == 2 || kind == 3 {
             return Err("binary contains a dynamic or interpreter program header".to_owned());
         }
         if kind == 1 {
-            let file_offset = usize::try_from(read_u32(&bytes, offset + 4)?)
+            let file_offset = usize::try_from(read_u32(bytes, offset + 4)?)
                 .map_err(|_| "load segment offset overflow")?;
-            let virtual_address = read_u32(&bytes, offset + 8)?;
-            let file_size = usize::try_from(read_u32(&bytes, offset + 16)?)
+            let virtual_address = read_u32(bytes, offset + 8)?;
+            let file_size = usize::try_from(read_u32(bytes, offset + 16)?)
                 .map_err(|_| "load segment size overflow")?;
-            let memory_size = read_u32(&bytes, offset + 20)?;
-            let segment_flags = read_u32(&bytes, offset + 24)?;
+            let memory_size = read_u32(bytes, offset + 20)?;
+            let segment_flags = read_u32(bytes, offset + 24)?;
             if file_size > usize::try_from(memory_size).unwrap_or(usize::MAX)
                 || file_offset
                     .checked_add(file_size)
@@ -6182,7 +6404,30 @@ fn print_help() {
            new <name>             Create a Rust application\n\
            dev [--builtin] [address]  Run this SDK app in the browser simulator\n\
            drive --script PATH    Drive a running simulator and save PNG screenshots\n\
+           drive --script PATH    Drive a running simulator and save PNG screenshots\n\
            drive --script PATH --record DIR  ... and film it, no hardware needed\n\
+           deck set PAD --launch APP|--url URL|--run CMD  Assign a Deck pad on this computer\n\
+           deck ls|show [--json]                 List the assigned pads, or print the layout JSON\n\
+           deck push (--sim | --device IP | --out PATH)  Publish that layout to the reader or simulator\n\
+           flashcards import FILE --out BUNDLE  Prepare an Anki package for Flashcards\n\
+           frame init (--sim | --device IP)      Create the Frame shelf\n\
+           frame push INPUT (--sim | --device IP) [--fit crop|pad] [--delete]\n\
+                                             Prepare and atomically push Frame photos\n\
+           frame ls (--sim | --device IP)        List Frame shelf photos\n\
+           frame rm ID (--sim | --device IP)     Remove a Frame shelf photo\n\
+           vault init (--device IP | --sim)      Prepare the Vault store on the reader or simulator\n\
+           vault push DIR (--device IP | --sim | --out INDEX)  Pack a markdown vault and publish it\n\
+           sync setup DIR --folder NAME --device IP  Pair one safe fixed Sync folder\n\
+           sync run [--foreground] [--seconds N] Start the private host Syncthing peer\n\
+           sync status|stop                      Inspect or stop that dedicated peer\n\
+           needles prepare PDF --out FILE       Extract a user-owned PDF for Needles\n\
+           needles push FILE --device IP        Transfer a prepared pattern to Needles\n\
+           nonograms push IMAGE --size 5|7|9 (--device IP | --out photo.png)\n\
+                                             Prepare and atomically transfer a photo puzzle\n\
+           parser check FILE             Validate a .z3/.z5/.z8 story on the host\n\
+           parser push FILE --device IP  Transfer a checked story to Parser\n\
+           stream init [--host ADDRESS]  Create Paperterm pairing material on this computer\n\
+           stream [--grid CxR] -- COMMAND   Serve host rows to Paperterm; the reader has no shell\n\
            shot [--device HOST]   Save a PNG of the panel (device or simulator)\n\
            record --device IP [--seconds N] [--fps F] [--out DIR]  Film the panel, read-only\n\
            present <app> --device IP [--seconds N]  Run one app on the panel\n\
@@ -6195,8 +6440,6 @@ fn print_help() {
            session --device IP --hold [minutes]  Keep it reachable for unattended testing\n\
            wait --device IP       Block until a device answers again\n\
            logs --device IP [--follow] [--lines N]  Read the runtime trace from the device\n\
-           wifi-trace summarize PATH  Report handoff generations and first divergence\n\
-           wifi-trace retrieve --device IP --out PATH  Retrieve and summarize the latest trace\n\
            shell --device IP [command ...]  Run one command on the reader, or open a\n\
            \x20                             session when no command is given. Exits with\n\
            \x20                             whatever the reader exited with\n\
@@ -6247,6 +6490,35 @@ fn print_help() {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn companion_help_exits_successfully() {
+        super::parser_command(&["--help".into()]).expect("parser help");
+        super::stream_command(&["--help".into()]).expect("stream help");
+        super::flashcards::command(&["--help".into()]).expect("flashcards help");
+        super::deck::command(&["--help".into()]).expect("deck help");
+        super::vault::command(&["--help".into()]).expect("vault help");
+    }
+
+    #[test]
+    fn parser_check_accepts_a_minimal_v5_header() {
+        let mut bytes = vec![0_u8; 64];
+        bytes[0] = 5;
+        let path = std::env::temp_dir().join(format!("parser-check-{}.z5", std::process::id()));
+        std::fs::write(&path, &bytes).expect("fixture");
+        super::parser_command(&["check".into(), path.display().to_string()]).expect("check");
+        std::fs::remove_file(path).expect("cleanup");
+    }
+
+    #[test]
+    fn parser_check_refuses_glulx() {
+        let path = std::env::temp_dir().join(format!("parser-glulx-{}.ulx", std::process::id()));
+        std::fs::write(&path, b"Glul\0\0\0\0").expect("fixture");
+        let error = super::parser_command(&["check".into(), path.display().to_string()])
+            .expect_err("glulx");
+        std::fs::remove_file(path).expect("cleanup");
+        assert!(error.contains("Glulx"));
+    }
+
     /// Builds a recording the way the device writes one.
     fn recording(width: u32, height: u32, frames: &[(u32, u8)]) -> Vec<u8> {
         let mut raw = b"KOBOCST1".to_vec();
@@ -6559,12 +6831,12 @@ mod tests {
 
     use super::package;
     use super::{
-        build_executables, canonical, configured_target_directory, is_device_flag,
-        manifest_uses_sdk, normalise_secret_value, parse_deploy, parse_devices, parse_logs,
-        parse_touch_probe, unreachable_device, valid_device_host, valid_slug, verify_arm_elf,
-        wait_for_remote_child, workspace_doctor_binary, DevSessionGuard, RemoteArtifact,
-        SimulationGuard, ALIASES, DEFAULT_TRACE_LINES, DEPLOY_TIMEOUT, DEVICE_PACKAGES,
-        TOUCH_PROBE_DEFAULT_SECONDS, TOUCH_PROBE_MAXIMUM_SECONDS,
+        build_executables, canonical, is_device_flag, manifest_uses_sdk, normalise_secret_value,
+        parse_deploy, parse_devices, parse_logs, parse_touch_probe, unreachable_device,
+        valid_device_host, valid_slug, verify_arm_elf, wait_for_remote_child,
+        workspace_doctor_binary, DevSessionGuard, RemoteArtifact, SimulationGuard, ALIASES,
+        DEFAULT_TRACE_LINES, DEPLOY_TIMEOUT, DEVICE_PACKAGES, TOUCH_PROBE_DEFAULT_SECONDS,
+        TOUCH_PROBE_MAXIMUM_SECONDS,
     };
     #[cfg(feature = "device-write")]
     use super::{
@@ -6805,6 +7077,15 @@ mod tests {
     }
 
     #[test]
+    fn syncthing_artifact_digest_must_be_the_pinned_lowercase_sha256() {
+        let digest = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+        assert!(super::matching_sha256(b"abc", digest));
+        assert!(!super::matching_sha256(b"abd", digest));
+        assert!(!super::matching_sha256(b"abc", &digest.to_uppercase()));
+        assert!(!super::matching_sha256(b"abc", "not-a-checksum"));
+    }
+
+    #[test]
     fn every_uploaded_artifact_is_built_from_this_workspace() {
         let command =
             super::device_build_command("kobo-doctor", None).expect("create doctor build command");
@@ -6834,8 +7115,8 @@ mod tests {
     fn every_installed_package_is_a_member_of_this_workspace() {
         let manifest = fs::read_to_string(super::workspace_manifest()).expect("read the workspace");
         for (name, _) in super::INSTALLED_PACKAGES {
-            let directory = if matches!(*name, "kobod" | "kobo-wifi-trace") {
-                format!("crates/{name}")
+            let directory = if *name == "kobod" {
+                "crates/kobod".to_owned()
             } else {
                 format!("examples/{}", name.trim_start_matches("kobo-"))
             };
@@ -7156,13 +7437,7 @@ mod tests {
     fn default_device_build_excludes_guard_and_smoke() {
         assert_eq!(
             DEVICE_PACKAGES,
-            [
-                "kobo-doctor",
-                "kobod",
-                "kobo-wifi-trace",
-                "kobo-todo",
-                "kobo-terminal"
-            ]
+            ["kobo-doctor", "kobod", "kobo-todo", "kobo-terminal"]
         );
         assert!(!DEVICE_PACKAGES.contains(&"kobo-guard"));
         assert!(!DEVICE_PACKAGES.contains(&"kobo-smoke"));
@@ -7225,45 +7500,22 @@ mod tests {
     }
 
     #[test]
-    fn remote_doctor_uses_strict_hosts_and_configured_target_artifact() {
+    fn remote_doctor_uses_strict_hosts_and_workspace_artifact() {
         assert!(valid_device_host("192.0.2.1"));
         assert!(valid_device_host("kobo-reader_1"));
         assert!(!valid_device_host(""));
         assert!(!valid_device_host("reader;reboot"));
         assert!(!valid_device_host("reader name"));
-        assert!(workspace_doctor_binary()
-            .ends_with("armv7-unknown-linux-musleabihf/release/kobo-doctor"));
+        assert_eq!(
+            workspace_doctor_binary(),
+            super::workspace_target_directory()
+                .join("armv7-unknown-linux-musleabihf/release/kobo-doctor")
+        );
         #[cfg(feature = "device-write")]
-        assert!(
-            workspace_smoke_binary().ends_with("armv7-unknown-linux-musleabihf/release/kobo-smoke")
-        );
-    }
-
-    #[test]
-    fn relative_cargo_target_dir_resolves_from_the_build_invocation() {
-        let workspace = PathBuf::from("/source/cobalt");
-        let invocation = PathBuf::from("/runner/jobs/package");
-        let relative = std::ffi::OsStr::new("../../cobalt-targets");
-        let resolved = configured_target_directory(&workspace, &invocation, Some(relative));
-        assert_eq!(resolved, invocation.join(relative));
-        assert_ne!(resolved, workspace.join(relative));
         assert_eq!(
-            resolved.join("armv7-unknown-linux-musleabihf/release/kobod"),
-            invocation
-                .join(relative)
-                .join("armv7-unknown-linux-musleabihf/release/kobod")
-        );
-        assert_eq!(
-            configured_target_directory(&workspace, &invocation, None),
-            workspace.join("target")
-        );
-        assert_eq!(
-            configured_target_directory(
-                &workspace,
-                &invocation,
-                Some(std::ffi::OsStr::new("/external/cobalt-targets"))
-            ),
-            PathBuf::from("/external/cobalt-targets")
+            workspace_smoke_binary(),
+            super::workspace_target_directory()
+                .join("armv7-unknown-linux-musleabihf/release/kobo-smoke")
         );
     }
 
@@ -7530,6 +7782,23 @@ mod tests {
         let encoded = super::base64_encode(&bytes);
         assert!(encoded.contains('\n'));
         assert_eq!(decode_base64(&encoded), bytes);
+    }
+
+    #[test]
+    fn parser_push_validates_story_formats_before_contacting_a_reader() {
+        for version in [3, 5, 8] {
+            let mut story = vec![0; 64];
+            story[0] = version;
+            assert_eq!(super::validate_parser_story(&story), Ok(()));
+        }
+        assert!(super::validate_parser_story(b"Glul followed by bytes")
+            .expect_err("Glulx must be refused")
+            .contains("Glulx"));
+        let mut unsupported = vec![0; 64];
+        unsupported[0] = 6;
+        assert!(super::validate_parser_story(&unsupported)
+            .expect_err("v6 must be refused")
+            .contains("version 6"));
     }
 
     #[test]

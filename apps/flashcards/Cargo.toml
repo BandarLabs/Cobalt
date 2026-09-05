@@ -1,0 +1,17 @@
+[package]
+name = "kobo-flashcards"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+fsrs = { path = "../../third_party/fsrs" }
+kobo-sdk = { path = "../../crates/kobo-sdk" }
+
+[dev-dependencies]
+kobo-ui = { path = "../../crates/kobo-ui" }
+
+[lints]
+workspace = true

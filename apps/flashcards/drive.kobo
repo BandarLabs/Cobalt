@@ -1,0 +1,9 @@
+wait 500
+expect Flashcards
+clean
+shot decks
+# First-run handling must state the compatibility gate rather than sample cards.
+tap Transfer
+expect Import paused
+clean
+shot transfer

@@ -1,0 +1,9 @@
+wait 800
+expect arXiv
+expect Artificial Intelligence
+clean
+shot subjects
+tap Library
+expect Library
+clean
+shot library

@@ -1,0 +1,11 @@
+{
+  "id": "fieldbook",
+  "display_name": "Fieldbook",
+  "short_label": "Fieldbook",
+  "summary": "Log bird sightings anywhere and build your life list.",
+  "page_description": "A field-ready eBird companion for quick sightings, species lookup, life lists, and checklist sharing.",
+  "version": "0.1.0",
+  "release_notes": "A field-ready eBird companion for quick sightings, species lookup, life lists, and checklist sharing.",
+  "glyph": "search",
+  "capabilities": []
+}

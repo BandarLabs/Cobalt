@@ -1,0 +1,29 @@
+{
+  "id": "needles",
+  "display_name": "Needles",
+  "short_label": "Needles",
+  "summary": "Count rows, browse Ravelry collections, and read your synced patterns offline.",
+  "page_description": "A knuckle-sized row counter, Ravelry library browser, and offline pattern reader.",
+  "version": "0.1.0",
+  "release_notes": "A knuckle-sized row counter, Ravelry library browser, and offline pattern reader.",
+  "glyph": "bookmark",
+  "capabilities": [
+    "network",
+    "keep-awake"
+  ],
+  "setup": {
+    "steps": [
+      {
+        "text": "Ravelry library sync requires an approved Ravelry API account and HTTP Basic credential."
+      },
+      {
+        "text": "Install the credential under the exact name ravelry.",
+        "command": "kobo secret set ravelry --device <address>"
+      },
+      {
+        "text": "Prepare and transfer a PDF you own with Poppler's pdftotext installed.",
+        "command": "kobo needles push PATTERN.pdf --device <address>"
+      }
+    ]
+  }
+}

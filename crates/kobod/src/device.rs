@@ -112,6 +112,10 @@ const STATE_ROOT: &str = "/mnt/onboard/.adds/cobalt/state";
 /// Nothing here can stop the device booting.
 const DATA_ROOT: &str = "/mnt/onboard/.adds/cobalt/data";
 
+fn app_data_root(name: &str) -> PathBuf {
+    Path::new(DATA_ROOT).join(name)
+}
+
 /// The panel metrics a screen is drawn and hit-tested with.
 ///
 /// A screen may ask for a text size other than the reader's own, a reader
@@ -1098,10 +1102,9 @@ struct Hosted {
     pictures: PictureCache,
     /// Application-local font handles mapped onto runtime-global handles.
     fonts: BTreeMap<FontHandle, FontHandle>,
-    /// Logical direction requested by this application.
+    /// Logical direction is app-session scoped and therefore vanishes when
+    /// this hosted process exits or the reader resumes.
     orientation: kobo_ui::Orientation,
-    /// Physical side selected by a verified orientation event, or the fixed
-    /// fallback on readers without an orientation sensor.
     landscape_turn: kobo_ui::LandscapeTurn,
     painted: u32,
     /// When this was last on the panel, for deciding what to stop first.
@@ -1346,9 +1349,9 @@ fn host_applications(
             // different things everywhere else, but `DeviceError` is the radio
             // vocabulary and has one word for both. Unreachable is the honest
             // one: from the player's point of view the bytes cannot be got.
-            kobo_protocol::TaskError::Offline | kobo_protocol::TaskError::Unreachable => {
-                kobo_protocol::DeviceError::Unreachable
-            }
+            kobo_protocol::TaskError::Offline
+            | kobo_protocol::TaskError::Unreachable
+            | kobo_protocol::TaskError::RateLimited(_) => kobo_protocol::DeviceError::Unreachable,
             kobo_protocol::TaskError::TimedOut => kobo_protocol::DeviceError::TimedOut,
             kobo_protocol::TaskError::NotFound => kobo_protocol::DeviceError::NotFound,
             kobo_protocol::TaskError::TooLarge => kobo_protocol::DeviceError::InvalidInput,
@@ -1656,9 +1659,13 @@ fn host_applications(
                             // then the press is at least on the record.
                             trace(&format!("power button pressed={pressed}"));
                         }
-                        // Sensor-equipped readers report which physical side
-                        // is down. Readers without these events keep the fixed
-                        // clockwise software-landscape fallback.
+                        // The kernel's digested accelerometer verdict. Only
+                        // the two portrait poses move the key mapping; the
+                        // image itself does not rotate mid-session yet.
+                        // The pose each MSC_RAW value names was measured here
+                        // by a rotation-only capture, and then confirmed in
+                        // use: a reader turned end for end mid-session, with
+                        // no restart, goes on paging the way it is now held.
                         GpioEvent::Orientation(gpio::Orientation::PortraitUp) => {
                             forward_is_194 = true;
                         }
@@ -1841,6 +1848,7 @@ fn host_applications(
                             .is_some_and(|(at, _, _)| at.elapsed() >= HOLD_TIME),
                         _ => false,
                     };
+                    let orientation = apps[index].orientation;
                     let disposition = deliver_touch(
                         &mut apps[index].stream,
                         event,
@@ -3093,7 +3101,8 @@ fn start_application(
     }
     let waker = sender.clone();
     let credential_app = name.clone();
-    let tasks = TaskRunner::simulated(std::env::temp_dir())
+    let app_data_root = app_data_root(&name);
+    let tasks = TaskRunner::simulated(&app_data_root)
         .with_fetch(Arc::new(kobo_net::fetch_from_controlled))
         .with_post(Arc::new(kobo_net::post_controlled))
         .with_line_streams(Arc::new(kobo_net::LineStreams::default()))
@@ -3121,7 +3130,7 @@ fn start_application(
         // remains confined to its private Cobalt data directory.
         PathBuf::from("/mnt/onboard/Audiobooks")
     } else {
-        Path::new(DATA_ROOT).join(&name)
+        app_data_root
     };
     apps.push(Hosted {
         id,
@@ -4416,6 +4425,17 @@ mod tests {
         event.server.join().expect("event mock");
         drop(runner);
         std::fs::remove_dir_all(root).expect("remove test state");
+    }
+
+    #[test]
+    fn app_file_roots_are_private_per_app() {
+        let nonograms = super::app_data_root("nonograms");
+        let panels = super::app_data_root("panels");
+        assert_ne!(nonograms, panels);
+        assert_eq!(
+            nonograms,
+            std::path::Path::new("/mnt/onboard/.adds/cobalt/data/nonograms")
+        );
     }
 
     /// `TZ` is read from the environment, which is process-global, so these

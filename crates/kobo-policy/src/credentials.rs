@@ -165,6 +165,9 @@ pub fn allowed_request(
     if app == "zotero-reader" {
         return usage == CredentialUse::Fetch && zotero_credential_allowed(credential, url);
     }
+    if let Some(allowed) = store_app_credential_allowed(app, credential, url, usage) {
+        return allowed;
+    }
     if app == "audiobook" {
         return match (&*credential.secret, &credential.header) {
             ("exa", SecretHeader::Named(header)) => {
@@ -305,6 +308,128 @@ fn uci_move(value: &str) -> bool {
         && matches!(bytes[2], b'a'..=b'h')
         && matches!(bytes[3], b'1'..=b'8')
         && (bytes.len() == 4 || matches!(bytes[4], b'q' | b'r' | b'b' | b'n'))
+}
+
+#[allow(
+    clippy::too_many_lines,
+    reason = "one explicit table keeps each Store app's credential boundary visible"
+)]
+fn store_app_credential_allowed(
+    app: &str,
+    credential: &Credential,
+    url: &str,
+    usage: CredentialUse,
+) -> Option<bool> {
+    let allowed = match app {
+        "calibre-web" => {
+            matches!(credential.header, SecretHeader::Basic)
+                && usage == CredentialUse::Fetch
+                && parsed_path(url).is_some_and(|path| clean_path(&path).ends_with("/opds"))
+        }
+        "habits" => {
+            credential.secret == "habitica"
+                && matches!(
+                    &credential.header,
+                    SecretHeader::Named(header) if header.eq_ignore_ascii_case("x-api-key")
+                )
+                && usage == CredentialUse::Fetch
+                && url == "https://habitica.com/api/v3/tasks/user"
+                && has_origin(url, "habitica.com", 443)
+        }
+        "homepanel" => {
+            credential.secret == "homeassistant"
+                && credential.header == SecretHeader::Bearer
+                && parsed_path(url).is_some_and(|path| {
+                    let path = clean_path(&path);
+                    match usage {
+                        CredentialUse::Fetch => path.ends_with("/api/"),
+                        CredentialUse::Post => {
+                            path.ends_with("/api/template") || path.contains("/api/services/")
+                        }
+                    }
+                })
+        }
+        "kitchencard" => {
+            credential.secret == "mealie"
+                && credential.header == SecretHeader::Bearer
+                && usage == CredentialUse::Fetch
+                && url == "https://mealie.local/api/recipes?perPage=20"
+                && has_origin(url, "mealie.local", 443)
+        }
+        "needles" => {
+            credential.secret == "ravelry"
+                && matches!(credential.header, SecretHeader::Basic)
+                && usage == CredentialUse::Fetch
+                && matches!(
+                    url,
+                    "https://api.ravelry.com/people/me/library/list.json"
+                        | "https://api.ravelry.com/people/me/queue/list.json"
+                        | "https://api.ravelry.com/people/me/favorites/list.json"
+                )
+                && has_origin(url, "api.ravelry.com", 443)
+        }
+        "panels" => {
+            credential.secret == "komga"
+                && matches!(credential.header, SecretHeader::Basic)
+                && usage == CredentialUse::Fetch
+                && url == "https://komga.local/opds/v1.2/catalog"
+                && has_origin(url, "komga.local", 443)
+        }
+        "post" => {
+            credential.secret == "hermes-post"
+                && credential.header == SecretHeader::Bearer
+                && parsed_path(url).is_some_and(|path| match usage {
+                    CredentialUse::Fetch => clean_path(&path).ends_with("/letters"),
+                    CredentialUse::Post => clean_path(&path).ends_with("/replies"),
+                })
+        }
+        "readlater" => {
+            credential.secret == "wallabag"
+                && credential.header == SecretHeader::Bearer
+                && parsed_path(url).is_some_and(|path| match usage {
+                    CredentialUse::Fetch => {
+                        (clean_path(&path).ends_with("/api/entries.json")
+                            && path.contains("detail=metadata"))
+                            || wallabag_entry_document(&path)
+                    }
+                    CredentialUse::Post => wallabag_entry_document(&path),
+                })
+        }
+        "rss-miniflux" => {
+            credential.secret == "miniflux"
+                && matches!(
+                    &credential.header,
+                    SecretHeader::Named(header) if header.eq_ignore_ascii_case("x-auth-token")
+                )
+                && parsed_path(url).is_some_and(|path| match usage {
+                    CredentialUse::Fetch => {
+                        clean_path(&path).ends_with("/v1/entries") && path.contains("status=unread")
+                    }
+                    CredentialUse::Post => clean_path(&path).ends_with("/v1/entries"),
+                })
+        }
+        _ => return None,
+    };
+    Some(allowed)
+}
+
+fn wallabag_entry_document(path: &str) -> bool {
+    let path = clean_path(path);
+    path.contains("/api/entries/")
+        && path
+            .strip_suffix(".json")
+            .and_then(|prefix| prefix.rsplit('/').next())
+            .is_some_and(|id| !id.is_empty() && id.bytes().all(|byte| byte.is_ascii_digit()))
+}
+
+fn parsed_path(url: &str) -> Option<String> {
+    parse(url).ok().map(|target| target.path)
+}
+
+fn clean_path(path_and_query: &str) -> &str {
+    path_and_query
+        .split_once('?')
+        .map_or(path_and_query, |(path, _)| path)
 }
 
 /// Binds a dedicated Zotero key to the exact read endpoints used by Zotero
@@ -548,6 +673,113 @@ mod tests {
                 CredentialUse::Fetch
             ));
         }
+    }
+
+    #[test]
+    fn store_app_credentials_are_bound_to_their_request_shapes() {
+        let requests = [
+            (
+                "calibre-web",
+                Credential::basic("calibre"),
+                "https://books.example/opds",
+                CredentialUse::Fetch,
+            ),
+            (
+                "habits",
+                Credential::in_header("habitica", "X-Api-Key"),
+                "https://habitica.com/api/v3/tasks/user",
+                CredentialUse::Fetch,
+            ),
+            (
+                "homepanel",
+                Credential::bearer("homeassistant"),
+                "https://home.example/api/template",
+                CredentialUse::Post,
+            ),
+            (
+                "kitchencard",
+                Credential::bearer("mealie"),
+                "https://mealie.local/api/recipes?perPage=20",
+                CredentialUse::Fetch,
+            ),
+            (
+                "needles",
+                Credential::basic("ravelry"),
+                "https://api.ravelry.com/people/me/library/list.json",
+                CredentialUse::Fetch,
+            ),
+            (
+                "panels",
+                Credential::basic("komga"),
+                "https://komga.local/opds/v1.2/catalog",
+                CredentialUse::Fetch,
+            ),
+            (
+                "post",
+                Credential::bearer("hermes-post"),
+                "https://letters.example/replies",
+                CredentialUse::Post,
+            ),
+            (
+                "readlater",
+                Credential::bearer("wallabag"),
+                "https://read.example/api/entries.json?detail=metadata&perPage=50&page=1&archive=0",
+                CredentialUse::Fetch,
+            ),
+            (
+                "readlater",
+                Credential::bearer("wallabag"),
+                "https://read.example/api/entries/7.json",
+                CredentialUse::Fetch,
+            ),
+            (
+                "rss-miniflux",
+                Credential::in_header("miniflux", "X-Auth-Token"),
+                "https://feeds.example/v1/entries?status=unread&limit=100&order=published_at&direction=desc",
+                CredentialUse::Fetch,
+            ),
+        ];
+        for (app, credential, url, usage) in requests {
+            assert!(allowed(app, &credential, url, usage), "{app}: {url}");
+            assert!(
+                !allowed("other", &credential, url, usage),
+                "another app used {app}'s credential"
+            );
+        }
+    }
+
+    #[test]
+    fn store_app_credentials_reject_wrong_headers_methods_and_paths() {
+        assert!(!allowed(
+            "post",
+            &Credential::bearer("hermes-post"),
+            "http://letters.example/letters",
+            CredentialUse::Fetch
+        ));
+        assert!(!allowed(
+            "post",
+            &Credential::basic("hermes-post"),
+            "https://letters.example/letters",
+            CredentialUse::Fetch
+        ));
+        assert!(!allowed(
+            "readlater",
+            &Credential::bearer("wallabag"),
+            "https://read.example/api/users",
+            CredentialUse::Fetch
+        ));
+        assert!(!allowed(
+            "rss-miniflux",
+            &Credential::in_header("miniflux", "Authorization"),
+            "https://feeds.example/v1/entries?status=unread",
+            CredentialUse::Fetch
+        ));
+        assert!(!allowed(
+            "lichess",
+            &Credential::bearer("lichess"),
+            "https://lichess.org/api/token",
+            CredentialUse::Fetch
+        ));
     }
 
     #[test]

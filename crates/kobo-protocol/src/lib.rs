@@ -51,6 +51,7 @@ pub const MAGIC: [u8; 4] = *b"KOBO";
 /// requests/results. Version 11 adds the identity request and its result,
 /// both tags an older side has no reading for. Update-channel requests were
 /// later added on new tags without changing the shapes of existing frames.
+/// Version 12 adds the explicit rate-limit task error and its retry delay.
 /// Version 12 adds Folio tile values, card tiles, section links and page rails.
 /// Version 13 adds persistent selected state to grid cells. Its runtime retains
 /// a version-12 reader so already installed Folio applications keep working.
@@ -525,6 +526,12 @@ pub enum TaskError {
     /// Kept apart from [`TaskError::NoCredential`] as well: that one is the
     /// device having no key, this one is the host refusing the request.
     Unauthorized,
+    /// The host asked this client to wait before trying again.
+    ///
+    /// The value is the bounded `Retry-After` delay in seconds. Keeping it on
+    /// the error lets an application honor the archive's own instruction
+    /// without exposing response headers generally.
+    RateLimited(u32),
 }
 
 impl TaskError {
@@ -541,7 +548,7 @@ impl TaskError {
     /// not here for the same reason as `Denied`: a key does not install itself
     /// between two attempts three seconds apart.
     #[must_use]
-    pub const fn worth_retrying(self) -> bool {
+    pub const fn worth_retrying(&self) -> bool {
         matches!(self, Self::Offline | Self::Unreachable | Self::TimedOut)
     }
 }
@@ -557,6 +564,7 @@ impl fmt::Display for TaskError {
             Self::TimedOut => "the task ran out of time",
             Self::NotFound => "not found",
             Self::Unauthorized => "the host will not answer without a credential",
+            Self::RateLimited(_) => "the host asked this client to slow down",
         })
     }
 }
@@ -583,8 +591,9 @@ pub enum Message {
         text_scale: TextScale,
     },
     SetScreen(Screen),
-    /// Changes the logical direction for this application session. Omission
-    /// keeps the portrait-compatible default.
+    /// Selects the application's logical viewport for subsequent screens.
+    ///
+    /// Portrait is the default for clients that never send this message.
     SetOrientation(Orientation),
     Action {
         action: ActionId,
@@ -1996,7 +2005,7 @@ fn encode_task_message(payload: &mut Vec<u8>, message: &Message) -> Result<(), P
                 }
                 TaskOutcome::Failed(error) => {
                     payload.push(1);
-                    payload.push(encode_task_error(*error));
+                    encode_task_error(payload, *error);
                 }
                 TaskOutcome::Cancelled => payload.push(2),
             }
@@ -2352,21 +2361,7 @@ fn encoded_message_layout(message: &Message, version: u8) -> Result<(u8, usize),
         Message::DeviceResult(result) => Ok((8, device_result_len(result)?)),
         Message::Spawn { work, .. } => Ok((9, encoded_task_len(work)?)),
         Message::Cancel { .. } => Ok((10, 4)),
-        Message::TaskOutcome { outcome, .. } => {
-            let mut length = 5;
-            match outcome {
-                TaskOutcome::Completed(bytes) => {
-                    if bytes.len() > MAX_TASK_BYTES {
-                        return Err(ProtocolError::FrameTooLarge);
-                    }
-                    add_encoded_len(&mut length, 4)?;
-                    add_encoded_len(&mut length, bytes.len())?;
-                }
-                TaskOutcome::Failed(_) => add_encoded_len(&mut length, 1)?,
-                TaskOutcome::Cancelled => {}
-            }
-            Ok((11, length))
-        }
+        Message::TaskOutcome { outcome, .. } => Ok((11, task_outcome_len(outcome)?)),
         Message::StoreRequest(request) => Ok((13, store_request_len(request)?)),
         Message::StoreResult(result) => Ok((14, store_result_len(result)?)),
         Message::Lifecycle(_) => Ok((15, 1)),
@@ -2385,6 +2380,7 @@ fn encoded_message_layout(message: &Message, version: u8) -> Result<(u8, usize),
             if expected != grey.len() {
                 return Err(ProtocolError::InvalidValue("picture size"));
             }
+
             if grey.len() > MAX_INLINE_PICTURE_BYTES {
                 return Err(ProtocolError::FrameTooLarge);
             }
@@ -2424,6 +2420,24 @@ fn encoded_message_layout(message: &Message, version: u8) -> Result<(u8, usize),
         }
         Message::DropFont { .. } => Ok((25, 4)),
     }
+}
+
+fn task_outcome_len(outcome: &TaskOutcome) -> Result<usize, ProtocolError> {
+    let mut length = 5;
+    match outcome {
+        TaskOutcome::Completed(bytes) => {
+            if bytes.len() > MAX_TASK_BYTES {
+                return Err(ProtocolError::FrameTooLarge);
+            }
+            add_encoded_len(&mut length, 4)?;
+            add_encoded_len(&mut length, bytes.len())?;
+        }
+        TaskOutcome::Failed(error) => {
+            add_encoded_len(&mut length, encoded_task_error_len(*error))?;
+        }
+        TaskOutcome::Cancelled => {}
+    }
+    Ok(length)
 }
 
 fn orientation_layout(version: u8) -> Result<(u8, usize), ProtocolError> {
@@ -4201,7 +4215,7 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, ProtocolError> {
                     }
                     TaskOutcome::Completed(reader.take(length)?.to_vec())
                 }
-                1 => TaskOutcome::Failed(decode_task_error(reader.u8()?)?),
+                1 => TaskOutcome::Failed(decode_task_error(&mut reader)?),
                 2 => TaskOutcome::Cancelled,
                 _ => return Err(ProtocolError::InvalidValue("task outcome")),
             };
@@ -5531,6 +5545,15 @@ const fn encode_glyph(glyph: Glyph) -> u8 {
         Glyph::ChessBlackBishop => 54,
         Glyph::ChessBlackKnight => 55,
         Glyph::ChessBlackPawn => 56,
+        Glyph::Heart => 57,
+        Glyph::BlackDisc => 58,
+        Glyph::WhiteDisc => 59,
+        Glyph::BlackDraughtsKing => 60,
+        Glyph::WhiteDraughtsKing => 61,
+        Glyph::BlackDraughtsMan => 62,
+        Glyph::WhiteDraughtsMan => 63,
+        Glyph::MorrisPoint => 64,
+        Glyph::MorrisLegalPoint => 65,
     }
 }
 
@@ -5593,6 +5616,15 @@ const fn decode_glyph(tag: u8) -> Option<Glyph> {
         54 => Glyph::ChessBlackBishop,
         55 => Glyph::ChessBlackKnight,
         56 => Glyph::ChessBlackPawn,
+        57 => Glyph::Heart,
+        58 => Glyph::BlackDisc,
+        59 => Glyph::WhiteDisc,
+        60 => Glyph::BlackDraughtsKing,
+        61 => Glyph::WhiteDraughtsKing,
+        62 => Glyph::BlackDraughtsMan,
+        63 => Glyph::WhiteDraughtsMan,
+        64 => Glyph::MorrisPoint,
+        65 => Glyph::MorrisLegalPoint,
 
         _ => return None,
     })
@@ -6764,8 +6796,9 @@ mod tests {
         unique.sort_unstable();
         unique.dedup();
         assert_eq!(unique.len(), tags.len(), "two glyphs share one wire tag");
+        let highest = tags.iter().copied().max().expect("glyphs have tags");
         assert_eq!(
-            decode_glyph(u8::try_from(Glyph::ALL.len()).expect("small set")),
+            decode_glyph(highest.checked_add(1).expect("glyph tag space remains")),
             None,
             "a tag one past the end decoded as a glyph"
         );
@@ -8927,6 +8960,10 @@ mod store_tests {
                 task: TaskId(15),
                 outcome: TaskOutcome::Cancelled,
             },
+            Message::TaskOutcome {
+                task: TaskId(16),
+                outcome: TaskOutcome::Failed(TaskError::RateLimited(37)),
+            },
         ] {
             let (_, predicted) = encoded_message_layout(&message, VERSION)
                 .expect("the message is within the limits");
@@ -9255,24 +9292,36 @@ mod store_tests {
     }
 }
 
-const fn encode_task_error(error: TaskError) -> u8 {
+fn encode_task_error(payload: &mut Vec<u8>, error: TaskError) {
     match error {
-        TaskError::Denied => 0,
-        TaskError::Unreachable => 1,
-        TaskError::TooLarge => 2,
-        TaskError::TimedOut => 3,
-        TaskError::NotFound => 4,
+        TaskError::Denied => payload.push(0),
+        TaskError::Unreachable => payload.push(1),
+        TaskError::TooLarge => payload.push(2),
+        TaskError::TimedOut => payload.push(3),
+        TaskError::NotFound => payload.push(4),
         // Appended rather than inserted. The tags are the wire, and renumbering
         // them would make a new daemon and an older app disagree about what
         // went wrong without either of them noticing.
-        TaskError::Offline => 5,
-        TaskError::NoCredential => 6,
-        TaskError::Unauthorized => 7,
+        TaskError::Offline => payload.push(5),
+        TaskError::NoCredential => payload.push(6),
+        TaskError::Unauthorized => payload.push(7),
+        TaskError::RateLimited(seconds) => {
+            payload.push(8);
+            push_u32(payload, seconds);
+        }
     }
 }
 
-const fn decode_task_error(tag: u8) -> Result<TaskError, ProtocolError> {
-    Ok(match tag {
+fn encoded_task_error_len(error: TaskError) -> usize {
+    if matches!(error, TaskError::RateLimited(_)) {
+        5
+    } else {
+        1
+    }
+}
+
+fn decode_task_error(reader: &mut Reader<'_>) -> Result<TaskError, ProtocolError> {
+    Ok(match reader.u8()? {
         0 => TaskError::Denied,
         1 => TaskError::Unreachable,
         2 => TaskError::TooLarge,
@@ -9281,13 +9330,14 @@ const fn decode_task_error(tag: u8) -> Result<TaskError, ProtocolError> {
         5 => TaskError::Offline,
         6 => TaskError::NoCredential,
         7 => TaskError::Unauthorized,
+        8 => TaskError::RateLimited(reader.u32()?),
         _ => return Err(ProtocolError::InvalidValue("task error")),
     })
 }
 
 #[cfg(test)]
 mod task_error_tests {
-    use super::{decode_task_error, encode_task_error, ProtocolError, TaskError};
+    use super::{decode_task_error, encode_task_error, Reader, TaskError};
 
     /// Every variant, so that adding one without a tag fails here.
     const EVERY: &[TaskError] = &[
@@ -9298,12 +9348,16 @@ mod task_error_tests {
         TaskError::TooLarge,
         TaskError::TimedOut,
         TaskError::NotFound,
+        TaskError::Unauthorized,
+        TaskError::RateLimited(37),
     ];
 
     #[test]
     fn every_task_error_survives_the_wire() {
         for error in EVERY {
-            assert_eq!(decode_task_error(encode_task_error(*error)), Ok(*error));
+            let mut bytes = Vec::new();
+            encode_task_error(&mut bytes, *error);
+            assert_eq!(decode_task_error(&mut Reader::new(&bytes)), Ok(*error));
         }
     }
 
@@ -9311,7 +9365,11 @@ mod task_error_tests {
     fn no_two_task_errors_share_a_tag() {
         let mut tags: Vec<u8> = EVERY
             .iter()
-            .map(|error| encode_task_error(*error))
+            .map(|error| {
+                let mut bytes = Vec::new();
+                encode_task_error(&mut bytes, *error);
+                bytes[0]
+            })
             .collect();
         tags.sort_unstable();
         let count = tags.len();
@@ -9324,13 +9382,19 @@ mod task_error_tests {
         // An app built before Offline existed is still talking to this daemon
         // over these numbers. Renumbering would make the two disagree about
         // what went wrong without either of them noticing.
-        assert_eq!(encode_task_error(TaskError::Denied), 0);
-        assert_eq!(encode_task_error(TaskError::Unreachable), 1);
-        assert_eq!(encode_task_error(TaskError::TooLarge), 2);
-        assert_eq!(encode_task_error(TaskError::TimedOut), 3);
-        assert_eq!(encode_task_error(TaskError::NotFound), 4);
-        assert_eq!(encode_task_error(TaskError::Offline), 5);
-        assert_eq!(encode_task_error(TaskError::NoCredential), 6);
+        let tag = |error: TaskError| {
+            let mut bytes = Vec::new();
+            encode_task_error(&mut bytes, error);
+            bytes[0]
+        };
+        assert_eq!(tag(TaskError::Denied), 0);
+        assert_eq!(tag(TaskError::Unreachable), 1);
+        assert_eq!(tag(TaskError::TooLarge), 2);
+        assert_eq!(tag(TaskError::TimedOut), 3);
+        assert_eq!(tag(TaskError::NotFound), 4);
+        assert_eq!(tag(TaskError::Offline), 5);
+        assert_eq!(tag(TaskError::NoCredential), 6);
+        assert_eq!(tag(TaskError::Unauthorized), 7);
     }
 
     /// The two refusals have to stay distinguishable in words as well as on
@@ -9348,12 +9412,8 @@ mod task_error_tests {
     #[test]
     fn a_tag_from_the_future_is_refused_rather_than_guessed() {
         assert_eq!(
-            decode_task_error(8),
-            Err(ProtocolError::InvalidValue("task error"))
-        );
-        assert_eq!(
-            decode_task_error(255),
-            Err(ProtocolError::InvalidValue("task error"))
+            decode_task_error(&mut Reader::new(&[255])),
+            Err(super::ProtocolError::InvalidValue("task error"))
         );
     }
 

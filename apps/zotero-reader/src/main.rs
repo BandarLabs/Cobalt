@@ -1949,6 +1949,9 @@ fn explain_failure(awaiting: Awaiting, error: TaskError) -> String {
                 "The requested conversion is no longer available.".to_owned()
             }
             TaskError::Unreachable => "The conversion service could not be reached.".to_owned(),
+            TaskError::RateLimited(_) => {
+                "The conversion service asked this reader to slow down.".to_owned()
+            }
         };
     }
 
@@ -1966,6 +1969,7 @@ fn explain_failure(awaiting: Awaiting, error: TaskError) -> String {
         TaskError::TimedOut => "Zotero took too long to answer.".to_owned(),
         TaskError::NotFound => "The requested Zotero item is no longer available.".to_owned(),
         TaskError::Unreachable => "Zotero could not be reached.".to_owned(),
+        TaskError::RateLimited(_) => "Zotero asked this reader to slow down.".to_owned(),
     }
 }
 

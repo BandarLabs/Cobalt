@@ -1,0 +1,19 @@
+wait 800
+expect Kitchen Card
+expect Start cooking
+clean
+shot tonight
+tap Pick recipe
+expect Pick a recipe
+expect Lemon chickpeas
+clean
+shot browse
+tap Lemon chickpeas
+tap Start cooking
+expect Cooking
+clean
+shot cook
+tap Ingredients
+expect Ingredients
+clean
+shot ingredients

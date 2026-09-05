@@ -32,24 +32,52 @@ const systemApps = [
 const screenshots = {
   arxiv: ["arxiv.png", "The newest machine learning preprints listed in the arXiv app on a Kobo"],
   audiobook: ["audiobook.png", "An audiobook player with cover art and playback controls on a Kobo"],
-  backgammon: ["backgammon.png", "A grayscale Backgammon board with legal move markers on a Kobo"],
+  backgammon: ["backgammon.png", "Backgammon board on a Kobo showing White's opening roll and 24 touchable points."],
   brief: ["brief.png", "A numbered daily news brief on a Kobo"],
+  "calibre-web": ["calibre-web.png", "Private-library list with an Add control and an empty-state explanation."],
   chat: ["chat.png", "An answer displayed for touch-friendly reading on a Kobo"],
+  crossword: ["crossword.png", "Crossword grid on a Kobo with a selected cell containing C and touch controls for letters and clues."],
+  deck: ["deck.png", "Deck showing six paired-computer controls in a two-column Kobo grid."],
+  fanshelf: ["fanshelf.png", "Fanshelf's empty shelf, with Add, Followed tags, and Check updates controls."],
+  fieldbook: ["fieldbook.png", "Fieldbook sighting log showing a selected bird, count controls, and a saved lifer notice."],
+  flashcards: ["flashcards.png", "Flashcards deck list showing four due cards, today's review count, and a Stats row."],
+  frame: ["frame.png", "A full-area monochrome photograph in Frame on a Kobo Clara BW."],
   gallery: ["components.png", "Cobalt typography and interface components on a Kobo"],
+  grimoire: ["grimoire.png", "Grimoire initiative order showing the active combatant and round counter on a Kobo."],
   gutenbird: ["gutenbird.png", "A shelf of books from an OPDS library on a Kobo"],
+  habits: ["habits.png", "Habits today screen on a Kobo Clara BW, with daily and weekday streak tasks."],
   hn: ["hackernews.png", "A ranked list of Hacker News stories on a Kobo"],
+  homepanel: ["homepanel.png", "Home Panel connection screen with HTTPS Home Assistant URL entry and named-secret instructions."],
+  inkling: ["inkling.png", "A solved Inkling five-letter daily puzzle with grayscale shape feedback."],
+  kitchencard: ["kitchencard.png", "Kitchen Card showing a large cooking instruction with Steps and Ingredients tabs."],
+  lichess: ["lichess.png", "Lichess on Kobo showing Puzzle and Play tiles, a daily puzzle row, and puzzle difficulty."],
+  logicpack: ["logicpack.png", "Logic Pack's Minesweeper board after a revealed cell and contradiction check."],
   launcher: ["launcher.png", "The Cobalt launcher showing installed apps on a Kobo"],
   lichess: ["lichess.png", "Responsive Lichess time-control tiles and puzzles on a Kobo"],
   magnet: ["magnet.png", "The Kobo hall sensor responding to a magnet"],
   morse: ["morse.png", "A letter filling the Kobo screen while the front light sends Morse code"],
+  musicstand: ["musicstand.png", "Music Stand showing a marked half-page score view for Bach's Cello Suite No. 1."],
+  needles: ["needles.png", "Needles pattern screen with row and repeat counters and a large +1 row button."],
+  nonograms: ["nonograms.png", "Nonogram puzzle on a Kobo showing numbered cells, row clues, and guided marking mode."],
+  panels: ["panels.png", "Panels library with controls to open an added comic or browse Komga."],
+  paperterm: ["paperterm.png", "Paperterm pairing screen with computer address field and on-screen keyboard on a Kobo Clara BW."],
+  parlor: ["parlor.png", "Reversi opening board showing four legal moves and touch controls."],
+  parser: ["parser.png", "Parser's book-like transcript after taking a brass lamp and entering the garden."],
+  post: ["post.png", "Post inbox showing completed Hermes letters, newest first."],
+  pubquiz: ["pubquiz.png", "Pub Quiz pass-around question with four large answer choices for Ada."],
+  readlater: ["readlater.png", "Read Later setup screen showing Wallabag credential instructions."],
   rss: ["feeds.png", "Subscribed feeds and articles in the Feeds app on a Kobo"],
+  "rss-miniflux": ["rss-miniflux.png", "RSS Reader starter directory listing Science News, engineering blogs, and long-form writing."],
   settings: ["settings.png", "Battery status and hardware information in Cobalt Settings"],
-  sidekick: ["sidekick.png", "A coding-agent request with tappable responses on a Kobo"],
+  sidekick: ["sidekick.png", "Sidekick multi-agent board showing distinct coding-agent sessions and pending approvals."],
   store: ["store.png", "The Cobalt App Store listing installed and available apps"],
   sudoku: ["sudoku.png", "A Sudoku game designed for the Kobo touch screen"],
+  syncthing: ["syncthing.png", "Sync folders showing receive-only vault, frame, books, and send-only out."],
   terminal: ["terminal.png", "A shell and touch keyboard on a Kobo"],
   tictactoe: ["tictactoe.png", "A completed game of tic-tac-toe on a Kobo"],
   todo: ["todo.png", "A to-do list with completed items on a Kobo"],
+  vault: ["vault.png", "Vault first-run screen on a Kobo Clara BW, showing the commands to push a note vault."],
+  verses: ["verses.png", "Verses displaying a public-domain daily poem in a spacious Kobo reading layout."],
   "zotero-reader": ["zotero-reader.png", "Reading a paper with structured layout and Zotero metadata on a Kobo"]
 };
 const screenshotFor = app => {
@@ -88,8 +116,19 @@ const escape = value => value
   .replaceAll('"', "&quot;");
 const jsonLd = value => JSON.stringify(value, null, 2).replaceAll("<", "\\u003c");
 const scriptHash = value => createHash("sha256").update(value).digest("base64");
+const pageDescription = app => {
+  if (app.page_description === undefined) return app.summary;
+  if (
+    typeof app.page_description !== "string"
+    || app.page_description.trim().length === 0
+    || app.page_description.length > 512
+  ) {
+    throw new Error(`${app.id} page_description must be a non-empty string of at most 512 characters`);
+  }
+  return app.page_description;
+};
 const installableDescription = app =>
-  `${app.summary} Install it on a supported Kobo e-reader with Cobalt.`;
+  `${pageDescription(app)} Install it on a supported Kobo e-reader with Cobalt.`;
 const systemDescription = app =>
   `${app.summary} Included with Cobalt on supported Kobo e-readers.`;
 const appSchema = (app, canonical, screenshot, screenshotAlt) => ({
@@ -98,7 +137,7 @@ const appSchema = (app, canonical, screenshot, screenshotAlt) => ({
     {
       "@type": "SoftwareApplication",
       name: app.display_name,
-      description: app.summary,
+      description: pageDescription(app),
       url: canonical,
       image: {
         "@type": "ImageObject",
@@ -144,7 +183,7 @@ const appSchema = (app, canonical, screenshot, screenshotAlt) => ({
 for (const app of catalog.apps) {
   const id = escape(app.id);
   const name = escape(app.display_name);
-  const summary = escape(app.summary);
+  const summary = escape(pageDescription(app));
   const description = escape(installableDescription(app));
   const capabilities = app.capabilities.length
     ? app.capabilities.map(escape).join(", ")

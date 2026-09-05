@@ -36,10 +36,18 @@ fn metrics_for_profile(
 /// Returns immutable hardware metrics after a verified device session starts,
 /// or the explicit host-simulation metrics before then.
 pub fn device_metrics() -> kobo_ui::DisplayMetrics {
-    VERIFIED_DEVICE_METRICS
-        .get()
-        .copied()
-        .unwrap_or_else(display_metrics_from_env)
+    VERIFIED_DEVICE_METRICS.get().copied().unwrap_or_else(|| {
+        let metrics = display_metrics_from_env();
+        let Ok(requested) = env::var("KOBO_SIM_PROFILE") else {
+            return metrics;
+        };
+        kobo_profile::SUPPORTED_PROFILES
+            .iter()
+            .copied()
+            .find(|profile| profile.id == requested)
+            .and_then(|profile| metrics_for_profile(profile, metrics).ok())
+            .unwrap_or(metrics)
+    })
 }
 
 #[cfg(feature = "device-write")]
@@ -66,6 +74,7 @@ mod blackbox;
 #[cfg(feature = "device-write")]
 mod device;
 mod frame;
+mod syncthing;
 mod update;
 
 fn main() -> ExitCode {
@@ -135,7 +144,127 @@ fn run(arguments: &[String]) -> Result<(), Box<dyn Error>> {
         );
         return Ok(());
     }
-    Err("usage: kobod [--sim-socket PATH --frame PATH] [--present APP] [--fetch URL BYTES] [--key-test SECONDS] [--app-link status|unpair]".into())
+    if arguments
+        .first()
+        .is_some_and(|argument| argument == "--syncthing")
+    {
+        return syncthing::command(&arguments[1..]).map_err(Into::into);
+    }
+    if arguments
+        .first()
+        .is_some_and(|argument| argument == "--beta-store")
+    {
+        return beta_store_maintenance(&arguments[1..]);
+    }
+    if arguments.len() == 2 && arguments[0] == "--resolve-app" {
+        let path = app_store::resolve_launch(Path::new("/mnt/onboard/.adds/cobalt"), &arguments[1])
+            .map_err(|error| format!("resolve application: {error}"))?;
+        println!("path={}", path.display());
+        return Ok(());
+    }
+    Err("usage: kobod [--sim-socket PATH --frame PATH] [--present APP] [--fetch URL BYTES] [--key-test SECONDS] [--app-link status|unpair] [--syncthing] [--resolve-app APP] [--beta-store identity|status APP|catalog-digest|refresh|install APP|uninstall APP]".into())
+}
+
+/// A narrow device-side surface for the host acceptance harness.
+///
+/// Every mutating action is hard-wired to Beta and requires an exact attended
+/// unlock. Stable is not an accepted argument and no network or owner setting
+/// is changed.
+fn beta_store_maintenance(arguments: &[String]) -> Result<(), Box<dyn Error>> {
+    const ROOT: &str = "/mnt/onboard/.adds/cobalt";
+    const UNLOCK: &str = "OWNER_ATTENDED_BETA_STORE_ACCEPTANCE";
+    match arguments {
+        [action] if action == "identity" => {
+            let snapshot = kobo_hal::probe_device()?;
+            let profile = kobo_profile::identify_profile(&snapshot)
+                .ok_or("the device does not exactly match a supported profile")?;
+            println!("profile={}", profile.id);
+            println!(
+                "firmware={}",
+                snapshot.identity.firmware_version.unwrap_or_default()
+            );
+            println!("cobalt={}", env!("CARGO_PKG_VERSION"));
+            println!("protocol={}", kobo_protocol::VERSION);
+            println!("panel_width={}", profile.width);
+            println!("panel_height={}", profile.height);
+            let channel = match autoupdate::preferences(Path::new(ROOT)).channel {
+                kobo_protocol::UpdateChannel::Stable => "stable",
+                kobo_protocol::UpdateChannel::Beta => "beta",
+            };
+            println!("channel={channel}");
+            Ok(())
+        }
+        [action, id] if action == "status" => {
+            if !kobo_protocol::valid_app_id(id) {
+                return Err("invalid application identity".into());
+            }
+            let installed = app_store::installed(Path::new(ROOT))
+                .map_err(|error| format!("read installed applications: {error}"))?;
+            let Some(app) = installed.iter().find(|app| app.id == *id) else {
+                println!("installed=false");
+                return Ok(());
+            };
+            let binary = app_store::resolve(Path::new(ROOT), id)
+                .map_err(|error| format!("resolve installed application: {error}"))?;
+            let bytes = fs::read(binary)?;
+            println!("installed=true");
+            println!(
+                "version={}",
+                app.installed_version.as_deref().unwrap_or_default()
+            );
+            println!("binary_sha256={}", kobo_net::sha256::hex_digest(&bytes));
+            Ok(())
+        }
+        [action] if action == "catalog-digest" => {
+            app_store::catalog(Path::new(ROOT), kobo_protocol::UpdateChannel::Beta)
+                .map_err(|error| format!("verify cached Beta catalog: {error}"))?;
+            let cache = Path::new(ROOT).join("store/catalog-beta");
+            let catalog = fs::read(cache.join("catalog.json"))?;
+            let signature = fs::read(cache.join("catalog.json.sig"))?;
+            println!(
+                "catalog_sha256={}",
+                kobo_net::sha256::hex_digest(&catalog)
+            );
+            println!(
+                "signature_sha256={}",
+                kobo_net::sha256::hex_digest(&signature)
+            );
+            Ok(())
+        }
+        [action] if action == "refresh" => {
+            require_beta_store_unlock(UNLOCK)?;
+            let entries = app_store::refresh(Path::new(ROOT), kobo_protocol::UpdateChannel::Beta)
+                .map_err(|error| format!("refresh Beta catalog: {error}"))?;
+            println!("entries={}", entries.len());
+            Ok(())
+        }
+        [action, id] if action == "install" => {
+            require_beta_store_unlock(UNLOCK)?;
+            app_store::install(Path::new(ROOT), id, kobo_protocol::UpdateChannel::Beta)
+                .map_err(|error| format!("install Beta application: {error}"))?;
+            println!("installed={id}");
+            Ok(())
+        }
+        [action, id] if action == "uninstall" => {
+            require_beta_store_unlock(UNLOCK)?;
+            app_store::uninstall(Path::new(ROOT), id)
+                .map_err(|error| format!("uninstall Beta application: {error}"))?;
+            println!("uninstalled={id}");
+            Ok(())
+        }
+        _ => Err(
+            "usage: kobod --beta-store identity|status APP|catalog-digest|refresh|install APP|uninstall APP"
+                .into(),
+        ),
+    }
+}
+
+fn require_beta_store_unlock(expected: &str) -> Result<(), Box<dyn Error>> {
+    if env::var("KOBO_BETA_STORE_UNLOCK").ok().as_deref() == Some(expected) {
+        Ok(())
+    } else {
+        Err("owner-attended beta Store acceptance unlock is missing or incorrect".into())
+    }
 }
 
 #[cfg(feature = "device-write")]
@@ -536,6 +665,18 @@ fn host_dictionary_directory() -> PathBuf {
     )
 }
 
+fn host_app_data_root(name: &str) -> PathBuf {
+    std::env::temp_dir().join("cobalt-host-data").join(name)
+}
+
+fn valid_app_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 32
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+}
+
 fn host_secret_directory() -> PathBuf {
     std::env::temp_dir().join("cobalt-host-secrets")
 }
@@ -578,6 +719,9 @@ fn serve_application(
     metrics: kobo_ui::DisplayMetrics,
     peer_version: u8,
 ) -> Result<(), Box<dyn Error>> {
+    if !valid_app_name(name) {
+        return Err("SDK application name is not a safe data directory name".into());
+    }
     // In simulation the daemon owns no hardware, so every hardware-touching
     // request is answered honestly rather than pretended.
     let mut services = DeviceServices::simulated();
@@ -594,10 +738,11 @@ fn serve_application(
     // runtime uses. Without the grant the backend could never run, so this
     // path claimed to be the real runtime while refusing every request an
     // application made.
+    let app_data_root = host_app_data_root(name);
     let secrets = host_secret_directory();
     let credential_app = name.to_owned();
     let tasks = std::sync::Arc::new(std::sync::Mutex::new(
-        TaskRunner::simulated(std::env::temp_dir())
+        TaskRunner::simulated(&app_data_root)
             .with_fetch(std::sync::Arc::new(kobo_net::fetch_from_controlled))
             .with_post(std::sync::Arc::new(kobo_net::post_controlled))
             .with_line_streams(std::sync::Arc::new(kobo_net::LineStreams::default()))
@@ -629,7 +774,7 @@ fn serve_application(
         std::thread::spawn(move || deliver_outcomes(&draining, &writer, peer_version));
     }
     let store = kobo_policy::store::Store::new(std::env::temp_dir().join("cobalt-host-state"));
-    let shelf = kobo_policy::shelf::Shelf::new(std::env::temp_dir().join("cobalt-host-data"));
+    let shelf = kobo_policy::shelf::Shelf::new(app_data_root);
     let mut pictures = kobo_ui::PictureCache::default();
     let mut preview = PreviewState::default();
     loop {
@@ -1014,6 +1159,16 @@ impl Drop for SocketGuard {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn host_file_task_roots_are_private_per_app() {
+        assert_ne!(
+            super::host_app_data_root("nonograms"),
+            super::host_app_data_root("panels")
+        );
+        assert!(super::valid_app_name("nonograms"));
+        assert!(!super::valid_app_name("../panels"));
+    }
 
     #[test]
     fn host_secret_installation_replaces_without_exposing_a_partial_file() {

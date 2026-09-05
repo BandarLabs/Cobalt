@@ -1486,11 +1486,11 @@ pub struct DisplayMetrics {
     pub text_scale: TextScale,
 }
 
-/// Direction of an application's logical viewport.
+/// An application's logical panel direction.
 ///
-/// Portrait keeps the established panel coordinate system. Landscape is
-/// rendered in software into a swapped viewport, then rotated clockwise into
-/// the unchanged physical framebuffer.
+/// Landscape is a software rotation: the physical panel remains portrait and
+/// the runtime rotates the completed logical surface clockwise for display.
+/// Portrait is the zero-copy compatibility default.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 #[repr(u8)]
 pub enum Orientation {
@@ -1499,10 +1499,6 @@ pub enum Orientation {
     Landscape = 1,
 }
 
-/// Which physical side is down while a landscape viewport is displayed.
-///
-/// Sensor-equipped readers may update this during a session. Readers without
-/// an orientation event source use [`LandscapeTurn::Clockwise`].
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub enum LandscapeTurn {
     #[default]
@@ -1672,7 +1668,7 @@ impl Default for DisplayMetrics {
 }
 
 impl DisplayMetrics {
-    /// Metrics in the logical viewport requested by an application.
+    /// The logical viewport for this orientation.
     #[must_use]
     pub const fn oriented(mut self, orientation: Orientation) -> Self {
         if matches!(orientation, Orientation::Landscape) {
@@ -2215,6 +2211,12 @@ pub struct BarAction {
 pub enum CellStyle {
     #[default]
     Board,
+    /// A shaded playable square on a conventional draughts board.
+    BoardDark,
+    /// A point on a conventional backgammon board, broad at the panel edge.
+    BackgammonTop,
+    /// A point on a conventional backgammon board, broad at the panel edge.
+    BackgammonBottom,
     Key,
     /// A cell that is nothing but the picture in it.
     ///
@@ -2224,6 +2226,11 @@ pub enum CellStyle {
     /// finger's width of paper between them are already separate, and putting
     /// each on a grey slab turns a quiet row into four boxes.
     Plain,
+    /// A recessed hardware pad: rounded square, thick ink bezel, paper face.
+    ///
+    /// Fifteen of these in three rows of five is a command deck. Empty pads
+    /// stay as blank keys so the grid does not collapse into a list.
+    Pad,
 }
 
 /// Whether a control can currently be activated.
@@ -5065,6 +5072,8 @@ pub enum Glyph {
     Download,
     /// A ribbon with a notch cut from its foot: kept, saved, come back to.
     Bookmark,
+    /// The universal favorite mark.
+    Heart,
     /// A funnel: narrow what is listed. Distinct from [`Self::Search`], which
     /// finds something not yet on screen; a filter subtracts from what is.
     Filter,
@@ -5152,6 +5161,22 @@ pub enum Glyph {
     ChessBlackBishop,
     ChessBlackKnight,
     ChessBlackPawn,
+    /// A conventional solid playing disc for Reversi, draughts, and Morris.
+    BlackDisc,
+    /// A conventional outlined playing disc for Reversi, draughts, and Morris.
+    WhiteDisc,
+    /// A stacked solid draughts piece, immediately recognizable as a king.
+    BlackDraughtsKing,
+    /// A stacked outlined draughts piece, immediately recognizable as a king.
+    WhiteDraughtsKing,
+    /// A solid man on a conventional draughts board.
+    BlackDraughtsMan,
+    /// An outlined man on a conventional draughts board.
+    WhiteDraughtsMan,
+    /// An unoccupied intersection on a Nine Men's Morris board.
+    MorrisPoint,
+    /// A legal destination on a Nine Men's Morris board.
+    MorrisLegalPoint,
 }
 
 impl Glyph {
@@ -5162,7 +5187,7 @@ impl Glyph {
     /// the set was twenty-one: `Light` and `Close` were authored, shipped, and
     /// covered by none of the tests that walk every glyph. A glyph nobody
     /// rasterises in a test is a blank space beside a label on the panel.
-    pub const ALL: [Self; 57] = [
+    pub const ALL: [Self; 66] = [
         Self::App,
         Self::Book,
         Self::Note,
@@ -5220,6 +5245,15 @@ impl Glyph {
         Self::ChessBlackBishop,
         Self::ChessBlackKnight,
         Self::ChessBlackPawn,
+        Self::Heart,
+        Self::BlackDisc,
+        Self::WhiteDisc,
+        Self::BlackDraughtsKing,
+        Self::WhiteDraughtsKing,
+        Self::BlackDraughtsMan,
+        Self::WhiteDraughtsMan,
+        Self::MorrisPoint,
+        Self::MorrisLegalPoint,
     ];
 }
 
@@ -5414,6 +5448,11 @@ pub enum LayoutKind {
     /// size without consulting the tree.
     Quote(u8, QuoteRole),
     Button(ActionId, ControlState, Emphasis),
+    /// A checker stack on a backgammon point. `from_top` pins its base to the
+    /// matching board edge so a five-checker point reads as one familiar pile.
+    BackgammonStack(Glyph, u8, bool),
+    /// The enclosing field and central bar of a backgammon board.
+    BackgammonBoard,
     Card,
     /// The extent of a horizontal group. Draws nothing itself: it exists so a
     /// repaint can dirty the whole group rather than each column.
@@ -5499,6 +5538,8 @@ pub enum LayoutKind {
     /// columns for its cells to turn taller than they are wide, so the size
     /// this label draws at cannot be read off its own rectangle.
     CellLabel(bool),
+    /// The three nested squares and four connectors behind a Morris board.
+    MorrisBoard,
     /// One cell of a table, drawn in the body face.
     TableCell,
     /// One cell of a table's heading row, drawn muted so the rule under it
@@ -7810,17 +7851,31 @@ fn layout_node(
             square,
             cells,
         } => {
-            let gutter = metrics.space(Space::Tight);
+            let tight = metrics.space(Space::Tight);
             let requested = i32::from((*columns).clamp(1, MAX_COLUMNS));
-            let columns = if legacy_typography() {
+            let backgammon_board = *square
+                && requested == 12
+                && cells.len() == 24
+                && cells.iter().all(|cell| cell.label.starts_with("Point "));
+            let pad_deck = *square && requested == 5 && cells.len() == 15;
+            // A board's column count is the board, so narrowing it to the touch
+            // target would deal a different game. Only free-form grids shrink.
+            let columns = if legacy_typography() || backgammon_board || pad_deck {
                 requested
             } else {
                 let fits = width
-                    .saturating_add(gutter)
-                    .checked_div(metrics.touch_target_minimum().saturating_add(gutter).max(1))
+                    .saturating_add(tight)
+                    .checked_div(metrics.touch_target_minimum().saturating_add(tight).max(1))
                     .unwrap_or(1)
                     .max(1);
                 requested.min(fits)
+            };
+            let (x, width, gutter) = if backgammon_board {
+                (0, metrics.width, 0)
+            } else if pad_deck {
+                (x, width, metrics.space(Space::Small))
+            } else {
+                (x, width, tight)
             };
             let block_extra = if *square && columns == 9 && cells.len() >= 81 {
                 gutter
@@ -7839,13 +7894,26 @@ fn layout_node(
                 } else {
                     metrics.touch_target_default()
                 };
-            let (cell_height, style) = if *square {
+            let (cell_height, style) = if backgammon_board {
+                (cell_width.saturating_mul(3), CellStyle::BackgammonTop)
+            } else if pad_deck {
+                (cell_width, CellStyle::Pad)
+            } else if *square {
                 (cell_width, CellStyle::Board)
             } else if cells.iter().all(|cell| cell.glyph.is_some()) {
                 (metrics.touch_target_default(), CellStyle::Plain)
             } else {
                 (key_height, CellStyle::Key)
             };
+            let morris_board = *square
+                && columns == 7
+                && cells.len() == 49
+                && cells.iter().any(|cell| {
+                    matches!(
+                        cell.glyph,
+                        Some(Glyph::MorrisPoint | Glyph::MorrisLegalPoint)
+                    )
+                });
             let index = layout.nodes.len();
             layout.nodes.push(LayoutNode {
                 id: *id,
@@ -7855,10 +7923,29 @@ fn layout_node(
                     width,
                     height: 0,
                 },
-                kind: LayoutKind::Spacer,
+                kind: if backgammon_board {
+                    LayoutKind::BackgammonBoard
+                } else if morris_board {
+                    LayoutKind::MorrisBoard
+                } else {
+                    LayoutKind::Spacer
+                },
                 text_lines: Vec::new(),
             });
             let mut rows = 0;
+            let draughts_board = *square
+                && matches!(columns, 8 | 10)
+                && cells.iter().any(|cell| {
+                    matches!(
+                        cell.glyph,
+                        Some(
+                            Glyph::BlackDraughtsMan
+                                | Glyph::WhiteDraughtsMan
+                                | Glyph::BlackDraughtsKing
+                                | Glyph::WhiteDraughtsKing
+                        )
+                    )
+                });
             for (position, cell) in cells.iter().take(MAX_CELLS).enumerate() {
                 if layout.nodes.len() + 3 > MAX_LAYOUT_NODES {
                     break;
@@ -7866,6 +7953,19 @@ fn layout_node(
                 let position = i32::try_from(position).unwrap_or(0);
                 let column = position % columns;
                 let row = position / columns;
+                let style = if backgammon_board {
+                    if row == 0 {
+                        CellStyle::BackgammonTop
+                    } else {
+                        CellStyle::BackgammonBottom
+                    }
+                } else if morris_board {
+                    CellStyle::Plain
+                } else if draughts_board && (row + column) % 2 == 1 {
+                    CellStyle::BoardDark
+                } else {
+                    style
+                };
                 rows = row + 1;
                 let rect = Rect {
                     x: x.saturating_add(column * (cell_width + gutter) + column / 3 * block_extra),
@@ -7887,27 +7987,78 @@ fn layout_node(
                 //
                 // So the mark has to be large enough to be the whole control,
                 // not the thumbnail that sat above a caption.
-                match cell.glyph {
-                    Some(glyph) => {
-                        let mark = min(cell_height, cell_width) * 3 / 5;
+                if backgammon_board {
+                    if let Some(glyph) = cell.glyph {
+                        let count = cell
+                            .label
+                            .split_whitespace()
+                            .nth(3)
+                            .and_then(|count| count.parse::<u8>().ok())
+                            .unwrap_or(1)
+                            .clamp(1, 5);
                         layout.nodes.push(LayoutNode {
                             id: *id,
-                            rect: Rect {
-                                x: rect.x.saturating_add((cell_width - mark).max(0) / 2),
-                                y: rect.y.saturating_add((cell_height - mark).max(0) / 2),
-                                width: mark,
-                                height: mark,
-                            },
-                            kind: LayoutKind::InlineGlyph(glyph, cell.selected),
+                            rect,
+                            kind: LayoutKind::BackgammonStack(
+                                glyph,
+                                count,
+                                matches!(style, CellStyle::BackgammonTop),
+                            ),
                             text_lines: vec![cell.label.clone()],
                         });
                     }
-                    None => layout.nodes.push(LayoutNode {
-                        id: *id,
-                        rect,
-                        kind: LayoutKind::CellLabel(style == CellStyle::Board),
-                        text_lines: vec![cell.label.clone()],
-                    }),
+                } else {
+                    match cell.glyph {
+                        Some(glyph) if style == CellStyle::Pad => {
+                            let inset = metrics.tenth_mm(PAD_BORDER_TENTH_MM);
+                            let mark = min(cell_height, cell_width) * 2 / 5;
+                            layout.nodes.push(LayoutNode {
+                                id: *id,
+                                rect: Rect {
+                                    x: rect.x.saturating_add((cell_width - mark).max(0) / 2),
+                                    y: rect.y.saturating_add(inset + cell_height / 8),
+                                    width: mark,
+                                    height: mark,
+                                },
+                                kind: LayoutKind::InlineGlyph(glyph, cell.selected),
+                                text_lines: vec![cell.label.clone()],
+                            });
+                            if !cell.label.is_empty() {
+                                let label_top = rect.y + cell_height * 3 / 5;
+                                layout.nodes.push(LayoutNode {
+                                    id: *id,
+                                    rect: Rect {
+                                        x: rect.x + inset,
+                                        y: label_top,
+                                        width: (cell_width - inset * 2).max(1),
+                                        height: (rect.y + cell_height - inset - label_top).max(1),
+                                    },
+                                    kind: LayoutKind::CellLabel(false),
+                                    text_lines: vec![cell.label.clone()],
+                                });
+                            }
+                        }
+                        Some(glyph) => {
+                            let mark = min(cell_height, cell_width) * 3 / 5;
+                            layout.nodes.push(LayoutNode {
+                                id: *id,
+                                rect: Rect {
+                                    x: rect.x.saturating_add((cell_width - mark).max(0) / 2),
+                                    y: rect.y.saturating_add((cell_height - mark).max(0) / 2),
+                                    width: mark,
+                                    height: mark,
+                                },
+                                kind: LayoutKind::InlineGlyph(glyph, cell.selected),
+                                text_lines: vec![cell.label.clone()],
+                            });
+                        }
+                        None => layout.nodes.push(LayoutNode {
+                            id: *id,
+                            rect,
+                            kind: LayoutKind::CellLabel(style == CellStyle::Board),
+                            text_lines: vec![cell.label.clone()],
+                        }),
+                    }
                 }
             }
             let height = if rows == 0 {
@@ -10609,6 +10760,12 @@ fn force_grapheme_break(
 /// looked like in 1996, and it is most of why these controls read as
 /// wireframes rather than as buttons.
 pub const BUTTON_RADIUS_TENTH_MM: i32 = 10;
+/// Corner radius of a command-deck pad. Larger than a keyboard key so a
+/// fifteen-key grid reads as recessed hardware rather than a ruled board.
+pub const PAD_RADIUS_TENTH_MM: i32 = 28;
+/// Bezel of a command-deck pad, in tenths of a millimetre. Heavier than a
+/// rule so the key sits in a dark frame the way a Stream Deck key does.
+pub const PAD_BORDER_TENTH_MM: i32 = 12;
 
 /// How far a press mark sits inside the control it acknowledges, in tenths of
 /// a millimetre. Enough to clear a row separator and the screen margin, not so
@@ -12379,10 +12536,10 @@ pub fn render_with(
     render_all(screen, metrics, chrome, &(), surface, dirty);
 }
 
-/// Maps a physical touch into the current logical viewport.
+/// Converts a physical panel coordinate into the active logical viewport.
 ///
-/// The clockwise display convention puts logical top-left at physical
-/// top-right; this is its exact inverse.
+/// Landscape follows the clockwise display convention: logical top-left is
+/// displayed at physical top-right. The inverse is applied before hit testing.
 #[must_use]
 pub const fn logical_point(
     orientation: Orientation,
@@ -12400,7 +12557,6 @@ pub const fn logical_point(
     )
 }
 
-/// Maps a physical touch into a logical viewport using the observed side.
 #[must_use]
 pub const fn logical_point_with_turn(
     orientation: Orientation,
@@ -12419,11 +12575,13 @@ pub const fn logical_point_with_turn(
     }
 }
 
-/// Renders into the physical framebuffer, using a full repaint for software
-/// landscape so rotated partial damage can never miss a changed pixel.
+/// Rasterizes into the physical panel in an application's requested direction.
+///
+/// Landscape is deliberately a full logical repaint: a rotated partial damage
+/// rectangle can otherwise leave stale pixels outside its transformed bounds.
 pub fn render_oriented(
     screen: &Screen,
-    metrics: &DisplayMetrics,
+    physical_metrics: &DisplayMetrics,
     chrome: &Chrome,
     pictures: &dyn Pictures,
     surface: &mut Surface,
@@ -12432,7 +12590,7 @@ pub fn render_oriented(
 ) {
     render_oriented_with_turn(
         screen,
-        metrics,
+        physical_metrics,
         chrome,
         pictures,
         surface,
@@ -12442,11 +12600,10 @@ pub fn render_oriented(
     );
 }
 
-/// Renders an oriented viewport using the physical landscape side.
 #[allow(clippy::too_many_arguments)]
 pub fn render_oriented_with_turn(
     screen: &Screen,
-    metrics: &DisplayMetrics,
+    physical_metrics: &DisplayMetrics,
     chrome: &Chrome,
     pictures: &dyn Pictures,
     surface: &mut Surface,
@@ -12455,29 +12612,27 @@ pub fn render_oriented_with_turn(
     turn: LandscapeTurn,
 ) {
     if orientation == Orientation::Portrait {
-        render_all(screen, metrics, chrome, pictures, surface, dirty);
+        render_all(screen, physical_metrics, chrome, pictures, surface, dirty);
         return;
     }
+    let metrics = physical_metrics.oriented(orientation);
     let mut logical = Surface::new(surface.height, surface.width);
-    render_all(
-        screen,
-        &metrics.oriented(orientation),
-        chrome,
-        pictures,
-        &mut logical,
-        None,
-    );
+    render_all(screen, &metrics, chrome, pictures, &mut logical, None);
     rotate_landscape(&logical, surface, turn);
 }
 
 fn rotate_landscape(logical: &Surface, physical: &mut Surface, turn: LandscapeTurn) {
-    for y in 0..logical.height {
-        for x in 0..logical.width {
-            let destination = match turn {
-                LandscapeTurn::Clockwise => x * physical.width + (physical.width - 1 - y),
-                LandscapeTurn::CounterClockwise => (physical.height - 1 - x) * physical.width + y,
+    if logical.width != physical.height || logical.height != physical.width {
+        return;
+    }
+    for logical_y in 0..logical.height {
+        for logical_x in 0..logical.width {
+            let (physical_x, physical_y) = match turn {
+                LandscapeTurn::Clockwise => (physical.width - 1 - logical_y, logical_x),
+                LandscapeTurn::CounterClockwise => (logical_y, physical.height - 1 - logical_x),
             };
-            physical.pixels[destination] = logical.pixels[y * logical.width + x];
+            physical.pixels[physical_y * physical.width + physical_x] =
+                logical.pixels[logical_y * logical.width + logical_x];
         }
     }
 }
@@ -12878,6 +13033,27 @@ fn render_all_with_selected_font(
                 metrics.rule_thickness(),
                 clip,
             ),
+            LayoutKind::Cell(_, CellStyle::BoardDark, _) => {
+                fill_clipped(surface, node.rect, tone::SURFACE, clip);
+                stroke_clipped(
+                    surface,
+                    node.rect,
+                    tone::RULE,
+                    metrics.rule_thickness(),
+                    clip,
+                );
+            }
+            LayoutKind::Cell(_, CellStyle::BackgammonTop, _) => {
+                draw_backgammon_point(surface, node.rect, true, metrics, clip);
+            }
+            LayoutKind::Cell(_, CellStyle::BackgammonBottom, _) => {
+                draw_backgammon_point(surface, node.rect, false, metrics, clip);
+            }
+            LayoutKind::BackgammonStack(glyph, count, from_top) => {
+                draw_backgammon_stack(surface, glyph, count, from_top, node.rect, clip);
+            }
+            LayoutKind::BackgammonBoard => draw_backgammon_board(surface, node.rect, metrics, clip),
+            LayoutKind::MorrisBoard => draw_morris_board(surface, node.rect, metrics, clip),
             // A key is the field it is printed on, with no rule at all. The
             // gaps between the keys separate them, which is how a keyboard has
             // always been read, and it takes forty-five outlines off the panel.
@@ -12890,6 +13066,18 @@ fn render_all_with_selected_font(
                 tone::SURFACE,
                 clip,
             ),
+            LayoutKind::Cell(_, CellStyle::Pad, _) => {
+                let radius = metrics.tenth_mm(PAD_RADIUS_TENTH_MM);
+                fill_rounded_clipped(surface, node.rect, radius, tone::PAPER, clip);
+                stroke_rounded_clipped(
+                    surface,
+                    node.rect,
+                    radius,
+                    tone::INK,
+                    metrics.tenth_mm(PAD_BORDER_TENTH_MM),
+                    clip,
+                );
+            }
             LayoutKind::CellLabel(board) => {
                 // A short label on a board is a mark rather than a word: an X,
                 // an O or a Sudoku digit is the content of the cell and should
@@ -14142,6 +14330,183 @@ fn stroke_clipped(surface: &mut Surface, rect: Rect, tone: u8, thickness: i32, c
         },
     ] {
         fill_clipped(surface, edge, tone, clip);
+    }
+}
+
+fn draw_morris_board(surface: &mut Surface, rect: Rect, metrics: &DisplayMetrics, clip: Rect) {
+    let thickness = metrics.rule_thickness().max(2);
+    let point = |column: i32, row: i32| {
+        (
+            rect.x + (2 * column + 1) * rect.width / 14,
+            rect.y + (2 * row + 1) * rect.height / 14,
+        )
+    };
+    let mut line = |from: (i32, i32), to: (i32, i32)| {
+        let x = from.0.min(to.0);
+        let y = from.1.min(to.1);
+        let width = (from.0 - to.0).abs().max(thickness);
+        let height = (from.1 - to.1).abs().max(thickness);
+        fill_clipped(
+            surface,
+            Rect {
+                x,
+                y,
+                width,
+                height,
+            },
+            tone::RULE,
+            clip,
+        );
+    };
+    for inset in 0..3 {
+        let far = 6 - inset;
+        let top_left = point(inset, inset);
+        let top_right = point(far, inset);
+        let bottom_left = point(inset, far);
+        let bottom_right = point(far, far);
+        line(top_left, top_right);
+        line(top_right, bottom_right);
+        line(bottom_right, bottom_left);
+        line(bottom_left, top_left);
+    }
+    line(point(3, 0), point(3, 2));
+    line(point(3, 4), point(3, 6));
+    line(point(0, 3), point(2, 3));
+    line(point(4, 3), point(6, 3));
+}
+
+fn draw_backgammon_point(
+    surface: &mut Surface,
+    rect: Rect,
+    from_top: bool,
+    metrics: &DisplayMetrics,
+    clip: Rect,
+) {
+    let paper_point = (rect.x / rect.width.max(1)).rem_euclid(2) == 0;
+    let fill = if paper_point {
+        tone::SURFACE
+    } else {
+        tone::PAPER
+    };
+    let height = rect.height.max(1);
+    let centre = rect.x + rect.width / 2;
+    for row in 0..height {
+        let depth = if from_top { row } else { height - 1 - row };
+        let half = (rect.width * (height - depth) / (2 * height)).max(1);
+        fill_clipped(
+            surface,
+            Rect {
+                x: centre - half,
+                y: rect.y + row,
+                width: half * 2,
+                height: 1,
+            },
+            fill,
+            clip,
+        );
+    }
+    let rule = metrics.rule_thickness();
+    let mut edge = |x0: i32, y0: i32, x1: i32, y1: i32| {
+        let steps = (x1 - x0).abs().max((y1 - y0).abs()).max(1);
+        for step in 0..=steps {
+            fill_clipped(
+                surface,
+                Rect {
+                    x: x0 + (x1 - x0) * step / steps,
+                    y: y0 + (y1 - y0) * step / steps,
+                    width: rule,
+                    height: rule,
+                },
+                tone::RULE,
+                clip,
+            );
+        }
+    };
+    let apex = if from_top {
+        (centre, rect.y + height - 1)
+    } else {
+        (centre, rect.y)
+    };
+    let base_y = if from_top {
+        rect.y
+    } else {
+        rect.y + height - 1
+    };
+    edge(rect.x, base_y, apex.0, apex.1);
+    edge(rect.x + rect.width - 1, base_y, apex.0, apex.1);
+}
+
+fn draw_backgammon_board(surface: &mut Surface, rect: Rect, metrics: &DisplayMetrics, clip: Rect) {
+    fill_clipped(surface, rect, tone::PAPER, clip);
+    stroke_clipped(
+        surface,
+        rect,
+        tone::RULE,
+        metrics.rule_thickness() * 2,
+        clip,
+    );
+    let bar_width = (rect.width / 28).max(metrics.rule_thickness() * 3);
+    fill_clipped(
+        surface,
+        Rect {
+            x: rect.x + (rect.width - bar_width) / 2,
+            y: rect.y,
+            width: bar_width,
+            height: rect.height,
+        },
+        tone::MUTED,
+        clip,
+    );
+    for (x, width) in [
+        (rect.x, (rect.width / 24).max(1)),
+        (
+            rect.x + rect.width - (rect.width / 24).max(1),
+            (rect.width / 24).max(1),
+        ),
+    ] {
+        stroke_clipped(
+            surface,
+            Rect {
+                x,
+                y: rect.y + rect.height / 8,
+                width,
+                height: rect.height * 3 / 4,
+            },
+            tone::MUTED,
+            metrics.rule_thickness(),
+            clip,
+        );
+    }
+}
+
+fn draw_backgammon_stack(
+    surface: &mut Surface,
+    glyph: Glyph,
+    count: u8,
+    from_top: bool,
+    rect: Rect,
+    clip: Rect,
+) {
+    let side = (rect.width * 7 / 10).max(1);
+    let step = (side * 2 / 3).max(1);
+    for index in 0..i32::from(count) {
+        let y = if from_top {
+            rect.y + 4 + index * step
+        } else {
+            rect.y + rect.height - side - 4 - index * step
+        };
+        draw_vector(
+            surface,
+            &vector::shapes(glyph),
+            Rect {
+                x: rect.x + (rect.width - side) / 2,
+                y,
+                width: side,
+                height: side,
+            },
+            clip,
+            tone::INK,
+        );
     }
 }
 
@@ -21555,50 +21920,26 @@ mod figure_tests {
     }
 
     #[test]
-    fn landscape_swaps_metrics_and_maps_both_physical_sides() {
-        let landscape = super::CLARA_BW_METRICS.oriented(super::Orientation::Landscape);
+    fn landscape_swaps_the_logical_viewport_and_inverts_touch_clockwise() {
+        let landscape = CLARA_BW_METRICS.oriented(Orientation::Landscape);
         assert_eq!((landscape.width, landscape.height), (1448, 1072));
+        assert_eq!(logical_point(Orientation::Landscape, 1072, 1071, 0), (0, 0));
         assert_eq!(
-            super::logical_point_with_turn(
-                super::Orientation::Landscape,
-                super::LandscapeTurn::Clockwise,
-                1072,
-                1448,
-                1071,
-                0,
-            ),
-            (0, 0)
+            logical_point(Orientation::Landscape, 1072, 0, 1447),
+            (1447, 1071)
         );
         assert_eq!(
-            super::logical_point_with_turn(
-                super::Orientation::Landscape,
-                super::LandscapeTurn::CounterClockwise,
-                1072,
-                1448,
-                0,
-                1447,
-            ),
-            (0, 0)
+            logical_point(Orientation::Landscape, 1072, 536, 724),
+            (724, 535)
         );
     }
 
     #[test]
-    fn software_rotation_places_every_corner_for_both_landscape_sides() {
-        let logical = super::Surface {
-            width: 3,
-            height: 2,
-            pixels: vec![1, 2, 3, 4, 5, 6],
-        };
-        let mut clockwise = super::Surface::new(2, 3);
-        super::rotate_landscape(&logical, &mut clockwise, super::LandscapeTurn::Clockwise);
-        assert_eq!(clockwise.pixels, [4, 1, 5, 2, 6, 3]);
-
-        let mut counter_clockwise = super::Surface::new(2, 3);
-        super::rotate_landscape(
-            &logical,
-            &mut counter_clockwise,
-            super::LandscapeTurn::CounterClockwise,
-        );
-        assert_eq!(counter_clockwise.pixels, [3, 6, 2, 5, 1, 4]);
+    fn landscape_rotation_maps_each_logical_corner_to_its_physical_corner() {
+        let mut logical = Surface::new(3, 2);
+        logical.pixels = vec![1, 2, 3, 4, 5, 6];
+        let mut physical = Surface::new(2, 3);
+        rotate_landscape(&logical, &mut physical, LandscapeTurn::Clockwise);
+        assert_eq!(physical.pixels, vec![4, 1, 5, 2, 6, 3]);
     }
 }

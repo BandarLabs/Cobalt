@@ -196,6 +196,28 @@ fn render(entries: &[Entry], glyphs: &str) -> String {
             shout(&entry.glyph)
         );
     }
+    out.push_str(
+        "        Glyph::ChessWhiteKing\n\
+         | Glyph::ChessWhiteQueen\n\
+         | Glyph::ChessWhiteRook\n\
+         | Glyph::ChessWhiteBishop\n\
+         | Glyph::ChessWhiteKnight\n\
+         | Glyph::ChessWhitePawn\n\
+         | Glyph::ChessBlackKing\n\
+         | Glyph::ChessBlackQueen\n\
+         | Glyph::ChessBlackRook\n\
+         | Glyph::ChessBlackBishop\n\
+         | Glyph::ChessBlackKnight\n\
+         | Glyph::ChessBlackPawn\n\
+         | Glyph::BlackDisc\n\
+         | Glyph::WhiteDisc\n\
+         | Glyph::BlackDraughtsKing\n\
+         | Glyph::WhiteDraughtsKing\n\
+         | Glyph::BlackDraughtsMan\n\
+         | Glyph::WhiteDraughtsMan\n\
+         | Glyph::MorrisPoint\n\
+         | Glyph::MorrisLegalPoint => &[],\n",
+    );
     let _ = writeln!(out, "    }}");
     let _ = writeln!(out, "}}\n");
     out.push_str(glyphs);
