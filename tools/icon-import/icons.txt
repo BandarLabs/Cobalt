@@ -54,3 +54,15 @@ Battery             battery
 Plus                plus
 Headphones          headphones
 Minus               minus
+ChessWhiteKing      chess-king
+ChessWhiteQueen     chess-queen
+ChessWhiteRook      chess-rook
+ChessWhiteBishop    chess-bishop
+ChessWhiteKnight    chess-knight
+ChessWhitePawn      chess
+ChessBlackKing      chess-king
+ChessBlackQueen     chess-queen
+ChessBlackRook      chess-rook
+ChessBlackBishop    chess-bishop
+ChessBlackKnight    chess-knight
+ChessBlackPawn      chess

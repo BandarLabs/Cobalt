@@ -4,7 +4,6 @@ use kobo_sdk::keyboard::{TextEntry, Typing};
 use kobo_sdk::{action_id, ActionId, Context, Glyph, KoboApp, Screen, ScreenBuilder, StoreResult};
 use model::{backlinks, decode_index, search, Note, INDEX_KEY};
 use std::process::ExitCode;
-const INDEX: &str = "vault-index-v1";
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum View {
     Home,
@@ -211,7 +210,7 @@ mod tests {
         let mut runner = AppRunner::new(Vault::default());
         runner.start();
         runner.store_result(StoreResult::Loaded {
-            key: INDEX.into(),
+            key: INDEX_KEY.into(),
             value: Some(
                 "Welcome.md\n# Welcome\n\nhome note of the fixture. See [[Alpha]].\n\n---vault-note---\n\nProjects/Alpha.md\n# Alpha\n\nA project with a wiki link to [[Welcome]].\n\n#project\n"
                     .as_bytes()

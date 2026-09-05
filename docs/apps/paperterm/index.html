@@ -4,12 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Install Paperterm on Kobo | Cobalt</title>
-<meta name="description" content="Pair a Kobo with a computer to read a terminal session on an e-ink display. Install it on a supported Kobo e-reader with Cobalt.">
+<meta name="description" content="Pair with a computer to mirror a terminal session on e-ink. Install it on a supported Kobo e-reader with Cobalt.">
 <link rel="canonical" href="https://bandarlabs.github.io/Cobalt/apps/paperterm/">
 <link rel="icon" href="../../logo.svg" type="image/svg+xml">
 <meta property="og:type" content="website">
 <meta property="og:title" content="Install Paperterm on Kobo | Cobalt">
-<meta property="og:description" content="Pair a Kobo with a computer to read a terminal session on an e-ink display. Install it on a supported Kobo e-reader with Cobalt.">
+<meta property="og:description" content="Pair with a computer to mirror a terminal session on e-ink. Install it on a supported Kobo e-reader with Cobalt.">
 <meta property="og:url" content="https://bandarlabs.github.io/Cobalt/apps/paperterm/">
 <meta property="og:site_name" content="Cobalt">
 <meta property="og:image" content="https://bandarlabs.github.io/Cobalt/media/site/apps/paperterm.png">
@@ -18,17 +18,17 @@
 <meta property="og:image:alt" content="Paperterm pairing screen with computer address field and on-screen keyboard on a Kobo Clara BW.">
 <meta name="twitter:card" content="summary">
 <meta name="twitter:title" content="Install Paperterm on Kobo | Cobalt">
-<meta name="twitter:description" content="Pair a Kobo with a computer to read a terminal session on an e-ink display. Install it on a supported Kobo e-reader with Cobalt.">
+<meta name="twitter:description" content="Pair with a computer to mirror a terminal session on e-ink. Install it on a supported Kobo e-reader with Cobalt.">
 <meta name="twitter:image" content="https://bandarlabs.github.io/Cobalt/media/site/apps/paperterm.png">
 <meta name="twitter:image:alt" content="Paperterm pairing screen with computer address field and on-screen keyboard on a Kobo Clara BW.">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-Qu8OmIce+lgBdE3lDGCwI6bLc5egiVy+RuJ07YWzhAU='; style-src 'self'; img-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-SkIWvbLcCasEBVKNLrxkxLSo6zW6YAaSrDI4oFBOghg='; style-src 'self'; img-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
 <script type="application/ld+json">{
   "@context": "https://schema.org",
   "@graph": [
     {
       "@type": "SoftwareApplication",
       "name": "Paperterm",
-      "description": "Pair a Kobo with a computer to read a terminal session on an e-ink display.",
+      "description": "Pair with a computer to mirror a terminal session on e-ink.",
       "url": "https://bandarlabs.github.io/Cobalt/apps/paperterm/",
       "image": {
         "@type": "ImageObject",
@@ -40,7 +40,7 @@
       "applicationSuite": "Cobalt",
       "applicationCategory": "SoftwareApplication",
       "operatingSystem": "Cobalt on supported Kobo e-readers",
-      "softwareVersion": "0.1.0",
+      "softwareVersion": "0.1.1",
       "isAccessibleForFree": true,
       "offers": {
         "@type": "Offer",
@@ -91,13 +91,13 @@
     </nav>
   </div>
 </header>
-<main class="wrap" data-app-id="paperterm" data-minimum-cobalt-version="0.3.2">
+<main class="wrap" data-app-id="paperterm" data-minimum-cobalt-version="0.3.5">
   <div class="app-hero">
     <div class="app-copy">
       <p class="eyebrow">Kobo app</p>
       <h1>Paperterm</h1>
-      <p class="summary">Pair a Kobo with a computer to read a terminal session on an e-ink display.</p>
-      <div class="meta"><span>Version 0.1.0</span><span>network</span></div>
+      <p class="summary">Pair with a computer to mirror a terminal session on e-ink.</p>
+      <div class="meta"><span>Version 0.1.1</span><span>network</span></div>
     </div>
     <figure class="app-shot">
       <img src="../../media/site/apps/paperterm.png" width="1072" height="1448" alt="Paperterm pairing screen with computer address field and on-screen keyboard on a Kobo Clara BW.">
@@ -107,12 +107,7 @@
     <p class="eyebrow">App setup</p>
     <h2 id="prerequisites-title">Before you install</h2>
     <ol>
-      <li>Initialize the terminal companion and note the address and pairing code.
-        <code class="setup-command">kobo stream init</code></li>
-      <li>Install the terminal companion certificate on the Kobo.
-        <code class="setup-command">kobo trust set stream --device &lt;address&gt;</code></li>
-      <li>Start a mirrored terminal with the controls needed on the reader.
-        <code class="setup-command">kobo stream --controls -- &lt;command&gt;</code></li>
+      <li>Run kobo stream init on the computer, install its stream trust root on the Kobo, then start kobo stream.</li>
     </ol>
   </section>
   <section class="panel" id="pair-panel">

@@ -73,19 +73,21 @@ pub(super) fn outline(glyph: Glyph) -> &'static [&'static [Cmd]] {
         Glyph::Plus => PLUS,
         Glyph::Headphones => HEADPHONES,
         Glyph::Minus => MINUS,
-        Glyph::ChessWhiteKing
-        | Glyph::ChessWhiteQueen
-        | Glyph::ChessWhiteRook
-        | Glyph::ChessWhiteBishop
-        | Glyph::ChessWhiteKnight
-        | Glyph::ChessWhitePawn
-        | Glyph::ChessBlackKing
-        | Glyph::ChessBlackQueen
-        | Glyph::ChessBlackRook
-        | Glyph::ChessBlackBishop
-        | Glyph::ChessBlackKnight
-        | Glyph::ChessBlackPawn
-        | Glyph::BlackDisc
+        Glyph::ChessWhiteKing => CHESS_WHITE_KING,
+        Glyph::ChessWhiteQueen => CHESS_WHITE_QUEEN,
+        Glyph::ChessWhiteRook => CHESS_WHITE_ROOK,
+        Glyph::ChessWhiteBishop => CHESS_WHITE_BISHOP,
+        Glyph::ChessWhiteKnight => CHESS_WHITE_KNIGHT,
+        Glyph::ChessWhitePawn => CHESS_WHITE_PAWN,
+        Glyph::ChessBlackKing => CHESS_BLACK_KING,
+        Glyph::ChessBlackQueen => CHESS_BLACK_QUEEN,
+        Glyph::ChessBlackRook => CHESS_BLACK_ROOK,
+        Glyph::ChessBlackBishop => CHESS_BLACK_BISHOP,
+        Glyph::ChessBlackKnight => CHESS_BLACK_KNIGHT,
+        Glyph::ChessBlackPawn => CHESS_BLACK_PAWN,
+        // Board pieces are discs and rings rather than line art, so they are
+        // filled in `game_piece_shapes` instead of stroked from an outline.
+        Glyph::BlackDisc
         | Glyph::WhiteDisc
         | Glyph::BlackDraughtsKing
         | Glyph::WhiteDraughtsKing
@@ -1021,3 +1023,385 @@ static HEADPHONES: &[&[Cmd]] = &[
 
 /// `minus` from Tabler Icons.
 static MINUS: &[&[Cmd]] = &[&[Cmd::Move(208, 500), Cmd::Line(792, 500)]];
+
+/// `chess-king` from Tabler Icons.
+static CHESS_WHITE_KING: &[&[Cmd]] = &[
+    &[
+        Cmd::Move(333, 667),
+        Cmd::Line(273, 697),
+        Cmd::Cubic(259, 704, 250, 718, 250, 734),
+        Cmd::Line(250, 833),
+        Cmd::Line(750, 833),
+        Cmd::Line(750, 734),
+        Cmd::Cubic(750, 718, 741, 704, 727, 697),
+        Cmd::Line(667, 667),
+        Cmd::Line(333, 667),
+    ],
+    &[
+        Cmd::Move(354, 667),
+        Cmd::Cubic(282, 667, 221, 614, 210, 542),
+        Cmd::Cubic(199, 471, 243, 402, 312, 381),
+        Cmd::Cubic(381, 360, 455, 393, 486, 458),
+        Cmd::Line(514, 458),
+        Cmd::Cubic(545, 393, 619, 360, 688, 381),
+        Cmd::Cubic(757, 402, 801, 471, 790, 542),
+        Cmd::Cubic(779, 614, 718, 667, 646, 667),
+        Cmd::Line(354, 667),
+    ],
+    &[Cmd::Move(375, 250), Cmd::Line(625, 250)],
+    &[Cmd::Move(500, 125), Cmd::Line(500, 458)],
+];
+
+/// `chess-queen` from Tabler Icons.
+static CHESS_WHITE_QUEEN: &[&[Cmd]] = &[
+    &[
+        Cmd::Move(667, 667),
+        Cmd::Line(750, 208),
+        Cmd::Line(583, 375),
+        Cmd::Line(500, 167),
+        Cmd::Line(417, 375),
+        Cmd::Line(250, 208),
+        Cmd::Line(333, 667),
+    ],
+    &[
+        Cmd::Move(333, 667),
+        Cmd::Line(273, 697),
+        Cmd::Cubic(259, 704, 250, 718, 250, 734),
+        Cmd::Line(250, 833),
+        Cmd::Line(750, 833),
+        Cmd::Line(750, 734),
+        Cmd::Cubic(750, 718, 741, 704, 727, 697),
+        Cmd::Line(667, 667),
+        Cmd::Line(333, 667),
+    ],
+    &[
+        Cmd::Move(458, 167),
+        Cmd::Cubic(458, 190, 477, 208, 500, 208),
+        Cmd::Cubic(523, 208, 542, 190, 542, 167),
+        Cmd::Cubic(542, 144, 523, 125, 500, 125),
+        Cmd::Cubic(477, 125, 458, 144, 458, 167),
+    ],
+    &[
+        Cmd::Move(208, 208),
+        Cmd::Cubic(208, 231, 227, 250, 250, 250),
+        Cmd::Cubic(273, 250, 292, 231, 292, 208),
+        Cmd::Cubic(292, 185, 273, 167, 250, 167),
+        Cmd::Cubic(227, 167, 208, 185, 208, 208),
+    ],
+    &[
+        Cmd::Move(708, 208),
+        Cmd::Cubic(708, 231, 727, 250, 750, 250),
+        Cmd::Cubic(773, 250, 792, 231, 792, 208),
+        Cmd::Cubic(792, 185, 773, 167, 750, 167),
+        Cmd::Cubic(727, 167, 708, 185, 708, 208),
+    ],
+];
+
+/// `chess-rook` from Tabler Icons.
+static CHESS_WHITE_ROOK: &[&[Cmd]] = &[
+    &[
+        Cmd::Move(333, 667),
+        Cmd::Line(273, 697),
+        Cmd::Cubic(259, 704, 250, 718, 250, 734),
+        Cmd::Line(250, 833),
+        Cmd::Line(750, 833),
+        Cmd::Line(750, 734),
+        Cmd::Cubic(750, 718, 741, 704, 727, 697),
+        Cmd::Line(667, 667),
+        Cmd::Line(333, 667),
+    ],
+    &[
+        Cmd::Move(333, 667),
+        Cmd::Line(375, 292),
+        Cmd::Line(625, 292),
+        Cmd::Line(667, 667),
+    ],
+    &[
+        Cmd::Move(250, 167),
+        Cmd::Line(271, 292),
+        Cmd::Line(729, 292),
+        Cmd::Line(750, 167),
+    ],
+    &[Cmd::Move(417, 167), Cmd::Line(417, 292)],
+    &[Cmd::Move(583, 167), Cmd::Line(583, 292)],
+];
+
+/// `chess-bishop` from Tabler Icons.
+static CHESS_WHITE_BISHOP: &[&[Cmd]] = &[
+    &[
+        Cmd::Move(333, 667),
+        Cmd::Line(273, 697),
+        Cmd::Cubic(259, 704, 250, 718, 250, 734),
+        Cmd::Line(250, 833),
+        Cmd::Line(750, 833),
+        Cmd::Line(750, 734),
+        Cmd::Cubic(750, 718, 741, 704, 727, 697),
+        Cmd::Line(667, 667),
+        Cmd::Line(333, 667),
+    ],
+    &[
+        Cmd::Move(458, 167),
+        Cmd::Cubic(458, 190, 477, 208, 500, 208),
+        Cmd::Cubic(523, 208, 542, 190, 542, 167),
+        Cmd::Cubic(542, 144, 523, 125, 500, 125),
+        Cmd::Cubic(477, 125, 458, 144, 458, 167),
+    ],
+    &[
+        Cmd::Move(396, 667),
+        Cmd::Cubic(326, 667, 292, 597, 292, 542),
+        Cmd::Cubic(292, 389, 361, 292, 500, 250),
+        Cmd::Cubic(639, 292, 708, 393, 708, 542),
+        Cmd::Cubic(708, 595, 676, 662, 611, 667),
+        Cmd::Line(604, 667),
+        Cmd::Line(396, 667),
+    ],
+    &[Cmd::Move(625, 333), Cmd::Line(500, 458)],
+    &[Cmd::Move(500, 208), Cmd::Line(500, 250)],
+];
+
+/// `chess-knight` from Tabler Icons.
+static CHESS_WHITE_KNIGHT: &[&[Cmd]] = &[
+    &[
+        Cmd::Move(333, 667),
+        Cmd::Line(273, 697),
+        Cmd::Cubic(259, 704, 250, 718, 250, 734),
+        Cmd::Line(250, 833),
+        Cmd::Line(750, 833),
+        Cmd::Line(750, 734),
+        Cmd::Cubic(750, 718, 741, 704, 727, 697),
+        Cmd::Line(667, 667),
+        Cmd::Line(333, 667),
+    ],
+    &[
+        Cmd::Move(375, 125),
+        Cmd::Line(417, 250),
+        Cmd::Line(271, 339),
+        Cmd::Cubic(255, 349, 248, 368, 253, 386),
+        Cmd::Cubic(258, 404, 274, 417, 293, 417),
+        Cmd::Line(417, 417),
+        Cmd::Line(330, 667),
+        Cmd::Line(662, 667),
+        Cmd::Line(667, 458),
+        Cmd::Cubic(667, 333, 621, 209, 500, 167),
+        Cmd::Cubic(419, 138, 378, 125, 375, 125),
+    ],
+];
+
+/// `chess` from Tabler Icons.
+static CHESS_WHITE_PAWN: &[&[Cmd]] = &[
+    &[
+        Cmd::Move(500, 125),
+        Cmd::Cubic(569, 125, 625, 181, 625, 250),
+        Cmd::Cubic(625, 296, 600, 353, 563, 375),
+        Cmd::Line(625, 667),
+        Cmd::Line(375, 667),
+        Cmd::Line(438, 375),
+        Cmd::Cubic(400, 353, 375, 296, 375, 250),
+        Cmd::Cubic(375, 181, 431, 125, 500, 125),
+    ],
+    &[Cmd::Move(333, 375), Cmd::Line(667, 375)],
+    &[
+        Cmd::Move(279, 699),
+        Cmd::Cubic(261, 705, 250, 720, 250, 738),
+        Cmd::Line(250, 792),
+        Cmd::Cubic(250, 815, 269, 833, 292, 833),
+        Cmd::Line(708, 833),
+        Cmd::Cubic(731, 833, 750, 815, 750, 792),
+        Cmd::Line(750, 738),
+        Cmd::Cubic(750, 720, 739, 704, 722, 699),
+        Cmd::Line(625, 667),
+        Cmd::Line(375, 667),
+        Cmd::Line(279, 699),
+    ],
+];
+
+/// `chess-king` from Tabler Icons.
+static CHESS_BLACK_KING: &[&[Cmd]] = &[
+    &[
+        Cmd::Move(333, 667),
+        Cmd::Line(273, 697),
+        Cmd::Cubic(259, 704, 250, 718, 250, 734),
+        Cmd::Line(250, 833),
+        Cmd::Line(750, 833),
+        Cmd::Line(750, 734),
+        Cmd::Cubic(750, 718, 741, 704, 727, 697),
+        Cmd::Line(667, 667),
+        Cmd::Line(333, 667),
+    ],
+    &[
+        Cmd::Move(354, 667),
+        Cmd::Cubic(282, 667, 221, 614, 210, 542),
+        Cmd::Cubic(199, 471, 243, 402, 312, 381),
+        Cmd::Cubic(381, 360, 455, 393, 486, 458),
+        Cmd::Line(514, 458),
+        Cmd::Cubic(545, 393, 619, 360, 688, 381),
+        Cmd::Cubic(757, 402, 801, 471, 790, 542),
+        Cmd::Cubic(779, 614, 718, 667, 646, 667),
+        Cmd::Line(354, 667),
+    ],
+    &[Cmd::Move(375, 250), Cmd::Line(625, 250)],
+    &[Cmd::Move(500, 125), Cmd::Line(500, 458)],
+];
+
+/// `chess-queen` from Tabler Icons.
+static CHESS_BLACK_QUEEN: &[&[Cmd]] = &[
+    &[
+        Cmd::Move(667, 667),
+        Cmd::Line(750, 208),
+        Cmd::Line(583, 375),
+        Cmd::Line(500, 167),
+        Cmd::Line(417, 375),
+        Cmd::Line(250, 208),
+        Cmd::Line(333, 667),
+    ],
+    &[
+        Cmd::Move(333, 667),
+        Cmd::Line(273, 697),
+        Cmd::Cubic(259, 704, 250, 718, 250, 734),
+        Cmd::Line(250, 833),
+        Cmd::Line(750, 833),
+        Cmd::Line(750, 734),
+        Cmd::Cubic(750, 718, 741, 704, 727, 697),
+        Cmd::Line(667, 667),
+        Cmd::Line(333, 667),
+    ],
+    &[
+        Cmd::Move(458, 167),
+        Cmd::Cubic(458, 190, 477, 208, 500, 208),
+        Cmd::Cubic(523, 208, 542, 190, 542, 167),
+        Cmd::Cubic(542, 144, 523, 125, 500, 125),
+        Cmd::Cubic(477, 125, 458, 144, 458, 167),
+    ],
+    &[
+        Cmd::Move(208, 208),
+        Cmd::Cubic(208, 231, 227, 250, 250, 250),
+        Cmd::Cubic(273, 250, 292, 231, 292, 208),
+        Cmd::Cubic(292, 185, 273, 167, 250, 167),
+        Cmd::Cubic(227, 167, 208, 185, 208, 208),
+    ],
+    &[
+        Cmd::Move(708, 208),
+        Cmd::Cubic(708, 231, 727, 250, 750, 250),
+        Cmd::Cubic(773, 250, 792, 231, 792, 208),
+        Cmd::Cubic(792, 185, 773, 167, 750, 167),
+        Cmd::Cubic(727, 167, 708, 185, 708, 208),
+    ],
+];
+
+/// `chess-rook` from Tabler Icons.
+static CHESS_BLACK_ROOK: &[&[Cmd]] = &[
+    &[
+        Cmd::Move(333, 667),
+        Cmd::Line(273, 697),
+        Cmd::Cubic(259, 704, 250, 718, 250, 734),
+        Cmd::Line(250, 833),
+        Cmd::Line(750, 833),
+        Cmd::Line(750, 734),
+        Cmd::Cubic(750, 718, 741, 704, 727, 697),
+        Cmd::Line(667, 667),
+        Cmd::Line(333, 667),
+    ],
+    &[
+        Cmd::Move(333, 667),
+        Cmd::Line(375, 292),
+        Cmd::Line(625, 292),
+        Cmd::Line(667, 667),
+    ],
+    &[
+        Cmd::Move(250, 167),
+        Cmd::Line(271, 292),
+        Cmd::Line(729, 292),
+        Cmd::Line(750, 167),
+    ],
+    &[Cmd::Move(417, 167), Cmd::Line(417, 292)],
+    &[Cmd::Move(583, 167), Cmd::Line(583, 292)],
+];
+
+/// `chess-bishop` from Tabler Icons.
+static CHESS_BLACK_BISHOP: &[&[Cmd]] = &[
+    &[
+        Cmd::Move(333, 667),
+        Cmd::Line(273, 697),
+        Cmd::Cubic(259, 704, 250, 718, 250, 734),
+        Cmd::Line(250, 833),
+        Cmd::Line(750, 833),
+        Cmd::Line(750, 734),
+        Cmd::Cubic(750, 718, 741, 704, 727, 697),
+        Cmd::Line(667, 667),
+        Cmd::Line(333, 667),
+    ],
+    &[
+        Cmd::Move(458, 167),
+        Cmd::Cubic(458, 190, 477, 208, 500, 208),
+        Cmd::Cubic(523, 208, 542, 190, 542, 167),
+        Cmd::Cubic(542, 144, 523, 125, 500, 125),
+        Cmd::Cubic(477, 125, 458, 144, 458, 167),
+    ],
+    &[
+        Cmd::Move(396, 667),
+        Cmd::Cubic(326, 667, 292, 597, 292, 542),
+        Cmd::Cubic(292, 389, 361, 292, 500, 250),
+        Cmd::Cubic(639, 292, 708, 393, 708, 542),
+        Cmd::Cubic(708, 595, 676, 662, 611, 667),
+        Cmd::Line(604, 667),
+        Cmd::Line(396, 667),
+    ],
+    &[Cmd::Move(625, 333), Cmd::Line(500, 458)],
+    &[Cmd::Move(500, 208), Cmd::Line(500, 250)],
+];
+
+/// `chess-knight` from Tabler Icons.
+static CHESS_BLACK_KNIGHT: &[&[Cmd]] = &[
+    &[
+        Cmd::Move(333, 667),
+        Cmd::Line(273, 697),
+        Cmd::Cubic(259, 704, 250, 718, 250, 734),
+        Cmd::Line(250, 833),
+        Cmd::Line(750, 833),
+        Cmd::Line(750, 734),
+        Cmd::Cubic(750, 718, 741, 704, 727, 697),
+        Cmd::Line(667, 667),
+        Cmd::Line(333, 667),
+    ],
+    &[
+        Cmd::Move(375, 125),
+        Cmd::Line(417, 250),
+        Cmd::Line(271, 339),
+        Cmd::Cubic(255, 349, 248, 368, 253, 386),
+        Cmd::Cubic(258, 404, 274, 417, 293, 417),
+        Cmd::Line(417, 417),
+        Cmd::Line(330, 667),
+        Cmd::Line(662, 667),
+        Cmd::Line(667, 458),
+        Cmd::Cubic(667, 333, 621, 209, 500, 167),
+        Cmd::Cubic(419, 138, 378, 125, 375, 125),
+    ],
+];
+
+/// `chess` from Tabler Icons.
+static CHESS_BLACK_PAWN: &[&[Cmd]] = &[
+    &[
+        Cmd::Move(500, 125),
+        Cmd::Cubic(569, 125, 625, 181, 625, 250),
+        Cmd::Cubic(625, 296, 600, 353, 563, 375),
+        Cmd::Line(625, 667),
+        Cmd::Line(375, 667),
+        Cmd::Line(438, 375),
+        Cmd::Cubic(400, 353, 375, 296, 375, 250),
+        Cmd::Cubic(375, 181, 431, 125, 500, 125),
+    ],
+    &[Cmd::Move(333, 375), Cmd::Line(667, 375)],
+    &[
+        Cmd::Move(279, 699),
+        Cmd::Cubic(261, 705, 250, 720, 250, 738),
+        Cmd::Line(250, 792),
+        Cmd::Cubic(250, 815, 269, 833, 292, 833),
+        Cmd::Line(708, 833),
+        Cmd::Cubic(731, 833, 750, 815, 750, 792),
+        Cmd::Line(750, 738),
+        Cmd::Cubic(750, 720, 739, 704, 722, 699),
+        Cmd::Line(625, 667),
+        Cmd::Line(375, 667),
+        Cmd::Line(279, 699),
+    ],
+];

@@ -33,13 +33,13 @@ test("a concise contribution derives package and minimum Cobalt", () => {
 test("protocol and capability policy derive the strictest minimum", () => {
   const policy = {
     format_version: 1,
-    protocols: { "11": "0.3.1" },
+    protocols: { "11": "0.3.1", "12": "0.3.5" },
     capabilities: { "future-service": "0.4.2" }
   };
   assert.equal(deriveMinimumCobalt(["network", "future-service"], 11, policy), "0.4.2");
   assert.throws(
-    () => deriveMinimumCobalt([], 12, policy),
-    /protocol 12 has no Cobalt minimum/
+    () => deriveMinimumCobalt([], 13, policy),
+    /protocol 13 has no Cobalt minimum/
   );
 });
 

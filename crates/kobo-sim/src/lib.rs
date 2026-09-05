@@ -55,6 +55,21 @@ fn profile_metrics() -> DisplayMetrics {
     }
 }
 
+fn physical_rect(orientation: kobo_ui::Orientation, rect: kobo_ui::Rect) -> kobo_ui::Rect {
+    match orientation {
+        kobo_ui::Orientation::Portrait => rect,
+        kobo_ui::Orientation::Landscape => kobo_ui::Rect {
+            x: profile_metrics()
+                .width
+                .saturating_sub(rect.y)
+                .saturating_sub(rect.height),
+            y: rect.x,
+            width: rect.height,
+            height: rect.width,
+        },
+    }
+}
+
 /// A deterministic failure mode selected from the simulator controls.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 enum Scenario {
@@ -412,7 +427,7 @@ impl Server {
                 )
             }
             ("GET", "/layout") => {
-                let body = layout_json(self.simulator.screen(), 0);
+                let body = layout_json(self.simulator.screen(), 0, kobo_ui::Orientation::Portrait);
                 write_response(
                     &mut stream,
                     200,
@@ -421,8 +436,11 @@ impl Server {
                 )
             }
             ("GET", "/diagnostics") => {
-                let body =
-                    diagnostics_json(self.simulator.screen(), &kobo_ui::PictureCache::default());
+                let body = diagnostics_json(
+                    self.simulator.screen(),
+                    &kobo_ui::PictureCache::default(),
+                    kobo_ui::Orientation::Portrait,
+                );
                 write_response(
                     &mut stream,
                     200,
@@ -598,6 +616,7 @@ impl AppServer {
         write_protocol_frame(
             stream,
             &Frame {
+                version: hello.version,
                 request_id: hello.request_id,
                 message: Message::Welcome {
                     width: u16::try_from(PROFILE.width).unwrap_or(u16::MAX),
@@ -615,7 +634,7 @@ impl AppServer {
         // to requests, and terminal output arriving on its own. Frames are
         // length-prefixed, so two of them written at once do not make two
         // frames, they make one unreadable stream.
-        let writer = AppWriter::spawn(stream.try_clone()?);
+        let writer = AppWriter::spawn_for(stream.try_clone()?, hello.version);
         let reader_writer = Arc::clone(&writer);
         thread::spawn(move || {
             // A malformed frame ends the session rather than being skipped,
@@ -1106,6 +1125,7 @@ impl AppSession {
         write_shared(
             &self.writer,
             &Frame {
+                version: kobo_protocol::VERSION,
                 request_id: 0,
                 message: Message::Action { action },
             },
@@ -1116,6 +1136,7 @@ impl AppSession {
         write_shared(
             &self.writer,
             &Frame {
+                version: kobo_protocol::VERSION,
                 request_id: 0,
                 message: Message::Lifecycle(lifecycle),
             },
@@ -1176,16 +1197,17 @@ impl AppSession {
             display: mapped,
             raw,
         });
-        let (x, y) = kobo_ui::logical_touch(
+        let physical = profile_metrics();
+        let (x, y) = kobo_ui::logical_point(
             state.orientation,
-            i32::try_from(PROFILE.width).ok()?,
+            physical.width,
             i32::try_from(mapped.0).ok()?,
             i32::try_from(mapped.1).ok()?,
         );
         state
             .screen
             .layout_with(
-                &profile_metrics().for_orientation(state.orientation),
+                &physical.oriented(state.orientation),
                 &kobo_ui::Chrome::default(),
             )
             .hit_test(x, y)
@@ -1235,7 +1257,7 @@ impl AppSession {
                         .state
                         .lock()
                         .unwrap_or_else(std::sync::PoisonError::into_inner);
-                    layout_json(&state.screen, state.paints)
+                    layout_json(&state.screen, state.paints, state.orientation)
                 };
                 write_response(
                     &mut stream,
@@ -1250,7 +1272,7 @@ impl AppSession {
                         .state
                         .lock()
                         .unwrap_or_else(std::sync::PoisonError::into_inner);
-                    diagnostics_json(&state.screen, state.active_pictures())
+                    diagnostics_json(&state.screen, state.active_pictures(), state.orientation)
                 };
                 write_response(
                     &mut stream,
@@ -1312,9 +1334,16 @@ impl AppSession {
     }
 }
 
-fn diagnostics_json(screen: &Screen, pictures: &kobo_ui::PictureCache) -> String {
-    let diagnostics =
-        screen.diagnostics_with_pictures(&profile_metrics(), &kobo_ui::Chrome::default(), pictures);
+fn diagnostics_json(
+    screen: &Screen,
+    pictures: &kobo_ui::PictureCache,
+    orientation: kobo_ui::Orientation,
+) -> String {
+    let diagnostics = screen.diagnostics_with_pictures(
+        &profile_metrics().oriented(orientation),
+        &kobo_ui::Chrome::default(),
+        pictures,
+    );
     let mut json = String::from("{\"issues\":[");
     for (index, issue) in diagnostics.issues.iter().enumerate() {
         if index > 0 {
@@ -1327,15 +1356,18 @@ fn diagnostics_json(screen: &Screen, pictures: &kobo_ui::PictureCache) -> String
         let node = issue
             .node
             .map_or_else(|| "null".to_owned(), |node| node.0.to_string());
-        let rect = issue.rect.map_or_else(
-            || "null".to_owned(),
-            |rect| {
-                format!(
-                    "{{\"x\":{},\"y\":{},\"width\":{},\"height\":{}}}",
-                    rect.x, rect.y, rect.width, rect.height
-                )
-            },
-        );
+        let rect = issue
+            .rect
+            .map(|rect| physical_rect(orientation, rect))
+            .map_or_else(
+                || "null".to_owned(),
+                |rect| {
+                    format!(
+                        "{{\"x\":{},\"y\":{},\"width\":{},\"height\":{}}}",
+                        rect.x, rect.y, rect.width, rect.height
+                    )
+                },
+            );
         let _ = std::fmt::Write::write_fmt(
             &mut json,
             format_args!(
@@ -1457,8 +1489,8 @@ fn parse_lifecycle(bytes: &[u8]) -> Option<Lifecycle> {
 /// actions directly would pass happily on a screen whose button had been laid
 /// out three millimetres off the bottom of the panel, which is exactly the
 /// class of fault worth catching.
-fn layout_json(screen: &Screen, paints: u64) -> String {
-    let metrics = profile_metrics();
+fn layout_json(screen: &Screen, paints: u64, orientation: kobo_ui::Orientation) -> String {
+    let metrics = profile_metrics().oriented(orientation);
     let layout = screen.layout_with(&metrics, &kobo_ui::Chrome::default());
     let mut json = format!("{{\"paints\":{paints},\"nodes\":[");
     for (index, node) in layout.nodes.iter().enumerate() {
@@ -1471,23 +1503,25 @@ fn layout_json(screen: &Screen, paints: u64) -> String {
             .map(|line| json_string(line))
             .collect::<Vec<_>>()
             .join(",");
-        let centre = (
+        let logical_centre = (
             node.rect.x + node.rect.width / 2,
             node.rect.y + node.rect.height / 2,
         );
         let action = layout
-            .hit_test(centre.0, centre.1)
+            .hit_test(logical_centre.0, logical_centre.1)
             .map_or_else(|| "null".to_owned(), |action| action.0.to_string());
+        let rect = physical_rect(orientation, node.rect);
+        let centre = (rect.x + rect.width / 2, rect.y + rect.height / 2);
         let _ = std::fmt::Write::write_fmt(
             &mut json,
             format_args!(
                 "{{\"kind\":{},\"x\":{},\"y\":{},\"width\":{},\"height\":{},\
                  \"centre\":{{\"x\":{},\"y\":{}}},\"action\":{action},\"lines\":[{lines}]}}",
                 json_string(&format!("{:?}", node.kind)),
-                node.rect.x,
-                node.rect.y,
-                node.rect.width,
-                node.rect.height,
+                rect.x,
+                rect.y,
+                rect.width,
+                rect.height,
                 centre.0,
                 centre.1,
             ),
@@ -1566,6 +1600,7 @@ fn answer_store(
     write_shared(
         writer,
         &Frame {
+            version: kobo_protocol::VERSION,
             request_id,
             message: Message::StoreResult(result),
         },
@@ -1607,8 +1642,9 @@ mod writer_tests {
     fn writing_to_an_application_that_is_not_reading_does_not_block_the_writer() {
         let (ours, theirs) = std::os::unix::net::UnixStream::pair().expect("socket pair");
         // Deliberately never read from.
-        let writer = AppWriter::spawn(ours);
+        let writer = AppWriter::spawn_for(ours, kobo_protocol::VERSION);
         let frame = Frame {
+            version: kobo_protocol::VERSION,
             request_id: 0,
             message: Message::Log {
                 level: kobo_protocol::LogLevel::Info,
@@ -1629,6 +1665,21 @@ mod writer_tests {
             .expect("512 frames queued without blocking on the socket");
         drop(theirs);
     }
+
+    #[test]
+    fn a_legacy_session_receives_legacy_runtime_events() {
+        let (ours, mut theirs) = std::os::unix::net::UnixStream::pair().expect("socket pair");
+        let writer = AppWriter::spawn_for(ours, kobo_protocol::LEGACY_VERSION);
+        let frame = Frame {
+            version: kobo_protocol::VERSION,
+            request_id: 4,
+            message: Message::Lifecycle(kobo_protocol::Lifecycle::Foreground),
+        };
+        write_shared(&writer, &frame).expect("queued");
+        let delivered = super::read_protocol_frame(&mut theirs).expect("delivered");
+        assert_eq!(delivered.version, kobo_protocol::LEGACY_VERSION);
+        assert_eq!(delivered.message, frame.message);
+    }
 }
 
 impl std::fmt::Debug for AppWriter {
@@ -1642,11 +1693,12 @@ struct AppWriter {
     /// The lock is only ever held across a queue push, which cannot block on
     /// anything, which is the entire point.
     sender: Mutex<std::sync::mpsc::Sender<Frame>>,
+    /// Fixed by Hello for the lifetime of this one-app session.
+    version: u8,
 }
 
 impl AppWriter {
-    /// Takes the socket, and returns the only handle anything else may use.
-    fn spawn(mut stream: UnixStream) -> Arc<Self> {
+    fn spawn_for(mut stream: UnixStream, version: u8) -> Arc<Self> {
         let (sender, receiver) = std::sync::mpsc::channel::<Frame>();
         std::thread::spawn(move || {
             for frame in receiver {
@@ -1657,17 +1709,20 @@ impl AppWriter {
         });
         Arc::new(Self {
             sender: Mutex::new(sender),
+            version,
         })
     }
 }
 
 /// Queues one frame for the application. Never blocks on the socket.
 fn write_shared(writer: &Arc<AppWriter>, frame: &Frame) -> io::Result<()> {
+    let mut frame = frame.clone();
+    frame.version = writer.version;
     writer
         .sender
         .lock()
         .map_err(|_| io::Error::other("simulator write lock poisoned"))?
-        .send(frame.clone())
+        .send(frame)
         .map_err(|_| io::Error::other("the application is no longer listening"))
 }
 
@@ -1689,6 +1744,7 @@ fn drain_shell(shells: &Arc<Mutex<kobo_shell::Shells>>, writer: &Arc<AppWriter>)
             write_shared(
                 writer,
                 &Frame {
+                    version: kobo_protocol::VERSION,
                     request_id: 0,
                     message: Message::ShellEvent(event),
                 },
@@ -1716,6 +1772,7 @@ fn answer_shell(
         write_shared(
             writer,
             &Frame {
+                version: kobo_protocol::VERSION,
                 request_id,
                 message: Message::ShellEvent(event),
             },
@@ -1889,6 +1946,7 @@ fn read_app_messages(
                 write_shared(
                     writer,
                     &Frame {
+                        version: kobo_protocol::VERSION,
                         request_id,
                         message: Message::DeviceResult(result),
                     },
@@ -1903,6 +1961,7 @@ fn read_app_messages(
                     write_shared(
                         writer,
                         &Frame {
+                            version: kobo_protocol::VERSION,
                             request_id,
                             message: Message::TaskOutcome {
                                 task,
@@ -1936,6 +1995,7 @@ fn read_app_messages(
                     write_shared(
                         writer,
                         &Frame {
+                            version: kobo_protocol::VERSION,
                             request_id,
                             message: Message::StoreResult(result),
                         },
@@ -1983,6 +2043,19 @@ fn simulated_app_request(
     request: &kobo_protocol::DeviceRequest,
 ) -> io::Result<Option<kobo_protocol::DeviceResult>> {
     use kobo_protocol::{DenyReason, DeviceError, DeviceRequest, DeviceResult};
+
+    if let DeviceRequest::SetSecret { name, value } = request {
+        if scenario == Scenario::PermissionDenied
+            || !kobo_policy::credentials::may_set(caller, name)
+        {
+            return Ok(Some(DeviceResult::Denied(DenyReason::NotDeclared)));
+        }
+        let directory = std::env::temp_dir().join(SIM_SECRETS);
+        let result =
+            kobo_policy::credentials::install_app_secret(&directory, caller, name, value.as_str())
+                .map_or_else(DeviceResult::Failed, |()| DeviceResult::Done);
+        return Ok(Some(result));
+    }
 
     let authorized = match request {
         DeviceRequest::ListInstalledApps => matches!(caller, "launcher" | "store"),
@@ -2097,6 +2170,7 @@ fn deliver_task_outcomes(
         write_shared(
             writer,
             &Frame {
+                version: kobo_protocol::VERSION,
                 request_id: 0,
                 message: Message::TaskOutcome {
                     task: finished.task,
@@ -2174,7 +2248,7 @@ fn simulated_tasks(name: &str) -> TaskRunner {
         let _ = kobo_net::trust_owner_roots_from_dir(&directory);
     });
     let runner = TaskRunner::simulated(simulated_data_root(name))
-        .with_secrets(std::env::temp_dir().join(SIM_SECRETS));
+        .with_app_secrets(std::env::temp_dir().join(SIM_SECRETS), name);
     if std::env::var_os(OFFLINE).is_some() {
         return runner;
     }
@@ -2185,11 +2259,21 @@ fn simulated_tasks(name: &str) -> TaskRunner {
     // and could only ever be run on hardware.
     let app = name.to_owned();
     runner
-        .with_fetch(Arc::new(kobo_net::fetch_from))
-        .with_post(Arc::new(kobo_net::post))
-        .with_credential_policy(Arc::new(move |credential, url, usage| {
-            kobo_policy::credentials::allowed(&app, credential, url, usage)
-        }))
+        .with_fetch(Arc::new(kobo_net::fetch_from_controlled))
+        .with_post(Arc::new(kobo_net::post_controlled))
+        .with_line_streams(Arc::new(kobo_net::LineStreams::default()))
+        .with_credential_policy(Arc::new(
+            move |credential, url, usage, body, content_type| {
+                kobo_policy::credentials::allowed_request(
+                    &app,
+                    credential,
+                    url,
+                    usage,
+                    body,
+                    content_type,
+                )
+            },
+        ))
         .with_capabilities([kobo_policy::Capability::Network])
 }
 
@@ -2559,6 +2643,35 @@ mod tests {
     }
 
     #[test]
+    fn simulated_secret_install_is_authorized_and_visible_to_tasks() {
+        use kobo_protocol::{DeviceRequest, DeviceResult, SecretValue};
+
+        let directory = std::env::temp_dir().join(SIM_SECRETS);
+        let path = directory.join("apps/zotero-reader/zotero");
+        let _ignored = fs::remove_dir_all(directory.join("apps/zotero-reader"));
+        let state = Arc::new(Mutex::new(AppState::with_apps(Arc::new(Mutex::new(
+            SimulatedApps::default(),
+        )))));
+        let request = DeviceRequest::SetSecret {
+            name: "zotero".to_owned(),
+            value: SecretValue::new("private-token"),
+        };
+        assert_eq!(
+            app_result(&state, "zotero-reader", Scenario::Normal, &request),
+            DeviceResult::Done
+        );
+        assert_eq!(
+            fs::read(&path).expect("stored simulator secret"),
+            b"private-token"
+        );
+        assert!(matches!(
+            app_result(&state, "todo", Scenario::Normal, &request),
+            DeviceResult::Denied(_)
+        ));
+        let _ignored = fs::remove_dir_all(directory.join("apps/zotero-reader"));
+    }
+
+    #[test]
     fn simulated_store_updates_and_reinstalls_in_one_session() {
         use kobo_protocol::{DeviceRequest, DeviceResult};
 
@@ -2766,7 +2879,7 @@ mod tests {
         // tapped something. Refusals arrived instantly, which is why nothing
         // noticed: the only tasks the simulator completed were refused ones.
         let (client, server) = UnixStream::pair().expect("a socket pair");
-        let writer = AppWriter::spawn(server);
+        let writer = AppWriter::spawn_for(server, kobo_protocol::VERSION);
         let state = Arc::new(Mutex::new(AppState::default()));
         let tasks = Arc::new(Mutex::new(
             TaskRunner::simulated(private_temp_dir())
@@ -2994,7 +3107,7 @@ mod tests {
         let (mut client, server) = UnixStream::pair().expect("socket pair");
         let session = AppSession {
             state: Arc::new(Mutex::new(AppState::default())),
-            writer: AppWriter::spawn(server),
+            writer: AppWriter::spawn_for(server, kobo_protocol::VERSION),
         };
 
         session
@@ -3009,6 +3122,63 @@ mod tests {
     }
 
     #[test]
+    fn rendered_landscape_control_accepts_a_tap_at_its_physical_centre() {
+        let action = ActionId(77);
+        let screen = Screen::new(
+            1,
+            vec![Node::Button {
+                id: NodeId(1),
+                action,
+                label: "Open".to_owned(),
+                state: kobo_ui::ControlState::Enabled,
+                emphasis: kobo_ui::Emphasis::Primary,
+            }],
+        );
+        let orientation = kobo_ui::Orientation::Landscape;
+        let logical = screen
+            .layout_with(
+                &profile_metrics().oriented(orientation),
+                &kobo_ui::Chrome::default(),
+            )
+            .rect_of_action(action)
+            .expect("button");
+        let physical = physical_rect(orientation, logical);
+        let (client, server) = UnixStream::pair().expect("socket pair");
+        drop(client);
+        let session = AppSession {
+            state: Arc::new(Mutex::new(AppState {
+                screen: screen.clone(),
+                orientation,
+                ..AppState::default()
+            })),
+            writer: AppWriter::spawn_for(server, kobo_protocol::VERSION),
+        };
+
+        let frame = session.render_frame(false);
+        let width = usize::try_from(profile_metrics().width).expect("panel width");
+        let inked = (physical.y..physical.y + physical.height)
+            .flat_map(|y| (physical.x..physical.x + physical.width).map(move |x| (x, y)))
+            .filter(|&(x, y)| {
+                frame[usize::try_from(y).expect("positive y") * width
+                    + usize::try_from(x).expect("positive x")]
+                    != kobo_ui::tone::PAPER
+            })
+            .count();
+        assert!(inked > 0, "the transformed control was not rendered");
+        assert_eq!(
+            session.touch_action(
+                physical.x + physical.width / 2,
+                physical.y + physical.height / 2,
+            ),
+            Some(action)
+        );
+
+        let layout = layout_json(&screen, 1, orientation);
+        assert!(layout.contains(&format!("\"x\":{}", physical.x)));
+        assert!(layout.contains(&format!("\"y\":{}", physical.y)));
+    }
+
+    #[test]
     fn diagnostics_endpoint_payload_names_layout_failures() {
         let screen = Screen::new(
             1,
@@ -3020,10 +3190,71 @@ mod tests {
                 })
                 .collect(),
         );
-        let payload = diagnostics_json(&screen, &kobo_ui::PictureCache::default());
+        let payload = diagnostics_json(
+            &screen,
+            &kobo_ui::PictureCache::default(),
+            kobo_ui::Orientation::Portrait,
+        );
         assert!(payload.starts_with("{\"issues\":["));
         assert!(payload.contains("below the content area"));
         assert!(payload.contains("\"severity\":\"error\""));
+    }
+
+    #[test]
+    fn diagnostics_fail_when_an_interactive_control_is_offscreen() {
+        let screen = Screen::new(
+            1,
+            vec![Node::Grid {
+                id: NodeId(100),
+                columns: 1,
+                square: false,
+                cells: (0..81)
+                    .map(|index| kobo_ui::Cell::new(ActionId(index + 1), index.to_string()))
+                    .collect(),
+            }],
+        );
+        let payload = diagnostics_json(
+            &screen,
+            &kobo_ui::PictureCache::default(),
+            kobo_ui::Orientation::Portrait,
+        );
+        assert!(
+            payload.contains("interactive control is outside the visible panel"),
+            "{payload}"
+        );
+        assert!(payload.contains("\"severity\":\"error\""));
+    }
+
+    #[test]
+    fn landscape_diagnostics_report_physical_framebuffer_rectangles() {
+        let screen = Screen::new(
+            1,
+            vec![Node::Grid {
+                id: NodeId(100),
+                columns: 1,
+                square: false,
+                cells: (0..81)
+                    .map(|index| kobo_ui::Cell::new(ActionId(index + 1), index.to_string()))
+                    .collect(),
+            }],
+        );
+        let orientation = kobo_ui::Orientation::Landscape;
+        let diagnostics = screen.diagnostics_with_pictures(
+            &profile_metrics().oriented(orientation),
+            &kobo_ui::Chrome::default(),
+            &kobo_ui::PictureCache::default(),
+        );
+        let logical = diagnostics
+            .issues
+            .iter()
+            .find_map(|issue| issue.rect)
+            .expect("diagnostic rectangle");
+        let physical = physical_rect(orientation, logical);
+        let payload = diagnostics_json(&screen, &kobo_ui::PictureCache::default(), orientation);
+        assert!(payload.contains(&format!(
+            "\"rect\":{{\"x\":{},\"y\":{},\"width\":{},\"height\":{}}}",
+            physical.x, physical.y, physical.width, physical.height
+        )));
     }
 
     #[test]
@@ -3090,6 +3321,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn app_server_handshakes_renders_and_returns_actions() {
         let root = private_temp_dir();
         let socket_path = root.join("app.sock");
@@ -3110,6 +3342,7 @@ mod tests {
             write_protocol_frame(
                 &mut stream,
                 &Frame {
+                    version: kobo_protocol::VERSION,
                     request_id: 7,
                     message: Message::Hello {
                         name: "test-app".into(),
@@ -3130,6 +3363,7 @@ mod tests {
             write_protocol_frame(
                 &mut stream,
                 &Frame {
+                    version: kobo_protocol::VERSION,
                     request_id: 8,
                     message: Message::SetScreen(Screen::new(
                         1,
@@ -3154,18 +3388,36 @@ mod tests {
         });
         let session = server.accept_app().expect("accept app");
         ready_receiver.recv().expect("screen sent");
-        for _ in 0..100 {
+        let deadline = std::time::Instant::now() + Duration::from_secs(1);
+        while std::time::Instant::now() < deadline {
             if !session.screen().nodes.is_empty() {
                 break;
             }
             thread::sleep(Duration::from_millis(1));
         }
-        assert!(!session.screen().nodes.is_empty());
+        let screen = session.screen();
+        assert!(
+            !screen.nodes.is_empty(),
+            "screen was not rendered within one second"
+        );
+        let button = screen
+            .layout()
+            .nodes
+            .iter()
+            .find(|node| matches!(node.kind, kobo_ui::LayoutKind::Button(..)))
+            .expect("rendered button")
+            .rect;
+        let (x, y) = (button.x + button.width / 2, button.y + button.height / 2);
 
         let browser = thread::spawn(move || -> io::Result<()> {
             let mut stream = TcpStream::connect(address)?;
+            let body = format!("x={x}&y={y}");
             stream.write_all(
-                b"POST /touch HTTP/1.1\r\nHost: localhost\r\nContent-Length: 9\r\n\r\nx=60&y=60",
+                format!(
+                    "POST /touch HTTP/1.1\r\nHost: localhost\r\nContent-Length: {}\r\n\r\n{body}",
+                    body.len()
+                )
+                .as_bytes(),
             )?;
             let mut response = String::new();
             stream.read_to_string(&mut response)?;

@@ -8,6 +8,7 @@ mod model;
 
 use kobo_bookview::{BookView, Step};
 use kobo_read::{Memory, Outcome};
+use kobo_sdk::credentials::{CredentialEvent, CredentialSetup};
 use kobo_sdk::keyboard::{Keyboard, Pressed};
 use kobo_sdk::{
     action_id, ActionId, BannerLevel, Context, Credential, Glyph, Header, KoboApp, RowLead, Screen,
@@ -133,6 +134,8 @@ struct ReadingList {
     pending_memory: Option<(String, Vec<u8>)>,
     place: Option<Memory>,
     figure_task: Option<(TaskId, String)>,
+    credential_setup: CredentialSetup,
+    credential_retry: Option<Awaiting>,
     figures: VecDeque<String>,
 }
 
@@ -253,6 +256,59 @@ impl ReadingList {
             512 * 1024,
             Awaiting::Collections,
         );
+    }
+
+    fn retry_zotero(&mut self, context: &mut Context, awaiting: Awaiting) {
+        match awaiting {
+            Awaiting::Collections => self.fetch_collections(context),
+            Awaiting::SnapshotPage(start) => {
+                if let Some(key) = self
+                    .selected
+                    .as_ref()
+                    .map(|collection| collection.key.clone())
+                {
+                    self.fetch_snapshot_page(context, &key, start);
+                }
+            }
+            Awaiting::Detail => {
+                if let Some(key) = self.opened_key.clone() {
+                    self.fetch_zotero(
+                        context,
+                        &format!("/items/{key}?format=json"),
+                        DETAIL_BYTES,
+                        Awaiting::Detail,
+                    );
+                }
+            }
+            Awaiting::DetailChildren => {
+                if let Some(key) = self.opened_key.clone() {
+                    self.fetch_zotero(
+                        context,
+                        &format!("/items/{key}/children?format=json&itemType=attachment&limit=100"),
+                        512 * 1024,
+                        Awaiting::DetailChildren,
+                    );
+                }
+            }
+            Awaiting::ZoteroFullText => {
+                if let Some(key) = self
+                    .attachment
+                    .as_ref()
+                    .map(|attachment| attachment.key.clone())
+                {
+                    self.fetch_zotero(
+                        context,
+                        &format!("/items/{key}/fulltext"),
+                        ZOTERO_RESPONSE_BYTES,
+                        Awaiting::ZoteroFullText,
+                    );
+                }
+            }
+            Awaiting::StartConversion
+            | Awaiting::PollWait
+            | Awaiting::PollConversion
+            | Awaiting::Document => {}
+        }
     }
 
     fn begin_after_config(&mut self, context: &mut Context) {
@@ -1124,6 +1180,10 @@ impl ReadingList {
     }
 
     fn show(&mut self, context: &mut Context) {
+        if self.credential_setup.is_open() {
+            context.set_screen(self.credential_setup.screen("Zotero Reader"));
+            return;
+        }
         let screen = match self.view {
             View::Setup => self.setup_screen(),
             View::Collections => self.collections_screen(context),
@@ -1205,6 +1265,7 @@ impl ReadingList {
 
 impl KoboApp for ReadingList {
     fn on_start(&mut self, context: &mut Context) {
+        self.credential_setup = CredentialSetup::new(ZOTERO_CREDENTIAL, "Zotero");
         context.store().load(USER_ID_KEY);
         context.store().load(SELECTED_KEY);
         context.store().load(LIBRARY_KEY);
@@ -1215,6 +1276,15 @@ impl KoboApp for ReadingList {
 
     #[allow(clippy::too_many_lines)]
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
+        if self.credential_setup.is_open() {
+            if let Some(event) = self.credential_setup.on_action(context, action) {
+                if event == CredentialEvent::Cancelled {
+                    self.credential_retry = None;
+                }
+                self.show(context);
+            }
+            return;
+        }
         if self.view == View::Setup {
             match self.keyboard.press(action) {
                 Some(Pressed::Submitted) => {
@@ -1384,9 +1454,19 @@ impl KoboApp for ReadingList {
     fn on_device_result(
         &mut self,
         context: &mut Context,
-        _request: kobo_sdk::DeviceRequest,
+        request: kobo_sdk::DeviceRequest,
         result: kobo_sdk::DeviceResult,
     ) {
+        if let Some(event) = self.credential_setup.on_device_result(&request, &result) {
+            if event == CredentialEvent::Saved {
+                self.trouble = None;
+                if let Some(awaiting) = self.credential_retry.take() {
+                    self.retry_zotero(context, awaiting);
+                }
+            }
+            self.show(context);
+            return;
+        }
         if let kobo_sdk::DeviceResult::Frontlight { percent } = result {
             if self.book.took_light(percent) {
                 self.show(context);
@@ -1469,7 +1549,16 @@ impl KoboApp for ReadingList {
                 Awaiting::Document => self.took_document(context, &bytes),
             },
             TaskOutcome::Failed(error) => {
+                let missing_direct_credential = error == TaskError::NoCredential
+                    && !matches!(
+                        awaiting,
+                        Awaiting::StartConversion | Awaiting::PollConversion | Awaiting::Document
+                    );
                 self.trouble = Some(explain_failure(awaiting, error));
+                if missing_direct_credential {
+                    self.credential_retry = Some(awaiting);
+                    self.credential_setup.open();
+                }
                 if matches!(
                     awaiting,
                     Awaiting::StartConversion
@@ -1908,12 +1997,90 @@ mod tests {
     use super::{
         decode_library, decode_reading_state, decode_selection, encode_library,
         encode_reading_state, encode_selection, valid_figure, valid_origin, valid_user_id,
-        Attachment, Collection, Kept,
+        Attachment, Awaiting, Collection, Kept, ReadingList,
     };
+    use kobo_sdk::credentials::CredentialSetup;
     use kobo_sdk::{
-        action_id, AppRunner, Command, Context, Credential, ShelfUpload, StoreError, StoreResult,
-        Task,
+        action_id, AppRunner, Command, Context, Credential, DeviceResult, ShelfUpload, StoreError,
+        StoreResult, Task, TaskError, TaskId, TaskOutcome,
     };
+
+    #[test]
+    fn a_missing_zotero_key_opens_attended_or_cli_setup() {
+        let task = TaskId(7);
+        let mut runner = AppRunner::new(ReadingList {
+            user_id: Some("12345".to_owned()),
+            task: Some((task, Awaiting::Collections)),
+            credential_setup: CredentialSetup::new("zotero", "Zotero"),
+            ..ReadingList::default()
+        });
+        let commands = runner.task_outcome(task, TaskOutcome::Failed(TaskError::NoCredential));
+        let screen = commands.iter().find_map(|command| match command {
+            Command::SetScreen(screen) => Some(screen),
+            _ => None,
+        });
+        let drawn = format!("{screen:?}");
+        assert!(drawn.contains("Connect Zotero"), "{drawn}");
+        assert!(drawn.contains("Enter credential"), "{drawn}");
+        assert!(drawn.contains("Use computer"), "{drawn}");
+    }
+
+    fn save_missing_credential(runner: &mut AppRunner<ReadingList>, task: TaskId) -> Vec<Command> {
+        runner.task_outcome(task, TaskOutcome::Failed(TaskError::NoCredential));
+        runner.action(action_id("credential.enter"));
+        runner.action(action_id("kb.r0c0"));
+        let saving = runner.action(action_id("kb.enter"));
+        assert!(saving.iter().any(|command| matches!(
+            command,
+            Command::Device(kobo_sdk::DeviceRequest::SetSecret { name, .. })
+                if name == "zotero"
+        )));
+        runner.device_result(DeviceResult::Done)
+    }
+
+    #[test]
+    fn credential_save_retries_the_failed_snapshot_page() {
+        let task = TaskId(8);
+        let mut runner = AppRunner::new(ReadingList {
+            user_id: Some("12345".to_owned()),
+            selected: Some(Collection {
+                key: "COLLECTION1".to_owned(),
+                name: "Research".to_owned(),
+            }),
+            task: Some((task, Awaiting::SnapshotPage(25))),
+            credential_setup: CredentialSetup::new("zotero", "Zotero"),
+            ..ReadingList::default()
+        });
+        let commands = save_missing_credential(&mut runner, task);
+        assert!(commands.iter().any(|command| matches!(
+            command,
+            Command::Spawn {
+                work: Task::Fetch { url, .. },
+                ..
+            } if url.contains("/collections/COLLECTION1/items/top?")
+                && url.contains("start=25")
+        )));
+    }
+
+    #[test]
+    fn credential_save_retries_the_failed_paper_detail() {
+        let task = TaskId(9);
+        let mut runner = AppRunner::new(ReadingList {
+            user_id: Some("12345".to_owned()),
+            opened_key: Some("PAPER001".to_owned()),
+            task: Some((task, Awaiting::Detail)),
+            credential_setup: CredentialSetup::new("zotero", "Zotero"),
+            ..ReadingList::default()
+        });
+        let commands = save_missing_credential(&mut runner, task);
+        assert!(commands.iter().any(|command| matches!(
+            command,
+            Command::Spawn {
+                work: Task::Fetch { url, .. },
+                ..
+            } if url == "https://api.zotero.org/users/12345/items/PAPER001?format=json"
+        )));
+    }
 
     #[test]
     fn only_an_exact_bare_https_origin_is_accepted() {

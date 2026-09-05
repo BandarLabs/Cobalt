@@ -2,9 +2,8 @@
 
 Cobalt is licensed under the GNU Affero General Public License, version 3. It
 links code and embeds fonts written by other people, all under permissive
-licences that impose no copyleft of their own, so a binary built from this tree
-can be redistributed under the AGPL as long as the notices below travel with
-it.
+licences or compatible GPL terms, so a binary built from this tree can be
+redistributed under the AGPL as long as the notices below travel with it.
 
 ## Rust dependencies
 
@@ -86,6 +85,7 @@ The example applications talk to services this project does not own.
 | --- | --- | --- |
 | `hn` | Hacker News Firebase API | Public, unauthenticated, no key |
 | `gutenbird` | Gutendex and Project Gutenberg | Public; Gutenberg texts are public domain in the US |
+| `lichess` | Lichess Board and puzzle APIs | Official HTTPS origin; Board API access uses a runtime-held personal token |
 | `rss` | Feedsearch | Public; the search screen carries the attribution its terms ask for |
 | `calibre-web` | calibre-web or calibre content-server OPDS | Owner-supplied HTTPS service; optional HTTP Basic credential |
 | `fanshelf` | Archive of Our Own public work pages | Public, unauthenticated lookups with an identifying user agent |

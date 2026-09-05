@@ -53,6 +53,7 @@ const screenshots = {
   lichess: ["lichess.png", "Lichess on Kobo showing Puzzle and Play tiles, a daily puzzle row, and puzzle difficulty."],
   logicpack: ["logicpack.png", "Logic Pack's Minesweeper board after a revealed cell and contradiction check."],
   launcher: ["launcher.png", "The Cobalt launcher showing installed apps on a Kobo"],
+  lichess: ["lichess.png", "Responsive Lichess time-control tiles and puzzles on a Kobo"],
   magnet: ["magnet.png", "The Kobo hall sensor responding to a magnet"],
   morse: ["morse.png", "A letter filling the Kobo screen while the front light sends Morse code"],
   musicstand: ["musicstand.png", "Music Stand showing a marked half-page score view for Bach's Cello Suite No. 1."],

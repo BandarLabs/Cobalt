@@ -1,6 +1,6 @@
 [package]
 name = "kobo-lichess"
-version = "0.1.0"
+version = "1.0.2"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -12,6 +12,7 @@ kobo-sdk = { path = "../../crates/kobo-sdk" }
 shakmaty = "=0.27.3"
 
 [dev-dependencies]
+kobo-profile = { path = "../../crates/kobo-profile" }
 kobo-ui = { path = "../../crates/kobo-ui" }
 
 [lints]

@@ -1,0 +1,28 @@
+{
+  "id": "homepanel",
+  "display_name": "Home Panel",
+  "short_label": "Home",
+  "summary": "Control saved Home Assistant tiles from a low-power panel.",
+  "page_description": "Keep your favorite Home Assistant controls on a simple, low-power panel.",
+  "version": "0.1.0",
+  "release_notes": "Keep your favorite Home Assistant controls on a simple, low-power panel.",
+  "glyph": "light",
+  "capabilities": [
+    "network"
+  ],
+  "setup": {
+    "steps": [
+      {
+        "text": "Expose Home Assistant through HTTPS, using Nabu Casa or a reverse proxy with a trusted certificate."
+      },
+      {
+        "text": "Create a Home Assistant long-lived access token and install it under the exact name homeassistant.",
+        "command": "kobo secret set homeassistant --device <address>"
+      },
+      {
+        "text": "For a private certificate authority, install its root on the Kobo.",
+        "command": "kobo trust set homeassistant --device <address>"
+      }
+    ]
+  }
+}

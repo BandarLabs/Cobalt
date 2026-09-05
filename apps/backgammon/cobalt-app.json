@@ -1,0 +1,10 @@
+{
+  "id": "backgammon",
+  "display_name": "Backgammon",
+  "short_label": "Backgammon",
+  "summary": "Play complete solo or pass-and-play backgammon on one Kobo.",
+  "version": "0.1.2",
+  "release_notes": "Keep Backgammon compatible with Cobalt's protocol-12 runtime.",
+  "glyph": "circle",
+  "capabilities": []
+}

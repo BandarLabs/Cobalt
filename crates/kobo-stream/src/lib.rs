@@ -113,7 +113,19 @@ pub fn permits_input(mode: InputMode, bytes: &[u8]) -> bool {
     bytes.len() <= MAX_KEY_BYTES
         && match mode {
             InputMode::None => false,
-            InputMode::Controls => CONTROL_BYTES.contains(&bytes),
+            InputMode::Controls => {
+                let mut remaining = bytes;
+                while !remaining.is_empty() {
+                    let Some(control) = CONTROL_BYTES
+                        .iter()
+                        .find(|control| remaining.starts_with(control))
+                    else {
+                        return false;
+                    };
+                    remaining = &remaining[control.len()..];
+                }
+                true
+            }
             InputMode::Full => true,
         }
 }
@@ -121,7 +133,11 @@ pub fn permits_input(mode: InputMode, bytes: &[u8]) -> bool {
 struct Terminal {
     parser: vt100::Parser,
     grid: Grid,
+    next_lease: u64,
+    lease: u64,
+    generation: u64,
     previous: Vec<String>,
+    previous_cursor: Option<(u16, u16)>,
     seq: u64,
     ended: Option<i32>,
     last_snapshot: Instant,
@@ -133,7 +149,11 @@ impl Terminal {
         Self {
             parser: vt100::Parser::new(grid.rows, grid.columns, 0),
             grid,
+            next_lease: 0,
+            lease: 0,
+            generation: 0,
             previous: Vec::new(),
+            previous_cursor: None,
             seq: 0,
             ended: None,
             last_snapshot: Instant::now()
@@ -150,7 +170,50 @@ impl Terminal {
 
     fn finish(&mut self, status: i32) {
         self.ended = Some(status);
+        self.last_snapshot = Instant::now()
+            .checked_sub(SNAPSHOT_INTERVAL)
+            .unwrap_or_else(Instant::now);
         self.dirty = true;
+    }
+
+    fn resize(&mut self, grid: Grid) {
+        if self.grid == grid {
+            return;
+        }
+        self.parser.screen_mut().set_size(grid.rows, grid.columns);
+        self.grid = grid;
+        self.previous.clear();
+        self.previous_cursor = None;
+        self.last_snapshot = Instant::now()
+            .checked_sub(SNAPSHOT_INTERVAL)
+            .unwrap_or_else(Instant::now);
+        self.dirty = true;
+    }
+
+    fn issue_lease(&mut self) -> u64 {
+        self.next_lease = self.next_lease.saturating_add(1).max(1);
+        self.next_lease
+    }
+
+    fn resize_for(&mut self, grid: Grid, lease: u64, generation: u64) -> bool {
+        let lease_is_current = lease == self.lease;
+        let lease_is_new = lease > self.lease && lease <= self.next_lease;
+        if (!lease_is_current && !lease_is_new)
+            || (lease_is_current && generation < self.generation)
+        {
+            return false;
+        }
+        if lease_is_new {
+            self.lease = lease;
+            self.generation = 0;
+        }
+        self.generation = generation;
+        self.resize(grid);
+        true
+    }
+
+    fn screen_for(&mut self, since: u64, lease: u64, generation: u64) -> Option<Screen> {
+        (lease == self.lease && generation == self.generation).then(|| self.screen(since))
     }
 
     fn screen(&mut self, since: u64) -> Screen {
@@ -162,18 +225,16 @@ impl Terminal {
                 exit: self.ended,
             };
         }
-        let visible: Vec<String> = self
-            .parser
-            .screen()
-            .rows(0, self.grid.columns)
-            .take(self.grid.rows as usize)
-            .map(substitute)
+        let screen = self.parser.screen();
+        let visible: Vec<String> = (0..self.grid.rows)
+            .map(|row| visible_row(screen, row, self.grid.columns))
             .collect();
-        let (cursor_y, cursor_x) = self.parser.screen().cursor_position();
-        let cursor_visible = !self.parser.screen().hide_cursor()
-            && cursor_y < self.grid.rows
-            && cursor_x < self.grid.columns;
-        let changed = visible != self.previous;
+        let (cursor_y, cursor_x) = screen.cursor_position();
+        let cursor =
+            (!screen.hide_cursor() && cursor_y < self.grid.rows && cursor_x < self.grid.columns)
+                .then_some((cursor_y, cursor_x));
+        let cursor_changed = cursor != self.previous_cursor;
+        let changed = visible != self.previous || cursor_changed;
         if changed {
             self.seq = self.seq.saturating_add(1);
         }
@@ -181,14 +242,23 @@ impl Terminal {
         let rows = visible
             .iter()
             .enumerate()
-            .filter(|(index, row)| full || self.previous.get(*index) != Some(*row))
+            .filter(|(index, row)| {
+                let index = *index as u16;
+                full || self.previous.get(usize::from(index)) != Some(*row)
+                    || (cursor_changed
+                        && (self.previous_cursor.is_some_and(|(y, _)| y == index)
+                            || cursor.is_some_and(|(y, _)| y == index)))
+            })
             .map(|(index, cells)| Row {
                 y: index as u16,
                 cells: cells.clone(),
-                cursor: (cursor_visible && cursor_y as usize == index).then_some(cursor_x),
+                cursor: cursor
+                    .filter(|(row, _)| usize::from(*row) == index)
+                    .map(|(_, column)| column),
             })
             .collect();
         self.previous = visible;
+        self.previous_cursor = cursor;
         self.dirty = false;
         self.last_snapshot = Instant::now();
         Screen {
@@ -228,6 +298,71 @@ impl Session {
             terminal.finish(status);
             self.changed.notify_all();
         }
+    }
+
+    pub fn resize(&self, grid: Grid) {
+        if let Ok(mut terminal) = self.terminal.lock() {
+            terminal.resize(grid);
+            self.changed.notify_all();
+        }
+    }
+
+    fn issue_lease(&self) -> Option<u64> {
+        self.terminal
+            .lock()
+            .ok()
+            .map(|mut terminal| terminal.issue_lease())
+    }
+
+    fn resize_for(
+        &self,
+        grid: Grid,
+        lease: u64,
+        generation: u64,
+        resize_pty: impl FnOnce() -> Result<(), String>,
+    ) -> Result<bool, String> {
+        let mut terminal = self
+            .terminal
+            .lock()
+            .map_err(|_| "terminal screen lock failed")?;
+        let lease_is_current = lease == terminal.lease;
+        let lease_is_new = lease > terminal.lease && lease <= terminal.next_lease;
+        if (!lease_is_current && !lease_is_new)
+            || (lease_is_current && generation < terminal.generation)
+        {
+            return Ok(false);
+        }
+        resize_pty()?;
+        let accepted = terminal.resize_for(grid, lease, generation);
+        self.changed.notify_all();
+        Ok(accepted)
+    }
+
+    fn screen_for(&self, since: u64, lease: u64, generation: u64) -> Option<Screen> {
+        self.terminal
+            .lock()
+            .ok()
+            .and_then(|mut terminal| terminal.screen_for(since, lease, generation))
+    }
+
+    fn write_for(
+        &self,
+        lease: u64,
+        bytes: &[u8],
+        write_pty: impl FnOnce(&[u8]) -> Result<(), String>,
+    ) -> Result<bool, String> {
+        let terminal = self
+            .terminal
+            .lock()
+            .map_err(|_| "terminal screen lock failed")?;
+        if terminal.lease != lease {
+            return Ok(false);
+        }
+        // Kept through the PTY write: resize takes this same terminal-then-PTY
+        // order, while output draining releases the PTY before feeding state.
+        write_pty(bytes)?;
+        drop(terminal);
+        Ok(true)
     }
 
     #[must_use]
@@ -283,10 +418,15 @@ pub fn run(options: Options) -> Result<i32, String> {
         .set_nonblocking(true)
         .map_err(|error| format!("configure listener: {error}"))?;
     let arguments: Vec<&str> = options.command[1..].iter().map(String::as_str).collect();
+    let environment = host_environment();
+    let environment_refs = environment
+        .iter()
+        .map(|(name, value)| (name.as_str(), value.as_str()))
+        .collect::<Vec<_>>();
     let pty = kobo_abi::pty::Pty::spawn(
         &options.command[0],
         &arguments,
-        &[("TERM", "xterm-256color")],
+        &environment_refs,
         options.grid.columns,
         options.grid.rows,
     )
@@ -298,19 +438,23 @@ pub fn run(options: Options) -> Result<i32, String> {
     let session_id = random_session()?;
     let title = options.command[0].clone();
     let mode = options.input_mode();
-    let grid = options.grid;
+    let mut exit_code = None;
     let mut ended_at = None;
     let readers = Arc::new(AtomicUsize::new(0));
     loop {
         if ended_at.is_none() {
-            drain_pty(&input, &session);
-            if let Some(code) = input
-                .lock()
-                .map_err(|_| "terminal lock failed")?
-                .finished()
-                .map_err(|error| format!("wait for command: {error}"))?
-            {
-                drop(raw_stdin.take());
+            let output_eof = drain_pty(&input, &session);
+            if exit_code.is_none() {
+                exit_code = input
+                    .lock()
+                    .map_err(|_| "terminal lock failed")?
+                    .finished()
+                    .map_err(|error| format!("wait for command: {error}"))?;
+                if exit_code.is_some() {
+                    drop(raw_stdin.take());
+                }
+            }
+            if let Some(code) = exit_code.filter(|_| output_eof) {
                 session.finish(code);
                 ended_at = Some(Instant::now());
             }
@@ -347,7 +491,6 @@ pub fn run(options: Options) -> Result<i32, String> {
                         &code,
                         session_id,
                         &title,
-                        grid,
                         mode,
                         &input,
                         &session,
@@ -363,6 +506,41 @@ pub fn run(options: Options) -> Result<i32, String> {
         }
     }
     Ok(session.screen(0).exit.unwrap_or(0))
+}
+
+/// The deliberately small part of the host environment a terminal program
+/// needs to behave like it was launched from the owner's shell.
+///
+/// `Pty` clears its environment because its other caller runs untrusted Kobo
+/// applications. A host command is different: without `PATH` a command such as
+/// `claude` cannot be found, and without `HOME` its own configuration cannot be
+/// found. Credentials and unrelated application variables are not copied.
+fn host_environment() -> Vec<(String, String)> {
+    host_environment_with(|name| std::env::var(name).ok())
+}
+
+fn host_environment_with(mut read: impl FnMut(&str) -> Option<String>) -> Vec<(String, String)> {
+    const INHERITED: &[&str] = &[
+        "HOME",
+        "PATH",
+        "USER",
+        "LOGNAME",
+        "SHELL",
+        "LANG",
+        "LC_ALL",
+        "LC_CTYPE",
+        "TMPDIR",
+        "XDG_CONFIG_HOME",
+        "XDG_DATA_HOME",
+        "XDG_CACHE_HOME",
+    ];
+    let mut environment = vec![("TERM".to_owned(), "xterm-256color".to_owned())];
+    environment.extend(
+        INHERITED
+            .iter()
+            .filter_map(|name| read(name).map(|value| ((*name).to_owned(), value))),
+    );
+    environment
 }
 
 struct ReaderSlot(Arc<AtomicUsize>);
@@ -420,12 +598,25 @@ fn forward_stdin(pty: Arc<Mutex<kobo_abi::pty::Pty>>) {
 /// Drains whatever the PTY reader has already delivered without holding the
 /// input lock while waiting. Device key writes therefore never wait behind
 /// output from a noisy full-screen application.
-fn drain_pty(pty: &Mutex<kobo_abi::pty::Pty>, session: &Session) {
-    let Ok(terminal) = pty.lock() else { return };
-    while let Ok(bytes) = terminal.output().try_recv() {
+fn drain_pty(pty: &Mutex<kobo_abi::pty::Pty>, session: &Session) -> bool {
+    let mut drained = Vec::new();
+    let disconnected = {
+        let Ok(terminal) = pty.lock() else {
+            return false;
+        };
+        loop {
+            match terminal.output().try_recv() {
+                Ok(bytes) => drained.push(bytes),
+                Err(std::sync::mpsc::TryRecvError::Empty) => break false,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => break true,
+            }
+        }
+    };
+    for bytes in drained {
         let _ = std::io::stdout().write_all(&bytes);
         session.feed(&bytes);
     }
+    disconnected
 }
 
 /// A stream identity, intentionally separate from Sidekick's identity.
@@ -500,6 +691,7 @@ pub fn init(hosts: &[String]) -> Result<(), String> {
     if !leaf.exists() || !leaf_key.exists() || !requested_hosts.is_empty() {
         let request = directory.join("leaf.csr");
         let extensions = directory.join("leaf.ext");
+        let serial = directory.join("ca-cert.srl");
         let mut names = vec!["IP:127.0.0.1".to_owned()];
         names.extend(requested_hosts.iter().map(|host| {
             if host.parse::<std::net::IpAddr>().is_ok() {
@@ -545,6 +737,8 @@ pub fn init(hosts: &[String]) -> Result<(), String> {
             .arg(&ca)
             .arg("-CAkey")
             .arg(&key)
+            .arg("-CAserial")
+            .arg(&serial)
             .arg("-extfile")
             .arg(&extensions)
             .arg("-out")
@@ -609,7 +803,6 @@ fn route(
     pairing: &str,
     session_id: u64,
     title: &str,
-    grid: Grid,
     mode: InputMode,
     input: &Mutex<kobo_abi::pty::Pty>,
     session: &Session,
@@ -620,16 +813,41 @@ fn route(
         return respond(stream, 403, "{}");
     }
     match (request.method.as_str(), request.path()) {
-        ("GET", "/hello") => respond(
-            stream,
-            200,
-            &format!(
-                r#"{{"session":{session_id},"grid":"{}","title":{},"input":"{}"}}"#,
-                grid.words(),
-                json(title),
-                mode.wire()
-            ),
-        ),
+        ("GET", "/lease") => {
+            let lease = session.issue_lease().ok_or("terminal screen lock failed")?;
+            respond(stream, 200, &format!(r#"{{"lease":{lease}}}"#))
+        }
+        ("GET", "/hello") => {
+            let grid = query(&request.target, "grid")
+                .ok_or_else(|| "hello omitted the terminal grid".to_owned())
+                .and_then(|value| Grid::parse(&value))?;
+            let generation = query(&request.target, "generation")
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(0);
+            let lease = query(&request.target, "lease")
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(0);
+            let accepted = session.resize_for(grid, lease, generation, || {
+                input
+                    .lock()
+                    .map_err(|_| "terminal input lock failed")?
+                    .resize(grid.columns, grid.rows)
+                    .map_err(|error| format!("resize terminal: {error}"))
+            })?;
+            if !accepted {
+                return respond(stream, 409, r#"{"stale":true}"#);
+            }
+            respond(
+                stream,
+                200,
+                &format!(
+                    r#"{{"session":{session_id},"grid":"{}","title":{},"input":"{}"}}"#,
+                    grid.words(),
+                    json(title),
+                    mode.wire()
+                ),
+            )
+        }
         ("GET", "/screen") => {
             let received = query(&request.target, "session").and_then(|value| value.parse().ok());
             if received != Some(session_id) {
@@ -638,15 +856,29 @@ fn route(
             let since = query(&request.target, "seq")
                 .and_then(|value| value.parse().ok())
                 .unwrap_or(0);
+            let generation = query(&request.target, "generation")
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(0);
+            let lease = query(&request.target, "lease")
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(0);
             let started = Instant::now();
-            let mut screen = session.screen(since);
+            let Some(mut screen) = session.screen_for(since, lease, generation) else {
+                return respond(stream, 409, r#"{"stale":true}"#);
+            };
             while screen.rows.is_empty() && !screen.ended && started.elapsed() < LONGEST_POLL {
                 std::thread::sleep(Duration::from_millis(100));
-                screen = session.screen(since);
+                let Some(current) = session.screen_for(since, lease, generation) else {
+                    return respond(stream, 409, r#"{"stale":true}"#);
+                };
+                screen = current;
             }
             respond(stream, 200, &screen_json(&screen))
         }
         ("POST", "/keys") => {
+            let lease = query(&request.target, "lease")
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(0);
             let body = String::from_utf8_lossy(&request.body);
             let parsed = kobo_json::parse(&body).map_err(|_| "invalid keys JSON")?;
             if parsed.get("session").and_then(kobo_json::Value::as_i64) != Some(session_id as i64) {
@@ -660,10 +892,16 @@ fn route(
             if !permits_input(mode, &bytes) {
                 return respond(stream, 403, r#"{"accepted":false}"#);
             }
-            let mut terminal = input.lock().map_err(|_| "terminal input lock failed")?;
-            terminal
-                .write(&bytes)
-                .map_err(|error| format!("write terminal input: {error}"))?;
+            let accepted = session.write_for(lease, &bytes, |bytes| {
+                input
+                    .lock()
+                    .map_err(|_| "terminal input lock failed")?
+                    .write(bytes)
+                    .map_err(|error| format!("write terminal input: {error}"))
+            })?;
+            if !accepted {
+                return respond(stream, 409, r#"{"stale":true}"#);
+            }
             respond(stream, 200, r#"{"accepted":true}"#)
         }
         _ => respond(stream, 404, "{}"),
@@ -766,26 +1004,50 @@ fn screen_json(screen: &Screen) -> String {
             .map_or_else(|| "null".to_owned(), |exit| exit.to_string())
     )
 }
-fn substitute(text: String) -> String {
-    text.chars()
-        .map(|character| match character {
-            '\u{2580}'..='\u{259f}' => '#',
-            '\u{2800}'..='\u{28ff}' => '·',
-            character
-                if character > '\u{7f}' && !('\u{2500}'..='\u{257f}').contains(&character) =>
-            {
-                '·'
-            }
-            character => character,
-        })
-        .collect()
+fn visible_row(screen: &vt100::Screen, row: u16, columns: u16) -> String {
+    let mut text = String::with_capacity(usize::from(columns));
+    for column in 0..columns {
+        let Some(cell) = screen.cell(row, column) else {
+            break;
+        };
+        if cell.is_wide_continuation() {
+            continue;
+        }
+        if !cell.has_contents() {
+            text.push(' ');
+            continue;
+        }
+        text.push(substitute_cell(cell.contents()));
+        if cell.is_wide() {
+            // Paperterm deliberately renders a one-cell replacement glyph.
+            // Keep its terminal continuation cell so following ASCII stays in
+            // the column the host TUI assigned it.
+            text.push(' ');
+        }
+    }
+    text.truncate(text.trim_end().len());
+    text
+}
+
+fn substitute_cell(text: &str) -> char {
+    let character = text.chars().next().unwrap_or(' ');
+    match character {
+        '\u{2580}'..='\u{259f}' => '#',
+        '\u{2800}'..='\u{28ff}' => '·',
+        character if character > '\u{7f}' && !('\u{2500}'..='\u{257f}').contains(&character) => '·',
+        character => character,
+    }
 }
 fn random_session() -> Result<u64, String> {
+    // The device's intentionally small JSON parser stores numbers as f64.
+    // Keep opaque identifiers inside the largest exactly representable integer
+    // so the value sent back on /screen and /keys is byte-for-byte equivalent.
+    const MAX_EXACT_JSON_INTEGER: u64 = (1_u64 << 53) - 1;
     let mut bytes = [0_u8; 8];
     std::fs::File::open("/dev/urandom")
         .and_then(|mut file| file.read_exact(&mut bytes))
         .map_err(|error| format!("read randomness: {error}"))?;
-    Ok(u64::from_le_bytes(bytes) & i64::MAX as u64)
+    Ok((u64::from_le_bytes(bytes) & MAX_EXACT_JSON_INTEGER).max(1))
 }
 fn decode_base64(text: &str) -> Option<Vec<u8>> {
     const A: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -811,12 +1073,12 @@ fn decode_base64(text: &str) -> Option<Vec<u8>> {
         } else {
             value(group[3])?
         };
-        out.push((a << 2 | b >> 4) as u8);
+        out.push(((a << 2) | (b >> 4)) as u8);
         if group[2] != b'=' {
-            out.push((b << 4 | c >> 2) as u8);
+            out.push(((b << 4) | (c >> 2)) as u8);
         }
         if group[3] != b'=' {
-            out.push((c << 6 | d) as u8);
+            out.push(((c << 6) | d) as u8);
         }
     }
     Some(out)
@@ -840,9 +1102,27 @@ mod tests {
     fn controls_are_a_closed_whitelist() {
         assert!(permits_input(InputMode::Controls, b"\x1b[A"));
         assert!(permits_input(InputMode::Controls, b"\x03"));
+        assert!(permits_input(InputMode::Controls, b"\x1b[A\r\x03yn"));
         assert!(!permits_input(InputMode::Controls, b"rm -rf /"));
         assert!(!permits_input(InputMode::None, b"y"));
     }
+
+    #[test]
+    fn host_terminal_gets_shell_paths_but_not_ambient_credentials() {
+        let environment = host_environment_with(|name| match name {
+            "HOME" => Some("/home/reader".to_owned()),
+            "PATH" => Some("/opt/tools:/usr/bin".to_owned()),
+            "ANTHROPIC_API_KEY" => Some("must-not-leak".to_owned()),
+            _ => None,
+        });
+        assert!(environment.contains(&("TERM".to_owned(), "xterm-256color".to_owned())));
+        assert!(environment.contains(&("HOME".to_owned(), "/home/reader".to_owned())));
+        assert!(environment.contains(&("PATH".to_owned(), "/opt/tools:/usr/bin".to_owned())));
+        assert!(environment
+            .iter()
+            .all(|(name, _)| name != "ANTHROPIC_API_KEY"));
+    }
+
     #[test]
     fn rows_diff_after_terminal_bytes_and_substitute_braille() {
         let session = Session::new(Grid {
@@ -861,6 +1141,80 @@ mod tests {
         assert_eq!(changed.rows[0].cells.trim(), "ok ·");
         assert!(session.screen(changed.seq).rows.is_empty());
     }
+
+    #[test]
+    fn substituted_wide_cells_keep_following_columns_aligned() {
+        let session = Session::new(Grid {
+            columns: 8,
+            rows: 1,
+        });
+        session.feed("好X".as_bytes());
+        std::thread::sleep(SNAPSHOT_INTERVAL);
+        let screen = session.screen(0);
+        assert_eq!(screen.rows[0].cells, "· X");
+        assert_eq!(screen.rows[0].cursor, Some(3));
+    }
+
+    #[test]
+    fn combining_marks_do_not_create_phantom_terminal_cells() {
+        let session = Session::new(Grid {
+            columns: 8,
+            rows: 1,
+        });
+        session.feed("e\u{301}X".as_bytes());
+        std::thread::sleep(SNAPSHOT_INTERVAL);
+        let screen = session.screen(0);
+        assert_eq!(screen.rows[0].cells, "eX");
+        assert_eq!(screen.rows[0].cursor, Some(2));
+    }
+
+    #[test]
+    fn cursor_only_moves_dirty_the_old_and_new_cursor_rows() {
+        let session = Session::new(Grid {
+            columns: 8,
+            rows: 2,
+        });
+        session.feed(b"abc");
+        std::thread::sleep(SNAPSHOT_INTERVAL);
+        let before = session.screen(0);
+        session.feed(b"\x1b[D");
+        std::thread::sleep(SNAPSHOT_INTERVAL);
+        let moved = session.screen(before.seq);
+        assert!(moved.seq > before.seq);
+        assert_eq!(moved.rows.len(), 1);
+        assert_eq!(moved.rows[0].cells, "abc");
+        assert_eq!(moved.rows[0].cursor, Some(2));
+
+        session.feed(b"\r\n");
+        std::thread::sleep(SNAPSHOT_INTERVAL);
+        let next_row = session.screen(moved.seq);
+        assert_eq!(
+            next_row.rows.iter().map(|row| row.y).collect::<Vec<_>>(),
+            vec![0, 1]
+        );
+        assert_eq!(next_row.rows[0].cursor, None);
+        assert_eq!(next_row.rows[1].cursor, Some(0));
+    }
+
+    #[test]
+    fn alternate_screen_returns_to_the_primary_screen_cleanly() {
+        let session = Session::new(Grid {
+            columns: 12,
+            rows: 2,
+        });
+        session.feed(b"primary");
+        std::thread::sleep(SNAPSHOT_INTERVAL);
+        let primary = session.screen(0);
+        session.feed(b"\x1b[?1049hsecondary");
+        std::thread::sleep(SNAPSHOT_INTERVAL);
+        let alternate = session.screen(primary.seq);
+        assert_eq!(alternate.rows[0].cells, "secondary");
+        session.feed(b"\x1b[?1049l");
+        std::thread::sleep(SNAPSHOT_INTERVAL);
+        let restored = session.screen(alternate.seq);
+        assert_eq!(restored.rows[0].cells, "primary");
+    }
+
     #[test]
     fn multiple_terminal_updates_share_one_snapshot() {
         let session = Session::new(Grid {
@@ -875,6 +1229,240 @@ mod tests {
         assert_eq!(frame.rows.len(), 1);
         assert_eq!(frame.rows[0].cells.trim(), "second");
     }
+
+    #[test]
+    fn resizing_changes_the_terminal_viewport_and_forces_a_full_frame() {
+        let session = Session::new(Grid {
+            columns: 12,
+            rows: 2,
+        });
+        session.feed(b"before");
+        std::thread::sleep(SNAPSHOT_INTERVAL);
+        let before = session.screen(0);
+        session.resize(Grid {
+            columns: 20,
+            rows: 3,
+        });
+        let resized = session.screen(before.seq);
+        assert_eq!(resized.rows.len(), 3);
+        assert_eq!(resized.rows[0].cells.trim(), "before");
+    }
+
+    #[test]
+    fn obsolete_poll_generation_cannot_consume_the_post_resize_snapshot() {
+        let session = Session::new(Grid {
+            columns: 12,
+            rows: 2,
+        });
+        session.feed(b"before");
+        let before = session.screen(0);
+        let resized = session
+            .resize_for(
+                Grid {
+                    columns: 20,
+                    rows: 3,
+                },
+                0,
+                1,
+                || Ok(()),
+            )
+            .expect("resize");
+        assert!(resized);
+        assert!(session.screen_for(before.seq, 0, 0).is_none());
+
+        let current = session
+            .screen_for(before.seq, 0, 1)
+            .expect("current generation snapshot");
+        assert_eq!(current.rows.len(), 3);
+        assert_eq!(current.rows[0].cells.trim(), "before");
+        assert!(!session
+            .resize_for(
+                Grid {
+                    columns: 12,
+                    rows: 2,
+                },
+                0,
+                0,
+                || panic!("stale resize reached the PTY"),
+            )
+            .expect("stale resize verdict"));
+    }
+
+    #[test]
+    fn fresh_lease_resets_generations_and_rejects_delayed_old_epoch_resize() {
+        let session = Session::new(Grid {
+            columns: 12,
+            rows: 2,
+        });
+        let first = session.issue_lease().expect("first lease");
+        assert!(session
+            .resize_for(
+                Grid {
+                    columns: 20,
+                    rows: 3,
+                },
+                first,
+                9,
+                || Ok(()),
+            )
+            .expect("first resize"));
+        let relaunched = session.issue_lease().expect("relaunch lease");
+        assert!(relaunched > first);
+        assert!(session
+            .resize_for(
+                Grid {
+                    columns: 30,
+                    rows: 4,
+                },
+                relaunched,
+                0,
+                || Ok(()),
+            )
+            .expect("relaunch resize"));
+        assert!(!session
+            .resize_for(
+                Grid {
+                    columns: 10,
+                    rows: 1,
+                },
+                first,
+                u64::MAX,
+                || panic!("old epoch reached the PTY"),
+            )
+            .expect("old epoch verdict"));
+        assert!(session.screen_for(0, first, u64::MAX).is_none());
+        let current = session
+            .screen_for(0, relaunched, 0)
+            .expect("relaunched screen");
+        assert_eq!(current.rows.len(), 4);
+    }
+
+    #[test]
+    fn delayed_old_lease_keys_cannot_cross_new_lease_activation() {
+        let session = Arc::new(Session::new(Grid {
+            columns: 12,
+            rows: 2,
+        }));
+        let first = session.issue_lease().expect("first lease");
+        assert!(session
+            .resize_for(
+                Grid {
+                    columns: 12,
+                    rows: 2,
+                },
+                first,
+                0,
+                || Ok(()),
+            )
+            .expect("activate first lease"));
+        let current = session.issue_lease().expect("current lease");
+        let writes = Arc::new(Mutex::new(Vec::<Vec<u8>>::new()));
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+        let (continue_tx, continue_rx) = std::sync::mpsc::channel();
+
+        std::thread::scope(|scope| {
+            let stale_session = Arc::clone(&session);
+            let stale_writes = Arc::clone(&writes);
+            let stale = scope.spawn(move || {
+                ready_tx.send(()).expect("announce parsed stale request");
+                continue_rx.recv().expect("continue stale request");
+                stale_session
+                    .write_for(first, b"old", |bytes| {
+                        stale_writes
+                            .lock()
+                            .expect("stale writes lock")
+                            .push(bytes.to_vec());
+                        Ok(())
+                    })
+                    .expect("stale write verdict")
+            });
+
+            ready_rx.recv().expect("stale request ready");
+            assert!(session
+                .resize_for(
+                    Grid {
+                        columns: 20,
+                        rows: 3,
+                    },
+                    current,
+                    0,
+                    || Ok(()),
+                )
+                .expect("activate current lease"));
+            continue_tx.send(()).expect("release stale request");
+            assert!(!stale.join().expect("stale request thread"));
+        });
+
+        assert!(session
+            .write_for(current, b"new", |bytes| {
+                writes
+                    .lock()
+                    .expect("current writes lock")
+                    .push(bytes.to_vec());
+                Ok(())
+            })
+            .expect("current write verdict"));
+        assert_eq!(*writes.lock().expect("writes lock"), [b"new".to_vec()]);
+    }
+
+    #[test]
+    fn hidden_open_closed_resize_emits_one_coherent_full_tui_frame_each_time() {
+        let hidden = Grid {
+            columns: 40,
+            rows: 10,
+        };
+        let open = Grid {
+            columns: 40,
+            rows: 6,
+        };
+        let session = Session::new(hidden);
+        session.feed(
+            b"\x1b[2J\x1b[HQuick safety check\r\n\
+              Security guide\r\n\
+              1. Yes, I trust this folder\r\n\
+              2. No, exit\r\n\
+              Enter to confirm",
+        );
+        let first = session.screen(0);
+        assert_eq!(
+            first
+                .rows
+                .iter()
+                .filter(|row| row.cells.contains("Quick safety check"))
+                .count(),
+            1
+        );
+
+        session.resize(open);
+        let smaller = session.screen(first.seq);
+        assert_eq!(smaller.rows.len(), usize::from(open.rows));
+        assert_eq!(
+            smaller
+                .rows
+                .iter()
+                .filter(|row| row.cells.contains("Quick safety check"))
+                .count(),
+            1
+        );
+
+        session.resize(hidden);
+        let expanded = session.screen(smaller.seq);
+        assert_eq!(expanded.rows.len(), usize::from(hidden.rows));
+        assert_eq!(
+            expanded
+                .rows
+                .iter()
+                .filter(|row| row.cells.contains("Quick safety check"))
+                .count(),
+            1
+        );
+        assert!(expanded
+            .rows
+            .iter()
+            .skip(usize::from(open.rows))
+            .all(|row| row.cells.trim().is_empty()));
+    }
+
     #[test]
     fn pty_output_keeps_terminal_escape_sequences_for_the_screen_model() {
         let mut pty = kobo_abi::pty::Pty::spawn(
@@ -898,6 +1486,57 @@ mod tests {
         assert_eq!(session.screen(0).rows[0].cells.trim(), "ready");
         let _ = pty.finished().expect("reap PTY command");
     }
+
+    #[test]
+    fn child_exit_drains_pty_eof_and_exposes_uncapped_final_output() {
+        let pty = kobo_abi::pty::Pty::spawn(
+            "/bin/sh",
+            &["-c", "printf first; sleep 1; printf final"],
+            &[("TERM", "xterm-256color")],
+            20,
+            2,
+        )
+        .expect("start final-output command");
+        let input = Mutex::new(pty);
+        let session = Session::new(Grid {
+            columns: 20,
+            rows: 2,
+        });
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let mut before = None;
+        let mut exit = None;
+        loop {
+            let eof = drain_pty(&input, &session);
+            if before.is_none() {
+                let screen = session.screen(0);
+                if screen.rows.iter().any(|row| row.cells.contains("first")) {
+                    before = Some(screen.seq);
+                }
+            }
+            if exit.is_none() {
+                exit = input
+                    .lock()
+                    .expect("terminal lock")
+                    .finished()
+                    .expect("wait for command");
+            }
+            if let Some(code) = exit.filter(|_| eof) {
+                session.finish(code);
+                break;
+            }
+            assert!(Instant::now() < deadline, "PTY did not reach EOF");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        let final_screen = session.screen(before.expect("initial output snapshot"));
+        assert!(final_screen.ended);
+        assert_eq!(final_screen.exit, Some(0));
+        assert!(final_screen
+            .rows
+            .iter()
+            .any(|row| row.cells.contains("firstfinal")));
+    }
+
     #[test]
     fn pty_accepts_control_input_without_waiting_for_a_snapshot() {
         let mut pty = kobo_abi::pty::Pty::spawn(
@@ -932,5 +1571,16 @@ mod tests {
     fn base64_is_bounded_before_input_is_accepted() {
         assert_eq!(decode_base64("Gw=="), Some(vec![27]));
         assert_eq!(decode_base64("bad"), None);
+    }
+
+    #[test]
+    fn session_identifiers_survive_the_device_json_number_model() {
+        const MAX_EXACT_JSON_INTEGER: u64 = (1_u64 << 53) - 1;
+        let body = format!(r#"{{"session":{MAX_EXACT_JSON_INTEGER}}}"#);
+        let parsed = kobo_json::parse(&body).expect("session JSON");
+        assert_eq!(
+            parsed.get("session").and_then(kobo_json::Value::as_i64),
+            Some(MAX_EXACT_JSON_INTEGER as i64)
+        );
     }
 }

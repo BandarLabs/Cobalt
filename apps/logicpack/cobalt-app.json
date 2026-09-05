@@ -1,0 +1,11 @@
+{
+  "id": "logicpack",
+  "display_name": "Logic Pack",
+  "short_label": "Logic Pack",
+  "summary": "Play four touch-first pencil puzzles.",
+  "page_description": "A daily collection of familiar logic puzzles with paper-like marks and large controls.",
+  "version": "0.1.0",
+  "release_notes": "A daily collection of familiar logic puzzles with paper-like marks and large controls.",
+  "glyph": "grid",
+  "capabilities": []
+}

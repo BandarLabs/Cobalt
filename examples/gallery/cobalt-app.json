@@ -1,12 +1,1 @@
-{
-  "id": "gallery",
-  "display_name": "Components",
-  "short_label": "Components",
-  "summary": "See every Cobalt UI component on the device in one reference app.",
-  "version": "1.0.7",
-  "glyph": "chart",
-  "capabilities": [
-    "network"
-  ],
-  "release_notes": "Rebuild for protocol 12 so the Store listing matches Cobalt 0.3.2."
-}
+{"id":"gallery","display_name":"Components","short_label":"Components","summary":"See every Cobalt UI component on the device in one reference app.","version":"1.0.8","glyph":"chart","capabilities":["network"],"release_notes":"Add Folio and ghosting component demonstrations."}

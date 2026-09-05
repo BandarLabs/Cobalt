@@ -1,0 +1,11 @@
+{
+  "id": "parser",
+  "display_name": "Parser",
+  "short_label": "Parser",
+  "summary": "Play an original interactive story without Wi-Fi.",
+  "page_description": "Explore an original text adventure with touch shortcuts and a comfortable reading layout.",
+  "version": "0.1.0",
+  "release_notes": "Explore an original text adventure with touch shortcuts and a comfortable reading layout.",
+  "glyph": "book",
+  "capabilities": []
+}

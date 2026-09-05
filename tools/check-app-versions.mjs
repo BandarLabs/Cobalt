@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { dirname, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { compatibilityPolicy } from "./app-registry.mjs";
+import { compatibilityPolicy, deriveMinimumCobalt } from "./app-registry.mjs";
 import {
   storeCatalogChanges,
   storeWatchDirectories,
@@ -17,11 +17,31 @@ const MANIFEST_FIELDS = [
   "minimum_cobalt_version",
   "glyph"
 ];
-const COMPATIBLE_PLATFORM_PATHS = new Set([
+const COMPATIBLE_RELEASE_PATHS = new Set([
+  "Cargo.lock",
+  "crates/kobo-abi/src/lib.rs",
+  "crates/kobo-net/src/lib.rs",
+  "crates/kobo-net/src/lines.rs",
+  "crates/kobo-net/tests/fixtures/localhost-ca.der",
+  "crates/kobo-net/tests/fixtures/localhost-cert.der",
+  "crates/kobo-net/tests/fixtures/localhost-key.der",
+  "crates/kobo-net/tests/lichess_stream_mock.rs",
+  "crates/kobo-policy/src/credentials.rs",
   "crates/kobo-policy/src/services.rs",
+  "crates/kobo-policy/src/tasks.rs",
   "crates/kobo-protocol/src/lib.rs",
+  "crates/kobo-sdk/Cargo.toml",
+  "crates/kobo-sdk/src/credentials.rs",
+  "crates/kobo-sdk/src/keyboard.rs",
   "crates/kobo-sdk/src/lib.rs",
-  "crates/kobo-ui/src/lib.rs"
+  "crates/kobo-sdk/src/terminal.rs",
+  "crates/kobo-text/src/lib.rs",
+  "crates/kobo-ui/Cargo.toml",
+  "crates/kobo-ui/src/lib.rs",
+  "crates/kobo-ui/src/vector.rs",
+  "crates/kobo-ui/src/vector/tabler.rs",
+  "examples/gutenbird/Cargo.toml",
+  "examples/gutenbird/src/main.rs"
 ]);
 
 // Cargo metadata grows with every workspace package. Bound it well above the
@@ -59,8 +79,17 @@ function normalizedCapabilities(value, label) {
 
 function changedManifestFields(app, previous) {
   const changed = [];
-  for (const field of [...MANIFEST_FIELDS, "version"]) {
+  for (const field of [
+    ...MANIFEST_FIELDS.filter(field => field !== "minimum_cobalt_version"),
+    "version"
+  ]) {
     if (app[field] !== previous[field]) changed.push(field);
+  }
+  if (
+    app.minimum_cobalt_version !== previous.minimum_cobalt_version &&
+    app.minimum_cobalt_version !== deriveMinimumCobalt(app.capabilities)
+  ) {
+    changed.push("minimum_cobalt_version");
   }
   const currentCapabilities = normalizedCapabilities(app.capabilities, app.id);
   const previousCapabilities = normalizedCapabilities(previous.capabilities, app.id);
@@ -223,7 +252,12 @@ function versionIsOlder(value, minimum) {
   return false;
 }
 
-export function checkProtocolMinimums(registry, protocolVersion, baselines = PROTOCOL_MINIMUMS) {
+export function checkProtocolMinimums(
+  registry,
+  protocolVersion,
+  baselines = PROTOCOL_MINIMUMS,
+  affectedPackages = null
+) {
   if (!Array.isArray(registry.apps)) throw new Error("registry apps must be an array");
   const minimum = baselines.get(protocolVersion);
   if (!minimum) {
@@ -232,12 +266,36 @@ export function checkProtocolMinimums(registry, protocolVersion, baselines = PRO
     );
   }
   const failures = registry.apps
+    .filter(app => !affectedPackages || affectedPackages.has(app.package))
     .filter(app => versionIsOlder(app.minimum_cobalt_version, minimum))
     .map(
       app =>
         `${app.id}: minimum Cobalt ${app.minimum_cobalt_version} is older than protocol ${protocolVersion}, first supported by ${minimum}`
     );
   if (failures.length > 0) throw new Error(failures.join("\n"));
+}
+
+export function checkBuildPackages(
+  registry,
+  published,
+  packages,
+  protocolVersion,
+  baselines = PROTOCOL_MINIMUMS
+) {
+  if (!Array.isArray(registry.apps)) throw new Error("registry apps must be an array");
+  if (!Array.isArray(packages) || packages.some(package_ => typeof package_ !== "string")) {
+    throw new Error("build packages must be an array of strings");
+  }
+  const selected = new Set(packages);
+  if (selected.size !== packages.length) {
+    throw new Error("build packages must not contain duplicates");
+  }
+  const registered = new Set(registry.apps.map(app => app?.package));
+  for (const package_ of selected) {
+    if (!registered.has(package_)) throw new Error(`unknown build package ${package_}`);
+  }
+  checkProtocolMinimums(registry, protocolVersion, baselines, selected);
+  checkEntries(registry, published, selected);
 }
 
 function currentProtocolVersion() {
@@ -409,8 +467,8 @@ export function compatibleChangePaths(
     for (const file of change.files) {
       if (
         typeof file?.path !== "string" ||
-        !COMPATIBLE_PLATFORM_PATHS.has(file.path) ||
-        !/^[0-9a-f]{40}$/.test(file?.base_blob) ||
+        !COMPATIBLE_RELEASE_PATHS.has(file.path) ||
+        (file?.base_blob !== null && !/^[0-9a-f]{40}$/.test(file?.base_blob)) ||
         !/^[0-9a-f]{40}$/.test(file?.compatible_blob)
       ) {
         throw new Error("invalid app release compatible-change file");
@@ -500,6 +558,19 @@ export function changedLockPackageIdentities(previousSource, currentSource) {
       return JSON.stringify(previousBlocks) !== JSON.stringify(currentBlocks);
     })
   );
+}
+
+export function releaseLockPackageIdentities(
+  previousSource,
+  currentSource,
+  compatiblePaths
+) {
+  if (!(compatiblePaths instanceof Set)) {
+    throw new Error("compatible release paths must be a set");
+  }
+  return compatiblePaths.has("Cargo.lock")
+    ? new Set()
+    : changedLockPackageIdentities(previousSource, currentSource);
 }
 
 export function registeredConsumers(
@@ -725,9 +796,10 @@ export function analyzeAppReleaseInputs(baseRevision, registry, strictUnknown = 
   }
 
   if (changedPaths.includes("Cargo.lock")) {
-    const lockChanges = changedLockPackageIdentities(
+    const lockChanges = releaseLockPackageIdentities(
       command("git", ["show", `${baseRevision}:Cargo.lock`]),
-      readFileSync(resolve(workspaceRoot, "Cargo.lock"), "utf8")
+      readFileSync(resolve(workspaceRoot, "Cargo.lock"), "utf8"),
+      compatiblePaths
     );
     for (const identity of lockChanges) changedIdentities.add(identity);
   }
@@ -783,7 +855,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
       registry,
       selectedPackage === undefined
     );
-    checkProtocolMinimums(registry, currentProtocolVersion());
+    checkProtocolMinimums(registry, currentProtocolVersion(), PROTOCOL_MINIMUMS, affected);
     if (mode === "--list-packages") {
       console.log(JSON.stringify(packagesToBuild(registry, published, affected)));
     } else if (mode === "--publish-needed") {

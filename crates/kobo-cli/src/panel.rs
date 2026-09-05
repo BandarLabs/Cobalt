@@ -114,7 +114,7 @@ pub fn parse_present(arguments: &[String]) -> Result<Present, String> {
             }
             "--keep-running" => keep_running = true,
             other if other.starts_with('-') => {
-                return Err(format!("unknown option '{other}'\n{PRESENT_USAGE}"))
+                return Err(format!("unknown option '{other}'\n{PRESENT_USAGE}"));
             }
             other if app.is_none() => app = Some(other.to_owned()),
             other => return Err(format!("unexpected argument '{other}'\n{PRESENT_USAGE}")),

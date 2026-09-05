@@ -1,0 +1,11 @@
+{
+  "id": "parlor",
+  "display_name": "Parlor",
+  "short_label": "Parlor",
+  "summary": "Play touch-first Reversi together on one Kobo.",
+  "page_description": "A pass-and-play board-game shelf, beginning with touch-first Reversi.",
+  "version": "0.1.0",
+  "release_notes": "A pass-and-play board-game shelf, beginning with touch-first Reversi.",
+  "glyph": "circle",
+  "capabilities": []
+}

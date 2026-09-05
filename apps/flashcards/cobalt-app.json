@@ -1,0 +1,11 @@
+{
+  "id": "flashcards",
+  "display_name": "Flashcards",
+  "short_label": "Flashcards",
+  "summary": "Review flashcards anywhere, even without Wi-Fi.",
+  "page_description": "Study with large reveal and answer controls designed for a Kobo screen.",
+  "version": "0.1.0",
+  "release_notes": "Study with large reveal and answer controls designed for a Kobo screen.",
+  "glyph": "bookmark",
+  "capabilities": []
+}

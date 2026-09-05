@@ -1,0 +1,13 @@
+{
+  "id": "inkling",
+  "display_name": "Inkling",
+  "short_label": "Inkling",
+  "summary": "Solve a fresh five-letter puzzle each day.",
+  "page_description": "A daily five-letter word puzzle you can play anywhere, with or without Wi-Fi.",
+  "version": "0.1.0",
+  "release_notes": "A daily five-letter word puzzle you can play anywhere, with or without Wi-Fi.",
+  "glyph": "note",
+  "capabilities": [
+    "network"
+  ]
+}
