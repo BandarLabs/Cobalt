@@ -24,6 +24,41 @@ use kobo_protocol::DeviceError;
 /// than the tests losing the code path that emits them.
 #[cfg(not(feature = "device-write"))]
 fn trace(_event: &str) {}
+
+/// The one line an owner can be asked for after an update would not install.
+///
+/// The blackbox is off unless `KOBO_BLACKBOX=1`, and nothing sets it, so
+/// tracing an update failure records it for a developer who already knew to
+/// turn it on and for nobody else. That is how a reader came to refuse an
+/// update while leaving no account of it anywhere: not in its own log, not
+/// over SSH, and not on screen beyond a shared sentence that named the wrong
+/// part of the system.
+///
+/// This is written whether or not anything is enabled, and only when an update
+/// has actually failed, so it costs one write on an occasion that is already
+/// exceptional. It sits with the owner's state rather than in the installation,
+/// so replacing Cobalt does not erase the reason the last replacement failed.
+///
+/// Best-effort throughout: a reader that cannot write this still gets the
+/// error it was going to get, because failing to record a failure is not worth
+/// turning into a second one.
+fn record_failure(adds: &Path, reason: &str) {
+    // Only ever written beside an installation that already exists. A failed
+    // update must leave a tree that has no Cobalt in it exactly as it found
+    // it, which is what `a_download_that_does_not_match_its_digest_writes_nothing`
+    // asserts: bytes that were not what they were promised to be do not get to
+    // create directories. On a reader this changes nothing, because a reader
+    // that is updating has an installation by definition.
+    let cobalt = adds.join("cobalt");
+    if !cobalt.is_dir() {
+        return;
+    }
+    let state = cobalt.join("state");
+    if fs::create_dir_all(&state).is_err() {
+        return;
+    }
+    let _ignored = fs::write(state.join("last-update-error"), format!("{reason}\n"));
+}
 use std::fs;
 use std::io::Write;
 use std::path::{Component, Path};
@@ -116,6 +151,7 @@ pub fn apply(url: &str, sha256: &str) -> Result<(), DeviceError> {
             ),
         };
         trace(&format!("platform update: download failed: {reason}"));
+        record_failure(Path::new(ADDS), &format!("download failed: {reason}"));
         mapped
     })?;
     trace(&format!(
@@ -134,10 +170,12 @@ pub fn apply(url: &str, sha256: &str) -> Result<(), DeviceError> {
 /// kept at `adds/cobalt.prev` so a bad release can be undone by hand.
 fn install(archive: &[u8], sha256: &str, adds: &Path) -> Result<(), DeviceError> {
     if kobo_net::sha256::hex_digest(archive) != sha256 {
-        trace(&format!(
-            "platform update: the {} downloaded bytes do not match the published digest",
+        let reason = format!(
+            "the {} downloaded bytes do not match the published digest",
             archive.len()
-        ));
+        );
+        trace(&format!("platform update: {reason}"));
+        record_failure(adds, &reason);
         return Err(DeviceError::Integrity);
     }
     // The digest matched, so these bytes are exactly what was published. A
@@ -150,10 +188,12 @@ fn install(archive: &[u8], sha256: &str, adds: &Path) -> Result<(), DeviceError>
     // gigabyte of memory. Both arrive here as one code, so the size is traced
     // to tell them apart afterwards.
     let tar = kobo_net::gzip::expand(archive, EXPANDED_LIMIT).map_err(|_| {
-        trace(&format!(
-            "platform update: could not expand the {} byte archive, ceiling {EXPANDED_LIMIT}",
+        let reason = format!(
+            "could not expand the {} byte archive, ceiling {EXPANDED_LIMIT}",
             archive.len()
-        ));
+        );
+        trace(&format!("platform update: {reason}"));
+        record_failure(adds, &reason);
         DeviceError::InvalidInput
     })?;
     trace(&format!(
@@ -1017,6 +1057,34 @@ mod tests {
             file("bin/kobod", b"daemon"),
             file("bin/kobo-launcher", b"launcher"),
         ]
+    }
+
+    #[test]
+    fn a_refused_update_leaves_an_account_of_itself_the_owner_can_be_asked_for() {
+        // The reason used to go only to the blackbox, which is off unless
+        // KOBO_BLACKBOX=1 and nothing sets it, so a reader that refused an
+        // update recorded nothing an owner could be asked for and nothing a
+        // maintainer could read without a cable and a staged key. This asserts
+        // the account survives on its own, with the blackbox exactly as absent
+        // as it is on a reader nobody has configured.
+        let adds = scratch("records-why-it-refused");
+        // A reader that is updating has an installation already; the account
+        // is written beside it and never conjured next to nothing.
+        fs::create_dir_all(adds.join("cobalt")).expect("an installed Cobalt");
+        let digest_of_something_else = "0".repeat(64);
+        let error = install(b"not a gzip archive", &digest_of_something_else, &adds)
+            .expect_err("an archive that is not what it was promised to be");
+        assert_eq!(error, DeviceError::Integrity);
+
+        let recorded = fs::read_to_string(adds.join("cobalt/state/last-update-error"))
+            .expect("the reason the update was refused");
+        assert!(
+            recorded.contains("do not match the published digest"),
+            "recorded reason does not say what happened: {recorded}"
+        );
+        // The owner's state, not the installation, so replacing Cobalt does
+        // not erase the reason the last replacement failed.
+        assert!(adds.join("cobalt/state").is_dir());
     }
 
     fn scratch(name: &str) -> std::path::PathBuf {
