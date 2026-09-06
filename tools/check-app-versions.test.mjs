@@ -26,7 +26,7 @@ import {
   releaseDependencyIds,
   storeImpactOfChangedPaths
 } from "./check-app-versions.mjs";
-import { collectRegistry } from "./app-registry.mjs";
+import { collectRegistry, deriveMinimumCobalt } from "./app-registry.mjs";
 import {
   registeredStorePackages,
   storeCatalogChanges,
@@ -77,7 +77,14 @@ test("accepts an unchanged app at the published version", () => {
 
 test("does not release unchanged apps for a policy-derived minimum bump", () => {
   const values = fixture();
-  values.registry.apps[0].minimum_cobalt_version = "0.3.5";
+  // Asked of the policy rather than written down. A literal here is a copy of
+  // the answer `checkEntries` computes, and the two drift apart the moment the
+  // protocol table moves: writing "0.3.5" here made this test fail when
+  // protocols 12 and 13 were corrected to 0.3.7, reporting a broken exemption
+  // when the exemption was working and only the fixture was stale.
+  values.registry.apps[0].minimum_cobalt_version = deriveMinimumCobalt(
+    values.registry.apps[0].capabilities
+  );
   assert.doesNotThrow(() => checkEntries(values.registry, values.published, new Set()));
 });
 

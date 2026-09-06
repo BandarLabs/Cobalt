@@ -36,8 +36,6 @@ mod sha256;
 mod sync;
 
 const DEVICE_PACKAGES: &[&str] = &["kobo-doctor", "kobod", "kobo-todo", "kobo-terminal"];
-const SYNCTHING_ARTIFACT_ENV: &str = "COBALT_SYNCTHING_ARTIFACT";
-const SYNCTHING_SHA256: &str = "e7e0523d8db0328b22ebff5c98bd721c94e295122771c0538414898a06ef8ebf";
 const SYNCTHING_SOURCE_RECORD: &str = "\
 Syncthing source: https://github.com/syncthing/syncthing.git
 Tag: v2.0.9
@@ -3547,17 +3545,21 @@ fn build_package_bytes() -> Result<BuiltPackage, String> {
             program: true,
         });
     }
-    let (syncthing, checksum) = verified_syncthing_artifact()?;
-    members.push(package::Member {
-        path: format!("{}/bin/syncthing", package::INSTALL_ROOT),
-        bytes: syncthing,
-        program: true,
-    });
-    members.push(package::Member {
-        path: format!("{}/bin/syncthing.sha256", package::INSTALL_ROOT),
-        bytes: checksum,
-        program: false,
-    });
+    // The Syncthing engine is deliberately not a member of this package.
+    //
+    // It is 27.9 MB, which was 44% of the release and took the archive from
+    // 15.0 MB to 31.0 MB compressed and 26.9 MB to 63.0 MB expanded. Every
+    // reader pays that on every update, over Wi-Fi, and `update::install`
+    // holds both the archive and the expanded tree in memory at once on a
+    // device with half a gigabyte of it -- so the cost of one optional
+    // feature is charged to everybody who never enables it, at the moment
+    // they are least able to afford it.
+    //
+    // The engine is fetched on first use instead, from a tag that does not
+    // move, and checked against the same digest the runtime already enforces
+    // before it will execute it. The source record stays here: a reader that
+    // runs Syncthing is owed the notice whether the bytes arrived in this
+    // archive or afterwards.
     members.push(text_member(
         "licenses/SYNCTHING.md",
         SYNCTHING_SOURCE_RECORD,
@@ -3615,34 +3617,6 @@ fn build_package_bytes() -> Result<BuiltPackage, String> {
         listed,
         compressed,
     })
-}
-
-fn verified_syncthing_artifact() -> Result<(Vec<u8>, Vec<u8>), String> {
-    let binary = std::env::var_os(SYNCTHING_ARTIFACT_ENV)
-        .map(PathBuf::from)
-        .ok_or_else(|| {
-            format!("{SYNCTHING_ARTIFACT_ENV} must name the reviewed Syncthing v2.0.9 ARM artifact")
-        })?;
-    let bytes = fs::read(&binary).map_err(|error| format!("read {}: {error}", binary.display()))?;
-    if !matching_sha256(&bytes, SYNCTHING_SHA256) {
-        return Err(
-            "Syncthing artifact did not match the repository-pinned v2.0.9 digest".to_owned(),
-        );
-    }
-    // Pure-Go ARM executables do not advertise a C floating-point ABI. The
-    // pinned digest authenticates this exact reviewed artifact; retain all
-    // other static ARM ELF checks without requiring the Rust hard-float flag.
-    verify_arm_elf_bytes(&bytes, false)
-        .map_err(|error| format!("verify {}: {error}", binary.display()))?;
-    Ok((bytes, format!("{SYNCTHING_SHA256}\n").into_bytes()))
-}
-
-fn matching_sha256(bytes: &[u8], expected: &str) -> bool {
-    expected.len() == 64
-        && expected
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-        && expected == sha256::hex_digest(bytes)
 }
 
 /// What to say when the cable is in but nothing usable is behind it.
@@ -7068,15 +7042,6 @@ mod tests {
         fs::write(&path, b"not an elf").expect("write fixture");
         assert!(verify_arm_elf(&path).is_err());
         fs::remove_file(path).expect("remove fixture");
-    }
-
-    #[test]
-    fn syncthing_artifact_digest_must_be_the_pinned_lowercase_sha256() {
-        let digest = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
-        assert!(super::matching_sha256(b"abc", digest));
-        assert!(!super::matching_sha256(b"abd", digest));
-        assert!(!super::matching_sha256(b"abc", &digest.to_uppercase()));
-        assert!(!super::matching_sha256(b"abc", "not-a-checksum"));
     }
 
     #[test]

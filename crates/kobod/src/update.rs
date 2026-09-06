@@ -27,13 +27,31 @@ const PREFIX: &str = "mnt/onboard/.adds/cobalt";
 #[cfg(feature = "device-write")]
 const ADDS: &str = "/mnt/onboard/.adds";
 
-/// The most compressed bytes a release is allowed to be. The real artifact is
-/// a few megabytes; a reply ten times that size is not the artifact.
+/// The most compressed bytes a release is allowed to be.
+///
+/// This said "the real artifact is a few megabytes" and allowed 32 MiB on that
+/// basis. The artifact stopped being a few megabytes when the Syncthing engine
+/// joined the package: 0.3.7 is 31.0 MiB compressed, which is 92.5% of that
+/// ceiling, so the release after it would have been refused by arithmetic
+/// alone. A refusal here surfaces as `TaskError::TooLarge`, which the caller
+/// maps to `DeviceError::InvalidInput` and the reader shows as "the address or
+/// credentials are invalid" -- an answer that sends whoever reads it looking at
+/// their network rather than at the size of the download.
+///
+/// Set from the measured artifact rather than a round number, with room for it
+/// to roughly double before anyone has to think about this again.
 #[cfg(feature = "device-write")]
-const ARCHIVE_LIMIT: u32 = 32 * 1024 * 1024;
+const ARCHIVE_LIMIT: u32 = 64 * 1024 * 1024;
 
 /// The most the archive may expand to. The device has half a gigabyte of
 /// memory in total, so the unpacked tree is held to a fraction of it.
+///
+/// Deliberately not raised alongside the ceiling above. 0.3.7 expands to
+/// 63.0 MiB against this 128 MiB, so this is not what refuses a release today,
+/// and raising it would only license a larger tree on a device whose memory is
+/// the real constraint: `install` holds the whole archive and the whole
+/// expanded tar at once, and the expansion doubles its output buffer to get
+/// there. The payload is the thing to make smaller, not this number.
 const EXPANDED_LIMIT: u32 = 128 * 1024 * 1024;
 
 /// One tar header or payload block.
