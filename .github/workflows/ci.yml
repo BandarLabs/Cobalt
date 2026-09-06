@@ -20,6 +20,10 @@ jobs:
       - name: Install the ARM cross-compiler the packaging tests look for
         run: sudo apt-get update && sudo apt-get install --yes gcc-arm-linux-gnueabihf
       - run: cargo fmt --all -- --check
+      - name: Test the POSIX host installer
+        run: |
+          sh -n install.sh docs/install.sh tools/installer-test.sh tools/build-host-release.sh
+          tools/installer-test.sh
       - run: node --test tools/*.test.mjs
       - name: Require current generated app pages
         run: |
@@ -52,17 +56,94 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          published_sha="$(gh api \
-            "repos/${GITHUB_REPOSITORY}/actions/workflows/apps.yml/runs?branch=main&status=success&per_page=1" \
-            --jq '.workflow_runs[0].head_sha')"
-          test -n "$published_sha"
-          curl --fail --location --retry 3 \
-            --output published-app-catalog.json \
-            https://github.com/BandarLabs/Cobalt/releases/download/app-catalog/cobalt-app-catalog.json
+          mkdir -p published-state
+          gh release download app-catalog \
+            --dir published-state \
+            --pattern cobalt-app-catalog.json
+          catalog_sha256="$(
+            sha256sum published-state/cobalt-app-catalog.json | cut -d' ' -f1
+          )"
+          provenance_count="$(
+            gh release view app-catalog --json assets \
+              --jq '[.assets[] | select(.name == "cobalt-app-catalog-provenance.json")] | length'
+          )"
+          if [ "$provenance_count" -eq 1 ]; then
+            gh release download app-catalog \
+              --dir published-state \
+              --pattern cobalt-app-catalog-provenance.json
+            published_sha="$(
+              # shellcheck disable=SC2016
+              node -e '
+                const fs = require("fs");
+                const value = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+                if (
+                  value.format_version !== 1 ||
+                  value.channel !== "app-catalog" ||
+                  !/^[0-9a-f]{40}$/.test(value.source_sha) ||
+                  value.catalog_sha256 !== process.argv[2]
+                ) process.exit(1);
+                process.stdout.write(value.source_sha);
+              ' \
+                published-state/cobalt-app-catalog-provenance.json \
+                "$catalog_sha256"
+            )"
+          elif [ "$provenance_count" -eq 0 ]; then
+            # The first promotion migrates the legacy catalog, which predates
+            # provenance assets. Do not use this fallback after provenance is
+            # present.
+            published_sha="$(gh api \
+              "repos/${GITHUB_REPOSITORY}/actions/workflows/apps.yml/runs?branch=main&status=success&per_page=1" \
+              --jq '.workflow_runs[0].head_sha')"
+            test -n "$published_sha"
+          else
+            echo "stable app catalog has duplicate provenance assets" >&2
+            exit 1
+          fi
+          git cat-file -e "${published_sha}^{commit}"
           node tools/check-app-versions.mjs \
             --registry apps/catalog.json \
-            --published-catalog published-app-catalog.json \
+            --published-catalog published-state/cobalt-app-catalog.json \
             --base "$published_sha"
+
+  host-release-build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-x86_64
+            runner: macos-15-intel
+            target: x86_64-apple-darwin
+            cc: ""
+          - platform: macos-arm64
+            runner: macos-14
+            target: aarch64-apple-darwin
+            cc: ""
+          - platform: linux-x86_64
+            runner: ubuntu-22.04
+            target: x86_64-unknown-linux-musl
+            cc: musl-gcc
+          - platform: linux-arm64
+            runner: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-musl
+            cc: musl-gcc
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: 1.85.1
+          targets: ${{ matrix.target }}
+      - name: Install Linux host tools
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install --yes musl-tools
+      - name: Build release host binary
+        env:
+          CC_x86_64_unknown_linux_musl: ${{ matrix.cc }}
+          CC_aarch64_unknown_linux_musl: ${{ matrix.cc }}
+        run: |
+          cargo build --locked --release -p kobo-cli --target "${{ matrix.target }}"
+          test -x "target/${{ matrix.target }}/release/kobo"
+          echo "built ${{ matrix.platform }}"
 
   advisories:
     runs-on: ubuntu-latest

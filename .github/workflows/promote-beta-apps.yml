@@ -1,0 +1,244 @@
+name: Promote tested beta apps
+
+on:
+  workflow_dispatch:
+    inputs:
+      tested_commit:
+        description: Full 40-character beta commit whose Store catalog was tested
+        required: true
+        type: string
+      expected_catalog_sha256:
+        description: SHA-256 of the tested beta cobalt-app-catalog.json
+        required: true
+        type: string
+      confirmation:
+        description: Type promote-apps-SHORTSHA using the first 12 commit characters
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: cobalt-stable-app-promotion
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: 1.85.1
+      - name: Guard the tested beta catalog
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TESTED_COMMIT: ${{ inputs.tested_commit }}
+          EXPECTED_CATALOG_SHA256: ${{ inputs.expected_catalog_sha256 }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+        run: |
+          set -eu
+          printf '%s\n' "$TESTED_COMMIT" | grep -Eq '^[0-9a-f]{40}$'
+          printf '%s\n' "$EXPECTED_CATALOG_SHA256" | grep -Eq '^[0-9a-f]{64}$'
+          short_commit="$(printf '%s' "$TESTED_COMMIT" | cut -c1-12)"
+          test "$CONFIRMATION" = "promote-apps-${short_commit}"
+          git cat-file -e "${TESTED_COMMIT}^{commit}"
+          git merge-base --is-ancestor "$TESTED_COMMIT" HEAD
+          mkdir -p dist/beta dist/packages dist/stable
+          gh release download app-catalog-beta \
+            --dir dist/beta \
+            --pattern cobalt-app-catalog.json \
+            --pattern cobalt-app-catalog.json.sig \
+            --pattern cobalt-app-catalog-provenance.json
+          actual_catalog_sha256="$(
+            sha256sum dist/beta/cobalt-app-catalog.json | cut -d' ' -f1
+          )"
+          test "$actual_catalog_sha256" = "$EXPECTED_CATALOG_SHA256"
+          node -e '
+            const fs = require("fs");
+            const provenance = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+            if (
+              provenance.format_version !== 1 ||
+              provenance.channel !== "app-catalog-beta" ||
+              provenance.source_sha !== process.argv[2] ||
+              provenance.catalog_sha256 !== process.argv[3]
+            ) process.exit(1);
+          ' \
+            dist/beta/cobalt-app-catalog-provenance.json \
+            "$TESTED_COMMIT" \
+            "$EXPECTED_CATALOG_SHA256"
+      - name: Download the exact beta app packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          # shellcheck disable=SC2016
+          node -e '
+            const fs = require("fs");
+            const catalog = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+            if (
+              catalog.format_version !== 1 ||
+              !Array.isArray(catalog.entries) ||
+              catalog.entries.length === 0
+            ) throw new Error("invalid or empty beta app catalog");
+            const seenIds = new Set();
+            const seenAssets = new Set();
+            for (const entry of catalog.entries) {
+              const url = new URL(entry.package_url);
+              const prefix =
+                "/BandarLabs/Cobalt/releases/download/app-catalog-beta/";
+              if (
+                url.protocol !== "https:" ||
+                url.hostname !== "github.com" ||
+                !url.pathname.startsWith(prefix)
+              ) throw new Error(`unexpected beta package URL: ${entry.package_url}`);
+              const asset = decodeURIComponent(url.pathname.slice(prefix.length));
+              if (
+                !/^[a-z0-9][a-z0-9._-]*\.cobalt-app$/.test(asset) ||
+                seenIds.has(entry.manifest.id) ||
+                seenAssets.has(asset) ||
+                !/^[0-9a-f]{64}$/.test(entry.package_sha256) ||
+                !Number.isSafeInteger(entry.package_bytes) ||
+                entry.package_bytes <= 0
+              ) throw new Error(`invalid beta catalog entry: ${entry.manifest.id}`);
+              seenIds.add(entry.manifest.id);
+              seenAssets.add(asset);
+              process.stdout.write(
+                `${asset}\t${entry.package_sha256}\t${entry.package_bytes}\n`
+              );
+            }
+          ' dist/beta/cobalt-app-catalog.json > dist/beta/packages.tsv
+          while IFS=$'\t' read -r asset expected_sha256 expected_bytes; do
+            gh release download app-catalog-beta \
+              --dir dist/packages \
+              --pattern "$asset"
+            package="dist/packages/$asset"
+            test "$(sha256sum "$package" | cut -d' ' -f1)" = "$expected_sha256"
+            test "$(stat --format='%s' "$package")" = "$expected_bytes"
+          done < dist/beta/packages.tsv
+      - name: Build and sign the stable catalog from tested packages
+        env:
+          COBALT_APP_SIGNING_SEED: ${{ secrets.COBALT_APP_SIGNING_SEED }}
+        run: |
+          set -eu
+          test -n "$COBALT_APP_SIGNING_SEED" || {
+            echo "COBALT_APP_SIGNING_SEED is not configured" >&2
+            exit 1
+          }
+          cargo build --locked -p kobo-cli
+          seed="$RUNNER_TEMP/cobalt-app-signing-seed"
+          trap 'rm -f "$seed"' EXIT
+          printf '%s' "$COBALT_APP_SIGNING_SEED" > "$seed"
+          chmod 600 "$seed"
+          entries=()
+          while IFS=$'\t' read -r asset _sha256 _bytes; do
+            entries+=(
+              --entry
+              "dist/packages/$asset"
+              "https://github.com/${GITHUB_REPOSITORY}/releases/download/app-catalog/$asset"
+            )
+          done < dist/beta/packages.tsv
+          target/debug/kobo app-catalog \
+            --seed "$seed" \
+            --out dist/stable/cobalt-app-catalog.json \
+            --signature dist/stable/cobalt-app-catalog.json.sig \
+            "${entries[@]}"
+          node -e '
+            const fs = require("fs");
+            const beta = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+            const stable = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+            if (beta.format_version !== stable.format_version) process.exit(1);
+            const normalize = (entry) => ({
+              ...entry,
+              package_url: entry.package_url.replace(
+                "/download/app-catalog-beta/",
+                "/download/app-catalog/"
+              ),
+            });
+            const expected = beta.entries.map(normalize);
+            if (JSON.stringify(stable.entries) !== JSON.stringify(expected)) process.exit(1);
+          ' \
+            dist/beta/cobalt-app-catalog.json \
+            dist/stable/cobalt-app-catalog.json
+      - name: Record stable catalog provenance
+        env:
+          TESTED_COMMIT: ${{ inputs.tested_commit }}
+          EXPECTED_CATALOG_SHA256: ${{ inputs.expected_catalog_sha256 }}
+        run: |
+          stable_sha256="$(
+            sha256sum dist/stable/cobalt-app-catalog.json | cut -d' ' -f1
+          )"
+          # shellcheck disable=SC2016
+          node -e '
+            const fs = require("fs");
+            const value = {
+              format_version: 1,
+              channel: "app-catalog",
+              source_channel: "app-catalog-beta",
+              source_sha: process.argv[2],
+              source_catalog_sha256: process.argv[3],
+              catalog_sha256: process.argv[4],
+              workflow_run_id: Number(process.argv[5]),
+              workflow_run_attempt: Number(process.argv[6]),
+            };
+            fs.writeFileSync(process.argv[1], `${JSON.stringify(value)}\n`);
+          ' \
+            dist/stable/cobalt-app-catalog-provenance.json \
+            "$TESTED_COMMIT" \
+            "$EXPECTED_CATALOG_SHA256" \
+            "$stable_sha256" \
+            "$GITHUB_RUN_ID" \
+            "$GITHUB_RUN_ATTEMPT"
+          cp \
+            dist/stable/cobalt-app-catalog-provenance.json \
+            "dist/stable/cobalt-app-catalog-provenance-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
+      - name: Publish exact packages and switch the stable catalog
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TESTED_COMMIT: ${{ inputs.tested_commit }}
+        run: |
+          set -eu
+          if ! gh release view app-catalog >/dev/null 2>&1; then
+            gh release create app-catalog \
+              --target "$TESTED_COMMIT" \
+              --title "Cobalt App Catalog" \
+              --notes "Promoted from physically tested beta Store packages." \
+              --latest=false
+          fi
+          while IFS=$'\t' read -r asset _sha256 _bytes; do
+            package="dist/packages/$asset"
+            matches="$(
+              gh release view app-catalog --json assets \
+                --jq '[.assets[] | select(.name == "'"$asset"'")] | length'
+            )"
+            case "$matches" in
+              0)
+                gh release upload app-catalog "$package"
+                ;;
+              1)
+                mkdir -p "$RUNNER_TEMP/published"
+                gh release download app-catalog \
+                  --dir "$RUNNER_TEMP/published" \
+                  --pattern "$asset" \
+                  --clobber
+                cmp "$package" "$RUNNER_TEMP/published/$asset"
+                ;;
+              *)
+                echo "duplicate stable release asset $asset" >&2
+                exit 1
+                ;;
+            esac
+          done < dist/beta/packages.tsv
+          gh release upload app-catalog \
+            "dist/stable/cobalt-app-catalog-provenance-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
+          gh release upload app-catalog \
+            dist/stable/cobalt-app-catalog.json.sig --clobber
+          gh release upload app-catalog \
+            dist/stable/cobalt-app-catalog.json --clobber
+          gh release upload app-catalog \
+            dist/stable/cobalt-app-catalog-provenance.json --clobber

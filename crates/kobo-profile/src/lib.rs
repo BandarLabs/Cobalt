@@ -288,7 +288,13 @@ pub const CLARA_BW_391: DeviceProfile = DeviceProfile {
     firmware_versions: &["4.45.23697"],
     kernel_release: "4.9.77",
     write_ready: true,
-    reap_nickel_supplicant: false,
+    // Measured on the device on 2026-09-02: preserving Nickel's detached
+    // supplicant kept SSH alive throughout Cobalt's panel session, but the
+    // restarted reader launched a replacement. Reaping the exact captured
+    // process prevents the two-owner handoff; the runtime then reproduces the
+    // stock network screen's scan/reassociate sequence and waits for the
+    // replacement to complete association because a stale route can linger.
+    reap_nickel_supplicant: true,
 };
 
 /// The 2025 P365 hardware refresh of the Clara BW. Kobo lists N365 and P365
@@ -354,7 +360,13 @@ pub const CLARA_BW_395: DeviceProfile = DeviceProfile {
     firmware_versions: &["4.45.23697"],
     kernel_release: "4.9.77",
     write_ready: true,
-    reap_nickel_supplicant: false,
+    // The refresh carries the same MediaTek radio, firmware, and kernel as the
+    // N365, so the two-supplicant collision measured there applies unchanged:
+    // hand back without reaping and Nickel's restarted reader races the
+    // leftover process for `wlan0`, leaving Wi-Fi down until a reboot. This
+    // profile was left at `false` when the reap landed for the N365, so the
+    // fix never ran on the refreshed hardware that needed it just as much.
+    reap_nickel_supplicant: true,
 };
 
 /// The Kobo Clara HD, added upstream without i.MX6 hardware to test on.
@@ -1728,9 +1740,13 @@ mod tests {
     /// The supplicant reap is declared, not guessed. The Libra 2 is the one
     /// device where both halves were measured: the two-supplicant collision
     /// after a normal hand-back, and the clean recovery once the leftover one
-    /// was killed. Every other profile keeps its current behaviour until the
-    /// same evidence exists for it, so a change to one of these values is a
-    /// claim about a device and needs the measurement to go with it.
+    /// was killed. The two Clara BW profiles are the same board, radio,
+    /// firmware, and kernel under two device codes, so evidence gathered on
+    /// either one covers both; splitting them is what let the N365 carry the
+    /// reap while the P365 refresh silently went without it. Every other
+    /// profile keeps its current behaviour until the same evidence exists for
+    /// it, so a change to one of these values is a claim about a device and
+    /// needs the measurement to go with it.
     #[test]
     fn the_supplicant_reap_is_declared_only_where_it_was_measured() {
         let declared = super::SUPPORTED_PROFILES
@@ -1740,8 +1756,8 @@ mod tests {
         assert_eq!(
             declared,
             [
-                ("clara-bw-391", false),
-                ("clara-bw-395", false),
+                ("clara-bw-391", true),
+                ("clara-bw-395", true),
                 ("clara-hd-376", false),
                 ("clara-colour-393", false),
                 ("elipsa-2e-389", false),

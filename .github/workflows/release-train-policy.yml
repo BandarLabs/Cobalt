@@ -1,0 +1,42 @@
+name: Release train policy
+
+on:
+  pull_request:
+    branches: [main, beta]
+
+permissions:
+  contents: read
+
+jobs:
+  route:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require beta promotion for main
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          HEAD_REF: ${{ github.head_ref }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          [ "$BASE_REF" = main ] || exit 0
+          if [ "$HEAD_REPOSITORY" != "$REPOSITORY" ]; then
+            echo "Pull requests into main must come from this repository." >&2
+            exit 1
+          fi
+          # Two branches may reach main, and a release branch is the one that
+          # does the releasing: main's own history is a chain of them, most
+          # recently release/v0.3.4. Requiring the head to be `beta` would have
+          # forbidden every release this project has cut.
+          #
+          # A release branch is not simply beta under another name. It is cut
+          # from the commit that was tested as a beta, which is usually behind
+          # beta's head because beta keeps moving while a release is verified,
+          # and it carries the fixes a release needs and nothing else. Neither
+          # is expressible as "the head branch is beta".
+          case "$HEAD_REF" in
+            beta|release/v*) ;;
+            *)
+              echo "Pull requests into main must come from beta or a release/v* branch." >&2
+              exit 1
+              ;;
+          esac

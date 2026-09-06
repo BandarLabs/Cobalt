@@ -168,6 +168,10 @@ impl RegionPlacement {
             .checked_mul(self.stride)
             .and_then(|delta| self.first_row_offset.checked_add(delta))
     }
+
+    fn is_contiguous(&self) -> bool {
+        self.region.x == 0 && self.row_bytes as u64 == self.stride
+    }
 }
 
 /// The exact bytes of one framebuffer region, sufficient to restore it.
@@ -238,13 +242,12 @@ impl RegionSnapshot {
             return Err(SurfaceError::RegionMismatch);
         }
         let mut pixels = vec![0_u8; placement.total_bytes()];
-        for (index, byte) in pixels.iter_mut().enumerate() {
-            let pixel = index / SUPPORTED_BYTES_PER_PIXEL;
-            *byte = if index % SUPPORTED_BYTES_PER_PIXEL == ALPHA_BYTE_INDEX {
-                u8::MAX
-            } else {
-                gray.get(pixel).copied().unwrap_or(u8::MAX)
-            };
+        for (pixel, gray) in pixels
+            .chunks_exact_mut(SUPPORTED_BYTES_PER_PIXEL)
+            .zip(gray.iter().copied())
+        {
+            pixel[..ALPHA_BYTE_INDEX].fill(gray);
+            pixel[ALPHA_BYTE_INDEX] = u8::MAX;
         }
         Ok(Self { placement, pixels })
     }
@@ -295,6 +298,10 @@ pub fn write_region(
     if placement != snapshot.placement || snapshot.pixels.len() != placement.total_bytes() {
         return Err(SurfaceError::RegionMismatch);
     }
+    if placement.is_contiguous() {
+        framebuffer.write_all_at(&snapshot.pixels, placement.first_row_offset)?;
+        return Ok(());
+    }
     for row in 0..placement.region.height {
         let offset = placement
             .row_offset(row)
@@ -342,6 +349,39 @@ mod tests {
         assert_eq!(placement.total_bytes(), 4096);
         assert_eq!(placement.row_offset(0), Some(704 * 4288 + 512 * 4));
         assert_eq!(placement.row_offset(31), Some(735 * 4288 + 512 * 4));
+        assert!(!placement.is_contiguous());
+    }
+
+    #[test]
+    fn a_full_width_region_is_one_contiguous_span() {
+        let placement = RegionPlacement::new(
+            CLARA,
+            Rect {
+                x: 0,
+                y: 300,
+                width: CLARA.width,
+                height: 40,
+            },
+        )
+        .expect("region is inside the screen");
+        assert!(placement.is_contiguous());
+        assert_eq!(placement.total_bytes(), 40 * 4288);
+    }
+
+    #[test]
+    fn grayscale_expansion_writes_one_rgba_pixel_at_a_time() {
+        let region = Rect {
+            x: 20,
+            y: 30,
+            width: 3,
+            height: 1,
+        };
+        let snapshot = RegionSnapshot::from_grayscale(CLARA, region, &[0, 127, 255])
+            .expect("grayscale region");
+        assert_eq!(
+            snapshot.pixels(),
+            [0, 0, 0, 255, 127, 127, 127, 255, 255, 255, 255, 255]
+        );
     }
 
     #[test]

@@ -10,6 +10,7 @@
 mod bundle;
 mod error;
 mod model;
+mod release;
 mod signing;
 
 pub use bundle::{build_bundle, parse_bundle, parse_public_bundle, ParsedBundle};
@@ -18,6 +19,7 @@ pub use model::{
     cobalt_version_at_least, is_public_glyph, is_public_reserved_app_id, public_reserved_app_ids,
     Catalog, CatalogEntry, CatalogEntryInput, Manifest, ManifestInput, Sha256Digest,
 };
+pub use release::{verify_release_manifest, ReleaseAsset, ReleaseManifest};
 pub use signing::{derive_public_key, sign, verify, DetachedSignature, Ed25519PublicKey};
 
 /// JSON schema version understood by this crate.

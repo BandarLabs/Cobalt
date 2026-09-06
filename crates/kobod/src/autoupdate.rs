@@ -27,8 +27,8 @@ const BETA_RELEASES: &str = "https://api.github.com/repos/BandarLabs/Cobalt/rele
 /// kilobytes; a reply a thousand times that size is not a release description.
 const RELEASE_LIMIT: u32 = 1024 * 1024;
 
-/// The most a digest listing is allowed to be: a few lines of hex and names.
-const DIGEST_LIMIT: u32 = 16 * 1024;
+const MANIFEST_LIMIT: u32 = 64 * 1024;
+const SIGNATURE_LIMIT: u32 = 1024;
 
 /// The file holding the owner's two choices, under `root/state`.
 const STATE_FILE: &str = "auto-update";
@@ -195,9 +195,8 @@ fn stale_apps(root: &Path, channel: UpdateChannel) -> Vec<String> {
     )
 }
 
-/// A strictly newer published release, with its digest already fetched, or
-/// nothing. All-or-nothing on purpose: a release that cannot be verified is
-/// not an update, it is a download.
+/// A strictly newer published release, with its signed manifest verified, or
+/// nothing. All-or-nothing on purpose: unsigned metadata is not an update.
 fn platform_update(installed: &str, channel: UpdateChannel) -> Option<PlatformUpdate> {
     let endpoint = match channel {
         UpdateChannel::Stable => STABLE_RELEASES,
@@ -205,46 +204,69 @@ fn platform_update(installed: &str, channel: UpdateChannel) -> Option<PlatformUp
     };
     let body = kobo_net::fetch(endpoint, RELEASE_LIMIT).ok()?;
     let body = String::from_utf8(body).ok()?;
-    let (version, archive, digest_url) = match channel {
+    let release = match channel {
         UpdateChannel::Stable => release_from(&body),
         UpdateChannel::Beta => beta_release_from(&body),
     }?;
-    if !newer(&version, installed) {
+    if !newer(&release.version, installed) {
         return None;
     }
-    let listing = kobo_net::fetch(&digest_url, DIGEST_LIMIT).ok()?;
-    let listing = String::from_utf8(listing).ok()?;
-    let sha256 = digest_from(&listing, &archive_file(&version))?;
+    let manifest = kobo_net::fetch(&release.manifest, MANIFEST_LIMIT).ok()?;
+    let signature = kobo_net::fetch(&release.signature, SIGNATURE_LIMIT).ok()?;
+    let signature = String::from_utf8(signature).ok()?;
+    let manifest = kobo_app_store::verify_release_manifest(&manifest, &signature).ok()?;
+    platform_from_manifest(release, &manifest)
+}
+
+fn platform_from_manifest(
+    release: Release,
+    manifest: &kobo_app_store::ReleaseManifest,
+) -> Option<PlatformUpdate> {
+    if manifest.version != release.version {
+        return None;
+    }
+    let device = manifest.device()?;
+    if device.name != archive_file(&release.version) {
+        return None;
+    }
     Some(PlatformUpdate {
-        version,
-        url: archive,
-        sha256,
+        version: release.version,
+        url: release.archive,
+        sha256: device.sha256.clone(),
     })
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct Release {
+    version: String,
+    archive: String,
+    manifest: String,
+    signature: String,
 }
 
 /// Reads the GitHub "latest release" reply down to the version, the archive
 /// URL and the digest URL this device needs.
-fn release_from(body: &str) -> Option<(String, String, String)> {
+fn release_from(body: &str) -> Option<Release> {
     let value = kobo_json::parse(body).ok()?;
     release_value(&value, "v", false)
 }
 
 /// Selects the highest valid beta prerelease, independent of GitHub's reply
 /// order. Drafts, stable releases and malformed beta entries are skipped.
-fn beta_release_from(body: &str) -> Option<(String, String, String)> {
+fn beta_release_from(body: &str) -> Option<Release> {
     let value = kobo_json::parse(body).ok()?;
     value
         .as_array()?
         .iter()
         .filter_map(|release| release_value(release, "beta-v", true))
-        .max_by_key(|(version, _, _)| numbers(version))
+        .max_by_key(|release| numbers(&release.version))
 }
 
 fn release_value(
     value: &kobo_json::Value,
     tag_prefix: &str,
     require_prerelease: bool,
-) -> Option<(String, String, String)> {
+) -> Option<Release> {
     if value
         .get("draft")
         .and_then(kobo_json::Value::as_bool)
@@ -271,8 +293,14 @@ fn release_value(
             .map(str::to_owned)
     };
     let archive = url_of(&archive_file(&version))?;
-    let digest = url_of(&format!("cobalt-{version}.sha256"))?;
-    Some((version, archive, digest))
+    let manifest = url_of("cobalt-host-manifest.txt")?;
+    let signature = url_of("cobalt-host-manifest.txt.sig")?;
+    Some(Release {
+        version,
+        archive,
+        manifest,
+        signature,
+    })
 }
 
 fn valid_release_url(url: &str) -> bool {
@@ -300,27 +328,14 @@ fn numbers(version: &str) -> Option<(u64, u64, u64)> {
     }
 }
 
-/// Finds the digest vouching for `asset` in a `sha256sum` style listing:
-/// sixty-four hex characters, whitespace, a file name per line.
-fn digest_from(listing: &str, asset: &str) -> Option<String> {
-    listing.lines().find_map(|line| {
-        let (digest, name) = line.split_once(char::is_whitespace)?;
-        let named = name.trim_start().trim_start_matches('*') == asset;
-        let plausible = digest.len() == 64
-            && digest
-                .bytes()
-                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte));
-        (named && plausible).then(|| digest.to_owned())
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
-        beta_release_from, digest_from, newer, parse, plan_with, preferences, release_from, render,
-        set_preferences, PlatformUpdate, Preferences,
+        beta_release_from, newer, parse, plan_with, platform_from_manifest, preferences,
+        release_from, render, set_preferences, PlatformUpdate, Preferences,
     };
     use kobo_protocol::UpdateChannel;
+    use std::fs;
 
     #[test]
     fn a_reader_who_chose_nothing_gets_both_updates() {
@@ -388,6 +403,41 @@ mod tests {
     }
 
     #[test]
+    fn returning_to_stable_changes_only_persisted_preferences() {
+        let root =
+            std::env::temp_dir().join(format!("cobalt-stable-channel-{}", std::process::id()));
+        let _ignored = std::fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("apps/example")).expect("app");
+        fs::create_dir_all(root.join("secrets")).expect("secrets");
+        fs::write(root.join("apps/example/state"), b"app state").expect("app state");
+        fs::write(root.join("secrets/service"), b"secret").expect("secret");
+        let beta = Preferences {
+            cobalt: true,
+            apps: true,
+            channel: UpdateChannel::Beta,
+        };
+        set_preferences(&root, beta).expect("choose beta");
+        set_preferences(
+            &root,
+            Preferences {
+                channel: UpdateChannel::Stable,
+                ..beta
+            },
+        )
+        .expect("return stable");
+        assert_eq!(preferences(&root).channel, UpdateChannel::Stable);
+        assert_eq!(
+            fs::read(root.join("apps/example/state")).expect("app state"),
+            b"app state"
+        );
+        assert_eq!(
+            fs::read(root.join("secrets/service")).expect("secret"),
+            b"secret"
+        );
+        let _ignored = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn only_a_strictly_newer_triple_counts() {
         assert!(newer("0.4.0", "0.3.0"));
         assert!(!newer("0.3.0", "0.3.0"));
@@ -397,7 +447,7 @@ mod tests {
     }
 
     #[test]
-    fn a_release_is_read_down_to_its_three_facts() {
+    fn a_release_is_read_down_to_its_signed_metadata() {
         let body = r#"{
             "tag_name": "v0.4.0",
             "draft": false,
@@ -405,14 +455,20 @@ mod tests {
             "assets": [
                 {"name": "cobalt-0.4.0-KoboRoot.tgz",
                  "browser_download_url": "https://example.test/cobalt-0.4.0-KoboRoot.tgz"},
-                {"name": "cobalt-0.4.0.sha256",
-                 "browser_download_url": "https://example.test/cobalt-0.4.0.sha256"}
+                {"name": "cobalt-host-manifest.txt",
+                 "browser_download_url": "https://example.test/manifest"},
+                {"name": "cobalt-host-manifest.txt.sig",
+                 "browser_download_url": "https://example.test/manifest.sig"}
             ]
         }"#;
-        let (version, archive, digest) = release_from(body).expect("release");
-        assert_eq!(version, "0.4.0");
-        assert_eq!(archive, "https://example.test/cobalt-0.4.0-KoboRoot.tgz");
-        assert_eq!(digest, "https://example.test/cobalt-0.4.0.sha256");
+        let release = release_from(body).expect("release");
+        assert_eq!(release.version, "0.4.0");
+        assert_eq!(
+            release.archive,
+            "https://example.test/cobalt-0.4.0-KoboRoot.tgz"
+        );
+        assert_eq!(release.manifest, "https://example.test/manifest");
+        assert_eq!(release.signature, "https://example.test/manifest.sig");
     }
 
     #[test]
@@ -429,22 +485,26 @@ mod tests {
         let body = r#"[
           {"tag_name":"beta-v0.4.0","draft":false,"prerelease":true,"assets":[
             {"name":"cobalt-0.4.0-KoboRoot.tgz","browser_download_url":"https://example.test/0.4.0.tgz"},
-            {"name":"cobalt-0.4.0.sha256","browser_download_url":"https://example.test/0.4.0.sha256"}]},
+            {"name":"cobalt-host-manifest.txt","browser_download_url":"https://example.test/0.4.0.manifest"},
+            {"name":"cobalt-host-manifest.txt.sig","browser_download_url":"https://example.test/0.4.0.sig"}]},
           {"tag_name":"beta-v0.6.0","draft":true,"prerelease":true,"assets":[
             {"name":"cobalt-0.6.0-KoboRoot.tgz","browser_download_url":"https://example.test/0.6.0.tgz"},
-            {"name":"cobalt-0.6.0.sha256","browser_download_url":"https://example.test/0.6.0.sha256"}]},
+            {"name":"cobalt-host-manifest.txt","browser_download_url":"https://example.test/0.6.0.manifest"},
+            {"name":"cobalt-host-manifest.txt.sig","browser_download_url":"https://example.test/0.6.0.sig"}]},
           {"tag_name":"v0.7.0","draft":false,"prerelease":false,"assets":[]},
           {"tag_name":"beta-v0.8.0","draft":false,"prerelease":true,"assets":[
             {"name":"KoboRoot.tgz","browser_download_url":"https://example.test/wrong.tgz"},
-            {"name":"cobalt-0.8.0.sha256","browser_download_url":"https://example.test/0.8.0.sha256"}]},
+            {"name":"cobalt-host-manifest.txt","browser_download_url":"https://example.test/0.8.0.manifest"},
+            {"name":"cobalt-host-manifest.txt.sig","browser_download_url":"https://example.test/0.8.0.sig"}]},
           {"tag_name":"beta-v0.5.0","draft":false,"prerelease":true,"assets":[
             {"name":"cobalt-0.5.0-KoboRoot.tgz","browser_download_url":"https://example.test/0.5.0.tgz"},
-            {"name":"cobalt-0.5.0.sha256","browser_download_url":"https://example.test/0.5.0.sha256"}]}
+            {"name":"cobalt-host-manifest.txt","browser_download_url":"https://example.test/0.5.0.manifest"},
+            {"name":"cobalt-host-manifest.txt.sig","browser_download_url":"https://example.test/0.5.0.sig"}]}
         ]"#;
-        let (version, archive, digest) = beta_release_from(body).expect("beta release");
-        assert_eq!(version, "0.5.0");
-        assert_eq!(archive, "https://example.test/0.5.0.tgz");
-        assert_eq!(digest, "https://example.test/0.5.0.sha256");
+        let release = beta_release_from(body).expect("beta release");
+        assert_eq!(release.version, "0.5.0");
+        assert_eq!(release.archive, "https://example.test/0.5.0.tgz");
+        assert_eq!(release.manifest, "https://example.test/0.5.0.manifest");
     }
 
     #[test]
@@ -462,24 +522,36 @@ mod tests {
     }
 
     #[test]
-    fn the_digest_listing_is_matched_by_name_and_shape() {
-        let listing = format!(
-            "{}  cobalt-0.4.0-KoboRoot.tgz\n{}  something-else.tgz\n",
-            "a".repeat(64),
-            "b".repeat(64)
-        );
+    fn signed_metadata_binds_the_beta_platform_digest() {
+        let release = super::Release {
+            version: "0.4.0".to_owned(),
+            archive: "https://example.test/0.4.0.tgz".to_owned(),
+            manifest: "https://example.test/0.4.0.manifest".to_owned(),
+            signature: "https://example.test/0.4.0.sig".to_owned(),
+        };
+        let manifest = kobo_app_store::ReleaseManifest {
+            version: "0.4.0".to_owned(),
+            channels: vec!["stable".to_owned(), "beta".to_owned()],
+            source: "0123456789abcdef0123456789abcdef01234567".to_owned(),
+            assets: vec![kobo_app_store::ReleaseAsset {
+                kind: "device".to_owned(),
+                platform: None,
+                name: "cobalt-0.4.0-KoboRoot.tgz".to_owned(),
+                bytes: 123,
+                sha256: "a".repeat(64),
+            }],
+        };
         assert_eq!(
-            digest_from(&listing, "cobalt-0.4.0-KoboRoot.tgz"),
-            Some("a".repeat(64))
+            platform_from_manifest(release.clone(), &manifest),
+            Some(PlatformUpdate {
+                version: "0.4.0".to_owned(),
+                url: "https://example.test/0.4.0.tgz".to_owned(),
+                sha256: "a".repeat(64),
+            })
         );
-        assert_eq!(digest_from(&listing, "cobalt-0.5.0-KoboRoot.tgz"), None);
-        assert_eq!(
-            digest_from(
-                "tooshort  cobalt-0.4.0-KoboRoot.tgz",
-                "cobalt-0.4.0-KoboRoot.tgz"
-            ),
-            None
-        );
+        let mut wrong = manifest;
+        wrong.version = "0.4.1".to_owned();
+        assert!(platform_from_manifest(release, &wrong).is_none());
     }
 
     #[test]
