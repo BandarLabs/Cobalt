@@ -354,6 +354,27 @@ export function isFilmingScript(path, packageDirectory) {
   return beside === "drive" || beside.startsWith("drive/") || /^drive[-.][^/]*$/.test(beside);
 }
 
+// Prose beside a package is not in the package. A published entry is built
+// from cobalt-app.json and the compiled binary, and neither the registry nor
+// the app-page generator reads a README, so no byte anybody downloads can
+// change because a paragraph did.
+//
+// Counting it is the same mistake the drive scripts above were rescued from.
+// Correcting a sentence in apps/syncthing/README.md that had gone stale --
+// it still told readers to export an environment variable for a packaging
+// step that no longer exists -- was refused as an unreleased change to the
+// Syncthing application, and the remedy on offer was to publish a new version
+// of it to every reader who has it in order to fix a paragraph none of them
+// download.
+//
+// Only prose directly beside the package: a nested path may be a screenshot
+// the app page does publish, and src/notes.md is source.
+export function isDocumentation(path, packageDirectory) {
+  if (!path.startsWith(`${packageDirectory}/`)) return false;
+  const beside = path.slice(packageDirectory.length + 1);
+  return !beside.includes("/") && beside.endsWith(".md");
+}
+
 // Returns the dependency edges capable of changing a release artifact.
 //
 // Cargo includes dev dependencies in the resolved metadata graph even when
@@ -679,13 +700,18 @@ export function storeImpactOfChangedPaths(changedPaths, packageDirectories, regi
   const storeDirectories = storeWatchDirectories(packageDirectories, registeredPackages);
   const storeChanges = storeCatalogChanges(changedPaths, storeDirectories).filter(path => {
     const directory = path.split("/").slice(0, -1).join("/");
-    return !isFilmingScript(path, directory);
+    return !isFilmingScript(path, directory) && !isDocumentation(path, directory);
   });
   const registered = new Set(registeredPackages);
   const sharedPackageChanged = [...packageDirectories].some(
     ([packageName, directory]) =>
       !registered.has(packageName) &&
-      changedPaths.some(path => isInside(path, directory) && !isFilmingScript(path, directory))
+      changedPaths.some(
+        path =>
+          isInside(path, directory) &&
+          !isFilmingScript(path, directory) &&
+          !isDocumentation(path, directory)
+      )
   );
   const globalBuildInputChanged = changedPaths.some(
     path =>
@@ -783,7 +809,8 @@ export function analyzeAppReleaseInputs(baseRevision, registry) {
       path =>
         isInside(path, relativeDirectory) &&
         !compatiblePaths.has(path) &&
-        !isFilmingScript(path, relativeDirectory)
+        !isFilmingScript(path, relativeDirectory) &&
+        !isDocumentation(path, relativeDirectory)
     );
     if (packageChanges.length === 0) continue;
     const relativeManifest = relative(workspaceRoot, package_.manifest_path).split(sep).join("/");
