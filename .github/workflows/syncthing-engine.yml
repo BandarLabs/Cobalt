@@ -22,16 +22,19 @@ on:
         default: false
         type: boolean
 
+# Read by default, and raised for exactly one job below. The rebuild runs
+# `go run build.go` from a repository fetched at build time, which is upstream
+# code executing on the runner: it should never be able to see a token that can
+# write to this repository. Splitting the upload out means a compromised build
+# script or Go dependency has nothing to reach for.
 permissions:
-  contents: write
-
-concurrency:
-  group: cobalt-syncthing-engine
-  cancel-in-progress: false
+  contents: read
 
 jobs:
   reproduce:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
@@ -74,9 +77,41 @@ jobs:
             echo "is leaking into the build." >&2
             exit 1
           fi
+          mkdir -p engine
+          cp syncthing "$GITHUB_WORKSPACE/syncthing-armv7"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: inputs.publish
+        with:
+          name: syncthing-armv7
+          path: syncthing-armv7
+          if-no-files-found: error
+
+  publish:
+    needs: reproduce
+    if: inputs.publish
+    runs-on: ubuntu-latest
+    # The only job that can write, and it runs nothing from upstream: it
+    # downloads an artifact, checks it against the pinned digest again, and
+    # uploads it.
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: syncthing-armv7
+
+      # Checked again here rather than trusted from the job that built it. The
+      # bytes have been through artifact storage since they were verified, and
+      # this is the last moment before they become the copy every reader
+      # fetches.
+      - name: Check the artifact against the pinned digest
+        run: |
+          set -eu
+          expected=e7e0523d8db0328b22ebff5c98bd721c94e295122771c0538414898a06ef8ebf
+          echo "$expected  syncthing-armv7" | sha256sum -c -
 
       - name: Publish the engine when the tag has none
-        if: inputs.publish
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -85,10 +120,9 @@ jobs:
           # Refused rather than replaced. The runtime pins one digest, so a
           # second set of bytes under this name could only ever be the wrong
           # ones for some reader that already fetched the first.
-          if gh release view "$tag" --json assets \
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets \
             --jq '.assets[].name' | grep -Fxq syncthing-armv7; then
             echo "$tag already carries syncthing-armv7; refusing replacement" >&2
             exit 1
           fi
-          cp /tmp/syncthing/syncthing syncthing-armv7
-          gh release upload "$tag" syncthing-armv7
+          gh release upload "$tag" syncthing-armv7 --repo "$GITHUB_REPOSITORY"

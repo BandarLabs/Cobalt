@@ -5,8 +5,14 @@ on:
     branches: [beta]
   workflow_dispatch:
 
+# Read by default, and raised for the one job that publishes. The device
+# and host jobs run `cargo build`, which executes build scripts from every
+# dependency in the graph: third-party code on the runner should not be
+# able to see a token that can write to this repository. `prepare` only
+# reads -- it lists tags and waits on this commit's CI. This is the shape
+# apps.yml already uses.
 permissions:
-  contents: write
+  contents: read
   actions: read
 
 concurrency:
@@ -342,6 +348,8 @@ jobs:
     needs: [prepare, device, host]
     if: needs.prepare.outputs.publish == 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
