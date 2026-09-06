@@ -11,16 +11,42 @@ jobs:
   route:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
       - name: Require beta promotion for main
         env:
           BASE_REF: ${{ github.base_ref }}
           HEAD_REF: ${{ github.head_ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
           REPOSITORY: ${{ github.repository }}
         run: |
-          if [ "$BASE_REF" = main ] &&
-            { [ "$HEAD_REF" != beta ] || [ "$HEAD_REPOSITORY" != "$REPOSITORY" ]; }
-          then
-            echo "Pull requests into main must promote the beta branch." >&2
+          [ "$BASE_REF" = main ] || exit 0
+          if [ "$HEAD_REPOSITORY" != "$REPOSITORY" ]; then
+            echo "Pull requests into main must come from this repository." >&2
+            exit 1
+          fi
+          if [ "$HEAD_REF" = beta ]; then
+            exit 0
+          fi
+          # A stable release is cut from the exact commit that was tested as a
+          # beta, and that commit is usually behind the beta branch head by the
+          # time it is promoted: beta keeps moving while a release is verified.
+          # Naming the branch `beta` is therefore not the property worth
+          # checking, because it forces main to take whatever beta happens to
+          # hold today and makes releasing an older tested commit impossible.
+          # What actually has to hold is that main receives nothing beta has
+          # not already integrated, so that is what is checked.
+          case "$HEAD_REF" in
+            release/v*) ;;
+            *)
+              echo "Pull requests into main must promote beta or a release/v* branch." >&2
+              exit 1
+              ;;
+          esac
+          git fetch --no-tags --quiet origin beta
+          if ! git merge-base --is-ancestor "$HEAD_SHA" origin/beta; then
+            echo "release branch commit $HEAD_SHA is not contained in beta" >&2
             exit 1
           fi
