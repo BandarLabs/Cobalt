@@ -7,16 +7,22 @@ set -eu
 : "${SYNCTHING_OUTPUT:?set SYNCTHING_OUTPUT outside this repository}"
 
 EXPECTED_COMMIT=3382ccc3f16536b5a7b6df7c8212951f7d4d3a9f
-EXPECTED_SHA256=845336fa67494f38ecb69dfaa0a81de6e33e9b5427bd707385d85051596641a1
+EXPECTED_GO=go1.24.13
+EXPECTED_SHA256=e7e0523d8db0328b22ebff5c98bd721c94e295122771c0538414898a06ef8ebf
 
 test "$(git -C "$SYNCTHING_SOURCE" rev-parse HEAD)" = "$EXPECTED_COMMIT"
+test "$(go env GOVERSION)" = "$EXPECTED_GO"
 test -f "$SYNCTHING_SOURCE/LICENSE"
 test -d "$SYNCTHING_OUTPUT"
 
 (
   cd "$SYNCTHING_SOURCE"
   go mod verify
-  GOARM=7 CGO_ENABLED=0 go run build.go -goos linux -goarch arm build
+  # build.go embeds the build user and hostname, so an unpinned build is a
+  # different binary on every machine. Pinning them, and the Go release above,
+  # is what makes the digest below something anyone can reproduce.
+  BUILD_USER=cobalt BUILD_HOST=cobalt GOARM=7 CGO_ENABLED=0 \
+    go run build.go -goos linux -goarch arm build
 )
 
 install -m 0755 "$SYNCTHING_SOURCE/syncthing" "$SYNCTHING_OUTPUT/syncthing"

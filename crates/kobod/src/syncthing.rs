@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 const APP_STATE: &str = "/mnt/onboard/.adds/cobalt/state/syncthing";
 const HOME: &str = "/var/lib/cobalt/syncthing";
 const ENGINE: &str = "/mnt/onboard/.adds/cobalt/bin/syncthing";
-const ENGINE_SHA256: &str = "845336fa67494f38ecb69dfaa0a81de6e33e9b5427bd707385d85051596641a1";
+const ENGINE_SHA256: &str = "e7e0523d8db0328b22ebff5c98bd721c94e295122771c0538414898a06ef8ebf";
 const SYNC_ROOT: &str = "/mnt/onboard/.adds/cobalt/sync";
 const MAX_WINDOW: Duration = Duration::from_secs(5 * 60);
 const TAIL_WINDOW: Duration = Duration::from_secs(90);
