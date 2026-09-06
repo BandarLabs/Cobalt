@@ -12,7 +12,18 @@
 //! unpack is swapped in. Owner data is held outside all three versioned trees
 //! while a durable direction journal makes every rename restartable.
 
+#[cfg(feature = "device-write")]
+use crate::blackbox::trace;
 use kobo_protocol::DeviceError;
+
+/// Where the trace goes when there is no device to write one on.
+///
+/// `install` is built for the host too, so that the unpacking and the
+/// directory transaction can be tested off a reader. The blackbox is the
+/// reader's own log and is not built there, so the calls become nothing rather
+/// than the tests losing the code path that emits them.
+#[cfg(not(feature = "device-write"))]
+fn trace(_event: &str) {}
 use std::fs;
 use std::io::Write;
 use std::path::{Component, Path};
@@ -66,21 +77,54 @@ const BLOCK: usize = 512;
 /// [`DeviceError::Backend`] when the book partition refuses a write.
 #[cfg(feature = "device-write")]
 pub fn apply(url: &str, sha256: &str) -> Result<(), DeviceError> {
-    let archive = kobo_net::fetch(url, ARCHIVE_LIMIT).map_err(|error| match error {
-        kobo_protocol::TaskError::Offline | kobo_protocol::TaskError::Unreachable => {
-            DeviceError::Unreachable
-        }
-        kobo_protocol::TaskError::TimedOut => DeviceError::TimedOut,
-        kobo_protocol::TaskError::NotFound => DeviceError::NotFound,
-        kobo_protocol::TaskError::TooLarge | kobo_protocol::TaskError::Denied => {
-            DeviceError::InvalidInput
-        }
-        kobo_protocol::TaskError::NoCredential | kobo_protocol::TaskError::Unauthorized => {
-            DeviceError::Authentication
-        }
-        kobo_protocol::TaskError::RateLimited(_) => DeviceError::Unreachable,
+    // Traced before it is returned, because the reply an owner sees is one of
+    // seven shared codes and several failures here map to the same one. An
+    // update that could not be downloaded and an update whose archive would
+    // not expand were the same sentence on screen and nothing whatever in the
+    // log, which is the position this project was actually in: a reader that
+    // refused to update left no trace on the device, none over SSH, and told
+    // its owner that "the address or credentials are invalid" about a download
+    // that involves neither.
+    let archive = kobo_net::fetch(url, ARCHIVE_LIMIT).map_err(|error| {
+        let (reason, mapped) = match error {
+            kobo_protocol::TaskError::Offline | kobo_protocol::TaskError::Unreachable => (
+                "the release host could not be reached".to_owned(),
+                DeviceError::Unreachable,
+            ),
+            kobo_protocol::TaskError::TimedOut => {
+                ("the download timed out".to_owned(), DeviceError::TimedOut)
+            }
+            kobo_protocol::TaskError::NotFound => (
+                "the release host does not have that archive".to_owned(),
+                DeviceError::NotFound,
+            ),
+            kobo_protocol::TaskError::TooLarge => (
+                format!("the archive is larger than the {ARCHIVE_LIMIT} byte ceiling"),
+                DeviceError::InvalidInput,
+            ),
+            kobo_protocol::TaskError::Denied => (
+                "the release host refused the download".to_owned(),
+                DeviceError::InvalidInput,
+            ),
+            kobo_protocol::TaskError::NoCredential | kobo_protocol::TaskError::Unauthorized => (
+                "the release host asked for credentials".to_owned(),
+                DeviceError::Authentication,
+            ),
+            kobo_protocol::TaskError::RateLimited(_) => (
+                "the release host is rate limiting this reader".to_owned(),
+                DeviceError::Unreachable,
+            ),
+        };
+        trace(&format!("platform update: download failed: {reason}"));
+        mapped
     })?;
-    install(&archive, sha256, Path::new(ADDS))
+    trace(&format!(
+        "platform update: downloaded {} bytes, unpacking",
+        archive.len()
+    ));
+    install(&archive, sha256, Path::new(ADDS)).inspect_err(|error| {
+        trace(&format!("platform update: install failed: {error}"));
+    })
 }
 
 /// Verifies `archive` against `sha256` and installs it under `adds`.
@@ -90,13 +134,32 @@ pub fn apply(url: &str, sha256: &str) -> Result<(), DeviceError> {
 /// kept at `adds/cobalt.prev` so a bad release can be undone by hand.
 fn install(archive: &[u8], sha256: &str, adds: &Path) -> Result<(), DeviceError> {
     if kobo_net::sha256::hex_digest(archive) != sha256 {
+        trace(&format!(
+            "platform update: the {} downloaded bytes do not match the published digest",
+            archive.len()
+        ));
         return Err(DeviceError::Integrity);
     }
     // The digest matched, so these bytes are exactly what was published. A
     // failure past this point means the release itself is malformed, which is
     // an input problem, not a transport or a disk problem.
-    let tar =
-        kobo_net::gzip::expand(archive, EXPANDED_LIMIT).map_err(|_| DeviceError::InvalidInput)?;
+    //
+    // Or the reader ran out of room to expand it in: this holds the archive
+    // and the whole expanded tree at once, and the decompressor doubles its
+    // output buffer to get there, on a device with a single core and half a
+    // gigabyte of memory. Both arrive here as one code, so the size is traced
+    // to tell them apart afterwards.
+    let tar = kobo_net::gzip::expand(archive, EXPANDED_LIMIT).map_err(|_| {
+        trace(&format!(
+            "platform update: could not expand the {} byte archive, ceiling {EXPANDED_LIMIT}",
+            archive.len()
+        ));
+        DeviceError::InvalidInput
+    })?;
+    trace(&format!(
+        "platform update: expanded to {} bytes, writing staging copy",
+        tar.len()
+    ));
     ensure_launch_bootstrap(adds)?;
     recover_interrupted_update(adds)?;
     let staging = adds.join("cobalt.next");
