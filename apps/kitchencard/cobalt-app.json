@@ -1,0 +1,25 @@
+{
+  "id": "kitchencard",
+  "display_name": "Kitchen Card",
+  "short_label": "Kitchen",
+  "summary": "Keep Mealie recipes handy in a counter-friendly cooking view.",
+  "page_description": "A Mealie companion that keeps tonight's recipe legible, awake, and usable offline at the counter.",
+  "version": "0.1.0",
+  "release_notes": "A Mealie companion that keeps tonight's recipe legible, awake, and usable offline at the counter.",
+  "glyph": "reader",
+  "capabilities": [
+    "network",
+    "keep-awake"
+  ],
+  "setup": {
+    "steps": [
+      {
+        "text": "Make the Mealie API available to the Kobo at https://mealie.local."
+      },
+      {
+        "text": "Create a long-lived Mealie API token and install it under the exact name mealie.",
+        "command": "kobo secret set mealie --device <address>"
+      }
+    ]
+  }
+}

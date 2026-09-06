@@ -5,8 +5,15 @@ on:
     branches: [beta]
   workflow_dispatch:
 
+# Read by default, and raised for the one job that publishes. The device
+# and host jobs run `cargo build`, which executes build scripts from every
+# dependency in the graph: third-party code on the runner should not be
+# able to see a token that can write to this repository. `prepare` only
+# reads -- it lists tags and waits on this commit's CI. This is the shape
+# apps.yml already uses.
 permissions:
-  contents: write
+  contents: read
+  actions: read
 
 concurrency:
   group: cobalt-beta-platform
@@ -14,15 +21,64 @@ concurrency:
 
 jobs:
   prepare:
-    if: github.ref == 'refs/heads/beta'
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
       publish: ${{ steps.release.outputs.publish }}
     steps:
+      # Every job used to be gated on the branch, so dispatching this workflow
+      # anywhere else skipped all of them and reported success.
+      - name: Refuse to publish the beta channel from another branch
+        if: github.ref != 'refs/heads/beta'
+        run: |
+          echo "This workflow publishes the beta channel and only runs on refs/heads/beta." >&2
+          echo "It was started on ${GITHUB_REF}; re-run it with the beta branch selected." >&2
+          exit 1
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
+      # A beta tag is immutable, so the one outcome worth blocking is
+      # publishing a tree nobody has tested. CI starts on the same push as this
+      # workflow, so waiting for it is the ordinary case rather than a fault.
+      # Everything that is not an observed success refuses: no run recorded, a
+      # cancelled or failed run, or a run still going when the wait runs out.
+      - name: Require this commit's CI to have passed
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          deadline=$(( $(date +%s) + 2700 ))
+          while :; do
+            state="$(
+              gh api \
+                "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${GITHUB_SHA}&per_page=100" \
+                --jq '[.workflow_runs[] | select(.event == "push")]
+                      | sort_by(.run_number)
+                      | last
+                      | if . == null then "absent absent"
+                        else "\(.status) \(.conclusion // "pending")" end' \
+                2>/dev/null || echo "unreachable unreachable"
+            )"
+            case "$state" in
+              "completed success")
+                echo "CI passed for ${GITHUB_SHA}."
+                break
+                ;;
+              "completed "*)
+                echo "CI for ${GITHUB_SHA} concluded ${state#completed }." >&2
+                echo "The beta channel publishes only what CI has accepted." >&2
+                exit 1
+                ;;
+              *)
+                echo "CI for ${GITHUB_SHA} is ${state}; waiting."
+                ;;
+            esac
+            if [ "$(date +%s)" -ge "$deadline" ]; then
+              echo "CI did not finish for ${GITHUB_SHA} within the wait." >&2
+              echo "Refusing to publish a beta tag on an untested tree." >&2
+              exit 1
+            fi
+            sleep 30
+          done
       - name: Read the workspace version
         id: version
         run: |
@@ -35,6 +91,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
+          set -o pipefail
           tag="beta-v${VERSION}"
           tag_count="$(git ls-remote --tags origin "refs/tags/$tag" | wc -l)"
           release_count="$(gh release list --limit 100 --json tagName \
@@ -45,7 +102,10 @@ jobs:
           fi
           if [ "$tag_count" -eq 1 ]; then
             release="$RUNNER_TEMP/release.json"
-            gh release view "$tag" --json tagName,isDraft,isPrerelease,assets,targetCommitish \
+            # The release is created against an existing tag, so GitHub fills
+            # targetCommitish with the default branch and it says nothing about
+            # what was published. The tag ref below is the authority.
+            gh release view "$tag" --json tagName,isDraft,isPrerelease,assets \
               > "$release"
             node - "$release" "$tag" "$VERSION" <<'NODE'
           const fs = require("fs");
@@ -141,6 +201,14 @@ jobs:
               test "$(sha256sum "$name" | cut -d' ' -f1)" = "$checksum"
             done < cobalt-host-manifest.txt
             cd "$GITHUB_WORKSPACE"
+            # The tag being an ancestor of this commit only proves beta has not
+            # rewritten history. Beta can still have moved on with packaged
+            # changes the published tag does not carry, and skipping the build
+            # then reports success while no reader receives them.
+            changed="$RUNNER_TEMP/changed-since-$tag"
+            git diff --name-only --diff-filter=ACDMRT "$tag_sha" "$GITHUB_SHA" > "$changed"
+            node tools/device-package-changes.mjs --tag "$tag" --version "$VERSION" \
+              < "$changed"
             echo "publish=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -165,10 +233,61 @@ jobs:
           targets: armv7-unknown-linux-musleabihf
       - name: Install the ARM cross-compiler
         run: sudo apt-get update && sudo apt-get install --yes gcc-arm-linux-gnueabihf
+      # The device target is musl, but the C in the dependency tree was being
+      # compiled by the glibc armhf cross-compiler. Ubuntu's armhf toolchain
+      # now defaults to 64-bit time_t, so SQLite's calls to stat, fcntl and
+      # nanosleep emit glibc's __stat64_time64 and friends, which musl has
+      # never defined. Nothing noticed while only ring compiled C, because it
+      # calls none of them. Zig ships musl headers for every target it emits,
+      # so it is the cross-compiler for the device rather than a fourth apt
+      # package pretending musl and glibc are interchangeable.
+      - name: Install the musl cross-compiler the device C needs
+        run: |
+          set -eu
+          curl -fsSL -o /tmp/zig.tar.xz \
+            https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz
+          echo "70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00  /tmp/zig.tar.xz" \
+            | sha256sum -c -
+          sudo tar -xJf /tmp/zig.tar.xz -C /opt
+          sudo tee /usr/local/bin/armv7-musl-cc >/dev/null <<'CC'
+          #!/bin/sh
+          # cc-rs passes --target=armv7-unknown-linux-musleabihf. Zig spells the
+          # same machine arm-linux-musleabihf and refuses "armv7", so the triple
+          # comes from here and the one we are handed is dropped.
+          zig=/opt/zig-x86_64-linux-0.16.0/zig
+          count=$#
+          index=0
+          while [ "$index" -lt "$count" ]; do
+            argument="$1"
+            shift
+            case "$argument" in
+              --target=*) ;;
+              *) set -- "$@" "$argument" ;;
+            esac
+            index=$((index + 1))
+          done
+          # Zig instruments with UBSan by default and does not link its runtime,
+          # so sqlite3.c ends up referencing __ubsan_handle_* that nothing
+          # defines. The device build is not a sanitiser run.
+          exec "$zig" cc -target arm-linux-musleabihf -fno-sanitize=undefined "$@"
+          CC
+          sudo chmod +x /usr/local/bin/armv7-musl-cc
+          armv7-musl-cc --version
+
+      # The Syncthing engine used to be rebuilt here, so that packaging could
+      # embed the reviewed bytes. It is no longer part of the release: readers
+      # fetch it on first use from a tag of its own, because 27.9 MB of engine
+      # in a 31.0 MB update was charged to everybody whether or not they sync.
+      # Rebuilding it on every platform release now costs a Go toolchain
+      # download and a full build for an artifact this job does not package.
+      #
+      # The reproducibility claim still has to be checkable, so it moved to
+      # .github/workflows/syncthing-engine.yml, where it can be run on demand
+      # against the same pinned commit and the same digest the runtime enforces.
       - name: Build the deterministic device package
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
-          CC_armv7_unknown_linux_musleabihf: arm-linux-gnueabihf-gcc
+          CC_armv7_unknown_linux_musleabihf: armv7-musl-cc
           CFLAGS_armv7_unknown_linux_musleabihf: -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0
         run: cargo run --locked -p kobo-cli -- package --out "dist/cobalt-${VERSION}-KoboRoot.tgz"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -229,6 +348,8 @@ jobs:
     needs: [prepare, device, host]
     if: needs.prepare.outputs.publish == 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4

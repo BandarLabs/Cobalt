@@ -1,0 +1,8 @@
+wait 800
+expect Nearby
+clean
+shot nearby
+tap Log a sighting
+expect TALLY
+clean
+shot log

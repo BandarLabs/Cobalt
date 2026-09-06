@@ -1,0 +1,13 @@
+{
+  "id": "verses",
+  "display_name": "Verses",
+  "short_label": "Verses",
+  "summary": "Read a public-domain poem each day.",
+  "page_description": "Discover a daily poem, browse its source, and keep favorites for later.",
+  "version": "0.1.0",
+  "release_notes": "Discover a daily poem, browse its source, and keep favorites for later.",
+  "glyph": "note",
+  "capabilities": [
+    "network"
+  ]
+}

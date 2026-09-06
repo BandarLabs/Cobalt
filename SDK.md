@@ -163,8 +163,9 @@ still statically linked. Section 11 has the rest of the device story, section
 
 An application is a process. It connects to the runtime over a Unix socket,
 sends whole screens, and receives actions. It never opens the framebuffer,
-never touches the input device, never opens a socket to the internet, and never
-sees a credential.
+never touches the input device and never opens a socket to the internet. It
+cannot read a stored credential. If the owner chooses in-app setup, the app
+holds only what is being typed until it hands that value to the runtime.
 
 ```
 your binary ── kobo-sdk ──socket── kobod ── panel, touch, network, secrets
@@ -181,6 +182,26 @@ hand it over:
 ```rust
 context.set_screen(ScreenBuilder::new("results").heading("Results").build());
 ```
+
+### Portrait and landscape
+
+Portrait is the compatibility default. An application that genuinely benefits
+from a wide viewport may request landscape for its current app session:
+
+```rust
+context.set_orientation(kobo_sdk::Orientation::Landscape);
+let metrics = context
+    .metrics()
+    .oriented(kobo_sdk::Orientation::Landscape);
+```
+
+The runtime keeps the framebuffer in its verified native mode and rotates the
+rendered surface in software when a hardware backend has not been independently
+validated for quarter turns. Touch coordinates are transformed through the
+same mapping. On readers that report a verified physical landscape side, the
+runtime follows that side; readers without orientation events use a fixed
+clockwise convention. Returning to the reader or starting another application
+restores the portrait default automatically.
 
 The runtime diffs it against the last one and picks an E Ink waveform from the
 pixels that changed. This is not a stylistic preference. A retained tree
@@ -898,13 +919,14 @@ Task::Post { secret: Some("openai".into()), .. }
 Task::Post { credential: Some(Credential::in_header("anthropic", "x-api-key")), .. }
 ```
 
-The application names a secret; the runtime reads
-`/mnt/onboard/.adds/cobalt/secrets/<name>` and attaches it, either as a bearer
-token or under the header the application named, which is what lets a request
-go straight to Anthropic or Gemini rather than through a proxy.
-The value is never in the application's memory, its logs, or its crash dump,
-and it cannot be sent anywhere the application did not name: the request is
-not replayed across a redirect.
+The application names a secret; the runtime reads its private app namespace,
+with an owner-installed global credential as fallback, and attaches the value
+either as a bearer token or under the header the application named. That is
+what lets a request go straight to Anthropic or Gemini rather than through a
+proxy.
+A value already stored by the runtime is never in the application's memory,
+logs, or crash dump, and it cannot be sent anywhere the application did not
+name: the request is not replayed across a redirect.
 
 `Failure::of(error)` turns a task failure into a state, a sentence and an
 honest answer about whether a Retry control would help. For a missing
@@ -929,6 +951,31 @@ an argument, so it does not reach a process table or a shell history, and it is
 never printed. A one-line `NAME=value` file is accepted as well as a raw key;
 only the value is installed. `--volume` does the same thing over USB for a
 reader that is not yet on Wi-Fi.
+
+Credentials entered inside an application are stored under that runtime-
+verified app ID (`secrets/apps/<app-id>/<name>`). Task lookup checks that
+private namespace first. A file installed by `kobo secret set` remains a
+global owner credential at `secrets/<name>` and is used only when the calling
+app has no private value. Thus Chat and Audiobook may hold different `openai`
+credentials, while existing CLI-installed credentials continue to work.
+Applications cannot name or write another app's namespace, and secret paths
+and symbolic links are refused rather than followed.
+
+Protocol-12 apps may also offer attended setup on the reader:
+
+```rust
+use kobo_sdk::credentials::CredentialSetup;
+
+let mut setup = CredentialSetup::new("openai", "OpenAI");
+setup.open();
+context.set_screen(setup.screen("My app"));
+```
+
+Pass actions to `setup.on_action(...)` and device replies to
+`setup.on_device_result(...)`. Entry is masked on screen, the runtime accepts
+only credential names authorized for the calling app, and the app cannot read
+the stored value back. The setup prompt also shows the CLI alternative and
+instructs the owner to restart the app after using it.
 
 ### Owner trust roots
 
@@ -1319,7 +1366,18 @@ book partition and run from there.
 this will not connect. **Cobalt does not install an SSH server and does not
 need one to run.** SSH is only how a developer's machine reaches a device.
 
-### Driving it, and photographing the result
+The default simulator profile is the 1072x1448 Clara BW. Set
+`KOBO_SIM_PROFILE` to a supported profile id to verify another panel:
+
+```sh
+KOBO_SIM_PROFILE=libra-2-388 kobo dev
+KOBO_SIM_PROFILE=elipsa-2e-389 kobo dev
+```
+
+The selected profile controls the framebuffer dimensions, density, touch
+transform and runtime layout metrics together; it is not a browser-only scale.
+
+## Driving it, and photographing the result
 
 Everything above tells you how to *run* an application. This is how to check
 what it actually looks like, without a person watching it.
@@ -1360,6 +1418,34 @@ A script is one step per line; `#` is a comment.
 A failing step reports the line, the step and the reason, and takes a
 screenshot first, because the question that immediately follows "tap Search
 failed" is "what was on the screen".
+
+**`--record` films the run instead of photographing it.**
+
+```sh
+cargo run -p kobo-cli -- drive --script drive.kobo --record target/demo --fps 4
+```
+
+The panel is sampled on its own clock while the script drives, so the
+recording catches the screens a run passes through as well as the ones it stops
+on: the list that was empty for half a second before the fetch came back, the
+pane drawn at the wrong size until the second layout pass. Frames identical to
+the one before them are dropped, so a script that waits two seconds between
+taps is one frame there and not eight. The directory ends up holding numbered
+greyscale PNGs, a `timings.txt`, a `recording.mp4` and a `recording.gif` --
+the same shape `kobo record --device` produces from a reader, so a demo made
+here and a demo made on hardware are the same kind of file.
+
+A recording is taken from the residue-free frame **unless you pass
+`--ghosting`**, which is the opposite default to `shot` and deliberate: a still
+with e-ink residue on it is two screens a person can read past, and a hundred
+of them played in sequence is every screen of the run at once. `--ideal` goes
+on governing the `shot` steps.
+
+ffmpeg assembles both files and is checked for before the script runs, because
+finding out it is missing after a minute of driving costs the minute.
+
+`scripts/record-apps-sim.sh` does this for every application in the catalog,
+one simulator at a time, with no reader anywhere near it.
 
 **Pass `--ideal` when you are reading the screenshots rather than the
 refreshes.** A screenshot is taken from the simulated panel, and the simulated
@@ -1410,13 +1496,20 @@ once, at one point, which must be on the screen, and it always lifts: a tap
 that failed halfway would leave the digitiser reporting a finger that is not
 there.
 
-The division is deliberate. **`drive` is the simulator; `shot` and `tap` are
-the device.** Resolving a label to a coordinate needs the layout, and the
-layout lives in the process doing the rendering. On the host that is the
-simulator, which runs the identical renderer, layout engine, hit-testing and
-refresh planner. On the device it is inside the running application, and
+The division is deliberate. **`drive` is the simulator; `shot`, `tap` and
+`record` are the device.** Resolving a label to a coordinate needs the layout,
+and the layout lives in the process doing the rendering. On the host that is
+the simulator, which runs the identical renderer, layout engine, hit-testing
+and refresh planner. On the device it is inside the running application, and
 opening a control channel into it in order to test it would be testing
 something other than the shipped path.
+
+That is why filming the simulator is `drive --record` and not `record
+--address`. `record` is a framebuffer reader: it uploads the doctor, has the
+device copy `/dev/fb0` into a file at a fixed rate, and pulls that file home
+over SSH compressed. None of those three things has a counterpart on this side
+of the cable, and there is no framebuffer here to read. What there is, is a
+driver already holding a connection to the process doing the rendering.
 
 ---
 
@@ -1430,7 +1523,9 @@ protocol and policies but is not an operating-system security boundary.
 
 - **You cannot draw.** No pixels, no colour, no fonts, no coordinates.
 - **You cannot block the panel.** Long work is a task or it does not happen.
-- **You cannot hold a credential.** You may name one.
+- **You cannot read a stored credential.** You may name one. During attended
+  in-app setup you may briefly hold what the owner is typing solely to submit
+  it to the runtime.
 - **You cannot remove Back.** The runtime owns it, draws it, and leaves to the
   launcher if you do not answer it. You may ask to answer it first.
 - **You cannot open a socket, a file outside your directory, or a device node.**

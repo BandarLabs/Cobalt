@@ -3,7 +3,10 @@
 Cobalt platform releases and Store app releases are separate:
 
 - Tagged `v*` releases publish the USB-installable Cobalt platform package.
-- Every accepted merge to `main` runs the app publishing workflow.
+- Every accepted merge to `beta` runs the app publishing workflow.
+- `.github/workflows/apps.yml` publishes signed **beta** packages only.
+- Stable apps are promoted from the exact physically tested beta packages by
+  the `promote-beta-apps` workflow; they are not rebuilt from `main`.
 - App-only changes do not require a Cobalt version bump or platform update.
 - Every changed app package requires a new app version, including changes from
   a shared SDK or protocol dependency.
@@ -66,10 +69,18 @@ Store apps are workspace packages declared in `apps/catalog.json`. The
 registry supplies public metadata; binary size and SHA-256 are calculated from
 the exact ARM release binary during publishing.
 
+`tools/protocol-minimums.json` maps SDK protocols and newer capabilities to
+their first compatible Cobalt release. A future protocol cannot publish until
+that Cobalt-owned policy is updated.
 `minimum_cobalt_version` must cover both the SDK wire protocol and the runtime
 services used by the app. Protocol 11 SDK builds require Cobalt 0.3.1 or newer.
-The publishing check rejects a lower value, and a future protocol version
-cannot publish until its first compatible Cobalt release is recorded.
+The 0.3.5 runtime deliberately accepts both protocol 11 and 12: installed
+protocol-11 apps, their state, secrets, update preferences, rollback path, and
+Nickel handoff remain usable after its OTA. Those frames retain legacy
+Atkinson metrics so their local pagination stays correct. Protocol-12 apps use
+Folio fields and typography and must declare `minimum_cobalt_version` 0.3.5;
+old runtimes may reject them. Protocol 13 is the current Lichess/Folio runtime
+and uses the same 0.3.5 Cobalt floor. The publishing check rejects a lower value.
 
 The initial Cobalt applications are registered too. Their `0.2.0` copies are
 bundled for a useful first boot, appear as installed in Store, and can later be
@@ -81,10 +92,10 @@ See [CONTRIBUTING_APPS.md](CONTRIBUTING_APPS.md) for the contribution format.
 
 ## Publishing workflow
 
-`.github/workflows/apps.yml` runs on every push to `main` and `beta`. Main
-publishes the Stable `app-catalog` release; beta publishes the isolated
-`app-catalog-beta` release with separate concurrency, URLs and same-branch
-version baselines. It:
+Developers open app pull requests against `beta`. After a tested beta merge,
+`.github/workflows/apps.yml` runs on pushes to `beta` and publishes only the
+isolated `app-catalog-beta` release. Stable is changed solely by the protected
+exact-byte promotion workflow. Beta publication:
 
 1. Validates the registry and creates a matrix only for new or affected
    packages by comparing with the previous successful run on the same branch.

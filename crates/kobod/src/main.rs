@@ -36,10 +36,18 @@ fn metrics_for_profile(
 /// Returns immutable hardware metrics after a verified device session starts,
 /// or the explicit host-simulation metrics before then.
 pub fn device_metrics() -> kobo_ui::DisplayMetrics {
-    VERIFIED_DEVICE_METRICS
-        .get()
-        .copied()
-        .unwrap_or_else(display_metrics_from_env)
+    VERIFIED_DEVICE_METRICS.get().copied().unwrap_or_else(|| {
+        let metrics = display_metrics_from_env();
+        let Ok(requested) = env::var("KOBO_SIM_PROFILE") else {
+            return metrics;
+        };
+        kobo_profile::SUPPORTED_PROFILES
+            .iter()
+            .copied()
+            .find(|profile| profile.id == requested)
+            .and_then(|profile| metrics_for_profile(profile, metrics).ok())
+            .unwrap_or(metrics)
+    })
 }
 
 #[cfg(feature = "device-write")]
@@ -66,6 +74,7 @@ mod blackbox;
 #[cfg(feature = "device-write")]
 mod device;
 mod frame;
+mod syncthing;
 mod update;
 
 fn main() -> ExitCode {
@@ -83,6 +92,14 @@ fn run(arguments: &[String]) -> Result<(), Box<dyn Error>> {
     if arguments.is_empty() {
         print_safety_state();
         return Ok(());
+    }
+    #[cfg(feature = "device-write")]
+    if matches!(
+        arguments.first().map(String::as_str),
+        Some("--present" | "--restart-from")
+    ) {
+        update::recover_at_startup(Path::new("/mnt/onboard/.adds"))
+            .map_err(|error| format!("recover interrupted update before launch: {error}"))?;
     }
     if arguments.len() == 4 && arguments[0] == "--sim-socket" && arguments[2] == "--frame" {
         return serve_simulation(Path::new(&arguments[1]), Path::new(&arguments[3]));
@@ -127,7 +144,127 @@ fn run(arguments: &[String]) -> Result<(), Box<dyn Error>> {
         );
         return Ok(());
     }
-    Err("usage: kobod [--sim-socket PATH --frame PATH] [--present APP] [--fetch URL BYTES] [--key-test SECONDS] [--app-link status|unpair]".into())
+    if arguments
+        .first()
+        .is_some_and(|argument| argument == "--syncthing")
+    {
+        return syncthing::command(&arguments[1..]).map_err(Into::into);
+    }
+    if arguments
+        .first()
+        .is_some_and(|argument| argument == "--beta-store")
+    {
+        return beta_store_maintenance(&arguments[1..]);
+    }
+    if arguments.len() == 2 && arguments[0] == "--resolve-app" {
+        let path = app_store::resolve_launch(Path::new("/mnt/onboard/.adds/cobalt"), &arguments[1])
+            .map_err(|error| format!("resolve application: {error}"))?;
+        println!("path={}", path.display());
+        return Ok(());
+    }
+    Err("usage: kobod [--sim-socket PATH --frame PATH] [--present APP] [--fetch URL BYTES] [--key-test SECONDS] [--app-link status|unpair] [--syncthing] [--resolve-app APP] [--beta-store identity|status APP|catalog-digest|refresh|install APP|uninstall APP]".into())
+}
+
+/// A narrow device-side surface for the host acceptance harness.
+///
+/// Every mutating action is hard-wired to Beta and requires an exact attended
+/// unlock. Stable is not an accepted argument and no network or owner setting
+/// is changed.
+fn beta_store_maintenance(arguments: &[String]) -> Result<(), Box<dyn Error>> {
+    const ROOT: &str = "/mnt/onboard/.adds/cobalt";
+    const UNLOCK: &str = "OWNER_ATTENDED_BETA_STORE_ACCEPTANCE";
+    match arguments {
+        [action] if action == "identity" => {
+            let snapshot = kobo_hal::probe_device()?;
+            let profile = kobo_profile::identify_profile(&snapshot)
+                .ok_or("the device does not exactly match a supported profile")?;
+            println!("profile={}", profile.id);
+            println!(
+                "firmware={}",
+                snapshot.identity.firmware_version.unwrap_or_default()
+            );
+            println!("cobalt={}", env!("CARGO_PKG_VERSION"));
+            println!("protocol={}", kobo_protocol::VERSION);
+            println!("panel_width={}", profile.width);
+            println!("panel_height={}", profile.height);
+            let channel = match autoupdate::preferences(Path::new(ROOT)).channel {
+                kobo_protocol::UpdateChannel::Stable => "stable",
+                kobo_protocol::UpdateChannel::Beta => "beta",
+            };
+            println!("channel={channel}");
+            Ok(())
+        }
+        [action, id] if action == "status" => {
+            if !kobo_protocol::valid_app_id(id) {
+                return Err("invalid application identity".into());
+            }
+            let installed = app_store::installed(Path::new(ROOT))
+                .map_err(|error| format!("read installed applications: {error}"))?;
+            let Some(app) = installed.iter().find(|app| app.id == *id) else {
+                println!("installed=false");
+                return Ok(());
+            };
+            let binary = app_store::resolve(Path::new(ROOT), id)
+                .map_err(|error| format!("resolve installed application: {error}"))?;
+            let bytes = fs::read(binary)?;
+            println!("installed=true");
+            println!(
+                "version={}",
+                app.installed_version.as_deref().unwrap_or_default()
+            );
+            println!("binary_sha256={}", kobo_net::sha256::hex_digest(&bytes));
+            Ok(())
+        }
+        [action] if action == "catalog-digest" => {
+            app_store::catalog(Path::new(ROOT), kobo_protocol::UpdateChannel::Beta)
+                .map_err(|error| format!("verify cached Beta catalog: {error}"))?;
+            let cache = Path::new(ROOT).join("store/catalog-beta");
+            let catalog = fs::read(cache.join("catalog.json"))?;
+            let signature = fs::read(cache.join("catalog.json.sig"))?;
+            println!(
+                "catalog_sha256={}",
+                kobo_net::sha256::hex_digest(&catalog)
+            );
+            println!(
+                "signature_sha256={}",
+                kobo_net::sha256::hex_digest(&signature)
+            );
+            Ok(())
+        }
+        [action] if action == "refresh" => {
+            require_beta_store_unlock(UNLOCK)?;
+            let entries = app_store::refresh(Path::new(ROOT), kobo_protocol::UpdateChannel::Beta)
+                .map_err(|error| format!("refresh Beta catalog: {error}"))?;
+            println!("entries={}", entries.len());
+            Ok(())
+        }
+        [action, id] if action == "install" => {
+            require_beta_store_unlock(UNLOCK)?;
+            app_store::install(Path::new(ROOT), id, kobo_protocol::UpdateChannel::Beta)
+                .map_err(|error| format!("install Beta application: {error}"))?;
+            println!("installed={id}");
+            Ok(())
+        }
+        [action, id] if action == "uninstall" => {
+            require_beta_store_unlock(UNLOCK)?;
+            app_store::uninstall(Path::new(ROOT), id)
+                .map_err(|error| format!("uninstall Beta application: {error}"))?;
+            println!("uninstalled={id}");
+            Ok(())
+        }
+        _ => Err(
+            "usage: kobod --beta-store identity|status APP|catalog-digest|refresh|install APP|uninstall APP"
+                .into(),
+        ),
+    }
+}
+
+fn require_beta_store_unlock(expected: &str) -> Result<(), Box<dyn Error>> {
+    if env::var("KOBO_BETA_STORE_UNLOCK").ok().as_deref() == Some(expected) {
+        Ok(())
+    } else {
+        Err("owner-attended beta Store acceptance unlock is missing or incorrect".into())
+    }
 }
 
 #[cfg(feature = "device-write")]
@@ -284,6 +421,7 @@ fn fetch_once(url: &str, max_bytes: &str) -> Result<(), Box<dyn Error>> {
 /// everything back afterwards.
 #[cfg(feature = "device-write")]
 fn present_on_panel(application: &Path) -> Result<(), Box<dyn Error>> {
+    use kobo_wifi_trace::TraceClient;
     use std::time::Duration;
     const UNLOCK_ENV: &str = "KOBO_PRESENT_UNLOCK";
     const UNLOCK_PHRASE: &str = "OWNER_ATTENDED_PANEL_SESSION";
@@ -304,7 +442,15 @@ fn present_on_panel(application: &Path) -> Result<(), Box<dyn Error>> {
             .and_then(|value| value.parse::<u64>().ok())
             .map_or(device::Limits::default().ceiling, Duration::from_secs),
     };
-    println!("{}", device::present(application, limits)?);
+    // This lookup is the diagnostic's entire normal-session cost. Without the
+    // exact attended unlock TraceClient opens no file and starts no process.
+    // With it, failure to establish the persistent baseline refuses the
+    // session before Nickel or any hardware state is touched.
+    let mut wifi_trace = TraceClient::start_if_enabled()?;
+    if let Some(path) = wifi_trace.trace_path() {
+        println!("passive Wi-Fi handoff trace: {}", path.display());
+    }
+    println!("{}", device::present(application, limits, &mut wifi_trace)?);
     Ok(())
 }
 
@@ -317,6 +463,26 @@ fn restart_reader(state: &Path) -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
     let reader = Reader::load(state)?;
+    match kobo_hal::probe_device() {
+        Ok(snapshot) => match kobo_profile::write_ready_profile(&snapshot) {
+            Ok(profile) => {
+                let mut executables = profile.leftover_radio_daemons.to_vec();
+                if profile.reap_nickel_supplicant
+                    && !executables.contains(&kobo_hal::network::SUPPLICANT_EXECUTABLE)
+                {
+                    executables.push(kobo_hal::network::SUPPLICANT_EXECUTABLE);
+                }
+                device::reap_leftover_radio_daemons(&executables);
+            }
+            Err(blockers) => println!(
+                "could not identify a write-ready profile while recovering the reader ({}); restarting without radio cleanup",
+                blockers.join("; ")
+            ),
+        },
+        Err(error) => println!(
+            "could not probe the device while recovering the reader ({error}); restarting without radio cleanup"
+        ),
+    }
     // The restart below is the operation that trips the SoC watchdog, and this
     // process is here precisely because the session that should have been
     // holding it off is dead. Slack first, then arm unconditionally once the
@@ -457,6 +623,7 @@ fn serve_simulation(socket_path: &Path, frame_path: &Path) -> Result<(), Box<dyn
     kobo_protocol::write_to(
         &mut stream,
         &Frame {
+            version: hello.version,
             request_id: hello.request_id,
             message: Message::Welcome {
                 width: u16::try_from(metrics.width)?,
@@ -466,7 +633,7 @@ fn serve_simulation(socket_path: &Path, frame_path: &Path) -> Result<(), Box<dyn
             },
         },
     )?;
-    serve_application(&mut stream, frame_path, &name, metrics)
+    serve_application(&mut stream, frame_path, &name, metrics, hello.version)
 }
 
 /// Where a host runtime looks for owner-installed TLS trust roots.
@@ -498,6 +665,49 @@ fn host_dictionary_directory() -> PathBuf {
     )
 }
 
+fn host_app_data_root(name: &str) -> PathBuf {
+    std::env::temp_dir().join("cobalt-host-data").join(name)
+}
+
+fn valid_app_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 32
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+}
+
+fn host_secret_directory() -> PathBuf {
+    std::env::temp_dir().join("cobalt-host-secrets")
+}
+
+#[derive(Default)]
+struct PreviewState {
+    orientation: kobo_ui::Orientation,
+    latest: Option<(Screen, kobo_ui::Chrome)>,
+}
+
+impl PreviewState {
+    fn remember(&mut self, screen: Screen, chrome: kobo_ui::Chrome) {
+        self.latest = Some((screen, chrome));
+    }
+}
+
+fn apply_preview_orientation<E>(
+    preview: &mut PreviewState,
+    requested: kobo_ui::Orientation,
+    rewrite: impl FnOnce(&Screen, &kobo_ui::Chrome, kobo_ui::Orientation) -> Result<(), E>,
+) -> Result<(), E> {
+    if preview.orientation == requested {
+        return Ok(());
+    }
+    preview.orientation = requested;
+    if let Some((screen, chrome)) = preview.latest.as_ref() {
+        rewrite(screen, chrome, requested)?;
+    }
+    Ok(())
+}
+
 #[allow(
     clippy::too_many_lines,
     reason = "one arm per message type; splitting the dispatch hides it"
@@ -507,7 +717,11 @@ fn serve_application(
     frame_path: &Path,
     name: &str,
     metrics: kobo_ui::DisplayMetrics,
+    peer_version: u8,
 ) -> Result<(), Box<dyn Error>> {
+    if !valid_app_name(name) {
+        return Err("SDK application name is not a safe data directory name".into());
+    }
     // In simulation the daemon owns no hardware, so every hardware-touching
     // request is answered honestly rather than pretended.
     let mut services = DeviceServices::simulated();
@@ -524,10 +738,27 @@ fn serve_application(
     // runtime uses. Without the grant the backend could never run, so this
     // path claimed to be the real runtime while refusing every request an
     // application made.
+    let app_data_root = host_app_data_root(name);
+    let secrets = host_secret_directory();
+    let credential_app = name.to_owned();
     let tasks = std::sync::Arc::new(std::sync::Mutex::new(
-        TaskRunner::simulated(std::env::temp_dir())
-            .with_fetch(std::sync::Arc::new(kobo_net::fetch_from))
-            .with_post(std::sync::Arc::new(kobo_net::post))
+        TaskRunner::simulated(&app_data_root)
+            .with_fetch(std::sync::Arc::new(kobo_net::fetch_from_controlled))
+            .with_post(std::sync::Arc::new(kobo_net::post_controlled))
+            .with_line_streams(std::sync::Arc::new(kobo_net::LineStreams::default()))
+            .with_app_secrets(&secrets, name)
+            .with_credential_policy(std::sync::Arc::new(
+                move |credential, url, usage, body, content_type| {
+                    kobo_policy::credentials::allowed_request(
+                        &credential_app,
+                        credential,
+                        url,
+                        usage,
+                        body,
+                        content_type,
+                    )
+                },
+            ))
             .with_capabilities([kobo_policy::Capability::Network]),
     ));
     // Outcomes are delivered from their own thread. This loop blocks on the
@@ -540,11 +771,12 @@ fn serve_application(
     {
         let draining = std::sync::Arc::clone(&tasks);
         let writer = std::sync::Arc::clone(&writer);
-        std::thread::spawn(move || deliver_outcomes(&draining, &writer));
+        std::thread::spawn(move || deliver_outcomes(&draining, &writer, peer_version));
     }
     let store = kobo_policy::store::Store::new(std::env::temp_dir().join("cobalt-host-state"));
-    let shelf = kobo_policy::shelf::Shelf::new(std::env::temp_dir().join("cobalt-host-data"));
+    let shelf = kobo_policy::shelf::Shelf::new(app_data_root);
     let mut pictures = kobo_ui::PictureCache::default();
+    let mut preview = PreviewState::default();
     loop {
         let frame = kobo_protocol::read_from(stream)?;
         match frame.message {
@@ -552,14 +784,32 @@ fn serve_application(
                 // Per screen, as the device does it: a book is drawn
                 // without a band and everything else with one.
                 let chrome = simulated_chrome(name, &screen);
-                write_screen(frame_path, screen, &chrome, name, &pictures)?;
+                write_screen(
+                    frame_path,
+                    &screen,
+                    &chrome,
+                    name,
+                    &pictures,
+                    preview.orientation,
+                )?;
+                preview.remember(screen, chrome);
+            }
+            Message::SetOrientation(requested) => {
+                apply_preview_orientation(
+                    &mut preview,
+                    requested,
+                    |screen, chrome, orientation| {
+                        write_screen(frame_path, screen, chrome, name, &pictures, orientation)
+                    },
+                )?;
             }
             Message::PutPicture {
                 handle,
                 width,
                 height,
-                grey,
-            } => match pictures.put_report(handle, width, height, grey) {
+                format,
+                pixels,
+            } => match pictures.put_report_with(handle, width, height, format, pixels) {
                 None => println!("picture {} refused", handle.0),
                 Some(evicted) if !evicted.is_empty() => {
                     println!("picture {} evicted {evicted:?}", handle.0);
@@ -570,20 +820,21 @@ fn serve_application(
                 handle,
                 width,
                 height,
+                format,
             } => {
-                if !pictures.begin_upload(handle, width, height) {
+                if !pictures.begin_upload_with(handle, width, height, format) {
                     println!("picture {} upload refused", handle.0);
                 }
             }
             Message::PictureChunk {
                 handle,
                 offset,
-                grey,
+                pixels,
             } => {
                 if !pictures.upload_chunk(
                     handle,
                     usize::try_from(offset).unwrap_or(usize::MAX),
-                    &grey,
+                    &pixels,
                 ) {
                     println!("picture {} chunk refused", handle.0);
                 }
@@ -610,11 +861,32 @@ fn serve_application(
             Message::Launch { name } => println!("launch requested: {name}"),
             Message::Log { level, message } => log_app(level, &message),
             Message::DeviceRequest(request) => {
-                let result = services.handle(request.clone());
+                let result = if let kobo_protocol::DeviceRequest::SetSecret {
+                    name: secret_name,
+                    value,
+                } = &request
+                {
+                    if kobo_policy::credentials::may_set(name, secret_name) {
+                        kobo_policy::credentials::install_app_secret(
+                            &secrets,
+                            name,
+                            secret_name,
+                            value.as_str(),
+                        )
+                        .map_or_else(kobo_protocol::DeviceResult::Failed, |()| {
+                            kobo_protocol::DeviceResult::Done
+                        })
+                    } else {
+                        kobo_protocol::DeviceResult::Denied(kobo_protocol::DenyReason::NotDeclared)
+                    }
+                } else {
+                    services.handle(request.clone())
+                };
                 println!("device request {request:?} -> {result:?}");
                 write_shared(
                     &writer,
                     &Frame {
+                        version: frame.version,
                         request_id: frame.request_id,
                         message: Message::DeviceResult(result),
                     },
@@ -630,6 +902,7 @@ fn serve_application(
                     write_shared(
                         &writer,
                         &Frame {
+                            version: frame.version,
                             request_id: frame.request_id,
                             message: Message::TaskOutcome {
                                 task,
@@ -646,6 +919,7 @@ fn serve_application(
                 write_shared(
                     &writer,
                     &Frame {
+                        version: frame.version,
                         request_id: frame.request_id,
                         message: Message::StoreResult(result),
                     },
@@ -659,6 +933,7 @@ fn serve_application(
             Message::ShellRequest(_) => write_shared(
                 &writer,
                 &Frame {
+                    version: frame.version,
                     request_id: frame.request_id,
                     message: Message::ShellEvent(kobo_protocol::ShellEvent::Refused(
                         kobo_protocol::ShellError::Unavailable,
@@ -712,6 +987,7 @@ fn write_shared(
 fn deliver_outcomes(
     tasks: &std::sync::Arc<std::sync::Mutex<TaskRunner>>,
     writer: &std::sync::Arc<std::sync::Mutex<UnixStream>>,
+    peer_version: u8,
 ) {
     loop {
         let Ok(finished) = tasks.lock().map(|mut tasks| tasks.drain()) else {
@@ -724,6 +1000,7 @@ fn deliver_outcomes(
             if kobo_protocol::write_to(
                 &mut *stream,
                 &Frame {
+                    version: peer_version,
                     request_id: 0,
                     message: Message::TaskOutcome {
                         task: finished.task,
@@ -786,10 +1063,11 @@ const HOME_APPLICATION: &str = "launcher";
 
 fn write_screen(
     path: &Path,
-    screen: Screen,
+    screen: &Screen,
     chrome: &kobo_ui::Chrome,
     name: &str,
     pictures: &dyn kobo_ui::Pictures,
+    orientation: kobo_ui::Orientation,
 ) -> Result<(), Box<dyn Error>> {
     let mut surface = Surface::new(
         usize::try_from(crate::device_metrics().width)?,
@@ -800,7 +1078,7 @@ fn write_screen(
     // never exist. Rendering with &Chrome::default() here meant the way back
     // was the one part of every screen that could not be looked at without a
     // reader, and it is the part that traps somebody when it is missing.
-    let screen = kobo_ui::ensure_way_back(screen, chrome, name);
+    let screen = kobo_ui::ensure_way_back(screen.clone(), chrome, name);
     let metrics = crate::device_metrics();
     // The same reason as on the device: the typeface sets at the ambient
     // scale, so a preview of a screen that asked for larger prose has to say
@@ -808,7 +1086,15 @@ fn write_screen(
     // the prose keeps the reader's own size either way.
     kobo_ui::set_text_scale(metrics.text_scale);
     kobo_ui::set_reading_scale(screen.text_scale.unwrap_or(metrics.text_scale));
-    kobo_ui::render_all(&screen, &metrics, chrome, pictures, &mut surface, None);
+    kobo_ui::render_oriented(
+        &screen,
+        &metrics,
+        chrome,
+        pictures,
+        &mut surface,
+        None,
+        orientation,
+    );
 
     let temporary = path.with_extension(format!("raw.tmp-{}", std::process::id()));
     let mut file = OpenOptions::new()
@@ -877,6 +1163,43 @@ impl Drop for SocketGuard {
 mod tests {
 
     #[test]
+    fn host_file_task_roots_are_private_per_app() {
+        assert_ne!(
+            super::host_app_data_root("nonograms"),
+            super::host_app_data_root("panels")
+        );
+        assert!(super::valid_app_name("nonograms"));
+        assert!(!super::valid_app_name("../panels"));
+    }
+
+    #[test]
+    fn host_secret_installation_replaces_without_exposing_a_partial_file() {
+        let directory =
+            std::env::temp_dir().join(format!("cobalt-host-secret-test-{}", std::process::id()));
+        let _ignored = std::fs::remove_dir_all(&directory);
+        kobo_policy::credentials::install_app_secret(
+            &directory,
+            "zotero-reader",
+            "zotero",
+            "first",
+        )
+        .expect("install secret");
+        kobo_policy::credentials::install_app_secret(
+            &directory,
+            "zotero-reader",
+            "zotero",
+            "second",
+        )
+        .expect("replace secret");
+        assert_eq!(
+            std::fs::read(directory.join("apps/zotero-reader/zotero")).expect("read secret"),
+            b"second"
+        );
+        assert!(!directory.join("apps/zotero-reader/.zotero.new").exists());
+        let _ignored = std::fs::remove_dir_all(directory);
+    }
+
+    #[test]
     fn an_elipsa_session_keeps_its_verified_metrics_without_another_probe() {
         let ambient = kobo_ui::DisplayMetrics {
             text_scale: kobo_ui::TextScale::Large,
@@ -898,6 +1221,40 @@ mod tests {
         let mut screen = plain();
         screen.reading = true;
         screen
+    }
+
+    #[test]
+    fn orientation_only_change_rewrites_the_latest_preview_immediately() {
+        let screen = plain();
+        let chrome = super::simulated_chrome("terminal", &screen);
+        let mut preview = super::PreviewState::default();
+        preview.remember(screen.clone(), chrome.clone());
+        let mut rewrites = Vec::new();
+
+        super::apply_preview_orientation(
+            &mut preview,
+            kobo_ui::Orientation::Landscape,
+            |retained, retained_chrome, orientation| {
+                rewrites.push((retained.id, retained_chrome.back, orientation));
+                Ok::<(), ()>(())
+            },
+        )
+        .expect("rewrite landscape preview");
+        assert_eq!(
+            rewrites,
+            vec![(screen.id, chrome.back, kobo_ui::Orientation::Landscape)]
+        );
+
+        super::apply_preview_orientation(
+            &mut preview,
+            kobo_ui::Orientation::Landscape,
+            |_, _, _| {
+                rewrites.push((0, false, kobo_ui::Orientation::Portrait));
+                Ok::<(), ()>(())
+            },
+        )
+        .expect("unchanged orientation");
+        assert_eq!(rewrites.len(), 1, "unchanged orientation rewrote preview");
     }
 
     #[test]

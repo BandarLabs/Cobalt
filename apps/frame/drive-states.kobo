@@ -1,0 +1,17 @@
+# Walk Home, full-frame Open, and the next photograph after a seeded push.
+expect Frame
+expect Photographs
+wait-for Open
+clean
+shot home-photo
+tap Open
+wait 400
+expect-missing Open
+clean
+shot show
+# Page-turn zone on the right of the unframed photograph.
+tap-at 1000,720
+wait 400
+expect-missing Open
+clean
+shot show-next

@@ -99,9 +99,9 @@ pub const VERSION_FILE: &str = ".kobo/version";
 
 /// The menu entry itself.
 ///
-/// `cmd_spawn` starts `start.sh` in the background and returns, which is what
-/// is wanted: `kobod` stops the reader and takes the panel, so a menu item
-/// that waited for it would wait for the whole session.
+/// `cmd_spawn` starts the stable launch bootstrap in the background and
+/// returns, which is what is wanted: `kobod` stops the reader and takes the
+/// panel, so a menu item that waited for it would wait for the whole session.
 ///
 /// Started on demand, deliberately. `kobod` has one mode and it is to replace
 /// the reader, so starting it at boot would leave a device with no stock
@@ -109,13 +109,14 @@ pub const VERSION_FILE: &str = ".kobo/version";
 /// this project has been leaning on, which is that restarting always comes
 /// back to stock.
 #[must_use]
-pub fn config(install_folder: &str) -> String {
+pub fn config(_install_folder: &str) -> String {
     format!(
         "# Cobalt. Written by 'kobo setup'; removed by 'kobo setup --undo'.\n\
          #\n\
          # Starting Cobalt stops the reader and takes over the screen. Restart\n\
          # the device to get the reader back.\n\
-         menu_item :main :Cobalt :cmd_spawn :quiet:/mnt/onboard/{install_folder}/start.sh\n"
+         menu_item :main :Cobalt :cmd_spawn :quiet:{}\n",
+        crate::bootstrap::DEVICE_PATH
     )
 }
 
@@ -365,12 +366,10 @@ pub struct Removed {
 ///
 /// When a write to the volume fails.
 pub fn remove(volume: &Path) -> Result<Removed, String> {
-    let mut removed = Removed::default();
-    let entry = volume.join(CONFIG);
-    if entry.exists() {
-        fs::remove_file(&entry).map_err(|error| format!("remove {}: {error}", entry.display()))?;
-        removed.entry = true;
-    }
+    let mut removed = Removed {
+        entry: crate::bootstrap::remove_menu_entries(volume)?,
+        ..Removed::default()
+    };
 
     // Only ours. An archive that holds anything this tool does not stage is
     // somebody else's, and taking it away would be undoing something this
@@ -498,10 +497,7 @@ mod tests {
             text.contains("menu_item :main :Cobalt :cmd_spawn :quiet:"),
             "{text}"
         );
-        assert!(
-            text.contains("/mnt/onboard/.adds/cobalt/start.sh"),
-            "{text}"
-        );
+        assert!(text.contains(crate::bootstrap::DEVICE_PATH), "{text}");
         // cmd_output would block the reader's UI thread for as long as Cobalt
         // ran, which is the whole session.
         assert!(!text.contains("cmd_output"), "{text}");

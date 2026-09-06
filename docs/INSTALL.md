@@ -72,7 +72,7 @@ repository; its SHA-256 fingerprint is
 `SHA256:ufJnWeLeZxeWlrY7KXb1MadhxMHYZdHSmk21Nmovgbo`.
 
 ```sh
-version=0.3.4
+version=0.3.5
 tag=v$version
 base=https://github.com/BandarLabs/Cobalt/releases/download/$tag
 dir=cobalt-installer-$version
@@ -132,6 +132,12 @@ data. A failed swap rolls back; an interrupted rollback is recovered on the
 next run without mixing managed versions. Installed apps, app state, secrets,
 owner data, and unrelated NickelMenu entries are preserved. Under WSL setup
 instructs Windows eject and does not claim WSL ejected the reader.
+
+Setup also installs `.adds/cobalt-launch.sh` outside the renamed version trees
+and migrates the exact legacy Cobalt entry in either `.adds/nm/cobalt` or the
+shared `.adds/nm/menu`, without rewriting unrelated menu text. The bootstrap
+launches only a complete version and can recover when an interrupted swap
+temporarily leaves no active `cobalt` directory.
 
 The binaries are statically linked, so nothing has to be installed on the
 reader to support them.
@@ -230,7 +236,11 @@ under [Connecting a device](DEVICES.md#connecting-a-device).
 Rerun the stable installer command to update. The host binary and verified
 release directory are replaced atomically; an interrupted download is never
 activated. Running it again at the same version is safe. Beta platform updates
-remain inside Cobalt Settings and do not require USB.
+remain inside Cobalt Settings and do not require USB after bootstrap setup.
+Readers installed by a pre-bootstrap release whose NickelMenu entry launches
+`.adds/cobalt/start.sh` must run current USB setup once. A new OTA deliberately
+fails closed on those old updaters before they rename the active installation;
+it does not attempt an unsafe in-place first migration.
 
 After the first installation, update only the host command with:
 
@@ -273,16 +283,21 @@ are the same as the prebuilt path.
 
 ## Removing it
 
-Cobalt never writes to the root filesystem, the bootloader, the kernel, a
-partition table or any startup script, so removing it is deleting a folder:
+Cobalt never writes to the root filesystem, bootloader, kernel, partition table
+or a startup script. Use the safe undo:
 
 ```sh
 kobo setup --undo
 ```
 
-Or, with no tooling at all, plug the reader in and delete `.adds/cobalt` from
-it. That is the entire uninstall. If you used `--enable-ssh`, `--undo` also
-switches the SSH server back off.
+It removes the managed `cobalt`, `cobalt.next`, and `cobalt.prev` trees,
+`.adds/cobalt-launch.sh`, and the exact Cobalt entry in `.adds/nm/cobalt` or a
+shared `.adds/nm/menu`. Before deleting a tree, it moves any `secrets`, `trust`,
+`state`, `data`, `apps`, or `store` folder into a free
+`.adds/cobalt.recovery.N` directory. Existing `.adds/cobalt.unusable[.N]`
+quarantines are also left for inspection and reported. Back up or inspect those
+locations before deleting them manually. If you used `--enable-ssh`, `--undo`
+also switches the SSH server back off.
 
 To remove the host command, read `~/.local/share/kobo/install-state`, remove
 only the `binary` path named there and `~/.local/share/kobo`, then remove the

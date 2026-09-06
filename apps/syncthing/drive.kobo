@@ -1,0 +1,15 @@
+expect Sync
+expect Sync is off
+tap Resume Sync
+expect Waiting for a sync window
+expect Enabled
+expect Pause Sync
+expect-missing Sync is off
+clean
+shot syncthing-on
+tap Folders
+expect Sync folders
+expect sync/vault
+expect Receive only
+clean
+shot syncthing-folders

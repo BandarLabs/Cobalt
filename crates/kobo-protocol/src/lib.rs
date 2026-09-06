@@ -7,15 +7,19 @@ use std::io::{self, Read, Write};
 
 use kobo_ui::{
     ActionId, BannerLevel, BarAction, BarStyle, BottomAction, Caret, Cell, ControlState,
-    FontHandle, Freeform, Glyph, NavBar, Node, NodeId, PageTurns, Percent, PictureHandle, Row,
-    RowLead, RowState, Screen, Space, TextScale, Tile, TilePicture, TileShape, TileState, TopBar,
-    TransferFailure, MAX_BAR_ACTIONS, MAX_TERMINAL_COLUMNS, MAX_TERMINAL_ROWS,
-    MIN_NAV_DESTINATIONS,
+    FontHandle, Freeform, Glyph, NavBar, Node, NodeId, Orientation, PageTurns, Percent,
+    PictureFormat, PictureHandle, Row, RowLead, RowState, Screen, Space, TextScale, Tile,
+    TilePicture, TileShape, TileState, TopBar, TransferFailure, MAX_BAR_ACTIONS,
+    MAX_TERMINAL_COLUMNS, MAX_TERMINAL_ROWS, MIN_NAV_DESTINATIONS,
 };
 use std::cmp::min;
 
 pub const MAGIC: [u8; 4] = *b"KOBO";
-/// The wire version, refused rather than reinterpreted on a mismatch.
+/// The newest wire version emitted by this runtime.
+///
+/// During the 0.3.5 OTA window the decoder also accepts
+/// [`LEGACY_VERSION`]. Every other version remains refused rather than
+/// reinterpreted.
 ///
 /// Went to 3 when a grid cell gained an optional glyph. That is a change to
 /// the payload of an existing tag rather than a new tag, so an old runtime
@@ -47,7 +51,19 @@ pub const MAGIC: [u8; 4] = *b"KOBO";
 /// requests/results. Version 11 adds the identity request and its result,
 /// both tags an older side has no reading for. Update-channel requests were
 /// later added on new tags without changing the shapes of existing frames.
-pub const VERSION: u8 = 11;
+/// Version 12 adds the explicit rate-limit task error and its retry delay.
+/// Version 12 adds Folio tile values, card tiles, section links and page rails.
+/// Version 13 adds persistent selected state to grid cells. Its runtime retains
+/// a version-12 reader so already installed Folio applications keep working.
+///
+/// A colour picture travels the same way: a grey picture still uses the tags it
+/// always did, byte for byte, and a colour one uses tags of its own that an
+/// older runtime refuses rather than misreads.
+pub const VERSION: u8 = 13;
+/// Folio's tile, section, and page-rail protocol.
+pub const FOLIO_VERSION: u8 = 12;
+/// The pre-Folio protocol retained during the compatibility window.
+pub const LEGACY_VERSION: u8 = 11;
 pub const HEADER_LEN: usize = 14;
 /// The largest single frame either side will read.
 ///
@@ -57,10 +73,12 @@ pub const HEADER_LEN: usize = 14;
 /// Eight megabytes bounds a runaway peer just as well and costs nothing when
 /// frames stay small, which every frame except an audio reply does.
 pub const MAX_FRAME_LEN: usize = 8 * 1_048_576;
-/// The largest decoded picture accepted from one application.
+/// The largest decoded picture accepted from one application, in bytes.
 ///
 /// Four Clara panels is the same bound used by `kobo-image`: enough headroom
-/// for a high-resolution source while remaining below the per-app cache.
+/// for a high-resolution source while remaining below the per-app cache. A
+/// bound on bytes rather than pixels, so a colour picture, at three bytes a
+/// pixel, fits a third as many of them; one Clara panel of colour fits.
 pub const MAX_PICTURE_BYTES: usize = 4 * 1072 * 1448;
 /// Largest picture sent as one legacy `PutPicture` frame.
 pub const MAX_INLINE_PICTURE_BYTES: usize = 768 * 1024;
@@ -81,6 +99,9 @@ const MAX_DEPTH: usize = 16;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Frame {
+    /// The peer protocol selected for this session. Responses use the same
+    /// version so an OTA runtime never answers a protocol-11 app in v12.
+    pub version: u8,
     pub request_id: u32,
     pub message: Message,
 }
@@ -511,6 +532,12 @@ pub enum TaskError {
     /// Kept apart from [`TaskError::NoCredential`] as well: that one is the
     /// device having no key, this one is the host refusing the request.
     Unauthorized,
+    /// The host asked this client to wait before trying again.
+    ///
+    /// The value is the bounded `Retry-After` delay in seconds. Keeping it on
+    /// the error lets an application honor the archive's own instruction
+    /// without exposing response headers generally.
+    RateLimited(u32),
 }
 
 impl TaskError {
@@ -527,7 +554,7 @@ impl TaskError {
     /// not here for the same reason as `Denied`: a key does not install itself
     /// between two attempts three seconds apart.
     #[must_use]
-    pub const fn worth_retrying(self) -> bool {
+    pub const fn worth_retrying(&self) -> bool {
         matches!(self, Self::Offline | Self::Unreachable | Self::TimedOut)
     }
 }
@@ -543,6 +570,7 @@ impl fmt::Display for TaskError {
             Self::TimedOut => "the task ran out of time",
             Self::NotFound => "not found",
             Self::Unauthorized => "the host will not answer without a credential",
+            Self::RateLimited(_) => "the host asked this client to slow down",
         })
     }
 }
@@ -569,6 +597,10 @@ pub enum Message {
         text_scale: TextScale,
     },
     SetScreen(Screen),
+    /// Selects the application's logical viewport for subsequent screens.
+    ///
+    /// Portrait is the default for clients that never send this message.
+    SetOrientation(Orientation),
     Action {
         action: ActionId,
     },
@@ -660,20 +692,28 @@ pub enum Message {
         handle: PictureHandle,
         width: u32,
         height: u32,
-        /// Eight-bit grey, row major, exactly `width * height` bytes.
-        grey: Vec<u8>,
+        /// How `pixels` is laid out. Grey travels on the tag it always has;
+        /// colour on one of its own, so the field costs nothing on the wire.
+        format: PictureFormat,
+        /// Row major, exactly `width * height * format.bytes_per_pixel()`
+        /// bytes: one grey byte, or red, green and blue.
+        pixels: Vec<u8>,
     },
     /// Starts an atomic picture upload larger than one protocol frame.
     BeginPicture {
         handle: PictureHandle,
         width: u32,
         height: u32,
+        format: PictureFormat,
     },
     /// One in-order span of a picture started by [`Message::BeginPicture`].
+    ///
+    /// Bytes in the format the upload was begun with; a chunk does not carry
+    /// the format itself, so its boundaries need not fall on a pixel.
     PictureChunk {
         handle: PictureHandle,
         offset: u32,
-        grey: Vec<u8>,
+        pixels: Vec<u8>,
     },
     /// Makes a completely received upload visible to screens.
     CommitPicture {
@@ -982,6 +1022,39 @@ impl UpdateChannel {
     }
 }
 
+#[derive(Clone, Eq, PartialEq)]
+pub struct SecretValue(String);
+
+impl SecretValue {
+    #[must_use]
+    pub fn new(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Debug for SecretValue {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("[redacted]")
+    }
+}
+
+impl From<String> for SecretValue {
+    fn from(value: String) -> Self {
+        Self::new(value)
+    }
+}
+
+impl From<&str> for SecretValue {
+    fn from(value: &str) -> Self {
+        Self::new(value)
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DeviceRequest {
     /// Report battery percentage and whether the device is charging.
@@ -1101,6 +1174,19 @@ pub enum DeviceRequest {
     ReadUpdateChannel,
     /// Select the published update stream used for platform and app updates.
     SetUpdateChannel { channel: UpdateChannel },
+    /// Install or replace one runtime-owned credential for the calling app.
+    ///
+    /// The runtime authorizes the app/name pair before writing anything.
+    /// Applications may submit a value entered by the owner, but cannot read
+    /// the stored value back.
+    SetSecret { name: String, value: SecretValue },
+    /// List documents already on the card and in the stock reader's library.
+    ///
+    /// The application never names a path. What comes back is an opaque id
+    /// and the few facts a shelf needs; reading the bytes is a second ask.
+    ListLibrary,
+    /// Read one library document by the identifier a listing returned.
+    ReadLibrary { id: String },
 }
 
 /// Current state of the runtime-owned App Store browser link.
@@ -1266,6 +1352,28 @@ pub struct DeviceIdentity {
     pub panel_height: u32,
 }
 
+impl DeviceIdentity {
+    /// Whether the reader's panel can show colour.
+    ///
+    /// Read from the profile name rather than a field of its own, because the
+    /// identity frame is a fixed shape older runtimes already send and an
+    /// added field would be misread by them rather than refused. The profile
+    /// names follow the products, and every panel with a colour filter is
+    /// sold with "Colour" in its name; the profile crate holds a test that
+    /// keeps its colour flag and its names in step, so this stays true as
+    /// panels are added. An application that gets `true` may send a picture
+    /// with `PictureFormat::Rgb`; one that gets `false` should not, since it
+    /// would cost three times the bytes to be drawn as grey.
+    #[must_use]
+    pub fn colour_panel(&self) -> bool {
+        const NAME: &[u8] = b"colour";
+        self.profile_id
+            .as_bytes()
+            .windows(NAME.len())
+            .any(|window| window.eq_ignore_ascii_case(NAME))
+    }
+}
+
 fn validate_identity(identity: &DeviceIdentity) -> Result<(), ProtocolError> {
     for text in [
         &identity.profile_id,
@@ -1354,6 +1462,43 @@ pub enum DeviceResult {
     Denied(DenyReason),
     /// Which published update stream the runtime follows.
     UpdateChannel(UpdateChannel),
+    /// Documents already on this device. See [`LibraryEntry`].
+    Library {
+        entries: Vec<LibraryEntry>,
+        truncated: bool,
+    },
+    /// The bytes of one library document, or empty when it is listed but not
+    /// on the card (a Kobo Store title that has not been downloaded).
+    LibraryDocument { id: String, bytes: Vec<u8> },
+}
+
+/// The largest library listing one result may carry.
+pub const MAX_LIBRARY_ENTRIES: usize = 400;
+/// The largest identifier a library entry may use.
+pub const MAX_LIBRARY_ID_LEN: usize = 256;
+/// The largest title a shelf tile may carry.
+pub const MAX_LIBRARY_TITLE_LEN: usize = 96;
+/// The largest document handed over as one device result.
+pub const MAX_LIBRARY_DOCUMENT_BYTES: usize = 4 * 1024 * 1024;
+
+/// One document the owner already has, as far as a shelf is concerned.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LibraryEntry {
+    pub id: String,
+    pub title: String,
+    /// 1 EPUB, 2 Markdown, 3 HTML, 4 text, 5 PDF.
+    pub kind: u8,
+    pub bytes: u32,
+    /// False for a Kobo Store title that is in the stock library but whose
+    /// file is not on the card.
+    pub on_card: bool,
+}
+
+impl LibraryEntry {
+    #[must_use]
+    pub const fn is_readable(&self) -> bool {
+        self.on_card && self.kind != 5
+    }
 }
 
 /// Application metadata safe to show to an unprivileged launcher or Store UI.
@@ -1538,7 +1683,15 @@ impl DeviceError {
             Self::Authentication => "authentication failed",
             Self::TimedOut => "the radio operation timed out",
             Self::Unreachable => "the device or network is unreachable",
-            Self::InvalidInput => "the address or credentials are invalid",
+            // Deliberately says nothing about addresses or credentials. This
+            // variant is the general "what arrived was not usable" answer and
+            // is returned for a malformed release archive and an expired
+            // pairing as readily as for a bad network address. Naming the
+            // radio here sent an owner whose platform update had failed to
+            // look at their Wi-Fi settings, and gave whoever they reported it
+            // to nothing to go on. What actually failed is traced at the site
+            // that knows.
+            Self::InvalidInput => "the data received was not usable",
             Self::Backend => "the system radio service failed",
             Self::Integrity => "the download did not match its published digest",
         }
@@ -1698,7 +1851,10 @@ impl From<io::Error> for StreamError {
 /// Returns an error when a message exceeds protocol limits.
 #[allow(clippy::too_many_lines)]
 pub fn encode(frame: &Frame) -> Result<Vec<u8>, ProtocolError> {
-    let (kind, payload_len) = encoded_message_layout(&frame.message)?;
+    if !matches!(frame.version, LEGACY_VERSION | FOLIO_VERSION | VERSION) {
+        return Err(ProtocolError::UnsupportedVersion(frame.version));
+    }
+    let (kind, payload_len) = encoded_message_layout(&frame.message, frame.version)?;
     let mut payload = Vec::with_capacity(payload_len);
     match &frame.message {
         Message::Hello { name } => {
@@ -1717,8 +1873,9 @@ pub fn encode(frame: &Frame) -> Result<Vec<u8>, ProtocolError> {
         }
         Message::SetScreen(screen) => {
             let mut count = 0;
-            encode_screen(&mut payload, screen, 0, &mut count)?;
+            encode_screen(&mut payload, screen, 0, &mut count, frame.version)?;
         }
+        Message::SetOrientation(orientation) => payload.push(*orientation as u8),
         Message::Action { action } => {
             push_u32(&mut payload, action.0);
         }
@@ -1739,7 +1896,9 @@ pub fn encode(frame: &Frame) -> Result<Vec<u8>, ProtocolError> {
         }
         Message::Exit => {}
         Message::Launch { name } => push_string(&mut payload, name)?,
-        Message::DeviceRequest(request) => encode_device_request(&mut payload, request)?,
+        Message::DeviceRequest(request) => {
+            encode_device_request(&mut payload, request, frame.version)?;
+        }
         Message::DeviceResult(result) => encode_device_result(&mut payload, result)?,
         Message::Spawn { .. } | Message::Cancel { .. } | Message::TaskOutcome { .. } => {
             encode_task_message(&mut payload, &frame.message)?;
@@ -1752,17 +1911,19 @@ pub fn encode(frame: &Frame) -> Result<Vec<u8>, ProtocolError> {
             handle,
             width,
             height,
-            grey,
+            pixels,
+            ..
         } => {
             push_u32(&mut payload, handle.0);
             push_u32(&mut payload, *width);
             push_u32(&mut payload, *height);
-            payload.extend_from_slice(grey);
+            payload.extend_from_slice(pixels);
         }
         Message::BeginPicture {
             handle,
             width,
             height,
+            ..
         } => {
             push_u32(&mut payload, handle.0);
             push_u32(&mut payload, *width);
@@ -1771,11 +1932,11 @@ pub fn encode(frame: &Frame) -> Result<Vec<u8>, ProtocolError> {
         Message::PictureChunk {
             handle,
             offset,
-            grey,
+            pixels,
         } => {
             push_u32(&mut payload, handle.0);
             push_u32(&mut payload, *offset);
-            payload.extend_from_slice(grey);
+            payload.extend_from_slice(pixels);
         }
         Message::CommitPicture { handle } | Message::DropPicture { handle } => {
             push_u32(&mut payload, handle.0);
@@ -1800,7 +1961,7 @@ pub fn encode(frame: &Frame) -> Result<Vec<u8>, ProtocolError> {
     debug_assert_eq!(payload.len(), payload_len);
     let mut bytes = Vec::with_capacity(HEADER_LEN + payload.len());
     bytes.extend_from_slice(&MAGIC);
-    bytes.push(VERSION);
+    bytes.push(frame.version);
     bytes.push(kind);
     let payload_len = u32::try_from(payload.len()).map_err(|_| ProtocolError::FrameTooLarge)?;
     bytes.extend_from_slice(&payload_len.to_be_bytes());
@@ -1934,7 +2095,7 @@ fn encode_task_message(payload: &mut Vec<u8>, message: &Message) -> Result<(), P
                 }
                 TaskOutcome::Failed(error) => {
                     payload.push(1);
-                    payload.push(encode_task_error(*error));
+                    encode_task_error(payload, *error);
                 }
                 TaskOutcome::Cancelled => payload.push(2),
             }
@@ -2259,14 +2420,46 @@ fn encoded_task_len(work: &Task) -> Result<usize, ProtocolError> {
     Ok(length)
 }
 
-fn encoded_message_layout(message: &Message) -> Result<(u8, usize), ProtocolError> {
+fn put_picture_layout(
+    width: u32,
+    height: u32,
+    format: PictureFormat,
+    pixels: &[u8],
+) -> Result<(u8, usize), ProtocolError> {
+    // The declared size and the bytes must agree before anything is
+    // allocated on the strength of either, or a decoder reading by
+    // dimension would run off the end of a short payload.
+    let expected = picture_len(width, height, format)?;
+    if expected != pixels.len() {
+        return Err(ProtocolError::InvalidValue("picture size"));
+    }
+    if pixels.len() > MAX_INLINE_PICTURE_BYTES {
+        return Err(ProtocolError::FrameTooLarge);
+    }
+    Ok((put_picture_tag(format), 12 + pixels.len()))
+}
+
+fn begin_picture_layout(
+    width: u32,
+    height: u32,
+    format: PictureFormat,
+) -> Result<(u8, usize), ProtocolError> {
+    let expected = picture_len(width, height, format)?;
+    if expected == 0 || expected > MAX_PICTURE_BYTES {
+        return Err(ProtocolError::FrameTooLarge);
+    }
+    Ok((begin_picture_tag(format), 12))
+}
+
+fn encoded_message_layout(message: &Message, version: u8) -> Result<(u8, usize), ProtocolError> {
     match message {
         Message::Hello { name } => Ok((1, encoded_string_len(name)?)),
         Message::Welcome { .. } => Ok((2, 7)),
         Message::SetScreen(screen) => {
             let mut count = 0;
-            Ok((3, encoded_screen_len(screen, 0, &mut count)?))
+            Ok((3, encoded_screen_len(screen, 0, &mut count, version)?))
         }
+        Message::SetOrientation(_) => orientation_layout(version),
         Message::Action { .. } => Ok((4, 4)),
         Message::TextHold { start, end, .. } => {
             if start >= end {
@@ -2285,25 +2478,11 @@ fn encoded_message_layout(message: &Message) -> Result<(u8, usize), ProtocolErro
             add_encoded_len(&mut length, encoded_string_len(name)?)?;
             Ok((12, length))
         }
-        Message::DeviceRequest(request) => Ok((7, device_request_len(request)?)),
+        Message::DeviceRequest(request) => Ok((7, device_request_len(request, version)?)),
         Message::DeviceResult(result) => Ok((8, device_result_len(result)?)),
         Message::Spawn { work, .. } => Ok((9, encoded_task_len(work)?)),
         Message::Cancel { .. } => Ok((10, 4)),
-        Message::TaskOutcome { outcome, .. } => {
-            let mut length = 5;
-            match outcome {
-                TaskOutcome::Completed(bytes) => {
-                    if bytes.len() > MAX_TASK_BYTES {
-                        return Err(ProtocolError::FrameTooLarge);
-                    }
-                    add_encoded_len(&mut length, 4)?;
-                    add_encoded_len(&mut length, bytes.len())?;
-                }
-                TaskOutcome::Failed(_) => add_encoded_len(&mut length, 1)?,
-                TaskOutcome::Cancelled => {}
-            }
-            Ok((11, length))
-        }
+        Message::TaskOutcome { outcome, .. } => Ok((11, task_outcome_len(outcome)?)),
         Message::StoreRequest(request) => Ok((13, store_request_len(request)?)),
         Message::StoreResult(result) => Ok((14, store_result_len(result)?)),
         Message::Lifecycle(_) => Ok((15, 1)),
@@ -2312,40 +2491,28 @@ fn encoded_message_layout(message: &Message) -> Result<(u8, usize), ProtocolErro
         Message::PutPicture {
             width,
             height,
-            grey,
+            format,
+            pixels,
             ..
-        } => {
-            // The declared size and the bytes must agree before anything is
-            // allocated on the strength of either, or a decoder reading by
-            // dimension would run off the end of a short payload.
-            let expected = picture_len(*width, *height)?;
-            if expected != grey.len() {
-                return Err(ProtocolError::InvalidValue("picture size"));
-            }
-            if grey.len() > MAX_INLINE_PICTURE_BYTES {
-                return Err(ProtocolError::FrameTooLarge);
-            }
-            Ok((18, 12 + grey.len()))
-        }
+        } => put_picture_layout(*width, *height, *format, pixels),
         Message::DropPicture { .. } => Ok((19, 4)),
-        Message::BeginPicture { width, height, .. } => {
-            let expected = picture_len(*width, *height)?;
-            if expected == 0 || expected > MAX_PICTURE_BYTES {
-                return Err(ProtocolError::FrameTooLarge);
-            }
-            Ok((20, 12))
-        }
-        Message::PictureChunk { offset, grey, .. } => {
-            if grey.is_empty()
-                || grey.len() > MAX_PICTURE_CHUNK_BYTES
+        Message::BeginPicture {
+            width,
+            height,
+            format,
+            ..
+        } => begin_picture_layout(*width, *height, *format),
+        Message::PictureChunk { offset, pixels, .. } => {
+            if pixels.is_empty()
+                || pixels.len() > MAX_PICTURE_CHUNK_BYTES
                 || usize::try_from(*offset)
                     .ok()
-                    .and_then(|offset| offset.checked_add(grey.len()))
+                    .and_then(|offset| offset.checked_add(pixels.len()))
                     .is_none_or(|end| end > MAX_PICTURE_BYTES)
             {
                 return Err(ProtocolError::FrameTooLarge);
             }
-            Ok((21, 8 + grey.len()))
+            Ok((21, 8 + pixels.len()))
         }
         Message::CommitPicture { .. } => Ok((22, 4)),
         Message::CoverChanged { .. } => Ok((23, 1)),
@@ -2363,11 +2530,53 @@ fn encoded_message_layout(message: &Message) -> Result<(u8, usize), ProtocolErro
     }
 }
 
-fn picture_len(width: u32, height: u32) -> Result<usize, ProtocolError> {
-    usize::try_from(width)
-        .ok()
-        .and_then(|width| width.checked_mul(usize::try_from(height).ok()?))
+fn task_outcome_len(outcome: &TaskOutcome) -> Result<usize, ProtocolError> {
+    let mut length = 5;
+    match outcome {
+        TaskOutcome::Completed(bytes) => {
+            if bytes.len() > MAX_TASK_BYTES {
+                return Err(ProtocolError::FrameTooLarge);
+            }
+            add_encoded_len(&mut length, 4)?;
+            add_encoded_len(&mut length, bytes.len())?;
+        }
+        TaskOutcome::Failed(error) => {
+            add_encoded_len(&mut length, encoded_task_error_len(*error))?;
+        }
+        TaskOutcome::Cancelled => {}
+    }
+    Ok(length)
+}
+
+fn orientation_layout(version: u8) -> Result<(u8, usize), ProtocolError> {
+    if version == LEGACY_VERSION {
+        Err(ProtocolError::InvalidValue("protocol 12 orientation"))
+    } else {
+        Ok((36, 1))
+    }
+}
+
+fn picture_len(width: u32, height: u32, format: PictureFormat) -> Result<usize, ProtocolError> {
+    format
+        .byte_len(width, height)
         .ok_or(ProtocolError::FrameTooLarge)
+}
+
+/// Grey pictures keep the tag they have always had; colour ones take a tag of
+/// their own, so an older runtime refuses the frame instead of reading three
+/// bytes a pixel as one.
+const fn put_picture_tag(format: PictureFormat) -> u8 {
+    match format {
+        PictureFormat::Grey => 18,
+        PictureFormat::Rgb => 28,
+    }
+}
+
+const fn begin_picture_tag(format: PictureFormat) -> u8 {
+    match format {
+        PictureFormat::Grey => 20,
+        PictureFormat::Rgb => 29,
+    }
 }
 
 #[allow(
@@ -2377,6 +2586,7 @@ fn picture_len(width: u32, height: u32) -> Result<usize, ProtocolError> {
 fn encode_device_request(
     output: &mut Vec<u8>,
     request: &DeviceRequest,
+    version: u8,
 ) -> Result<(), ProtocolError> {
     match request {
         DeviceRequest::ReadBattery => fixed_device_request(output, 1, 0),
@@ -2505,9 +2715,36 @@ fn encode_device_request(
         DeviceRequest::SetUpdateChannel { channel } => {
             output.extend_from_slice(&[46, channel.wire()]);
         }
+        DeviceRequest::SetSecret { name, value }
+            if version >= FOLIO_VERSION
+                && valid_app_id(name)
+                && !value.as_str().is_empty()
+                && value.as_str().len() <= MAX_APP_SECRET_BYTES
+                && !value.as_str().chars().any(char::is_control) =>
+        {
+            output.push(47);
+            push_string(output, name)?;
+            push_string(output, value.as_str())?;
+        }
+        DeviceRequest::SetSecret { .. } => {
+            return Err(ProtocolError::InvalidValue("application secret"));
+        }
+        DeviceRequest::ListLibrary => output.push(48),
+        DeviceRequest::ReadLibrary { id } if valid_library_id(id) => {
+            output.push(49);
+            push_string(output, id)?;
+        }
+        DeviceRequest::ReadLibrary { .. } => {
+            return Err(ProtocolError::InvalidValue("library id"));
+        }
     }
     Ok(())
 }
+
+/// The largest credential that can be entered on the device keyboard.
+///
+/// CLI installation remains available for larger machine-generated material.
+pub const MAX_APP_SECRET_BYTES: usize = 512;
 
 /// Sixty-four lowercase hex characters: the only shape a SHA-256 hex digest
 /// has. Checked at both ends of the wire, so a digest that cannot possibly
@@ -2539,9 +2776,9 @@ fn fixed_device_request(output: &mut Vec<u8>, tag: u8, argument: u32) {
     push_u32(output, argument);
 }
 
-fn device_request_len(request: &DeviceRequest) -> Result<usize, ProtocolError> {
+fn device_request_len(request: &DeviceRequest, version: u8) -> Result<usize, ProtocolError> {
     let mut encoded = Vec::new();
-    encode_device_request(&mut encoded, request)?;
+    encode_device_request(&mut encoded, request, version)?;
     Ok(encoded.len())
 }
 
@@ -2679,7 +2916,10 @@ fn valid_radio_flags(flags: u8, field: &'static str) -> Result<u8, ProtocolError
     clippy::too_many_lines,
     reason = "one explicit bounded request tag table"
 )]
-fn decode_device_request(reader: &mut Reader<'_>) -> Result<DeviceRequest, ProtocolError> {
+fn decode_device_request(
+    reader: &mut Reader<'_>,
+    version: u8,
+) -> Result<DeviceRequest, ProtocolError> {
     let tag = reader.u8()?;
     match tag {
         1 => fixed_argument(reader, 0).map(|()| DeviceRequest::ReadBattery),
@@ -2804,6 +3044,29 @@ fn decode_device_request(reader: &mut Reader<'_>) -> Result<DeviceRequest, Proto
         46 => Ok(DeviceRequest::SetUpdateChannel {
             channel: UpdateChannel::from_wire(reader.u8()?)?,
         }),
+        47 if version >= FOLIO_VERSION => {
+            let name = reader.string()?;
+            let value = reader.string()?;
+            if !valid_app_id(&name)
+                || value.is_empty()
+                || value.len() > MAX_APP_SECRET_BYTES
+                || value.chars().any(char::is_control)
+            {
+                return Err(ProtocolError::InvalidValue("application secret"));
+            }
+            Ok(DeviceRequest::SetSecret {
+                name,
+                value: SecretValue::new(value),
+            })
+        }
+        48 => Ok(DeviceRequest::ListLibrary),
+        49 => {
+            let id = reader.string()?;
+            if !valid_library_id(&id) {
+                return Err(ProtocolError::InvalidValue("library id"));
+            }
+            Ok(DeviceRequest::ReadLibrary { id })
+        }
         _ => Err(ProtocolError::InvalidValue("device request")),
     }
 }
@@ -2991,6 +3254,32 @@ fn encode_device_result(output: &mut Vec<u8>, result: &DeviceResult) -> Result<(
             output.extend_from_slice(&[17, radio_flags(*cobalt, *apps)]);
         }
         DeviceResult::UpdateChannel(channel) => output.extend_from_slice(&[18, channel.wire()]),
+        DeviceResult::Library { entries, truncated } => {
+            if entries.len() > MAX_LIBRARY_ENTRIES {
+                return Err(ProtocolError::InvalidValue("library listing"));
+            }
+            output.push(19);
+            push_u16(
+                output,
+                u16::try_from(entries.len()).map_err(|_| ProtocolError::FrameTooLarge)?,
+            );
+            output.push(u8::from(*truncated));
+            for entry in entries {
+                encode_library_entry(output, entry)?;
+            }
+        }
+        DeviceResult::LibraryDocument { id, bytes } => {
+            if !valid_library_id(id) || bytes.len() > MAX_LIBRARY_DOCUMENT_BYTES {
+                return Err(ProtocolError::InvalidValue("library document"));
+            }
+            output.push(20);
+            push_string(output, id)?;
+            push_u32(
+                output,
+                u32::try_from(bytes.len()).map_err(|_| ProtocolError::FrameTooLarge)?,
+            );
+            output.extend_from_slice(bytes);
+        }
     }
     Ok(())
 }
@@ -3193,8 +3482,79 @@ fn decode_device_result(reader: &mut Reader<'_>) -> Result<DeviceResult, Protoco
         16 => identity(reader).map(DeviceResult::Identity),
         17 => decode_auto_update(reader),
         18 => UpdateChannel::from_wire(reader.u8()?).map(DeviceResult::UpdateChannel),
+        19 => decode_library_result(reader),
+        20 => decode_library_document(reader),
         _ => Err(ProtocolError::InvalidValue("device result")),
     }
+}
+
+fn valid_library_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= MAX_LIBRARY_ID_LEN
+        && !id.starts_with('/')
+        && !id.chars().any(char::is_control)
+        && !id.split('/').any(|part| part == "..")
+}
+
+fn encode_library_entry(output: &mut Vec<u8>, entry: &LibraryEntry) -> Result<(), ProtocolError> {
+    if !valid_library_id(&entry.id)
+        || entry.title.is_empty()
+        || entry.title.len() > MAX_LIBRARY_TITLE_LEN
+        || !(1..=5).contains(&entry.kind)
+    {
+        return Err(ProtocolError::InvalidValue("library entry"));
+    }
+    push_string(output, &entry.id)?;
+    push_string(output, &entry.title)?;
+    output.push(entry.kind);
+    push_u32(output, entry.bytes);
+    output.push(u8::from(entry.on_card));
+    Ok(())
+}
+
+fn decode_library_entry(reader: &mut Reader<'_>) -> Result<LibraryEntry, ProtocolError> {
+    let id = reader.string()?;
+    let title = reader.string()?;
+    let kind = reader.u8()?;
+    let bytes = reader.u32()?;
+    let on_card = read_boolean(reader, "library on card")?;
+    if !valid_library_id(&id)
+        || title.is_empty()
+        || title.len() > MAX_LIBRARY_TITLE_LEN
+        || !(1..=5).contains(&kind)
+    {
+        return Err(ProtocolError::InvalidValue("library entry"));
+    }
+    Ok(LibraryEntry {
+        id,
+        title,
+        kind,
+        bytes,
+        on_card,
+    })
+}
+
+fn decode_library_result(reader: &mut Reader<'_>) -> Result<DeviceResult, ProtocolError> {
+    let count = usize::from(reader.u16()?);
+    if count > MAX_LIBRARY_ENTRIES {
+        return Err(ProtocolError::InvalidValue("library listing"));
+    }
+    let truncated = read_boolean(reader, "library truncated")?;
+    let mut entries = Vec::with_capacity(count);
+    for _ in 0..count {
+        entries.push(decode_library_entry(reader)?);
+    }
+    Ok(DeviceResult::Library { entries, truncated })
+}
+
+fn decode_library_document(reader: &mut Reader<'_>) -> Result<DeviceResult, ProtocolError> {
+    let id = reader.string()?;
+    let length = usize::try_from(reader.u32()?).unwrap_or(usize::MAX);
+    if !valid_library_id(&id) || length > MAX_LIBRARY_DOCUMENT_BYTES {
+        return Err(ProtocolError::InvalidValue("library document"));
+    }
+    let bytes = reader.take(length)?.to_vec();
+    Ok(DeviceResult::LibraryDocument { id, bytes })
 }
 
 fn decode_auto_update(reader: &mut Reader<'_>) -> Result<DeviceResult, ProtocolError> {
@@ -3437,6 +3797,7 @@ fn encoded_screen_len(
     screen: &Screen,
     depth: usize,
     count: &mut usize,
+    version: u8,
 ) -> Result<usize, ProtocolError> {
     if screen.nodes.len() > MAX_NODES {
         return Err(ProtocolError::TooManyNodes);
@@ -3499,7 +3860,7 @@ fn encoded_screen_len(
         }
     }
     for node in &screen.nodes {
-        add_encoded_len(&mut length, encoded_node_len(node, depth, count)?)?;
+        add_encoded_len(&mut length, encoded_node_len(node, depth, count, version)?)?;
     }
     // The presence flag, and when there is one: the id, the kind, the anchor a
     // popover names, the title and the count of its nodes.
@@ -3511,7 +3872,7 @@ fn encoded_screen_len(
         }
         add_encoded_len(&mut length, encoded_string_len(&overlay.title)?)?;
         for node in &overlay.nodes {
-            add_encoded_len(&mut length, encoded_node_len(node, depth, count)?)?;
+            add_encoded_len(&mut length, encoded_node_len(node, depth, count, version)?)?;
         }
     }
     Ok(length)
@@ -3523,7 +3884,12 @@ fn encoded_screen_len(
 // arms stay in enum order and are never merged by coincidentally equal sizes,
 // because reading this beside the enum is how the two are kept in step.
 #[allow(clippy::too_many_lines, clippy::match_same_arms)]
-fn encoded_node_len(node: &Node, depth: usize, count: &mut usize) -> Result<usize, ProtocolError> {
+fn encoded_node_len(
+    node: &Node,
+    depth: usize,
+    count: &mut usize,
+    version: u8,
+) -> Result<usize, ProtocolError> {
     if depth > MAX_DEPTH {
         return Err(ProtocolError::TooDeep);
     }
@@ -3579,12 +3945,22 @@ fn encoded_node_len(node: &Node, depth: usize, count: &mut usize) -> Result<usiz
             }
             length
         }
-        Node::Section { title, value, .. } => {
-            // id, then the title, then a byte saying whether a value follows.
-            let mut length = 6;
+        Node::Section {
+            title, value, link, ..
+        } => {
+            // Protocol 11 ends after the optional value. Protocol 12 adds a
+            // second flag and the optional trailing destination.
+            let mut length = if version == LEGACY_VERSION { 6 } else { 7 };
             add_encoded_len(&mut length, encoded_string_len(title)?)?;
             if let Some(value) = value {
                 add_encoded_len(&mut length, encoded_string_len(value)?)?;
+            }
+            if version == LEGACY_VERSION && link.is_some() {
+                return Err(ProtocolError::InvalidValue("protocol 12 section link"));
+            }
+            if let Some(link) = link {
+                add_encoded_len(&mut length, 4)?;
+                add_encoded_len(&mut length, encoded_string_len(&link.label)?)?;
             }
             length
         }
@@ -3607,7 +3983,10 @@ fn encoded_node_len(node: &Node, depth: usize, count: &mut usize) -> Result<usiz
             }
             let mut length = 7;
             for child in children {
-                add_encoded_len(&mut length, encoded_node_len(child, depth + 1, count)?)?;
+                add_encoded_len(
+                    &mut length,
+                    encoded_node_len(child, depth + 1, count, version)?,
+                )?;
             }
             length
         }
@@ -3665,7 +4044,10 @@ fn encoded_node_len(node: &Node, depth: usize, count: &mut usize) -> Result<usiz
                 }
                 add_encoded_len(&mut length, 2)?;
                 for node in &slot.nodes {
-                    add_encoded_len(&mut length, encoded_node_len(node, depth + 1, count)?)?;
+                    add_encoded_len(
+                        &mut length,
+                        encoded_node_len(node, depth + 1, count, version)?,
+                    )?;
                 }
             }
             length
@@ -3698,6 +4080,9 @@ fn encoded_node_len(node: &Node, depth: usize, count: &mut usize) -> Result<usiz
                 add_encoded_len(&mut length, 4)?;
                 add_encoded_len(&mut length, encoded_string_len(&cell.label)?)?;
                 add_encoded_len(&mut length, if cell.glyph.is_some() { 2 } else { 1 })?;
+                if version >= 13 {
+                    add_encoded_len(&mut length, 1)?;
+                }
             }
             length
         }
@@ -3722,9 +4107,12 @@ fn encoded_node_len(node: &Node, depth: usize, count: &mut usize) -> Result<usiz
             }
             length
         }
-        Node::TileGrid { tiles, .. } => {
+        Node::TileGrid { tiles, shape, .. } => {
             if tiles.len() > u8::MAX as usize {
                 return Err(ProtocolError::TooManyNodes);
+            }
+            if version == LEGACY_VERSION && matches!(shape, TileShape::Card) {
+                return Err(ProtocolError::InvalidValue("protocol 12 tile shape"));
             }
             let mut length = 7;
             for tile in tiles {
@@ -3732,12 +4120,30 @@ fn encoded_node_len(node: &Node, depth: usize, count: &mut usize) -> Result<usiz
                 add_encoded_len(&mut length, encoded_string_len(&tile.label)?)?;
                 add_encoded_len(&mut length, encoded_string_len(&tile.badge)?)?;
                 add_encoded_len(&mut length, encoded_string_len(&tile.subtitle)?)?;
+                if version == LEGACY_VERSION {
+                    if !tile.value.is_empty() {
+                        return Err(ProtocolError::InvalidValue("protocol 12 tile value"));
+                    }
+                    if tile.menu.is_some() {
+                        return Err(ProtocolError::InvalidValue("protocol 12 tile menu"));
+                    }
+                } else {
+                    add_encoded_len(&mut length, encoded_string_len(&tile.value)?)?;
+                    add_encoded_len(&mut length, 1)?;
+                    if tile.menu.is_some() {
+                        add_encoded_len(&mut length, 4)?;
+                    }
+                }
                 if tile.picture.is_some() {
                     add_encoded_len(&mut length, 12)?;
                 }
             }
             length
         }
+        Node::PageRail { .. } if version == LEGACY_VERSION => {
+            return Err(ProtocolError::InvalidValue("protocol 12 page rail"));
+        }
+        Node::PageRail { .. } => 9,
         Node::Picture { .. } => 20,
         Node::Table { rows, weights, .. } => {
             if rows.len() > u8::MAX as usize || weights.len() > u8::MAX as usize {
@@ -3897,7 +4303,8 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, ProtocolError> {
     if bytes[..4] != MAGIC {
         return Err(ProtocolError::BadMagic);
     }
-    if bytes[4] != VERSION {
+    let version = bytes[4];
+    if !matches!(version, LEGACY_VERSION | FOLIO_VERSION | VERSION) {
         return Err(ProtocolError::UnsupportedVersion(bytes[4]));
     }
     let payload_len = u32::from_be_bytes([bytes[6], bytes[7], bytes[8], bytes[9]]) as usize;
@@ -3922,8 +4329,15 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, ProtocolError> {
         },
         3 => {
             let mut count = 0;
-            Message::SetScreen(decode_screen(&mut reader, 0, &mut count)?)
+            Message::SetScreen(decode_screen(&mut reader, 0, &mut count, version)?)
         }
+        36 if version == LEGACY_VERSION => {
+            return Err(ProtocolError::UnknownMessageType(36));
+        }
+        36 => Message::SetOrientation(
+            Orientation::from_wire(reader.u8()?)
+                .ok_or(ProtocolError::InvalidValue("orientation"))?,
+        ),
         4 => Message::Action {
             action: ActionId(reader.u32()?),
         },
@@ -3950,7 +4364,7 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, ProtocolError> {
         12 => Message::Launch {
             name: reader.string()?,
         },
-        7 => Message::DeviceRequest(decode_device_request(&mut reader)?),
+        7 => Message::DeviceRequest(decode_device_request(&mut reader, version)?),
         8 => Message::DeviceResult(decode_device_result(&mut reader)?),
         9 => {
             let task = TaskId(reader.u32()?);
@@ -4038,7 +4452,7 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, ProtocolError> {
                     }
                     TaskOutcome::Completed(reader.take(length)?.to_vec())
                 }
-                1 => TaskOutcome::Failed(decode_task_error(reader.u8()?)?),
+                1 => TaskOutcome::Failed(decode_task_error(&mut reader)?),
                 2 => TaskOutcome::Cancelled,
                 _ => return Err(ProtocolError::InvalidValue("task outcome")),
             };
@@ -4192,30 +4606,41 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, ProtocolError> {
             3 => ShellEvent::Refused(ShellError::try_from(reader.u8()?)?),
             _ => return Err(ProtocolError::InvalidValue("shell event")),
         }),
-        18 => {
+        tag @ (18 | 28) => {
+            let format = if tag == 18 {
+                PictureFormat::Grey
+            } else {
+                PictureFormat::Rgb
+            };
             let handle = PictureHandle(reader.u32()?);
             let width = reader.u32()?;
             let height = reader.u32()?;
-            let expected = picture_len(width, height)?;
+            let expected = picture_len(width, height, format)?;
             if expected > MAX_INLINE_PICTURE_BYTES {
                 return Err(ProtocolError::FrameTooLarge);
             }
-            let grey = reader.take(expected)?.to_vec();
+            let pixels = reader.take(expected)?.to_vec();
             Message::PutPicture {
                 handle,
                 width,
                 height,
-                grey,
+                format,
+                pixels,
             }
         }
         19 => Message::DropPicture {
             handle: PictureHandle(reader.u32()?),
         },
-        20 => {
+        tag @ (20 | 29) => {
+            let format = if tag == 20 {
+                PictureFormat::Grey
+            } else {
+                PictureFormat::Rgb
+            };
             let handle = PictureHandle(reader.u32()?);
             let width = reader.u32()?;
             let height = reader.u32()?;
-            let expected = picture_len(width, height)?;
+            let expected = picture_len(width, height, format)?;
             if expected == 0 || expected > MAX_PICTURE_BYTES {
                 return Err(ProtocolError::FrameTooLarge);
             }
@@ -4223,6 +4648,7 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, ProtocolError> {
                 handle,
                 width,
                 height,
+                format,
             }
         }
         21 => {
@@ -4242,7 +4668,7 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, ProtocolError> {
             Message::PictureChunk {
                 handle,
                 offset,
-                grey: reader.take(length)?.to_vec(),
+                pixels: reader.take(length)?.to_vec(),
             }
         }
         22 => Message::CommitPicture {
@@ -4276,6 +4702,7 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, ProtocolError> {
         return Err(ProtocolError::LengthMismatch);
     }
     Ok(Frame {
+        version,
         request_id,
         message,
     })
@@ -4306,7 +4733,7 @@ pub fn read_from<R: Read>(reader: &mut R) -> Result<Frame, StreamError> {
     if header[..4] != MAGIC {
         return Err(ProtocolError::BadMagic.into());
     }
-    if header[4] != VERSION {
+    if !matches!(header[4], LEGACY_VERSION | FOLIO_VERSION | VERSION) {
         return Err(ProtocolError::UnsupportedVersion(header[4]).into());
     }
     let payload_len = u32::from_be_bytes([header[6], header[7], header[8], header[9]]) as usize;
@@ -4346,6 +4773,7 @@ fn encode_screen(
     screen: &Screen,
     depth: usize,
     count: &mut usize,
+    version: u8,
 ) -> Result<(), ProtocolError> {
     push_u32(output, screen.id);
     // Bars are encoded as presence flags outside the node list, mirroring the
@@ -4452,7 +4880,7 @@ fn encode_screen(
         u16::try_from(screen.nodes.len()).map_err(|_| ProtocolError::TooManyNodes)?,
     );
     for node in &screen.nodes {
-        encode_node(output, node, depth, count)?;
+        encode_node(output, node, depth, count, version)?;
     }
     // Last, and after the node count, so the nodes are read the same way with
     // or without one. An overlay's nodes are counted against the same budget
@@ -4476,7 +4904,7 @@ fn encode_screen(
                 u16::try_from(overlay.nodes.len()).map_err(|_| ProtocolError::TooManyNodes)?,
             );
             for node in &overlay.nodes {
-                encode_node(output, node, depth, count)?;
+                encode_node(output, node, depth, count, version)?;
             }
         }
     }
@@ -4563,6 +4991,7 @@ fn encode_node(
     node: &Node,
     depth: usize,
     count: &mut usize,
+    version: u8,
 ) -> Result<(), ProtocolError> {
     if depth > MAX_DEPTH {
         return Err(ProtocolError::TooDeep);
@@ -4683,13 +5112,32 @@ fn encode_node(
             push_u32(output, id.0);
             push_string(output, text)?;
         }
-        Node::Section { id, title, value } => {
+        Node::Section {
+            id,
+            title,
+            value,
+            link,
+        } => {
             output.push(21);
             push_u32(output, id.0);
             push_string(output, title)?;
             output.push(u8::from(value.is_some()));
             if let Some(value) = value {
                 push_string(output, value)?;
+            }
+            if version == LEGACY_VERSION {
+                if link.is_some() {
+                    return Err(ProtocolError::InvalidValue("protocol 12 section link"));
+                }
+            } else {
+                match link {
+                    Some(link) => {
+                        output.push(1);
+                        push_u32(output, link.action.0);
+                        push_string(output, &link.label)?;
+                    }
+                    None => output.push(0),
+                }
             }
         }
         Node::Quote {
@@ -4746,7 +5194,7 @@ fn encode_node(
                 u16::try_from(children.len()).map_err(|_| ProtocolError::TooManyNodes)?,
             );
             for child in children {
-                encode_node(output, child, depth + 1, count)?;
+                encode_node(output, child, depth + 1, count, version)?;
             }
         }
         Node::Field {
@@ -4831,7 +5279,7 @@ fn encode_node(
                     u16::try_from(slot.nodes.len()).map_err(|_| ProtocolError::TooManyNodes)?,
                 );
                 for node in &slot.nodes {
-                    encode_node(output, node, depth + 1, count)?;
+                    encode_node(output, node, depth + 1, count, version)?;
                 }
             }
         }
@@ -4896,6 +5344,9 @@ fn encode_node(
                         output.push(encode_glyph(glyph));
                     }
                 }
+                if version >= 13 {
+                    output.push(u8::from(cell.selected));
+                }
             }
         }
         Node::Rows { id, rows } => {
@@ -4921,9 +5372,13 @@ fn encode_node(
         Node::TileGrid { id, tiles, shape } => {
             output.push(9);
             push_u32(output, id.0);
+            if version == LEGACY_VERSION && matches!(shape, TileShape::Card) {
+                return Err(ProtocolError::InvalidValue("protocol 12 tile shape"));
+            }
             output.push(match shape {
                 TileShape::Square => 0,
                 TileShape::Portrait => 1,
+                TileShape::Card => 2,
             });
             output.push(u8::try_from(tiles.len()).map_err(|_| ProtocolError::TooManyNodes)?);
             for tile in tiles {
@@ -4938,6 +5393,23 @@ fn encode_node(
                 });
                 push_string(output, &tile.badge)?;
                 push_string(output, &tile.subtitle)?;
+                if version == LEGACY_VERSION {
+                    if !tile.value.is_empty() {
+                        return Err(ProtocolError::InvalidValue("protocol 12 tile value"));
+                    }
+                    if tile.menu.is_some() {
+                        return Err(ProtocolError::InvalidValue("protocol 12 tile menu"));
+                    }
+                } else {
+                    push_string(output, &tile.value)?;
+                    match tile.menu {
+                        Some(menu) => {
+                            output.push(1);
+                            push_u32(output, menu.0);
+                        }
+                        None => output.push(0),
+                    }
+                }
                 match tile.picture {
                     Some(picture) => {
                         output.push(1);
@@ -4948,6 +5420,15 @@ fn encode_node(
                     None => output.push(0),
                 }
             }
+        }
+        Node::PageRail { id, page, of } => {
+            if version == LEGACY_VERSION {
+                return Err(ProtocolError::InvalidValue("protocol 12 page rail"));
+            }
+            output.push(31);
+            push_u32(output, id.0);
+            push_u16(output, *page);
+            push_u16(output, *of);
         }
         Node::Picture {
             id,
@@ -5301,6 +5782,27 @@ const fn encode_glyph(glyph: Glyph) -> u8 {
         Glyph::Plus => 42,
         Glyph::Headphones => 43,
         Glyph::Minus => 44,
+        Glyph::ChessWhiteKing => 45,
+        Glyph::ChessWhiteQueen => 46,
+        Glyph::ChessWhiteRook => 47,
+        Glyph::ChessWhiteBishop => 48,
+        Glyph::ChessWhiteKnight => 49,
+        Glyph::ChessWhitePawn => 50,
+        Glyph::ChessBlackKing => 51,
+        Glyph::ChessBlackQueen => 52,
+        Glyph::ChessBlackRook => 53,
+        Glyph::ChessBlackBishop => 54,
+        Glyph::ChessBlackKnight => 55,
+        Glyph::ChessBlackPawn => 56,
+        Glyph::Heart => 57,
+        Glyph::BlackDisc => 58,
+        Glyph::WhiteDisc => 59,
+        Glyph::BlackDraughtsKing => 60,
+        Glyph::WhiteDraughtsKing => 61,
+        Glyph::BlackDraughtsMan => 62,
+        Glyph::WhiteDraughtsMan => 63,
+        Glyph::MorrisPoint => 64,
+        Glyph::MorrisLegalPoint => 65,
     }
 }
 
@@ -5351,6 +5853,27 @@ const fn decode_glyph(tag: u8) -> Option<Glyph> {
         42 => Glyph::Plus,
         43 => Glyph::Headphones,
         44 => Glyph::Minus,
+        45 => Glyph::ChessWhiteKing,
+        46 => Glyph::ChessWhiteQueen,
+        47 => Glyph::ChessWhiteRook,
+        48 => Glyph::ChessWhiteBishop,
+        49 => Glyph::ChessWhiteKnight,
+        50 => Glyph::ChessWhitePawn,
+        51 => Glyph::ChessBlackKing,
+        52 => Glyph::ChessBlackQueen,
+        53 => Glyph::ChessBlackRook,
+        54 => Glyph::ChessBlackBishop,
+        55 => Glyph::ChessBlackKnight,
+        56 => Glyph::ChessBlackPawn,
+        57 => Glyph::Heart,
+        58 => Glyph::BlackDisc,
+        59 => Glyph::WhiteDisc,
+        60 => Glyph::BlackDraughtsKing,
+        61 => Glyph::WhiteDraughtsKing,
+        62 => Glyph::BlackDraughtsMan,
+        63 => Glyph::WhiteDraughtsMan,
+        64 => Glyph::MorrisPoint,
+        65 => Glyph::MorrisLegalPoint,
 
         _ => return None,
     })
@@ -5361,6 +5884,7 @@ fn decode_screen(
     reader: &mut Reader<'_>,
     depth: usize,
     count: &mut usize,
+    version: u8,
 ) -> Result<Screen, ProtocolError> {
     let id = reader.u32()?;
     let top_bar = match reader.u8()? {
@@ -5480,7 +6004,7 @@ fn decode_screen(
     }
     let mut nodes = Vec::with_capacity(count_nodes);
     for _ in 0..count_nodes {
-        nodes.push(decode_node(reader, depth, count)?);
+        nodes.push(decode_node(reader, depth, count, version)?);
     }
     let overlay = match reader.u8()? {
         0 => None,
@@ -5500,7 +6024,7 @@ fn decode_screen(
             }
             let mut overlay_nodes = Vec::with_capacity(count_overlay);
             for _ in 0..count_overlay {
-                overlay_nodes.push(decode_node(reader, depth, count)?);
+                overlay_nodes.push(decode_node(reader, depth, count, version)?);
             }
             Some(Box::new(kobo_ui::Overlay {
                 id,
@@ -5527,6 +6051,7 @@ fn decode_screen(
     screen.text_scale = text_scale;
     screen.reading = reading;
     screen.reading_font = reading_font;
+    screen.legacy_typography = version == LEGACY_VERSION;
     Ok(screen)
 }
 
@@ -5538,6 +6063,7 @@ fn decode_node(
     reader: &mut Reader<'_>,
     depth: usize,
     count: &mut usize,
+    version: u8,
 ) -> Result<Node, ProtocolError> {
     if depth > MAX_DEPTH {
         return Err(ProtocolError::TooDeep);
@@ -5736,7 +6262,27 @@ fn decode_node(
             } else {
                 Some(reader.string()?)
             };
-            Ok(Node::Section { id, title, value })
+            let link = if version == LEGACY_VERSION {
+                None
+            } else {
+                match reader.u8()? {
+                    0 => None,
+                    1 => {
+                        let action = ActionId(reader.u32()?);
+                        if action.is_reserved() {
+                            return Err(ProtocolError::InvalidValue("reserved action id"));
+                        }
+                        Some(BarAction::new(action, reader.string()?))
+                    }
+                    _ => return Err(ProtocolError::InvalidValue("section link flag")),
+                }
+            };
+            Ok(Node::Section {
+                id,
+                title,
+                value,
+                link,
+            })
         }
         4 => {
             let child_count = usize::from(reader.u16()?);
@@ -5745,7 +6291,7 @@ fn decode_node(
             }
             let mut children = Vec::with_capacity(child_count);
             for _ in 0..child_count {
-                children.push(decode_node(reader, depth + 1, count)?);
+                children.push(decode_node(reader, depth + 1, count, version)?);
             }
             Ok(Node::Card { id, children })
         }
@@ -5854,7 +6400,7 @@ fn decode_node(
                 }
                 let mut nodes = Vec::with_capacity(inside);
                 for _ in 0..inside {
-                    nodes.push(decode_node(reader, depth + 1, count)?);
+                    nodes.push(decode_node(reader, depth + 1, count, version)?);
                 }
                 slots.push(kobo_ui::BandSlot::new(width, nodes));
             }
@@ -5894,6 +6440,7 @@ fn decode_node(
             let shape = match reader.u8()? {
                 0 => TileShape::Square,
                 1 => TileShape::Portrait,
+                2 if version >= FOLIO_VERSION => TileShape::Card,
                 _ => return Err(ProtocolError::InvalidValue("tile shape")),
             };
             let len = usize::from(reader.u8()?);
@@ -5915,6 +6462,26 @@ fn decode_node(
                 };
                 let badge = reader.string()?;
                 let subtitle = reader.string()?;
+                let value = if version == LEGACY_VERSION {
+                    String::new()
+                } else {
+                    reader.string()?
+                };
+                let menu = if version == LEGACY_VERSION {
+                    None
+                } else {
+                    match reader.u8()? {
+                        0 => None,
+                        1 => {
+                            let action = ActionId(reader.u32()?);
+                            if action.is_reserved() {
+                                return Err(ProtocolError::InvalidValue("reserved action id"));
+                            }
+                            Some(action)
+                        }
+                        _ => return Err(ProtocolError::InvalidValue("tile menu flag")),
+                    }
+                };
                 let picture = match reader.u8()? {
                     0 => None,
                     1 => Some(TilePicture {
@@ -5925,16 +6492,23 @@ fn decode_node(
                 };
                 tiles.push(Tile {
                     action,
+                    menu,
                     label,
                     glyph,
                     picture,
                     state,
                     badge,
                     subtitle,
+                    value,
                 });
             }
             Ok(Node::TileGrid { id, tiles, shape })
         }
+        31 if version >= FOLIO_VERSION => Ok(Node::PageRail {
+            id,
+            page: reader.u16()?,
+            of: reader.u16()?,
+        }),
         17 => Ok(Node::Picture {
             id,
             handle: PictureHandle(reader.u32()?),
@@ -6156,12 +6730,21 @@ fn decode_node(
                 }
                 let label = reader.string()?;
                 let cell = Cell::new(action, label);
-                cells.push(match reader.u8()? {
+                let cell = match reader.u8()? {
                     0 => cell,
                     1 => cell.with_glyph(
                         decode_glyph(reader.u8()?).ok_or(ProtocolError::InvalidValue("glyph"))?,
                     ),
                     _ => return Err(ProtocolError::InvalidValue("cell glyph flag")),
+                };
+                cells.push(if version >= 13 {
+                    cell.with_selected(match reader.u8()? {
+                        0 => false,
+                        1 => true,
+                        _ => return Err(ProtocolError::InvalidValue("cell selected flag")),
+                    })
+                } else {
+                    cell
                 });
             }
             Ok(Node::Grid {
@@ -6444,6 +7027,43 @@ mod tests {
     use std::io::Cursor;
 
     #[test]
+    fn a_shared_failure_code_never_blames_a_part_of_the_system_it_cannot_know_about() {
+        // These seven codes answer for the radio, the Store, the app link and
+        // the platform updater alike, so each sentence has to be true of all
+        // of them. InvalidInput used to read "the address or credentials are
+        // invalid", which is a sentence about a network: it was what a reader
+        // showed when a platform update would not install, sending its owner
+        // to their Wi-Fi settings for a download that had already succeeded,
+        // and telling whoever they reported it to nothing at all.
+        for failure in [
+            DeviceError::NotFound,
+            DeviceError::Authentication,
+            DeviceError::TimedOut,
+            DeviceError::Unreachable,
+            DeviceError::InvalidInput,
+            DeviceError::Backend,
+            DeviceError::Integrity,
+        ] {
+            let described = failure.describe();
+            assert!(
+                !described.is_empty(),
+                "{failure:?} has nothing to show an owner"
+            );
+            if !matches!(
+                failure,
+                DeviceError::Authentication | DeviceError::Unreachable | DeviceError::NotFound
+            ) {
+                assert!(
+                    !described.contains("credential")
+                        && !described.contains("address")
+                        && !described.contains("network"),
+                    "{failure:?} explains itself with a network that may not be involved: {described}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn every_glyph_has_a_wire_tag_and_gets_it_back() {
         // A glyph added to the enum without a tag here encodes as whatever the
         // match arm above it chose, so a book would arrive as a battery. The
@@ -6462,14 +7082,19 @@ mod tests {
         unique.sort_unstable();
         unique.dedup();
         assert_eq!(unique.len(), tags.len(), "two glyphs share one wire tag");
+        let highest = tags.iter().copied().max().expect("glyphs have tags");
         assert_eq!(
-            decode_glyph(u8::try_from(Glyph::ALL.len()).expect("small set")),
+            decode_glyph(highest.checked_add(1).expect("glyph tag space remains")),
             None,
             "a tag one past the end decoded as a glyph"
         );
     }
 
     #[test]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one entry per wire variant; a shorter list is a variant that stopped being covered"
+    )]
     fn every_device_request_round_trips() {
         let requests = vec![
             DeviceRequest::ReadBattery,
@@ -6555,9 +7180,18 @@ mod tests {
             DeviceRequest::SetUpdateChannel {
                 channel: UpdateChannel::Beta,
             },
+            DeviceRequest::SetSecret {
+                name: "lichess".to_owned(),
+                value: SecretValue::new("token-value"),
+            },
+            DeviceRequest::ListLibrary,
+            DeviceRequest::ReadLibrary {
+                id: "0/Bleak-House.epub".to_owned(),
+            },
         ];
         for request in requests {
             let frame = Frame {
+                version: VERSION,
                 request_id: 9,
                 message: Message::DeviceRequest(request),
             };
@@ -6581,6 +7215,7 @@ mod tests {
         ];
         for (url, sha256) in cases {
             let frame = Frame {
+                version: VERSION,
                 request_id: 9,
                 message: Message::DeviceRequest(DeviceRequest::Update {
                     url: url.clone(),
@@ -6592,6 +7227,10 @@ mod tests {
     }
 
     #[test]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one entry per wire variant; a shorter list is a variant that stopped being covered"
+    )]
     fn every_device_result_round_trips() {
         let results = vec![
             DeviceResult::Done,
@@ -6682,9 +7321,24 @@ mod tests {
                     installed_version: Some("1.1.0".to_owned()),
                 }],
             },
+            DeviceResult::Library {
+                entries: vec![LibraryEntry {
+                    id: "0/Bleak-House.epub".to_owned(),
+                    title: "Bleak House".to_owned(),
+                    kind: 1,
+                    bytes: 12_000,
+                    on_card: true,
+                }],
+                truncated: false,
+            },
+            DeviceResult::LibraryDocument {
+                id: "0/notes.md".to_owned(),
+                bytes: b"hello".to_vec(),
+            },
         ];
         for result in results {
             let frame = Frame {
+                version: VERSION,
                 request_id: 11,
                 message: Message::DeviceResult(result),
             };
@@ -6698,6 +7352,7 @@ mod tests {
         for cobalt in [false, true] {
             for apps in [false, true] {
                 let frame = Frame {
+                    version: VERSION,
                     request_id: 11,
                     message: Message::DeviceResult(DeviceResult::AutoUpdate { cobalt, apps }),
                 };
@@ -6708,19 +7363,21 @@ mod tests {
     }
 
     #[test]
-    fn protocol_11_auto_update_frames_remain_byte_compatible() {
+    fn protocol_12_auto_update_frames_keep_their_payload_shape() {
         let read = Frame {
+            version: VERSION,
             request_id: 8,
             message: Message::DeviceRequest(DeviceRequest::ReadAutoUpdate),
         };
         let read_bytes = encode(&read).expect("encode read");
         assert_eq!(
             read_bytes,
-            [b'K', b'O', b'B', b'O', 11, 7, 0, 0, 0, 1, 0, 0, 0, 8, 43,]
+            [b'K', b'O', b'B', b'O', VERSION, 7, 0, 0, 0, 1, 0, 0, 0, 8, 43,]
         );
         assert_eq!(decode(&read_bytes).expect("decode read"), read);
 
         let request = Frame {
+            version: VERSION,
             request_id: 9,
             message: Message::DeviceRequest(DeviceRequest::SetAutoUpdate {
                 cobalt: true,
@@ -6730,11 +7387,12 @@ mod tests {
         let request_bytes = encode(&request).expect("encode request");
         assert_eq!(
             request_bytes,
-            [b'K', b'O', b'B', b'O', 11, 7, 0, 0, 0, 2, 0, 0, 0, 9, 44, 1,]
+            [b'K', b'O', b'B', b'O', VERSION, 7, 0, 0, 0, 2, 0, 0, 0, 9, 44, 1,]
         );
         assert_eq!(decode(&request_bytes).expect("decode request"), request);
 
         let result = Frame {
+            version: VERSION,
             request_id: 11,
             message: Message::DeviceResult(DeviceResult::AutoUpdate {
                 cobalt: false,
@@ -6744,7 +7402,7 @@ mod tests {
         let result_bytes = encode(&result).expect("encode result");
         assert_eq!(
             result_bytes,
-            [b'K', b'O', b'B', b'O', 11, 8, 0, 0, 0, 2, 0, 0, 0, 11, 17, 2,]
+            [b'K', b'O', b'B', b'O', VERSION, 8, 0, 0, 0, 2, 0, 0, 0, 11, 17, 2,]
         );
         assert_eq!(decode(&result_bytes).expect("decode result"), result);
     }
@@ -6757,6 +7415,7 @@ mod tests {
                 Message::DeviceResult(DeviceResult::UpdateChannel(channel)),
             ] {
                 let frame = Frame {
+                    version: VERSION,
                     request_id: 9,
                     message,
                 };
@@ -6765,6 +7424,7 @@ mod tests {
             }
         }
         let read = Frame {
+            version: VERSION,
             request_id: 9,
             message: Message::DeviceRequest(DeviceRequest::ReadUpdateChannel),
         };
@@ -6773,8 +7433,48 @@ mod tests {
     }
 
     #[test]
+    fn application_secret_debug_output_is_redacted() {
+        let request = DeviceRequest::SetSecret {
+            name: "zotero".to_owned(),
+            value: SecretValue::new("must-not-appear"),
+        };
+        let debug = format!("{request:?}");
+        assert!(debug.contains("zotero"));
+        assert!(debug.contains("[redacted]"));
+        assert!(!debug.contains("must-not-appear"));
+    }
+
+    #[test]
+    fn protocol_11_cannot_encode_or_decode_application_secret_requests() {
+        let request = Frame {
+            version: LEGACY_VERSION,
+            request_id: 9,
+            message: Message::DeviceRequest(DeviceRequest::SetSecret {
+                name: "zotero".to_owned(),
+                value: SecretValue::new("owner-value"),
+            }),
+        };
+        assert_eq!(
+            encode(&request),
+            Err(ProtocolError::InvalidValue("application secret"))
+        );
+
+        let mut bytes = encode(&Frame {
+            version: VERSION,
+            ..request
+        })
+        .expect("protocol 12 secret request");
+        bytes[4] = LEGACY_VERSION;
+        assert_eq!(
+            decode(&bytes),
+            Err(ProtocolError::InvalidValue("device request"))
+        );
+    }
+
+    #[test]
     fn unknown_update_channels_are_refused() {
         let request = Frame {
+            version: VERSION,
             request_id: 9,
             message: Message::DeviceRequest(DeviceRequest::SetUpdateChannel {
                 channel: UpdateChannel::Stable,
@@ -6788,6 +7488,7 @@ mod tests {
         );
 
         let result = Frame {
+            version: VERSION,
             request_id: 9,
             message: Message::DeviceResult(DeviceResult::UpdateChannel(UpdateChannel::Stable)),
         };
@@ -6816,6 +7517,7 @@ mod tests {
         ];
         for result in results {
             let frame = Frame {
+                version: VERSION,
                 request_id: 11,
                 message: Message::DeviceResult(result),
             };
@@ -6831,6 +7533,7 @@ mod tests {
             ..DeviceIdentity::default()
         };
         let frame = Frame {
+            version: VERSION,
             request_id: 11,
             message: Message::DeviceResult(DeviceResult::Identity(identity)),
         };
@@ -6870,6 +7573,7 @@ mod tests {
         ];
         for result in results {
             let frame = Frame {
+                version: VERSION,
                 request_id: 11,
                 message: Message::DeviceResult(result),
             };
@@ -6893,6 +7597,7 @@ mod tests {
         ];
         for id in ids {
             let frame = Frame {
+                version: VERSION,
                 request_id: 1,
                 message: Message::DeviceRequest(DeviceRequest::InstallApp { id: id.clone() }),
             };
@@ -6918,6 +7623,7 @@ mod tests {
                 .collect(),
         };
         assert!(encode(&Frame {
+            version: VERSION,
             request_id: 1,
             message: Message::DeviceResult(too_many),
         })
@@ -6935,6 +7641,7 @@ mod tests {
             installed_version: None,
         };
         assert!(encode(&Frame {
+            version: VERSION,
             request_id: 1,
             message: Message::DeviceResult(DeviceResult::Apps {
                 entries: vec![app("a".repeat(MAX_APP_VERSION_LEN))],
@@ -6942,6 +7649,7 @@ mod tests {
         })
         .is_ok());
         assert!(encode(&Frame {
+            version: VERSION,
             request_id: 1,
             message: Message::DeviceResult(DeviceResult::Apps {
                 entries: vec![app("a".repeat(MAX_APP_VERSION_LEN + 1))],
@@ -6998,6 +7706,7 @@ mod tests {
     #[test]
     fn malformed_device_payloads_are_rejected_without_panic() {
         let template = encode(&Frame {
+            version: VERSION,
             request_id: 1,
             message: Message::DeviceRequest(DeviceRequest::ReadBattery),
         })
@@ -7026,6 +7735,7 @@ mod tests {
         assert_eq!(decode(&truncated), Err(ProtocolError::LengthMismatch));
 
         let result = encode(&Frame {
+            version: VERSION,
             request_id: 1,
             message: Message::DeviceResult(DeviceResult::Denied(DenyReason::Busy)),
         })
@@ -7042,6 +7752,7 @@ mod tests {
     #[test]
     fn app_link_and_remote_install_payloads_are_bounded_and_validated() {
         let pairing = |code: String, url: String, expires_in| Frame {
+            version: VERSION,
             request_id: 1,
             message: Message::DeviceResult(DeviceResult::AppLink(AppLinkState::Pairing {
                 code,
@@ -7076,6 +7787,7 @@ mod tests {
         ))
         .is_err());
         assert!(encode(&Frame {
+            version: VERSION,
             request_id: 1,
             message: Message::DeviceResult(DeviceResult::AppLink(AppLinkState::Paired {
                 browsers: 9,
@@ -7083,6 +7795,7 @@ mod tests {
         })
         .is_err());
         assert!(encode(&Frame {
+            version: VERSION,
             request_id: 1,
             message: Message::DeviceResult(DeviceResult::RemoteInstall(
                 RemoteInstallOutcome::Installed {
@@ -7096,6 +7809,7 @@ mod tests {
     #[test]
     fn malformed_app_link_payloads_are_rejected() {
         let pairing = |code: String, url: String, expires_in| Frame {
+            version: VERSION,
             request_id: 1,
             message: Message::DeviceResult(DeviceResult::AppLink(AppLinkState::Pairing {
                 code,
@@ -7136,6 +7850,7 @@ mod tests {
         );
 
         let mut bad_browsers = encode(&Frame {
+            version: VERSION,
             request_id: 1,
             message: Message::DeviceResult(DeviceResult::AppLink(AppLinkState::Paired {
                 browsers: 8,
@@ -7150,6 +7865,7 @@ mod tests {
         );
 
         let mut bad_id = encode(&Frame {
+            version: VERSION,
             request_id: 1,
             message: Message::DeviceResult(DeviceResult::RemoteInstall(
                 RemoteInstallOutcome::Installed {
@@ -7165,6 +7881,7 @@ mod tests {
         );
 
         let mut bad_outcome = encode(&Frame {
+            version: VERSION,
             request_id: 1,
             message: Message::DeviceResult(DeviceResult::RemoteInstall(RemoteInstallOutcome::None)),
         })
@@ -7180,6 +7897,7 @@ mod tests {
     #[test]
     fn screen_round_trip_is_deterministic() {
         let frame = Frame {
+            version: VERSION,
             request_id: 12,
             message: Message::SetScreen(Screen::new(
                 7,
@@ -7217,6 +7935,7 @@ mod tests {
         for screen in [plain, with_menu] {
             let expected = screen.page_turns;
             let frame = Frame {
+                version: VERSION,
                 request_id: 4,
                 message: Message::SetScreen(screen),
             };
@@ -7239,6 +7958,7 @@ mod tests {
         for screen in [plain, holding] {
             let expected = screen.hold;
             let frame = Frame {
+                version: VERSION,
                 request_id: 4,
                 message: Message::SetScreen(screen),
             };
@@ -7260,6 +7980,7 @@ mod tests {
         );
         for scale in [None, Some(TextScale::Large), Some(TextScale::ExtraLarge)] {
             let frame = Frame {
+                version: VERSION,
                 request_id: 9,
                 message: Message::SetScreen(screen.clone().with_text_scale(scale)),
             };
@@ -7288,6 +8009,7 @@ mod tests {
         assert!(!screen.owns_back, "not asking for it is the default");
         for owns_back in [false, true] {
             let frame = Frame {
+                version: VERSION,
                 request_id: 12,
                 message: Message::SetScreen(screen.clone().with_own_back(owns_back)),
             };
@@ -7308,8 +8030,188 @@ mod tests {
     }
 
     #[test]
+    fn version_11_screen_frames_survive_the_0_3_4_compatibility_window() {
+        // Heading and body are unchanged v11 payloads, representative of an
+        // already-installed app. The peer version must select the legacy
+        // renderer rather than refuse an OTA user's application.
+        let nodes = vec![
+            Node::Heading {
+                id: NodeId(1),
+                text: "Existing app".into(),
+                level: 1,
+            },
+            Node::Text {
+                id: NodeId(2),
+                text: "Its local Atkinson measurements still apply.".into(),
+                links: Vec::new(),
+            },
+        ];
+        let screen = Screen::new(9, nodes.clone());
+        let frame = Frame {
+            version: LEGACY_VERSION,
+            request_id: 3,
+            message: Message::SetScreen(screen),
+        };
+        let bytes = encode(&frame).expect("v11 encoding");
+        let back = decode(&bytes).expect("v11 accepted");
+        assert_eq!(back.version, LEGACY_VERSION);
+        let Message::SetScreen(decoded) = back.message else {
+            panic!("expected screen");
+        };
+        assert!(decoded.legacy_typography);
+        assert_eq!(decoded.nodes, nodes);
+        assert!(decoded
+            .layout()
+            .nodes
+            .iter()
+            .any(|node| matches!(node.kind, kobo_ui::LayoutKind::Heading(1))));
+    }
+
+    #[test]
+    fn version_11_sections_and_tiles_use_the_legacy_wire_layout() {
+        let nodes = vec![
+            Node::Section {
+                id: NodeId(1),
+                title: "Library".into(),
+                value: Some("12".into()),
+                link: None,
+            },
+            Node::TileGrid {
+                id: NodeId(2),
+                shape: TileShape::Portrait,
+                tiles: vec![Tile::new(ActionId(5), "Book", Glyph::Book)],
+            },
+        ];
+        let frame = Frame {
+            version: LEGACY_VERSION,
+            request_id: 7,
+            message: Message::SetScreen(Screen::new(10, nodes.clone())),
+        };
+        let Message::SetScreen(decoded) = decode(&encode(&frame).expect("v11 encoding"))
+            .expect("v11 decoding")
+            .message
+        else {
+            panic!("expected screen");
+        };
+        assert_eq!(decoded.nodes, nodes);
+    }
+
+    #[test]
+    fn version_11_encoder_rejects_folio_only_fields() {
+        let screens = [
+            Screen::new(
+                1,
+                vec![Node::Section {
+                    id: NodeId(1),
+                    title: "Library".into(),
+                    value: None,
+                    link: Some(BarAction::new(ActionId(2), "View all")),
+                }],
+            ),
+            Screen::new(
+                1,
+                vec![Node::TileGrid {
+                    id: NodeId(1),
+                    shape: TileShape::Square,
+                    tiles: vec![Tile::new(ActionId(2), "Updates", Glyph::Download)
+                        .with_value("3")
+                        .with_menu(ActionId(3))],
+                }],
+            ),
+            Screen::new(
+                1,
+                vec![Node::TileGrid {
+                    id: NodeId(1),
+                    shape: TileShape::Card,
+                    tiles: Vec::new(),
+                }],
+            ),
+            Screen::new(
+                1,
+                vec![Node::PageRail {
+                    id: NodeId(1),
+                    page: 0,
+                    of: 2,
+                }],
+            ),
+        ];
+        for screen in screens {
+            assert!(matches!(
+                encode(&Frame {
+                    version: LEGACY_VERSION,
+                    request_id: 8,
+                    message: Message::SetScreen(screen),
+                }),
+                Err(ProtocolError::InvalidValue(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn version_12_folio_fields_round_trip() {
+        let screen = Screen::new(
+            10,
+            vec![
+                Node::Section {
+                    id: NodeId(1),
+                    title: "Featured".into(),
+                    value: None,
+                    link: Some(BarAction::new(ActionId(4), "View all ↗")),
+                },
+                Node::TileGrid {
+                    id: NodeId(2),
+                    shape: TileShape::Card,
+                    tiles: vec![Tile::new(ActionId(5), "App Store", Glyph::Download)
+                        .with_caption("Updates")
+                        .with_value("3")
+                        .with_menu(ActionId(6))],
+                },
+                Node::PageRail {
+                    id: NodeId(3),
+                    page: 1,
+                    of: 3,
+                },
+            ],
+        );
+        let frame = Frame {
+            version: VERSION,
+            request_id: 4,
+            message: Message::SetScreen(screen.clone()),
+        };
+        let Message::SetScreen(decoded) = decode(&encode(&frame).expect("v12 encoding"))
+            .expect("v12 decoding")
+            .message
+        else {
+            panic!("expected screen");
+        };
+        assert_eq!(decoded, screen);
+        assert!(!decoded.legacy_typography);
+    }
+
+    #[test]
+    fn versions_outside_the_window_are_refused() {
+        let frame = Frame {
+            version: VERSION,
+            request_id: 3,
+            message: Message::Exit,
+        };
+        let mut bytes = encode(&frame).expect("encoding");
+        bytes[4] = LEGACY_VERSION - 1;
+        assert_eq!(
+            decode(&bytes),
+            Err(ProtocolError::UnsupportedVersion(LEGACY_VERSION - 1))
+        );
+        bytes[4] = VERSION + 1;
+        assert_eq!(
+            decode(&bytes),
+            Err(ProtocolError::UnsupportedVersion(VERSION + 1))
+        );
+    }
+
+    #[test]
     fn invalid_utf8_is_rejected() {
         let mut bytes = encode(&Frame {
+            version: VERSION,
             request_id: 1,
             message: Message::Hello { name: "x".into() },
         })
@@ -7321,6 +8223,7 @@ mod tests {
     #[test]
     fn stream_round_trip_reads_exactly_one_frame() {
         let frame = Frame {
+            version: VERSION,
             request_id: 42,
             message: Message::Hello {
                 name: "counter".into(),
@@ -7359,6 +8262,7 @@ mod tests {
             .collect();
         assert_eq!(
             encode(&Frame {
+                version: VERSION,
                 request_id: 1,
                 message: Message::SetScreen(Screen::new(1, nodes)),
             }),
@@ -7367,6 +8271,7 @@ mod tests {
 
         assert_eq!(
             encode(&Frame {
+                version: VERSION,
                 request_id: 2,
                 message: Message::SetScreen(Screen::new(
                     2,
@@ -7395,6 +8300,7 @@ mod tests {
             .collect();
         assert_eq!(
             encode(&Frame {
+                version: VERSION,
                 request_id: 3,
                 message: Message::SetScreen(Screen::new(3, nodes)),
             }),
@@ -7598,11 +8504,13 @@ mod node_coverage_tests {
                 id: NodeId(23),
                 title: "Details".into(),
                 value: None,
+                link: None,
             },
             Node::Section {
                 id: NodeId(24),
                 title: "Popular".into(),
                 value: Some("32".into()),
+                link: Some(BarAction::new(ActionId(68), "View all ↗")),
             },
             Node::Flex { id: NodeId(90) },
             Node::Spacer {
@@ -7638,8 +8546,14 @@ mod node_coverage_tests {
                     Tile::new(ActionId(4), "Bleak House", Glyph::Book)
                         .with_state(TileState::Held)
                         .with_badge("12")
-                        .with_subtitle("Charles Dickens"),
+                        .with_subtitle("Charles Dickens")
+                        .with_value("12"),
                 ],
+            },
+            Node::PageRail {
+                id: NodeId(91),
+                page: 1,
+                of: 3,
             },
             Node::Splash {
                 id: NodeId(21),
@@ -7748,6 +8662,7 @@ mod node_coverage_tests {
 
     fn round_trip(screen: Screen) -> Screen {
         let frame = Frame {
+            version: VERSION,
             request_id: 7,
             message: Message::SetScreen(screen),
         };
@@ -7765,7 +8680,9 @@ mod node_coverage_tests {
         // byte of the next cell's action, so the second button of a transport
         // row would fire something nobody named. VERSION went to 3 for this.
         let cells = vec![
-            kobo_ui::Cell::new(ActionId(11), "Back 30 sec").with_glyph(Glyph::Rewind30),
+            kobo_ui::Cell::new(ActionId(11), "Back 30 sec")
+                .with_glyph(Glyph::Rewind30)
+                .with_selected(true),
             kobo_ui::Cell::new(ActionId(12), "Play"),
             kobo_ui::Cell::new(ActionId(13), "Louder").with_glyph(Glyph::VolumeUp),
         ];
@@ -7942,6 +8859,7 @@ mod node_coverage_tests {
         let screen = Screen::new(1, Vec::new())
             .with_top_bar(TopBar::new(NodeId(1), "Trap").action(ActionId::BACK, "Back"));
         let frame = Frame {
+            version: VERSION,
             request_id: 1,
             message: Message::SetScreen(screen),
         };
@@ -7971,13 +8889,14 @@ mod node_coverage_tests {
             ))
             .with_top_bar(TopBar::new(NodeId(2), "Cobalt"));
         let frame = Frame {
+            version: VERSION,
             request_id: 1,
             message: Message::SetScreen(screen.clone()),
         };
         let bytes = encode(&frame).expect("encode");
         // The reserved length and the encoder have to agree, and a mark that
         // is written but not counted is exactly how they stop agreeing.
-        let counted = encoded_screen_len(&screen, 0, &mut 0).expect("length");
+        let counted = encoded_screen_len(&screen, 0, &mut 0, VERSION).expect("length");
         assert_eq!(bytes.len(), HEADER_LEN + counted);
         let Message::SetScreen(back) = decode(&bytes).expect("decode").message else {
             panic!("expected a screen");
@@ -8013,6 +8932,7 @@ mod node_coverage_tests {
             Some(0),
         ));
         let frame = Frame {
+            version: VERSION,
             request_id: 1,
             message: Message::SetScreen(screen),
         };
@@ -8073,6 +8993,7 @@ mod node_coverage_tests {
             }],
         );
         let bytes = encode(&Frame {
+            version: VERSION,
             request_id: 1,
             message: Message::SetScreen(screen),
         })
@@ -8099,6 +9020,7 @@ mod node_coverage_tests {
             }],
         );
         let frame = Frame {
+            version: VERSION,
             request_id: 1,
             message: Message::SetScreen(screen),
         };
@@ -8127,6 +9049,7 @@ mod node_coverage_tests {
                     ),
                     0,
                     &mut count,
+                    VERSION,
                 )
                 .expect("encode");
                 let last = screen.len() - 1;
@@ -8148,6 +9071,7 @@ mod node_coverage_tests {
                     ),
                     0,
                     &mut count,
+                    VERSION,
                 )
                 .expect("encode");
                 // The level byte sits after the screen header, node tag and id.
@@ -8159,7 +9083,7 @@ mod node_coverage_tests {
             let mut reader = Reader::new(&bytes);
             let mut count = 0;
             assert!(
-                decode_screen(&mut reader, 0, &mut count).is_err(),
+                decode_screen(&mut reader, 0, &mut count, VERSION).is_err(),
                 "an unknown {label} tag was accepted"
             );
         }
@@ -8172,6 +9096,7 @@ mod store_tests {
 
     fn message_round_trip(message: Message) -> Message {
         let frame = Frame {
+            version: VERSION,
             request_id: 11,
             message,
         };
@@ -8216,6 +9141,7 @@ mod store_tests {
         // or a program printing without pause builds a frame the other end
         // will only reject after it has already been allocated.
         let frame = Frame {
+            version: VERSION,
             request_id: 1,
             message: Message::ShellEvent(ShellEvent::Output(vec![b'x'; MAX_SHELL_CHUNK + 1])),
         };
@@ -8247,6 +9173,7 @@ mod store_tests {
             },
         };
         let frame = Frame {
+            version: VERSION,
             request_id: 1,
             message,
         };
@@ -8255,6 +9182,7 @@ mod store_tests {
         assert_eq!(decoded, frame);
 
         let oversized = Frame {
+            version: VERSION,
             request_id: 1,
             message: Message::Spawn {
                 task: TaskId(3),
@@ -8344,10 +9272,15 @@ mod store_tests {
                 task: TaskId(15),
                 outcome: TaskOutcome::Cancelled,
             },
+            Message::TaskOutcome {
+                task: TaskId(16),
+                outcome: TaskOutcome::Failed(TaskError::RateLimited(37)),
+            },
         ] {
-            let (_, predicted) =
-                encoded_message_layout(&message).expect("the message is within the limits");
+            let (_, predicted) = encoded_message_layout(&message, VERSION)
+                .expect("the message is within the limits");
             let frame = Frame {
+                version: VERSION,
                 request_id: 3,
                 message: message.clone(),
             };
@@ -8385,6 +9318,7 @@ mod store_tests {
             .map(|index| Header::new(format!("X-{index}"), "value"))
             .collect();
         let frame = Frame {
+            version: VERSION,
             request_id: 1,
             message: Message::Spawn {
                 task: TaskId(21),
@@ -8412,6 +9346,7 @@ mod store_tests {
             Header::new("X-Evil", "value\r\nX-Injected: 1"),
         ] {
             let frame = Frame {
+                version: VERSION,
                 request_id: 1,
                 message: Message::Spawn {
                     task: TaskId(22),
@@ -8543,10 +9478,12 @@ mod store_tests {
             Message::StoreResult(StoreResult::Denied(StoreError::Missing)),
         ] {
             let frame = Frame {
+                version: VERSION,
                 request_id: 1,
                 message: message.clone(),
             };
-            let (_, predicted) = encoded_message_layout(&frame.message).expect("a valid message");
+            let (_, predicted) =
+                encoded_message_layout(&frame.message, frame.version).expect("a valid message");
             let encoded = encode(&frame).expect("a valid message");
             assert_eq!(
                 encoded.len() - HEADER_LEN,
@@ -8570,6 +9507,7 @@ mod store_tests {
         });
         assert!(matches!(
             encode(&Frame {
+                version: VERSION,
                 request_id: 1,
                 message,
             }),
@@ -8580,6 +9518,7 @@ mod store_tests {
     #[test]
     fn a_finished_flag_that_is_neither_yes_nor_no_is_refused() {
         let mut encoded = encode(&Frame {
+            version: VERSION,
             request_id: 1,
             message: Message::StoreRequest(StoreRequest::ShelfWrite {
                 name: "a".into(),
@@ -8613,11 +9552,13 @@ mod store_tests {
         });
         assert_ne!(
             encode(&Frame {
+                version: VERSION,
                 request_id: 0,
                 message: missing.clone()
             })
             .unwrap(),
             encode(&Frame {
+                version: VERSION,
                 request_id: 0,
                 message: empty.clone()
             })
@@ -8630,6 +9571,7 @@ mod store_tests {
     #[test]
     fn an_oversized_value_is_refused_before_it_is_encoded() {
         let frame = Frame {
+            version: VERSION,
             request_id: 0,
             message: Message::StoreRequest(StoreRequest::Save {
                 key: "big".into(),
@@ -8662,24 +9604,36 @@ mod store_tests {
     }
 }
 
-const fn encode_task_error(error: TaskError) -> u8 {
+fn encode_task_error(payload: &mut Vec<u8>, error: TaskError) {
     match error {
-        TaskError::Denied => 0,
-        TaskError::Unreachable => 1,
-        TaskError::TooLarge => 2,
-        TaskError::TimedOut => 3,
-        TaskError::NotFound => 4,
+        TaskError::Denied => payload.push(0),
+        TaskError::Unreachable => payload.push(1),
+        TaskError::TooLarge => payload.push(2),
+        TaskError::TimedOut => payload.push(3),
+        TaskError::NotFound => payload.push(4),
         // Appended rather than inserted. The tags are the wire, and renumbering
         // them would make a new daemon and an older app disagree about what
         // went wrong without either of them noticing.
-        TaskError::Offline => 5,
-        TaskError::NoCredential => 6,
-        TaskError::Unauthorized => 7,
+        TaskError::Offline => payload.push(5),
+        TaskError::NoCredential => payload.push(6),
+        TaskError::Unauthorized => payload.push(7),
+        TaskError::RateLimited(seconds) => {
+            payload.push(8);
+            push_u32(payload, seconds);
+        }
     }
 }
 
-const fn decode_task_error(tag: u8) -> Result<TaskError, ProtocolError> {
-    Ok(match tag {
+fn encoded_task_error_len(error: TaskError) -> usize {
+    if matches!(error, TaskError::RateLimited(_)) {
+        5
+    } else {
+        1
+    }
+}
+
+fn decode_task_error(reader: &mut Reader<'_>) -> Result<TaskError, ProtocolError> {
+    Ok(match reader.u8()? {
         0 => TaskError::Denied,
         1 => TaskError::Unreachable,
         2 => TaskError::TooLarge,
@@ -8688,13 +9642,14 @@ const fn decode_task_error(tag: u8) -> Result<TaskError, ProtocolError> {
         5 => TaskError::Offline,
         6 => TaskError::NoCredential,
         7 => TaskError::Unauthorized,
+        8 => TaskError::RateLimited(reader.u32()?),
         _ => return Err(ProtocolError::InvalidValue("task error")),
     })
 }
 
 #[cfg(test)]
 mod task_error_tests {
-    use super::{decode_task_error, encode_task_error, ProtocolError, TaskError};
+    use super::{decode_task_error, encode_task_error, Reader, TaskError};
 
     /// Every variant, so that adding one without a tag fails here.
     const EVERY: &[TaskError] = &[
@@ -8705,12 +9660,16 @@ mod task_error_tests {
         TaskError::TooLarge,
         TaskError::TimedOut,
         TaskError::NotFound,
+        TaskError::Unauthorized,
+        TaskError::RateLimited(37),
     ];
 
     #[test]
     fn every_task_error_survives_the_wire() {
         for error in EVERY {
-            assert_eq!(decode_task_error(encode_task_error(*error)), Ok(*error));
+            let mut bytes = Vec::new();
+            encode_task_error(&mut bytes, *error);
+            assert_eq!(decode_task_error(&mut Reader::new(&bytes)), Ok(*error));
         }
     }
 
@@ -8718,7 +9677,11 @@ mod task_error_tests {
     fn no_two_task_errors_share_a_tag() {
         let mut tags: Vec<u8> = EVERY
             .iter()
-            .map(|error| encode_task_error(*error))
+            .map(|error| {
+                let mut bytes = Vec::new();
+                encode_task_error(&mut bytes, *error);
+                bytes[0]
+            })
             .collect();
         tags.sort_unstable();
         let count = tags.len();
@@ -8731,13 +9694,19 @@ mod task_error_tests {
         // An app built before Offline existed is still talking to this daemon
         // over these numbers. Renumbering would make the two disagree about
         // what went wrong without either of them noticing.
-        assert_eq!(encode_task_error(TaskError::Denied), 0);
-        assert_eq!(encode_task_error(TaskError::Unreachable), 1);
-        assert_eq!(encode_task_error(TaskError::TooLarge), 2);
-        assert_eq!(encode_task_error(TaskError::TimedOut), 3);
-        assert_eq!(encode_task_error(TaskError::NotFound), 4);
-        assert_eq!(encode_task_error(TaskError::Offline), 5);
-        assert_eq!(encode_task_error(TaskError::NoCredential), 6);
+        let tag = |error: TaskError| {
+            let mut bytes = Vec::new();
+            encode_task_error(&mut bytes, error);
+            bytes[0]
+        };
+        assert_eq!(tag(TaskError::Denied), 0);
+        assert_eq!(tag(TaskError::Unreachable), 1);
+        assert_eq!(tag(TaskError::TooLarge), 2);
+        assert_eq!(tag(TaskError::TimedOut), 3);
+        assert_eq!(tag(TaskError::NotFound), 4);
+        assert_eq!(tag(TaskError::Offline), 5);
+        assert_eq!(tag(TaskError::NoCredential), 6);
+        assert_eq!(tag(TaskError::Unauthorized), 7);
     }
 
     /// The two refusals have to stay distinguishable in words as well as on
@@ -8755,12 +9724,8 @@ mod task_error_tests {
     #[test]
     fn a_tag_from_the_future_is_refused_rather_than_guessed() {
         assert_eq!(
-            decode_task_error(8),
-            Err(ProtocolError::InvalidValue("task error"))
-        );
-        assert_eq!(
-            decode_task_error(255),
-            Err(ProtocolError::InvalidValue("task error"))
+            decode_task_error(&mut Reader::new(&[255])),
+            Err(super::ProtocolError::InvalidValue("task error"))
         );
     }
 
@@ -8816,6 +9781,7 @@ mod picture_tests {
             ],
         );
         let frame = Frame {
+            version: VERSION,
             request_id: 3,
             message: Message::SetScreen(screen),
         };
@@ -8826,16 +9792,136 @@ mod picture_tests {
     #[test]
     fn handing_over_a_picture_survives_the_wire() {
         let frame = Frame {
+            version: VERSION,
             request_id: 1,
             message: Message::PutPicture {
                 handle: PictureHandle(4),
                 width: 3,
                 height: 2,
-                grey: vec![0, 32, 64, 96, 128, 160],
+                format: PictureFormat::Grey,
+                pixels: vec![0, 32, 64, 96, 128, 160],
             },
         };
         let bytes = encode(&frame).expect("encode");
         assert_eq!(decode(&bytes).expect("decode"), frame);
+    }
+
+    /// Where the message tag sits in a frame: after the magic and the version.
+    const TAG_INDEX: usize = MAGIC.len() + 1;
+
+    #[test]
+    fn a_grey_picture_is_the_same_bytes_it_was_before_colour_existed() {
+        // The frame an application built last year, byte for byte: magic,
+        // version, request id, tag 18, length, then the handle, the size and
+        // the pixels. A runtime from before colour reads it unchanged.
+        let frame = Frame {
+            version: VERSION,
+            request_id: 1,
+            message: Message::PutPicture {
+                handle: PictureHandle(4),
+                width: 2,
+                height: 1,
+                format: PictureFormat::Grey,
+                pixels: vec![7, 9],
+            },
+        };
+        let bytes = encode(&frame).expect("encode");
+        assert_eq!(bytes[MAGIC.len()], VERSION);
+        assert_eq!(bytes[TAG_INDEX], 18, "the grey tag did not move");
+        assert_eq!(
+            &bytes[HEADER_LEN..],
+            &[0, 0, 0, 4, 0, 0, 0, 2, 0, 0, 0, 1, 7, 9]
+        );
+
+        let begin = encode(&Frame {
+            version: VERSION,
+            request_id: 1,
+            message: Message::BeginPicture {
+                handle: PictureHandle(4),
+                width: 2,
+                height: 1,
+                format: PictureFormat::Grey,
+            },
+        })
+        .expect("encode");
+        assert_eq!(begin[TAG_INDEX], 20);
+    }
+
+    #[test]
+    fn a_colour_picture_travels_on_its_own_tag_at_three_bytes_a_pixel() {
+        let frame = Frame {
+            version: VERSION,
+            request_id: 1,
+            message: Message::PutPicture {
+                handle: PictureHandle(4),
+                width: 2,
+                height: 1,
+                format: PictureFormat::Rgb,
+                pixels: vec![255, 0, 0, 0, 0, 255],
+            },
+        };
+        let bytes = encode(&frame).expect("encode");
+        assert_eq!(bytes[TAG_INDEX], 28);
+        assert_eq!(decode(&bytes).expect("decode"), frame);
+
+        // The same pixels declared grey are the wrong length and refused; a
+        // colour picture short of three bytes a pixel likewise.
+        assert!(matches!(
+            encode(&Frame {
+                version: VERSION,
+                request_id: 1,
+                message: Message::PutPicture {
+                    handle: PictureHandle(4),
+                    width: 2,
+                    height: 1,
+                    format: PictureFormat::Grey,
+                    pixels: vec![255, 0, 0, 0, 0, 255],
+                },
+            }),
+            Err(ProtocolError::InvalidValue(_))
+        ));
+        assert!(matches!(
+            encode(&Frame {
+                version: VERSION,
+                request_id: 1,
+                message: Message::PutPicture {
+                    handle: PictureHandle(4),
+                    width: 2,
+                    height: 1,
+                    format: PictureFormat::Rgb,
+                    pixels: vec![255, 0, 0, 0],
+                },
+            }),
+            Err(ProtocolError::InvalidValue(_))
+        ));
+
+        let begin = Frame {
+            version: VERSION,
+            request_id: 1,
+            message: Message::BeginPicture {
+                handle: PictureHandle(4),
+                width: 1072,
+                height: 1448,
+                format: PictureFormat::Rgb,
+            },
+        };
+        let bytes = encode(&begin).expect("a full colour panel fits the byte bound");
+        assert_eq!(bytes[TAG_INDEX], 29);
+        assert_eq!(decode(&bytes).expect("decode"), begin);
+        // Two colour panels do not: the bound is on bytes, not pixels.
+        assert!(matches!(
+            encode(&Frame {
+                version: VERSION,
+                request_id: 1,
+                message: Message::BeginPicture {
+                    handle: PictureHandle(4),
+                    width: 1072,
+                    height: 1448 * 2,
+                    format: PictureFormat::Rgb,
+                },
+            }),
+            Err(ProtocolError::FrameTooLarge)
+        ));
     }
 
     #[test]
@@ -8843,12 +9929,14 @@ mod picture_tests {
         // The decoder allocates on the strength of the declared size, so the
         // two have to be checked against each other before anything is read.
         let refused = encode(&Frame {
+            version: VERSION,
             request_id: 1,
             message: Message::PutPicture {
                 handle: PictureHandle(4),
                 width: 100,
                 height: 100,
-                grey: vec![0; 99],
+                format: PictureFormat::Grey,
+                pixels: vec![0; 99],
             },
         });
         assert!(matches!(refused, Err(ProtocolError::InvalidValue(_))));
@@ -8857,12 +9945,14 @@ mod picture_tests {
     #[test]
     fn a_picture_larger_than_a_frame_is_refused() {
         let refused = encode(&Frame {
+            version: VERSION,
             request_id: 1,
             message: Message::PutPicture {
                 handle: PictureHandle(4),
                 width: u32::try_from(MAX_INLINE_PICTURE_BYTES + 1).expect("fits"),
                 height: 1,
-                grey: vec![0; MAX_INLINE_PICTURE_BYTES + 1],
+                format: PictureFormat::Grey,
+                pixels: vec![0; MAX_INLINE_PICTURE_BYTES + 1],
             },
         });
         assert!(matches!(refused, Err(ProtocolError::FrameTooLarge)));
@@ -8875,11 +9965,12 @@ mod picture_tests {
                 handle: PictureHandle(4),
                 width: 1072,
                 height: 1448,
+                format: PictureFormat::Grey,
             },
             Message::PictureChunk {
                 handle: PictureHandle(4),
                 offset: 0,
-                grey: vec![17; 4096],
+                pixels: vec![17; 4096],
             },
             Message::CommitPicture {
                 handle: PictureHandle(4),
@@ -8887,6 +9978,7 @@ mod picture_tests {
         ];
         for message in messages {
             let frame = Frame {
+                version: VERSION,
                 request_id: 1,
                 message,
             };
@@ -8898,11 +9990,12 @@ mod picture_tests {
     #[test]
     fn a_picture_chunk_is_independently_bounded() {
         let refused = encode(&Frame {
+            version: VERSION,
             request_id: 1,
             message: Message::PictureChunk {
                 handle: PictureHandle(4),
                 offset: 0,
-                grey: vec![0; MAX_PICTURE_CHUNK_BYTES + 1],
+                pixels: vec![0; MAX_PICTURE_CHUNK_BYTES + 1],
             },
         });
         assert!(matches!(refused, Err(ProtocolError::FrameTooLarge)));
@@ -8911,6 +10004,7 @@ mod picture_tests {
     #[test]
     fn releasing_a_picture_survives_the_wire() {
         let frame = Frame {
+            version: VERSION,
             request_id: 8,
             message: Message::DropPicture {
                 handle: PictureHandle(4),
@@ -8928,6 +10022,7 @@ mod picture_tests {
             bytes: b"OTTOfixture".to_vec(),
         };
         let frame = Frame {
+            version: VERSION,
             request_id: 1,
             message: message.clone(),
         };
@@ -8935,6 +10030,7 @@ mod picture_tests {
         assert_eq!(decode(&bytes).expect("decode font").message, message);
 
         let oversized = Frame {
+            version: VERSION,
             request_id: 1,
             message: Message::PutFont {
                 handle: FontHandle(8),
@@ -8951,6 +10047,7 @@ mod picture_tests {
     #[test]
     fn an_unknown_tile_shape_is_refused_rather_than_guessed() {
         let frame = Frame {
+            version: VERSION,
             request_id: 1,
             message: Message::SetScreen(Screen::new(
                 1,
@@ -8973,6 +10070,35 @@ mod picture_tests {
             Err(ProtocolError::InvalidValue("tile shape"))
         ));
     }
+
+    #[test]
+    fn orientation_request_round_trips_and_keeps_portrait_as_the_default() {
+        let frame = Frame {
+            version: VERSION,
+            request_id: 4,
+            message: Message::SetOrientation(Orientation::Landscape),
+        };
+        assert_eq!(
+            decode(&encode(&frame).expect("encode")).expect("decode"),
+            frame
+        );
+        assert_eq!(Orientation::default(), Orientation::Portrait);
+        assert_eq!(Orientation::Portrait as u8, 0);
+    }
+
+    #[test]
+    fn protocol_11_cannot_send_orientation_requests() {
+        let frame = Frame {
+            version: LEGACY_VERSION,
+            request_id: 4,
+            message: Message::SetOrientation(Orientation::Landscape),
+        };
+        assert_eq!(
+            encode(&frame),
+            Err(ProtocolError::InvalidValue("protocol 12 orientation"))
+        );
+    }
+
     #[test]
     fn a_basic_credential_survives_an_encode_decode_round_trip() {
         // A gated catalogue is reached by name, and the name is all an
@@ -8986,6 +10112,7 @@ mod picture_tests {
             max_bytes: 1024,
         };
         let frame = Frame {
+            version: VERSION,
             request_id: 1,
             message: Message::Spawn {
                 task: TaskId(1),

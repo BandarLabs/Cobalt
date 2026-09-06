@@ -1,0 +1,24 @@
+{
+  "id": "rss-miniflux",
+  "display_name": "RSS Reader — Miniflux",
+  "short_label": "RSS Reader",
+  "summary": "Read your Miniflux feeds anywhere.",
+  "page_description": "Bring unread Miniflux articles to your Kobo and keep reading without Wi-Fi.",
+  "version": "0.1.0",
+  "release_notes": "Bring unread Miniflux articles to your Kobo and keep reading without Wi-Fi.",
+  "glyph": "rss",
+  "capabilities": [
+    "network"
+  ],
+  "setup": {
+    "steps": [
+      {
+        "text": "Have an HTTPS Miniflux instance, either self-hosted or hosted, and create an API token."
+      },
+      {
+        "text": "Install the token under the exact name miniflux; the runtime sends it as X-Auth-Token.",
+        "command": "kobo secret set miniflux --device <address>"
+      }
+    ]
+  }
+}

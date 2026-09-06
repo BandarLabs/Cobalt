@@ -1,0 +1,11 @@
+{
+  "id": "flashcards",
+  "display_name": "Flashcards",
+  "short_label": "Flashcards",
+  "summary": "Review flashcards anywhere, even without Wi-Fi.",
+  "page_description": "Study with large reveal and answer controls designed for a Kobo screen.",
+  "version": "0.2.1",
+  "release_notes": "Show the review scheduler and its dependencies in the licences screen, which were missing from the notices the app carries.",
+  "glyph": "bookmark",
+  "capabilities": []
+}

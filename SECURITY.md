@@ -62,7 +62,9 @@ After either bootstrap starts, it verifies the signed versioned manifest before
 parsing it, then checks the selected host archive and device package against
 the manifest's exact byte lengths and SHA-256 digests. `kobo setup`
 independently verifies the raw detached manifest signature with its pinned
-public key before accepting a prebuilt device package. USB activation stages
-and verifies a complete managed directory, swaps whole directories with a
-previous-copy rollback, and recovers interrupted swaps before a rerun. Mutable
-owner folders are carried separately and never accepted from a release.
+public key before accepting a prebuilt device package. USB activation stages and verifies a complete managed directory, swaps whole
+directories with a previous-copy rollback, and recovers interrupted swaps
+before a rerun. OTA activation additionally syncs a direction journal and
+holds mutable owner folders outside the versioned trees; normal daemon startup
+finishes an interrupted activation or rollback before runtime launch. Mutable
+owner folders are never accepted from a release.

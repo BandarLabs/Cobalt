@@ -1,0 +1,8 @@
+expect Photographs
+wait-for Open
+clean
+shot shelf
+tap Open
+wait 800
+clean
+shot photo

@@ -3,22 +3,279 @@
   "changes": [
     {
       "protocol_version": 11,
-      "reason": "Additive protocol-11 update-channel settings used only by the bundled runtime and Settings app",
+      "reason": "Additive protocol-11 orientation command is opt-in; existing Store apps keep their existing messages and portrait rendering The beta shelf merge re-derived these files; their reviewed content is re-pinned here so a platform change does not force every Store app to publish a new version.",
       "files": [
         {
           "path": "crates/kobo-protocol/src/lib.rs",
-          "base_blob": "8c30366191af89abc121075544635bf871fdfac4",
-          "compatible_blob": "f34528d7b407e542a7836b0348b91de043822274"
-        },
-        {
-          "path": "crates/kobo-policy/src/services.rs",
-          "base_blob": "d0a852942683f396baaf3803830d9c19c9911f18",
-          "compatible_blob": "e5b8617ac601332dd9b5d39c8e6ea83d613e171b"
+          "base_blob": "bca91b5812ccdb58a0e4114a4435bda29b756771",
+          "compatible_blob": "737c2b84e65f222a230693c302658baeb197a311"
         },
         {
           "path": "crates/kobo-sdk/src/lib.rs",
-          "base_blob": "52bd17b242beee85f691ebefdd0083fdabbd4550",
-          "compatible_blob": "9a645f3f3d9c8746dda47d858bb3fcd744621df8"
+          "base_blob": "3896ee9ee1638511eeb60aa65fac9fc331274474",
+          "compatible_blob": "ce36687fb6be161f8d41d642822674a2e629ae63"
+        },
+        {
+          "path": "crates/kobo-ui/src/lib.rs",
+          "base_blob": "0e66ff990c5a1f5f64f960cdf9b776bbff55725e",
+          "compatible_blob": "8ff6e81f674292a875505dcc0783c28bcf4ae0e9"
+        }
+      ]
+    },
+    {
+      "protocol_version": 12,
+      "reason": "The 0.3.5 runtime retains protocol-11 rendering, responses, and Atkinson metrics for unchanged Store binaries. Responsive renderer fixes, single-source section links, SDK profile tests, Gutenbird test-only pagination coverage, and Lichess runtime transport and policy prerequisites do not alter already-published app bytes. Protocol 12 additively introduces Folio nodes, orientation, and a write-only app-scoped credential request that protocol-11 apps cannot emit; only catalog apps changed to use the new SDK surface are rebuilt. The beta shelf merge re-derived these files; their reviewed content is re-pinned here so a platform change does not force every Store app to publish a new version.",
+      "files": [
+        {
+          "path": "Cargo.lock",
+          "base_blob": "2abdcc318538b63f16e492beb19b112a1134f105",
+          "compatible_blob": "75e8b27b88d423dd7ea9aa5450c2f9ead8a52ac1"
+        },
+        {
+          "path": "crates/kobo-abi/src/lib.rs",
+          "base_blob": "a6b9cd1a21eb5a52afc53822af0c1e7fae170fcb",
+          "compatible_blob": "a6b9cd1a21eb5a52afc53822af0c1e7fae170fcb"
+        },
+        {
+          "path": "crates/kobo-net/src/lib.rs",
+          "base_blob": "e8d2fdc14f41ecffacc60e1e2b0c2d69d8c7cc9f",
+          "compatible_blob": "7ea0618c5b84578c0f68bc99d4bbd33208790b3b"
+        },
+        {
+          "path": "crates/kobo-net/src/lines.rs",
+          "base_blob": "00f877af25028f435a77ea6c8ccbb546fcccf1ee",
+          "compatible_blob": "00f877af25028f435a77ea6c8ccbb546fcccf1ee"
+        },
+        {
+          "path": "crates/kobo-net/tests/fixtures/localhost-ca.der",
+          "base_blob": "c94b448a7103cd723c34349c8ce25352783d41f7",
+          "compatible_blob": "c94b448a7103cd723c34349c8ce25352783d41f7"
+        },
+        {
+          "path": "crates/kobo-net/tests/fixtures/localhost-cert.der",
+          "base_blob": "34a3ae946020aed21622549fe3bd497c34bd708e",
+          "compatible_blob": "34a3ae946020aed21622549fe3bd497c34bd708e"
+        },
+        {
+          "path": "crates/kobo-net/tests/fixtures/localhost-key.der",
+          "base_blob": "05c93b80f8cfb9b032f9c10a44723ac68f54e0fb",
+          "compatible_blob": "05c93b80f8cfb9b032f9c10a44723ac68f54e0fb"
+        },
+        {
+          "path": "crates/kobo-net/tests/lichess_stream_mock.rs",
+          "base_blob": "b35462b66df1fb416e4e5b24adf449b2b4ff32e5",
+          "compatible_blob": "d192f04edbcc24cb14db2971d2da29fd8480444f"
+        },
+        {
+          "path": "crates/kobo-policy/src/credentials.rs",
+          "base_blob": "d5cefd807f0c2d37a824b08892a50729bc166c8f",
+          "compatible_blob": "d5cefd807f0c2d37a824b08892a50729bc166c8f"
+        },
+        {
+          "path": "crates/kobo-policy/src/services.rs",
+          "base_blob": "48e98006a574b8b6f2b2e52cd0c282d8fe0a7816",
+          "compatible_blob": "0a8dbe4c00ff5b6e03555090f0f00ca6e86fea0e"
+        },
+        {
+          "path": "crates/kobo-policy/src/tasks.rs",
+          "base_blob": "614263e4237b2c5575dfa2020992448f41150a57",
+          "compatible_blob": "614263e4237b2c5575dfa2020992448f41150a57"
+        },
+        {
+          "path": "crates/kobo-protocol/src/lib.rs",
+          "base_blob": "bca91b5812ccdb58a0e4114a4435bda29b756771",
+          "compatible_blob": "737c2b84e65f222a230693c302658baeb197a311"
+        },
+        {
+          "path": "crates/kobo-sdk/Cargo.toml",
+          "base_blob": "1e430f2f1912c1c327b17ec7a388b934c33c6d42",
+          "compatible_blob": "1e430f2f1912c1c327b17ec7a388b934c33c6d42"
+        },
+        {
+          "path": "crates/kobo-sdk/src/lib.rs",
+          "base_blob": "3896ee9ee1638511eeb60aa65fac9fc331274474",
+          "compatible_blob": "ce36687fb6be161f8d41d642822674a2e629ae63"
+        },
+        {
+          "path": "crates/kobo-sdk/src/credentials.rs",
+          "base_blob": "7cc2181bdad2e5b580a668283642159d486551e4",
+          "compatible_blob": "7e3fb1a3a490a5c45358056b729182b3b38dfda6"
+        },
+        {
+          "path": "crates/kobo-sdk/src/keyboard.rs",
+          "base_blob": "3ee32641ffc26a83b739463e366e72ddec4a6ee4",
+          "compatible_blob": "3ee32641ffc26a83b739463e366e72ddec4a6ee4"
+        },
+        {
+          "path": "crates/kobo-sdk/src/terminal.rs",
+          "base_blob": "6b36d662ba4699617f6b9d08eea6018c6022d551",
+          "compatible_blob": "6b36d662ba4699617f6b9d08eea6018c6022d551"
+        },
+        {
+          "path": "crates/kobo-text/src/lib.rs",
+          "base_blob": "c645479d92d9bdcc7e07a38f2e8fca591fc9cf57",
+          "compatible_blob": "c645479d92d9bdcc7e07a38f2e8fca591fc9cf57"
+        },
+        {
+          "path": "crates/kobo-ui/Cargo.toml",
+          "base_blob": "94a904d6db2500ac354997940d20a918828523af",
+          "compatible_blob": "94a904d6db2500ac354997940d20a918828523af"
+        },
+        {
+          "path": "crates/kobo-ui/src/lib.rs",
+          "base_blob": "0e66ff990c5a1f5f64f960cdf9b776bbff55725e",
+          "compatible_blob": "8ff6e81f674292a875505dcc0783c28bcf4ae0e9"
+        },
+        {
+          "path": "examples/gutenbird/Cargo.toml",
+          "base_blob": "abeddb5f99c0d7d8fa5f8f89cf2d56909f38a860",
+          "compatible_blob": "abeddb5f99c0d7d8fa5f8f89cf2d56909f38a860"
+        },
+        {
+          "path": "examples/gutenbird/src/main.rs",
+          "base_blob": "7af71d574667ed54ad37b70e97a28eaba11084c3",
+          "compatible_blob": "7af71d574667ed54ad37b70e97a28eaba11084c3"
+        },
+        {
+          "path": "crates/kobo-ui/src/vector.rs",
+          "base_blob": "c948eca1a61b61e0b7dbce1de498e46827f4480e",
+          "compatible_blob": "c948eca1a61b61e0b7dbce1de498e46827f4480e"
+        },
+        {
+          "path": "crates/kobo-ui/src/vector/tabler.rs",
+          "base_blob": "d624ad9689802c8fc8c964c600cdd1e65db38b07",
+          "compatible_blob": "d624ad9689802c8fc8c964c600cdd1e65db38b07"
+        }
+      ]
+    },
+    {
+      "protocol_version": 13,
+      "reason": "The 0.3.5 runtime retains protocol-11 rendering, responses, and Atkinson metrics for unchanged Store binaries. Responsive renderer fixes, single-source section links, SDK profile tests, Gutenbird test-only pagination coverage, and Lichess runtime transport and policy prerequisites do not alter already-published app bytes. Protocols 12 and 13 additively introduce Folio nodes, orientation, section links, page rails, selected state, and a write-only app-scoped credential request; only catalog apps changed to use the new SDK surface are rebuilt. The beta shelf merge re-derived these files; their reviewed content is re-pinned here so a platform change does not force every Store app to publish a new version.",
+      "files": [
+        {
+          "path": "Cargo.lock",
+          "base_blob": "2abdcc318538b63f16e492beb19b112a1134f105",
+          "compatible_blob": "75e8b27b88d423dd7ea9aa5450c2f9ead8a52ac1"
+        },
+        {
+          "path": "crates/kobo-abi/src/lib.rs",
+          "base_blob": "a6b9cd1a21eb5a52afc53822af0c1e7fae170fcb",
+          "compatible_blob": "a6b9cd1a21eb5a52afc53822af0c1e7fae170fcb"
+        },
+        {
+          "path": "crates/kobo-net/src/lib.rs",
+          "base_blob": "e8d2fdc14f41ecffacc60e1e2b0c2d69d8c7cc9f",
+          "compatible_blob": "7ea0618c5b84578c0f68bc99d4bbd33208790b3b"
+        },
+        {
+          "path": "crates/kobo-net/src/lines.rs",
+          "base_blob": "00f877af25028f435a77ea6c8ccbb546fcccf1ee",
+          "compatible_blob": "00f877af25028f435a77ea6c8ccbb546fcccf1ee"
+        },
+        {
+          "path": "crates/kobo-net/tests/fixtures/localhost-ca.der",
+          "base_blob": "c94b448a7103cd723c34349c8ce25352783d41f7",
+          "compatible_blob": "c94b448a7103cd723c34349c8ce25352783d41f7"
+        },
+        {
+          "path": "crates/kobo-net/tests/fixtures/localhost-cert.der",
+          "base_blob": "34a3ae946020aed21622549fe3bd497c34bd708e",
+          "compatible_blob": "34a3ae946020aed21622549fe3bd497c34bd708e"
+        },
+        {
+          "path": "crates/kobo-net/tests/fixtures/localhost-key.der",
+          "base_blob": "05c93b80f8cfb9b032f9c10a44723ac68f54e0fb",
+          "compatible_blob": "05c93b80f8cfb9b032f9c10a44723ac68f54e0fb"
+        },
+        {
+          "path": "crates/kobo-net/tests/lichess_stream_mock.rs",
+          "base_blob": "b35462b66df1fb416e4e5b24adf449b2b4ff32e5",
+          "compatible_blob": "d192f04edbcc24cb14db2971d2da29fd8480444f"
+        },
+        {
+          "path": "crates/kobo-policy/src/credentials.rs",
+          "base_blob": "d5cefd807f0c2d37a824b08892a50729bc166c8f",
+          "compatible_blob": "d5cefd807f0c2d37a824b08892a50729bc166c8f"
+        },
+        {
+          "path": "crates/kobo-policy/src/services.rs",
+          "base_blob": "48e98006a574b8b6f2b2e52cd0c282d8fe0a7816",
+          "compatible_blob": "0a8dbe4c00ff5b6e03555090f0f00ca6e86fea0e"
+        },
+        {
+          "path": "crates/kobo-policy/src/tasks.rs",
+          "base_blob": "614263e4237b2c5575dfa2020992448f41150a57",
+          "compatible_blob": "614263e4237b2c5575dfa2020992448f41150a57"
+        },
+        {
+          "path": "crates/kobo-protocol/src/lib.rs",
+          "base_blob": "bca91b5812ccdb58a0e4114a4435bda29b756771",
+          "compatible_blob": "737c2b84e65f222a230693c302658baeb197a311"
+        },
+        {
+          "path": "crates/kobo-sdk/Cargo.toml",
+          "base_blob": "1e430f2f1912c1c327b17ec7a388b934c33c6d42",
+          "compatible_blob": "1e430f2f1912c1c327b17ec7a388b934c33c6d42"
+        },
+        {
+          "path": "crates/kobo-sdk/src/lib.rs",
+          "base_blob": "3896ee9ee1638511eeb60aa65fac9fc331274474",
+          "compatible_blob": "ce36687fb6be161f8d41d642822674a2e629ae63"
+        },
+        {
+          "path": "crates/kobo-sdk/src/credentials.rs",
+          "base_blob": "7cc2181bdad2e5b580a668283642159d486551e4",
+          "compatible_blob": "7e3fb1a3a490a5c45358056b729182b3b38dfda6"
+        },
+        {
+          "path": "crates/kobo-sdk/src/keyboard.rs",
+          "base_blob": "3ee32641ffc26a83b739463e366e72ddec4a6ee4",
+          "compatible_blob": "3ee32641ffc26a83b739463e366e72ddec4a6ee4"
+        },
+        {
+          "path": "crates/kobo-sdk/src/terminal.rs",
+          "base_blob": "6b36d662ba4699617f6b9d08eea6018c6022d551",
+          "compatible_blob": "6b36d662ba4699617f6b9d08eea6018c6022d551"
+        },
+        {
+          "path": "crates/kobo-text/src/lib.rs",
+          "base_blob": "c645479d92d9bdcc7e07a38f2e8fca591fc9cf57",
+          "compatible_blob": "c645479d92d9bdcc7e07a38f2e8fca591fc9cf57"
+        },
+        {
+          "path": "crates/kobo-ui/Cargo.toml",
+          "base_blob": "94a904d6db2500ac354997940d20a918828523af",
+          "compatible_blob": "94a904d6db2500ac354997940d20a918828523af"
+        },
+        {
+          "path": "crates/kobo-ui/src/lib.rs",
+          "base_blob": "0e66ff990c5a1f5f64f960cdf9b776bbff55725e",
+          "compatible_blob": "8ff6e81f674292a875505dcc0783c28bcf4ae0e9"
+        },
+        {
+          "path": "examples/gutenbird/Cargo.toml",
+          "base_blob": "abeddb5f99c0d7d8fa5f8f89cf2d56909f38a860",
+          "compatible_blob": "abeddb5f99c0d7d8fa5f8f89cf2d56909f38a860"
+        },
+        {
+          "path": "examples/gutenbird/src/main.rs",
+          "base_blob": "7af71d574667ed54ad37b70e97a28eaba11084c3",
+          "compatible_blob": "7af71d574667ed54ad37b70e97a28eaba11084c3"
+        },
+        {
+          "path": "crates/kobo-ui/src/vector.rs",
+          "base_blob": "c948eca1a61b61e0b7dbce1de498e46827f4480e",
+          "compatible_blob": "c948eca1a61b61e0b7dbce1de498e46827f4480e"
+        },
+        {
+          "path": "crates/kobo-ui/src/vector/tabler.rs",
+          "base_blob": "d624ad9689802c8fc8c964c600cdd1e65db38b07",
+          "compatible_blob": "d624ad9689802c8fc8c964c600cdd1e65db38b07"
+        },
+        {
+          "path": "crates/kobo-image/src/lib.rs",
+          "base_blob": "5e49d7d853385130e11ca2bc66b512d02d21c2c9",
+          "compatible_blob": "5e49d7d853385130e11ca2bc66b512d02d21c2c9"
         }
       ]
     }

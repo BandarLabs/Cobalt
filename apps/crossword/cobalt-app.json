@@ -1,0 +1,11 @@
+{
+  "id": "crossword",
+  "display_name": "Crossword",
+  "short_label": "Crossword",
+  "summary": "Solve a compact touch-first crossword with clue navigation.",
+  "page_description": "Work through a compact crossword with cell-by-cell touch entry and clue navigation.",
+  "version": "0.1.0",
+  "release_notes": "Work through a compact crossword with cell-by-cell touch entry and clue navigation.",
+  "glyph": "grid",
+  "capabilities": []
+}

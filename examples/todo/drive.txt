@@ -1,0 +1,19 @@
+# Writing something down, and crossing it off.
+#
+# The list is not assumed to be empty. The simulator keeps an application's
+# store in the host's temporary directory, so a second run of this starts on
+# whatever the first run left behind, and a script that opened with
+# `expect Nothing to do` passed once and then never again.
+wait-for Todo
+wait 900
+tap Add
+wait-for New item
+wait 700
+type buy milk
+wait 700
+tap Add
+wait-for buy milk
+wait 1300
+tap buy milk
+wait-for Tap to reopen
+wait 1600

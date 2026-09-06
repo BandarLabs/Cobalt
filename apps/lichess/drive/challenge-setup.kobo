@@ -1,0 +1,13 @@
+expect Challenge player
+expect KnightReader
+expect Casual
+expect 10+0
+expect 10+5
+expect 15+10
+expect 30+0
+expect 30+20
+expect Black
+expect Random
+expect White
+expect Challenge
+shot challenge-setup

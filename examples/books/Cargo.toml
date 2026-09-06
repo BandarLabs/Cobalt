@@ -1,0 +1,23 @@
+[package]
+name = "kobo-books"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[[bin]]
+name = "kobo-books"
+path = "src/main.rs"
+
+[dependencies]
+kobo-bookview = { path = "../../crates/kobo-bookview" }
+kobo-doc = { path = "../../crates/kobo-doc", features = ["raster"] }
+kobo-read = { path = "../../crates/kobo-read", features = ["raster"] }
+kobo-sdk = { path = "../../crates/kobo-sdk" }
+
+[dev-dependencies]
+kobo-ui = { path = "../../crates/kobo-ui" }
+
+[lints]
+workspace = true

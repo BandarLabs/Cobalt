@@ -1,7 +1,8 @@
 # kobo-sidekickd
 
-The daemon half of [Sidekick](../../examples/sidekick): a coding agent's
-permission prompt, relayed to a Kobo.
+The computer companion for [Sidekick](../../examples/sidekick) and
+[Deck](../../apps/deck). It relays coding-agent questions to a Kobo and serves
+the fixed command controls the owner puts in `deck.toml`.
 
 Claude Code and Codex both stop mid-task to ask "may I run this?", and both
 have hook systems that let a command answer instead of the keyboard. This
@@ -43,8 +44,19 @@ Deliberately different, because their trust is different:
   blocks until the question is decided or five minutes pass, because the
   hook protocol is "write your decision to stdout before you exit".
 - `0.0.0.0:9331`, TLS, for the reader. `GET /pending` long-polls up to
-  twenty-five seconds for a question; `POST /answer` delivers the tap. Both
-  demand the pairing code.
+  twenty-five seconds for a question; `POST /answer` delivers the tap. Deck
+  uses `GET /deck`, `POST /deck/press`, and `GET /deck/result` on the same
+  listener. Every reader route demands the pairing code.
 
 The TLS server side lives in `kobo-net::serve`, beside the client it was
 built to talk to, so the workspace's network dependencies stay in one crate.
+
+## Deck command safety
+
+Deck routes are unavailable unless `~/.config/kobo/sidekick/deck.toml` exists.
+The reader can choose only commands already present in that computer-owned
+file. Confirmed keys require a second explicit press, stale key IDs cannot run a
+changed command, one key cannot overlap itself, and no more than four commands
+run at once. Commands receive ten minutes, then their whole process group gets
+`SIGTERM` followed by `SIGKILL` after ten seconds. The daemon strips terminal
+escape sequences and retains only the last 2 KB of output.

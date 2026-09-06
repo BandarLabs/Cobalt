@@ -1,0 +1,11 @@
+{
+  "id": "grimoire",
+  "display_name": "Grimoire",
+  "short_label": "Grimoire",
+  "summary": "Browse offline SRD references and manage tabletop combat.",
+  "page_description": "Offline SRD reference and table tools for spell lookups, monster stat blocks, dice, initiative, and party HP.",
+  "version": "0.1.0",
+  "release_notes": "Offline SRD reference and table tools for spell lookups, monster stat blocks, dice, initiative, and party HP.",
+  "glyph": "book",
+  "capabilities": []
+}

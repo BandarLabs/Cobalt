@@ -1,0 +1,6 @@
+expect Needles
+expect +1 row
+tap +1 row
+expect Row
+clean
+shot project

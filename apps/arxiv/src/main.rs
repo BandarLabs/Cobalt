@@ -515,7 +515,7 @@ impl Arxiv {
                 self.query = Some(query);
                 self.offset = offset;
             }
-            None => self.trouble = Some("The device is busy. Try that again.".to_owned()),
+            None => self.trouble = Some("Another arXiv search is still loading.".to_owned()),
         }
     }
 
@@ -541,7 +541,7 @@ impl Arxiv {
             headers: Vec::new(),
         }) {
             Some(task) => self.task = Some((task, Awaiting::FullText)),
-            None => self.trouble = Some("The device is busy. Try that again.".to_owned()),
+            None => self.trouble = Some("This paper is already loading.".to_owned()),
         }
     }
 
@@ -605,9 +605,10 @@ impl Arxiv {
         }
         if self.library.is_empty() {
             return screen
-                .empty_state(
-                    "Nothing kept yet. Open a paper's full text and keep it to read it later \
-                     without a network.",
+                .splash(
+                    Some(Glyph::Bookmark),
+                    "No saved papers",
+                    "Save a paper to read it later.",
                 )
                 .build();
         }
@@ -657,7 +658,11 @@ impl Arxiv {
         let narrowing = (WINDOW, self.window.label(), Glyph::Filter);
         if self.papers.is_empty() {
             return screen
-                .empty_state("No papers here. Try a wider window or different words.")
+                .splash(
+                    Some(Glyph::Search),
+                    "No papers found",
+                    "Change the date range or search words.",
+                )
                 .bottom_action_marked(narrowing.0, narrowing.1, narrowing.2)
                 .build();
         }
@@ -714,7 +719,7 @@ impl Arxiv {
         if self.truncated {
             screen = screen.banner(
                 BannerLevel::Attention,
-                "This paper was longer than the reader will fetch, so it stops early.",
+                "This paper is too long to open completely, so only the beginning is shown.",
             );
         }
         let page = self.page.min(self.pages.len().saturating_sub(1));

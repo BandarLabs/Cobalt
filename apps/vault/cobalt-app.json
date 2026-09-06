@@ -1,0 +1,11 @@
+{
+  "id": "vault",
+  "display_name": "Vault",
+  "short_label": "Vault",
+  "summary": "Browse your notes by folder, tag, link, and backlink.",
+  "page_description": "Keep a searchable copy of your note library ready to read on your Kobo.",
+  "version": "0.1.0",
+  "release_notes": "Keep a searchable copy of your note library ready to read on your Kobo.",
+  "glyph": "note",
+  "capabilities": []
+}

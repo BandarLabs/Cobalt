@@ -1,0 +1,6 @@
+expect Incoming challenge
+expect KnightReader
+expect Casual
+expect Accept
+expect Decline
+shot incoming-challenge

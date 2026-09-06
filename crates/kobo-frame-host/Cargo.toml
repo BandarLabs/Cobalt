@@ -1,0 +1,14 @@
+[package]
+name = "kobo-frame-host"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+blake3 = "1.8.2"
+image = { version = "=0.25.8", default-features = false, features = ["gif", "jpeg", "png", "webp"] }
+
+[lints]
+workspace = true

@@ -1,0 +1,14 @@
+# Populated shelf after `kobo frame init --sim` and `kobo frame push … --sim`.
+expect Frame
+expect Photographs
+expect-missing Your frame is empty
+expect-missing kobo frame
+wait-for Open
+clean
+shot shelf
+tap Open
+wait 800
+expect-missing Open
+expect-missing Your frame is empty
+clean
+shot photo

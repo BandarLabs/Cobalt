@@ -1284,7 +1284,9 @@ impl KoboApp for Settings {
             | DeviceResult::Dictionary { .. }
             | DeviceResult::Apps { .. }
             | DeviceResult::AppLink(_)
-            | DeviceResult::RemoteInstall(_) => {}
+            | DeviceResult::RemoteInstall(_)
+            | DeviceResult::Library { .. }
+            | DeviceResult::LibraryDocument { .. } => {}
         }
         self.show(context);
     }

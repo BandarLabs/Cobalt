@@ -1,0 +1,28 @@
+{
+  "id": "deck",
+  "display_name": "Deck",
+  "short_label": "Deck",
+  "summary": "Turn your Kobo into a remote control for your computer.",
+  "page_description": "Pair with your computer and run favorite actions from large, clear controls.",
+  "version": "0.2.0",
+  "release_notes": "Pair with your computer and run favorite actions from large, clear controls.",
+  "glyph": "grid",
+  "capabilities": [
+    "network"
+  ],
+  "setup": {
+    "steps": [
+      {
+        "text": "Create ~/.config/kobo/sidekick/deck.toml with the pages and controls you want on the reader."
+      },
+      {
+        "text": "Initialize the companion daemon to obtain its address, certificate, and pairing code.",
+        "command": "kobo-sidekickd init"
+      },
+      {
+        "text": "Install the daemon certificate on the Kobo before pairing.",
+        "command": "kobo trust set sidekick --device <address>"
+      }
+    ]
+  }
+}

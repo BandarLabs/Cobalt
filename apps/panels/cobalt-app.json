@@ -1,0 +1,24 @@
+{
+  "id": "panels",
+  "display_name": "Panels",
+  "short_label": "Panels",
+  "summary": "Read comics added from your computer or Komga library.",
+  "page_description": "Enjoy your comics on Kobo with clear page controls and support for Komga libraries.",
+  "version": "0.1.0",
+  "release_notes": "Enjoy your comics on Kobo with clear page controls and support for Komga libraries.",
+  "glyph": "reader",
+  "capabilities": [
+    "network"
+  ],
+  "setup": {
+    "steps": [
+      {
+        "text": "Local CBZ reading needs no service. Komga mode requires an HTTPS Komga OPDS endpoint."
+      },
+      {
+        "text": "For a private Komga library, install its HTTP Basic credential under the exact name komga.",
+        "command": "kobo secret set komga --device <address>"
+      }
+    ]
+  }
+}

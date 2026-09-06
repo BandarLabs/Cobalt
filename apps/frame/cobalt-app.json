@@ -1,0 +1,30 @@
+{
+  "id": "frame",
+  "display_name": "Frame",
+  "short_label": "Frame",
+  "summary": "Show computer-pushed monochrome photos in awake or scheduled slideshow modes.",
+  "page_description": "Turn a Kobo into a low-power monochrome photo frame with bounded, owner-pushed albums and awake or scheduled slideshow modes.",
+  "version": "1.0.1",
+  "release_notes": "Turn a Kobo into a low-power monochrome photo frame with bounded, owner-pushed albums and awake or scheduled slideshow modes.",
+  "glyph": "app",
+  "capabilities": [
+    "keep-awake",
+    "scheduled-wake"
+  ],
+  "setup": {
+    "steps": [
+      {
+        "text": "Enable Cobalt's owner-attended SSH path and install this computer's public key.",
+        "command": "kobo setup --enable-ssh"
+      },
+      {
+        "text": "Create Frame's private shelf through the established SSH connection.",
+        "command": "kobo frame init --device <address>"
+      },
+      {
+        "text": "Prepare and atomically push a photo or folder from this computer.",
+        "command": "kobo frame push ~/Pictures/family --device <address>"
+      }
+    ]
+  }
+}

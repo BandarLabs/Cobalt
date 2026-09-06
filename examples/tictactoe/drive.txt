@@ -1,0 +1,20 @@
+# A whole game, played to a win, on a board whose cells have no words in them.
+# The points are the centres the layout reports for a 1072x1448 panel: columns
+# at 206, 536 and 866, rows at 367, 697 and 1027.
+wait-for O to play
+wait 900
+tap-at 206,367
+wait-for X to play
+wait 700
+tap-at 536,367
+wait-for O to play
+wait 700
+tap-at 536,697
+wait-for X to play
+wait 700
+tap-at 866,367
+wait-for O to play
+wait 700
+tap-at 866,1027
+wait-for O wins
+wait 1800

@@ -1,0 +1,18 @@
+[package]
+name = "kobo-wifi-trace"
+version.workspace = true
+edition.workspace = true
+publish = false
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "kobo-wifi-trace"
+path = "src/main.rs"
+
+[dependencies]
+kobo-json = { path = "../kobo-json" }
+ring = "0.17"
+
+[lints]
+workspace = true

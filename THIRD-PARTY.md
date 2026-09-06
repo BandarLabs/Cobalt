@@ -2,9 +2,8 @@
 
 Cobalt is licensed under the GNU Affero General Public License, version 3. It
 links code and embeds fonts written by other people, all under permissive
-licences that impose no copyleft of their own, so a binary built from this tree
-can be redistributed under the AGPL as long as the notices below travel with
-it.
+licences or compatible GPL terms, so a binary built from this tree can be
+redistributed under the AGPL as long as the notices below travel with it.
 
 ## Rust dependencies
 
@@ -18,11 +17,12 @@ cargo metadata --format-version 1 --all-features
 | Selected licence | Crates |
 | --- | --- |
 | Apache-2.0 | dependencies that offer Apache-2.0 as an alternative, including `image`, `http`, `rustls`, `libc`, `png`, `flate2`, `ttf-parser`, and their transitive dependencies |
-| MIT | `bytes`, `byteorder-lite`, `memchr`, `minimp3`, `minimp3-sys`, `pulldown-cmark`, `simd-adler32`, `slice-ring-buffer`, `vt100` |
+| MIT | `bytes`, `byteorder-lite`, `memchr`, `minimp3`, `minimp3-sys`, `pulldown-cmark`, `pulldown-cmark-escape`, `simd-adler32`, `slice-ring-buffer`, `vt100` |
 | Apache-2.0 and ISC | `ring` |
 | ISC | `rustls-webpki`, `untrusted` |
 | BSD-3-Clause | `subtle` |
 | CDLA-Permissive-2.0 | `webpki-roots` |
+| GPL-3.0-or-later | `shakmaty` |
 | Zlib | `foldhash` |
 
 Proc-macro and build-script crates (`unicode-ident` and its dependents, `cc`,
@@ -32,7 +32,16 @@ their terms do not attach to the distribution.
 The release archive contains the complete selected terms and package-specific
 notices in `licenses/LICENSE-Rust-dependencies.txt`. That includes `ring`'s
 Apache-2.0 and ISC terms and the CDLA-Permissive-2.0 agreement for the Mozilla
-CA data bundled by `webpki-roots`.
+CA data bundled by `webpki-roots`. The GPL-3.0-or-later terms selected for
+`shakmaty` ship separately in `licenses/LICENSE-shakmaty.txt`.
+
+## Bundled content
+
+| Application | Content | Terms |
+| --- | --- | --- |
+| `grimoire` | Excerpts from the System Reference Document 5.1 and 5.2 by Wizards of the Coast LLC | Creative Commons Attribution 4.0 International; attribution is also included in the app |
+| `pubquiz` | Starter questions sourced from Open Trivia DB | Creative Commons Attribution-ShareAlike 4.0; the app carries `QUESTION-DATA-LICENSE.md` |
+| `verses` | Short poems by Emily Dickinson, William Blake and Percy Bysshe Shelley | Public domain; source and publication year are retained with each poem |
 
 ## Icons
 
@@ -57,16 +66,66 @@ travels too, which is what the file above is for.
 
 Two typefaces are embedded in the `kobo-text` crate and end up inside every
 binary. Atkinson Hyperlegible is embedded in two weights, which the one licence
-below covers. Their licences ship beside them.
+below covers. Flashcards additionally embeds the bounded Cobalt Japanese font
+subset in its own host/device dependency closure. Their licences ship beside
+the artifacts that contain them.
 
 | Font | Licence | File |
 | --- | --- | --- |
 | Atkinson Hyperlegible (Regular and Bold) | SIL Open Font License 1.1 | `crates/kobo-text/fonts/LICENSE-AtkinsonHyperlegible.txt` |
 | DejaVu Sans | Bitstream Vera and Arev fonts licence | `crates/kobo-text/fonts/LICENSE-DejaVu.txt` |
+| Cobalt Japanese (derived Noto Sans CJK JP subset) | SIL Open Font License 1.1 | `licenses/LICENSE-Cobalt-Japanese-font.txt`; source and deterministic subset recipe in `licenses/SOURCE-Cobalt-Japanese-font.md` |
 
 Both permit embedding and redistribution. The OFL forbids selling the font on
 its own and requires the reserved name to be kept, which embedding does not
 touch.
+
+## Flashcards host conversion
+
+The host-only converter is unofficial and is not affiliated with Ankitects,
+Anki, or AnkiWeb. It uses no upstream logo or artwork. It links Anki rslib and
+its i18n/proto support at one exact pinned revision. The Anki AGPL terms, resvg
+source pin, exact revision, and host distribution requirements are in
+[`licenses/NOTICE-Flashcards-Anki.md`](licenses/NOTICE-Flashcards-Anki.md).
+Full Anki terms and corresponding-source instructions are in
+`licenses/LICENSE-Anki.txt` and `licenses/SOURCE-Flashcards-Anki.md`.
+
+The Kobo app consumes a Cobalt-owned neutral bundle and links no Anki code.
+Consequently its package intentionally omits the Anki source/licence notice.
+Resolved non-Anki dependency notices for the host helper and complete resolved
+dependency notices for the device app are in
+`licenses/LICENSE-Flashcards-host-dependencies.txt` and
+`licenses/LICENSE-Flashcards-device-dependencies.txt`. The host's linked Anki
+packages are noticed separately in the Anki notice/licence/source files. These
+texts are embedded only in the corresponding artifacts; the app exposes its
+device notices as paged text and the host helper prints its host notices with
+`--licenses`.
+Regenerate both deterministically with
+`scripts/generate-flashcards-licenses.py`; its accepted SPDX policy is scoped
+in `licenses/flashcards-about.toml`.
+
+The device application links the FSRS review scheduler, which is vendored at
+`third_party/fsrs` under BSD-3-Clause, and everything the scheduler itself
+depends on. That subtree was absent from the generated notices: the policy
+ignored packages marked `publish = false`, which is right for Cobalt's own
+crates and wrong for vendored third-party source, and it took the scheduler's
+dependencies out with it. The policy no longer ignores them.
+
+`priority-queue`, which the scheduler uses, offers LGPL-3.0-or-later or
+MPL-2.0. MPL-2.0 is the selected term: its obligations attach to the files it
+covers, which a reader can satisfy from the source this project already
+publishes, while LGPL-3.0 asks for relinking of a statically linked device
+binary. LGPL-3.0 is therefore no longer an accepted term for this app, so the
+choice cannot quietly revert the next time the notices are regenerated.
+
+## Flashcards SVG rendering
+
+The host Flashcards importer links `resvg`/`usvg` 0.45.1 to rasterize accepted
+SVG image media before publication. The device application links the same
+bounded path to verify due-card source/raster equality at admission, then
+displays only the digest-addressed PNG. resvg is dual-licensed Apache-2.0 or
+MIT; both selected terms travel in
+[`licenses/LICENSE-resvg.txt`](licenses/LICENSE-resvg.txt).
 
 ## Services
 
@@ -76,7 +135,19 @@ The example applications talk to services this project does not own.
 | --- | --- | --- |
 | `hn` | Hacker News Firebase API | Public, unauthenticated, no key |
 | `gutenbird` | Gutendex and Project Gutenberg | Public; Gutenberg texts are public domain in the US |
+| `lichess` | Lichess Board and puzzle APIs | Official HTTPS origin; Board API access uses a runtime-held personal token |
 | `rss` | Feedsearch | Public; the search screen carries the attribution its terms ask for |
+| `calibre-web` | calibre-web or calibre content-server OPDS | Owner-supplied HTTPS service; optional HTTP Basic credential |
+| `fanshelf` | Archive of Our Own public work pages | Public, unauthenticated lookups with an identifying user agent |
+| `homepanel` | Home Assistant API | Owner-supplied HTTPS service using a runtime-held long-lived token |
+| `kitchencard` | Mealie API | Owner-supplied service; Mealie is AGPL-3.0 |
+| `lichess` | Lichess API | Public puzzle access; optional personal access token for account features |
+| `needles` | Ravelry API | Account access through a runtime-held HTTP Basic credential |
+| `panels` | Komga OPDS | Optional owner-supplied service; Komga is MIT licensed |
+| `post` | Hermes gateway | Owner-supplied HTTPS gateway; Hermes Agent is MIT licensed |
+| `pubquiz` | Open Trivia DB | Public question-pack API; returned question content is CC-BY-SA-4.0 |
+| `readlater` | Wallabag API | Owner-supplied or hosted service; Wallabag is MIT licensed |
+| `rss-miniflux` | Miniflux API | Owner-supplied or hosted service; Miniflux is Apache-2.0 licensed |
 
 None of them is paid for or rate-limit-exempt. An application that hammers
 them is your responsibility, not theirs.

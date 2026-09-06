@@ -73,7 +73,9 @@ BACK="95,110"
 shots_for() {
     case "$1" in
         launcher)
-            echo "home:2:- more-apps:3:800,1376" ;;
+            # Folio desk, then the Apps destination. The latter is reached
+            # through its labelled nav slot rather than a hidden page turn.
+            echo "home:2:- more-apps:3:402,1376" ;;
         # The root list, then each pane it opens and the way back out.
         settings)
             echo "connections:2:- wifi:6:536,475 -:3:$BACK battery:4:536,700" ;;
@@ -87,7 +89,9 @@ shots_for() {
             echo "-:2:869,400 -:2:201,400 -:2:869,700 -:2:201,700 game:4:869,1000" ;;
         # Two pages of the gallery: the type specimen, then the controls.
         gallery)
-            echo "text:3:- controls:4:800,1380" ;;
+            # Type proves the baseline; Folio exposes the v2 primitives and
+            # its ghosting comparison page for the on-panel acceptance pass.
+            echo "text:3:- folio:4:965,1380 ghosting:4:402,220" ;;
         # A shell that has actually run something. The taps are the l and s
         # keys and then enter, so the listing on the panel is a real one made
         # by the reader's own /bin/sh rather than a picture of one.

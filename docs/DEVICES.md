@@ -170,8 +170,11 @@ accepts a connection but answers neither way is asked again next round rather
 than written off, because a booting reader does exactly that.
 
 `--no-wait` skips that SSH wait and `--no-menu` skips the menu entry.
-`kobo setup --undo` puts every part of the setup back,
-and `kobo setup --dry-run` prints what it would do without touching anything.
+`kobo setup --undo` removes the managed trees, stable launcher, and exact
+Cobalt NickelMenu entry. It preserves owner folders under
+`.adds/cobalt.recovery.N` and reports any `.adds/cobalt.unusable[.N]`
+quarantine for inspection rather than silently deleting recoverable data.
+`kobo setup --dry-run` prints what it would do without touching anything,
 including for `--undo`, which is what `--undo --dry-run` means.
 
 Both settings are the reader's own, applied by the reader's own code, so
@@ -200,16 +203,18 @@ The ordinary way to install anything on a Kobo is to drop a `KoboRoot.tgz` into
 is also the one mechanism on the device that can leave it unbootable, because
 nothing checks the paths inside before extracting them over the running system.
 
-So Cobalt is not shipped that way. `kobo setup` copies the same files straight
-into `.adds/cobalt` as a plain folder, which the reader never elevates. The cost
-is that a folder copy does not trigger the firmware's update-and-restart, so the
-reader has to be restarted by hand once for the SSH server to start. That is one
-button held down, in exchange for never handing the boot script an archive. The
-worst outcome of a setup that goes wrong is a folder to delete.
+So normal `kobo setup` does not use that route. It copies the versioned files
+straight into `.adds/cobalt` and the stable sibling
+`.adds/cobalt-launch.sh`, which the reader never elevates. The cost is that a
+folder copy does not trigger the firmware's update-and-restart, so the reader
+has to be restarted by hand once for the SSH server to start.
 
 `kobo package` still builds a `KoboRoot.tgz` for owners who want the usual
-route, and `kobo inspect` proves before it is copied that every path in it falls
-under `.adds/cobalt`.
+route. `kobo inspect` proves that its only member outside `.adds/cobalt` is the
+first, exact, executable `.adds/cobalt-launch.sh`. With `--folder OUTPUT`, the
+output is explicitly volume-relative: copy `OUTPUT/.adds` to the root of the
+mounted Kobo volume. It contains both `.adds/cobalt-launch.sh` and the complete
+`.adds/cobalt/...` tree.
 
 ### The one archive setup does stage, and what is checked first
 
@@ -221,7 +226,7 @@ over HTTPS and checked against a recorded SHA-256, so the transport does not hav
 to be trusted, and writes a single entry beside it:
 
 ```
-menu_item :main :Cobalt :cmd_spawn :quiet:/mnt/onboard/.adds/cobalt/start.sh
+menu_item :main :Cobalt :cmd_spawn :quiet:/mnt/onboard/.adds/cobalt-launch.sh
 ```
 
 `--no-menu` skips all of it.
@@ -243,10 +248,11 @@ archive naming `./etc/init.d/rcS` is the one that ends a device, and it is
 refused by name. It also refuses to overwrite an archive some other mod has
 already staged, since `.kobo/KoboRoot.tgz` is a single shared slot.
 
-`kobo setup --undo` takes the entry away. If the reader has not restarted yet it
-simply takes the staged archive back, and nothing was ever installed. If it has,
-it writes NickelMenu's own uninstall flag, unless another mod still has a
-configuration file beside ours, in which case the plugin stays and only the
+`kobo setup --undo` takes the exact Cobalt entry away from either its dedicated
+configuration or the shared `.adds/nm/menu`. If the reader has not restarted
+yet it simply takes the staged archive back, and nothing was ever installed. If
+it has, it writes NickelMenu's own uninstall flag, unless another mod still has
+a configuration file beside ours, in which case the plugin stays and only the
 Cobalt entry goes, because it is shared.
 
 The entry starts Cobalt **on demand**, and deliberately not at boot. `kobod` has
@@ -317,32 +323,19 @@ showing an empty file when the trace is not there.
 ### Wi-Fi across a session
 
 Stopping and restarting the stock reader reliably drops the Wi-Fi connection.
-The reader owns the radio and drives it inside `libnickel`, and the restarted
-one begins from its own "not connected" state; there is no D-Bus service, no
-script and no supported way to ask it to reconnect. So every session costs the
-connection, and the reader picks it up again by itself.
+The reader owns the radio inside `libnickel`, while the firmware supplicant,
+DHCP client and D-Bus adapter are separate processes. The current beta
+handoff captures those exact processes, preserves the existing automatic
+reconnect path while Cobalt owns the panel, removes only Cobalt-started owners
+before Nickel returns, then waits for Nickel's association and default route
+to remain healthy for ten seconds.
 
-The runtime does **not** put the link back, and there is no option to make it.
-It used to be able to, by restarting the supplicant and DHCP client it had
-recorded. Those daemons attach to `wlan0`; the restarted reader drives the same
-radio from inside libnickel and cannot be told what we started behind it; and
-two owners of one radio leaves the reader's own network panel unable to scan at
-all: not merely disconnected, but unable to see a network it has known for
-months.
-
-That was known and the restore was kept anyway, behind an environment variable,
-as a convenience for working on a device over Wi-Fi where losing the link costs
-a reboot. It was removed after it erased a device. The reader came up owning a
-radio it had not configured, never reached its first watchdog ping, and the
-freeze watchdog was armed against it regardless, which is an SoC reset every
-ten seconds with nothing synced, until one landed inside a write to the library
-database and the device came up asking for a language.
-
-Both links in that chain are now cut. The watchdog is armed only on evidence
-that something is feeding it (see `resume_once_fed`), and the network is simply
-never restored. A developer working over Wi-Fi loses the link when the session
-ends and reconnects the reader's own way, or reboots. That is a worse afternoon
-and a better trade.
+That immediate gate is not evidence that the handoff stays healthy minutes
+later. For the N365 investigation, the owner-attended
+[`KOBO_WIFI_HANDOFF_TRACE`](WIFI_HANDOFF_TRACE.md) mode records the process and
+route generations through a ten-minute soak without adding network lifecycle
+operations. It is a diagnostic harness, not a fix. Do not toggle Wi-Fi until
+its passive soak has completed.
 
 ### The three watchdogs
 
