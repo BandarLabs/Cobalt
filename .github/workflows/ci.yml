@@ -78,7 +78,10 @@ jobs:
             esac
             index=$((index + 1))
           done
-          exec "$zig" cc -target arm-linux-musleabihf "$@"
+          # Zig instruments with UBSan by default and does not link its runtime,
+          # so sqlite3.c ends up referencing __ubsan_handle_* that nothing
+          # defines. The device build is not a sanitiser run.
+          exec "$zig" cc -target arm-linux-musleabihf -fno-sanitize=undefined "$@"
           CC
           sudo chmod +x /usr/local/bin/armv7-musl-cc
           armv7-musl-cc --version
