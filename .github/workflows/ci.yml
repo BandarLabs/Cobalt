@@ -45,16 +45,45 @@ jobs:
           targets: armv7-unknown-linux-musleabihf
       - name: Install the ring C cross-compiler
         run: sudo apt-get update && sudo apt-get install --yes gcc-arm-linux-gnueabihf
+      # The device target is musl, but the C in the dependency tree was being
+      # compiled by the glibc armhf cross-compiler. Ubuntu's armhf toolchain
+      # now defaults to 64-bit time_t, so SQLite's calls to stat, fcntl and
+      # nanosleep emit glibc's __stat64_time64 and friends, which musl has
+      # never defined. Nothing noticed while only ring compiled C, because it
+      # calls none of them. Zig ships musl headers for every target it emits,
+      # so it is the cross-compiler for the device rather than a fourth apt
+      # package pretending musl and glibc are interchangeable.
+      - name: Install the musl cross-compiler the device C needs
+        run: |
+          set -eu
+          curl -fsSL -o /tmp/zig.tar.xz \
+            https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz
+          echo "70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00  /tmp/zig.tar.xz" \
+            | sha256sum -c -
+          sudo tar -xJf /tmp/zig.tar.xz -C /opt
+          printf '#!/bin/sh\nexec /opt/zig-x86_64-linux-0.16.0/zig cc -target arm-linux-musleabihf "$@"\n' \
+            | sudo tee /usr/local/bin/armv7-musl-cc >/dev/null
+          sudo chmod +x /usr/local/bin/armv7-musl-cc
+          armv7-musl-cc --version
+
       - run: cargo check --workspace --all-features --target armv7-unknown-linux-musleabihf
         env:
-          CC_armv7_unknown_linux_musleabihf: arm-linux-gnueabihf-gcc
+          CC_armv7_unknown_linux_musleabihf: armv7-musl-cc
+      # A check never links, so an undefined symbol in a C dependency reaches
+      # the release job unopposed. That is how bundled SQLite's glibc time64
+      # aliases got as far as cutting a tag. The runtime is the binary that
+      # links the most C, so it is the one worth building here.
+      - name: Link the runtime for the device
+        run: cargo build --locked -p kobod --target armv7-unknown-linux-musleabihf
+        env:
+          CC_armv7_unknown_linux_musleabihf: armv7-musl-cc
       # Every Store app is described by a manifest beside its source, so the
       # registry has to be collected before anything can check it. Reading
       # apps/catalog.json directly would check the empty base and pass.
       - run: node tools/collect-app-registry.mjs --out generated-app-registry.json
       - run: cargo run --locked -p kobo-cli -- app-check --registry generated-app-registry.json
         env:
-          CC_armv7_unknown_linux_musleabihf: arm-linux-gnueabihf-gcc
+          CC_armv7_unknown_linux_musleabihf: armv7-musl-cc
           CFLAGS_armv7_unknown_linux_musleabihf: -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0
       - name: Require versions for changed app packages
         # This workflow runs on every push, tags included, and a tag belongs to
