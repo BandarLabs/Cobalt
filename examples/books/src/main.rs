@@ -33,6 +33,8 @@ enum Kind {
     Html,
     Text,
     Pdf,
+    /// A Kobo Store book: listed with its real title, refused on a tap.
+    Kepub,
 }
 
 impl Kind {
@@ -43,11 +45,12 @@ impl Kind {
             Self::Html => "html",
             Self::Text => "txt",
             Self::Pdf => "pdf",
+            Self::Kepub => "kepub",
         }
     }
 
     const fn is_readable(self) -> bool {
-        !matches!(self, Self::Pdf)
+        !matches!(self, Self::Pdf | Self::Kepub)
     }
 
     const fn filename(self) -> &'static str {
@@ -57,6 +60,7 @@ impl Kind {
             Self::Html => "streets.html",
             Self::Text => "letter.txt",
             Self::Pdf => "timetable.pdf",
+            Self::Kepub => "purchase.kepub.epub",
         }
     }
 }
@@ -247,6 +251,8 @@ impl Books {
         let title = document.map_or("This document", |document| document.title.as_str());
         let reason = if document.is_some_and(|document| !document.on_card) {
             "This book is in the Kobo library but is not on the card. Open it in the Kobo reader to download."
+        } else if document.is_some_and(|document| document.kind == Kind::Kepub) {
+            "This Kobo Store book is listed but is not readable yet."
         } else if document.is_some_and(|document| !document.kind.is_readable()) {
             "PDF is listed but is not readable yet."
         } else {
@@ -486,6 +492,7 @@ fn from_entry(entry: LibraryEntry) -> Option<Document> {
         3 => Kind::Html,
         4 => Kind::Text,
         5 => Kind::Pdf,
+        6 => Kind::Kepub,
         _ => return None,
     };
     Some(Document {
@@ -510,7 +517,8 @@ fn fixture_bytes(document: &Document, body: &str) -> Vec<u8> {
             }],
         )
         .unwrap_or_default(),
-        Kind::Pdf => Vec::new(),
+        // Neither is handed to a reader, so neither needs bytes.
+        Kind::Pdf | Kind::Kepub => Vec::new(),
         Kind::Markdown | Kind::Html | Kind::Text => body.as_bytes().to_vec(),
     }
 }

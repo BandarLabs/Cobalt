@@ -92,6 +92,15 @@ pub enum Kind {
     /// the book with the reason rather than to hide it or to open something
     /// that is not it.
     Pdf,
+    /// A Kobo Store book, listed and not openable yet.
+    ///
+    /// Kepub is EPUB with the stock reader's own spans threaded through the
+    /// markup. Opening one as plain EPUB shows the spans, so it is listed with
+    /// its real title from the database and refused on a tap, which is the
+    /// same answer PDF already gives. These are the books most readers own
+    /// most of, so hiding them would make the shelf look empty rather than
+    /// honest.
+    Kepub,
 }
 
 impl Kind {
@@ -100,6 +109,7 @@ impl Kind {
     pub const fn badge(self) -> &'static str {
         match self {
             Self::Epub => "EPUB",
+            Self::Kepub => "KEPUB",
             Self::Markdown => "MD",
             Self::Html => "HTML",
             Self::Text => "TXT",
@@ -110,7 +120,7 @@ impl Kind {
     /// Whether the built-in reader can page this.
     #[must_use]
     pub const fn is_readable(self) -> bool {
-        !matches!(self, Self::Pdf)
+        !matches!(self, Self::Pdf | Self::Kepub)
     }
 
     /// The kind a file name implies, if it implies one.
@@ -118,8 +128,8 @@ impl Kind {
     pub fn from_name(name: &str) -> Option<Self> {
         let lowered = name.to_ascii_lowercase();
         for (suffix, kind) in [
+            (".kepub.epub", Self::Kepub),
             (".epub", Self::Epub),
-            (".kepub.epub", Self::Epub),
             (".md", Self::Markdown),
             (".markdown", Self::Markdown),
             (".html", Self::Html),
@@ -220,6 +230,7 @@ pub fn to_wire(entry: Entry) -> kobo_protocol::LibraryEntry {
             Kind::Html => 3,
             Kind::Text => 4,
             Kind::Pdf => 5,
+            Kind::Kepub => 6,
         },
         bytes: u32::try_from(entry.bytes).unwrap_or(u32::MAX),
         on_card: entry.on_card,
@@ -551,7 +562,9 @@ mod nickel {
             }
         }
         let mime = mime.to_ascii_lowercase();
-        if mime.contains("epub") || mime.contains("octet-stream") {
+        if mime.contains("kobo-epub") {
+            Some(Kind::Kepub)
+        } else if mime.contains("epub") || mime.contains("octet-stream") {
             Some(Kind::Epub)
         } else if mime.contains("pdf") {
             Some(Kind::Pdf)
@@ -578,6 +591,21 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).expect("the scratch root");
         root
+    }
+
+    // `.kepub.epub` also ends with `.epub`, so asking about `.epub` first made
+    // the Kepub arm unreachable and every Kobo Store book look like an EPUB
+    // the reader could open. It cannot: the stock reader threads its own spans
+    // through the markup.
+    #[test]
+    fn a_kepub_is_not_mistaken_for_an_epub_it_cannot_open() {
+        assert_eq!(Kind::from_name("Bleak House.kepub.epub"), Some(Kind::Kepub));
+        assert_eq!(Kind::from_name("Bleak House.epub"), Some(Kind::Epub));
+        assert_eq!(Kind::from_name("BLEAK HOUSE.KEPUB.EPUB"), Some(Kind::Kepub));
+
+        assert!(!Kind::Kepub.is_readable(), "a Kepub is listed, not opened");
+        assert!(Kind::Epub.is_readable());
+        assert_eq!(Kind::Kepub.badge(), "KEPUB");
     }
 
     #[test]

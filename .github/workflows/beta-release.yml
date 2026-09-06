@@ -227,10 +227,51 @@ jobs:
           targets: armv7-unknown-linux-musleabihf
       - name: Install the ARM cross-compiler
         run: sudo apt-get update && sudo apt-get install --yes gcc-arm-linux-gnueabihf
+      # The device target is musl, but the C in the dependency tree was being
+      # compiled by the glibc armhf cross-compiler. Ubuntu's armhf toolchain
+      # now defaults to 64-bit time_t, so SQLite's calls to stat, fcntl and
+      # nanosleep emit glibc's __stat64_time64 and friends, which musl has
+      # never defined. Nothing noticed while only ring compiled C, because it
+      # calls none of them. Zig ships musl headers for every target it emits,
+      # so it is the cross-compiler for the device rather than a fourth apt
+      # package pretending musl and glibc are interchangeable.
+      - name: Install the musl cross-compiler the device C needs
+        run: |
+          set -eu
+          curl -fsSL -o /tmp/zig.tar.xz \
+            https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz
+          echo "70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00  /tmp/zig.tar.xz" \
+            | sha256sum -c -
+          sudo tar -xJf /tmp/zig.tar.xz -C /opt
+          sudo tee /usr/local/bin/armv7-musl-cc >/dev/null <<'CC'
+          #!/bin/sh
+          # cc-rs passes --target=armv7-unknown-linux-musleabihf. Zig spells the
+          # same machine arm-linux-musleabihf and refuses "armv7", so the triple
+          # comes from here and the one we are handed is dropped.
+          zig=/opt/zig-x86_64-linux-0.16.0/zig
+          count=$#
+          index=0
+          while [ "$index" -lt "$count" ]; do
+            argument="$1"
+            shift
+            case "$argument" in
+              --target=*) ;;
+              *) set -- "$@" "$argument" ;;
+            esac
+            index=$((index + 1))
+          done
+          # Zig instruments with UBSan by default and does not link its runtime,
+          # so sqlite3.c ends up referencing __ubsan_handle_* that nothing
+          # defines. The device build is not a sanitiser run.
+          exec "$zig" cc -target arm-linux-musleabihf -fno-sanitize=undefined "$@"
+          CC
+          sudo chmod +x /usr/local/bin/armv7-musl-cc
+          armv7-musl-cc --version
+
       - name: Build the deterministic device package
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
-          CC_armv7_unknown_linux_musleabihf: arm-linux-gnueabihf-gcc
+          CC_armv7_unknown_linux_musleabihf: armv7-musl-cc
           CFLAGS_armv7_unknown_linux_musleabihf: -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0
         run: cargo run --locked -p kobo-cli -- package --out "dist/cobalt-${VERSION}-KoboRoot.tgz"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
