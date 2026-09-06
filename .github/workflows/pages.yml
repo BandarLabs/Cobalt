@@ -108,6 +108,53 @@ jobs:
             "$COBALT_VERSION" "$digest" "$bytes" > _site/install/manifest.json
           cat _site/install/manifest.json
 
+      # Read from the published catalog rather than from this tree, so the list
+      # is whatever the Store is actually offering on the day the site is built
+      # and cannot drift from it. A catalog holds at most MAX_CATALOG_ENTRIES
+      # (128) applications, so this is bounded: at the size they run to now,
+      # every application in a full catalog is about 150 MB.
+      - name: Take the Store catalog as it stands
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          mkdir -p _site/install/apps
+          gh release download app-catalog --repo "$GITHUB_REPOSITORY" \
+            --dir . --pattern cobalt-app-catalog.json --clobber
+          node --input-type=module -e '
+            import { readFileSync, writeFileSync } from "node:fs";
+            const catalog = JSON.parse(readFileSync("cobalt-app-catalog.json", "utf8"));
+            const apps = catalog.entries.map(entry => ({
+              id: entry.manifest.id,
+              name: entry.manifest.display_name,
+              summary: entry.manifest.summary,
+              version: entry.manifest.version,
+              glyph: entry.manifest.glyph,
+              minimum: entry.manifest.minimum_cobalt_version,
+              capabilities: entry.manifest.capabilities ?? [],
+              bytes: entry.package_bytes,
+              sha256: entry.package_sha256,
+              url: entry.package_url
+            })).sort((left, right) => left.name.localeCompare(right.name));
+            writeFileSync("apps-index.json", JSON.stringify(apps));
+            console.log(`${apps.length} applications in the catalog`);
+          '
+          # Fetched one at a time and checked against the digest the catalog
+          # gives, so an application the page offers is one whose bytes are
+          # already known to be the published ones.
+          node --input-type=module -e '
+            import { readFileSync, writeFileSync } from "node:fs";
+            const apps = JSON.parse(readFileSync("apps-index.json", "utf8"));
+            console.log(apps.map(app => `${app.id} ${app.sha256} ${app.url}`).join("\n"));
+          ' > apps.tsv
+          while read -r id digest url; do
+            [ -n "$id" ] || continue
+            curl -fsSL --retry 3 -o "_site/install/apps/${id}.cobalt-app" "$url"
+            echo "$digest  _site/install/apps/${id}.cobalt-app" | sha256sum --check -
+          done < apps.tsv
+          cp apps-index.json _site/install/apps.json
+          du -sh _site/install/apps | sed 's/^/  applications: /'
+
       - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3
         with:
           path: _site

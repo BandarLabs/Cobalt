@@ -70,6 +70,25 @@ li[aria-disabled="true"] { opacity: .45; }
 
 .progress { height: 5px; background: var(--paper-deep); border: 1px solid var(--rule); margin: 14px 0 0; }
 .progress > i { display: block; height: 100%; width: 0; background: var(--cobalt); transition: width .2s; }
+
+.optional { font-family: var(--mono); font-size: 11px; letter-spacing: .07em; text-transform: uppercase;
+  color: var(--ink-soft); border: 1px solid var(--rule); padding: 2px 6px; vertical-align: 3px; }
+#app-search {
+  width: 100%; padding: 9px 12px; font-family: var(--serif); font-size: 16px;
+  border: 1.5px solid var(--rule); background: var(--paper); color: var(--ink); border-radius: 2px;
+}
+#app-search:focus { outline: none; border-color: var(--cobalt); }
+/* Bounded so a full catalogue does not push the remaining steps off the page. */
+.applist { max-height: 320px; overflow-y: auto; border: 1px solid var(--rule); border-top: none; margin-top: 10px; }
+.applist:empty { display: none; }
+.app { display: grid; grid-template-columns: 22px 1fr auto; gap: 11px; align-items: baseline;
+  padding: 10px 13px; border-top: 1px solid var(--rule); cursor: pointer; }
+.app:hover { background: var(--paper-deep); }
+.app input { margin: 0; accent-color: var(--cobalt); width: 16px; height: 16px; }
+.app b { font-weight: 600; }
+.app span { display: block; font-size: 14px; color: var(--ink-soft); }
+.app em { font-family: var(--mono); font-size: 12px; color: var(--ink-soft); font-style: normal; white-space: nowrap; }
+.app[hidden] { display: none; }
 @media (max-width: 600px) {
   h1 { font-size: 30px; }
   ol.steps > li { grid-template-columns: 34px 1fr; gap: 13px; }
@@ -112,6 +131,16 @@ li[aria-disabled="true"] { opacity: .45; }
         <button class="btn" id="fetch" type="button" disabled>Download and verify</button>
         <div class="progress" hidden id="bar"><i></i></div>
         <p class="note" id="fetch-note"></p>
+      </div>
+    </li>
+
+    <li id="step-apps" aria-disabled="true">
+      <div>
+        <h2>Choose applications <span class="optional">optional</span></h2>
+        <p>These are installed alongside Cobalt, so the reader has them at first start. You can skip this and install any of them later from the Store on the device.</p>
+        <input type="search" id="app-search" placeholder="Search applications" autocomplete="off" disabled>
+        <div class="applist" id="applist"></div>
+        <p class="note" id="apps-note">Loading the catalogue…</p>
       </div>
     </li>
 

@@ -23,6 +23,7 @@ menu_item :main :Cobalt :cmd_spawn :quiet:/mnt/onboard/.adds/cobalt-launch.sh
 const step = {
   connect: document.querySelector("#step-connect"),
   download: document.querySelector("#step-download"),
+  apps: document.querySelector("#step-apps"),
   write: document.querySelector("#step-write"),
   finish: document.querySelector("#step-finish")
 };
@@ -32,12 +33,15 @@ const writeButton = document.querySelector("#write");
 const pickNote = document.querySelector("#pick-note");
 const fetchNote = document.querySelector("#fetch-note");
 const writeNote = document.querySelector("#write-note");
+const appsNote = document.querySelector("#apps-note");
+const search = document.querySelector("#app-search");
 const bar = document.querySelector("#bar");
 const barFill = bar.querySelector("i");
 
 let drive = null;
 let archive = null;
 let manifest = null;
+let catalogue = [];
 
 function enable(element, on) {
   element.removeAttribute("aria-disabled");
@@ -141,8 +145,10 @@ async function fetchRelease() {
     fetchNote.innerHTML = `<span class="ok">Cobalt ${escapeText(manifest.version)} verified.</span>`;
     showFacts(digest);
     done(step.download);
+    enable(step.apps, true);
     enable(step.write, true);
     writeButton.disabled = false;
+    loadCatalogue();
   } catch (error) {
     archive = null;
     fetchNote.innerHTML = `<span class="bad">${escapeText(error.message)}</span>`;
@@ -182,14 +188,120 @@ async function writeToReader() {
     await entryTarget.write(new TextEncoder().encode(MENU_ENTRY));
     await entryTarget.close();
 
+    const chosen = chosenApps();
+    if (chosen.length > 0) {
+      const cobalt = await adds.getDirectoryHandle("cobalt", { create: true });
+      const appsFolder = await cobalt.getDirectoryHandle("apps", { create: true });
+      for (const [index, app] of chosen.entries()) {
+        writeNote.textContent = `Writing ${app.name} (${index + 1} of ${chosen.length})…`;
+        await writeApp(appsFolder, app);
+      }
+    }
+
+    const tail = chosen.length > 0 ? ` with ${chosen.length} application${chosen.length === 1 ? "" : "s"}` : "";
     writeNote.innerHTML =
-      '<span class="ok">Written. Eject the drive, unplug the cable and restart the reader.</span>';
+      `<span class="ok">Written${escapeText(tail)}. Eject the drive, unplug the cable and restart the reader.</span>`;
     done(step.write);
     enable(step.finish, true);
   } catch (error) {
     writeNote.innerHTML = `<span class="bad">${escapeText(error.message)}</span>`;
     writeButton.disabled = false;
   }
+}
+
+// The list is whatever the Store was offering when the site was built, not a
+// list kept by hand here, so an application added to the catalogue appears
+// without anyone editing this page.
+async function loadCatalogue() {
+  try {
+    catalogue = await (await fetch("apps.json", { cache: "no-store" })).json();
+  } catch {
+    appsNote.textContent =
+      "The application catalogue could not be read. Cobalt can still be installed, " +
+      "and applications can be added later from the Store on the reader.";
+    return;
+  }
+  const list = document.querySelector("#applist");
+  for (const app of catalogue) {
+    const row = document.createElement("label");
+    row.className = "app";
+    row.dataset.search = `${app.name} ${app.summary} ${app.id}`.toLowerCase();
+    row.innerHTML =
+      `<input type="checkbox" value="${escapeText(app.id)}">` +
+      `<div><b>${escapeText(app.name)}</b><span>${escapeText(app.summary)}</span></div>` +
+      `<em>${(app.bytes / 1048576).toFixed(1)} MB</em>`;
+    row.querySelector("input").addEventListener("change", countChosen);
+    list.append(row);
+  }
+  search.disabled = false;
+  search.addEventListener("input", () => {
+    const needle = search.value.trim().toLowerCase();
+    for (const row of list.children) {
+      row.hidden = needle !== "" && !row.dataset.search.includes(needle);
+    }
+  });
+  countChosen();
+}
+
+function chosenApps() {
+  return [...document.querySelectorAll("#applist input:checked")]
+    .map(box => catalogue.find(app => app.id === box.value));
+}
+
+function countChosen() {
+  const chosen = chosenApps();
+  if (chosen.length === 0) {
+    appsNote.textContent = `${catalogue.length} available. None chosen; Cobalt will be installed on its own.`;
+    return;
+  }
+  const megabytes = chosen.reduce((total, app) => total + app.bytes, 0) / 1048576;
+  appsNote.textContent =
+    `${chosen.length} chosen, ${megabytes.toFixed(1)} MB to download alongside Cobalt.`;
+}
+
+// magic(8) | version u16 | manifest length u32 | signature(64) | manifest | binary.
+// Split rather than unpacked: there is no archive here, and the three files the
+// reader expects are these three pieces written out.
+function splitBundle(bytes) {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const magic = new TextDecoder().decode(bytes.subarray(0, 8));
+  if (magic !== "COBALTAP") throw new Error("that is not an application package");
+  if (view.getUint16(8) !== 1) throw new Error("the package is a format this page does not know");
+  const manifestLength = view.getUint32(10);
+  const signature = bytes.subarray(14, 78);
+  const manifest = bytes.subarray(78, 78 + manifestLength);
+  const binary = bytes.subarray(78 + manifestLength);
+  if (binary.length === 0) throw new Error("the package carries no application");
+  return { signature, manifest, binary };
+}
+
+async function writeApp(appsFolder, app) {
+  const response = await fetch(`apps/${app.id}.cobalt-app`, { cache: "no-store" });
+  if (!response.ok) throw new Error(`${app.name} could not be downloaded (${response.status})`);
+  const bytes = new Uint8Array(await response.arrayBuffer());
+
+  // Same rule as the platform archive: checked before anything is written, and
+  // discarded rather than installed if it does not match.
+  const digest = [...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))]
+    .map(byte => byte.toString(16).padStart(2, "0")).join("");
+  if (digest !== app.sha256) throw new Error(`${app.name} did not match its published digest`);
+
+  const { signature, manifest, binary } = splitBundle(bytes);
+  const folder = await appsFolder.getDirectoryHandle(app.id, { create: true });
+  const bin = await folder.getDirectoryHandle("bin", { create: true });
+  // The manifest bytes are written exactly as they were signed; re-encoding
+  // them would leave a signature that no longer covers what is on disk.
+  await writeFile(folder, "manifest.json", manifest);
+  await writeFile(folder, "manifest.json.sig",
+    new TextEncoder().encode([...signature].map(b => b.toString(16).padStart(2, "0")).join("") + "\n"));
+  await writeFile(bin, `kobo-${app.id}`, binary);
+}
+
+async function writeFile(folder, name, bytes) {
+  const handle = await folder.getFileHandle(name, { create: true });
+  const target = await handle.createWritable();
+  await target.write(bytes);
+  await target.close();
 }
 
 function showFacts(digest) {
