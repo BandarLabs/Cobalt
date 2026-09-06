@@ -445,8 +445,9 @@ fn ensure_engine(engine: &Path) -> Result<(), String> {
     if engine.exists() {
         return Ok(());
     }
-    let bytes = kobo_net::fetch(ENGINE_URL, ENGINE_LIMIT)
-        .map_err(|_| "Sync engine could not be downloaded. Check Wi-Fi and try again.".to_owned())?;
+    let bytes = kobo_net::fetch(ENGINE_URL, ENGINE_LIMIT).map_err(|_| {
+        "Sync engine could not be downloaded. Check Wi-Fi and try again.".to_owned()
+    })?;
     if kobo_net::sha256::hex_digest(&bytes) != ENGINE_SHA256 {
         return Err("Sync engine download did not match its checksum.".to_owned());
     }
