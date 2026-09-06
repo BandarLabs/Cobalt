@@ -17,6 +17,18 @@ const APP_STATE: &str = "/mnt/onboard/.adds/cobalt/state/syncthing";
 const HOME: &str = "/var/lib/cobalt/syncthing";
 const ENGINE: &str = "/mnt/onboard/.adds/cobalt/bin/syncthing";
 const ENGINE_SHA256: &str = "e7e0523d8db0328b22ebff5c98bd721c94e295122771c0538414898a06ef8ebf";
+
+/// Where the engine is fetched from when it is not installed yet.
+///
+/// A tag of its own rather than the current release: the engine changes when
+/// Syncthing is rebuilt, which is rarely, and tying it to the platform release
+/// would put a 27.9 MB download back into the path of every reader on every
+/// update, which is the whole thing this avoids.
+const ENGINE_URL: &str =
+    "https://github.com/BandarLabs/Cobalt/releases/download/syncthing-v2.0.9/syncthing-armv7";
+
+/// The most the engine download may be. The reviewed artifact is 27.9 MB.
+const ENGINE_LIMIT: u32 = 48 * 1024 * 1024;
 const SYNC_ROOT: &str = "/mnt/onboard/.adds/cobalt/sync";
 const MAX_WINDOW: Duration = Duration::from_secs(5 * 60);
 const TAIL_WINDOW: Duration = Duration::from_secs(90);
@@ -401,6 +413,7 @@ fn atomic_write(path: &Path, value: &str, mode: u32) -> Result<(), String> {
 }
 
 fn start(home: &Path) -> Result<Child, String> {
+    ensure_engine(Path::new(ENGINE))?;
     verify_engine(Path::new(ENGINE))?;
     Command::new(ENGINE)
         .arg("--home")
@@ -413,15 +426,56 @@ fn start(home: &Path) -> Result<Child, String> {
         .map_err(|error| format!("start Sync engine: {error}"))
 }
 
+/// Fetches the engine the first time somebody actually turns Sync on.
+///
+/// The engine used to travel inside the platform package, where it was 27.9 MB
+/// of a 31.0 MB release: every reader downloaded it on every update, over
+/// Wi-Fi, and the updater holds the whole archive and the whole expanded tree
+/// in memory at once on a device with half a gigabyte of it. That is a large
+/// bill for a feature most readers never enable, presented at the worst
+/// possible moment.
+///
+/// So it is fetched here instead, once, by the reader that asked for it. The
+/// address is a tag that does not move, because the digest below is what makes
+/// the download safe to trust and a digest cannot be pinned to a moving target.
+/// Nothing is trusted on arrival: [`verify_engine`] runs afterwards exactly as
+/// it did when the firmware unpacked these bytes, so a truncated or substituted
+/// download is refused rather than executed.
+fn ensure_engine(engine: &Path) -> Result<(), String> {
+    if engine.exists() {
+        return Ok(());
+    }
+    let bytes = kobo_net::fetch(ENGINE_URL, ENGINE_LIMIT)
+        .map_err(|_| "Sync engine could not be downloaded. Check Wi-Fi and try again.".to_owned())?;
+    if kobo_net::sha256::hex_digest(&bytes) != ENGINE_SHA256 {
+        return Err("Sync engine download did not match its checksum.".to_owned());
+    }
+    // Written beside the destination and renamed, so an interrupted download
+    // never leaves a partial file at a path the next run would take for an
+    // installed engine and hand to `verify_engine` as a checksum failure.
+    let partial = engine.with_extension("part");
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o755)
+        .open(&partial)
+        .map_err(|error| format!("create Sync engine: {error}"))?;
+    file.write_all(&bytes)
+        .and_then(|()| file.sync_all())
+        .map_err(|error| format!("write Sync engine: {error}"))?;
+    drop(file);
+    fs::rename(&partial, engine).map_err(|error| format!("install Sync engine: {error}"))
+}
+
 /// Refuses an engine the signed platform package did not pin by digest.
 ///
 /// The updater verifies its archive before extraction; this second check
 /// catches a corrupt or locally replaced executable before it is spawned.
 /// Neither the app nor a network response gets to choose either path.
 fn verify_engine(engine: &Path) -> Result<(), String> {
-    let metadata = fs::symlink_metadata(engine).map_err(|_| {
-        "Sync engine not installed. Install the platform update that includes Syncthing.".to_owned()
-    })?;
+    let metadata = fs::symlink_metadata(engine)
+        .map_err(|_| "Sync engine is not installed. Check Wi-Fi and try again.".to_owned())?;
     if !metadata.file_type().is_file()
         || metadata.file_type().is_symlink()
         || metadata.mode() & 0o111 == 0
