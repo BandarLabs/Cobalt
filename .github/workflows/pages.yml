@@ -1,0 +1,126 @@
+name: Publish the site
+
+# Pages used to serve `main:/docs` directly, which cannot offer the platform
+# archive: a browser install has to read those bytes from the same origin as
+# the page, GitHub's release assets carry no `Access-Control-Allow-Origin`, and
+# committing 18.3 MB per release into `docs/` would add that to the repository's
+# history forever -- about half its present size, every release, never
+# reclaimed.
+#
+# So the site is assembled here instead. `docs/` is copied verbatim, and the
+# archive is fetched from the release it belongs to, merged, and published
+# beside it. Nothing large enters git, and the download always matches the
+# release rather than whatever was last committed.
+
+on:
+  release:
+    types: [published]
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cobalt-pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      # Everything the site serves today, unchanged. This job replaces the
+      # branch publication that used to do it, so anything missed here stops
+      # being reachable -- install.sh included, which is the one file the
+      # documented install depends on.
+      - name: Take the site as it stands
+        run: |
+          set -eu
+          mkdir -p _site
+          cp -R docs/. _site/
+          test -f _site/install.sh
+          test -f _site/index.html
+
+      - name: Fetch the current stable release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          version="$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName \
+            --jq '.tagName | ltrimstr("v")')"
+          printf '%s\n' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'
+          echo "COBALT_VERSION=$version" >> "$GITHUB_ENV"
+          mkdir -p release
+          gh release download "v${version}" --repo "$GITHUB_REPOSITORY" --dir release \
+            --pattern "cobalt-${version}-KoboRoot.tgz" \
+            --pattern "cobalt-${version}.sha256"
+          cd release
+          # The published checksum file covers more than this archive, so only
+          # the line naming it is checked; `sha256sum --check` on the whole file
+          # would fail on the assets that were not downloaded.
+          grep " cobalt-${version}-KoboRoot.tgz\$" "cobalt-${version}.sha256" \
+            | sha256sum --check -
+
+      # The same release and the same digest the runtime pins, so the plugin
+      # published here is the plugin `kobo setup` would have installed.
+      - name: Fetch the reviewed NickelMenu
+        run: |
+          set -eu
+          expected=322ff9aa863860e8f5f7e0b55cae561c54bf95983b9bce1d19819d1225d064af
+          curl -fsSL -o nm.tgz \
+            https://github.com/pgaskin/NickelMenu/releases/download/v0.6.0/KoboRoot.tgz
+          echo "$expected  nm.tgz" | sha256sum --check -
+          # Two files is the whole of NickelMenu. Anything else in this archive
+          # would be extracted as root by the firmware alongside it.
+          members="$(tar tzf nm.tgz | sed 's#^\./##' | sort | tr '\n' ' ')"
+          test "$members" = "mnt/onboard/.adds/nm/doc usr/local/Kobo/imageformats/libnm.so "
+
+      # The firmware extracts exactly one archive, so a reader that needs both
+      # Cobalt and NickelMenu cannot be given them separately without a second
+      # restart. Their members are disjoint, so one archive delivers both.
+      - name: Merge them into the single slot the firmware reads
+        run: |
+          set -eu
+          mkdir -p merged
+          tar xzf "release/cobalt-${COBALT_VERSION}-KoboRoot.tgz" -C merged
+          tar xzf nm.tgz -C merged
+          test -f merged/usr/local/Kobo/imageformats/libnm.so
+          test -f "merged/mnt/onboard/.adds/cobalt/VERSION"
+          mkdir -p _site/install
+          tar czf _site/install/cobalt-KoboRoot.tgz -C merged mnt usr
+          gzip -t _site/install/cobalt-KoboRoot.tgz
+
+      # What the page checks the bytes against before it writes them. Same
+      # origin as the page, so it is covered by the same TLS and cannot be
+      # substituted independently of the archive it describes.
+      - name: Describe what was published
+        run: |
+          set -eu
+          digest="$(sha256sum _site/install/cobalt-KoboRoot.tgz | cut -d' ' -f1)"
+          bytes="$(wc -c < _site/install/cobalt-KoboRoot.tgz | tr -d ' ')"
+          printf '{\n  "version": "%s",\n  "archive": "cobalt-KoboRoot.tgz",\n  "sha256": "%s",\n  "bytes": %s,\n  "nickelmenu": "v0.6.0"\n}\n' \
+            "$COBALT_VERSION" "$digest" "$bytes" > _site/install/manifest.json
+          cat _site/install/manifest.json
+
+      - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4

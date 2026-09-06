@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Install Cobalt from this page — Cobalt</title>
+<meta name="description" content="Install Cobalt and NickelMenu on a USB-connected Kobo from the browser. No terminal, nothing uploaded.">
+<link rel="icon" href="../logo.svg" type="image/svg+xml">
+<style>
+:root {
+  --paper: #f6f2ea; --paper-deep: #eee8db; --ink: #1b1813; --ink-soft: #5a5347;
+  --rule: #d9d1c0; --cobalt: #1a41a8; --cobalt-deep: #143283;
+  --serif: "Charter", "Iowan Old Style", "Palatino", "Georgia", serif;
+  --mono: "SF Mono", "Menlo", "Consolas", monospace;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--paper); color: var(--ink);
+  font-family: var(--serif); font-size: 18px; line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+.wrap { width: min(760px, calc(100% - 48px)); margin: 0 auto; }
+a { color: var(--cobalt); text-decoration: none; }
+a:hover { text-decoration: underline; }
+code, kbd { font-family: var(--mono); font-size: .88em; }
+
+.masthead { border-bottom: 1.5px solid var(--ink); background: var(--paper); }
+.masthead .wrap { display: flex; align-items: center; justify-content: space-between; padding: 14px 0; }
+.masthead img { display: block; }
+.masthead nav a { color: var(--ink); font-size: 16px; margin-left: 20px; }
+
+h1 { font-size: 40px; line-height: 1.1; margin: 40px 0 10px; letter-spacing: -.01em; }
+.lede { color: var(--ink-soft); margin: 0 0 8px; }
+
+/* Steps */
+ol.steps { list-style: none; counter-reset: step; margin: 34px 0 0; padding: 0; }
+ol.steps > li { counter-increment: step; display: grid; grid-template-columns: 46px 1fr; gap: 18px; padding: 26px 0; border-top: 1px solid var(--rule); }
+ol.steps > li::before {
+  content: counter(step); font-family: var(--mono); font-size: 22px; line-height: 1;
+  color: var(--cobalt); border: 1.5px solid var(--cobalt); border-radius: 2px;
+  width: 40px; height: 40px; display: flex; align-items: center; justify-content: center;
+}
+ol.steps h2 { font-size: 21px; margin: 4px 0 6px; }
+ol.steps p { margin: 0 0 12px; color: var(--ink-soft); }
+li[data-state="done"]::before { background: var(--cobalt); color: #fff; }
+li[aria-disabled="true"] { opacity: .45; }
+
+.btn {
+  display: inline-flex; align-items: center; gap: 9px; padding: 11px 20px; font-size: 17px;
+  font-family: var(--serif); border: 1.5px solid var(--ink); border-radius: 2px;
+  background: transparent; color: var(--ink); cursor: pointer;
+}
+.btn:hover:not(:disabled) { background: var(--ink); color: var(--paper); }
+.btn.primary { background: var(--cobalt); border-color: var(--cobalt); color: #fff; }
+.btn.primary:hover:not(:disabled) { background: var(--cobalt-deep); border-color: var(--cobalt-deep); }
+.btn:disabled { cursor: not-allowed; opacity: .4; }
+
+.note { font-size: 15px; color: var(--ink-soft); margin: 10px 0 0; }
+.ok { color: var(--cobalt); }
+.bad { color: #8a2b1e; }
+
+.banner { border: 1.5px solid #8a2b1e; background: #f7e9e5; padding: 14px 18px; margin: 26px 0 0; }
+.banner strong { display: block; margin-bottom: 3px; }
+.banner p { margin: 0; font-size: 16px; }
+[hidden] { display: none !important; }
+
+.facts { border-top: 1px solid var(--rule); margin-top: 34px; padding: 18px 0 60px; font-size: 15px; color: var(--ink-soft); }
+.facts dt { font-family: var(--mono); font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--ink); }
+.facts dd { margin: 2px 0 12px; font-family: var(--mono); font-size: 13px; word-break: break-all; }
+
+.progress { height: 5px; background: var(--paper-deep); border: 1px solid var(--rule); margin: 14px 0 0; }
+.progress > i { display: block; height: 100%; width: 0; background: var(--cobalt); transition: width .2s; }
+@media (max-width: 600px) {
+  h1 { font-size: 30px; }
+  ol.steps > li { grid-template-columns: 34px 1fr; gap: 13px; }
+  ol.steps > li::before { width: 30px; height: 30px; font-size: 17px; }
+}
+</style>
+</head>
+<body>
+
+<header class="masthead">
+  <div class="wrap">
+    <a href="../"><img src="../logo.svg" alt="Cobalt" width="81" height="34"></a>
+    <nav><a href="../">Home</a><a href="https://github.com/BandarLabs/Cobalt">GitHub</a></nav>
+  </div>
+</header>
+
+<main class="wrap">
+  <h1>Install from this page</h1>
+  <p class="lede">This writes Cobalt and NickelMenu to a Kobo connected by USB, from the browser. There is no terminal step, and nothing is uploaded: the reader is written to directly by this page.</p>
+
+  <div class="banner" id="unsupported" hidden>
+    <strong>This browser cannot write to the reader.</strong>
+    <p id="unsupported-why"></p>
+  </div>
+
+  <ol class="steps">
+    <li id="step-connect">
+      <div>
+        <h2>Connect the reader</h2>
+        <p>Plug the Kobo in and tap <em>Connect</em> on its screen. It appears as a drive called <code>KOBOeReader</code>. Then choose that drive here.</p>
+        <button class="btn" id="pick" type="button">Choose the Kobo drive</button>
+        <p class="note" id="pick-note">Your browser will ask permission to edit files on the drive. Only <code>.kobo</code> and <code>.adds</code> are written.</p>
+      </div>
+    </li>
+
+    <li id="step-download" aria-disabled="true">
+      <div>
+        <h2>Fetch the release</h2>
+        <p id="download-copy">Downloads the current release and checks it against the digest published beside it. A file that does not match is discarded rather than written.</p>
+        <button class="btn" id="fetch" type="button" disabled>Download and verify</button>
+        <div class="progress" hidden id="bar"><i></i></div>
+        <p class="note" id="fetch-note"></p>
+      </div>
+    </li>
+
+    <li id="step-write" aria-disabled="true">
+      <div>
+        <h2>Write it to the reader</h2>
+        <p>Writes the release into the slot the firmware reads at startup, and adds a Cobalt entry to NickelMenu. Entries you or other mods have added are left alone.</p>
+        <button class="btn primary" id="write" type="button" disabled>Write to the Kobo</button>
+        <p class="note" id="write-note"></p>
+      </div>
+    </li>
+
+    <li id="step-finish" aria-disabled="true">
+      <div>
+        <h2>Eject and restart</h2>
+        <p>Eject the drive from your computer, unplug the cable, and hold the power button until the reader restarts. It shows an update screen while the firmware unpacks Cobalt, then returns to the home screen.</p>
+        <p class="note">Leave the home screen alone for about a minute afterwards. NickelMenu uses that time as a failsafe and switches itself off if a start is interrupted. Then open the menu in the bottom-right corner and choose <strong>Cobalt</strong>.</p>
+      </div>
+    </li>
+  </ol>
+
+  <dl class="facts" id="facts" hidden>
+    <dt>Version</dt><dd id="fact-version"></dd>
+    <dt>SHA-256</dt><dd id="fact-digest"></dd>
+    <dt>Bytes</dt><dd id="fact-bytes"></dd>
+    <dt>NickelMenu</dt><dd id="fact-nm"></dd>
+  </dl>
+</main>
+
+<script src="install.js"></script>
+</body>
+</html>
