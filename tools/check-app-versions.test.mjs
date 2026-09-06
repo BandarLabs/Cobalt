@@ -19,6 +19,7 @@ import {
   manifestOnlyChangesWorkspaceMembershipOrVersion,
   packagesToBuild,
   registeredConsumers,
+  isDocumentation,
   isFilmingScript,
   releaseDiffArguments,
   releaseLockPackageIdentities,
@@ -538,6 +539,22 @@ test("a drive script next to an application is not a release input", () => {
   assert.equal(isFilmingScript("examples/todo/src/main.rs", "examples/todo"), false);
   assert.equal(isFilmingScript("examples/todo/src/drive.txt", "examples/todo"), false);
   assert.equal(isFilmingScript("examples/todo-extra/drive.txt", "examples/todo"), false);
+});
+
+// Correcting a stale sentence in apps/syncthing/README.md was refused as an
+// unreleased change to the Syncthing application, offering to republish a
+// binary to every reader who has it in order to fix a paragraph none of them
+// download. Nothing published is built from prose.
+test("prose beside an application is not a release input", () => {
+  assert.equal(isDocumentation("apps/syncthing/README.md", "apps/syncthing"), true);
+  assert.equal(isDocumentation("apps/notes/NOTES.md", "apps/notes"), true);
+  // Source is source, whatever it is named.
+  assert.equal(isDocumentation("apps/notes/src/main.rs", "apps/notes"), false);
+  assert.equal(isDocumentation("apps/notes/build-armv7.sh", "apps/notes"), false);
+  // A nested path may be a screenshot the app page publishes, so only prose
+  // directly beside the package is excused.
+  assert.equal(isDocumentation("apps/notes/docs/guide.md", "apps/notes"), false);
+  assert.equal(isDocumentation("apps/notes-extra/README.md", "apps/notes"), false);
 });
 
 // One route per application was the assumption, and the shelf broke it: an

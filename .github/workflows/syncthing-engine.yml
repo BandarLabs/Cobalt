@@ -1,0 +1,128 @@
+name: Reproduce the Syncthing engine
+
+# The engine is not carried in the platform release: it is 27.9 MB, and
+# shipping it charged every reader a 31.0 MB update whether or not they use
+# Sync. It lives at its own tag and the runtime fetches it on first use.
+#
+# That tag is the only copy, so the claim that these bytes can be rebuilt from
+# source has to be checkable on demand rather than only at the moment somebody
+# happened to publish them. This rebuilds the engine from its pinned commit and
+# compares it against the digest the runtime enforces before it will spawn it.
+#
+# It used to run inside every beta platform release, which paid for a Go
+# toolchain download and a full Syncthing build on releases that no longer
+# package the result.
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Upload the rebuilt engine if the tag has no asset yet
+        required: false
+        default: false
+        type: boolean
+
+# Read by default, and raised for exactly one job below. The rebuild runs
+# `go run build.go` from a repository fetched at build time, which is upstream
+# code executing on the runner: it should never be able to see a token that can
+# write to this repository. Splitting the upload out means a compromised build
+# script or Go dependency has nothing to reach for.
+permissions:
+  contents: read
+
+jobs:
+  reproduce:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      # apps/syncthing/build-armv7.sh is deliberately build-only: it refuses to
+      # download or execute a release artifact. Fetching source at a pinned
+      # commit is not that, so the recipe it documents runs here instead, with
+      # go mod verify and the same digest the runtime checks.
+      #
+      # build.go passes -trimpath and takes SOURCE_DATE_EPOCH from the commit
+      # timestamp, so the only thing left that can move the digest is the Go
+      # release, which is pinned by checksum here.
+      - name: Build the reviewed engine from its pinned source
+        run: |
+          set -eu
+          commit=3382ccc3f16536b5a7b6df7c8212951f7d4d3a9f
+          expected=e7e0523d8db0328b22ebff5c98bd721c94e295122771c0538414898a06ef8ebf
+          curl -fsSL -o /tmp/go.tar.gz https://go.dev/dl/go1.24.13.linux-amd64.tar.gz
+          echo "1fc94b57134d51669c72173ad5d49fd62afb0f1db9bf3f798fd98ee423f8d730  /tmp/go.tar.gz" \
+            | sha256sum -c -
+          sudo tar -xzf /tmp/go.tar.gz -C /opt
+          export PATH=/opt/go/bin:$PATH
+          go version
+          mkdir -p /tmp/syncthing
+          cd /tmp/syncthing
+          git init -q
+          git remote add origin https://github.com/syncthing/syncthing.git
+          git fetch -q --depth 1 origin "$commit"
+          git checkout -q FETCH_HEAD
+          test -f LICENSE
+          go mod verify
+          BUILD_USER=cobalt BUILD_HOST=cobalt GOARM=7 CGO_ENABLED=0 \
+            go run build.go -goos linux -goarch arm build
+          actual="$(sha256sum syncthing | cut -d" " -f1)"
+          echo "expected $expected"
+          echo "actual   $actual"
+          if [ "$actual" != "$expected" ]; then
+            echo "The rebuilt engine is not the reviewed one." >&2
+            echo "The recipe in SYNCTHING_SOURCE_RECORD should determine these" >&2
+            echo "bytes exactly; if it no longer does, something it does not name" >&2
+            echo "is leaking into the build." >&2
+            exit 1
+          fi
+          mkdir -p engine
+          cp syncthing "$GITHUB_WORKSPACE/syncthing-armv7"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: inputs.publish
+        with:
+          name: syncthing-armv7
+          path: syncthing-armv7
+          if-no-files-found: error
+
+  publish:
+    needs: reproduce
+    if: inputs.publish
+    runs-on: ubuntu-latest
+    # The only job that can write, and it runs nothing from upstream: it
+    # downloads an artifact, checks it against the pinned digest again, and
+    # uploads it.
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: syncthing-armv7
+
+      # Checked again here rather than trusted from the job that built it. The
+      # bytes have been through artifact storage since they were verified, and
+      # this is the last moment before they become the copy every reader
+      # fetches.
+      - name: Check the artifact against the pinned digest
+        run: |
+          set -eu
+          expected=e7e0523d8db0328b22ebff5c98bd721c94e295122771c0538414898a06ef8ebf
+          echo "$expected  syncthing-armv7" | sha256sum -c -
+
+      - name: Publish the engine when the tag has none
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          tag=syncthing-v2.0.9
+          # Refused rather than replaced. The runtime pins one digest, so a
+          # second set of bytes under this name could only ever be the wrong
+          # ones for some reader that already fetched the first.
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets \
+            --jq '.assets[].name' | grep -Fxq syncthing-armv7; then
+            echo "$tag already carries syncthing-armv7; refusing replacement" >&2
+            exit 1
+          fi
+          gh release upload "$tag" syncthing-armv7 --repo "$GITHUB_REPOSITORY"

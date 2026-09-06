@@ -1683,7 +1683,15 @@ impl DeviceError {
             Self::Authentication => "authentication failed",
             Self::TimedOut => "the radio operation timed out",
             Self::Unreachable => "the device or network is unreachable",
-            Self::InvalidInput => "the address or credentials are invalid",
+            // Deliberately says nothing about addresses or credentials. This
+            // variant is the general "what arrived was not usable" answer and
+            // is returned for a malformed release archive and an expired
+            // pairing as readily as for a bad network address. Naming the
+            // radio here sent an owner whose platform update had failed to
+            // look at their Wi-Fi settings, and gave whoever they reported it
+            // to nothing to go on. What actually failed is traced at the site
+            // that knows.
+            Self::InvalidInput => "the data received was not usable",
             Self::Backend => "the system radio service failed",
             Self::Integrity => "the download did not match its published digest",
         }
@@ -7017,6 +7025,43 @@ impl<'a> Reader<'a> {
 mod tests {
     use super::*;
     use std::io::Cursor;
+
+    #[test]
+    fn a_shared_failure_code_never_blames_a_part_of_the_system_it_cannot_know_about() {
+        // These seven codes answer for the radio, the Store, the app link and
+        // the platform updater alike, so each sentence has to be true of all
+        // of them. InvalidInput used to read "the address or credentials are
+        // invalid", which is a sentence about a network: it was what a reader
+        // showed when a platform update would not install, sending its owner
+        // to their Wi-Fi settings for a download that had already succeeded,
+        // and telling whoever they reported it to nothing at all.
+        for failure in [
+            DeviceError::NotFound,
+            DeviceError::Authentication,
+            DeviceError::TimedOut,
+            DeviceError::Unreachable,
+            DeviceError::InvalidInput,
+            DeviceError::Backend,
+            DeviceError::Integrity,
+        ] {
+            let described = failure.describe();
+            assert!(
+                !described.is_empty(),
+                "{failure:?} has nothing to show an owner"
+            );
+            if !matches!(
+                failure,
+                DeviceError::Authentication | DeviceError::Unreachable | DeviceError::NotFound
+            ) {
+                assert!(
+                    !described.contains("credential")
+                        && !described.contains("address")
+                        && !described.contains("network"),
+                    "{failure:?} explains itself with a network that may not be involved: {described}"
+                );
+            }
+        }
+    }
 
     #[test]
     fn every_glyph_has_a_wire_tag_and_gets_it_back() {

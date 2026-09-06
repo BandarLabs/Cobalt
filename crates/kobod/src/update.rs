@@ -12,7 +12,53 @@
 //! unpack is swapped in. Owner data is held outside all three versioned trees
 //! while a durable direction journal makes every rename restartable.
 
+#[cfg(feature = "device-write")]
+use crate::blackbox::trace;
 use kobo_protocol::DeviceError;
+
+/// Where the trace goes when there is no device to write one on.
+///
+/// `install` is built for the host too, so that the unpacking and the
+/// directory transaction can be tested off a reader. The blackbox is the
+/// reader's own log and is not built there, so the calls become nothing rather
+/// than the tests losing the code path that emits them.
+#[cfg(not(feature = "device-write"))]
+fn trace(_event: &str) {}
+
+/// The one line an owner can be asked for after an update would not install.
+///
+/// The blackbox is off unless `KOBO_BLACKBOX=1`, and nothing sets it, so
+/// tracing an update failure records it for a developer who already knew to
+/// turn it on and for nobody else. That is how a reader came to refuse an
+/// update while leaving no account of it anywhere: not in its own log, not
+/// over SSH, and not on screen beyond a shared sentence that named the wrong
+/// part of the system.
+///
+/// This is written whether or not anything is enabled, and only when an update
+/// has actually failed, so it costs one write on an occasion that is already
+/// exceptional. It sits with the owner's state rather than in the installation,
+/// so replacing Cobalt does not erase the reason the last replacement failed.
+///
+/// Best-effort throughout: a reader that cannot write this still gets the
+/// error it was going to get, because failing to record a failure is not worth
+/// turning into a second one.
+fn record_failure(adds: &Path, reason: &str) {
+    // Only ever written beside an installation that already exists. A failed
+    // update must leave a tree that has no Cobalt in it exactly as it found
+    // it, which is what `a_download_that_does_not_match_its_digest_writes_nothing`
+    // asserts: bytes that were not what they were promised to be do not get to
+    // create directories. On a reader this changes nothing, because a reader
+    // that is updating has an installation by definition.
+    let cobalt = adds.join("cobalt");
+    if !cobalt.is_dir() {
+        return;
+    }
+    let state = cobalt.join("state");
+    if fs::create_dir_all(&state).is_err() {
+        return;
+    }
+    let _ignored = fs::write(state.join("last-update-error"), format!("{reason}\n"));
+}
 use std::fs;
 use std::io::Write;
 use std::path::{Component, Path};
@@ -66,21 +112,55 @@ const BLOCK: usize = 512;
 /// [`DeviceError::Backend`] when the book partition refuses a write.
 #[cfg(feature = "device-write")]
 pub fn apply(url: &str, sha256: &str) -> Result<(), DeviceError> {
-    let archive = kobo_net::fetch(url, ARCHIVE_LIMIT).map_err(|error| match error {
-        kobo_protocol::TaskError::Offline | kobo_protocol::TaskError::Unreachable => {
-            DeviceError::Unreachable
-        }
-        kobo_protocol::TaskError::TimedOut => DeviceError::TimedOut,
-        kobo_protocol::TaskError::NotFound => DeviceError::NotFound,
-        kobo_protocol::TaskError::TooLarge | kobo_protocol::TaskError::Denied => {
-            DeviceError::InvalidInput
-        }
-        kobo_protocol::TaskError::NoCredential | kobo_protocol::TaskError::Unauthorized => {
-            DeviceError::Authentication
-        }
-        kobo_protocol::TaskError::RateLimited(_) => DeviceError::Unreachable,
+    // Traced before it is returned, because the reply an owner sees is one of
+    // seven shared codes and several failures here map to the same one. An
+    // update that could not be downloaded and an update whose archive would
+    // not expand were the same sentence on screen and nothing whatever in the
+    // log, which is the position this project was actually in: a reader that
+    // refused to update left no trace on the device, none over SSH, and told
+    // its owner that "the address or credentials are invalid" about a download
+    // that involves neither.
+    let archive = kobo_net::fetch(url, ARCHIVE_LIMIT).map_err(|error| {
+        let (reason, mapped) = match error {
+            kobo_protocol::TaskError::Offline | kobo_protocol::TaskError::Unreachable => (
+                "the release host could not be reached".to_owned(),
+                DeviceError::Unreachable,
+            ),
+            kobo_protocol::TaskError::TimedOut => {
+                ("the download timed out".to_owned(), DeviceError::TimedOut)
+            }
+            kobo_protocol::TaskError::NotFound => (
+                "the release host does not have that archive".to_owned(),
+                DeviceError::NotFound,
+            ),
+            kobo_protocol::TaskError::TooLarge => (
+                format!("the archive is larger than the {ARCHIVE_LIMIT} byte ceiling"),
+                DeviceError::InvalidInput,
+            ),
+            kobo_protocol::TaskError::Denied => (
+                "the release host refused the download".to_owned(),
+                DeviceError::InvalidInput,
+            ),
+            kobo_protocol::TaskError::NoCredential | kobo_protocol::TaskError::Unauthorized => (
+                "the release host asked for credentials".to_owned(),
+                DeviceError::Authentication,
+            ),
+            kobo_protocol::TaskError::RateLimited(_) => (
+                "the release host is rate limiting this reader".to_owned(),
+                DeviceError::Unreachable,
+            ),
+        };
+        trace(&format!("platform update: download failed: {reason}"));
+        record_failure(Path::new(ADDS), &format!("download failed: {reason}"));
+        mapped
     })?;
-    install(&archive, sha256, Path::new(ADDS))
+    trace(&format!(
+        "platform update: downloaded {} bytes, unpacking",
+        archive.len()
+    ));
+    install(&archive, sha256, Path::new(ADDS)).inspect_err(|error| {
+        trace(&format!("platform update: install failed: {error}"));
+    })
 }
 
 /// Verifies `archive` against `sha256` and installs it under `adds`.
@@ -90,13 +170,36 @@ pub fn apply(url: &str, sha256: &str) -> Result<(), DeviceError> {
 /// kept at `adds/cobalt.prev` so a bad release can be undone by hand.
 fn install(archive: &[u8], sha256: &str, adds: &Path) -> Result<(), DeviceError> {
     if kobo_net::sha256::hex_digest(archive) != sha256 {
+        let reason = format!(
+            "the {} downloaded bytes do not match the published digest",
+            archive.len()
+        );
+        trace(&format!("platform update: {reason}"));
+        record_failure(adds, &reason);
         return Err(DeviceError::Integrity);
     }
     // The digest matched, so these bytes are exactly what was published. A
     // failure past this point means the release itself is malformed, which is
     // an input problem, not a transport or a disk problem.
-    let tar =
-        kobo_net::gzip::expand(archive, EXPANDED_LIMIT).map_err(|_| DeviceError::InvalidInput)?;
+    //
+    // Or the reader ran out of room to expand it in: this holds the archive
+    // and the whole expanded tree at once, and the decompressor doubles its
+    // output buffer to get there, on a device with a single core and half a
+    // gigabyte of memory. Both arrive here as one code, so the size is traced
+    // to tell them apart afterwards.
+    let tar = kobo_net::gzip::expand(archive, EXPANDED_LIMIT).map_err(|_| {
+        let reason = format!(
+            "could not expand the {} byte archive, ceiling {EXPANDED_LIMIT}",
+            archive.len()
+        );
+        trace(&format!("platform update: {reason}"));
+        record_failure(adds, &reason);
+        DeviceError::InvalidInput
+    })?;
+    trace(&format!(
+        "platform update: expanded to {} bytes, writing staging copy",
+        tar.len()
+    ));
     ensure_launch_bootstrap(adds)?;
     recover_interrupted_update(adds)?;
     let staging = adds.join("cobalt.next");
@@ -954,6 +1057,34 @@ mod tests {
             file("bin/kobod", b"daemon"),
             file("bin/kobo-launcher", b"launcher"),
         ]
+    }
+
+    #[test]
+    fn a_refused_update_leaves_an_account_of_itself_the_owner_can_be_asked_for() {
+        // The reason used to go only to the blackbox, which is off unless
+        // KOBO_BLACKBOX=1 and nothing sets it, so a reader that refused an
+        // update recorded nothing an owner could be asked for and nothing a
+        // maintainer could read without a cable and a staged key. This asserts
+        // the account survives on its own, with the blackbox exactly as absent
+        // as it is on a reader nobody has configured.
+        let adds = scratch("records-why-it-refused");
+        // A reader that is updating has an installation already; the account
+        // is written beside it and never conjured next to nothing.
+        fs::create_dir_all(adds.join("cobalt")).expect("an installed Cobalt");
+        let digest_of_something_else = "0".repeat(64);
+        let error = install(b"not a gzip archive", &digest_of_something_else, &adds)
+            .expect_err("an archive that is not what it was promised to be");
+        assert_eq!(error, DeviceError::Integrity);
+
+        let recorded = fs::read_to_string(adds.join("cobalt/state/last-update-error"))
+            .expect("the reason the update was refused");
+        assert!(
+            recorded.contains("do not match the published digest"),
+            "recorded reason does not say what happened: {recorded}"
+        );
+        // The owner's state, not the installation, so replacing Cobalt does
+        // not erase the reason the last replacement failed.
+        assert!(adds.join("cobalt/state").is_dir());
     }
 
     fn scratch(name: &str) -> std::path::PathBuf {

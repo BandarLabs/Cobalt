@@ -8,7 +8,7 @@
         {
           "path": "crates/kobo-protocol/src/lib.rs",
           "base_blob": "bca91b5812ccdb58a0e4114a4435bda29b756771",
-          "compatible_blob": "758804ff1693d06c203aaabbc36f87cf8ca956ae"
+          "compatible_blob": "737c2b84e65f222a230693c302658baeb197a311"
         },
         {
           "path": "crates/kobo-sdk/src/lib.rs",
@@ -84,7 +84,7 @@
         {
           "path": "crates/kobo-protocol/src/lib.rs",
           "base_blob": "bca91b5812ccdb58a0e4114a4435bda29b756771",
-          "compatible_blob": "758804ff1693d06c203aaabbc36f87cf8ca956ae"
+          "compatible_blob": "737c2b84e65f222a230693c302658baeb197a311"
         },
         {
           "path": "crates/kobo-sdk/Cargo.toml",
@@ -210,7 +210,7 @@
         {
           "path": "crates/kobo-protocol/src/lib.rs",
           "base_blob": "bca91b5812ccdb58a0e4114a4435bda29b756771",
-          "compatible_blob": "758804ff1693d06c203aaabbc36f87cf8ca956ae"
+          "compatible_blob": "737c2b84e65f222a230693c302658baeb197a311"
         },
         {
           "path": "crates/kobo-sdk/Cargo.toml",
