@@ -23,9 +23,19 @@ use kobo_protocol::{DeviceError, UpdateChannel};
 const STABLE_RELEASES: &str = "https://api.github.com/repos/BandarLabs/Cobalt/releases/latest";
 const BETA_RELEASES: &str = "https://api.github.com/repos/BandarLabs/Cobalt/releases?per_page=100";
 
-/// The most a release description is allowed to be. The real reply is a few
-/// kilobytes; a reply a thousand times that size is not a release description.
-const RELEASE_LIMIT: u32 = 1024 * 1024;
+/// The most a release listing is allowed to be.
+///
+/// "A few kilobytes" describes the stable reply, which is one release. The beta
+/// reply is every release this repository has ever published, because the
+/// newest prerelease cannot be found without looking past the stable ones, and
+/// each carries its full asset list: 29 releases already answer 680 KiB, two
+/// thirds of the 1 MiB this used to allow, and every release adds about 23 KiB.
+///
+/// The ceiling would therefore have been reached by ordinary publishing, and a
+/// listing refused here is indistinguishable from having no update: the caller
+/// discards the error with `.ok()?`, so beta readers would simply have stopped
+/// being offered updates, with nothing said about why.
+const RELEASE_LIMIT: u32 = 8 * 1024 * 1024;
 
 const MANIFEST_LIMIT: u32 = 64 * 1024;
 const SIGNATURE_LIMIT: u32 = 1024;
