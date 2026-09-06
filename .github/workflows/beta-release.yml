@@ -243,8 +243,25 @@ jobs:
           echo "70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00  /tmp/zig.tar.xz" \
             | sha256sum -c -
           sudo tar -xJf /tmp/zig.tar.xz -C /opt
-          printf '#!/bin/sh\nexec /opt/zig-x86_64-linux-0.16.0/zig cc -target arm-linux-musleabihf "$@"\n' \
-            | sudo tee /usr/local/bin/armv7-musl-cc >/dev/null
+          sudo tee /usr/local/bin/armv7-musl-cc >/dev/null <<'CC'
+          #!/bin/sh
+          # cc-rs passes --target=armv7-unknown-linux-musleabihf. Zig spells the
+          # same machine arm-linux-musleabihf and refuses "armv7", so the triple
+          # comes from here and the one we are handed is dropped.
+          zig=/opt/zig-x86_64-linux-0.16.0/zig
+          count=$#
+          index=0
+          while [ "$index" -lt "$count" ]; do
+            argument="$1"
+            shift
+            case "$argument" in
+              --target=*) ;;
+              *) set -- "$@" "$argument" ;;
+            esac
+            index=$((index + 1))
+          done
+          exec "$zig" cc -target arm-linux-musleabihf "$@"
+          CC
           sudo chmod +x /usr/local/bin/armv7-musl-cc
           armv7-musl-cc --version
 
