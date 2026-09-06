@@ -104,6 +104,20 @@ Regenerate both deterministically with
 `scripts/generate-flashcards-licenses.py`; its accepted SPDX policy is scoped
 in `licenses/flashcards-about.toml`.
 
+The device application links the FSRS review scheduler, which is vendored at
+`third_party/fsrs` under BSD-3-Clause, and everything the scheduler itself
+depends on. That subtree was absent from the generated notices: the policy
+ignored packages marked `publish = false`, which is right for Cobalt's own
+crates and wrong for vendored third-party source, and it took the scheduler's
+dependencies out with it. The policy no longer ignores them.
+
+`priority-queue`, which the scheduler uses, offers LGPL-3.0-or-later or
+MPL-2.0. MPL-2.0 is the selected term: its obligations attach to the files it
+covers, which a reader can satisfy from the source this project already
+publishes, while LGPL-3.0 asks for relinking of a statically linked device
+binary. LGPL-3.0 is therefore no longer an accepted term for this app, so the
+choice cannot quietly revert the next time the notices are regenerated.
+
 ## Flashcards SVG rendering
 
 The host Flashcards importer links `resvg`/`usvg` 0.45.1 to rasterize accepted
