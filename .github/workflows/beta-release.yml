@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: write
+  actions: read
 
 concurrency:
   group: cobalt-beta-platform
@@ -30,6 +31,48 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
+      # A beta tag is immutable, so the one outcome worth blocking is
+      # publishing a tree nobody has tested. CI starts on the same push as this
+      # workflow, so waiting for it is the ordinary case rather than a fault.
+      # Everything that is not an observed success refuses: no run recorded, a
+      # cancelled or failed run, or a run still going when the wait runs out.
+      - name: Require this commit's CI to have passed
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          deadline=$(( $(date +%s) + 2700 ))
+          while :; do
+            state="$(
+              gh api \
+                "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${GITHUB_SHA}&per_page=100" \
+                --jq '[.workflow_runs[] | select(.event == "push")]
+                      | sort_by(.run_number)
+                      | last
+                      | if . == null then "absent absent"
+                        else "\(.status) \(.conclusion // "pending")" end' \
+                2>/dev/null || echo "unreachable unreachable"
+            )"
+            case "$state" in
+              "completed success")
+                echo "CI passed for ${GITHUB_SHA}."
+                break
+                ;;
+              "completed "*)
+                echo "CI for ${GITHUB_SHA} concluded ${state#completed }." >&2
+                echo "The beta channel publishes only what CI has accepted." >&2
+                exit 1
+                ;;
+              *)
+                echo "CI for ${GITHUB_SHA} is ${state}; waiting."
+                ;;
+            esac
+            if [ "$(date +%s)" -ge "$deadline" ]; then
+              echo "CI did not finish for ${GITHUB_SHA} within the wait." >&2
+              echo "Refusing to publish a beta tag on an untested tree." >&2
+              exit 1
+            fi
+            sleep 30
+          done
       - name: Read the workspace version
         id: version
         run: |
