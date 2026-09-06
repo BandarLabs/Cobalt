@@ -37,14 +37,16 @@ mod sync;
 
 const DEVICE_PACKAGES: &[&str] = &["kobo-doctor", "kobod", "kobo-todo", "kobo-terminal"];
 const SYNCTHING_ARTIFACT_ENV: &str = "COBALT_SYNCTHING_ARTIFACT";
-const SYNCTHING_SHA256: &str = "845336fa67494f38ecb69dfaa0a81de6e33e9b5427bd707385d85051596641a1";
+const SYNCTHING_SHA256: &str = "e7e0523d8db0328b22ebff5c98bd721c94e295122771c0538414898a06ef8ebf";
 const SYNCTHING_SOURCE_RECORD: &str = "\
 Syncthing source: https://github.com/syncthing/syncthing.git
 Tag: v2.0.9
 Commit: 3382ccc3f16536b5a7b6df7c8212951f7d4d3a9f
 License: MPL-2.0
-Build: GOOS=linux GOARCH=arm GOARM=7 CGO_ENABLED=0 go run build.go -goos linux -goarch arm build
-SHA-256: 845336fa67494f38ecb69dfaa0a81de6e33e9b5427bd707385d85051596641a1
+Toolchain: go1.24.13
+Build: GOOS=linux GOARCH=arm GOARM=7 CGO_ENABLED=0 BUILD_USER=cobalt BUILD_HOST=cobalt \
+go run build.go -goos linux -goarch arm build
+SHA-256: e7e0523d8db0328b22ebff5c98bd721c94e295122771c0538414898a06ef8ebf
 ";
 /// Everything an owner's device needs, in the order it is packaged, with the
 /// features each one has to be built with.

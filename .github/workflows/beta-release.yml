@@ -282,7 +282,7 @@ jobs:
         run: |
           set -eu
           commit=3382ccc3f16536b5a7b6df7c8212951f7d4d3a9f
-          expected=845336fa67494f38ecb69dfaa0a81de6e33e9b5427bd707385d85051596641a1
+          expected=e7e0523d8db0328b22ebff5c98bd721c94e295122771c0538414898a06ef8ebf
           curl -fsSL -o /tmp/go.tar.gz https://go.dev/dl/go1.24.13.linux-amd64.tar.gz
           echo "1fc94b57134d51669c72173ad5d49fd62afb0f1db9bf3f798fd98ee423f8d730  /tmp/go.tar.gz" \
             | sha256sum -c -
@@ -297,14 +297,16 @@ jobs:
           git checkout -q FETCH_HEAD
           test -f LICENSE
           go mod verify
-          GOARM=7 CGO_ENABLED=0 go run build.go -goos linux -goarch arm build
+          BUILD_USER=cobalt BUILD_HOST=cobalt GOARM=7 CGO_ENABLED=0 \
+            go run build.go -goos linux -goarch arm build
           actual="$(sha256sum syncthing | cut -d" " -f1)"
           echo "expected $expected"
           echo "actual   $actual"
           if [ "$actual" != "$expected" ]; then
             echo "The rebuilt engine is not the reviewed one." >&2
-            echo "The source record names a commit but not a Go release, so a" >&2
-            echo "different toolchain reproduces different bytes." >&2
+            echo "The recipe in SYNCTHING_SOURCE_RECORD should determine these" >&2
+            echo "bytes exactly; if it no longer does, something it does not name" >&2
+            echo "is leaking into the build." >&2
             exit 1
           fi
           echo "COBALT_SYNCTHING_ARTIFACT=/tmp/syncthing/syncthing" >> "$GITHUB_ENV"
