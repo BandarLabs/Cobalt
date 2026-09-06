@@ -30,4 +30,5 @@ ACTUAL_SHA256=$(shasum -a 256 "$SYNCTHING_OUTPUT/syncthing" | awk '{print $1}')
 test "$ACTUAL_SHA256" = "$EXPECTED_SHA256"
 printf '%s\n' "$ACTUAL_SHA256" > "$SYNCTHING_OUTPUT/syncthing.sha256"
 echo "built $(wc -c < "$SYNCTHING_OUTPUT/syncthing") bytes"
-echo "export COBALT_SYNCTHING_ARTIFACT='$SYNCTHING_OUTPUT/syncthing' before packaging"
+echo "matches the digest the runtime enforces; the engine is published once at"
+echo "the syncthing-v2.0.9 tag and fetched on first use, not packaged"

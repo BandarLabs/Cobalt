@@ -48,11 +48,19 @@ and relays remain enabled for direct and remote transfers.
 pinned upstream checkout and a caller-provided output directory. It does not
 download or execute a release artifact. It pins Syncthing `v2.0.9` commit
 `3382ccc3f16536b5a7b6df7c8212951f7d4d3a9f`, runs `go mod verify`, and refuses
-an output that differs from the repository-pinned SHA-256. Set
-`COBALT_SYNCTHING_ARTIFACT` to that verified binary before packaging. `kobod`
-compares the installed engine to the same digest compiled into the runtime; it
-refuses a symlink, group/world-writable, non-root-owned, or mismatched engine
-before spawning it.
+an output that differs from the repository-pinned SHA-256.
+
+The engine is not part of the platform package. It was 27.9 MB of a 31.0 MB
+release, which every reader downloaded on every update whether or not they use
+Sync, so it is published once under the `syncthing-v2.0.9` tag and `kobod`
+fetches it the first time somebody turns Sync on. Running this script proves
+those published bytes can be rebuilt from the pinned source; the same rebuild
+runs on demand in `.github/workflows/syncthing-engine.yml`.
+
+`kobod` compares the fetched engine to the same digest compiled into the
+runtime; it refuses a symlink, group/world-writable, non-root-owned, or
+mismatched engine before spawning it, whether the bytes arrived over the
+network or in an older platform package.
 
 Choosing hourly, four-hourly, or daily in the app requests Cobalt's bounded
 scheduled-wake facility; manual mode and Pause cancel it. A scheduled launcher

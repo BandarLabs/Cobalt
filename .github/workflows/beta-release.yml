@@ -268,48 +268,16 @@ jobs:
           sudo chmod +x /usr/local/bin/armv7-musl-cc
           armv7-musl-cc --version
 
-      # apps/syncthing/build-armv7.sh is deliberately build-only: it refuses to
-      # download or execute a release artifact. Fetching source at a pinned
-      # commit is not that, so the recipe it documents runs here instead, with
-      # go mod verify and the same digest the runtime checks before it will
-      # spawn the engine. Nothing is trusted because it was downloaded: if
-      # these bytes are not the reviewed bytes, packaging refuses.
+      # The Syncthing engine used to be rebuilt here, so that packaging could
+      # embed the reviewed bytes. It is no longer part of the release: readers
+      # fetch it on first use from a tag of its own, because 27.9 MB of engine
+      # in a 31.0 MB update was charged to everybody whether or not they sync.
+      # Rebuilding it on every platform release now costs a Go toolchain
+      # download and a full build for an artifact this job does not package.
       #
-      # build.go passes -trimpath and takes SOURCE_DATE_EPOCH from the commit
-      # timestamp, so the only thing left that can move the digest is the Go
-      # release, which is pinned by checksum here.
-      - name: Build the reviewed Syncthing engine from its pinned source
-        run: |
-          set -eu
-          commit=3382ccc3f16536b5a7b6df7c8212951f7d4d3a9f
-          expected=e7e0523d8db0328b22ebff5c98bd721c94e295122771c0538414898a06ef8ebf
-          curl -fsSL -o /tmp/go.tar.gz https://go.dev/dl/go1.24.13.linux-amd64.tar.gz
-          echo "1fc94b57134d51669c72173ad5d49fd62afb0f1db9bf3f798fd98ee423f8d730  /tmp/go.tar.gz" \
-            | sha256sum -c -
-          sudo tar -xzf /tmp/go.tar.gz -C /opt
-          export PATH=/opt/go/bin:$PATH
-          go version
-          mkdir -p /tmp/syncthing
-          cd /tmp/syncthing
-          git init -q
-          git remote add origin https://github.com/syncthing/syncthing.git
-          git fetch -q --depth 1 origin "$commit"
-          git checkout -q FETCH_HEAD
-          test -f LICENSE
-          go mod verify
-          BUILD_USER=cobalt BUILD_HOST=cobalt GOARM=7 CGO_ENABLED=0 \
-            go run build.go -goos linux -goarch arm build
-          actual="$(sha256sum syncthing | cut -d" " -f1)"
-          echo "expected $expected"
-          echo "actual   $actual"
-          if [ "$actual" != "$expected" ]; then
-            echo "The rebuilt engine is not the reviewed one." >&2
-            echo "The recipe in SYNCTHING_SOURCE_RECORD should determine these" >&2
-            echo "bytes exactly; if it no longer does, something it does not name" >&2
-            echo "is leaking into the build." >&2
-            exit 1
-          fi
-          echo "COBALT_SYNCTHING_ARTIFACT=/tmp/syncthing/syncthing" >> "$GITHUB_ENV"
+      # The reproducibility claim still has to be checkable, so it moved to
+      # .github/workflows/syncthing-engine.yml, where it can be run on demand
+      # against the same pinned commit and the same digest the runtime enforces.
       - name: Build the deterministic device package
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
