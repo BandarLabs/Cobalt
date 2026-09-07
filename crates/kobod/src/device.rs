@@ -1072,6 +1072,8 @@ static NEXT_RUNTIME_FONT: AtomicU32 = AtomicU32::new(1);
 /// Every one of these owns a live process, its own socket, its own store and
 /// its own background work. Only one of them owns the panel.
 struct Hosted {
+    /// Wire version selected by this application's greeting.
+    version: u8,
     /// Identity that survives the list being reordered. An index would not:
     /// applications are removed from the middle when they end.
     id: u64,
@@ -1253,7 +1255,7 @@ impl Hosted {
         kobo_protocol::write_to(
             &mut self.stream,
             &Frame {
-                version: kobo_protocol::VERSION,
+                version: self.version,
                 request_id: 0,
                 message,
             },
@@ -1326,6 +1328,8 @@ fn host_applications(
         backends.push(Capability::BluetoothControl);
     }
     let wifi = kobo_hal::wifi::Wifi::open();
+    let wifi_unavailable = kobo_hal::wifi::Wifi::unavailable_reason(display.profile())
+        .unwrap_or(kobo_protocol::DenyReason::Unsupported);
     if wifi.is_some() {
         backends.push(Capability::WifiControl);
         backends.push(Capability::Network);
@@ -1850,8 +1854,10 @@ fn host_applications(
                         _ => false,
                     };
                     let orientation = apps[index].orientation;
+                    let version = apps[index].version;
                     let disposition = deliver_touch(
                         &mut apps[index].stream,
+                        version,
                         event,
                         screen.as_ref(),
                         &chrome,
@@ -2116,7 +2122,11 @@ fn host_applications(
                                     kobo_protocol::DenyReason::NotDeclared,
                                 )
                             } else if let Some(reason) = services.refusal_for(&request) {
-                                kobo_protocol::DeviceResult::Denied(reason)
+                                kobo_protocol::DeviceResult::Denied(wifi_refusal(
+                                    &request,
+                                    reason,
+                                    wifi_unavailable,
+                                ))
                             } else {
                                 match &request {
                                     kobo_protocol::DeviceRequest::ReadBluetooth => {
@@ -2670,7 +2680,7 @@ fn reply(app: &mut Hosted, request_id: u32, message: Message) -> Result<(), Stri
     kobo_protocol::write_to(
         &mut app.stream,
         &Frame {
-            version: kobo_protocol::VERSION,
+            version: app.version,
             request_id,
             message,
         },
@@ -2858,6 +2868,30 @@ fn app_store_result(
     match result {
         Ok(entries) => kobo_protocol::DeviceResult::Apps { entries },
         Err(error) => kobo_protocol::DeviceResult::Failed(error),
+    }
+}
+
+// Refine only the missing Wi-Fi backend. Permission and battery refusals,
+// and unrelated hardware requests, retain their original policy result.
+fn wifi_refusal(
+    request: &kobo_protocol::DeviceRequest,
+    reason: kobo_protocol::DenyReason,
+    unavailable: kobo_protocol::DenyReason,
+) -> kobo_protocol::DenyReason {
+    use kobo_protocol::{DenyReason, DeviceRequest};
+    if reason == DenyReason::Unsupported
+        && matches!(
+            request,
+            DeviceRequest::ReadWifi
+                | DeviceRequest::SetWifi { .. }
+                | DeviceRequest::ScanWifi
+                | DeviceRequest::JoinWifi { .. }
+                | DeviceRequest::DisconnectWifi
+        )
+    {
+        unavailable
+    } else {
+        reason
     }
 }
 
@@ -3142,6 +3176,7 @@ fn start_application(
         app_data_root
     };
     apps.push(Hosted {
+        version,
         id,
         // Named explicitly, and only here. A shell on this device is root on a
         // writable root filesystem, so it is the one capability that is never
@@ -3700,6 +3735,7 @@ enum Tap {
 )]
 fn deliver_touch(
     stream: &mut std::os::unix::net::UnixStream,
+    version: u8,
     event: TouchEvent,
     current: Option<&Screen>,
     chrome: &Chrome,
@@ -3734,7 +3770,7 @@ fn deliver_touch(
         kobo_protocol::write_to(
             stream,
             &Frame {
-                version: kobo_protocol::VERSION,
+                version,
                 request_id: 0,
                 message: Message::TextHold {
                     action,
@@ -3759,7 +3795,7 @@ fn deliver_touch(
     kobo_protocol::write_to(
         stream,
         &Frame {
-            version: kobo_protocol::VERSION,
+            version,
             request_id: 0,
             message: Message::Action { action },
         },
@@ -4359,6 +4395,56 @@ mod tests {
     }
 
     #[test]
+    fn wifi_startup_guidance_preserves_permissions_and_other_hardware_refusals() {
+        use kobo_protocol::{DenyReason, DeviceRequest};
+        for request in [
+            DeviceRequest::ReadWifi,
+            DeviceRequest::ScanWifi,
+            DeviceRequest::SetWifi { enabled: true },
+            DeviceRequest::SetWifi { enabled: false },
+            DeviceRequest::JoinWifi {
+                ssid: "test".into(),
+                password: String::new(),
+            },
+            DeviceRequest::DisconnectWifi,
+        ] {
+            assert_eq!(
+                super::wifi_refusal(
+                    &request,
+                    DenyReason::Unsupported,
+                    DenyReason::WifiNeedsNickel
+                ),
+                DenyReason::WifiNeedsNickel
+            );
+            for reason in [
+                DenyReason::NotDeclared,
+                DenyReason::WithheldForBattery,
+                DenyReason::PolicyRejected,
+                DenyReason::Busy,
+            ] {
+                assert_eq!(
+                    super::wifi_refusal(&request, reason, DenyReason::WifiNeedsNickel),
+                    reason
+                );
+            }
+        }
+        for request in [
+            DeviceRequest::ReadBluetooth,
+            DeviceRequest::ReadBatteryDetail,
+            DeviceRequest::ReadAudio,
+        ] {
+            assert_eq!(
+                super::wifi_refusal(
+                    &request,
+                    DenyReason::Unsupported,
+                    DenyReason::WifiNeedsNickel
+                ),
+                DenyReason::Unsupported
+            );
+        }
+    }
+
+    #[test]
     fn protocol_11_lichess_consumes_host_secret_for_stream_and_cancellable_seek() {
         trust_mock_root();
         let config = mock_server_config();
@@ -4931,6 +5017,7 @@ mod tests {
         assert_eq!(
             deliver_touch(
                 &mut runtime,
+                kobo_protocol::LEGACY_VERSION,
                 tap,
                 Some(&screen),
                 &chrome,
@@ -4947,6 +5034,7 @@ mod tests {
         assert_eq!(
             deliver_touch(
                 &mut runtime,
+                kobo_protocol::LEGACY_VERSION,
                 tap,
                 Some(&owning),
                 &chrome,
@@ -4958,6 +5046,7 @@ mod tests {
             Tap::OfferedBack
         );
         let frame = kobo_protocol::read_from(&mut app).expect("the application is told");
+        assert_eq!(frame.version, kobo_protocol::LEGACY_VERSION);
         assert!(matches!(
             frame.message,
             Message::Action {

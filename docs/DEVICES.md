@@ -322,13 +322,31 @@ showing an empty file when the trace is not there.
 
 ### Wi-Fi across a session
 
-Stopping and restarting the stock reader reliably drops the Wi-Fi connection.
+On MediaTek readers, including the Elipsa 2E, enable and connect Wi-Fi in
+Nickel (the Kobo reader) before starting Cobalt. Cobalt reuses the firmware's
+existing `wlan0` interface and `wpa_cli`; it does not perform first-time WMT
+or driver initialization. If the firmware tool exists but the known MediaTek
+interface is absent, Settings > Wi-Fi says: “Enable Wi-Fi in the Kobo reader,
+then start Cobalt again.” A missing tool or an unsupported backend keeps the
+unsupported-hardware response. See [issue #90](https://github.com/BandarLabs/Cobalt/issues/90).
+
 The reader owns the radio inside `libnickel`, while the firmware supplicant,
-DHCP client and D-Bus adapter are separate processes. The current beta
-handoff captures those exact processes, preserves the existing automatic
-reconnect path while Cobalt owns the panel, removes only Cobalt-started owners
-before Nickel returns, then waits for Nickel's association and default route
+DHCP client and D-Bus adapter are separate processes. Handoff captures those
+exact processes and preserves the existing automatic reconnect path while
+Cobalt owns the panel. Before Nickel returns, it removes Cobalt-started owners
+and, on profiles with measured two-supplicant collisions, releases the captured
+Nickel supplicant. It then waits for Nickel's association and default route
 to remain healthy for ten seconds.
+
+On Elipsa 2E N605/code 389, firmware 4.38.23697 / kernel 4.9.77,
+[issue #91](https://github.com/BandarLabs/Cobalt/issues/91) records the original
+supplicant surviving into Nickel's restart, a competing replacement, and a
+repeating loss of the interface until reboot. The reporter's successful trace
+with the profile's bounded reap enabled shows the original owner exiting before
+the replacement starts, about seven seconds with the interface down, then
+association and a default route returning with one owner. The Elipsa profile
+now enables that existing cleanup. This does not initialize the driver or
+change Bluetooth, and does not enable the cleanup on other untested profiles.
 
 That immediate gate is not evidence that the handoff stays healthy minutes
 later. For the N365 investigation, the owner-attended
