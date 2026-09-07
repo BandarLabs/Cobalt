@@ -13,6 +13,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # The reviewed-change check compares Cargo.lock against the blob that
+          # was reviewed, which a depth-1 clone does not contain. Without the
+          # history it cannot ask whether the lockfile still resolves the same
+          # way and falls back to comparing bytes, which a version bump always
+          # fails -- so every release would need the manual re-pin the check
+          # was changed to remove. The other jobs here already fetch history.
+          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
         with:
           toolchain: 1.85.1

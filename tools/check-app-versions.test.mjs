@@ -727,8 +727,49 @@ test("reviewed compatible-change entries name the exact current files", () => {
   );
   for (const change of manifest.changes) {
     for (const file of change.files) {
+      const current = execFileSync("git", ["hash-object", file.path], {
+        encoding: "utf8"
+      }).trim();
+      if (current === file.compatible_blob) continue;
+      // Cargo.lock records the workspace version, so releasing anything at all
+      // moves its bytes and lapsed this entry. That cost a hand re-pin on
+      // seven releases in a row, every one of them for a lockfile in which no
+      // package identity had moved -- which is the property the review was
+      // ever about, and which the release logic already computes for itself.
+      //
+      // So ask that question instead of comparing bytes. The reviewed blob is
+      // still in the repository, so the two can be compared as lockfiles: an
+      // entry stands while the packages it resolved to are the ones resolved
+      // now, and a genuine dependency change still fails, because that moves
+      // an identity rather than a version number.
+      if (file.path === "Cargo.lock") {
+        let reviewed;
+        try {
+          reviewed = execFileSync("git", ["cat-file", "blob", file.compatible_blob], {
+            encoding: "utf8",
+            maxBuffer: COMMAND_MAX_BUFFER
+          });
+        } catch {
+          // A checkout too shallow to hold the reviewed blob cannot answer the
+          // question, and guessing in that direction would excuse a real
+          // change. Fall back to the exact comparison.
+          assert.equal(
+            current,
+            file.compatible_blob,
+            `${file.path} changed and the reviewed blob is not in this checkout`
+          );
+          continue;
+        }
+        const changed = changedLockPackageIdentities(reviewed, readFileSync(file.path, "utf8"));
+        assert.deepEqual(
+          [...changed],
+          [],
+          `${file.path} resolves differently than when it was reviewed`
+        );
+        continue;
+      }
       assert.equal(
-        execFileSync("git", ["hash-object", file.path], { encoding: "utf8" }).trim(),
+        current,
         file.compatible_blob,
         `${file.path} changed without reviewing its Store release impact`
       );
