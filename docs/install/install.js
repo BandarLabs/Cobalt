@@ -66,12 +66,17 @@ function refuseUnsupportedBrowser() {
   if (typeof window.showDirectoryPicker === "function") return false;
   const banner = document.querySelector("#unsupported");
   document.querySelector("#unsupported-why").innerHTML =
-    "Writing to a plugged-in drive is something Chrome, Edge and Opera can do, " +
-    "and Firefox and Safari cannot. <strong>Open this page in Chrome</strong> " +
-    "to install straight from the browser. Otherwise the ways below install " +
-    "exactly the same thing.";
+    "Writing to a plugged-in drive needs <strong>Chrome, Edge or Opera on a " +
+    "computer</strong>. Firefox and Safari cannot do it, and neither can any " +
+    "browser on a phone or tablet. The ways below install exactly the same " +
+    "thing and work anywhere.";
   banner.hidden = false;
   pickButton.disabled = true;
+  // The steps are the whole page and none of them can be followed here. Left
+  // as they are they read as the thing to do, and the route that does work sits
+  // underneath them looking like an afterthought.
+  const steps = document.querySelector("#steps");
+  if (steps) steps.setAttribute("aria-disabled", "true");
   // The steps above cannot be followed here, so the ways that can be are
   // opened rather than left folded behind a heading somebody has to think to
   // click.
@@ -104,10 +109,15 @@ async function chooseDrive() {
     return;
   }
 
-  if ((await handle.queryPermission({ mode: "readwrite" })) !== "granted" &&
-      (await handle.requestPermission({ mode: "readwrite" })) !== "granted") {
-    pickNote.innerHTML = '<span class="bad">Writing was not allowed, so nothing was installed.</span>';
-    return;
+  if (typeof handle.queryPermission === "function") {
+    const already = await handle.queryPermission({ mode: "readwrite" });
+    const granted = already === "granted" ||
+      (typeof handle.requestPermission === "function" &&
+        (await handle.requestPermission({ mode: "readwrite" })) === "granted");
+    if (!granted) {
+      pickNote.innerHTML = '<span class="bad">Writing was not allowed, so nothing was installed.</span>';
+      return;
+    }
   }
 
   drive = handle;

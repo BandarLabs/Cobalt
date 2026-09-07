@@ -34,6 +34,7 @@ h1 { font-size: 40px; line-height: 1.1; margin: 40px 0 10px; letter-spacing: -.0
 
 /* Steps */
 ol.steps { list-style: none; counter-reset: step; margin: 34px 0 0; padding: 0; }
+ol.steps[aria-disabled="true"] { opacity: .4; }
 ol.steps > li { counter-increment: step; display: grid; grid-template-columns: 46px 1fr; gap: 18px; padding: 26px 0; border-top: 1px solid var(--rule); }
 ol.steps > li::before {
   content: counter(step); font-family: var(--mono); font-size: 22px; line-height: 1;
@@ -176,7 +177,7 @@ cargo run -p kobo-cli -- setup</pre>
     </div>
   </details>
 
-  <ol class="steps">
+  <ol class="steps" id="steps">
     <li id="step-connect">
       <div>
         <h2>Connect your Kobo via USB</h2>
