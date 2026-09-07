@@ -17,6 +17,21 @@ enum Kind {
     Mines,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum View {
+    #[default]
+    Puzzle,
+    Help,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum Outcome {
+    #[default]
+    Playing,
+    Lost,
+    Solved,
+}
+
 impl Kind {
     const fn stored(self) -> u8 {
         match self {
@@ -44,12 +59,11 @@ struct Game {
     kind: Kind,
     cells: [u8; 16],
     notice: String,
-    help: bool,
+    view: View,
     mines: u16,
     flagging: bool,
     first_reveal: bool,
-    lost: bool,
-    solved: bool,
+    outcome: Outcome,
     edited: bool,
 }
 
@@ -59,12 +73,11 @@ impl Default for Game {
             kind: Kind::Home,
             cells: [0; 16],
             notice: "Choose a puzzle.".into(),
-            help: false,
+            view: View::Puzzle,
             mines: INITIAL_MINES,
             flagging: false,
             first_reveal: true,
-            lost: false,
-            solved: false,
+            outcome: Outcome::Playing,
             edited: false,
         }
     }
@@ -77,8 +90,7 @@ impl Game {
         self.mines = INITIAL_MINES;
         self.flagging = false;
         self.first_reveal = true;
-        self.lost = false;
-        self.solved = false;
+        self.outcome = Outcome::Playing;
         self.notice = match kind {
             Kind::Slither => "Draw one loop around the four 2 clues.",
             Kind::Hashi => "Join each outer island to the centre.",
@@ -90,7 +102,7 @@ impl Game {
     }
 
     fn screen(&self) -> Screen {
-        if self.help {
+        if self.view == View::Help {
             return self.help_screen();
         }
         match self.kind {
@@ -172,7 +184,7 @@ impl Game {
             .build()
     }
 
-    fn controls(&self, screen: ScreenBuilder) -> Screen {
+    fn controls(screen: ScreenBuilder) -> Screen {
         screen
             .grid(
                 3,
@@ -220,7 +232,7 @@ impl Game {
                 (format!("fixed-{place}"), "·".to_owned(), None)
             }
         });
-        self.controls(
+        Self::controls(
             ScreenBuilder::new("logicpack-slither")
                 .top_bar("Slitherlink")
                 .secondary(&self.notice)
@@ -241,7 +253,7 @@ impl Game {
             };
             (name, label, None)
         });
-        self.controls(
+        Self::controls(
             ScreenBuilder::new("logicpack-hashi")
                 .top_bar("Hashi")
                 .secondary(&self.notice)
@@ -270,7 +282,7 @@ impl Game {
             };
             (name, label, None)
         });
-        self.controls(
+        Self::controls(
             ScreenBuilder::new("logicpack-kakuro")
                 .top_bar("Kakuro")
                 .secondary(&self.notice)
@@ -333,7 +345,7 @@ impl Game {
     }
 
     fn tap_mine(&mut self, cell: usize) -> bool {
-        if self.lost || self.solved {
+        if self.outcome != Outcome::Playing {
             return false;
         }
         if self.flagging {
@@ -359,13 +371,17 @@ impl Game {
         }
         if has_mine(self.mines, cell) {
             self.cells[cell] = 3;
-            self.lost = true;
+            self.outcome = Outcome::Lost;
             self.notice = "Mine opened. Tap Puzzles to try a fresh field.".into();
             return true;
         }
         self.reveal(cell);
-        self.solved = (0..16).all(|at| has_mine(self.mines, at) || self.cells[at] == 1);
-        self.notice = if self.solved {
+        self.outcome = if (0..16).all(|at| has_mine(self.mines, at) || self.cells[at] == 1) {
+            Outcome::Solved
+        } else {
+            Outcome::Playing
+        };
+        self.notice = if self.outcome == Outcome::Solved {
             "Field cleared.".into()
         } else {
             "Safe. Keep going.".into()
@@ -387,7 +403,7 @@ impl Game {
     }
 
     fn check(&mut self) {
-        self.solved = match self.kind {
+        self.outcome = if match self.kind {
             Kind::Slither => {
                 let mask = self.cells[..12]
                     .iter()
@@ -401,8 +417,12 @@ impl Game {
             Kind::Kakuro => self.cells[..3] == KAKURO_SOLUTION,
             Kind::Mines => (0..16).all(|cell| has_mine(self.mines, cell) || self.cells[cell] == 1),
             Kind::Home => false,
+        } {
+            Outcome::Solved
+        } else {
+            Outcome::Playing
         };
-        self.notice = if self.solved {
+        self.notice = if self.outcome == Outcome::Solved {
             "Solved.".into()
         } else {
             "Not solved yet. Recheck your marks.".into()
@@ -421,8 +441,8 @@ impl Game {
             self.mines,
             u8::from(self.flagging),
             u8::from(self.first_reveal),
-            u8::from(self.lost),
-            u8::from(self.solved)
+            u8::from(self.outcome == Outcome::Lost),
+            u8::from(self.outcome == Outcome::Solved)
         )
         .into_bytes()
     }
@@ -472,8 +492,12 @@ impl Game {
         self.mines = mines;
         self.flagging = flags[0];
         self.first_reveal = flags[1];
-        self.lost = flags[2];
-        self.solved = flags[3];
+        self.outcome = match (flags[2], flags[3]) {
+            (false, false) => Outcome::Playing,
+            (true, false) => Outcome::Lost,
+            (false, true) => Outcome::Solved,
+            (true, true) => return false,
+        };
         self.notice = "Saved puzzle restored.".into();
         true
     }
@@ -544,9 +568,9 @@ impl KoboApp for Game {
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
         let mut changed = true;
         let mut save = false;
-        if self.help {
+        if self.view == View::Help {
             if action == action_id("close-help") || action == ActionId::BACK {
-                self.help = false;
+                self.view = View::Puzzle;
             } else {
                 return;
             }
@@ -556,7 +580,7 @@ impl KoboApp for Game {
                 action if action == action_id("hashi") => self.select(Kind::Hashi),
                 action if action == action_id("kakuro") => self.select(Kind::Kakuro),
                 action if action == action_id("mines") => self.select(Kind::Mines),
-                action if action == action_id("how-to-play") => self.help = true,
+                action if action == action_id("how-to-play") => self.view = View::Help,
                 action if action == action_id("back") || action == ActionId::BACK => {
                     self.kind = Kind::Home;
                     self.notice = "Choose a puzzle.".into();
@@ -614,17 +638,17 @@ mod tests {
             game.cells[edge] = u8::from(SLITHER_TARGET & (1 << edge) != 0);
         }
         game.check();
-        assert!(game.solved);
+        assert_eq!(game.outcome, Outcome::Solved);
 
         game.select(Kind::Hashi);
         game.cells[..4].fill(1);
         game.check();
-        assert!(game.solved);
+        assert_eq!(game.outcome, Outcome::Solved);
 
         game.select(Kind::Kakuro);
         game.cells[..3].copy_from_slice(&KAKURO_SOLUTION);
         game.check();
-        assert!(game.solved);
+        assert_eq!(game.outcome, Outcome::Solved);
     }
 
     #[test]
@@ -633,13 +657,13 @@ mod tests {
         game.select(Kind::Mines);
         assert!(has_mine(game.mines, 5));
         assert!(game.tap_mine(5));
-        assert!(!game.lost);
+        assert_ne!(game.outcome, Outcome::Lost);
         assert!(!has_mine(game.mines, 5));
         let mine = (0..16)
             .find(|cell| has_mine(game.mines, *cell))
             .expect("mine");
         assert!(game.tap_mine(mine));
-        assert!(game.lost);
+        assert_eq!(game.outcome, Outcome::Lost);
     }
 
     #[test]
@@ -675,7 +699,7 @@ mod tests {
                 .layout_with(&CLARA_BW_METRICS, &Chrome::default())
                 .rect_of_action(action_id("how-to-play"))
                 .is_some());
-            game.help = true;
+            game.view = View::Help;
             assert!(game
                 .screen()
                 .diagnostics(&CLARA_BW_METRICS, &Chrome::measuring(true))

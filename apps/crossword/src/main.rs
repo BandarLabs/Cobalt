@@ -56,15 +56,22 @@ fn cell_name(cell: usize) -> String {
     format!("cell-{cell}")
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum View {
+    #[default]
+    Board,
+    Help,
+    Clues,
+    Entry,
+}
+
 struct Game {
     letters: Vec<char>,
     selected: Option<usize>,
     down: bool,
     clue: usize,
     completed: bool,
-    help: bool,
-    clues: bool,
-    typing: bool,
+    view: View,
     keyboard: Keyboard,
     notice: Option<String>,
     edited: bool,
@@ -80,9 +87,7 @@ impl Default for Game {
             down: false,
             clue: 0,
             completed: false,
-            help: false,
-            clues: false,
-            typing: false,
+            view: View::Board,
             keyboard: Keyboard::new(),
             notice: None,
             edited: false,
@@ -210,7 +215,7 @@ impl Game {
     }
 }
 fn screen(game: &Game) -> Screen {
-    if game.help {
+    if game.view == View::Help {
         return ScreenBuilder::new("crossword-help")
             .top_bar("How to play")
             .owns_back(true)
@@ -221,7 +226,7 @@ fn screen(game: &Game) -> Screen {
             .bottom_action("close-help", "Play")
             .build();
     }
-    if game.clues {
+    if game.view == View::Clues {
         let offset = if game.down { 5 } else { 0 };
         return ScreenBuilder::new("crossword-clues")
             .top_bar(if game.down {
@@ -243,7 +248,7 @@ fn screen(game: &Game) -> Screen {
             .buttons([("clue-direction", "Switch direction"), ("board", "Board")])
             .build();
     }
-    if game.typing {
+    if game.view == View::Entry {
         return ScreenBuilder::new("crossword-entry")
             .top_bar("Crossword")
             .owns_back(true)
@@ -300,19 +305,19 @@ impl KoboApp for Game {
     }
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
         let mut save = false;
-        let changed = if self.help {
+        let changed = if self.view == View::Help {
             if action == action_id("close-help") || action == ActionId::BACK {
-                self.help = false;
+                self.view = View::Board;
                 true
             } else {
                 false
             }
         } else if action == action_id("how-to-play") {
-            self.help = true;
+            self.view = View::Help;
             true
-        } else if self.clues {
+        } else if self.view == View::Clues {
             if action == action_id("board") || action == ActionId::BACK {
-                self.clues = false;
+                self.view = View::Board;
                 true
             } else if action == action_id("clue-direction") {
                 self.down = !self.down;
@@ -326,15 +331,15 @@ impl KoboApp for Game {
                     index * usize::from(WIDTH)
                 });
                 self.clue = if self.down { 5 + index } else { index };
-                self.clues = false;
+                self.view = View::Board;
                 true
             } else {
                 false
             }
-        } else if self.typing {
+        } else if self.view == View::Entry {
             if action == action_id("cancel") || action == ActionId::BACK {
                 self.keyboard.clear();
-                self.typing = false;
+                self.view = View::Board;
                 true
             } else if let Some(pressed) = self.keyboard.press(action) {
                 if pressed == Pressed::Submitted {
@@ -342,7 +347,7 @@ impl KoboApp for Game {
                     let mut letters = entered.chars().filter(char::is_ascii_alphabetic);
                     if let (Some(letter), None) = (letters.next(), letters.next()) {
                         save = self.enter(letter.to_ascii_uppercase());
-                        self.typing = false;
+                        self.view = View::Board;
                     } else {
                         self.notice = Some("Enter one letter.".to_owned());
                     }
@@ -352,7 +357,7 @@ impl KoboApp for Game {
                 false
             }
         } else if action == action_id("clues") {
-            self.clues = true;
+            self.view = View::Clues;
             true
         } else if action == action_id("clear") {
             if let Some(selected) = self.selected {
@@ -370,7 +375,7 @@ impl KoboApp for Game {
             let selected = self.select(cell);
             if selected {
                 self.keyboard.clear();
-                self.typing = true;
+                self.view = View::Entry;
             }
             selected
         } else {
@@ -443,7 +448,7 @@ mod tests {
             .layout_with(&CLARA_BW_METRICS, &Chrome::default())
             .rect_of_action(action_id("how-to-play"))
             .is_some());
-        game.help = true;
+        game.view = View::Help;
         assert!(screen(&game)
             .diagnostics(&CLARA_BW_METRICS, &Chrome::measuring(true))
             .issues

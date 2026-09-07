@@ -21032,14 +21032,14 @@ mod prose_tests {
         );
         assert_eq!(grey.len(), (width * height) as usize);
         assert!(
-            grey.iter().any(|pixel| *pixel == tone::INK),
+            grey.contains(&tone::INK),
             "the first lines left no ink on the page"
         );
         let w = width as usize;
         let h = height as usize;
         let foot = &grey[(h - 24) * w..];
         assert!(
-            foot.iter().any(|pixel| *pixel == tone::INK),
+            foot.contains(&tone::INK),
             "the format chip was not drawn in the trailing foot"
         );
         let with_lines =

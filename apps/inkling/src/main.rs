@@ -110,11 +110,9 @@ fn hard_allows(answer: &str, prior: &[String], guess: &str) -> bool {
     }
     required.iter().enumerate().all(|(offset, needed)| {
         let letter = b'a' + u8::try_from(offset).expect("alphabet index");
-        guess_bytes
-            .iter()
-            .filter(|candidate| **candidate == letter)
-            .count()
-            >= usize::from(*needed)
+        guess_bytes.iter().fold(0_usize, |count, candidate| {
+            count + usize::from(*candidate == letter)
+        }) >= usize::from(*needed)
     })
 }
 struct Game {
@@ -124,7 +122,6 @@ struct Game {
     keyboard: Keyboard,
     notice: String,
     hard: bool,
-    done: bool,
     typing: bool,
     help: bool,
 }
@@ -138,13 +135,20 @@ impl Default for Game {
             keyboard: Keyboard::new(),
             notice: "Six guesses. Shape states do not rely on color.".into(),
             hard: false,
-            done: false,
             typing: false,
             help: false,
         }
     }
 }
 impl Game {
+    fn done(&self) -> bool {
+        self.guesses.len() >= 6
+            || self
+                .guesses
+                .last()
+                .is_some_and(|guess| guess == self.answer)
+    }
+
     fn submit(&mut self) {
         let guess = self.keyboard.take().to_ascii_lowercase();
         if guess.len() != 5 {
@@ -160,10 +164,9 @@ impl Game {
             return;
         }
         self.guesses.push(guess.clone());
-        self.done = guess == self.answer || self.guesses.len() == 6;
         self.notice = if guess == self.answer {
             "Solved.".into()
-        } else if self.done {
+        } else if self.done() {
             format!("Answer: {}", self.answer)
         } else {
             format!("{} of 6", self.guesses.len())
@@ -239,7 +242,7 @@ impl KoboApp for Game {
         } else if self.typing {
             if let Some(p) = self.keyboard.press(a) {
                 changed = true;
-                if p == Pressed::Submitted && !self.done {
+                if p == Pressed::Submitted && !self.done() {
                     self.submit();
                     self.typing = false;
                 }
@@ -247,7 +250,7 @@ impl KoboApp for Game {
                 self.typing = false;
                 changed = true;
             }
-        } else if a == action_id("enter") && !self.done {
+        } else if a == action_id("enter") && !self.done() {
             self.typing = true;
             changed = true;
         } else if a == action_id("hard") {
@@ -262,8 +265,8 @@ impl KoboApp for Game {
         } else if a == action_id("stats") {
             self.notice = format!(
                 "Played {}. Wins {}.",
-                usize::from(self.done),
-                usize::from(self.done && self.guesses.last().is_some_and(|g| g == self.answer))
+                usize::from(self.done()),
+                usize::from(self.done() && self.guesses.last().is_some_and(|g| g == self.answer))
             );
             changed = true;
         }

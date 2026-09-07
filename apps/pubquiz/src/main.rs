@@ -30,108 +30,83 @@ struct Question {
     answers: [String; 4],
     correct: usize,
 }
+
+fn question(category: &str, text: &str, answers: [&str; 4], correct: usize) -> Question {
+    Question {
+        category: category.into(),
+        text: text.into(),
+        answers: answers.map(Into::into),
+        correct,
+    }
+}
+
 fn bundled_questions() -> Vec<Question> {
     [
-        Question {
-            category: "Science".into(),
-            text: "Which planet has the shortest year?".into(),
-            answers: [
-                "Mercury".into(),
-                "Mars".into(),
-                "Venus".into(),
-                "Earth".into(),
+        question(
+            "Science",
+            "Which planet has the shortest year?",
+            ["Mercury", "Mars", "Venus", "Earth"],
+            0,
+        ),
+        question(
+            "General knowledge",
+            "What is the capital of Finland?",
+            ["Oslo", "Helsinki", "Tallinn", "Stockholm"],
+            1,
+        ),
+        question(
+            "History",
+            "Which ship carried Charles Darwin on his voyage?",
+            ["Beagle", "Endeavour", "Victory", "Resolution"],
+            0,
+        ),
+        question(
+            "Arts",
+            "Who painted The Persistence of Memory?",
+            ["Miró", "Dalí", "Picasso", "Kahlo"],
+            1,
+        ),
+        question(
+            "Geography",
+            "Which river runs through Budapest?",
+            ["Rhine", "Danube", "Seine", "Tagus"],
+            1,
+        ),
+        question(
+            "Science",
+            "What is the chemical symbol for gold?",
+            ["Ag", "Gd", "Au", "Go"],
+            2,
+        ),
+        question(
+            "Literature",
+            "Who wrote Frankenstein?",
+            [
+                "Mary Shelley",
+                "George Eliot",
+                "Jane Austen",
+                "Emily Brontë",
             ],
-            correct: 0,
-        },
-        Question {
-            category: "General knowledge".into(),
-            text: "What is the capital of Finland?".into(),
-            answers: [
-                "Oslo".into(),
-                "Helsinki".into(),
-                "Tallinn".into(),
-                "Stockholm".into(),
-            ],
-            correct: 1,
-        },
-        Question {
-            category: "History".into(),
-            text: "Which ship carried Charles Darwin on his voyage?".into(),
-            answers: [
-                "Beagle".into(),
-                "Endeavour".into(),
-                "Victory".into(),
-                "Resolution".into(),
-            ],
-            correct: 0,
-        },
-        Question {
-            category: "Arts".into(),
-            text: "Who painted The Persistence of Memory?".into(),
-            answers: [
-                "Miró".into(),
-                "Dalí".into(),
-                "Picasso".into(),
-                "Kahlo".into(),
-            ],
-            correct: 1,
-        },
-        Question {
-            category: "Geography".into(),
-            text: "Which river runs through Budapest?".into(),
-            answers: [
-                "Rhine".into(),
-                "Danube".into(),
-                "Seine".into(),
-                "Tagus".into(),
-            ],
-            correct: 1,
-        },
-        Question {
-            category: "Science".into(),
-            text: "What is the chemical symbol for gold?".into(),
-            answers: ["Ag".into(), "Gd".into(), "Au".into(), "Go".into()],
-            correct: 2,
-        },
-        Question {
-            category: "Literature".into(),
-            text: "Who wrote Frankenstein?".into(),
-            answers: [
-                "Mary Shelley".into(),
-                "George Eliot".into(),
-                "Jane Austen".into(),
-                "Emily Brontë".into(),
-            ],
-            correct: 0,
-        },
-        Question {
-            category: "Music".into(),
-            text: "How many strings does a standard violin have?".into(),
-            answers: ["Three".into(), "Four".into(), "Five".into(), "Six".into()],
-            correct: 1,
-        },
-        Question {
-            category: "Nature".into(),
-            text: "Which animal is the largest living bird?".into(),
-            answers: [
-                "Emu".into(),
-                "Albatross".into(),
-                "Ostrich".into(),
-                "Condor".into(),
-            ],
-            correct: 2,
-        },
-        Question {
-            category: "Sport".into(),
-            text: "How many players start on a football team?".into(),
-            answers: [
-                "Nine".into(),
-                "Ten".into(),
-                "Eleven".into(),
-                "Twelve".into(),
-            ],
-            correct: 2,
-        },
+            0,
+        ),
+        question(
+            "Music",
+            "How many strings does a standard violin have?",
+            ["Three", "Four", "Five", "Six"],
+            1,
+        ),
+        question(
+            "Nature",
+            "Which animal is the largest living bird?",
+            ["Emu", "Albatross", "Ostrich", "Condor"],
+            2,
+        ),
+        question(
+            "Sport",
+            "How many players start on a football team?",
+            ["Nine", "Ten", "Eleven", "Twelve"],
+            2,
+        ),
     ]
     .into()
 }
@@ -493,9 +468,7 @@ impl KoboApp for Quiz {
             self.view = View::About;
         } else if action == action_id("how-to-play") {
             self.view = View::HowTo;
-        } else if action == ActionId::BACK {
-            self.view = View::Home;
-        } else if action == action_id("home") {
+        } else if action == ActionId::BACK || action == action_id("home") {
             self.view = View::Home;
         } else if let Some(answer) = (0..4).find(|i| action == action_id(&choice(*i))) {
             self.answer = Some(answer);
