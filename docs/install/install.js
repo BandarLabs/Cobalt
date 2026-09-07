@@ -78,16 +78,15 @@ function refuseUnsupportedBrowser() {
   const missing = missingCapability();
   if (!missing) return false;
   const banner = document.querySelector("#unsupported");
-  const detail = missing === "picker"
-    ? "cannot open a drive"
-    : missing === "writing"
-      ? "can open a drive but cannot write to one"
-      : "cannot read the folders on a drive";
+  // Said once. The heading already says it cannot be done here, so this says
+  // what is needed instead, and the colon that used to sit between them landed
+  // at the start of a line whenever the bolded part wrapped.
+  const detail = missing === "writing" ? "can open a drive but cannot write to one"
+    : missing === "folders" ? "cannot read folders on a drive"
+    : "cannot open a drive";
   document.querySelector("#unsupported-why").innerHTML =
-    `This browser ${detail}. Installing this way needs <strong>Chrome, Edge or ` +
-    "Opera on a computer</strong>: Firefox and Safari cannot do it, and neither " +
-    "can any browser on a phone or tablet. The ways below install exactly the " +
-    "same thing and work anywhere.";
+    `It ${detail}. Installing this way needs Chrome, Edge or Opera on a computer. ` +
+    "The ways below install the same thing and work anywhere.";
   banner.hidden = false;
   pickButton.disabled = true;
   // The steps are the whole page and none of them can be followed here. Left
