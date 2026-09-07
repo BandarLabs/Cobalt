@@ -248,6 +248,14 @@ for (const app of catalog.apps) {
       <img src="../../media/site/apps/${screenshot}" width="1072" height="1448" alt="${escape(screenshotAlt)}">
     </figure>
   </div>${prerequisites}
+  <section class="panel get-cobalt">
+    <div class="get-cobalt-copy">
+      <p class="eyebrow">New to Cobalt?</p>
+      <h2>Install Cobalt directly from your browser</h2>
+      <p>Plug your Kobo into this computer and the browser writes it across. No terminal, and it takes about a minute.</p>
+    </div>
+    <a class="get-cobalt-go" href="../../install/">Install Cobalt<span aria-hidden="true">&#8594;</span></a>
+  </section>
   <section class="panel" id="pair-panel">
     <p class="eyebrow">Install with Cobalt</p>
     <h2>Link your Kobo to install</h2>
@@ -374,6 +382,14 @@ for (const app of systemApps) {
       <img src="../../media/site/apps/${screenshot}" width="1072" height="1448" alt="${escape(screenshotAlt)}">
     </figure>
   </div>
+  <section class="panel get-cobalt">
+    <div class="get-cobalt-copy">
+      <p class="eyebrow">New to Cobalt?</p>
+      <h2>Install Cobalt directly from your browser</h2>
+      <p>Plug your Kobo into this computer and the browser writes it across. No terminal, and it takes about a minute.</p>
+    </div>
+    <a class="get-cobalt-go" href="../../install/">Install Cobalt<span aria-hidden="true">&#8594;</span></a>
+  </section>
   <section class="panel setup">
     <p class="eyebrow">No separate install needed</p>
     <h2>Available after Cobalt setup</h2>
