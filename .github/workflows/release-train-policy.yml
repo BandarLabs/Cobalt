@@ -11,6 +11,13 @@ jobs:
   route:
     runs-on: ubuntu-latest
     steps:
+      # Needed only to compare a site branch against the base. The whole
+      # history is fetched because a shallow clone has no merge base to diff
+      # against, and a diff that cannot be taken must not be read as "nothing
+      # changed".
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
       - name: Require beta promotion for main
         env:
           BASE_REF: ${{ github.base_ref }}
@@ -18,9 +25,45 @@ jobs:
           HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
           REPOSITORY: ${{ github.repository }}
         run: |
-          if [ "$BASE_REF" = main ] &&
-            { [ "$HEAD_REF" != beta ] || [ "$HEAD_REPOSITORY" != "$REPOSITORY" ]; }
-          then
-            echo "Pull requests into main must promote the beta branch." >&2
+          [ "$BASE_REF" = main ] || exit 0
+          if [ "$HEAD_REPOSITORY" != "$REPOSITORY" ]; then
+            echo "Pull requests into main must come from this repository." >&2
+            exit 1
+          fi
+          # Two branches may reach main, and a release branch is the one that
+          # does the releasing: main's own history is a chain of them, most
+          # recently release/v0.3.4. Requiring the head to be `beta` would have
+          # forbidden every release this project has cut.
+          #
+          # A release branch is not simply beta under another name. It is cut
+          # from the commit that was tested as a beta, which is usually behind
+          # beta's head because beta keeps moving while a release is verified,
+          # and it carries the fixes a release needs and nothing else. Neither
+          # is expressible as "the head branch is beta".
+          # A site branch is the third thing that legitimately reaches main.
+          # Pages serves main:/docs, so a correction to the published site
+          # arrives only by going there; routing it through beta would mean no
+          # fix to the website could ship without also shipping whatever else
+          # beta is carrying that day. It is held to the site: the check below
+          # refuses one that touches anything a reader runs.
+          case "$HEAD_REF" in
+            beta|release/v*) exit 0 ;;
+            site/*) ;;
+            *)
+              echo "Pull requests into main must come from beta, release/v*, or site/*." >&2
+              exit 1
+              ;;
+          esac
+          git fetch --no-tags --quiet origin "$BASE_REF"
+          outside="$(git diff --name-only "origin/${BASE_REF}...HEAD" \
+            | grep -Ev '^(docs/|\.github/workflows/(pages|release-train-policy)\.yml$)' || true)"
+          if [ -n "$outside" ]; then
+            echo "A site/* branch may change only the site and how it is published." >&2
+            echo "These fall outside that:" >&2
+            # Quoted, and fed by line rather than by word: a path with a space
+            # in it would otherwise be reported as two, and one holding a glob
+            # character would be replaced by whatever it happened to match in
+            # the working directory.
+            printf '  %s\n' "$outside" >&2
             exit 1
           fi
