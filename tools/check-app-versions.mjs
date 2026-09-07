@@ -665,10 +665,7 @@ export function lockfileOnlyAddsPackages(previousSource, currentSource) {
 // reached only when a Store catalog input actually changed.
 export function storeImpactOfChangedPaths(changedPaths, packageDirectories, registeredPackages) {
   const storeDirectories = storeWatchDirectories(packageDirectories, registeredPackages);
-  const storeChanges = storeCatalogChanges(changedPaths, storeDirectories).filter(path => {
-    const directory = path.split("/").slice(0, -1).join("/");
-    return !isFilmingScript(path, directory) && !isDocumentation(path, directory);
-  });
+  const storeChanges = storeCatalogChanges(changedPaths, storeDirectories);
   const registered = new Set(registeredPackages);
   const sharedPackageChanged = [...packageDirectories].some(
     ([packageName, directory]) =>
