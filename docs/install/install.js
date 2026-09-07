@@ -193,6 +193,28 @@ async function writeToReader() {
     await target.write(archive);
     await target.close();
 
+    // Read back what was written. There is no way for a page to eject a drive
+    // -- no web API offers it -- so the operating system may still be holding
+    // these bytes in a cache that only ejecting flushes. This does not prove
+    // they reached the card, and nothing a page can do would. It does prove
+    // the file is the right length and the right bytes as the system reports
+    // it, which is what catches a write that ran out of room half way and
+    // would otherwise be found by the reader, at the next start, as an update
+    // that failed for no stated reason.
+    writeNote.textContent = "Checking what was written…";
+    const written = new Uint8Array(await (await slot.getFile()).arrayBuffer());
+    if (written.length !== archive.length) {
+      throw new Error(
+        `only ${written.length.toLocaleString()} of ${archive.length.toLocaleString()} bytes ` +
+        "were written, so the reader was left alone. Check there is room on the drive and try again."
+      );
+    }
+    const writtenDigest = [...new Uint8Array(await crypto.subtle.digest("SHA-256", written))]
+      .map(byte => byte.toString(16).padStart(2, "0")).join("");
+    if (writtenDigest !== manifest.sha256) {
+      throw new Error("what was written does not match what was downloaded, so it was not left in place.");
+    }
+
     writeNote.textContent = "Adding the menu entry…";
     const adds = await drive.getDirectoryHandle(MENU_FOLDER, { create: true });
     const nm = await adds.getDirectoryHandle(MENU_SUBFOLDER, { create: true });
@@ -217,6 +239,16 @@ async function writeToReader() {
     done(step.write);
     enable(step.finish, true);
   } catch (error) {
+    // A partial archive in the slot is worse than none: the firmware would try
+    // it at the next start and fail on its own, with nobody to say why.
+    try {
+      const system = await drive.getDirectoryHandle(SLOT_FOLDER);
+      const slot = await system.getFileHandle(SLOT_FILE);
+      const partial = await slot.getFile();
+      if (partial.size !== (archive ? archive.length : -1)) {
+        await system.removeEntry(SLOT_FILE);
+      }
+    } catch { /* nothing was written, or it is complete and stays */ }
     writeNote.innerHTML = `<span class="bad">${escapeText(error.message)}</span>`;
     writeButton.disabled = false;
   }

@@ -191,7 +191,8 @@ kbd { border: 1px solid var(--rule); border-bottom-width: 2px; padding: 0 5px; b
     <li id="step-finish" aria-disabled="true">
       <div>
         <h2>Eject and restart</h2>
-        <p>Eject the drive from your computer, unplug the cable, and hold the power button until the reader restarts. It shows an update screen while the firmware unpacks Cobalt, then returns to the home screen.</p>
+        <p><strong>Eject the drive before unplugging.</strong> A page cannot do this for you, and it is not a formality: your computer may still be holding part of the file in memory, and ejecting is what finishes writing it. Unplugging first can leave the reader with half an update.</p>
+        <p>Then hold the power button until the reader restarts. It shows an update screen while the firmware unpacks Cobalt, and returns to the home screen.</p>
         <p class="note">Leave the home screen alone for about a minute afterwards. NickelMenu uses that time as a failsafe and switches itself off if a start is interrupted. Then open the menu in the bottom-right corner and choose <strong>Cobalt</strong>.</p>
       </div>
     </li>
