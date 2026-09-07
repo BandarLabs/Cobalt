@@ -220,6 +220,18 @@ if an install fails, the previous installed copy remains in place.
 - **Setup refused to do something.** Read what it printed. It refuses rather
   than guesses, and it names the reason: an unrecognised volume, a menu slot
   another mod is already using, or a file that did not read back byte for byte.
+- **Software update says “the address or credentials are invalid” on 0.3.1.**
+  When updating a pre-bootstrap installation to a current release, this can
+  mean the old updater rejected the new standalone launcher in the package;
+  it does not necessarily mean your Wi-Fi credentials are wrong. The old
+  updater refuses that path before replacing Cobalt. Reinstall the current
+  stable release once using the universal installer and USB `kobo setup`, as
+  described under [Updating or building from source](#updating-or-building-from-source).
+  Running `kobo update` alone updates the host command, not the reader.
+  After setup, open Settings > Software update, confirm the installed version,
+  and check again. If the error persists on a current installation, report the
+  installed version and selected channel: this generic message can also have
+  other causes. See [issue #154](https://github.com/BandarLabs/Cobalt/issues/154).
 - **The screen looks wrong, or nothing draws.** Cobalt declines to write to a
   panel it does not recognise exactly. Hold the power button to reboot, and you
   are back in the stock reader with nothing to undo.
