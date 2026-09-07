@@ -48,6 +48,8 @@ let drive = null;
 let archive = null;
 let manifest = null;
 let catalogue = [];
+let installed = null;
+let installedApps = new Set();
 
 function enable(element, on) {
   element.removeAttribute("aria-disabled");
@@ -106,7 +108,15 @@ async function chooseDrive() {
   }
 
   drive = handle;
-  pickNote.innerHTML = `<span class="ok">Reader found on <strong>${escapeText(handle.name)}</strong>.</span>`;
+  // Read before anything is offered, so somebody can see whether this is a
+  // first install, an update, or the version they already have, rather than
+  // finding out from what the reader does afterwards.
+  installed = await readInstalledVersion(handle);
+  installedApps = await readInstalledApps(handle);
+  const where = `Reader found on <strong>${escapeText(handle.name)}</strong>`;
+  pickNote.innerHTML = installed
+    ? `<span class="ok">${where}, with Cobalt ${escapeText(installed)} installed.</span>`
+    : `<span class="ok">${where}. Cobalt is not installed yet.</span>`;
   done(step.connect);
   enable(step.download, true);
   fetchButton.disabled = false;
@@ -155,7 +165,12 @@ async function fetchRelease() {
     }
 
     archive = bytes;
-    fetchNote.innerHTML = `<span class="ok">Cobalt ${escapeText(manifest.version)} verified.</span>`;
+    const change = !installed
+      ? `Cobalt ${escapeText(manifest.version)} verified.`
+      : installed === manifest.version
+        ? `Cobalt ${escapeText(manifest.version)} verified — the same version this reader already has, so this reinstalls it.`
+        : `Cobalt ${escapeText(manifest.version)} verified — this reader has ${escapeText(installed)}.`;
+    fetchNote.innerHTML = `<span class="ok">${change}</span>`;
     showFacts(digest);
     done(step.download);
     enable(step.apps, true);
@@ -271,10 +286,11 @@ async function loadCatalogue() {
     const row = document.createElement("label");
     row.className = "app";
     row.dataset.search = `${app.name} ${app.summary} ${app.id}`.toLowerCase();
+    const already = installedApps.has(app.id);
     row.innerHTML =
       `<input type="checkbox" value="${escapeText(app.id)}">` +
       `<div><b>${escapeText(app.name)}</b><span>${escapeText(app.summary)}</span></div>` +
-      `<em>${(app.bytes / 1048576).toFixed(1)} MB</em>`;
+      `<em>${already ? "on the reader · " : ""}${(app.bytes / 1048576).toFixed(1)} MB</em>`;
     row.querySelector("input").addEventListener("change", countChosen);
     list.append(row);
   }
@@ -334,12 +350,27 @@ async function writeApp(appsFolder, app) {
   const { signature, manifest, binary } = splitBundle(bytes);
   const folder = await appsFolder.getDirectoryHandle(app.id, { create: true });
   const bin = await folder.getDirectoryHandle("bin", { create: true });
+
+  // The runtime stages an application beside the one it replaces and swaps the
+  // two, so an interruption leaves the old one whole. A page has no rename to
+  // do that with, so the order is chosen instead to make every point at which
+  // this can stop a refusal rather than a half-installed application:
+  //
+  //   the executable first -- on its own it no longer matches the manifest
+  //   still beside it, and the runtime checks that
+  //   then the manifest -- now signed by a signature that is still the old one
+  //   the signature last -- which is the only point where the three agree
+  //
+  // Stop anywhere before the end and the reader declines to start it, which is
+  // recoverable by installing again. Writing the signature first would leave
+  // the opposite: an application that verifies and is not the one that was
+  // signed.
+  await writeFile(bin, `kobo-${app.id}`, binary);
   // The manifest bytes are written exactly as they were signed; re-encoding
   // them would leave a signature that no longer covers what is on disk.
   await writeFile(folder, "manifest.json", manifest);
   await writeFile(folder, "manifest.json.sig",
     new TextEncoder().encode([...signature].map(b => b.toString(16).padStart(2, "0")).join("") + "\n"));
-  await writeFile(bin, `kobo-${app.id}`, binary);
 }
 
 async function writeFile(folder, name, bytes) {
@@ -449,6 +480,32 @@ async function removeCobalt() {
     removeNote.innerHTML = `<span class="bad">${escapeText(error.message)}</span>`;
     removeGo.disabled = false;
   }
+}
+
+async function readInstalledVersion(handle) {
+  try {
+    const adds = await handle.getDirectoryHandle(MENU_FOLDER);
+    const cobalt = await adds.getDirectoryHandle("cobalt");
+    const file = await (await cobalt.getFileHandle("VERSION")).getFile();
+    return (await file.text()).trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+async function readInstalledApps(handle) {
+  const present = new Set();
+  try {
+    const adds = await handle.getDirectoryHandle(MENU_FOLDER);
+    const cobalt = await adds.getDirectoryHandle("cobalt");
+    const apps = await cobalt.getDirectoryHandle("apps");
+    for await (const [name, entry] of apps.entries()) {
+      // The runtime stages an installation beside the one it is replacing, so
+      // a .next or .prev beside an application is not an application.
+      if (entry.kind === "directory" && !name.includes(".")) present.add(name);
+    }
+  } catch { /* nothing installed */ }
+  return present;
 }
 
 function escapeText(value) {
