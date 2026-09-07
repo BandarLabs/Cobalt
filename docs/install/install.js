@@ -38,9 +38,6 @@ const fetchNote = document.querySelector("#fetch-note");
 const writeNote = document.querySelector("#write-note");
 const appsNote = document.querySelector("#apps-note");
 const search = document.querySelector("#app-search");
-const removeNote = document.querySelector("#remove-note");
-const removePick = document.querySelector("#remove-pick");
-const removeGo = document.querySelector("#remove-go");
 const bar = document.querySelector("#bar");
 const barFill = bar.querySelector("i");
 
@@ -208,7 +205,6 @@ async function fetchRelease() {
         ? `Cobalt ${escapeText(manifest.version)} verified. This reader already has that version, so this reinstalls it.`
         : `Cobalt ${escapeText(manifest.version)} verified. This reader has ${escapeText(installed)}.`;
     fetchNote.innerHTML = `<span class="ok">${change}</span>`;
-    showFacts(digest);
     done(step.download);
     enable(step.apps, true);
     enable(step.write, true);
@@ -417,173 +413,6 @@ async function writeFile(folder, name, bytes) {
   await target.close();
 }
 
-function showFacts(digest) {
-  document.querySelector("#fact-version").textContent = manifest.version;
-  document.querySelector("#fact-digest").textContent = digest;
-  document.querySelector("#fact-bytes").textContent = manifest.bytes.toLocaleString();
-  document.querySelector("#fact-nm").textContent = manifest.nickelmenu;
-  document.querySelector("#facts").hidden = false;
-}
-
-// Shown to everyone, not only to browsers that cannot do the rest: it is the
-// same archive and the same entry, so somebody who would rather copy a file
-// themselves is not being sent down a different path with different bytes.
-async function describeManualRoute() {
-  document.querySelector("#by-hand-entry").textContent = MENU_ENTRY;
-  try {
-    const described = await fetch("manifest.json", { cache: "no-store" });
-    if (!described.ok) return;
-    const facts = await described.json();
-    document.querySelector("#by-hand-archive").setAttribute("href", facts.archive);
-    document.querySelector("#by-hand-size").textContent =
-      `Cobalt ${facts.version} with NickelMenu ${facts.nickelmenu}, ${(facts.bytes / 1048576).toFixed(1)} MB`;
-  } catch {
-    // The steps above will report this; the link still points at the archive.
-  }
-}
-
-// Removing is the same shape as installing, in reverse: the payload a release
-// wrote, and the menu entry named for Cobalt. Everything else on the reader was
-// put there by its owner, and none of it is a release's to take away.
-const PAYLOAD_ENTRIES = ["bin", "licenses", "start.sh", "README.txt", "LICENSE", "THIRD-PARTY.md", "VERSION"];
-const OWNER_ENTRIES = ["secrets", "trust", "state", "data", "apps", "store"];
-const STALE_FOLDERS = ["cobalt.prev", "cobalt.next", "cobalt.previous"];
-
-let removeDrive = null;
-
-async function chooseDriveToRemoveFrom() {
-  let handle;
-  try {
-    handle = await window.showDirectoryPicker({ id: "kobo", mode: "readwrite" });
-  } catch (error) {
-    if (error && error.name === "AbortError") return;
-    removeNote.innerHTML = `<span class="bad">${escapeText(error.message)}</span>`;
-    return;
-  }
-  try {
-    const system = await handle.getDirectoryHandle(SLOT_FOLDER);
-    await system.getFileHandle("version");
-  } catch {
-    removeNote.innerHTML = '<span class="bad">That drive is not a Kobo.</span>';
-    return;
-  }
-  let install;
-  try {
-    const adds = await handle.getDirectoryHandle(MENU_FOLDER);
-    install = await adds.getDirectoryHandle("cobalt");
-  } catch {
-    removeNote.innerHTML =
-      '<span class="ok">Cobalt is not on this reader, so there is nothing to remove.</span>';
-    return;
-  }
-
-  // What survives a removal is the folder itself, holding the owner's data, so
-  // the folder being there does not mean Cobalt is. Removing again would be
-  // harmless and the message would be a lie: it would report taking away
-  // something that went the first time.
-  const version = await readInstalledVersion(handle);
-  const keeping = [];
-  for (const entry of OWNER_ENTRIES) {
-    try { await install.getDirectoryHandle(entry); keeping.push(entry); } catch { /* absent */ }
-  }
-  if (!version) {
-    removeNote.innerHTML = keeping.length > 0
-      ? '<span class="ok">Cobalt is already removed from this reader. What is still here is yours: ' +
-        `${escapeText(keeping.join(", "))}. Installing again picks it up where it is.</span>`
-      : '<span class="ok">Cobalt is already removed from this reader.</span>';
-    document.querySelector("#remove-confirm").hidden = true;
-    return;
-  }
-  removeDrive = handle;
-  removeNote.innerHTML =
-    `<span class="ok">Cobalt ${escapeText(version)} is on <strong>${escapeText(handle.name)}</strong>.</span>`;
-  document.querySelector("#remove-keeping").textContent = keeping.length > 0
-    ? `Keeping: ${keeping.join(", ")}.`
-    : "There is no data on this reader to keep.";
-  document.querySelector("#remove-confirm").hidden = false;
-}
-
-async function removeCobalt() {
-  removeGo.disabled = true;
-  try {
-    const adds = await removeDrive.getDirectoryHandle(MENU_FOLDER);
-    const install = await adds.getDirectoryHandle("cobalt");
-    // Entry by entry, never the folder: removing .adds/cobalt itself would take
-    // the owner's data with it, which is the one thing this must not do.
-    for (const entry of PAYLOAD_ENTRIES) {
-      try { await install.removeEntry(entry, { recursive: true }); } catch { /* absent */ }
-    }
-    try { await adds.removeEntry("cobalt-launch.sh"); } catch { /* absent */ }
-    for (const folder of STALE_FOLDERS) {
-      try { await adds.removeEntry(folder, { recursive: true }); } catch { /* absent */ }
-    }
-    // Ours by name, which is why it has one. A config somebody wrote by hand is
-    // .adds/nm/menu and is not touched, and NickelMenu itself stays: other mods
-    // are using it.
-    try {
-      const nm = await adds.getDirectoryHandle(MENU_SUBFOLDER);
-      await nm.removeEntry(MENU_FILE);
-    } catch { /* absent */ }
-    removeNote.innerHTML =
-      '<span class="ok">Cobalt is removed and your data is still there. Eject the drive and restart the reader.</span>';
-    document.querySelector("#remove-confirm").hidden = true;
-  } catch (error) {
-    removeNote.innerHTML = `<span class="bad">${escapeText(error.message)}</span>`;
-    removeGo.disabled = false;
-  }
-}
-
-// .kobo/version is a comma-separated line whose first field is the serial and
-// whose third is the firmware. The first four characters of the serial are the
-// model code, which is what a device profile is keyed on.
-async function readTestedDevices() {
-  try {
-    const response = await fetch("devices.json", { cache: "no-store" });
-    if (!response.ok) return [];
-    return await response.json();
-  } catch {
-    return [];
-  }
-}
-
-async function readReaderIdentity(handle) {
-  try {
-    const system = await handle.getDirectoryHandle(SLOT_FOLDER);
-    const text = await (await (await system.getFileHandle("version")).getFile()).text();
-    const fields = text.trim().split(",");
-    const serial = (fields[0] || "").trim();
-    return { model: serial.slice(0, 4), firmware: (fields[2] || "").trim() };
-  } catch {
-    return null;
-  }
-}
-
-async function readInstalledVersion(handle) {
-  try {
-    const adds = await handle.getDirectoryHandle(MENU_FOLDER);
-    const cobalt = await adds.getDirectoryHandle("cobalt");
-    const file = await (await cobalt.getFileHandle("VERSION")).getFile();
-    return (await file.text()).trim() || null;
-  } catch {
-    return null;
-  }
-}
-
-async function readInstalledApps(handle) {
-  const present = new Set();
-  try {
-    const adds = await handle.getDirectoryHandle(MENU_FOLDER);
-    const cobalt = await adds.getDirectoryHandle("cobalt");
-    const apps = await cobalt.getDirectoryHandle("apps");
-    for await (const [name, entry] of apps.entries()) {
-      // The runtime stages an installation beside the one it is replacing, so
-      // a .next or .prev beside an application is not an application.
-      if (entry.kind === "directory" && !name.includes(".")) present.add(name);
-    }
-  } catch { /* nothing installed */ }
-  return present;
-}
-
 function escapeText(value) {
   const holder = document.createElement("span");
   holder.textContent = String(value);
@@ -599,6 +428,4 @@ if (refuseUnsupportedBrowser()) {
   pickButton.addEventListener("click", chooseDrive);
   fetchButton.addEventListener("click", fetchRelease);
   writeButton.addEventListener("click", writeToReader);
-  removePick.addEventListener("click", chooseDriveToRemoveFrom);
-  removeGo.addEventListener("click", removeCobalt);
 }
