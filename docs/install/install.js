@@ -158,19 +158,19 @@ async function chooseDrive() {
 
 async function fetchRelease() {
   fetchButton.disabled = true;
-  fetchNote.textContent = "Reading the release description…";
+  fetchNote.textContent = "Checking what is available\u2026";
   try {
     // Checked before it is parsed. A 404 here answers with a page, and parsing
     // that as JSON reports a syntax error to somebody who wanted to install a
     // reading application.
     const described = await fetch("manifest.json", { cache: "no-store" });
     if (!described.ok) {
-      throw new Error(`the release description could not be read (${described.status})`);
+      throw new Error(`could not check what is available (${described.status})`);
     }
     manifest = await described.json();
     bar.hidden = false;
     const response = await fetch(manifest.archive, { cache: "no-store" });
-    if (!response.ok) throw new Error(`the release could not be downloaded (${response.status})`);
+    if (!response.ok) throw new Error(`Cobalt could not be downloaded (${response.status})`);
 
     // Read in pieces so the bar moves. A reader on a slow connection is
     // downloading about eighteen megabytes and deserves to see it happening.

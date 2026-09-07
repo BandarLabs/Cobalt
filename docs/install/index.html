@@ -178,7 +178,7 @@ cargo run -p kobo-cli -- setup</pre>
   <ol class="steps">
     <li id="step-connect">
       <div>
-        <h2>Connect the reader</h2>
+        <h2>Connect your Kobo via USB</h2>
         <p>Plug the Kobo in. It asks on its own screen whether to connect: tap <strong>Connect</strong>. Until you do, it only charges and no drive appears. Then choose <code>KOBOeReader</code> here.</p>
         <button class="btn" id="pick" type="button">Choose the Kobo drive</button>
         <p class="note" id="pick-note">Your browser will ask permission to edit files on the drive. Only <code>.kobo</code> and <code>.adds</code> are written.</p>
@@ -187,9 +187,9 @@ cargo run -p kobo-cli -- setup</pre>
 
     <li id="step-download" aria-disabled="true">
       <div>
-        <h2>Fetch the release</h2>
+        <h2>Download Cobalt</h2>
         <p id="download-copy">Downloads Cobalt and checks it against the checksum published with it. If the file that arrives is not the one that was published, it is thrown away instead of written to your reader.</p>
-        <button class="btn" id="fetch" type="button" disabled>Download and verify</button>
+        <button class="btn" id="fetch" type="button" disabled>Download and check it</button>
         <div class="progress" hidden id="bar"><i></i></div>
         <p class="note" id="fetch-note"></p>
       </div>
@@ -207,7 +207,7 @@ cargo run -p kobo-cli -- setup</pre>
 
     <li id="step-write" aria-disabled="true">
       <div>
-        <h2>Write it to the reader</h2>
+        <h2>Write it to your Kobo</h2>
         <p>Writes Cobalt to the reader and adds it to the reader's menu. Menu entries you or other mods added are left alone.</p>
         <button class="btn primary" id="write" type="button" disabled>Write to the Kobo</button>
         <p class="note" id="write-note"></p>
@@ -216,7 +216,7 @@ cargo run -p kobo-cli -- setup</pre>
 
     <li id="step-finish" aria-disabled="true">
       <div>
-        <h2>Eject and restart</h2>
+        <h2>Eject and restart your Kobo</h2>
         <p><strong>Eject the drive before unplugging.</strong> A page cannot do this for you, and it is not a formality: your computer may still be holding part of the file in memory, and ejecting is what finishes writing it. Unplugging first can leave the reader with half an update.</p>
         <figure class="shot">
           <img src="eject.gif" width="560" height="239" alt="In the Finder sidebar, the eject button beside KOBOeReader is clicked and the drive disappears from the list.">
