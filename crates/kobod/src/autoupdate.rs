@@ -21,7 +21,20 @@ use kobo_protocol::{DeviceError, UpdateChannel};
 /// Where releases are published. The same address the settings screen asks,
 /// so the two paths cannot disagree about what "newest" means.
 const STABLE_RELEASES: &str = "https://api.github.com/repos/BandarLabs/Cobalt/releases/latest";
-const BETA_RELEASES: &str = "https://api.github.com/repos/BandarLabs/Cobalt/releases?per_page=100";
+/// The newest releases, rather than all of them.
+///
+/// GitHub cannot be asked for prereleases alone, so the newest beta has to be
+/// picked out of a listing that also carries the stable ones. Asking for every
+/// release meant a reply that grew with the project: at thirty-four releases it
+/// was 880 KB, against a ceiling of one megabyte on the readers that shipped
+/// before this, and the failure at the ceiling is silent -- an update check
+/// that finds nothing looks exactly like a reader that is up to date.
+///
+/// Twenty is chosen against how releases actually appear. Betas are the most
+/// frequent tag here, so the newest one has never been far from the top; the
+/// case this gives up on is twenty consecutive releases without a single beta,
+/// by which time nobody is waiting on a beta anyway.
+const BETA_RELEASES: &str = "https://api.github.com/repos/BandarLabs/Cobalt/releases?per_page=20";
 
 /// The most a release listing is allowed to be.
 ///

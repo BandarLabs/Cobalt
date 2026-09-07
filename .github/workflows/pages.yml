@@ -1,0 +1,242 @@
+name: Publish the site
+
+# Pages used to serve `main:/docs` directly, which cannot offer the platform
+# archive: a browser install has to read those bytes from the same origin as
+# the page, GitHub's release assets carry no `Access-Control-Allow-Origin`, and
+# committing 18.3 MB per release into `docs/` would add that to the repository's
+# history forever -- about half its present size, every release, never
+# reclaimed.
+#
+# So the site is assembled here instead. `docs/` is copied verbatim, and the
+# archive is fetched from the release it belongs to, merged, and published
+# beside it. Nothing large enters git, and the download always matches the
+# release rather than whatever was last committed.
+
+on:
+  release:
+    types: [published]
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cobalt-pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    # The site carries the stable release, so a beta being published is not an
+    # occasion to rebuild it. Without this the workflow would run on every beta
+    # tag and republish the identical site.
+    if: github.event_name != 'release' || github.event.release.prerelease == false
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      # Everything the site serves today, unchanged. This job replaces the
+      # branch publication that used to do it, so anything missed here stops
+      # being reachable -- install.sh included, which is the one file the
+      # documented install depends on.
+      - name: Take the site as it stands
+        run: |
+          set -eu
+          mkdir -p _site
+          cp -R docs/. _site/
+          test -f _site/install.sh
+          test -f _site/index.html
+
+      - name: Fetch the current stable release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TRIGGERING_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -eu
+          version="$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName \
+            --jq '.tagName | ltrimstr("v")')"
+          printf '%s\n' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'
+          # Publishing a release is not the same event as that release becoming
+          # the latest one, and the site is only ever meant to carry the latest.
+          # If a release published an older version -- a backport, or a tag
+          # restored by hand -- the site would otherwise be rebuilt from it and
+          # quietly moved backwards.
+          if [ -n "${TRIGGERING_TAG:-}" ] && [ "$TRIGGERING_TAG" != "v${version}" ]; then
+            echo "${TRIGGERING_TAG} was published, but ${version} is the current release." >&2
+            echo "Refusing to build the site from something that is not the latest." >&2
+            exit 1
+          fi
+          echo "COBALT_VERSION=$version" >> "$GITHUB_ENV"
+          mkdir -p release
+          gh release download "v${version}" --repo "$GITHUB_REPOSITORY" --dir release \
+            --pattern "cobalt-${version}-KoboRoot.tgz" \
+            --pattern "cobalt-${version}.sha256"
+          cd release
+          # The published checksum file covers more than this archive, so only
+          # the line naming it is checked; `sha256sum --check` on the whole file
+          # would fail on the assets that were not downloaded.
+          grep " cobalt-${version}-KoboRoot.tgz\$" "cobalt-${version}.sha256" \
+            | sha256sum --check -
+
+      # The same release and the same digest the runtime pins, so the plugin
+      # published here is the plugin `kobo setup` would have installed.
+      - name: Fetch the reviewed NickelMenu
+        run: |
+          set -eu
+          expected=322ff9aa863860e8f5f7e0b55cae561c54bf95983b9bce1d19819d1225d064af
+          curl -fsSL -o nm.tgz \
+            https://github.com/pgaskin/NickelMenu/releases/download/v0.6.0/KoboRoot.tgz
+          echo "$expected  nm.tgz" | sha256sum --check -
+          # Two files is the whole of NickelMenu. Anything else in this archive
+          # would be extracted as root by the firmware alongside it.
+          members="$(tar tzf nm.tgz | sed 's#^\./##' | sort | tr '\n' ' ')"
+          test "$members" = "mnt/onboard/.adds/nm/doc usr/local/Kobo/imageformats/libnm.so "
+
+      # The firmware extracts exactly one archive, so a reader that needs both
+      # Cobalt and NickelMenu cannot be given them separately without a second
+      # restart. Their members are disjoint, so one archive delivers both.
+      - name: Merge them into the single slot the firmware reads
+        run: |
+          set -eu
+          mkdir -p merged
+          tar xzf "release/cobalt-${COBALT_VERSION}-KoboRoot.tgz" -C merged
+          tar xzf nm.tgz -C merged
+          test -f merged/usr/local/Kobo/imageformats/libnm.so
+          test -f "merged/mnt/onboard/.adds/cobalt/VERSION"
+          mkdir -p _site/install
+          tar czf _site/install/cobalt-KoboRoot.tgz -C merged mnt usr
+          gzip -t _site/install/cobalt-KoboRoot.tgz
+
+      # What the page checks the bytes against before it writes them. Same
+      # origin as the page, so it is covered by the same TLS and cannot be
+      # substituted independently of the archive it describes.
+      - name: Describe what was published
+        run: |
+          set -eu
+          digest="$(sha256sum _site/install/cobalt-KoboRoot.tgz | cut -d' ' -f1)"
+          bytes="$(wc -c < _site/install/cobalt-KoboRoot.tgz | tr -d ' ')"
+          printf '{\n  "version": "%s",\n  "archive": "cobalt-KoboRoot.tgz",\n  "sha256": "%s",\n  "bytes": %s,\n  "nickelmenu": "v0.6.0"\n}\n' \
+            "$COBALT_VERSION" "$digest" "$bytes" > _site/install/manifest.json
+          cat _site/install/manifest.json
+
+      # Read from the published catalog rather than from this tree, so the list
+      # is whatever the Store is actually offering on the day the site is built
+      # and cannot drift from it. A catalog holds at most MAX_CATALOG_ENTRIES
+      # (128) applications, so this is bounded: at the size they run to now,
+      # every application in a full catalog is about 150 MB.
+      - name: Take the Store catalog as it stands
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          mkdir -p _site/install/apps
+          gh release download app-catalog --repo "$GITHUB_REPOSITORY" \
+            --dir . --pattern cobalt-app-catalog.json --clobber
+          node --input-type=module -e '
+            import { readFileSync, writeFileSync } from "node:fs";
+            const catalog = JSON.parse(readFileSync("cobalt-app-catalog.json", "utf8"));
+            const apps = catalog.entries.map(entry => ({
+              id: entry.manifest.id,
+              name: entry.manifest.display_name,
+              summary: entry.manifest.summary,
+              version: entry.manifest.version,
+              glyph: entry.manifest.glyph,
+              minimum: entry.manifest.minimum_cobalt_version,
+              capabilities: entry.manifest.capabilities ?? [],
+              bytes: entry.package_bytes,
+              sha256: entry.package_sha256,
+              url: entry.package_url
+            })).sort((left, right) => left.name.localeCompare(right.name));
+            writeFileSync("apps-index.json", JSON.stringify(apps));
+            console.log(`${apps.length} applications in the catalog`);
+          '
+          # Fetched one at a time and checked against the digest the catalog
+          # gives, so an application the page offers is one whose bytes are
+          # already known to be the published ones.
+          node --input-type=module -e '
+            import { readFileSync, writeFileSync } from "node:fs";
+            const apps = JSON.parse(readFileSync("apps-index.json", "utf8"));
+            console.log(apps.map(app => `${app.id} ${app.sha256} ${app.url}`).join("\n"));
+          ' > apps.tsv
+          while read -r id digest url; do
+            [ -n "$id" ] || continue
+            curl -fsSL --retry 3 -o "_site/install/apps/${id}.cobalt-app" "$url"
+            echo "$digest  _site/install/apps/${id}.cobalt-app" | sha256sum --check -
+          done < apps.tsv
+          cp apps-index.json _site/install/apps.json
+          du -sh _site/install/apps | sed 's/^/  applications: /'
+
+      # The reviewed devices, taken from the profiles the runtime enforces
+      # rather than from a list kept beside the page. A copy would go stale
+      # against the one that matters, and a device list that is quietly wrong
+      # tells somebody their working reader is untested. Anything this cannot
+      # read stops the build instead of publishing a gap.
+      - name: Take the reviewed device profiles
+        run: |
+          set -eu
+          node --input-type=module -e '
+            import { readFileSync } from "node:fs";
+            const src = readFileSync("crates/kobo-profile/src/lib.rs", "utf8");
+
+            function block(name) {
+              const m = src.match(new RegExp(`(?:pub )?(?:static|const) ${name}\\s*:\\s*DeviceProfile\\s*=\\s*DeviceProfile\\s*\\{([\\s\\S]*?)\\n\\};`));
+              if (!m) throw new Error(`no profile named ${name}`);
+              return m[1];
+            }
+            function read(name, seen = new Set()) {
+              if (seen.has(name)) throw new Error(`profile ${name} inherits from itself`);
+              seen.add(name);
+              const body = block(name);
+              // `..BASE` copies every field not written here, so the base must be read
+              // first and then written over. Missing this is what produced a profile with
+              // no model and no serial prefix.
+              const base = body.match(/\.\.\s*([A-Z0-9_]+)\s*$/m);
+              const value = base ? { ...read(base[1], seen) } : {};
+              const one = (field, re) => { const m = body.match(new RegExp(`\\b${field}:\\s*${re}`)); return m ? m[1] : undefined; };
+              const id = one("id", '"([^"]*)"'); if (id !== undefined) value.id = id;
+              const model = one("model", '"([^"]*)"'); if (model !== undefined) value.model = model;
+              const prefix = one("serial_prefix", '"([^"]*)"'); if (prefix !== undefined) value.serial_prefix = prefix;
+              const ready = one("write_ready", "(true|false)"); if (ready !== undefined) value.write_ready = ready === "true";
+              const fw = body.match(/\bfirmware_versions:\s*&\[([\s\S]*?)\]/);
+              if (fw) value.firmware = (fw[1].match(/"[^"]*"/g) || []).map(s => s.slice(1, -1));
+              return value;
+            }
+
+            const listed = src.match(/pub const SUPPORTED_PROFILES[^=]*=\s*&\[([\s\S]*?)\]/)[1]
+              .split(",").map(s => s.trim().replace(/^&/, "")).filter(Boolean);
+            const profiles = listed.map(n => read(n));
+
+            // A matrix that is quietly incomplete is worse than no matrix: it would tell
+            // somebody their working reader is untested. Anything unreadable stops the build.
+            const faults = [];
+            for (const [i, p] of profiles.entries()) {
+              for (const field of ["id", "model", "serial_prefix", "write_ready"]) {
+                if (p[field] === undefined || p[field] === null) faults.push(`${listed[i]}: no ${field}`);
+              }
+              if (!p.firmware || p.firmware.length === 0) faults.push(`${listed[i]}: no firmware versions`);
+            }
+            if (faults.length > 0) { console.error("could not read the device profiles:\n  " + faults.join("\n  ")); process.exit(1); }
+            console.log(JSON.stringify(profiles.map(p => ({ model: p.model, code: p.serial_prefix, firmware: p.firmware, ready: p.write_ready }))));
+          ' > _site/install/devices.json
+          node -e 'const d=require("./_site/install/devices.json"); console.log(`  ${d.length} reviewed device profiles`)'
+
+      - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4
