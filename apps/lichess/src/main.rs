@@ -423,7 +423,7 @@ impl Lichess {
     fn show(&mut self, context: &mut Context) {
         let screen = match self.route {
             Route::Home => self.home(context),
-            Route::HowTo => self.how_to_screen(),
+            Route::HowTo => Self::how_to_screen(),
             Route::Puzzles => self.puzzles_screen(),
             Route::Solve => self.solve_screen(),
             Route::PuzzleResult => self.puzzle_result(),
@@ -656,7 +656,7 @@ impl Lichess {
             .build()
     }
 
-    fn how_to_screen(&self) -> Screen {
+    fn how_to_screen() -> Screen {
         ScreenBuilder::new("lichess-help")
             .top_bar("How to play")
             .heading("Chess on Lichess")
