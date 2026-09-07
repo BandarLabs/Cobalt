@@ -10,10 +10,13 @@ const MENU_FOLDER = ".adds";
 const MENU_SUBFOLDER = "nm";
 const MENU_FILE = "cobalt";
 
-// Written by 'kobo setup' too, and removed by 'kobo setup --undo'. Keeping the
-// same wording means the command-line tool recognises and can remove what this
-// page writes.
-const MENU_ENTRY = `# Cobalt. Written by the browser installer; removed by 'kobo setup --undo'.
+// Byte for byte what `kobo setup` writes, and deliberately so. The undo path
+// removes its own comment lines by exact string match, so a line reworded to
+// mention this page instead would be left behind: the menu_item would go, the
+// comments would stay, and the file would survive as a stub that no longer
+// says anything true. Saying "written by 'kobo setup'" is less accurate about
+// where it came from and more accurate about what can remove it.
+const MENU_ENTRY = `# Cobalt. Written by 'kobo setup'; removed by 'kobo setup --undo'.
 #
 # Starting Cobalt stops the reader and takes over the screen. Restart
 # the device to get the reader back.
@@ -110,7 +113,14 @@ async function fetchRelease() {
   fetchButton.disabled = true;
   fetchNote.textContent = "Reading the release description…";
   try {
-    manifest = await (await fetch("manifest.json", { cache: "no-store" })).json();
+    // Checked before it is parsed. A 404 here answers with a page, and parsing
+    // that as JSON reports a syntax error to somebody who wanted to install a
+    // reading application.
+    const described = await fetch("manifest.json", { cache: "no-store" });
+    if (!described.ok) {
+      throw new Error(`the release description could not be read (${described.status})`);
+    }
+    manifest = await described.json();
     bar.hidden = false;
     const response = await fetch(manifest.archive, { cache: "no-store" });
     if (!response.ok) throw new Error(`the release could not be downloaded (${response.status})`);

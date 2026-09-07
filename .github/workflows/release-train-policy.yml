@@ -60,6 +60,10 @@ jobs:
           if [ -n "$outside" ]; then
             echo "A site/* branch may change only the site and how it is published." >&2
             echo "These fall outside that:" >&2
-            printf '  %s\n' $outside >&2
+            # Quoted, and fed by line rather than by word: a path with a space
+            # in it would otherwise be reported as two, and one holding a glob
+            # character would be replaced by whatever it happened to match in
+            # the working directory.
+            printf '  %s\n' "$outside" >&2
             exit 1
           fi
