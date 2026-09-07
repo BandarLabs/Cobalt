@@ -329,12 +329,15 @@ impl Panels {
             ScreenBuilder::new("panels-reader")
                 .top_bar(title)
                 .top_bar_action("rtl", if self.rtl { "RTL" } else { "LTR" })
-                .secondary(format!("Page {} of {}", self.page + 1, comic.pages.len())),
+                .secondary(format!("Page {} of {}", self.page + 1, comic.pages.len()))
+                .owns_back(true),
         );
         if let Some(picture) = self.picture {
             screen = screen.unframed_picture(picture, 154);
-        } else {
+        } else if self.notice.is_none() {
             screen = screen.activity("Opening page", None);
+        } else {
+            screen = screen.secondary("Use the page edges to continue reading.");
         }
         screen.page_turns("previous", "next").build()
     }
@@ -479,12 +482,15 @@ impl Panels {
         let (Some(pending), Some(download)) = (self.pending.take(), self.transfer.take()) else {
             return;
         };
-        let Ok(comic) = archive::inspect(&download.received) else {
-            self.notice = Some("The downloaded comic could not be opened.".to_owned());
-            self.pending = Some(pending);
-            self.transfer = Some(download);
-            self.paused = true;
-            return;
+        let comic = match archive::inspect(&download.received) {
+            Ok(comic) => comic,
+            Err(error) => {
+                self.notice = Some(error.to_string());
+                self.pending = Some(pending);
+                self.transfer = Some(download);
+                self.paused = true;
+                return;
+            }
         };
         let kept = Kept {
             key: pending.key,
@@ -523,20 +529,23 @@ impl Panels {
     }
 
     fn open_bytes(&mut self, context: &mut Context, bytes: Vec<u8>, kept: Kept, page: usize) {
-        if let Ok(comic) = archive::inspect(&bytes) {
-            self.page = page.min(comic.pages.len().saturating_sub(1));
-            self.rtl = kept.rtl;
-            self.opened = Some(kept);
-            self.bytes = Some(bytes);
-            self.comic = Some(comic);
-            self.picture = None;
-            self.route = Route::Reader;
-            self.notice = None;
-            self.display_page(context);
-        } else {
-            self.notice = Some("This saved comic can no longer be opened.".to_owned());
-            self.route = Route::Library;
-        }
+        let comic = match archive::inspect(&bytes) {
+            Ok(comic) => comic,
+            Err(error) => {
+                self.notice = Some(error.to_string());
+                self.route = Route::Library;
+                return;
+            }
+        };
+        self.page = page.min(comic.pages.len().saturating_sub(1));
+        self.rtl = kept.rtl;
+        self.opened = Some(kept);
+        self.bytes = Some(bytes);
+        self.comic = Some(comic);
+        self.picture = None;
+        self.route = Route::Reader;
+        self.notice = None;
+        self.display_page(context);
     }
 
     fn display_page(&mut self, context: &mut Context) {
@@ -560,8 +569,9 @@ impl Panels {
                     .is_none()
                     .then_some("This page is too large to display.".to_owned());
             }
-            Err(_) => {
-                self.notice = Some("This page could not be opened. You can skip it.".to_owned());
+            Err(error) => {
+                self.picture = None;
+                self.notice = Some(error.to_string());
             }
         }
     }
@@ -855,7 +865,7 @@ impl KoboApp for Panels {
                             0,
                         );
                     }
-                    Err(_) => self.notice = Some("The added comic could not be opened.".to_owned()),
+                    Err(error) => self.notice = Some(error.to_string()),
                 }
             }
             (Awaiting::Comic, TaskOutcome::Completed(chunk)) => {

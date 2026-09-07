@@ -349,11 +349,7 @@ impl StatusSource {
 /// said `owns_back`, which is an application declaring it has somewhere of its
 /// own to go, so drawing the control is exactly what it asked for.
 fn chrome_for(screen: &Screen, at_home: bool, status: &mut StatusSource) -> Chrome {
-    let chrome = Chrome::with_back(!at_home || screen.owns_back);
-    if screen.reading {
-        return chrome;
-    }
-    chrome.with_status(status.get().clone())
+    Chrome::for_screen(screen, at_home, Some(status.get().clone()))
 }
 
 /// Assembles one reading of everything the band shows.

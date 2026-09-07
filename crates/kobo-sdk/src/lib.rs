@@ -5,6 +5,8 @@
 //! Applications own their state and call [`AppRunner::start`] and
 //! [`AppRunner::action`] from their platform event loop.
 
+pub mod collections;
+
 pub use kobo_protocol::{
     is_valid_key, AppInfo, AppLinkState, AudioPlaybackState, AudioSource, BatteryDetail,
     BluetoothDevice, BluetoothDeviceKind, Credential, DenyReason, DeviceError, DeviceIdentity,

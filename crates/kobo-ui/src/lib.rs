@@ -1926,6 +1926,7 @@ pub const MAX_TONES_PER_SCREEN: usize = 4;
 /// The most verbs an action bar will draw. See [`BarStyle::Actions`].
 pub const MAX_ACTION_BAR_ACTIONS: usize = 3;
 
+mod environment;
 pub mod vector;
 
 /// Grayscale values used by the built-in monochrome design system.
@@ -2068,6 +2069,15 @@ pub struct Chrome {
 }
 
 impl Chrome {
+    /// Composes shell decoration for the screen that will be displayed.
+    #[must_use]
+    pub fn for_screen(screen: &Screen, at_home: bool, status: Option<Status>) -> Self {
+        Self {
+            back: !at_home || screen.owns_back,
+            status: if screen.reading { None } else { status },
+        }
+    }
+
     #[must_use]
     pub const fn with_back(back: bool) -> Self {
         Self { back, status: None }
@@ -2869,6 +2879,7 @@ impl Screen {
     /// Lays the screen out for a panel, including runtime-owned decoration.
     #[must_use]
     pub fn layout_with(&self, metrics: &DisplayMetrics, chrome: &Chrome) -> Layout {
+        let _environment = environment::TextEnvironment::enter(self, metrics);
         with_legacy_typography(self.legacy_typography, || {
             with_reading_font(self.reading_font, || {
                 self.layout_with_selected_font(metrics, chrome)
@@ -11715,6 +11726,7 @@ fn diagnose_screen(
     chrome: &Chrome,
     pictures: Option<&dyn Pictures>,
 ) -> LayoutDiagnostics {
+    let _environment = environment::TextEnvironment::enter(screen, metrics);
     with_reading_font(screen.reading_font, || {
         diagnose_screen_with_selected_font(screen, metrics, chrome, pictures)
     })
@@ -13162,6 +13174,7 @@ pub fn render_all(
     surface: &mut Surface,
     dirty: Option<Rect>,
 ) {
+    let _environment = environment::TextEnvironment::enter(screen, metrics);
     with_legacy_typography(screen.legacy_typography, || {
         with_reading_font(screen.reading_font, || {
             render_all_with_selected_font(screen, metrics, chrome, pictures, surface, dirty);

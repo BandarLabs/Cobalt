@@ -1031,11 +1031,7 @@ fn deliver_outcomes(
 /// layout fault that put the first row of the launcher's grid underneath the
 /// title on real hardware while every frame rendered here looked right.
 fn simulated_chrome(name: &str, screen: &Screen) -> kobo_ui::Chrome {
-    let chrome = kobo_ui::Chrome::with_back(name != HOME_APPLICATION);
-    if screen.reading {
-        return chrome;
-    }
-    chrome.with_status(simulated_status())
+    kobo_ui::Chrome::for_screen(screen, name == HOME_APPLICATION, Some(simulated_status()))
 }
 
 /// Everything the band shows, invented and fixed.

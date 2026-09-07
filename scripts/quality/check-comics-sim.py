@@ -1,0 +1,148 @@
+#!/usr/bin/env python3
+"""Drive Panels against original local fixtures in isolated simulator storage."""
+import argparse
+import io
+import json
+import os
+from pathlib import Path
+import re
+import signal
+import subprocess
+import tempfile
+import time
+import urllib.request
+import zipfile
+
+from PIL import Image, ImageDraw, ImageFont
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+def comic_bytes():
+    archive = io.BytesIO()
+    with zipfile.ZipFile(archive, 'w', compression=zipfile.ZIP_DEFLATED) as volume:
+        for number in (10, 2, 1):
+            page = Image.new('L', (800, 1100), 255)
+            draw = ImageDraw.Draw(page)
+            # Original geometric panels, with no external artwork or story text.
+            font = ImageFont.load_default(size=40)
+            draw.text((50, 35), f'Fixture page {number}', fill=0, font=font)
+            for index, box in enumerate(((45, 120, 755, 410), (45, 435, 385, 1030), (410, 435, 755, 1030))):
+                draw.rectangle(box, outline=0, width=5)
+                draw.ellipse((box[0]+40, box[1]+45, box[0]+170, box[1]+175), fill=64 + index*64)
+            encoded = io.BytesIO()
+            page.save(encoded, format='PNG')
+            volume.writestr(f'{number}.png', encoded.getvalue())
+    return archive.getvalue()
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--scale', default='default')
+    parser.add_argument('--profile', default='clara-bw-391')
+    parser.add_argument('--cbr', action='store_true', help='Check explicit CBR refusal')
+    args = parser.parse_args()
+    args.output.mkdir(parents=True, exist_ok=True)
+    binary = ROOT / 'target/debug/kobo'
+    if not binary.is_file():
+        parser.error('Build kobo-cli before running this check.')
+    process = None
+    with tempfile.TemporaryDirectory(prefix='cq-comic-', dir='/tmp') as private:
+        env = dict(os.environ, TMPDIR=private, CARGO_TARGET_DIR=str(ROOT/'target'),
+                   CARGO_PROFILE_DEV_DEBUG='0', CARGO_INCREMENTAL='0',
+                   KOBO_SIM_PROFILE=args.profile, KOBO_TEXT_SCALE=args.scale)
+        storage = Path(private)/'cobalt-sim-data/panels'
+        storage.mkdir(parents=True)
+        (storage/'volume.cbz').write_bytes(b'Rar!\x1a\x07\x01\x00' if args.cbr else comic_bytes())
+        log_path = args.output/'simulator.log'
+        with log_path.open('w') as log:
+            try:
+                process = subprocess.Popen([str(binary), 'dev', '127.0.0.1:0'], cwd=ROOT/'apps/panels',
+                                           env=env, stdout=log, stderr=log, start_new_session=True)
+                deadline = time.monotonic() + 120
+                address = None
+                while time.monotonic() < deadline:
+                    if process.poll() is not None:
+                        raise RuntimeError('Simulator exited: ' + log_path.read_text()[-2000:])
+                    match = re.search(r'Kobo app simulator: http://(127\.0\.0\.1:\d+)', log_path.read_text())
+                    if match:
+                        address = match.group(1)
+                        break
+                    time.sleep(.1)
+                if address is None:
+                    raise RuntimeError('Simulator startup timed out')
+
+                def get(endpoint):
+                    with urllib.request.urlopen(f'http://{address}/{endpoint}', timeout=5) as response:
+                        return response.read()
+
+                def drive(step):
+                    subprocess.run([str(binary), 'drive', '--address', address, '--step', step], cwd=ROOT,
+                                   env=env, check=True, timeout=20, stdout=log, stderr=log)
+
+                def wait_for(text):
+                    deadline = time.monotonic() + 30
+                    while time.monotonic() < deadline:
+                        if text in get('layout').decode():
+                            return
+                        if process.poll() is not None:
+                            raise RuntimeError('Simulator stopped while waiting for ' + text)
+                        time.sleep(.1)
+                    raise RuntimeError('Timed out waiting for ' + text + ': ' + get('layout').decode()[-1800:])
+
+                def capture(label):
+                    # Await application responses, then check frame reads themselves do not mutate history.
+                    time.sleep(.25)
+                    before = json.loads(get('simulation'))
+                    for _ in range(8):
+                        get('frame')
+                        raw = get('ideal-frame')
+                    after = json.loads(get('simulation'))
+                    assert before == after, 'Screenshot requests changed simulation state'
+                    layout = json.loads(get('layout'))
+                    diagnostics = json.loads(get('diagnostics'))
+                    width, height = before['profile']['width'], before['profile']['height']
+                    Image.frombytes('L', (width, height), raw).save(args.output/(label+'.png'))
+                    data = dict(simulation=after, layout=layout, diagnostics=diagnostics)
+                    (args.output/(label+'.json')).write_text(json.dumps(data, indent=2)+'\n')
+                    errors = [issue for issue in diagnostics['issues'] if issue['severity'] == 'error']
+                    assert not errors, f'{label}: {errors}'
+                    return json.dumps(layout)
+
+                wait_for('Open added comic')
+                capture('01-library')
+                drive('tap Open added comic')
+                wait_for('CBR is not supported yet' if args.cbr else 'Page 1 of 3')
+                text = capture('02-opened')
+                if args.cbr:
+                    assert 'CBR is not supported yet' in text, 'Missing CBR explanation'
+                    assert 'CBZ copy' in text, 'Missing recovery action'
+                else:
+                    assert 'Page 1 of 3' in text, 'Comic did not open'
+                    profile = json.loads(get('simulation'))['profile']
+                    x, y = profile['width']*9//10, profile['height']//2
+                    drive(f'tap-at {x},{y}')
+                    wait_for('Page 2 of 3')
+                    assert 'Page 2 of 3' in capture('03-next'), 'Page turn failed'
+                    drive(f'tap-at {profile["width"]//10},{y}')
+                    wait_for('Page 1 of 3')
+                    assert 'Page 1 of 3' in capture('04-previous'), 'Previous page failed'
+                    back = next(node for node in json.loads(get('layout'))['nodes'] if node['kind'] == 'Back')
+                    drive(f'tap-at {back["centre"]["x"]},{back["centre"]["y"]}')
+                    wait_for('Open added comic')
+                    assert 'On this reader' in capture('05-library-return') or 'Open added comic' in get('layout').decode(), 'Back did not return to library'
+                (args.output/'result.json').write_text(json.dumps(dict(status='passed', profile=args.profile,
+                    scale=args.scale, cbr=args.cbr, original_fixture=True), indent=2)+'\n')
+            finally:
+                if process is not None and process.poll() is None:
+                    os.killpg(process.pid, signal.SIGTERM)
+                    try:
+                        process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        os.killpg(process.pid, signal.SIGKILL)
+                        process.wait(timeout=5)
+
+
+if __name__ == '__main__':
+    main()

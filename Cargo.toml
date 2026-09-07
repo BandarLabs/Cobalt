@@ -4,6 +4,8 @@ members = [
     "crates/kobo-app-store",
     "crates/kobo-bookview",
     "crates/kobo-cli",
+    "crates/kobo-catalog",
+    "crates/kobo-comic",
     "crates/kobo-doc",
     "crates/kobo-doctor",
     "crates/kobo-dict",
