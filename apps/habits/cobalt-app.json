@@ -4,8 +4,8 @@
   "short_label": "Habits",
   "summary": "Track daily and weekday habits with local streaks.",
   "page_description": "An offline-first habit tracker that puts today's commitments and streaks on a calm paper display.",
-  "version": "0.1.1",
-  "release_notes": "An offline-first habit tracker that puts today's commitments and streaks on a calm paper display.",
+  "version": "0.1.2",
+  "release_notes": "Keep the Skip button labels inside their buttons when more than one habit is due, which they were not from Monday to Friday.",
   "glyph": "check",
   "capabilities": []
 }
