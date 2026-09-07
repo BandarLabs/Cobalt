@@ -62,14 +62,32 @@ function done(element) {
 // Said once, at the top, rather than left for the reader to discover when a
 // button does nothing. The directory picker is the part browsers disagree
 // about; everything else here is ordinary.
+function missingCapability() {
+  if (typeof window.showDirectoryPicker !== "function") return "picker";
+  // The write side is a separate interface and is what the install needs. A
+  // browser offering the picker without it would get as far as a chosen reader
+  // and a verified download, and fail at the only step that matters.
+  const file = window.FileSystemFileHandle;
+  if (!file || typeof file.prototype.createWritable !== "function") return "writing";
+  const folder = window.FileSystemDirectoryHandle;
+  if (!folder || typeof folder.prototype.getDirectoryHandle !== "function") return "folders";
+  return null;
+}
+
 function refuseUnsupportedBrowser() {
-  if (typeof window.showDirectoryPicker === "function") return false;
+  const missing = missingCapability();
+  if (!missing) return false;
   const banner = document.querySelector("#unsupported");
+  const detail = missing === "picker"
+    ? "cannot open a drive"
+    : missing === "writing"
+      ? "can open a drive but cannot write to one"
+      : "cannot read the folders on a drive";
   document.querySelector("#unsupported-why").innerHTML =
-    "Writing to a plugged-in drive needs <strong>Chrome, Edge or Opera on a " +
-    "computer</strong>. Firefox and Safari cannot do it, and neither can any " +
-    "browser on a phone or tablet. The ways below install exactly the same " +
-    "thing and work anywhere.";
+    `This browser ${detail}. Installing this way needs <strong>Chrome, Edge or ` +
+    "Opera on a computer</strong>: Firefox and Safari cannot do it, and neither " +
+    "can any browser on a phone or tablet. The ways below install exactly the " +
+    "same thing and work anywhere.";
   banner.hidden = false;
   pickButton.disabled = true;
   // The steps are the whole page and none of them can be followed here. Left
@@ -92,7 +110,14 @@ async function chooseDrive() {
     // Dismissing the picker is a choice, not a fault, and should not be
     // reported as one.
     if (error && error.name === "AbortError") return;
-    pickNote.innerHTML = `<span class="bad">The drive could not be opened: ${escapeText(error.message)}</span>`;
+    // Whatever went wrong here, this browser has just failed at the first step,
+    // so the routes that do not depend on it are opened rather than left folded
+    // away. A button that does nothing and says nothing is the worst of the
+    // outcomes available.
+    pickNote.innerHTML =
+      `<span class="bad">The drive could not be opened: ${escapeText(error.message || error.name || "no reason given")}. ` +
+      "The other ways to install, below, do not need this.</span>";
+    document.querySelector("#by-hand").open = true;
     return;
   }
 
