@@ -244,10 +244,27 @@ jobs:
       - name: Install the musl cross-compiler the device C needs
         run: |
           set -eu
-          curl -fsSL -o /tmp/zig.tar.xz \
-            https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz
-          echo "70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00  /tmp/zig.tar.xz" \
-            | sha256sum -c -
+          # Community mirrors listed at https://ziglang.org/download/community-mirrors.txt.
+          # Every source must match the same reviewed digest before extraction.
+          # Bound each attempt: ziglang.org has stalled indefinitely on CI runners.
+          zig_downloaded=false
+          for zig_url in \
+            'https://pkg.hexops.org/zig/zig-x86_64-linux-0.16.0.tar.xz?source=cobalt-ci' \
+            'https://ziglang.freetls.fastly.net/zig-x86_64-linux-0.16.0.tar.xz?source=cobalt-ci' \
+            'https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz'; do
+            if curl -fL --connect-timeout 15 --max-time 120 \
+              --speed-limit 1024 --speed-time 20 -o /tmp/zig.tar.xz "$zig_url" \
+              && echo "70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00  /tmp/zig.tar.xz" \
+                | sha256sum -c -; then
+              zig_downloaded=true
+              break
+            fi
+            echo "::warning::Could not obtain the pinned Zig archive from $zig_url"
+          done
+          if [ "$zig_downloaded" != true ]; then
+            echo "No source supplied the pinned Zig archive" >&2
+            exit 1
+          fi
           sudo tar -xJf /tmp/zig.tar.xz -C /opt
           sudo tee /usr/local/bin/armv7-musl-cc >/dev/null <<'CC'
           #!/bin/sh
