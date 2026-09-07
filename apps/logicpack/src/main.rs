@@ -733,3 +733,50 @@ mod regression_tests {
         assert!(restored.tap_mine(1));
     }
 }
+
+#[cfg(test)]
+mod help_layout_tests {
+    use super::*;
+    #[test]
+    fn help_fits_supported_text_scales_and_geometries() {
+        let screens = [
+            Kind::Home,
+            Kind::Slither,
+            Kind::Hashi,
+            Kind::Kakuro,
+            Kind::Mines,
+        ]
+        .map(|kind| {
+            let game = Game {
+                kind,
+                ..Game::default()
+            };
+            game.help_screen()
+        });
+        for screen in screens {
+            for (width, height, pixels_per_inch) in
+                [(1072, 1448, 300), (758, 1024, 212), (1448, 1072, 300)]
+            {
+                for text_scale in kobo_ui::TextScale::STEPS {
+                    let metrics = kobo_sdk::DisplayMetrics {
+                        width,
+                        height,
+                        pixels_per_inch,
+                        text_scale,
+                    };
+                    let chrome = kobo_ui::Chrome::measuring(true);
+                    let diagnostics = screen.diagnostics(&metrics, &chrome);
+                    assert!(
+                        diagnostics.issues.is_empty(),
+                        "{metrics:?}: {:?}",
+                        diagnostics.issues
+                    );
+                    assert!(screen
+                        .layout_with(&metrics, &chrome)
+                        .rect_of_action(action_id("close-help"))
+                        .is_some());
+                }
+            }
+        }
+    }
+}
