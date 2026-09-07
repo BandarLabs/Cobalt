@@ -160,3 +160,22 @@ test("Store-only and platform-only changes do not block each other", () => {
   assert.equal(affectsDevicePackage(bundledStoreApp[0]), true);
   assert.deepEqual(storeCatalogChanges(bundledStoreApp, directories), bundledStoreApp);
 });
+
+
+test("the no-publication guard excludes host routes and package prose without hiding source", () => {
+  const directories = directoriesOfThisTree();
+  const hostOnly = [
+    "apps/frame/drive.kobo", "apps/frame/drive.txt", "apps/frame/drive-empty.kobo",
+    "apps/frame/drive/scenes.txt", "apps/frame/README.md",
+    "examples/todo/drive.txt", "examples/todo/README.md"
+  ];
+  assert.deepEqual(storeCatalogChanges(hostOnly, directories), []);
+  const releaseInputs = [
+    "apps/frame/src/drive.txt", "apps/frame/src/notes.md", "apps/frame/Cargo.toml",
+    "apps/frame/cobalt-app.json", "apps/frame/drive-helper/src/main.rs",
+    "apps/drive/src/main.rs", "apps/drive.kobo", "apps/catalog.json",
+    "examples/todo/src/drive.txt"
+  ];
+  assert.deepEqual(storeCatalogChanges([...hostOnly, ...releaseInputs], directories),
+    [...releaseInputs].sort());
+});
