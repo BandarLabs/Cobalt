@@ -78,15 +78,17 @@ function refuseUnsupportedBrowser() {
   const missing = missingCapability();
   if (!missing) return false;
   const banner = document.querySelector("#unsupported");
-  // Said once. The heading already says it cannot be done here, so this says
-  // what is needed instead, and the colon that used to sit between them landed
-  // at the start of a line whenever the bolded part wrapped.
-  const detail = missing === "writing" ? "can open a drive but cannot write to one"
+  // Which of the three is missing matters for working out why, and not to
+  // somebody who wants to install a reading application: the answer is the same
+  // either way. It goes to the console for anyone looking, and the line on the
+  // page says what to do instead.
+  console.info(`Cobalt: this browser ${
+    missing === "writing" ? "opens a drive but cannot write to one"
     : missing === "folders" ? "cannot read folders on a drive"
-    : "cannot open a drive";
+    : "cannot open a drive"}.`);
   document.querySelector("#unsupported-why").innerHTML =
-    `It ${detail}. Installing this way needs Chrome, Edge or Opera on a computer. ` +
-    "The ways below install the same thing and work anywhere.";
+    "Try Chrome, Edge or Opera on a computer. Or use one of the ways below: " +
+    "one command in a terminal, or copy a single file with no terminal at all.";
   banner.hidden = false;
   pickButton.disabled = true;
   // The steps are the whole page and none of them can be followed here. Left
