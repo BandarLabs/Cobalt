@@ -18,7 +18,7 @@
         {
           "path": "crates/kobo-ui/src/lib.rs",
           "base_blob": "0e66ff990c5a1f5f64f960cdf9b776bbff55725e",
-          "compatible_blob": "8ff6e81f674292a875505dcc0783c28bcf4ae0e9"
+          "compatible_blob": "5584e7868c84392af10e3b69399a59e0d7941424"
         }
       ]
     },
@@ -124,7 +124,7 @@
         {
           "path": "crates/kobo-ui/src/lib.rs",
           "base_blob": "0e66ff990c5a1f5f64f960cdf9b776bbff55725e",
-          "compatible_blob": "8ff6e81f674292a875505dcc0783c28bcf4ae0e9"
+          "compatible_blob": "5584e7868c84392af10e3b69399a59e0d7941424"
         },
         {
           "path": "examples/gutenbird/Cargo.toml",
@@ -250,7 +250,7 @@
         {
           "path": "crates/kobo-ui/src/lib.rs",
           "base_blob": "0e66ff990c5a1f5f64f960cdf9b776bbff55725e",
-          "compatible_blob": "8ff6e81f674292a875505dcc0783c28bcf4ae0e9"
+          "compatible_blob": "5584e7868c84392af10e3b69399a59e0d7941424"
         },
         {
           "path": "examples/gutenbird/Cargo.toml",
