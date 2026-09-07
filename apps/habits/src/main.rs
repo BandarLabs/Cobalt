@@ -11,7 +11,7 @@ use model::{
 use std::process::ExitCode;
 const HABITS: &str = "habits-v1";
 const ROWS_PER_PAGE: usize = 3;
-const ACTION_NAME_CHARS: usize = 24;
+const ACTION_NAME_CHARS: usize = 12;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Page {
     Today,
@@ -865,7 +865,7 @@ mod tests {
         runner.store_result(StoreResult::Loaded {
             key: HABITS.into(),
             value: Some(
-                format!("0\td\t{long}\t\t\n0\tw\t{spaced}\t\t\n0\td\t  \t\t\n").into_bytes(),
+                format!("0\td\t{long}\t\t\n0\td\t{spaced}\t\t\n0\td\t  \t\t\n").into_bytes(),
             ),
         });
 
@@ -1025,5 +1025,32 @@ mod tests {
                 .done
                 .is_empty()
         );
+    }
+
+    // A page holds ROWS_PER_PAGE habits, and each due habit puts a Skip button
+    // in one shared band, so the widest label has to fit a third of the width
+    // rather than all of it. It did not: with three long names the buttons
+    // overflowed their slots and the label ran past the edge of the button.
+    //
+    // Nothing caught it because the schedules decided how many buttons there
+    // were. A weekdays habit is not due at a weekend, so the second button only
+    // appeared from Monday, and the test that would have failed was run on a
+    // Saturday and passed. This one holds the count itself.
+    #[test]
+    fn a_full_page_of_long_names_keeps_every_button_inside_its_slot() {
+        let long = "x".repeat(MAX_HABIT_NAME_CHARS);
+        let mut runner = AppRunner::new(Habits::default());
+        runner.start();
+        runner.store_result(StoreResult::Loaded {
+            key: HABITS.into(),
+            value: Some(
+                format!("0\td\t{long}\t\t\n0\td\t{long}\t\t\n0\td\t{long}\t\t\n").into_bytes(),
+            ),
+        });
+        assert_eq!(runner.app().items.len(), ROWS_PER_PAGE);
+        let screen = runner.app().screen();
+        let diagnostics =
+            screen.diagnostics(&kobo_ui::CLARA_BW_METRICS, &kobo_ui::Chrome::default());
+        assert!(diagnostics.issues.is_empty(), "{:#?}", diagnostics.issues);
     }
 }
