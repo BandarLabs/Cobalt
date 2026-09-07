@@ -151,24 +151,25 @@ kbd { border: 1px solid var(--rule); border-bottom-width: 2px; padding: 0 5px; b
       </section>
 
       <section class="way">
-        <h3><span class="tag">Any browser</span> Copy one file</h3>
+        <h3><span class="tag">From source</span> Build it yourself</h3>
+        <p>Needs Rust. Builds the same thing the others download.</p>
+        <pre>git clone https://github.com/BandarLabs/Cobalt.git
+cd Cobalt
+rustup target add armv7-unknown-linux-musleabihf
+cargo run -p kobo-cli -- setup</pre>
+      </section>
+
+      <section class="way">
+        <h3><span class="tag">Any computer</span> Copy one file</h3>
+        <p>No terminal, and any browser. It is the file the steps above would write.</p>
         <ol>
           <li>Download <a id="by-hand-archive" href="cobalt-KoboRoot.tgz" download>the Cobalt file</a> <span class="note" id="by-hand-size"></span></li>
-          <li>Plug the Kobo in and tap <em>Connect</em>. It shows up as a drive called <code>KOBOeReader</code>.</li>
+          <li>Plug the Kobo in. It asks on its own screen whether to connect: tap <strong>Connect</strong>. It shows up as a drive called <code>KOBOeReader</code>.</li>
           <li>Copy the file into the <code>.kobo</code> folder, named exactly <code>KoboRoot.tgz</code>. That folder is hidden: on a Mac press <kbd>&#8984;&#8679;.</kbd> in Finder, on Windows turn on <em>Hidden items</em> in the View tab.</li>
           <li>Eject the drive, unplug, then hold the power button until the reader restarts.</li>
         </ol>
         <p class="note">To add Cobalt to the reader's menu, also make a file called <code>cobalt</code> inside <code>.adds/nm</code> containing:</p>
         <pre id="by-hand-entry"></pre>
-      </section>
-
-      <section class="way">
-        <h3><span class="tag">From source</span> Build it yourself</h3>
-        <p>Needs Rust. Builds the same thing the other two download.</p>
-        <pre>git clone https://github.com/BandarLabs/Cobalt.git
-cd Cobalt
-rustup target add armv7-unknown-linux-musleabihf
-cargo run -p kobo-cli -- setup</pre>
       </section>
 
       <p class="note">Supported readers and the firmware each was tested at are in the <a href="https://github.com/BandarLabs/Cobalt/blob/main/docs/DEVICES.md#device-support-matrix">device support matrix</a>. The full walkthrough, including how to recover a reader, is in <a href="https://github.com/BandarLabs/Cobalt/blob/main/docs/INSTALL.md">docs/INSTALL.md</a>.</p>

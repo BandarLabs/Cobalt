@@ -65,12 +65,17 @@ function done(element) {
 function refuseUnsupportedBrowser() {
   if (typeof window.showDirectoryPicker === "function") return false;
   const banner = document.querySelector("#unsupported");
-  document.querySelector("#unsupported-why").textContent =
-    "Writing to a plugged-in drive is something Chrome, Edge and Opera can do " +
-    "and Firefox and Safari cannot. Open this page in one of those, or use " +
-    "one of the other ways below. Both put on exactly the same thing.";
+  document.querySelector("#unsupported-why").innerHTML =
+    "Writing to a plugged-in drive is something Chrome, Edge and Opera can do, " +
+    "and Firefox and Safari cannot. <strong>Open this page in Chrome</strong> " +
+    "to install straight from the browser. Otherwise the ways below install " +
+    "exactly the same thing.";
   banner.hidden = false;
   pickButton.disabled = true;
+  // The steps above cannot be followed here, so the ways that can be are
+  // opened rather than left folded behind a heading somebody has to think to
+  // click.
+  document.querySelector("#by-hand").open = true;
   return true;
 }
 
