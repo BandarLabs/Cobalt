@@ -5,7 +5,8 @@ import { collectRegistry } from "./app-registry.mjs";
 
 // Everything whose content reaches a reader through the signed Store catalog.
 //
-// `apps/` is taken whole: it holds the registry and every Store-only package.
+// `apps/` holds the registry and every Store-only package. Host drive scripts
+// and package README files use the same exclusions as the release checker.
 // Registered packages that still live under `examples/` are watched by their
 // workspace directory, because those binaries are the same ones the catalog
 // signs. Device-only examples (launcher, settings, store, terminal, hello)
@@ -18,10 +19,54 @@ import { collectRegistry } from "./app-registry.mjs";
 // job. The next Store publication of an actually edited app compiles against
 // whatever the platform then is.
 
+// A drive script is the host-side route used to film an application. It is
+// never compiled into the signed bundle, so adding or editing one must not
+// look like a Store package change. That mistake is what turned a simulator
+// recording script into a forced version bump of every example that grew one.
+//
+// Matching only drive.txt and drive.kobo let it happen again as soon as an
+// application needed more than one route: a shelf of thirty-six applications
+// grew drive.sh, drive-states.kobo, drive-empty.kobo, and a drive/ directory
+// of scenes, and every one of those counted as a release input. So the whole
+// family beside the package is named here, and only beside the package —
+// src/drive.txt is source and a sibling directory is another package.
+export function isFilmingScript(path, packageDirectory) {
+  if (!path.startsWith(`${packageDirectory}/`)) return false;
+  const beside = path.slice(packageDirectory.length + 1);
+  return beside === "drive" || beside.startsWith("drive/") || /^drive[-.][^/]*$/.test(beside);
+}
+
+// Prose beside a package is not in the package. A published entry is built
+// from cobalt-app.json and the compiled binary, and neither the registry nor
+// the app-page generator reads a README, so no byte anybody downloads can
+// change because a paragraph did.
+//
+// Counting it is the same mistake the drive scripts above were rescued from.
+// Correcting a sentence in apps/syncthing/README.md that had gone stale --
+// it still told readers to export an environment variable for a packaging
+// step that no longer exists -- was refused as an unreleased change to the
+// Syncthing application, and the remedy on offer was to publish a new version
+// of it to every reader who has it in order to fix a paragraph none of them
+// download.
+//
+// Only prose directly beside the package: a nested path may be a screenshot
+// the app page does publish, and src/notes.md is source.
+export function isDocumentation(path, packageDirectory) {
+  if (!path.startsWith(`${packageDirectory}/`)) return false;
+  const beside = path.slice(packageDirectory.length + 1);
+  return !beside.includes("/") && beside.endsWith(".md");
+}
+
 export function affectsStoreCatalog(path, directories) {
   if (typeof path !== "string" || !Array.isArray(directories)) return false;
   const normalized = path.trim().split("\\").join("/");
   if (normalized.length === 0) return false;
+  // "apps" is the broad catch-all, not a package root. Applying an exclusion
+  // there would hide an actual app named drive or a new registry-level file.
+  const packageDirectories = directories.filter(directory => directory !== "apps");
+  if (packageDirectories.some(directory =>
+    isFilmingScript(normalized, directory) || isDocumentation(normalized, directory)
+  )) return false;
   return directories.some(
     directory => normalized === directory || normalized.startsWith(`${directory}/`)
   );

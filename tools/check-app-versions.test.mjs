@@ -1163,3 +1163,14 @@ test("the Flashcards test-only exemption refuses a changed production blob", () 
   assert.deepEqual(compatibleChangePaths(manifest, 13, [file.path], () => file.base_blob, () => file.compatible_blob), new Set([file.path]));
   assert.deepEqual(compatibleChangePaths(manifest, 13, [file.path], () => file.base_blob, () => "f".repeat(40)), new Set());
 });
+
+test("both catalog gates share package-root exclusions without hiding nested source", () => {
+  const packages = new Map([["kobo-frame", "apps/frame"]]);
+  const registered = ["kobo-frame"];
+  const hostOnly = ["apps/frame/drive.kobo", "apps/frame/drive/scenes.txt", "apps/frame/README.md"];
+  assert.equal(storeImpactOfChangedPaths(hostOnly, packages, registered).catalogQuiet, true);
+  const source = ["apps/frame/src/drive.txt", "apps/frame/src/notes.md", "apps/drive.kobo", "apps/drive/src/main.rs"];
+  const expected = [...source].sort();
+  assert.deepEqual(storeImpactOfChangedPaths([...hostOnly, ...source], packages, registered).storeChanges, expected);
+  assert.deepEqual(storeCatalogChanges([...hostOnly, ...source], storeWatchDirectories(packages, registered)), expected);
+});
