@@ -1,5 +1,11 @@
 expect Lichess
 expect Puzzles
-expect Daily puzzle
+tap How to play
+expect Chess on Lichess
+wait 250
+clean
+shot lichess-help
+tap Play
+expect Computer
 clean
 shot home

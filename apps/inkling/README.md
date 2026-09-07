@@ -6,10 +6,9 @@ are grayscale-first: `[letter]` is placed, `(letter)` is present, and `letter×`
 
 ![A solved Inkling puzzle on Clara BW](screenshots/inkling-solved.png)
 
-The compact MVP includes six guesses, duplicate-correct scoring, hard-mode placed-letter checks,
+The compact game includes six guesses, duplicate-correct scoring, hard-mode revealed-letter checks,
 and a stats summary. It ships a deliberately small common-word seed list rather than any copied
-commercial answer list. No trademarked game name or source list is used. A production word asset
-will retain public-domain ENABLE provenance and an explicit exclusion list.
+commercial answer list. No trademarked game name or source list is used.
 
 ## Capabilities
 

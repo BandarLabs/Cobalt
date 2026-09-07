@@ -8,6 +8,5 @@ tap Class
 tap Level
 tap School
 tap Ritual
-tap Concentration
 clean
 shot spell-filters

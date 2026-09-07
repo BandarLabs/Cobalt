@@ -34,7 +34,8 @@ to match the checkout being audited.
 `Cargo.lock` records the same immutable Anki Git revision and all resolved Rust
 dependencies. The host dependency notice lists exact non-Anki package versions
 and licences; the Anki packages and licence are listed explicitly above.
-`cargo vendor --locked vendor` materializes corresponding registry/Git source
+`cargo vendor --locked --manifest-path crates/kobo-flashcards-import/Cargo.toml vendor`
+materializes corresponding registry/Git source
 into one local directory when an offline source archive is required.
 
 To use the documented artifact-audit layout, build the host helper from the
@@ -47,7 +48,8 @@ test -z "$(git status --porcelain --untracked-files=normal)"
 source_commit=$(git rev-parse HEAD)
 COBALT_SOURCE_COMMIT="$source_commit" \
 CARGO_TARGET_DIR="$target_root/host-target" \
-  cargo build --locked --release -p kobo-flashcards-import
+  cargo build --locked --release \
+    --manifest-path crates/kobo-flashcards-import/Cargo.toml
 printf '%s\n' "$source_commit" > \
   "$target_root/artifacts/flashcards-import.source-commit.txt"
 ```

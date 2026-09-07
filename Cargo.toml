@@ -86,6 +86,7 @@ members = [
     "apps/zotero-reader",
     "tools/icon-import",
 ]
+exclude = ["crates/kobo-flashcards-import"]
 resolver = "2"
 
 [workspace.package]

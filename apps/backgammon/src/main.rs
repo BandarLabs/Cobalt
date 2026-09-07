@@ -353,6 +353,7 @@ struct Game {
     history: Vec<Snapshot>,
     message: String,
     initial_load: InitialLoad,
+    help: bool,
 }
 
 impl Default for Game {
@@ -376,6 +377,7 @@ impl Default for Game {
             history: Vec::new(),
             message: "Tap Roll to begin.".into(),
             initial_load: InitialLoad::Pending,
+            help: false,
         }
     }
 }
@@ -747,6 +749,7 @@ impl Game {
             history: Vec::new(),
             message: saved_message(phase),
             initial_load: InitialLoad::Pending,
+            help: false,
         };
         if !saved_game_is_safe(&game) {
             return None;
@@ -1267,6 +1270,20 @@ fn board_pixels(game: &Game) -> Vec<u8> {
 }
 
 fn screen(game: &Game, picture: Option<TilePicture>) -> Screen {
+    if game.help {
+        return ScreenBuilder::new("backgammon-help")
+            .top_bar("How to play")
+            .owns_back(true)
+            .heading("Move all 15 checkers home, then off")
+            .text("Roll, tap a checker, then a legal destination marked on the board.")
+            .text("A lone opposing checker is hit and sent to the bar. Move bar checkers first.")
+            .text(
+                "Once every checker is home, bear them off. The first player to clear all 15 wins.",
+            )
+            .text("Double raises the game's value before a roll; the opponent may take or drop.")
+            .bottom_action("close-help", "Play")
+            .build();
+    }
     match game.phase {
         Phase::ConfirmDouble => ScreenBuilder::new("backgammon-double")
             .top_bar("Backgammon")
@@ -1378,6 +1395,7 @@ fn playing_screen(game: &Game, picture: Option<TilePicture>) -> Screen {
         .chips([
             ("mode", game.mode.label().to_owned(), false),
             ("match", format!("To {}", game.match_to), false),
+            ("how-to-play", "How to play".to_owned(), false),
         ])
         .action_bar([("roll", "Roll"), ("double", "Double"), ("undo", "Undo")])
         .build()
@@ -1453,7 +1471,7 @@ impl Game {
     }
 
     fn show(&self, context: &mut Context) {
-        let picture = if self.phase == Phase::Playing {
+        let picture = if self.phase == Phase::Playing && !self.help {
             context.put_picture(BOARD_PICTURE, BOARD_WIDTH, BOARD_HEIGHT, board_pixels(self))
         } else {
             None
@@ -1463,6 +1481,17 @@ impl Game {
 }
 
 fn game_action(game: &mut Game, action: ActionId) -> Option<()> {
+    if game.help {
+        if action == action_id("close-help") || action == ActionId::BACK {
+            game.help = false;
+            return Some(());
+        }
+        return None;
+    }
+    if action == action_id("how-to-play") {
+        game.help = true;
+        return Some(());
+    }
     if game.mode == Mode::Solo
         && game.turn == Player::Black
         && matches!(

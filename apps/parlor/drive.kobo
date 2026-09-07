@@ -1,6 +1,12 @@
 expect Pass-and-play classics
 tap Reversi
 expect Set the table
+tap How to play
+expect Bracketed discs flip
+wait 250
+clean
+shot parlor-help
+tap Set up game
 tap Start game
 expect Tap a hollow destination
 clean

@@ -165,12 +165,33 @@ for app in $APPS; do
     # Started from the application's own directory, which is how `kobo dev`
     # decides what to build and run.
     if [ -n "$FRESH" ]; then
-        mkdir -p "$OUT/$app-store"
-        store=$(cd "$OUT/$app-store" && pwd)
-        (cd "$directory" && TMPDIR="$store" exec "$KOBO" dev "$ADDRESS") > "$log" 2>&1 &
+        # The simulator uses a Unix socket under TMPDIR; keeping this path
+        # short avoids SUN_LEN failures when --out is a long workspace path.
+        store=$(mktemp -d "/tmp/cb-$app.XXXXXX")
     else
-        (cd "$directory" && exec "$KOBO" dev "$ADDRESS") > "$log" 2>&1 &
+        store="${TMPDIR:-/tmp}"
     fi
+    case "$app" in
+        deck)
+            TMPDIR="$store" "$KOBO" deck init --home "$store/deck-config" >/dev/null
+            TMPDIR="$store" "$KOBO" deck set 1 --label Todo --launch todo --home "$store/deck-config" >/dev/null
+            TMPDIR="$store" "$KOBO" deck set 2 --label Example --url https://example.com --home "$store/deck-config" >/dev/null
+            TMPDIR="$store" "$KOBO" deck push --sim --home "$store/deck-config" >/dev/null
+            ;;
+        frame)
+            TMPDIR="$store" "$KOBO" frame init --sim >/dev/null
+            TMPDIR="$store" "$KOBO" frame push "$PWD/apps/frame/screenshots/frame.png" --sim --fit pad >/dev/null
+            ;;
+        vault)
+            TMPDIR="$store" "$KOBO" vault init --sim >/dev/null
+            TMPDIR="$store" "$KOBO" vault push "$PWD/apps/vault/tests/fixtures" --sim >/dev/null
+            ;;
+    esac
+    case "$app" in
+        fanshelf) (cd "$directory" && TMPDIR="$store" FANSHELF_DEMO=1 exec "$KOBO" dev "$ADDRESS") > "$log" 2>&1 & ;;
+        inkling) (cd "$directory" && TMPDIR="$store" KOBO_INKLING_DAY=2026-09-01 exec "$KOBO" dev "$ADDRESS") > "$log" 2>&1 & ;;
+        *) (cd "$directory" && TMPDIR="$store" exec "$KOBO" dev "$ADDRESS") > "$log" 2>&1 & ;;
+    esac
     simulator=$!
 
     # The address line is printed once the application has compiled, started

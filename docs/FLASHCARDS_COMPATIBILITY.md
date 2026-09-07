@@ -237,7 +237,7 @@ never enter source control:
 
 ```sh
 COBALT_ANKI_EQUIVALENCE_APKG=/path/to/private.apkg \
-  cargo test -p kobo-flashcards-import \
+  cargo test --manifest-path crates/kobo-flashcards-import/Cargo.toml \
   private_owner_deck_matches_pinned_rslib_aggregates_when_available
 ```
 

@@ -42,23 +42,73 @@ wait_for_sim() {
   return 1
 }
 
+catalog_apps() {
+  (
+    cd "$ROOT"
+    node --input-type=module -e '
+      import { collectRegistry } from "./tools/app-registry.mjs";
+      for (const app of collectRegistry().apps) console.log(app.id);
+    '
+  )
+}
+
+source_of() {
+  for root in apps examples; do
+    if [ -d "$ROOT/$root/$1" ]; then
+      echo "$ROOT/$root/$1"
+      return 0
+    fi
+  done
+  return 1
+}
+
+script_of() {
+  for name in drive.kobo drive.txt; do
+    if [ -f "$1/$name" ]; then
+      echo "$1/$name"
+      return 0
+    fi
+  done
+  return 1
+}
+
 run_one() {
   app="$1"
-  script="$ROOT/apps/$app/drive.kobo"
-  if [ ! -f "$script" ]; then
-    echo "SKIP $app (no drive.kobo)"
+  directory="$(source_of "$app")" || {
+    echo "SKIP $app (no source directory)"
     return 0
-  fi
+  }
+  script="$(script_of "$directory")" || {
+    echo "SKIP $app (no drive script)"
+    return 0
+  }
   mkdir -p "$SHOTS/$app"
+  store="$(mktemp -d "/tmp/cb-$app.XXXXXX")"
+  case "$app" in
+    deck)
+      TMPDIR="$store" "$KOBO" deck init --home "$store/deck-config" >/dev/null
+      TMPDIR="$store" "$KOBO" deck set 1 --label Todo --launch todo --home "$store/deck-config" >/dev/null
+      TMPDIR="$store" "$KOBO" deck set 2 --label Example --url https://example.com --home "$store/deck-config" >/dev/null
+      TMPDIR="$store" "$KOBO" deck push --sim --home "$store/deck-config" >/dev/null
+      ;;
+    frame)
+      TMPDIR="$store" "$KOBO" frame init --sim >/dev/null
+      TMPDIR="$store" "$KOBO" frame push "$ROOT/apps/frame/screenshots/frame.png" --sim --fit pad >/dev/null
+      ;;
+    vault)
+      TMPDIR="$store" "$KOBO" vault init --sim >/dev/null
+      TMPDIR="$store" "$KOBO" vault push "$ROOT/apps/vault/tests/fixtures" --sim >/dev/null
+      ;;
+  esac
   stop_sim
   echo "==== $app ===="
   (
-    cd "$ROOT/apps/$app"
-    if [ "$app" = fanshelf ]; then
-      FANSHELF_DEMO=1 "$KOBO" dev
-    else
-      "$KOBO" dev
-    fi
+    cd "$directory"
+    case "$app" in
+      fanshelf) TMPDIR="$store" FANSHELF_DEMO=1 "$KOBO" dev ;;
+      inkling) TMPDIR="$store" KOBO_INKLING_DAY=2026-09-01 "$KOBO" dev ;;
+      *) TMPDIR="$store" "$KOBO" dev ;;
+    esac
   ) >/tmp/cobalt-dev-"$app".log 2>&1 &
   DEV_PID=$!
   if ! wait_for_sim; then
@@ -77,7 +127,7 @@ run_one() {
 
 APPS="${*:-}"
 if [ -z "$APPS" ]; then
-  APPS="backgammon calibre-web crossword deck fanshelf fieldbook flashcards frame grimoire habits homepanel inkling kitchencard lichess logicpack musicstand needles nonograms panels paperterm parlor parser post pubquiz readlater rss-miniflux syncthing vault verses"
+  APPS="$(catalog_apps)"
 fi
 
 : >/tmp/cobalt-shelf-shots.log

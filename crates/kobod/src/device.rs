@@ -617,6 +617,9 @@ pub fn present(
         .stop(STOP_GRACE)
         .map_err(|error| format!("stop the reader: {error}"))?;
     wifi_trace.checkpoint(WifiTraceEvent::NickelStopped);
+    if let Err(error) = show_launch_screen(&display, whole_screen) {
+        trace(&format!("launch screen unavailable: {error}"));
+    }
     wifi_trace.checkpoint(WifiTraceEvent::RecoveryBegin);
 
     // Nickel owns Wi-Fi while it runs, but its supplicant and DHCP client are
@@ -983,6 +986,39 @@ fn describe(limit: Duration) -> String {
         0 => format!("{minutes} minute"),
         rest => format!("{minutes} minute {rest} second"),
     }
+}
+
+fn launch_screen() -> Screen {
+    Screen::new(
+        0x434f_4241,
+        vec![kobo_ui::Node::Splash {
+            id: kobo_ui::NodeId(2),
+            glyph: Some(kobo_ui::Glyph::Grid),
+            title: "Opening Cobalt".to_owned(),
+            summary: "Getting your apps ready.".to_owned(),
+        }],
+    )
+    .with_top_bar(kobo_ui::TopBar::new(kobo_ui::NodeId(1), "Cobalt"))
+}
+
+/// Paints the first Cobalt-owned frame as soon as Nickel releases the panel.
+/// Network recovery and application discovery continue behind this screen.
+fn show_launch_screen(display: &DisplaySession, whole_screen: Rect) -> Result<(), String> {
+    let screen = launch_screen();
+    let mut surface = Surface::new(
+        usize::try_from(whole_screen.width).unwrap_or(0),
+        usize::try_from(whole_screen.height).unwrap_or(0),
+    );
+    kobo_ui::render_oriented(
+        &screen,
+        &metrics_for(&screen),
+        &Chrome::with_back(false),
+        &(),
+        &mut surface,
+        None,
+        kobo_ui::Orientation::Portrait,
+    );
+    Painter::new(surface.width, surface.height).paint(display, whole_screen, &surface)
 }
 
 /// Tells the reader a restart is coming, and that it is not a fault.
@@ -4124,6 +4160,19 @@ mod tests {
         include_bytes!("../../kobo-net/tests/fixtures/localhost-key.der");
     const SEEK_BODY: &str = "rated=true&time=10&increment=0&variant=standard&color=random";
     const FORM: &str = "application/x-www-form-urlencoded";
+
+    #[test]
+    fn launch_screen_is_crisp_and_fits_the_smallest_panel() {
+        let screen = super::launch_screen();
+        let diagnostics = screen.diagnostics(
+            &kobo_ui::CLARA_BW_METRICS,
+            &kobo_ui::Chrome::with_back(false),
+        );
+        assert!(diagnostics.issues.is_empty(), "{:?}", diagnostics.issues);
+        let rendered = format!("{screen:?}");
+        assert!(rendered.contains("Opening Cobalt"));
+        assert!(rendered.contains("Getting your apps ready."));
+    }
 
     fn trust_mock_root() {
         static TRUST: Once = Once::new();

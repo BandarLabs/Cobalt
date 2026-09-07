@@ -4,10 +4,8 @@
   "short_label": "Inkling",
   "summary": "Solve a fresh five-letter puzzle each day.",
   "page_description": "A daily five-letter word puzzle you can play anywhere, with or without Wi-Fi.",
-  "version": "0.1.0",
-  "release_notes": "A daily five-letter word puzzle you can play anywhere, with or without Wi-Fi.",
+  "version": "0.1.1",
+  "release_notes": "Use the real calendar day, improve word and hard-mode checks, and add a short rules page.",
   "glyph": "note",
-  "capabilities": [
-    "network"
-  ]
+  "capabilities": []
 }

@@ -29,7 +29,7 @@
         {
           "path": "Cargo.lock",
           "base_blob": "2abdcc318538b63f16e492beb19b112a1134f105",
-          "compatible_blob": "75e8b27b88d423dd7ea9aa5450c2f9ead8a52ac1"
+          "compatible_blob": "aa0961448d78f0e07d62e283a92969e700b1330c"
         },
         {
           "path": "crates/kobo-abi/src/lib.rs",
@@ -155,7 +155,7 @@
         {
           "path": "Cargo.lock",
           "base_blob": "2abdcc318538b63f16e492beb19b112a1134f105",
-          "compatible_blob": "75e8b27b88d423dd7ea9aa5450c2f9ead8a52ac1"
+          "compatible_blob": "aa0961448d78f0e07d62e283a92969e700b1330c"
         },
         {
           "path": "crates/kobo-abi/src/lib.rs",

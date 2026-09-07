@@ -1,9 +1,9 @@
 [package]
 name = "kobo-flashcards-import"
-version.workspace = true
-edition.workspace = true
-rust-version.workspace = true
-license.workspace = true
+version = "0.3.10"
+edition = "2021"
+rust-version = "1.85.1"
+license = "AGPL-3.0-only"
 publish = false
 
 [[bin]]
@@ -29,5 +29,12 @@ icu_normalizer = "=2.0.0"
 icu_properties = "=2.0.0"
 time = "=0.3.41"
 
-[lints]
-workspace = true
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = "warn"
+pedantic = "warn"
+
+[workspace]
+resolver = "2"

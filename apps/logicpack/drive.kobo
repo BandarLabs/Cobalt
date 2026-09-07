@@ -1,8 +1,14 @@
 expect Logic Pack
 tap Minesweeper
 expect First reveal is safe
+tap How to play
+expect Reveal every safe square
+wait 250
+clean
+shot logicpack-help
+tap Play
 tap ?
 tap Check
-expect contradiction
+expect Not solved yet
 clean
 shot logicpack-mines

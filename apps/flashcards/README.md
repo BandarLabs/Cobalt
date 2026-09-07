@@ -14,9 +14,9 @@ Prepare and stage a collection on the host, with the Kobo USB volume mounted
 at `MOUNT` and Flashcards closed:
 
 ```sh
-cargo run -p kobo-flashcards-import -- \
+cargo run --manifest-path crates/kobo-flashcards-import/Cargo.toml -- \
   import deck.apkg --merge collection.cobfc
-cargo run -p kobo-flashcards-import -- \
+cargo run --manifest-path crates/kobo-flashcards-import/Cargo.toml -- \
   stage collection.cobfc --kobo-root MOUNT
 ```
 
