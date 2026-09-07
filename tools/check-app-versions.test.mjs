@@ -1142,3 +1142,24 @@ test("the previous complete-set artifact is still excluded from per-app reuse", 
   assert.match(source, /previous_artifact="set"/);
   assert.match(source, /the set has to/);
 });
+
+test("the standalone importer is isolated without changing device workspace inputs", () => {
+  const metadata = manifestPath => JSON.parse(execFileSync("cargo", [
+    "metadata", "--locked", "--no-deps", "--format-version", "1",
+    ...(manifestPath ? ["--manifest-path", manifestPath] : [])
+  ], { encoding: "utf8", maxBuffer: COMMAND_MAX_BUFFER }));
+  const workspace = metadata();
+  assert.ok(!workspace.workspace_members.some(member => member.includes("kobo-flashcards-import")));
+  const importer = metadata("crates/kobo-flashcards-import/Cargo.toml");
+  assert.equal(importer.workspace_members.length, 1);
+  assert.ok(importer.workspace_members[0].includes("kobo-flashcards-import"));
+});
+
+test("the Flashcards test-only exemption refuses a changed production blob", () => {
+  const manifest = JSON.parse(readFileSync("tools/app-release-compatible-changes.json", "utf8"));
+  const file = manifest.changes.flatMap(change => change.files)
+    .find(entry => entry.path === "apps/flashcards/src/main.rs");
+  assert.ok(file);
+  assert.deepEqual(compatibleChangePaths(manifest, 13, [file.path], () => file.base_blob, () => file.compatible_blob), new Set([file.path]));
+  assert.deepEqual(compatibleChangePaths(manifest, 13, [file.path], () => file.base_blob, () => "f".repeat(40)), new Set());
+});

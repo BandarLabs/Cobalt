@@ -1,8 +1,9 @@
 //! Inkling: a deterministic, offline five-letter daily puzzle.
 use kobo_sdk::keyboard::{Keyboard, Pressed};
-use kobo_sdk::{action_id, ActionId, Context, KoboApp, Screen, ScreenBuilder};
+use kobo_sdk::{action_id, ActionId, Context, KoboApp, Screen, ScreenBuilder, StoreResult};
 use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
+const STATE: &str = "inkling-state-v1";
 const SALT: &str = "inkling-offline-2026";
 const ANSWERS: &[&str] = &[
     "crane", "stare", "piano", "flint", "woven", "mirth", "caper", "bloom", "quiet", "ridge",
@@ -115,6 +116,12 @@ fn hard_allows(answer: &str, prior: &[String], guess: &str) -> bool {
         }) >= usize::from(*needed)
     })
 }
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum LoadState {
+    Pending,
+    Ready,
+}
+
 struct Game {
     date: String,
     answer: &'static str,
@@ -124,23 +131,109 @@ struct Game {
     hard: bool,
     typing: bool,
     help: bool,
+    load: LoadState,
+    played: u32,
+    wins: u32,
 }
 impl Default for Game {
     fn default() -> Self {
         let date = std::env::var("KOBO_INKLING_DAY").unwrap_or_else(|_| today());
+        Self::for_day(&date)
+    }
+}
+impl Game {
+    fn for_day(date: &str) -> Self {
         Self {
-            answer: answer_for(&date),
-            date,
+            answer: answer_for(date),
+            date: date.to_owned(),
             guesses: Vec::new(),
             keyboard: Keyboard::new(),
             notice: "Six guesses. Shape states do not rely on color.".into(),
             hard: false,
             typing: false,
             help: false,
+            load: LoadState::Pending,
+            played: 0,
+            wins: 0,
         }
     }
 }
 impl Game {
+    fn encode(&self) -> Vec<u8> {
+        format!(
+            "1|{}|{}|{}|{}|{}",
+            self.date,
+            u8::from(self.hard),
+            self.played,
+            self.wins,
+            self.guesses.join(",")
+        )
+        .into_bytes()
+    }
+
+    fn restore(&mut self, bytes: &[u8]) -> bool {
+        let Ok(text) = std::str::from_utf8(bytes) else {
+            return false;
+        };
+        let fields = text.split('|').collect::<Vec<_>>();
+        if fields.len() != 6 || fields[0] != "1" {
+            return false;
+        }
+        let hard = match fields.get(2).copied() {
+            Some("0") => false,
+            Some("1") => true,
+            _ => return false,
+        };
+        let (Ok(played), Ok(wins)) = (fields[3].parse::<u32>(), fields[4].parse::<u32>()) else {
+            return false;
+        };
+        if wins > played {
+            return false;
+        }
+        let guesses = if fields[5].is_empty() {
+            Vec::new()
+        } else {
+            fields[5].split(',').map(str::to_owned).collect::<Vec<_>>()
+        };
+        if guesses.len() > 6 || guesses.iter().any(|guess| !valid(guess)) {
+            return false;
+        }
+        let answer = answer_for(fields[1]);
+        if guesses
+            .iter()
+            .take(guesses.len().saturating_sub(1))
+            .any(|guess| guess == answer)
+        {
+            return false;
+        }
+        let completed = guesses.len() == 6 || guesses.last().is_some_and(|guess| guess == answer);
+        if completed
+            && (played == 0 || (guesses.last().is_some_and(|guess| guess == answer) && wins == 0))
+        {
+            return false;
+        }
+        // Validate completely before replacing anything; a bad save cannot
+        // leave a partially restored board or index a short guess in marks().
+        self.played = played;
+        self.wins = wins;
+        self.hard = hard;
+        if fields[1] == self.date {
+            self.guesses = guesses;
+            self.notice = if self
+                .guesses
+                .last()
+                .is_some_and(|guess| guess == self.answer)
+            {
+                "Solved.".into()
+            } else if self.done() {
+                format!("Answer: {}", self.answer)
+            } else {
+                "Saved game restored.".into()
+            };
+        }
+        true
+    }
+
     fn done(&self) -> bool {
         self.guesses.len() >= 6
             || self
@@ -150,6 +243,9 @@ impl Game {
     }
 
     fn submit(&mut self) {
+        if self.done() {
+            return;
+        }
         let guess = self.keyboard.take().to_ascii_lowercase();
         if guess.len() != 5 {
             self.notice = "Use five letters.".into();
@@ -164,6 +260,10 @@ impl Game {
             return;
         }
         self.guesses.push(guess.clone());
+        if self.done() {
+            self.played = self.played.saturating_add(1);
+            self.wins = self.wins.saturating_add(u32::from(guess == self.answer));
+        }
         self.notice = if guess == self.answer {
             "Solved.".into()
         } else if self.done() {
@@ -227,10 +327,33 @@ impl Game {
 }
 impl KoboApp for Game {
     fn on_start(&mut self, c: &mut Context) {
+        c.store().load(STATE);
+        c.set_screen(self.screen());
+    }
+    fn on_store(&mut self, c: &mut Context, result: StoreResult) {
+        match result {
+            StoreResult::Loaded { key, value }
+                if key == STATE && self.load == LoadState::Pending =>
+            {
+                if value.is_some_and(|bytes| !self.restore(&bytes)) {
+                    self.notice = "Saved game was damaged and was ignored.".into();
+                }
+                self.load = LoadState::Ready;
+            }
+            StoreResult::Denied(_) => {
+                self.load = LoadState::Ready;
+                self.notice = "Progress could not be saved. Check available storage.".into();
+            }
+            _ => return,
+        }
         c.set_screen(self.screen());
     }
     fn on_action(&mut self, c: &mut Context, a: ActionId) {
+        if self.load == LoadState::Pending {
+            return;
+        }
         let mut changed = false;
+        let mut save = false;
         if self.help {
             if a == action_id("close-help") || a == ActionId::BACK {
                 self.help = false;
@@ -244,6 +367,7 @@ impl KoboApp for Game {
                 changed = true;
                 if p == Pressed::Submitted && !self.done() {
                     self.submit();
+                    save = true;
                     self.typing = false;
                 }
             } else if a == action_id("cancel") {
@@ -254,6 +378,7 @@ impl KoboApp for Game {
             self.typing = true;
             changed = true;
         } else if a == action_id("hard") {
+            save = true;
             self.hard = !self.hard;
             self.notice = if self.hard {
                 "Hard mode on."
@@ -263,12 +388,11 @@ impl KoboApp for Game {
             .into();
             changed = true;
         } else if a == action_id("stats") {
-            self.notice = format!(
-                "Played {}. Wins {}.",
-                usize::from(self.done()),
-                usize::from(self.done() && self.guesses.last().is_some_and(|g| g == self.answer))
-            );
+            self.notice = format!("Played {}. Wins {}.", self.played, self.wins);
             changed = true;
+        }
+        if save {
+            c.store().save(STATE, self.encode());
         }
         if changed {
             c.set_screen(self.screen());
@@ -326,13 +450,13 @@ mod tests {
     }
     #[test]
     fn clara_layout_is_clean() {
-        let s = Game::default().screen();
+        let s = Game::for_day("2026-09-01").screen();
         let d = s.diagnostics(&CLARA_BW_METRICS, &Chrome::default());
         assert!(d.issues.is_empty(), "{:?}", d.issues);
     }
     #[test]
     fn how_to_play_is_short_and_reachable() {
-        let mut game = Game::default();
+        let mut game = Game::for_day("2026-09-01");
         let home = game.screen();
         assert!(home
             .layout_with(&CLARA_BW_METRICS, &Chrome::default())
@@ -344,5 +468,66 @@ mod tests {
             .diagnostics(&CLARA_BW_METRICS, &Chrome::measuring(true))
             .issues
             .is_empty());
+    }
+}
+
+#[cfg(test)]
+mod persistence_tests {
+    use super::*;
+    use kobo_sdk::AppRunner;
+
+    #[test]
+    fn saved_daily_game_and_statistics_survive_relaunch() {
+        let mut game = Game::for_day("2026-09-01");
+        game.hard = true;
+        game.guesses = vec!["crane".into(), "caper".into()];
+        game.played = 4;
+        game.wins = 3;
+        let bytes = game.encode();
+        let mut restored = Game::for_day("2026-09-01");
+        assert!(restored.restore(&bytes));
+        assert!(restored.done());
+        assert!(restored.hard);
+        assert_eq!(restored.guesses, game.guesses);
+        assert_eq!((restored.played, restored.wins), (4, 3));
+        restored.submit();
+        assert_eq!((restored.played, restored.wins), (4, 3));
+        let mut tomorrow = Game::for_day("2026-09-02");
+        assert!(tomorrow.restore(&bytes));
+        assert!(tomorrow.guesses.is_empty());
+        assert_eq!((tomorrow.played, tomorrow.wins), (4, 3));
+    }
+
+    #[test]
+    fn corrupt_guesses_are_rejected_before_they_reach_scoring() {
+        for bytes in [
+            b"1|2026-09-01|0|1|1|x".as_slice(),
+            b"1|2026-09-01|0|0|1|",
+            b"1|2026-09-01|0|1|1|caper,crane",
+        ] {
+            let mut game = Game::for_day("2026-09-01");
+            assert!(!game.restore(bytes));
+            assert!(game.guesses.is_empty());
+            assert_eq!((game.played, game.wins), (0, 0));
+        }
+    }
+
+    #[test]
+    fn input_waits_for_saved_state_and_duplicate_load_cannot_erase_edits() {
+        let mut runner = AppRunner::new(Game::for_day("2026-09-01"));
+        runner.start();
+        runner.action(action_id("enter"));
+        assert!(!runner.app().typing);
+        runner.store_result(StoreResult::Loaded {
+            key: STATE.into(),
+            value: None,
+        });
+        runner.action(action_id("hard"));
+        assert!(runner.app().hard);
+        runner.store_result(StoreResult::Loaded {
+            key: STATE.into(),
+            value: Some(Game::for_day("2026-09-01").encode()),
+        });
+        assert!(runner.app().hard);
     }
 }

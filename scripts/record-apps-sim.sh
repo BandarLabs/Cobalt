@@ -146,12 +146,31 @@ fi
 
 echo "building the CLI"
 cargo build --release -q -p kobo-cli
-KOBO="$PWD/target/release/kobo"
+KOBO="${CARGO_TARGET_DIR:-$PWD/target}/release/kobo"
+case "$KOBO" in /*) ;; *) KOBO="$PWD/$KOBO" ;; esac
 
 mkdir -p "$OUT"
 RECORDED=0
 FAILED=""
 NO_SCRIPT=""
+simulator=""
+fresh_store=""
+cleanup_app() {
+    if [ -n "$simulator" ]; then
+        children=$(pgrep -P "$simulator" 2>/dev/null || true)
+        for child in $children; do kill "$child" 2>/dev/null || true; done
+        kill "$simulator" 2>/dev/null || true
+        wait "$simulator" 2>/dev/null || true
+        simulator=""
+    fi
+    if [ -n "$fresh_store" ]; then
+        rm -rf -- "$fresh_store"
+        fresh_store=""
+    fi
+}
+trap cleanup_app EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 for app in $APPS; do
     directory=$(source_of "$app") || {
@@ -168,6 +187,7 @@ for app in $APPS; do
         # The simulator uses a Unix socket under TMPDIR; keeping this path
         # short avoids SUN_LEN failures when --out is a long workspace path.
         store=$(mktemp -d "/tmp/cb-$app.XXXXXX")
+        fresh_store="$store"
     else
         store="${TMPDIR:-/tmp}"
     fi
@@ -184,7 +204,7 @@ for app in $APPS; do
             ;;
         vault)
             TMPDIR="$store" "$KOBO" vault init --sim >/dev/null
-            TMPDIR="$store" "$KOBO" vault push "$PWD/apps/vault/tests/fixtures" --sim >/dev/null
+            TMPDIR="$store" "$KOBO" vault push "$PWD/scripts/fixtures/vault" --sim >/dev/null
             ;;
     esac
     case "$app" in
@@ -251,14 +271,8 @@ for app in $APPS; do
         fi
     fi
 
-    # The application is a child of the simulator, and a simulator taken down
-    # by a signal does not get to run the code that reaps it.
-    children=$(pgrep -P "$simulator" 2>/dev/null || true)
-    kill "$simulator" 2>/dev/null || true
-    wait "$simulator" 2>/dev/null || true
-    for child in $children; do
-        kill "$child" 2>/dev/null || true
-    done
+    cleanup_app
+
 done
 
 echo

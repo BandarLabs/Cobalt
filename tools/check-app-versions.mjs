@@ -18,6 +18,7 @@ const MANIFEST_FIELDS = [
   "glyph"
 ];
 const COMPATIBLE_RELEASE_PATHS = new Set([
+  "apps/flashcards/src/main.rs",
   "Cargo.lock",
   "crates/kobo-abi/src/lib.rs",
   "crates/kobo-image/src/lib.rs",

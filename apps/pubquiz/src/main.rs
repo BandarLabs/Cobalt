@@ -5,6 +5,7 @@ use kobo_sdk::{
     action_id, ActionId, BannerLevel, Context, Glyph, KoboApp, Screen, ScreenBuilder, StoreResult,
     Task, TaskId, TaskOutcome,
 };
+use std::fmt::Write;
 use std::process::ExitCode;
 
 const STATE: &str = "pubquiz-state";
@@ -17,6 +18,7 @@ const API: &str = "https://opentdb.com/api.php?amount=50&type=multiple";
 enum View {
     Home,
     Question,
+    Choices,
     Pass,
     Reveal,
     Podium,
@@ -118,11 +120,13 @@ struct Quiz {
     answer: Option<usize>,
     scores: [u8; 4],
     packs: u8,
-    syncing: bool,
     note: Option<String>,
-    streak: u16,
-    loaded: bool,
+    rounds: u16,
     questions: Vec<Question>,
+    round_questions: Vec<Question>,
+    page: usize,
+    sync_task: Option<TaskId>,
+    pack_synced: bool,
 }
 impl Default for Quiz {
     fn default() -> Self {
@@ -134,11 +138,13 @@ impl Default for Quiz {
             answer: None,
             scores: [0; 4],
             packs: 0,
-            syncing: false,
             note: None,
-            streak: 0,
-            loaded: false,
+            rounds: 0,
             questions: bundled_questions(),
+            round_questions: bundled_questions(),
+            page: 0,
+            sync_task: None,
+            pack_synced: false,
         }
     }
 }
@@ -149,7 +155,7 @@ impl Quiz {
     fn save(&self, context: &mut Context) {
         context.store().save(
             STATE,
-            format!("{}|{}", self.packs, self.streak).into_bytes(),
+            format!("{}|{}", self.packs, self.rounds).into_bytes(),
         );
     }
     fn begin(&mut self, party: bool) {
@@ -160,26 +166,53 @@ impl Quiz {
         self.answer = None;
         self.scores = [0; 4];
         self.note = None;
+        self.page = 0;
+        let offset = usize::from(self.rounds) * 10 % self.questions.len();
+        self.round_questions = self
+            .questions
+            .iter()
+            .cycle()
+            .skip(offset)
+            .take(10)
+            .cloned()
+            .collect();
     }
     fn sync(&mut self, context: &mut Context) {
-        self.syncing = true;
+        if self.sync_task.is_some() {
+            return;
+        }
         self.note = None;
-        if context
-            .spawn_retrying(Task::Fetch {
-                url: API.into(),
-                offset: 0,
-                max_bytes: 128 * 1024,
-                credential: None,
-                headers: Vec::new(),
-            })
-            .is_none()
-        {
-            self.syncing = false;
+        self.sync_task = context.spawn_retrying(Task::Fetch {
+            url: API.into(),
+            offset: 0,
+            max_bytes: 128 * 1024,
+            credential: None,
+            headers: Vec::new(),
+        });
+        if self.sync_task.is_none() {
             self.note = Some("Trivia packs are already updating.".into());
         }
     }
+    fn page_count(&self, context: &Context) -> usize {
+        if self.view == View::Choices {
+            let question = &self.round_questions[self.question % self.round_questions.len()];
+            let titles = question
+                .answers
+                .iter()
+                .enumerate()
+                .map(|(index, answer)| format!("{} · {answer}", index + 1))
+                .collect::<Vec<_>>();
+            let rows = titles
+                .iter()
+                .map(|title| (title.as_str(), ""))
+                .collect::<Vec<_>>();
+            context.paginate_rows(&rows, true).len()
+        } else {
+            context.paginate(&question_text(self), true).len()
+        }
+    }
     fn show(&self, context: &mut Context) {
-        context.set_screen(screen(self));
+        context.set_screen(screen_with(self, context));
     }
 }
 fn choice(index: usize) -> String {
@@ -275,18 +308,132 @@ fn parse_pack(bytes: &[u8]) -> Option<Vec<Question>> {
         .collect::<Vec<_>>();
     (questions.len() >= 10).then_some(questions)
 }
-#[allow(clippy::too_many_lines)]
+#[cfg(test)]
 fn screen(quiz: &Quiz) -> Screen {
-    let question = &quiz.questions[quiz.question % quiz.questions.len()];
+    screen_with(quiz, &Context::default())
+}
+
+fn question_text(quiz: &Quiz) -> String {
+    let question = &quiz.round_questions[quiz.question % quiz.round_questions.len()];
+    let mut text = format!(
+        "{} · question {} of 10\n\n{}",
+        question.category,
+        quiz.question + 1,
+        question.text
+    );
+    for (index, answer) in question.answers.iter().enumerate() {
+        write!(text, "\n\n{} · {answer}", index + 1).expect("writing to a String");
+    }
+    text
+}
+
+fn question_title(quiz: &Quiz) -> String {
+    if quiz.party {
+        format!("{} answers", quiz.player_name())
+    } else {
+        "Solo round".into()
+    }
+}
+
+fn answer_rows(question: &Question) -> impl Iterator<Item = (String, String, &str, u16)> {
+    question.answers.iter().enumerate().map(|(index, answer)| {
+        (
+            choice(index),
+            format!("{} · {answer}", index + 1),
+            "",
+            u16::try_from(index + 1).expect("four answers"),
+        )
+    })
+}
+
+fn question_screen(quiz: &Quiz, context: &Context) -> Screen {
+    let question = &quiz.round_questions[quiz.question % quiz.round_questions.len()];
+    let compact = ScreenBuilder::new("pubquiz-question")
+        .top_bar(question_title(quiz))
+        .secondary(format!(
+            "{} · question {} of 10",
+            question.category,
+            quiz.question + 1
+        ))
+        .text(&question.text)
+        .rows(answer_rows(question))
+        .build();
+    if compact
+        .diagnostics(&context.metrics(), &kobo_sdk::Chrome::default())
+        .issues
+        .is_empty()
+    {
+        return compact;
+    }
+    // Long questions stay complete, including answers that share a prefix.
+    // The same measured prose pagination as the reader keeps every word reachable.
+    let pages = context.paginate(&question_text(quiz), true);
+    let page = quiz.page.min(pages.len().saturating_sub(1));
+    let mut builder = ScreenBuilder::new("pubquiz-question").top_bar(question_title(quiz));
+    for paragraph in &pages[page] {
+        builder = builder.text(paragraph);
+    }
+    builder
+        .page_position(
+            u16::try_from(page + 1).unwrap_or(u16::MAX),
+            u16::try_from(pages.len()).unwrap_or(u16::MAX),
+        )
+        .action_bar([
+            ("previous-page", "Previous"),
+            ("next-page", "Next"),
+            ("choose", "Answer"),
+        ])
+        .build()
+}
+
+fn choices_screen(quiz: &Quiz, context: &Context) -> Screen {
+    let question = &quiz.round_questions[quiz.question % quiz.round_questions.len()];
+    let titles = question
+        .answers
+        .iter()
+        .enumerate()
+        .map(|(index, answer)| format!("{} · {answer}", index + 1))
+        .collect::<Vec<_>>();
+    let rows = titles
+        .iter()
+        .map(|title| (title.as_str(), ""))
+        .collect::<Vec<_>>();
+    let pages = context.paginate_rows(&rows, true);
+    let page = quiz.page.min(pages.len().saturating_sub(1));
+    ScreenBuilder::new("pubquiz-choices")
+        .top_bar("Choose an answer")
+        .rows(pages[page].iter().map(|&index| {
+            (
+                choice(index),
+                titles[index].as_str(),
+                "",
+                u16::try_from(index + 1).expect("four answers"),
+            )
+        }))
+        .page_position(
+            u16::try_from(page + 1).unwrap_or(u16::MAX),
+            u16::try_from(pages.len()).unwrap_or(u16::MAX),
+        )
+        .action_bar([
+            ("previous-page", "Previous"),
+            ("next-page", "Next"),
+            ("question", "Question"),
+        ])
+        .build()
+}
+
+#[allow(clippy::too_many_lines)]
+fn screen_with(quiz: &Quiz, context: &Context) -> Screen {
+    let question = &quiz.round_questions[quiz.question % quiz.round_questions.len()];
     match quiz.view {
         View::Home => {
             let mut b = ScreenBuilder::new("pubquiz-home")
                 .top_bar("Pub Quiz")
                 .heading("Question packs")
                 .secondary(format!(
-                    "{} questions ready · {} day streak",
+                    "{} questions ready · {} rounds completed",
                     quiz.questions.len(),
-                    quiz.streak
+                    quiz.rounds
                 ));
             if let Some(note) = &quiz.note {
                 b = b.banner(BannerLevel::Info, note);
@@ -296,7 +443,7 @@ fn screen(quiz: &Quiz) -> Screen {
                     ("solo", "Solo round"),
                     (
                         "sync",
-                        if quiz.syncing {
+                        if quiz.sync_task.is_some() {
                             "Working…"
                         } else {
                             "Sync packs"
@@ -306,33 +453,8 @@ fn screen(quiz: &Quiz) -> Screen {
                 .buttons([("how-to-play", "How to play"), ("about", "About")])
                 .build()
         }
-        View::Question => ScreenBuilder::new("pubquiz-question")
-            .top_bar(if quiz.party {
-                format!("{} answers", quiz.player_name())
-            } else {
-                "Solo round".into()
-            })
-            .secondary(format!(
-                "{} · question {} of 10",
-                question.category,
-                quiz.question + 1
-            ))
-            .heading(question.text.clone())
-            .grid(
-                1,
-                false,
-                question.answers.iter().enumerate().map(|(i, answer)| {
-                    (
-                        choice(i),
-                        format!(
-                            "{} · {}",
-                            char::from(b'A' + u8::try_from(i).expect("four answers fit u8")),
-                            answer
-                        ),
-                    )
-                }),
-            )
-            .build(),
+        View::Question => question_screen(quiz, context),
+        View::Choices => choices_screen(quiz, context),
         View::Pass => ScreenBuilder::new("pubquiz-pass")
             .top_bar("Pass it on")
             .heading("Answer locked")
@@ -367,7 +489,7 @@ fn screen(quiz: &Quiz) -> Screen {
         View::Podium => ScreenBuilder::new("pubquiz-podium")
             .top_bar("Pub Quiz")
             .heading("Podium")
-            .rows((0..4).map(|i| {
+            .rows((0..if quiz.party { 4 } else { 1 }).map(|i| {
                 (
                     format!("player-{i}"),
                     ["Ada", "Bert", "Cleo", "Dev"][i],
@@ -411,11 +533,10 @@ impl KoboApp for Quiz {
                     if let Ok(s) = String::from_utf8(bytes) {
                         let p: Vec<_> = s.split('|').collect();
                         self.packs = p.first().and_then(|x| x.parse().ok()).unwrap_or(0);
-                        self.streak = p.get(1).and_then(|x| x.parse().ok()).unwrap_or(0);
+                        self.rounds = p.get(1).and_then(|x| x.parse().ok()).unwrap_or(0);
                     }
                 }
-                self.loaded = true;
-            } else if key == PACK {
+            } else if key == PACK && !self.pack_synced {
                 if let Some(bytes) = value {
                     if let Some(questions) = parse_pack(&bytes) {
                         self.questions = questions;
@@ -430,12 +551,16 @@ impl KoboApp for Quiz {
             self.show(context);
         }
     }
-    fn on_task(&mut self, context: &mut Context, _: TaskId, outcome: TaskOutcome) {
-        self.syncing = false;
+    fn on_task(&mut self, context: &mut Context, task: TaskId, outcome: TaskOutcome) {
+        if self.sync_task != Some(task) {
+            return;
+        }
+        self.sync_task = None;
         match outcome {
             TaskOutcome::Completed(bytes) => {
                 if let Some(questions) = parse_pack(&bytes) {
                     self.questions = questions;
+                    self.pack_synced = true;
                     self.packs = 1;
                     context.store().save(PACK, bytes);
                     self.note = Some(format!(
@@ -458,11 +583,28 @@ impl KoboApp for Quiz {
         self.show(context);
     }
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
-        if action == action_id("party") {
+        if action == action_id("choose") && self.view == View::Question {
+            self.view = View::Choices;
+            self.page = 0;
+        } else if action == action_id("question") && self.view == View::Choices {
+            self.view = View::Question;
+            self.page = 0;
+        } else if matches!(self.view, View::Question | View::Choices)
+            && action == action_id("next-page")
+        {
+            self.page = self
+                .page
+                .saturating_add(1)
+                .min(self.page_count(context).saturating_sub(1));
+        } else if matches!(self.view, View::Question | View::Choices)
+            && action == action_id("previous-page")
+        {
+            self.page = self.page.saturating_sub(1);
+        } else if action == action_id("party") && self.view == View::Home {
             self.begin(true);
-        } else if action == action_id("solo") {
+        } else if action == action_id("solo") && self.view == View::Home {
             self.begin(false);
-        } else if action == action_id("sync") {
+        } else if action == action_id("sync") && self.view == View::Home {
             self.sync(context);
         } else if action == action_id("about") {
             self.view = View::About;
@@ -470,21 +612,24 @@ impl KoboApp for Quiz {
             self.view = View::HowTo;
         } else if action == ActionId::BACK || action == action_id("home") {
             self.view = View::Home;
-        } else if let Some(answer) = (0..4).find(|i| action == action_id(&choice(*i))) {
+        } else if let Some(answer) = (0..4).find(|i| {
+            matches!(self.view, View::Question | View::Choices) && action == action_id(&choice(*i))
+        }) {
             self.answer = Some(answer);
             self.view = if self.party { View::Pass } else { View::Reveal };
-            if answer == self.questions[self.question % self.questions.len()].correct {
+            if answer == self.round_questions[self.question % self.round_questions.len()].correct {
                 self.scores[self.player] += 1;
             }
-        } else if action == action_id("reveal") {
+        } else if action == action_id("reveal") && self.view == View::Pass {
             self.view = View::Reveal;
-        } else if action == action_id("continue") {
+        } else if action == action_id("continue") && self.view == View::Reveal {
             self.question += 1;
-            self.player = (self.player + 1) % 4;
+            self.player = if self.party { (self.player + 1) % 4 } else { 0 };
+            self.page = 0;
             self.answer = None;
             if self.question >= 10 {
                 self.view = View::Podium;
-                self.streak += 1;
+                self.rounds = self.rounds.saturating_add(1);
                 self.save(context);
             } else {
                 self.view = View::Question;
@@ -595,5 +740,125 @@ mod tests {
         assert_eq!(runner.app().view, View::Podium);
         runner.action(action_id("home"));
         assert_eq!(runner.app().view, View::Home);
+    }
+}
+
+#[cfg(test)]
+mod regression_tests {
+    use super::*;
+    use kobo_sdk::{AppRunner, Chrome, DisplayMetrics};
+    use kobo_ui::TextScale;
+
+    fn pack() -> Vec<u8> {
+        let item = r#"{"category":"New pack","question":"Changed question?","correct_answer":"Right","incorrect_answers":["Wrong 1","Wrong 2","Wrong 3"]}"#;
+        format!(
+            r#"{{"response_code":0,"results":[{}]}}"#,
+            [item; 10].join(",")
+        )
+        .into_bytes()
+    }
+
+    #[test]
+    fn solo_round_credits_only_the_solo_player_once() {
+        let mut runner = AppRunner::new(Quiz::default());
+        runner.start();
+        runner.action(action_id("solo"));
+        for _ in 0..10 {
+            let quiz = runner.app();
+            let correct = quiz.round_questions[quiz.question].correct;
+            runner.action(action_id(&choice(correct)));
+            runner.action(action_id(&choice(correct))); // A stale double tap cannot score twice.
+            runner.action(action_id("continue"));
+        }
+        assert_eq!(runner.app().scores, [10, 0, 0, 0]);
+        assert_eq!(runner.app().rounds, 1);
+        runner.action(action_id("continue"));
+        assert_eq!(runner.app().rounds, 1);
+        assert!(!format!("{:?}", screen(runner.app())).contains("Bert"));
+    }
+
+    #[test]
+    fn late_cache_and_sync_do_not_replace_an_active_round() {
+        let mut runner = AppRunner::new(Quiz::default());
+        runner.start();
+        runner.action(action_id("sync"));
+        let task = runner.app().sync_task.expect("sync started");
+        runner.action(action_id("solo"));
+        let round = runner.app().round_questions.clone();
+        runner.store_result(StoreResult::Loaded {
+            key: PACK.into(),
+            value: Some(pack()),
+        });
+        assert_eq!(runner.app().round_questions, round);
+        runner.task_outcome(task, TaskOutcome::Completed(pack()));
+        assert_eq!(runner.app().round_questions, round);
+        runner.action(action_id("home"));
+        runner.action(action_id("solo"));
+        assert_eq!(runner.app().round_questions[0].category, "New pack");
+    }
+
+    #[test]
+    fn long_questions_keep_every_answer_reachable_at_large_text_sizes() {
+        let mut quiz = Quiz::default();
+        quiz.begin(false);
+        quiz.round_questions[0].text =
+            "A long question about the people involved in a historical event. "
+                .repeat(4)
+                .chars()
+                .take(240)
+                .collect();
+        quiz.round_questions[0].answers = std::array::from_fn(|index| {
+            format!(
+                "{} ending{index}",
+                "A long answer with shared words ".repeat(3)
+            )
+            .chars()
+            .rev()
+            .take(80)
+            .collect::<String>()
+            .chars()
+            .rev()
+            .collect()
+        });
+        for (width, height, pixels_per_inch) in
+            [(1072, 1448, 300), (758, 1024, 212), (1448, 1072, 300)]
+        {
+            for text_scale in TextScale::STEPS {
+                let metrics = DisplayMetrics {
+                    width,
+                    height,
+                    pixels_per_inch,
+                    text_scale,
+                };
+                let context = AppRunner::with_metrics(Quiz::default(), metrics).context();
+                let pages = context.paginate(&question_text(&quiz), true);
+                for page in 0..pages.len() {
+                    quiz.page = page;
+                    let screen = question_screen(&quiz, &context);
+                    let diagnostics = screen.diagnostics(&metrics, &Chrome::default());
+                    assert!(
+                        diagnostics.issues.is_empty(),
+                        "{metrics:?}: {:?}",
+                        diagnostics.issues
+                    );
+                }
+                let mut seen = [false; 4];
+                for page in 0..4 {
+                    quiz.page = page;
+                    let screen = choices_screen(&quiz, &context);
+                    let diagnostics = screen.diagnostics(&metrics, &Chrome::default());
+                    assert!(
+                        diagnostics.issues.is_empty(),
+                        "{metrics:?}: {:?}",
+                        diagnostics.issues
+                    );
+                    let layout = screen.layout_with(&metrics, &Chrome::default());
+                    for (index, found) in seen.iter_mut().enumerate() {
+                        *found |= layout.rect_of_action(action_id(&choice(index))).is_some();
+                    }
+                }
+                assert!(seen.into_iter().all(|found| found));
+            }
+        }
     }
 }

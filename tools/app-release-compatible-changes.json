@@ -278,6 +278,17 @@
           "compatible_blob": "5e49d7d853385130e11ca2bc66b512d02d21c2c9"
         }
       ]
+    },
+    {
+      "protocol_version": 13,
+      "reason": "Flashcards only initializes its existing fonts inside the layout test before measuring. The production application is unchanged; this exact test-only source edit needs no Store release.",
+      "files": [
+        {
+          "path": "apps/flashcards/src/main.rs",
+          "base_blob": "a171b891504827f964daaca231997d963279bcf4",
+          "compatible_blob": "98f10e3c8c1d8c5b6a80b343963179ff91046f4b"
+        }
+      ]
     }
   ]
 }

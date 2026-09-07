@@ -222,7 +222,7 @@ fn screen(game: &Game) -> Screen {
             .heading("Fill the white squares")
             .text("Read the clue, choose a square, then pick and enter a letter.")
             .text("Tap the same square again to switch between Across and Down.")
-            .text("Next clue moves through the clue list. Clear cell erases one letter.")
+            .text("Open Clues to choose a clue. Clear cell erases one letter.")
             .bottom_action("close-help", "Play")
             .build();
     }
@@ -266,12 +266,9 @@ fn screen(game: &Game) -> Screen {
         };
         (cell_name(cell), label, None)
     });
-    let mut screen = ScreenBuilder::new("crossword")
+    let screen = ScreenBuilder::new("crossword")
         .top_bar("Crossword")
-        .secondary(game.status());
-    if let Some(notice) = &game.notice {
-        screen = screen.secondary(notice);
-    }
+        .secondary(game.notice.clone().unwrap_or_else(|| game.status()));
     screen
         .board(WIDTH, cells)
         .grid(

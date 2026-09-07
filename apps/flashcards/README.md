@@ -70,3 +70,6 @@ State-by-state 1072×1448 golden captures are under `screenshots/states/`.
 | Question | Answer |
 | --- | --- |
 | ![Japanese question with bounded SVG media and one Reveal answer action](screenshots/states/question-japanese-svg.png) | ![Revealed answer with stable Again, Hard, Good and Easy controls](screenshots/states/answer-reveal.png) |
+
+The standalone importer requires Rust 1.88 or newer and `protoc`. The device
+workspace continues to support Rust 1.85.1.

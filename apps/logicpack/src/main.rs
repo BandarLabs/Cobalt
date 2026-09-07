@@ -403,6 +403,9 @@ impl Game {
     }
 
     fn check(&mut self) {
+        if self.kind == Kind::Mines && self.outcome != Outcome::Playing {
+            return;
+        }
         self.outcome = if match self.kind {
             Kind::Slither => {
                 let mask = self.cells[..12]
@@ -706,5 +709,27 @@ mod tests {
                 .issues
                 .is_empty());
         }
+    }
+}
+
+#[cfg(test)]
+mod regression_tests {
+    use super::*;
+    #[test]
+    fn checking_a_lost_field_preserves_the_loss_after_restore() {
+        let mut game = Game::default();
+        game.select(Kind::Mines);
+        assert!(game.tap_mine(0));
+        assert!(game.tap_mine(5));
+        assert_eq!(game.outcome, Outcome::Lost);
+        game.check();
+        assert_eq!(game.outcome, Outcome::Lost);
+        let mut restored = Game::default();
+        assert!(restored.restore(&game.encode()));
+        restored.check();
+        assert_eq!(restored.outcome, Outcome::Lost);
+        assert!(!restored.tap_mine(1));
+        restored.select(Kind::Mines);
+        assert!(restored.tap_mine(1));
     }
 }

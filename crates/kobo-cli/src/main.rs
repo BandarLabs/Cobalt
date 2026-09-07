@@ -6378,7 +6378,7 @@ fn print_help() {
            deck set PAD --launch APP|--url URL|--run CMD  Assign a Deck pad on this computer\n\
            deck ls|show [--json]                 List the assigned pads, or print the layout JSON\n\
            deck push (--sim | --device IP | --out PATH)  Publish that layout to the reader or simulator\n\
-           flashcards-import --help              Separate host converter; see apps/flashcards/README.md\n\
+           flashcards --help                     Prepare, verify, stage, and export card bundles\n\
            frame init (--sim | --device IP)      Create the Frame shelf\n\
            frame push INPUT (--sim | --device IP) [--fit crop|pad] [--delete]\n\
                                              Prepare and atomically push Frame photos\n\

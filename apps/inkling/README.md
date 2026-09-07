@@ -7,7 +7,8 @@ are grayscale-first: `[letter]` is placed, `(letter)` is present, and `letter×`
 ![A solved Inkling puzzle on Clara BW](screenshots/inkling-solved.png)
 
 The compact game includes six guesses, duplicate-correct scoring, hard-mode revealed-letter checks,
-and a stats summary. It ships a deliberately small common-word seed list rather than any copied
+saved daily progress, and cumulative played/won statistics. The puzzle day is UTC;
+`KOBO_INKLING_DAY=YYYY-MM-DD` pins it for simulator recordings. It ships a deliberately small common-word seed list rather than any copied
 commercial answer list. No trademarked game name or source list is used.
 
 ## Capabilities
