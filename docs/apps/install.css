@@ -215,3 +215,39 @@ footer nav { display: flex; gap: 18px; flex-wrap: wrap; }
 @media (prefers-reduced-motion: no-preference) {
   button { transition: background-color 150ms ease, opacity 150ms ease; }
 }
+
+/* Every application page is a place somebody can arrive without having Cobalt
+   at all. The pairing panel below assumes they already do, so this offers the
+   step before it, and is deliberately the brightest thing on the page after
+   the screenshot. */
+.get-cobalt {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px 28px;
+  flex-wrap: wrap;
+  border-color: var(--blue);
+  border-left-width: 4px;
+  background: linear-gradient(180deg, #fff, var(--paper-deep));
+}
+.get-cobalt h2 { margin: 6px 0 0; font-size: clamp(21px, 3vw, 26px); letter-spacing: -.01em; }
+.get-cobalt p { margin: 9px 0 0; color: var(--muted); max-width: 34em; }
+.get-cobalt .eyebrow { color: var(--blue); }
+.get-cobalt-go {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 13px 24px;
+  background: var(--blue);
+  color: #fff;
+  font-size: 17px;
+  border: 1px solid var(--blue);
+  white-space: nowrap;
+  transition: background .15s, transform .15s;
+}
+.get-cobalt-go:hover { background: var(--blue-dark); border-color: var(--blue-dark); text-decoration: none; transform: translateX(2px); }
+.get-cobalt-go span { font-size: 19px; line-height: 1; }
+@media (max-width: 620px) {
+  .get-cobalt { flex-direction: column; align-items: flex-start; }
+  .get-cobalt-go { width: 100%; justify-content: center; }
+}
