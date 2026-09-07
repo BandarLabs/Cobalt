@@ -146,12 +146,31 @@ fi
 
 echo "building the CLI"
 cargo build --release -q -p kobo-cli
-KOBO="$PWD/target/release/kobo"
+KOBO="${CARGO_TARGET_DIR:-$PWD/target}/release/kobo"
+case "$KOBO" in /*) ;; *) KOBO="$PWD/$KOBO" ;; esac
 
 mkdir -p "$OUT"
 RECORDED=0
 FAILED=""
 NO_SCRIPT=""
+simulator=""
+fresh_store=""
+cleanup_app() {
+    if [ -n "$simulator" ]; then
+        children=$(pgrep -P "$simulator" 2>/dev/null || true)
+        for child in $children; do kill "$child" 2>/dev/null || true; done
+        kill "$simulator" 2>/dev/null || true
+        wait "$simulator" 2>/dev/null || true
+        simulator=""
+    fi
+    if [ -n "$fresh_store" ]; then
+        rm -rf -- "$fresh_store"
+        fresh_store=""
+    fi
+}
+trap cleanup_app EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 for app in $APPS; do
     directory=$(source_of "$app") || {
@@ -165,12 +184,34 @@ for app in $APPS; do
     # Started from the application's own directory, which is how `kobo dev`
     # decides what to build and run.
     if [ -n "$FRESH" ]; then
-        mkdir -p "$OUT/$app-store"
-        store=$(cd "$OUT/$app-store" && pwd)
-        (cd "$directory" && TMPDIR="$store" exec "$KOBO" dev "$ADDRESS") > "$log" 2>&1 &
+        # The simulator uses a Unix socket under TMPDIR; keeping this path
+        # short avoids SUN_LEN failures when --out is a long workspace path.
+        store=$(mktemp -d "/tmp/cb-$app.XXXXXX")
+        fresh_store="$store"
     else
-        (cd "$directory" && exec "$KOBO" dev "$ADDRESS") > "$log" 2>&1 &
+        store="${TMPDIR:-/tmp}"
     fi
+    case "$app" in
+        deck)
+            TMPDIR="$store" "$KOBO" deck init --home "$store/deck-config" >/dev/null
+            TMPDIR="$store" "$KOBO" deck set 1 --label Todo --launch todo --home "$store/deck-config" >/dev/null
+            TMPDIR="$store" "$KOBO" deck set 2 --label Example --url https://example.com --home "$store/deck-config" >/dev/null
+            TMPDIR="$store" "$KOBO" deck push --sim --home "$store/deck-config" >/dev/null
+            ;;
+        frame)
+            TMPDIR="$store" "$KOBO" frame init --sim >/dev/null
+            TMPDIR="$store" "$KOBO" frame push "$PWD/apps/frame/screenshots/frame.png" --sim --fit pad >/dev/null
+            ;;
+        vault)
+            TMPDIR="$store" "$KOBO" vault init --sim >/dev/null
+            TMPDIR="$store" "$KOBO" vault push "$PWD/scripts/fixtures/vault" --sim >/dev/null
+            ;;
+    esac
+    case "$app" in
+        fanshelf) (cd "$directory" && TMPDIR="$store" FANSHELF_DEMO=1 exec "$KOBO" dev "$ADDRESS") > "$log" 2>&1 & ;;
+        inkling) (cd "$directory" && TMPDIR="$store" KOBO_INKLING_DAY=2026-09-01 exec "$KOBO" dev "$ADDRESS") > "$log" 2>&1 & ;;
+        *) (cd "$directory" && TMPDIR="$store" exec "$KOBO" dev "$ADDRESS") > "$log" 2>&1 & ;;
+    esac
     simulator=$!
 
     # The address line is printed once the application has compiled, started
@@ -230,14 +271,8 @@ for app in $APPS; do
         fi
     fi
 
-    # The application is a child of the simulator, and a simulator taken down
-    # by a signal does not get to run the code that reaps it.
-    children=$(pgrep -P "$simulator" 2>/dev/null || true)
-    kill "$simulator" 2>/dev/null || true
-    wait "$simulator" 2>/dev/null || true
-    for child in $children; do
-        kill "$child" 2>/dev/null || true
-    done
+    cleanup_app
+
 done
 
 echo

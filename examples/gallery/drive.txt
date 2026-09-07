@@ -22,6 +22,11 @@ wait-for Nothing here yet
 wait 900
 tap Offline
 wait 900
-tap Work
-wait-for Work in flight
+expect You're offline
+tap V2
+wait 500
+tap Requests
+wait-for Work with no bytes at all
+tap Start a request
+wait-for Request failed
 wait 1500

@@ -1,9 +1,15 @@
 expect Crossword
+tap How to play
+expect Fill the white squares
+wait 250
+clean
+shot crossword-help
+tap Play
 tap-at 111,227
-tap letter
-tap letter
-tap enter
-expect Across
-tap clue
+type h
+tap Enter letter
+expect 1 Across
+tap Clues
+expect Across clues
 clean
 shot crossword-play

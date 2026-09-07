@@ -6374,12 +6374,11 @@ fn print_help() {
            new <name>             Create a Rust application\n\
            dev [--builtin] [address]  Run this SDK app in the browser simulator\n\
            drive --script PATH    Drive a running simulator and save PNG screenshots\n\
-           drive --script PATH    Drive a running simulator and save PNG screenshots\n\
            drive --script PATH --record DIR  ... and film it, no hardware needed\n\
            deck set PAD --launch APP|--url URL|--run CMD  Assign a Deck pad on this computer\n\
            deck ls|show [--json]                 List the assigned pads, or print the layout JSON\n\
            deck push (--sim | --device IP | --out PATH)  Publish that layout to the reader or simulator\n\
-           flashcards import FILE --out BUNDLE  Prepare an Anki package for Flashcards\n\
+           flashcards --help                     Prepare, verify, stage, and export card bundles\n\
            frame init (--sim | --device IP)      Create the Frame shelf\n\
            frame push INPUT (--sim | --device IP) [--fit crop|pad] [--delete]\n\
                                              Prepare and atomically push Frame photos\n\
@@ -6464,6 +6463,10 @@ mod tests {
         super::stream_command(&["--help".into()]).expect("stream help");
         super::flashcards::command(&["--help".into()]).expect("flashcards help");
         super::deck::command(&["--help".into()]).expect("deck help");
+        super::frame::command(&["--help".into()]).expect("frame help");
+        super::sync::command(&["--help".into()]).expect("sync help");
+        super::needles::command(&["--help".into()]).expect("needles help");
+        super::nonograms::command(&["--help".into()]).expect("nonograms help");
         super::vault::command(&["--help".into()]).expect("vault help");
     }
 

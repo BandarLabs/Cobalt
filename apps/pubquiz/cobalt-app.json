@@ -4,8 +4,8 @@
   "short_label": "Pub Quiz",
   "summary": "Play offline solo or pass-around trivia rounds.",
   "page_description": "Offline trivia rounds for one reader or a table passing one Kobo between players.",
-  "version": "0.1.0",
-  "release_notes": "Offline trivia rounds for one reader or a table passing one Kobo between players.",
+  "version": "0.1.1",
+  "release_notes": "Ship ten-question rounds, correct solo scoring, stable rounds during pack sync, readable long answers, attribution, and a short rules page.",
   "glyph": "chat",
   "capabilities": [
     "network"

@@ -27,6 +27,7 @@ enum Route {
     Gate,
     Photo,
     Reveal,
+    HowTo,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -136,6 +137,14 @@ impl Game {
                 .build(),
             Route::Photo => self.photo(),
             Route::Reveal => self.reveal_screen(),
+            Route::HowTo => ScreenBuilder::new("nonograms-help")
+                .top_bar("How to play")
+                .heading("Use the clues to fill the picture")
+                .text("Each number is a run of filled squares in that row or column.")
+                .text("Separate runs with at least one empty square.")
+                .text("Tap a square to cycle blank, filled and ×. Guided mode warns about contradictions.")
+                .bottom_action("back-browser", "Play")
+                .build(),
         }
     }
 
@@ -175,7 +184,12 @@ impl Game {
                     u16::try_from(pages).unwrap_or(u16::MAX),
                 );
         }
-        screen.button("photo", "Make a photo puzzle").build()
+        screen
+            .buttons([
+                ("photo", "Make a photo puzzle"),
+                ("how-to-play", "How to play"),
+            ])
+            .build()
     }
 
     fn play(&self) -> Screen {
@@ -592,6 +606,9 @@ impl KoboApp for Game {
         } else if action == action_id("photo") {
             self.route = Route::Photo;
             self.notice = None;
+        } else if action == action_id("how-to-play") {
+            self.route = Route::HowTo;
+            self.notice = None;
         } else if action == action_id("photo-size") {
             self.photo_side = match self.photo_side {
                 5 => 7,
@@ -681,6 +698,22 @@ mod tests {
         for puzzle in corpus::bundled() {
             assert!(puzzle.is_line_solvable(), "{}", puzzle.id);
         }
+    }
+
+    #[test]
+    fn browser_links_to_short_rules() {
+        let mut game = Game::default();
+        assert!(game
+            .screen()
+            .layout_with(&CLARA_BW_METRICS, &Chrome::default())
+            .rect_of_action(action_id("how-to-play"))
+            .is_some());
+        game.route = Route::HowTo;
+        assert!(game
+            .screen()
+            .diagnostics(&CLARA_BW_METRICS, &Chrome::measuring(true))
+            .issues
+            .is_empty());
     }
 
     #[test]

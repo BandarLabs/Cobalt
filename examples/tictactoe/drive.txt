@@ -2,6 +2,13 @@
 # The points are the centres the layout reports for a 1072x1448 panel: columns
 # at 206, 536 and 866, rows at 367, 697 and 1027.
 wait-for O to play
+tap How to play
+wait-for Make three in a row
+wait 250
+clean
+shot tictactoe-help
+tap Play
+wait-for O to play
 wait 900
 tap-at 206,367
 wait-for X to play

@@ -4,8 +4,8 @@
   "short_label": "Crossword",
   "summary": "Solve a compact touch-first crossword with clue navigation.",
   "page_description": "Work through a compact crossword with cell-by-cell touch entry and clue navigation.",
-  "version": "0.1.0",
-  "release_notes": "Work through a compact crossword with cell-by-cell touch entry and clue navigation.",
+  "version": "0.1.1",
+  "release_notes": "Add a solvable grid, touch keyboard entry, clue navigation, autosave, and a short rules page.",
   "glyph": "grid",
   "capabilities": []
 }

@@ -234,7 +234,8 @@ export \
     --target armv7-unknown-linux-musleabihf -p kobo-flashcards
   COBALT_SOURCE_COMMIT="$source_commit" \
   CARGO_TARGET_DIR="$target_root/host-target" \
-    "$CARGO" build --locked --release -p kobo-flashcards-import
+    "$CARGO" build --locked --release \
+      --manifest-path "$repo/crates/kobo-flashcards-import/Cargo.toml"
   CARGO_TARGET_DIR="$target_root/host-tools" \
     "$CARGO" build --locked --release -p kobo-cli
 )

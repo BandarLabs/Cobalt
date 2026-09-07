@@ -1,4 +1,10 @@
 expect Backgammon
+tap How to play
+expect Move all 15 checkers home
+wait 250
+clean
+shot backgammon-help
+tap Play
 tap Roll
 expect White opened
 clean

@@ -89,6 +89,7 @@ struct Game {
     board: [Mark; CELLS],
     turn: Mark,
     outcome: Outcome,
+    help: bool,
 }
 
 impl Default for Game {
@@ -98,6 +99,7 @@ impl Default for Game {
             // Nought first, so the first tap of a fresh game is always an O.
             turn: Mark::Nought,
             outcome: Outcome::Playing,
+            help: false,
         }
     }
 }
@@ -150,6 +152,17 @@ const NAMES: [&str; CELLS] = [
 ];
 
 fn screen(game: &Game) -> Screen {
+    if game.help {
+        return ScreenBuilder::new("tictactoe-help")
+            .top_bar("How to play")
+            .owns_back(true)
+            .heading("Make three in a row")
+            .text("O goes first. Players take turns tapping an empty square.")
+            .text("Win with three marks across, down or diagonally.")
+            .text("If all nine squares fill without a line, the game is a tie.")
+            .bottom_action("close-help", "Play")
+            .build();
+    }
     let cells = NAMES
         .iter()
         .zip(game.board.iter())
@@ -158,14 +171,17 @@ fn screen(game: &Game) -> Screen {
         .top_bar("Tic-tac-toe")
         .heading(game.status())
         .board(COLUMNS, cells)
-        .button(
-            "reset",
-            if game.outcome == Outcome::Playing {
-                "Reset game"
-            } else {
-                "Play again"
-            },
-        )
+        .buttons([
+            (
+                "reset",
+                if game.outcome == Outcome::Playing {
+                    "Reset game"
+                } else {
+                    "Play again"
+                },
+            ),
+            ("how-to-play", "How to play"),
+        ])
         .build()
 }
 
@@ -175,6 +191,18 @@ impl KoboApp for Game {
     }
 
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
+        if self.help {
+            if action == action_id("close-help") || action == ActionId::BACK {
+                self.help = false;
+                context.set_screen(screen(self));
+            }
+            return;
+        }
+        if action == action_id("how-to-play") {
+            self.help = true;
+            context.set_screen(screen(self));
+            return;
+        }
         if action == action_id("reset") {
             *self = Self::default();
             context.set_screen(screen(self));
@@ -332,5 +360,19 @@ mod tests {
             "the reset button is off the bottom of the panel"
         );
         assert_eq!(CELLS, SIZE * SIZE);
+    }
+
+    #[test]
+    fn how_to_play_is_short_and_reachable() {
+        let mut game = Game::default();
+        assert!(screen(&game)
+            .layout_with(&CLARA_BW_METRICS, &Chrome::default())
+            .rect_of_action(action_id("how-to-play"))
+            .is_some());
+        game.help = true;
+        assert!(screen(&game)
+            .diagnostics(&CLARA_BW_METRICS, &Chrome::measuring(true))
+            .issues
+            .is_empty());
     }
 }

@@ -155,6 +155,13 @@ the Kobo intentionally does not run Anki's scheduler after a local grade.
 Long card text is split against the actual panel metrics and text scale, with
 visible page controls and the review actions retained on every page.
 
+## Host toolchain
+
+The standalone importer requires Rust 1.88 or newer and its own lockfile. This
+allows the patched `time` parser (RUSTSEC-2026-0009) without changing the device
+workspace's Rust 1.85.1 requirement. CI tests and audits both lockfiles. Install
+`protobuf-compiler` (or `protoc` on macOS) before building the companion.
+
 ## Media and image safety
 
 Media names are NFC-normalized and path components, controls, duplicate
@@ -237,7 +244,7 @@ never enter source control:
 
 ```sh
 COBALT_ANKI_EQUIVALENCE_APKG=/path/to/private.apkg \
-  cargo test -p kobo-flashcards-import \
+  cargo test --manifest-path crates/kobo-flashcards-import/Cargo.toml \
   private_owner_deck_matches_pinned_rslib_aggregates_when_available
 ```
 

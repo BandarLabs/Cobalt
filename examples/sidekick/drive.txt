@@ -1,6 +1,5 @@
-# Run with two pending daemon questions after pairing.
-wait-for Waiting questions
-expect Claude Code
-expect Codex
+# Fresh simulator state exercises the pairing screen without a live daemon.
+wait-for Pair with your computer
+expect address shown
 clean
-shot board
+shot pairing
