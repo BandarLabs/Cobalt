@@ -6,11 +6,6 @@
       "reason": "Additive protocol-11 orientation command is opt-in; existing Store apps keep their existing messages and portrait rendering The beta shelf merge re-derived these files; their reviewed content is re-pinned here so a platform change does not force every Store app to publish a new version.",
       "files": [
         {
-          "path": "crates/kobo-protocol/src/lib.rs",
-          "base_blob": "bca91b5812ccdb58a0e4114a4435bda29b756771",
-          "compatible_blob": "737c2b84e65f222a230693c302658baeb197a311"
-        },
-        {
           "path": "crates/kobo-sdk/src/lib.rs",
           "base_blob": "3896ee9ee1638511eeb60aa65fac9fc331274474",
           "compatible_blob": "ce36687fb6be161f8d41d642822674a2e629ae63"
@@ -80,11 +75,6 @@
           "path": "crates/kobo-policy/src/tasks.rs",
           "base_blob": "614263e4237b2c5575dfa2020992448f41150a57",
           "compatible_blob": "614263e4237b2c5575dfa2020992448f41150a57"
-        },
-        {
-          "path": "crates/kobo-protocol/src/lib.rs",
-          "base_blob": "bca91b5812ccdb58a0e4114a4435bda29b756771",
-          "compatible_blob": "737c2b84e65f222a230693c302658baeb197a311"
         },
         {
           "path": "crates/kobo-sdk/Cargo.toml",
@@ -208,11 +198,6 @@
           "compatible_blob": "614263e4237b2c5575dfa2020992448f41150a57"
         },
         {
-          "path": "crates/kobo-protocol/src/lib.rs",
-          "base_blob": "bca91b5812ccdb58a0e4114a4435bda29b756771",
-          "compatible_blob": "737c2b84e65f222a230693c302658baeb197a311"
-        },
-        {
           "path": "crates/kobo-sdk/Cargo.toml",
           "base_blob": "1e430f2f1912c1c327b17ec7a388b934c33c6d42",
           "compatible_blob": "1e430f2f1912c1c327b17ec7a388b934c33c6d42"
@@ -287,6 +272,17 @@
           "path": "apps/flashcards/src/main.rs",
           "base_blob": "a171b891504827f964daaca231997d963279bcf4",
           "compatible_blob": "98f10e3c8c1d8c5b6a80b343963179ff91046f4b"
+        }
+      ]
+    },
+    {
+      "protocol_version": 14,
+      "reason": "Wi-Fi startup guidance is a platform change. The runtime retains versions 11–13 and maps the new refusal to Unsupported for those peers, so unchanged installed Store binaries keep their wire contract and do not need republication. Newly rebuilt protocol-14 apps require Cobalt 0.3.12 through protocol-minimums.json.",
+      "files": [
+        {
+          "path": "crates/kobo-protocol/src/lib.rs",
+          "base_blob": "737c2b84e65f222a230693c302658baeb197a311",
+          "compatible_blob": "5acf0397dfb822914e18de7e9633ca8d7c3ca7d0"
         }
       ]
     }

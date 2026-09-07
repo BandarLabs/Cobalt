@@ -1585,6 +1585,23 @@ mod tests {
         settings.fail(super::Topic::Wifi, guidance);
         assert!(format!("{:?}", settings.home().nodes).contains(guidance));
         assert!(format!("{:?}", settings.wifi().nodes).contains(guidance));
+        let elipsa = kobo_sdk::DisplayMetrics {
+            width: 1404,
+            height: 1872,
+            pixels_per_inch: 227,
+            ..CLARA_BW_METRICS
+        };
+        for metrics in [CLARA_BW_METRICS, elipsa] {
+            for screen in [settings.home(), settings.wifi()] {
+                let issues = screen.validate(&metrics);
+                assert!(
+                    issues
+                        .iter()
+                        .all(|issue| issue.severity != kobo_sdk::DiagnosticSeverity::Error),
+                    "{issues:?}"
+                );
+            }
+        }
         assert!(!format!("{:?}", settings.bluetooth().nodes).contains(guidance));
         assert!(!format!("{:?}", settings.battery().nodes).contains(guidance));
         settings.settled(super::Topic::Battery);
