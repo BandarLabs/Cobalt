@@ -29,6 +29,18 @@ fixture results are not substitutes.
 Firmware versions not listed here are unsupported even on the same model until
 a new read-only probe and the applicable attended evidence have been reviewed.
 
+### Elipsa 2E portrait orientations
+
+The N605 profile accepts both portrait launch poses, framebuffer rotations 1
+and 3. Rotation 1 remains the reference for the measured touch transform;
+rotation 3 composes it with a half-turn. The model, firmware, framebuffer and
+touch identity checks remain unchanged, and landscape rotations 0 and 2 are
+still rejected. See [issue #89](https://github.com/BandarLabs/Cobalt/issues/89).
+
+The pose is resolved when a Cobalt session starts. To change portrait
+orientation, return to the Kobo reader, rotate the device there, and launch
+Cobalt again. This change does not add live autorotation within a session.
+
 ## Connecting a device
 
 The reader has to be on the same wireless network as the machine you work from.

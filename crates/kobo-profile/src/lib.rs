@@ -507,7 +507,7 @@ pub const ELIPSA_2E_389: DeviceProfile = DeviceProfile {
     },
     touch_transform: TouchTransform::TransposeMirrorY,
     reference_rotation: 1,
-    verified_rotations: &[1],
+    verified_rotations: &[1, 3],
     geometry_rule: GeometryRule::Fixed,
     touch_name: "Elan Touchscreen",
     touch_x_min: 0,
@@ -2263,6 +2263,107 @@ mod tests {
         }
         assert_eq!(CLARA_BW_POSE.display_to_touch(1072, 0), None);
         assert_eq!(CLARA_BW_POSE.display_to_touch(0, 1448), None);
+    }
+
+    /// N605 doctor fields measured on firmware 4.38.23697. Keep the fixture
+    /// independent of the profile so changes to its gate cannot change the
+    /// evidence the test supplies at the same time.
+    fn measured_elipsa(rotation: u32) -> DeviceSnapshot {
+        let channel = Bitfield {
+            offset: 0,
+            length: 0,
+            msb_right: 0,
+        };
+        DeviceSnapshot {
+            compatible: vec!["mediatek,mt8110".into(), "mediatek,mt8512".into()],
+            model: Some("MediaTek MT8110 board".into()),
+            framebuffer: Some(FramebufferSnapshot {
+                id: "hwtcon".into(),
+                width: 1404,
+                height: 1872,
+                virtual_width: 1404,
+                virtual_height: 1872,
+                x_offset: 0,
+                y_offset: 0,
+                bits_per_pixel: 32,
+                grayscale: 0,
+                stride: 5616,
+                memory_length: 10_543_104,
+                kind: 0,
+                visual: 2,
+                rotation,
+                red: channel,
+                green: channel,
+                blue: channel,
+                alpha: channel,
+            }),
+            touch: Some(TouchSnapshot {
+                path: "/dev/input/event2".into(),
+                name: "Elan Touchscreen".into(),
+                x_min: 0,
+                x_max: 1872,
+                y_min: 0,
+                y_max: 1404,
+            }),
+            identity: IdentitySnapshot {
+                serial_prefix: Some("N605".into()),
+                firmware_version: Some("4.38.23697".into()),
+                kernel_release: Some("4.9.77".into()),
+                device_code: Some(389),
+            },
+        }
+    }
+
+    #[test]
+    fn elipsa_both_portrait_poses_pass_the_write_gate_and_map_touch() {
+        for (rotation, mapping, sample) in [
+            (
+                1,
+                TouchMapping {
+                    swap_axes: true,
+                    mirror_x: false,
+                    mirror_y: true,
+                },
+                (30, 34),
+            ),
+            // The measured rotation-1 sample (30, 34), reflected through
+            // the panel centre: (1403 - 30, 1871 - 34).
+            (
+                3,
+                TouchMapping {
+                    swap_axes: true,
+                    mirror_x: true,
+                    mirror_y: false,
+                },
+                (1373, 1837),
+            ),
+        ] {
+            let snapshot = measured_elipsa(rotation);
+            let profile = write_ready_profile(&snapshot).expect("portrait is write-ready");
+            assert_eq!(profile.id, "elipsa-2e-389");
+            let pose = PanelPose::resolve(profile, snapshot.framebuffer.as_ref().unwrap())
+                .expect("verified portrait resolves");
+            assert_eq!(pose.touch_mapping(), mapping);
+            assert_eq!(pose.touch_to_display(1838, 30), Some(sample));
+            for display in [(0, 0), (1403, 0), (0, 1871), (1403, 1871), (702, 936)] {
+                let raw = pose.display_to_touch(display.0, display.1).unwrap();
+                assert_eq!(pose.touch_to_display(raw.0, raw.1), Some(display));
+            }
+        }
+    }
+
+    #[test]
+    fn elipsa_portrait_support_does_not_relax_landscape_or_identity() {
+        for rotation in [0, 2] {
+            let snapshot = measured_elipsa(rotation);
+            assert!(write_ready_profile(&snapshot).is_err());
+            assert!(
+                PanelPose::resolve(&ELIPSA_2E_389, snapshot.framebuffer.as_ref().unwrap()).is_err()
+            );
+        }
+        let mut snapshot = measured_elipsa(3);
+        snapshot.identity.firmware_version = Some("unverified".into());
+        assert!(write_ready_profile(&snapshot).is_err());
     }
 
     #[test]
