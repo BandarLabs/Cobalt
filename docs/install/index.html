@@ -90,6 +90,10 @@ li[aria-disabled="true"] { opacity: .45; }
 .app em { font-family: var(--mono); font-size: 12px; color: var(--ink-soft); font-style: normal; white-space: nowrap; }
 .app[hidden] { display: none; }
 
+#remove { margin: 14px 0 0; }
+#remove > summary { cursor: pointer; padding: 11px 0; font-size: 16px; color: var(--ink-soft); }
+#remove > div { padding: 4px 0 14px; }
+#remove .btn { margin-top: 6px; }
 #by-hand { margin: 26px 0 0; border: 1px solid var(--rule); background: var(--paper-deep); }
 #by-hand > summary { cursor: pointer; padding: 13px 18px; font-size: 17px; }
 #by-hand > summary::marker { color: var(--cobalt); }
@@ -192,6 +196,21 @@ kbd { border: 1px solid var(--rule); border-bottom-width: 2px; padding: 0 5px; b
       </div>
     </li>
   </ol>
+
+  <details id="remove">
+    <summary>Remove Cobalt from a reader</summary>
+    <div>
+      <p>Takes off the Cobalt programs and its entry in the reader's menu. It keeps everything you put there: your books, settings, credentials, and the applications with their data. Installing again later picks them up where they are.</p>
+      <p class="note">NickelMenu itself is left alone — other mods use it — and so is any menu entry that is not Cobalt's.</p>
+      <button class="btn" id="remove-pick" type="button">Choose the Kobo drive</button>
+      <p class="note" id="remove-note"></p>
+      <div id="remove-confirm" hidden>
+        <p class="note" id="remove-keeping"></p>
+        <button class="btn" id="remove-go" type="button">Remove Cobalt, keep my data</button>
+      </div>
+      <p class="note">From a terminal instead: <code>kobo setup --undo</code>, or <a href="../uninstall.sh" download>uninstall.sh</a>.</p>
+    </div>
+  </details>
 
   <dl class="facts" id="facts" hidden>
     <dt>Version</dt><dd id="fact-version"></dd>

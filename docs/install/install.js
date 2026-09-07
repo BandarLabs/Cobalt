@@ -38,6 +38,9 @@ const fetchNote = document.querySelector("#fetch-note");
 const writeNote = document.querySelector("#write-note");
 const appsNote = document.querySelector("#apps-note");
 const search = document.querySelector("#app-search");
+const removeNote = document.querySelector("#remove-note");
+const removePick = document.querySelector("#remove-pick");
+const removeGo = document.querySelector("#remove-go");
 const bar = document.querySelector("#bar");
 const barFill = bar.querySelector("i");
 
@@ -339,6 +342,83 @@ async function describeManualRoute() {
   }
 }
 
+// Removing is the same shape as installing, in reverse: the payload a release
+// wrote, and the menu entry named for Cobalt. Everything else on the reader was
+// put there by its owner, and none of it is a release's to take away.
+const PAYLOAD_ENTRIES = ["bin", "licenses", "start.sh", "README.txt", "LICENSE", "THIRD-PARTY.md", "VERSION"];
+const OWNER_ENTRIES = ["secrets", "trust", "state", "data", "apps", "store"];
+const STALE_FOLDERS = ["cobalt.prev", "cobalt.next", "cobalt.previous"];
+
+let removeDrive = null;
+
+async function chooseDriveToRemoveFrom() {
+  let handle;
+  try {
+    handle = await window.showDirectoryPicker({ id: "kobo", mode: "readwrite" });
+  } catch (error) {
+    if (error && error.name === "AbortError") return;
+    removeNote.innerHTML = `<span class="bad">${escapeText(error.message)}</span>`;
+    return;
+  }
+  try {
+    const system = await handle.getDirectoryHandle(SLOT_FOLDER);
+    await system.getFileHandle("version");
+  } catch {
+    removeNote.innerHTML = '<span class="bad">That drive is not a Kobo.</span>';
+    return;
+  }
+  let install;
+  try {
+    const adds = await handle.getDirectoryHandle(MENU_FOLDER);
+    install = await adds.getDirectoryHandle("cobalt");
+  } catch {
+    removeNote.innerHTML = '<span class="bad">There is no Cobalt on that drive.</span>';
+    return;
+  }
+  // Named before anything is removed, so what survives is something the owner
+  // read rather than something they were told afterwards.
+  const keeping = [];
+  for (const entry of OWNER_ENTRIES) {
+    try { await install.getDirectoryHandle(entry); keeping.push(entry); } catch { /* absent */ }
+  }
+  removeDrive = handle;
+  removeNote.innerHTML = `<span class="ok">Cobalt found on <strong>${escapeText(handle.name)}</strong>.</span>`;
+  document.querySelector("#remove-keeping").textContent = keeping.length > 0
+    ? `Keeping: ${keeping.join(", ")}.`
+    : "There is no data on this reader to keep.";
+  document.querySelector("#remove-confirm").hidden = false;
+}
+
+async function removeCobalt() {
+  removeGo.disabled = true;
+  try {
+    const adds = await removeDrive.getDirectoryHandle(MENU_FOLDER);
+    const install = await adds.getDirectoryHandle("cobalt");
+    // Entry by entry, never the folder: removing .adds/cobalt itself would take
+    // the owner's data with it, which is the one thing this must not do.
+    for (const entry of PAYLOAD_ENTRIES) {
+      try { await install.removeEntry(entry, { recursive: true }); } catch { /* absent */ }
+    }
+    try { await adds.removeEntry("cobalt-launch.sh"); } catch { /* absent */ }
+    for (const folder of STALE_FOLDERS) {
+      try { await adds.removeEntry(folder, { recursive: true }); } catch { /* absent */ }
+    }
+    // Ours by name, which is why it has one. A config somebody wrote by hand is
+    // .adds/nm/menu and is not touched, and NickelMenu itself stays: other mods
+    // are using it.
+    try {
+      const nm = await adds.getDirectoryHandle(MENU_SUBFOLDER);
+      await nm.removeEntry(MENU_FILE);
+    } catch { /* absent */ }
+    removeNote.innerHTML =
+      '<span class="ok">Cobalt is removed and your data is still there. Eject the drive and restart the reader.</span>';
+    document.querySelector("#remove-confirm").hidden = true;
+  } catch (error) {
+    removeNote.innerHTML = `<span class="bad">${escapeText(error.message)}</span>`;
+    removeGo.disabled = false;
+  }
+}
+
 function escapeText(value) {
   const holder = document.createElement("span");
   holder.textContent = String(value);
@@ -354,4 +434,6 @@ if (refuseUnsupportedBrowser()) {
   pickButton.addEventListener("click", chooseDrive);
   fetchButton.addEventListener("click", fetchRelease);
   writeButton.addEventListener("click", writeToReader);
+  removePick.addEventListener("click", chooseDriveToRemoveFrom);
+  removeGo.addEventListener("click", removeCobalt);
 }
