@@ -49,6 +49,8 @@ let archive = null;
 let manifest = null;
 let catalogue = [];
 let installed = null;
+let identity = null;
+let untestedAcknowledged = true;
 let installedApps = new Set();
 
 function enable(element, on) {
@@ -112,10 +114,46 @@ async function chooseDrive() {
   // finding out from what the reader does afterwards.
   installed = await readInstalledVersion(handle);
   installedApps = await readInstalledApps(handle);
+  identity = await readReaderIdentity(handle);
   const where = `Reader found on <strong>${escapeText(handle.name)}</strong>`;
-  pickNote.innerHTML = installed
-    ? `<span class="ok">${where}, with Cobalt ${escapeText(installed)} installed.</span>`
-    : `<span class="ok">${where}. Cobalt is not installed yet.</span>`;
+  const said = installed
+    ? `${where}, with Cobalt ${escapeText(installed)} installed.`
+    : `${where}. Cobalt is not installed yet.`;
+
+  // The reviewed models come from the profiles the runtime enforces, so this
+  // says the same thing the project says. It is a note, not a gate: an untested
+  // reader may well work, and somebody who wants to try theirs should be able
+  // to. Nothing is said when the model cannot be read, because a warning about
+  // a question that was never answered is just noise.
+  let caution = "";
+  const tested = await readTestedDevices();
+  if (identity && identity.model && tested.length > 0) {
+    const match = tested.find(device => device.code === identity.model);
+    if (match) {
+      caution = `<span class="note">${escapeText(match.model)}, firmware ${escapeText(identity.firmware || "unknown")}. This model has been tested.</span>`;
+    } else {
+      caution =
+        `<span class="note">Model ${escapeText(identity.model)}, firmware ${escapeText(identity.firmware || "unknown")}. ` +
+        "This model has not been tested with Cobalt. It may work and it may not, " +
+        `and the ones that have been tested are: ${escapeText([...new Set(tested.map(d => d.model))].join(", "))}.</span>` +
+        '<label class="consent"><input type="checkbox" id="untested-ok"> Install anyway on this untested model</label>';
+    }
+  }
+  pickNote.innerHTML = `<span class="ok">${said}</span>${caution}`;
+  const consent = document.querySelector("#untested-ok");
+  if (consent) {
+    // The reader is chosen at step one and written at step three, so the
+    // agreement has to survive the steps in between rather than gate a button
+    // that is not on screen yet.
+    untestedAcknowledged = false;
+    consent.addEventListener("change", () => {
+      untestedAcknowledged = consent.checked;
+      writeButton.disabled = !consent.checked || archive === null;
+    });
+  } else {
+    untestedAcknowledged = true;
+  }
+
   done(step.connect);
   enable(step.download, true);
   fetchButton.disabled = false;
@@ -174,7 +212,7 @@ async function fetchRelease() {
     done(step.download);
     enable(step.apps, true);
     enable(step.write, true);
-    writeButton.disabled = false;
+    writeButton.disabled = !untestedAcknowledged;
     loadCatalogue();
   } catch (error) {
     archive = null;
@@ -492,6 +530,31 @@ async function removeCobalt() {
   } catch (error) {
     removeNote.innerHTML = `<span class="bad">${escapeText(error.message)}</span>`;
     removeGo.disabled = false;
+  }
+}
+
+// .kobo/version is a comma-separated line whose first field is the serial and
+// whose third is the firmware. The first four characters of the serial are the
+// model code, which is what a device profile is keyed on.
+async function readTestedDevices() {
+  try {
+    const response = await fetch("devices.json", { cache: "no-store" });
+    if (!response.ok) return [];
+    return await response.json();
+  } catch {
+    return [];
+  }
+}
+
+async function readReaderIdentity(handle) {
+  try {
+    const system = await handle.getDirectoryHandle(SLOT_FOLDER);
+    const text = await (await (await system.getFileHandle("version")).getFile()).text();
+    const fields = text.trim().split(",");
+    const serial = (fields[0] || "").trim();
+    return { model: serial.slice(0, 4), firmware: (fields[2] || "").trim() };
+  } catch {
+    return null;
   }
 }
 
