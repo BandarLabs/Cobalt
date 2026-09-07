@@ -67,10 +67,9 @@ function refuseUnsupportedBrowser() {
   if (typeof window.showDirectoryPicker === "function") return false;
   const banner = document.querySelector("#unsupported");
   document.querySelector("#unsupported-why").textContent =
-    "Writing to a connected drive needs the File System Access API, which " +
-    "Chrome, Edge and Opera have and Firefox and Safari do not. Open this " +
-    "page in one of those, or use the by-hand route below -- it writes the " +
-    "same file and needs no terminal.";
+    "Writing to a plugged-in drive is something Chrome, Edge and Opera can do " +
+    "and Firefox and Safari cannot. Open this page in one of those, or use " +
+    "one of the other ways below. Both put on exactly the same thing.";
   banner.hidden = false;
   pickButton.disabled = true;
   return true;
@@ -103,7 +102,7 @@ async function chooseDrive() {
 
   if ((await handle.queryPermission({ mode: "readwrite" })) !== "granted" &&
       (await handle.requestPermission({ mode: "readwrite" })) !== "granted") {
-    pickNote.innerHTML = '<span class="bad">Writing was not permitted, so nothing can be installed.</span>';
+    pickNote.innerHTML = '<span class="bad">Writing was not allowed, so nothing was installed.</span>';
     return;
   }
 
@@ -161,15 +160,15 @@ async function fetchRelease() {
     const digest = [...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))]
       .map(byte => byte.toString(16).padStart(2, "0")).join("");
     if (digest !== manifest.sha256) {
-      throw new Error("the download did not match its published digest, so it was discarded");
+      throw new Error("the file that arrived is not the one that was published, so it was thrown away");
     }
 
     archive = bytes;
     const change = !installed
       ? `Cobalt ${escapeText(manifest.version)} verified.`
       : installed === manifest.version
-        ? `Cobalt ${escapeText(manifest.version)} verified — the same version this reader already has, so this reinstalls it.`
-        : `Cobalt ${escapeText(manifest.version)} verified — this reader has ${escapeText(installed)}.`;
+        ? `Cobalt ${escapeText(manifest.version)} verified. This reader already has that version, so this reinstalls it.`
+        : `Cobalt ${escapeText(manifest.version)} verified. This reader has ${escapeText(installed)}.`;
     fetchNote.innerHTML = `<span class="ok">${change}</span>`;
     showFacts(digest);
     done(step.download);
@@ -227,7 +226,7 @@ async function writeToReader() {
     const writtenDigest = [...new Uint8Array(await crypto.subtle.digest("SHA-256", written))]
       .map(byte => byte.toString(16).padStart(2, "0")).join("");
     if (writtenDigest !== manifest.sha256) {
-      throw new Error("what was written does not match what was downloaded, so it was not left in place.");
+      throw new Error("what ended up on the reader is not what was downloaded, so it was taken off again.");
     }
 
     writeNote.textContent = "Adding the menu entry…";
@@ -399,7 +398,7 @@ async function describeManualRoute() {
     const facts = await described.json();
     document.querySelector("#by-hand-archive").setAttribute("href", facts.archive);
     document.querySelector("#by-hand-size").textContent =
-      `— Cobalt ${facts.version} with NickelMenu ${facts.nickelmenu}, ${(facts.bytes / 1048576).toFixed(1)} MB`;
+      `Cobalt ${facts.version} with NickelMenu ${facts.nickelmenu}, ${(facts.bytes / 1048576).toFixed(1)} MB`;
   } catch {
     // The steps above will report this; the link still points at the archive.
   }
@@ -435,17 +434,31 @@ async function chooseDriveToRemoveFrom() {
     const adds = await handle.getDirectoryHandle(MENU_FOLDER);
     install = await adds.getDirectoryHandle("cobalt");
   } catch {
-    removeNote.innerHTML = '<span class="bad">There is no Cobalt on that drive.</span>';
+    removeNote.innerHTML =
+      '<span class="ok">Cobalt is not on this reader, so there is nothing to remove.</span>';
     return;
   }
-  // Named before anything is removed, so what survives is something the owner
-  // read rather than something they were told afterwards.
+
+  // What survives a removal is the folder itself, holding the owner's data, so
+  // the folder being there does not mean Cobalt is. Removing again would be
+  // harmless and the message would be a lie: it would report taking away
+  // something that went the first time.
+  const version = await readInstalledVersion(handle);
   const keeping = [];
   for (const entry of OWNER_ENTRIES) {
     try { await install.getDirectoryHandle(entry); keeping.push(entry); } catch { /* absent */ }
   }
+  if (!version) {
+    removeNote.innerHTML = keeping.length > 0
+      ? '<span class="ok">Cobalt is already removed from this reader. What is still here is yours: ' +
+        `${escapeText(keeping.join(", "))}. Installing again picks it up where it is.</span>`
+      : '<span class="ok">Cobalt is already removed from this reader.</span>';
+    document.querySelector("#remove-confirm").hidden = true;
+    return;
+  }
   removeDrive = handle;
-  removeNote.innerHTML = `<span class="ok">Cobalt found on <strong>${escapeText(handle.name)}</strong>.</span>`;
+  removeNote.innerHTML =
+    `<span class="ok">Cobalt ${escapeText(version)} is on <strong>${escapeText(handle.name)}</strong>.</span>`;
   document.querySelector("#remove-keeping").textContent = keeping.length > 0
     ? `Keeping: ${keeping.join(", ")}.`
     : "There is no data on this reader to keep.";

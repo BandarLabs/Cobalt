@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Install Cobalt from this page — Cobalt</title>
+<title>Install Cobalt from this page</title>
 <meta name="description" content="Install Cobalt and NickelMenu on a USB-connected Kobo from the browser. No terminal, nothing uploaded.">
 <link rel="icon" href="../logo.svg" type="image/svg+xml">
 <style>
@@ -100,11 +100,13 @@ li[aria-disabled="true"] { opacity: .45; }
 #by-hand > div { padding: 0 18px 16px; border-top: 1px solid var(--rule); }
 #by-hand[open] > summary { font-weight: 600; }
 #by-hand ol { padding-left: 22px; }
+#by-hand h3 { font-size: 17px; margin: 22px 0 4px; padding-top: 14px; border-top: 1px solid var(--rule); }
 #by-hand li { margin: 7px 0; }
 #by-hand pre {
   font-family: var(--mono); font-size: 13px; line-height: 1.5; background: var(--paper);
   border: 1px solid var(--rule); padding: 11px 13px; overflow-x: auto; white-space: pre; margin: 8px 0;
 }
+.whole { font-weight: 600; color: var(--ink); border-left: 3px solid var(--cobalt); padding-left: 11px; margin: 2px 0 12px; }
 kbd { border: 1px solid var(--rule); border-bottom-width: 2px; padding: 0 5px; background: var(--paper); }
 @media (max-width: 600px) {
   h1 { font-size: 30px; }
@@ -124,7 +126,7 @@ kbd { border: 1px solid var(--rule); border-bottom-width: 2px; padding: 0 5px; b
 
 <main class="wrap">
   <h1>Install from this page</h1>
-  <p class="lede">This writes Cobalt and NickelMenu to a Kobo connected by USB, from the browser. There is no terminal step, and nothing is uploaded: the reader is written to directly by this page.</p>
+  <p class="lede">This puts Cobalt and NickelMenu on a Kobo plugged into your computer. There is no terminal step. Nothing is sent anywhere: this page writes to the reader directly.</p>
 
   <div class="banner" id="unsupported" hidden>
     <strong>This browser cannot write to the reader.</strong>
@@ -132,20 +134,24 @@ kbd { border: 1px solid var(--rule); border-bottom-width: 2px; padding: 0 5px; b
   </div>
 
   <details id="by-hand">
-    <summary>Install by hand instead</summary>
+    <summary>Other ways to install</summary>
     <div>
-      <p>Every browser can do this, and it is the same file the steps below would write. Nothing here needs a terminal.</p>
-      <ol>
-        <li>Download <a id="by-hand-archive" href="cobalt-KoboRoot.tgz" download>the Cobalt archive</a> <span class="note" id="by-hand-size"></span></li>
-        <li>Plug the Kobo in and tap <em>Connect</em>. It appears as a drive called <code>KOBOeReader</code>.</li>
-        <li>Copy the file into the <code>.kobo</code> folder on that drive, named exactly <code>KoboRoot.tgz</code>. The folder is hidden: on macOS press <kbd>⌘⇧.</kbd> in Finder, on Windows turn on <em>Hidden items</em> in the View tab.</li>
-        <li>Eject the drive, unplug the cable, and hold the power button until the reader restarts.</li>
-      </ol>
-      <p>That installs Cobalt and NickelMenu. To add the Cobalt entry to the reader's menu, also create a file called <code>cobalt</code> inside <code>.adds/nm</code> containing:</p>
-      <pre id="by-hand-entry"></pre>
-      <p class="note">A file of its own, so entries you or another mod added are untouched. <code>kobo setup --undo</code> removes it.</p>
-      <p>Or, if you have a terminal, this does all of it:</p>
+      <p class="whole">This is the whole install. Nothing else on this page is needed after it.</p>
+      <p>Open Terminal on a Mac or Linux, plug the reader in, and paste this one command:</p>
       <pre>curl -fsSL https://bandarlabs.github.io/Cobalt/install.sh | sh</pre>
+      <p class="note">It finds the reader, checks what it downloads, puts on Cobalt and NickelMenu, adds the menu entry, and ejects the drive when it is done. Books, settings and data already on the reader are kept. You do not need the steps above, and you do not need to copy any file.</p>
+
+      <h3>Or copy one file yourself</h3>
+      <p class="whole">Also the whole install, for anyone who would rather not use a terminal. Any browser will do.</p>
+      <ol>
+        <li>Download <a id="by-hand-archive" href="cobalt-KoboRoot.tgz" download>the Cobalt file</a> <span class="note" id="by-hand-size"></span></li>
+        <li>Plug the Kobo in and tap <em>Connect</em>. It shows up as a drive called <code>KOBOeReader</code>.</li>
+        <li>Copy the file into the <code>.kobo</code> folder on that drive, named exactly <code>KoboRoot.tgz</code>. That folder is hidden: on a Mac press <kbd>&#8984;&#8679;.</kbd> in Finder, on Windows turn on <em>Hidden items</em> in the View tab.</li>
+        <li>Eject the drive, unplug the cable, then hold the power button until the reader restarts.</li>
+      </ol>
+      <p>That puts on Cobalt and NickelMenu. To add Cobalt to the reader's menu, also make a file called <code>cobalt</code> inside <code>.adds/nm</code> containing:</p>
+      <pre id="by-hand-entry"></pre>
+      <p class="note">It is a file of its own, so menu entries you or another mod added stay as they are. <code>kobo setup --undo</code> removes it.</p>
     </div>
   </details>
 
@@ -162,7 +168,7 @@ kbd { border: 1px solid var(--rule); border-bottom-width: 2px; padding: 0 5px; b
     <li id="step-download" aria-disabled="true">
       <div>
         <h2>Fetch the release</h2>
-        <p id="download-copy">Downloads the current release and checks it against the digest published beside it. A file that does not match is discarded rather than written.</p>
+        <p id="download-copy">Downloads Cobalt and checks it against the checksum published with it. If the file that arrives is not the one that was published, it is thrown away instead of written to your reader.</p>
         <button class="btn" id="fetch" type="button" disabled>Download and verify</button>
         <div class="progress" hidden id="bar"><i></i></div>
         <p class="note" id="fetch-note"></p>
@@ -172,7 +178,7 @@ kbd { border: 1px solid var(--rule); border-bottom-width: 2px; padding: 0 5px; b
     <li id="step-apps" aria-disabled="true">
       <div>
         <h2>Choose applications <span class="optional">optional</span></h2>
-        <p>These are installed alongside Cobalt, so the reader has them at first start. You can skip this and install any of them later from the Store on the device.</p>
+        <p>These go on at the same time, so they are ready when the reader starts. You can skip this and add them later from the Store on the reader.</p>
         <input type="search" id="app-search" placeholder="Search applications" autocomplete="off" disabled>
         <div class="applist" id="applist"></div>
         <p class="note" id="apps-note">Loading the catalogue…</p>
@@ -182,7 +188,7 @@ kbd { border: 1px solid var(--rule); border-bottom-width: 2px; padding: 0 5px; b
     <li id="step-write" aria-disabled="true">
       <div>
         <h2>Write it to the reader</h2>
-        <p>Writes the release into the slot the firmware reads at startup, and adds a Cobalt entry to NickelMenu. Entries you or other mods have added are left alone.</p>
+        <p>Writes Cobalt to the reader and adds it to the reader's menu. Menu entries you or other mods added are left alone.</p>
         <button class="btn primary" id="write" type="button" disabled>Write to the Kobo</button>
         <p class="note" id="write-note"></p>
       </div>
@@ -202,7 +208,7 @@ kbd { border: 1px solid var(--rule); border-bottom-width: 2px; padding: 0 5px; b
     <summary>Remove Cobalt from a reader</summary>
     <div>
       <p>Takes off the Cobalt programs and its entry in the reader's menu. It keeps everything you put there: your books, settings, credentials, and the applications with their data. Installing again later picks them up where they are.</p>
-      <p class="note">NickelMenu itself is left alone — other mods use it — and so is any menu entry that is not Cobalt's.</p>
+      <p class="note">NickelMenu itself is left alone, because other mods use it. So is any menu entry that is not Cobalt's.</p>
       <button class="btn" id="remove-pick" type="button">Choose the Kobo drive</button>
       <p class="note" id="remove-note"></p>
       <div id="remove-confirm" hidden>

@@ -57,7 +57,23 @@ fi
 [ -f "$VOLUME/.kobo/version" ] || fail "$VOLUME has no .kobo/version, so it is not a Kobo"
 
 INSTALL=$VOLUME/.adds/cobalt
-[ -d "$INSTALL" ] || fail "there is no Cobalt on $VOLUME"
+[ -d "$INSTALL" ] || fail "Cobalt is not on $VOLUME, so there is nothing to remove"
+
+# The folder survives a removal, because the owner's data is in it. So the
+# folder being here does not mean Cobalt is, and removing again would report
+# taking away something that went the first time.
+if [ ! -f "$INSTALL/VERSION" ] && [ ! -d "$INSTALL/bin" ]; then
+    say "Cobalt is already removed from $VOLUME."
+    kept_now=""
+    for folder in secrets trust state data apps store; do
+        [ -e "$INSTALL/$folder" ] && kept_now="$kept_now $folder"
+    done
+    if [ -n "$kept_now" ]; then
+        say "What is still here is yours:$kept_now"
+        say "Installing again picks it up where it is."
+    fi
+    exit 0
+fi
 
 # Named rather than globbed. `rm -rf .adds/cobalt` would take the owner's data
 # with it, which is the one thing this must not do.
