@@ -41,6 +41,9 @@ The pose is resolved when a Cobalt session starts. To change portrait
 orientation, return to the Kobo reader, rotate the device there, and launch
 Cobalt again. This change does not add live autorotation within a session.
 
+See the [N605 acceptance record](testing/elipsa-rotation-89/README.md) for
+attended results in both portrait poses and device framebuffer captures.
+
 ## Connecting a device
 
 The reader has to be on the same wireless network as the machine you work from.
