@@ -89,6 +89,19 @@ li[aria-disabled="true"] { opacity: .45; }
 .app span { display: block; font-size: 14px; color: var(--ink-soft); }
 .app em { font-family: var(--mono); font-size: 12px; color: var(--ink-soft); font-style: normal; white-space: nowrap; }
 .app[hidden] { display: none; }
+
+#by-hand { margin: 26px 0 0; border: 1px solid var(--rule); background: var(--paper-deep); }
+#by-hand > summary { cursor: pointer; padding: 13px 18px; font-size: 17px; }
+#by-hand > summary::marker { color: var(--cobalt); }
+#by-hand > div { padding: 0 18px 16px; border-top: 1px solid var(--rule); }
+#by-hand[open] > summary { font-weight: 600; }
+#by-hand ol { padding-left: 22px; }
+#by-hand li { margin: 7px 0; }
+#by-hand pre {
+  font-family: var(--mono); font-size: 13px; line-height: 1.5; background: var(--paper);
+  border: 1px solid var(--rule); padding: 11px 13px; overflow-x: auto; white-space: pre; margin: 8px 0;
+}
+kbd { border: 1px solid var(--rule); border-bottom-width: 2px; padding: 0 5px; background: var(--paper); }
 @media (max-width: 600px) {
   h1 { font-size: 30px; }
   ol.steps > li { grid-template-columns: 34px 1fr; gap: 13px; }
@@ -113,6 +126,24 @@ li[aria-disabled="true"] { opacity: .45; }
     <strong>This browser cannot write to the reader.</strong>
     <p id="unsupported-why"></p>
   </div>
+
+  <details id="by-hand">
+    <summary>Install by hand instead</summary>
+    <div>
+      <p>Every browser can do this, and it is the same file the steps below would write. Nothing here needs a terminal.</p>
+      <ol>
+        <li>Download <a id="by-hand-archive" href="cobalt-KoboRoot.tgz" download>the Cobalt archive</a> <span class="note" id="by-hand-size"></span></li>
+        <li>Plug the Kobo in and tap <em>Connect</em>. It appears as a drive called <code>KOBOeReader</code>.</li>
+        <li>Copy the file into the <code>.kobo</code> folder on that drive, named exactly <code>KoboRoot.tgz</code>. The folder is hidden: on macOS press <kbd>⌘⇧.</kbd> in Finder, on Windows turn on <em>Hidden items</em> in the View tab.</li>
+        <li>Eject the drive, unplug the cable, and hold the power button until the reader restarts.</li>
+      </ol>
+      <p>That installs Cobalt and NickelMenu. To add the Cobalt entry to the reader's menu, also create a file called <code>cobalt</code> inside <code>.adds/nm</code> containing:</p>
+      <pre id="by-hand-entry"></pre>
+      <p class="note">A file of its own, so entries you or another mod added are untouched. <code>kobo setup --undo</code> removes it.</p>
+      <p>Or, if you have a terminal, this does all of it:</p>
+      <pre>curl -fsSL https://bandarlabs.github.io/Cobalt/install.sh | sh</pre>
+    </div>
+  </details>
 
   <ol class="steps">
     <li id="step-connect">

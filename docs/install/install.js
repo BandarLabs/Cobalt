@@ -64,8 +64,8 @@ function refuseUnsupportedBrowser() {
   document.querySelector("#unsupported-why").textContent =
     "Writing to a connected drive needs the File System Access API, which " +
     "Chrome, Edge and Opera have and Firefox and Safari do not. Open this " +
-    "page in one of those, or install from a terminal with the one-line " +
-    "command on the home page.";
+    "page in one of those, or use the by-hand route below -- it writes the " +
+    "same file and needs no terminal.";
   banner.hidden = false;
   pickButton.disabled = true;
   return true;
@@ -322,13 +322,35 @@ function showFacts(digest) {
   document.querySelector("#facts").hidden = false;
 }
 
+// Shown to everyone, not only to browsers that cannot do the rest: it is the
+// same archive and the same entry, so somebody who would rather copy a file
+// themselves is not being sent down a different path with different bytes.
+async function describeManualRoute() {
+  document.querySelector("#by-hand-entry").textContent = MENU_ENTRY;
+  try {
+    const described = await fetch("manifest.json", { cache: "no-store" });
+    if (!described.ok) return;
+    const facts = await described.json();
+    document.querySelector("#by-hand-archive").setAttribute("href", facts.archive);
+    document.querySelector("#by-hand-size").textContent =
+      `— Cobalt ${facts.version} with NickelMenu ${facts.nickelmenu}, ${(facts.bytes / 1048576).toFixed(1)} MB`;
+  } catch {
+    // The steps above will report this; the link still points at the archive.
+  }
+}
+
 function escapeText(value) {
   const holder = document.createElement("span");
   holder.textContent = String(value);
   return holder.innerHTML;
 }
 
-if (!refuseUnsupportedBrowser()) {
+describeManualRoute();
+
+if (refuseUnsupportedBrowser()) {
+  // The only route left, so it is opened rather than left to be discovered.
+  document.querySelector("#by-hand").open = true;
+} else {
   pickButton.addEventListener("click", chooseDrive);
   fetchButton.addEventListener("click", fetchRelease);
   writeButton.addEventListener("click", writeToReader);
