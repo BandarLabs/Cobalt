@@ -365,7 +365,7 @@ footer nav { display: flex; gap: 22px; flex-wrap: wrap; }
       <p class="lede">Cobalt is an open-source application platform for Kobo e-readers: a launcher, a signed App Store, a Rust SDK, and a runtime that keeps every app in its own unprivileged process.</p>
       <p class="sub">Install it once over USB. Every app after that installs, updates and removes on the reader itself, over Wi-Fi. A reboot returns to the stock Kobo reader.</p>
       <div class="cta">
-        <a class="btn primary" href="#install">Install on your Kobo</a>
+        <a class="btn primary" href="install/">Install on your Kobo</a>
         <a class="btn" href="https://github.com/BandarLabs/Cobalt">Read the source</a>
       </div>
       <p class="hero-proof">
@@ -681,12 +681,13 @@ footer nav { display: flex; gap: 22px; flex-wrap: wrap; }
     <h2 class="measure">How to install</h2>
     <ol class="steps">
       <li><strong>Charge a fully supported reader</strong> and connect it over USB. The Clara BW N365, Clara Colour N367, Elipsa 2E N605, Clara HD N249, Libra 2 N418, and Libra Colour N428 are fully tested at the exact versions in the <a href="https://github.com/BandarLabs/Cobalt/blob/main/docs/DEVICES.md#device-support-matrix">device support matrix</a>.</li>
-      <li><strong>Run the setup:</strong></li>
+      <li><strong>Install it from your browser.</strong> Plug the reader into this computer and the browser writes Cobalt across. About a minute, and no terminal.</li>
     </ol>
-<pre><code>git clone https://github.com/BandarLabs/Cobalt.git
-<span class="k">cd</span> Cobalt
-rustup target add armv7-unknown-linux-musleabihf
-cargo run -p kobo-cli -- setup</code></pre>
+    <div class="cta" style="margin-top:16px">
+      <a class="btn primary" href="install/">Install Cobalt</a>
+    </div>
+    <p class="measure quiet" style="margin-top:18px">Or from a terminal, which does the same thing:</p>
+<pre><code>curl -fsSL https://bandarlabs.github.io/Cobalt/install.sh | sh</code></pre>
     <ol class="steps" start="3" style="counter-reset: step 2">
       <li><strong>Restart the reader</strong> and open <strong>Cobalt</strong> from Kobo's menu.</li>
       <li><strong>Open Store.</strong> Everything from here on arrives over Wi-Fi.</li>
