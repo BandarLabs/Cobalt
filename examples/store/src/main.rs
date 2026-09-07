@@ -719,6 +719,7 @@ fn denied(reason: DenyReason) -> &'static str {
         }
         DenyReason::Unsupported => "This Cobalt build does not include app-store support.",
         DenyReason::Busy => "Another operation is still in progress.",
+        DenyReason::WifiNeedsNickel => reason.describe(),
         DenyReason::PolicyRejected => "The runtime policy refused this operation.",
     }
 }

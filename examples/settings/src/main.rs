@@ -270,12 +270,14 @@ impl Settings {
                 format!("On · {connected} connected")
             }
         };
-        let wifi = match (self.wifi_state, &self.connected_ssid) {
-            (RadioState::Unavailable, _) => "Unavailable on this firmware".to_owned(),
-            (RadioState::On, Some(ssid)) => format!("Connected to {ssid}"),
-            (RadioState::On, None) => "On · Not connected".to_owned(),
-            (RadioState::Off, _) => "Off".to_owned(),
-        };
+        let wifi = self.banner_for(Topic::Wifi).unwrap_or_else(|| {
+            match (self.wifi_state, &self.connected_ssid) {
+                (RadioState::Unavailable, _) => "Unavailable on this firmware".to_owned(),
+                (RadioState::On, Some(ssid)) => format!("Connected to {ssid}"),
+                (RadioState::On, None) => "On · Not connected".to_owned(),
+                (RadioState::Off, _) => "Off".to_owned(),
+            }
+        });
         let screen = ScreenBuilder::new("settings")
             .top_bar("Settings")
             // A section, like the "Device" group under it. As a heading it was
@@ -1574,6 +1576,21 @@ mod tests {
             paired: index % 2 == 0,
             connected: index == 0,
         }
+    }
+
+    #[test]
+    fn wifi_startup_guidance_is_visible_only_on_wifi_and_clears_after_success() {
+        let mut settings = Settings::default();
+        let guidance = kobo_sdk::DenyReason::WifiNeedsNickel.describe();
+        settings.fail(super::Topic::Wifi, guidance);
+        assert!(format!("{:?}", settings.home().nodes).contains(guidance));
+        assert!(format!("{:?}", settings.wifi().nodes).contains(guidance));
+        assert!(!format!("{:?}", settings.bluetooth().nodes).contains(guidance));
+        assert!(!format!("{:?}", settings.battery().nodes).contains(guidance));
+        settings.settled(super::Topic::Battery);
+        assert!(settings.banner_for(super::Topic::Wifi).is_some());
+        settings.settled(super::Topic::Wifi);
+        assert!(!format!("{:?}", settings.home().nodes).contains(guidance));
     }
 
     #[test]
