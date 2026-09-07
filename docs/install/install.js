@@ -320,11 +320,17 @@ async function loadCatalogue() {
     row.className = "app";
     row.dataset.search = `${app.name} ${app.summary} ${app.id}`.toLowerCase();
     const already = installedApps.has(app.id);
+    // The name links to the application's own page, which is where somebody
+    // deciding whether they want it can read more than a one-line summary. It
+    // opens in its own tab: this page holds a chosen reader and a verified
+    // download, and navigating away would lose both.
     row.innerHTML =
       `<input type="checkbox" value="${escapeText(app.id)}">` +
-      `<div><b>${escapeText(app.name)}</b><span>${escapeText(app.summary)}</span></div>` +
+      `<div><a class="app-name" href="../apps/${escapeText(app.id)}/" target="_blank" rel="noopener">${escapeText(app.name)}</a>` +
+      `<span>${escapeText(app.summary)}</span></div>` +
       `<em>${already ? "on the reader · " : ""}${(app.bytes / 1048576).toFixed(1)} MB</em>`;
     row.querySelector("input").addEventListener("change", countChosen);
+    row.querySelector(".app-name").addEventListener("click", event => event.stopPropagation());
     list.append(row);
   }
   search.disabled = false;
