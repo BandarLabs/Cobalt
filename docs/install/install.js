@@ -66,12 +66,17 @@ function refuseUnsupportedBrowser() {
   if (typeof window.showDirectoryPicker === "function") return false;
   const banner = document.querySelector("#unsupported");
   document.querySelector("#unsupported-why").innerHTML =
-    "Writing to a plugged-in drive is something Chrome, Edge and Opera can do, " +
-    "and Firefox and Safari cannot. <strong>Open this page in Chrome</strong> " +
-    "to install straight from the browser. Otherwise the ways below install " +
-    "exactly the same thing.";
+    "Writing to a plugged-in drive needs <strong>Chrome, Edge or Opera on a " +
+    "computer</strong>. Firefox and Safari cannot do it, and neither can any " +
+    "browser on a phone or tablet. The ways below install exactly the same " +
+    "thing and work anywhere.";
   banner.hidden = false;
   pickButton.disabled = true;
+  // The steps are the whole page and none of them can be followed here. Left
+  // as they are they read as the thing to do, and the route that does work sits
+  // underneath them looking like an afterthought.
+  const steps = document.querySelector("#steps");
+  if (steps) steps.setAttribute("aria-disabled", "true");
   // The steps above cannot be followed here, so the ways that can be are
   // opened rather than left folded behind a heading somebody has to think to
   // click.
@@ -104,10 +109,15 @@ async function chooseDrive() {
     return;
   }
 
-  if ((await handle.queryPermission({ mode: "readwrite" })) !== "granted" &&
-      (await handle.requestPermission({ mode: "readwrite" })) !== "granted") {
-    pickNote.innerHTML = '<span class="bad">Writing was not allowed, so nothing was installed.</span>';
-    return;
+  if (typeof handle.queryPermission === "function") {
+    const already = await handle.queryPermission({ mode: "readwrite" });
+    const granted = already === "granted" ||
+      (typeof handle.requestPermission === "function" &&
+        (await handle.requestPermission({ mode: "readwrite" })) === "granted");
+    if (!granted) {
+      pickNote.innerHTML = '<span class="bad">Writing was not allowed, so nothing was installed.</span>';
+      return;
+    }
   }
 
   drive = handle;
@@ -424,13 +434,34 @@ async function writeFile(folder, name, bytes) {
   await target.close();
 }
 
+// The by-hand route shows the same archive and the same menu entry the steps
+// above would write, read from the same manifest and the same constant, so the
+// two cannot drift into installing different things.
+async function describeManualRoute() {
+  const entry = document.querySelector("#by-hand-entry");
+  if (entry) entry.textContent = MENU_ENTRY;
+  try {
+    const described = await fetch("manifest.json", { cache: "no-store" });
+    if (!described.ok) return;
+    const facts = await described.json();
+    const link = document.querySelector("#by-hand-archive");
+    if (link) link.setAttribute("href", facts.archive);
+    const size = document.querySelector("#by-hand-size");
+    if (size) {
+      size.textContent =
+        `Cobalt ${facts.version} with NickelMenu ${facts.nickelmenu}, ${(facts.bytes / 1048576).toFixed(1)} MB`;
+    }
+  } catch {
+    // The steps above report a manifest that cannot be read; the link still
+    // points at the archive.
+  }
+}
+
 function escapeText(value) {
   const holder = document.createElement("span");
   holder.textContent = String(value);
   return holder.innerHTML;
 }
-
-describeManualRoute();
 
 if (refuseUnsupportedBrowser()) {
   // The only route left, so it is opened rather than left to be discovered.
@@ -440,3 +471,9 @@ if (refuseUnsupportedBrowser()) {
   fetchButton.addEventListener("click", fetchRelease);
   writeButton.addEventListener("click", writeToReader);
 }
+
+// After the wiring, and its failure is its own. This filled in the by-hand
+// section and was called first; when it referred to something that no longer
+// existed it threw, the wiring below it never ran, and every button on the page
+// did nothing in every browser.
+describeManualRoute();
