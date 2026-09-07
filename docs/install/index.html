@@ -133,7 +133,7 @@ kbd { border: 1px solid var(--rule); border-bottom-width: 2px; padding: 0 5px; b
 
 <main class="wrap">
   <h1>Install Cobalt directly from your browser</h1>
-  <p class="lede">This puts Cobalt and NickelMenu on a Kobo plugged into your computer. There is no terminal step. Nothing is sent anywhere: this page writes to the reader directly.</p>
+  <p class="lede">Writes Cobalt and NickelMenu to a Kobo plugged into this computer. No terminal, nothing uploaded.</p>
 
   <div class="banner" id="unsupported" hidden>
     <strong>This browser cannot write to the reader.</strong>
@@ -179,7 +179,7 @@ cargo run -p kobo-cli -- setup</pre>
     <li id="step-connect">
       <div>
         <h2>Connect the reader</h2>
-        <p>Plug the Kobo in and tap <em>Connect</em> on its screen. It appears as a drive called <code>KOBOeReader</code>. Then choose that drive here.</p>
+        <p>Plug the Kobo in. It asks on its own screen whether to connect: tap <strong>Connect</strong>. Until you do, it only charges and no drive appears. Then choose <code>KOBOeReader</code> here.</p>
         <button class="btn" id="pick" type="button">Choose the Kobo drive</button>
         <p class="note" id="pick-note">Your browser will ask permission to edit files on the drive. Only <code>.kobo</code> and <code>.adds</code> are written.</p>
       </div>
