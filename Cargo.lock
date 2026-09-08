@@ -1439,6 +1439,7 @@ name = "kobo-sim"
 version = "0.3.11"
 dependencies = [
  "kobo-catalog",
+ "kobo-json",
  "kobo-net",
  "kobo-policy",
  "kobo-profile",

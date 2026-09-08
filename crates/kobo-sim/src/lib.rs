@@ -15,6 +15,8 @@ use std::thread;
 // Panel policy belongs to the runtime, but the simulator compiles the same
 // source so region and waveform decisions cannot drift.
 mod activity;
+mod capture;
+pub use capture::CaptureSource;
 #[path = "../../kobod/src/frame.rs"]
 mod frame;
 use frame::{FramePlanner, FrameTransition, PanelWaveform};
@@ -407,6 +409,21 @@ impl Simulator {
         self.panel.frame(ideal).to_vec()
     }
 
+    fn capture(&self, ideal: bool) -> io::Result<Vec<u8>> {
+        capture::View {
+            app: "counter",
+            mode: "counter-demo",
+            screen: self.screen(),
+            source: &CaptureSource::default(),
+            paints: u64::from(self.counter),
+            orientation: kobo_ui::Orientation::Portrait,
+            simulation: self.simulation_json(),
+            frame: self.panel.frame(ideal),
+            ideal,
+        }
+        .pack()
+    }
+
     fn commit_frame(&mut self) {
         let mut surface = Surface::new(PROFILE.width as usize, PROFILE.height as usize);
         kobo_ui::render_with(
@@ -555,6 +572,11 @@ impl Server {
                 let frame = self.simulator.ideal_frame();
                 write_response(&mut stream, 200, "application/octet-stream", &frame)
             }
+            ("GET", "/capture" | "/ideal-capture") => {
+                let ideal = request.path == "/ideal-capture";
+                let body = self.simulator.capture(ideal)?;
+                write_response(&mut stream, 200, "application/octet-stream", &body)
+            }
             ("GET", "/simulation") => {
                 let body = self.simulator.simulation_json();
                 write_response(
@@ -640,6 +662,7 @@ pub struct AppServer {
     socket_path: PathBuf,
     socket_identity: (u64, u64),
     manifest: Option<kobo_catalog::App>,
+    capture_source: CaptureSource,
 }
 
 impl AppServer {
@@ -683,6 +706,7 @@ impl AppServer {
             socket_path,
             socket_identity: (metadata.dev(), metadata.ino()),
             manifest: None,
+            capture_source: CaptureSource::default(),
         })
     }
 
@@ -703,6 +727,21 @@ impl AppServer {
             kobo_catalog::App::parse(source)
                 .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?,
         );
+        Ok(self)
+    }
+
+    /// Attach build provenance to captures without changing the app's grants.
+    ///
+    /// # Errors
+    /// Refuses malformed hashes and oversized or control-bearing labels.
+    pub fn with_capture_source(mut self, source: CaptureSource) -> io::Result<Self> {
+        if !source.valid() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "invalid capture source",
+            ));
+        }
+        self.capture_source = source;
         Ok(self)
     }
 
@@ -791,6 +830,7 @@ impl AppServer {
         let reader = stream.try_clone()?;
         let mut initial = AppState::with_apps(Arc::clone(&self.apps));
         initial.app_name.clone_from(&name);
+        initial.capture_source = self.capture_source.clone();
         let state = Arc::new(Mutex::new(initial));
         let reader_state = Arc::clone(&state);
         // One writer for the whole session, shared by every thread that has
@@ -1032,6 +1072,7 @@ fn is_picture_message(message: &Message) -> bool {
 struct AppState {
     screen: Screen,
     app_name: String,
+    capture_source: CaptureSource,
     secret_directory: PathBuf,
     chrome: kobo_ui::Chrome,
     orientation: kobo_ui::Orientation,
@@ -1070,6 +1111,7 @@ impl AppState {
         Self {
             screen: Screen::new(0, Vec::new()),
             app_name: "app".into(),
+            capture_source: CaptureSource::default(),
             secret_directory: std::env::temp_dir().join(SIM_SECRETS),
             chrome: kobo_ui::Chrome::default(),
             orientation: kobo_ui::Orientation::Portrait,
@@ -1413,6 +1455,33 @@ impl AppSession {
             ("GET", "/ideal-frame") => {
                 let frame = self.render_frame(true);
                 write_response(&mut stream, 200, "application/octet-stream", &frame)
+            }
+            ("GET", "/capture" | "/ideal-capture") => {
+                let body = {
+                    let state = self
+                        .state
+                        .lock()
+                        .map_err(|_| io::Error::other("app state lock poisoned"))?;
+                    let ideal = request.path == "/ideal-capture";
+                    capture::View {
+                        app: &state.app_name,
+                        mode: "single-app",
+                        screen: &state.screen,
+                        source: &state.capture_source,
+                        paints: state.paints,
+                        orientation: state.orientation,
+                        simulation: simulation_json(
+                            &state.panel,
+                            state.scenario,
+                            state.lifecycle,
+                            state.last_touch,
+                        ),
+                        frame: state.panel.frame(ideal),
+                        ideal,
+                    }
+                    .pack()?
+                };
+                write_response(&mut stream, 200, "application/octet-stream", &body)
             }
             ("GET", "/activity") => {
                 let body = self

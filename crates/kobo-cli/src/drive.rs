@@ -117,6 +117,14 @@ pub struct Driver {
     ideal: bool,
 }
 
+#[derive(Debug)]
+pub struct CapturedFrame {
+    pub metadata: serde_json::Value,
+    pub width: u32,
+    pub height: u32,
+    pub grey: Vec<u8>,
+}
+
 impl Driver {
     pub fn new(address: &str, shots: &Path) -> Self {
         Self {
@@ -425,9 +433,8 @@ impl Driver {
 
     /// Writes the panel out as a PNG and returns where it went.
     fn shot(&mut self, name: &str) -> Result<PathBuf, String> {
-        let (width, height) = self.dimensions()?;
-        let frame = self.frame()?;
-        let png = kobo_image::encode_png_grey(width, height, &frame)
+        let capture = self.capture()?;
+        let png = kobo_image::encode_png_grey(capture.width, capture.height, &capture.grey)
             .map_err(|error| format!("encode the frame: {error}"))?;
         self.taken += 1;
         let name = if name.is_empty() {
@@ -439,7 +446,29 @@ impl Driver {
             .map_err(|error| format!("create {}: {error}", self.shots.display()))?;
         let path = self.shots.join(format!("{name}.png"));
         std::fs::write(&path, png).map_err(|error| format!("write {}: {error}", path.display()))?;
+        let sidecar = path.with_extension("json");
+        std::fs::write(
+            &sidecar,
+            serde_json::to_vec_pretty(&capture.metadata).map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| format!("write {}: {error}", sidecar.display()))?;
         Ok(path)
+    }
+
+    /// Captures one committed frame and its provenance in the same response.
+    pub fn capture(&self) -> Result<CapturedFrame, String> {
+        let bytes = self.get(if self.ideal {
+            "/ideal-capture"
+        } else {
+            "/capture"
+        })?;
+        let (metadata, width, height, grey) = parse_atomic_capture(&bytes)?;
+        Ok(CapturedFrame {
+            metadata,
+            width,
+            height,
+            grey: grey.to_vec(),
+        })
     }
 
     /// The first control saying `label`, if any.
@@ -448,31 +477,6 @@ impl Driver {
             .layout()?
             .into_iter()
             .find(|control| control.says(label)))
-    }
-
-    /// The raw grey bytes of the panel as the simulator has it.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the simulator cannot be reached, or answers with
-    /// a frame that is not the size of the panel -- which would silently come
-    /// out as a picture skewed one pixel further with every row.
-    pub fn frame(&self) -> Result<Vec<u8>, String> {
-        let frame = self.get(if self.ideal { "/ideal-frame" } else { "/frame" })?;
-        let (width, height) = self.dimensions()?;
-        let expected = (width as usize) * (height as usize);
-        if frame.len() != expected {
-            return Err(format!(
-                "the simulator sent {} bytes for a {width}x{height} panel, not {expected}",
-                frame.len()
-            ));
-        }
-        Ok(frame)
-    }
-
-    /// Physical frame dimensions reported by the selected simulator profile.
-    pub fn dimensions(&self) -> Result<(u32, u32), String> {
-        parse_dimensions(&self.get("/simulation")?)
     }
 
     /// Everything the renderer put on the panel.
@@ -614,9 +618,16 @@ const STOP_POLL: Duration = Duration::from_millis(10);
 struct FrameLog {
     frames: Vec<RecordedFrame>,
     looked: u32,
+    provenance: Vec<serde_json::Value>,
 }
 
 impl FrameLog {
+    fn sample_capture(&mut self, millis: u32, capture: CapturedFrame) {
+        if self.sample(millis, capture.grey) {
+            self.provenance.push(capture.metadata);
+        }
+    }
+
     /// Offers one look at the panel, and says whether it was worth keeping.
     fn sample(&mut self, millis: u32, grey: Vec<u8>) -> bool {
         self.looked += 1;
@@ -654,6 +665,7 @@ pub struct Recorder {
     /// A second connection to the same simulator, used only for frames.
     sampler: Driver,
     dimensions: (u32, u32),
+    metadata_directory: Option<PathBuf>,
     started: Instant,
     log: Arc<Mutex<FrameLog>>,
     stop: Arc<AtomicBool>,
@@ -681,9 +693,10 @@ impl Recorder {
             ));
         }
         let sampler = Driver::new(address, Path::new(".")).ideal(!ghosting);
-        let dimensions = sampler.dimensions()?;
+        let captured = sampler.capture()?;
+        let dimensions = (captured.width, captured.height);
         let mut opening = FrameLog::default();
-        opening.sample(0, sampler.frame()?);
+        opening.sample_capture(0, captured);
 
         let interval = Duration::from_micros(1_000_000 / u64::from(fps));
         let started = Instant::now();
@@ -698,11 +711,11 @@ impl Recorder {
             std::thread::spawn(move || {
                 while !stop.load(Ordering::Relaxed) {
                     let looked_at = Instant::now();
-                    match sampler.frame() {
-                        Ok(grey) => {
+                    match sampler.capture() {
+                        Ok(captured) => {
                             let millis =
                                 u32::try_from(started.elapsed().as_millis()).unwrap_or(u32::MAX);
-                            lock(&log).sample(millis, grey);
+                            lock(&log).sample_capture(millis, captured);
                         }
                         Err(error) => {
                             *lock(&failure) = Some(error);
@@ -725,12 +738,20 @@ impl Recorder {
         Ok(Self {
             sampler,
             dimensions,
+            metadata_directory: None,
             started,
             log,
             stop,
             failure,
             worker: Some(worker),
         })
+    }
+
+    /// Write provenance for each retained frame beside the recording.
+    #[must_use]
+    pub fn with_metadata(mut self, directory: &Path) -> Self {
+        self.metadata_directory = Some(directory.to_path_buf());
+        self
     }
 
     /// Stops filming and hands back the panel, its size, and every frame kept.
@@ -751,12 +772,12 @@ impl Recorder {
         if let Some(worker) = self.worker.take() {
             let _ = worker.join();
         }
-        let closing = self.sampler.frame();
+        let closing = self.sampler.capture();
         let mut log = lock(&self.log);
         match closing {
-            Ok(grey) => {
+            Ok(captured) => {
                 let millis = u32::try_from(self.started.elapsed().as_millis()).unwrap_or(u32::MAX);
-                log.sample(millis, grey);
+                log.sample_capture(millis, captured);
             }
             Err(error) => *lock(&self.failure) = Some(error),
         }
@@ -765,6 +786,18 @@ impl Recorder {
                 return Err(error);
             }
             eprintln!("warning: the recording stopped early: {error}");
+        }
+        if let Some(directory) = &self.metadata_directory {
+            std::fs::create_dir_all(directory)
+                .map_err(|error| format!("create recording metadata directory: {error}"))?;
+            for (index, metadata) in log.provenance.iter().enumerate() {
+                let path = directory.join(format!("frame-{index:04}.json"));
+                std::fs::write(
+                    &path,
+                    serde_json::to_vec_pretty(metadata).map_err(|error| error.to_string())?,
+                )
+                .map_err(|error| format!("write {}: {error}", path.display()))?;
+            }
         }
         println!(
             "recording: kept {} of {} frames",
@@ -1058,6 +1091,43 @@ fn json_number(object: &str, key: &str) -> Option<i64> {
     digits.parse().ok()
 }
 
+fn parse_atomic_capture(bytes: &[u8]) -> Result<(serde_json::Value, u32, u32, &[u8]), String> {
+    let header: [u8; 4] = bytes
+        .get(..4)
+        .ok_or("capture has no metadata header")?
+        .try_into()
+        .map_err(|_| "capture header is invalid")?;
+    let size = u32::from_le_bytes(header) as usize;
+    if size > 128 * 1024 {
+        return Err("capture metadata exceeds its limit".into());
+    }
+    let metadata: serde_json::Value = serde_json::from_slice(
+        bytes
+            .get(4..4 + size)
+            .ok_or("capture metadata is incomplete")?,
+    )
+    .map_err(|error| format!("read capture metadata: {error}"))?;
+    if metadata["schema"] != "cobalt.simulator-capture"
+        || metadata["version"] != 1
+        || metadata["frame"]["format"] != "grey8"
+    {
+        return Err("unsupported capture schema or pixel format".into());
+    }
+    let simulation = metadata
+        .get("simulation")
+        .ok_or("capture has no simulation state")?;
+    let (width, height) =
+        parse_dimensions(&serde_json::to_vec(simulation).map_err(|error| error.to_string())?)?;
+    let frame = &bytes[4 + size..];
+    if frame.len() != width as usize * height as usize {
+        return Err("capture pixels do not match the panel size".into());
+    }
+    if metadata["frame"]["sha256"].as_str() != Some(&kobo_net::sha256::hex_digest(frame)) {
+        return Err("capture pixels do not match their recorded digest".into());
+    }
+    Ok((metadata, width, height, frame))
+}
+
 fn parse_action_id(value: &str) -> Result<u32, String> {
     if let Ok(number) = value.parse::<u32>() {
         return Ok(number);
@@ -1157,6 +1227,24 @@ mod tests {
     use std::path::Path;
 
     const BODY: &str = r#"{"nodes":[{"kind":"Button","x":10,"y":20,"width":30,"height":40,"centre":{"x":25,"y":40},"action":77,"lines":["Search","for a \"book\""]},{"kind":"Divider","x":0,"y":1,"width":2,"height":3,"centre":{"x":1,"y":2},"action":null,"lines":[]}]}"#;
+
+    #[test]
+    fn atomic_capture_rejects_truncation_corruption_and_mismatched_metadata() {
+        let pixels = [0_u8, 64, 128, 255, 0, 255];
+        let metadata = serde_json::json!({"schema":"cobalt.simulator-capture", "version":1, "simulation":{"profile":{"width":2,"height":3}}, "frame":{"format":"grey8", "sha256":kobo_net::sha256::hex_digest(&pixels)}});
+        let encoded = serde_json::to_vec(&metadata).unwrap();
+        let mut capture = u32::try_from(encoded.len()).unwrap().to_le_bytes().to_vec();
+        capture.extend(encoded);
+        capture.extend(pixels);
+        let (restored, width, height, frame) = super::parse_atomic_capture(&capture).unwrap();
+        assert_eq!(restored, metadata);
+        assert_eq!((width, height), (2, 3));
+        assert_eq!(frame, pixels);
+        assert!(super::parse_atomic_capture(&capture[..capture.len() - 1]).is_err());
+        *capture.last_mut().unwrap() ^= 1;
+        assert!(super::parse_atomic_capture(&capture).is_err());
+        assert!(super::parse_atomic_capture(&[255, 255, 255, 255]).is_err());
+    }
 
     #[test]
     fn semantic_assertions_retain_types_and_require_real_callback_completion() {
@@ -1398,7 +1486,11 @@ mod tests {
         let address = server.local_addr().expect("simulator address").to_string();
         std::thread::spawn(move || server.serve());
 
-        let recorder = Recorder::start(&address, 10, false).expect("start recording");
+        let evidence =
+            std::env::temp_dir().join(format!("cobalt-recording-{}", std::process::id()));
+        let recorder = Recorder::start(&address, 10, false)
+            .expect("start recording")
+            .with_metadata(&evidence);
         // Something for it to film: the built-in simulator's button increments
         // a counter and redraws, so the panel really does change under it.
         let mut driver = Driver::new(&address, Path::new("."));
@@ -1408,7 +1500,16 @@ mod tests {
 
         assert_eq!((width, height), (FRAME_WIDTH, FRAME_HEIGHT));
         assert!(!frames.is_empty(), "nothing was filmed");
-        for frame in &frames {
+        for (index, frame) in frames.iter().enumerate() {
+            let metadata: serde_json::Value = serde_json::from_slice(
+                &std::fs::read(evidence.join(format!("frame-{index:04}.json"))).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(
+                metadata["frame"]["sha256"],
+                kobo_net::sha256::hex_digest(&frame.grey)
+            );
+            assert_eq!(metadata["mode"], "counter-demo");
             assert_eq!(
                 frame.grey.len(),
                 (FRAME_WIDTH as usize) * (FRAME_HEIGHT as usize),
@@ -1424,5 +1525,6 @@ mod tests {
             frames.len() >= 2,
             "the counter was tapped and the recording never noticed"
         );
+        std::fs::remove_dir_all(evidence).unwrap();
     }
 }

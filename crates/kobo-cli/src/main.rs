@@ -1665,6 +1665,9 @@ fn dev_sdk_app(address: &str) -> Result<(), String> {
         .set_nonblocking(true)
         .map_err(|error| format!("configure app simulator: {error}"))?;
     let executable = build_dev_app()?;
+    let server = server
+        .with_capture_source(dev_capture_source(&executable)?)
+        .map_err(|error| error.to_string())?;
     let mut app = AppChild::spawn(&executable, &dev_session.socket)?;
     let session = wait_for_app(&server, &mut app)?;
     println!(
@@ -1674,6 +1677,41 @@ fn dev_sdk_app(address: &str) -> Result<(), String> {
             .map_err(|error| format!("read simulator address: {error}"))?
     );
     serve_app(&server, &session, &mut app)
+}
+
+fn dev_capture_source(executable: &Path) -> Result<kobo_sim::CaptureSource, String> {
+    let git = |arguments: &[&str]| {
+        Command::new("git")
+            .args(arguments)
+            .output()
+            .ok()
+            .filter(|output| output.status.success())
+            .and_then(|output| String::from_utf8(output.stdout).ok())
+    };
+    let revision = git(&["rev-parse", "HEAD"]).map(|value| value.trim().to_owned());
+    let dirty = git(&["status", "--porcelain"]).map(|value| !value.is_empty());
+    let mut bytes = Vec::new();
+    fs::File::open(executable)
+        .and_then(|file| file.take(256 * 1024 * 1024 + 1).read_to_end(&mut bytes))
+        .map_err(|error| format!("read app build for capture provenance: {error}"))?;
+    let binary_sha256 =
+        (bytes.len() <= 256 * 1024 * 1024).then(|| kobo_net::sha256::hex_digest(&bytes));
+    let fixture = std::env::var("KOBO_SIM_FIXTURE").ok();
+    let seed = std::env::var("KOBO_SIM_SEED")
+        .ok()
+        .map(|value| {
+            value
+                .parse()
+                .map_err(|_| "KOBO_SIM_SEED must be an unsigned integer")
+        })
+        .transpose()?;
+    Ok(kobo_sim::CaptureSource {
+        revision,
+        dirty,
+        binary_sha256,
+        fixture,
+        seed,
+    })
 }
 
 struct DevSessionGuard {
@@ -5342,7 +5380,10 @@ fn drive_command(arguments: &[String]) -> Result<(), String> {
     }
     let recorder = record
         .as_ref()
-        .map(|_| drive::Recorder::start(&address, fps, ghosting))
+        .map(|directory| {
+            drive::Recorder::start(&address, fps, ghosting)
+                .map(|recorder| recorder.with_metadata(directory))
+        })
         .transpose()?;
 
     let mut driver = drive::Driver::new(&address, &shots).ideal(ideal);
@@ -5474,17 +5515,27 @@ fn shot_command(arguments: &[String]) -> Result<(), String> {
         }
         index += 1;
     }
+    let mut capture_metadata = None;
     let (width, height, grey) = if let Some(host) = host {
         let transcript = capture_remote_fixed_artifact(&host, &RemoteArtifact::capture())?;
         drive::decode_capture(&transcript)?
     } else {
         let driver = drive::Driver::new(&address, Path::new(".")).ideal(ideal);
-        let (width, height) = driver.dimensions()?;
-        (width, height, driver.frame()?)
+        let capture = driver.capture()?;
+        capture_metadata = Some(capture.metadata);
+        (capture.width, capture.height, capture.grey)
     };
     let png = kobo_image::encode_png_grey(width, height, &grey)
         .map_err(|error| format!("encode the panel: {error}"))?;
     fs::write(&output, png).map_err(|error| format!("write {}: {error}", output.display()))?;
+    if let Some(metadata) = capture_metadata {
+        let sidecar = output.with_extension("json");
+        fs::write(
+            &sidecar,
+            serde_json::to_vec_pretty(&metadata).map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| format!("write {}: {error}", sidecar.display()))?;
+    }
     println!("shot {} ({width}x{height})", output.display());
     Ok(())
 }

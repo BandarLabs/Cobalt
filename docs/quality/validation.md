@@ -104,3 +104,14 @@ Import verification checks transfer identity, not document parsing. Apps must va
 - The extra-large shared comic flow passed using stable action names, explicit idle waits, storage-full recovery, process restart and assertions of zero fetch/post attempts. It no longer uses a fixed delay before captures. [Result](evidence/comics/semantic-idle-result.json).
 
 Activity metadata counts app request attempts, including locally refused requests. It does not claim a remote mutation succeeded. It contains no URL, credential, request body or returned document. Simulator task logs now summarize returned byte counts instead of retaining response bytes. Virtual clock, raw HAL replay and full-runtime switching remain open.
+
+
+## Atomic simulator capture provenance
+
+Screenshots and retained recording frames now receive a JSON sidecar from the same locked frame snapshot as their pixels. The envelope records app identity, single-app versus counter mode, runtime version, source revision and dirty state, app binary SHA-256, profile and pose, installed font source filenames, interface and reading sizes, fixture label and requested seed. Unknown source fields remain null. A seed label does not establish that an arbitrary app consumes deterministic entropy, and font filenames are not font-content hashes. Capture endpoints remain read-only.
+
+- Simulator: **53 tests passed**. CLI driver: **17 tests passed**, including rejecting truncated or changed capture bytes and matching each retained recording frame to its sidecar digest.
+- Simulator, CLI and text Clippy, all targets with `-D warnings`: **passed**.
+- Full extra-large comic route: **passed**, including atomic captures, navigation, rotation, process restart, storage failure and retry. Each capture checks source and font provenance, dimensions and serious diagnostics. [Result](evidence/comics/atomic-capture-result.json), [failure screen](evidence/comics/atomic-capture-save-failed.png), [matching provenance](evidence/comics/atomic-capture-save-failed.json).
+
+The capture identifies this verification build as a dirty working tree on its parent revision; it does not mislabel uncommitted changes as that commit. Physical panel calibration remains pending.

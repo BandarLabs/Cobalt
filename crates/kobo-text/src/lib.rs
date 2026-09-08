@@ -951,10 +951,40 @@ fn kern(font: &Font, previous: char, current: char, pixels: f32) -> f32 {
 pub fn install(metrics: DisplayMetrics) -> Result<PathBuf, Error> {
     let fonts = SystemFonts::discover(metrics)?;
     let source = fonts.text_source().to_path_buf();
-    // A second install means something already chose a face; that is not a
-    // failure worth reporting to a caller that only wanted text to look right.
-    let _ = kobo_ui::install_typesetter(Box::new(fonts));
+    let sources = [
+        ("interface", &fonts.text),
+        ("display-title", &fonts.display_title),
+        ("display-heading", &fonts.display_heading),
+        ("display-bold", &fonts.legacy_display),
+        ("reading", &fonts.reading),
+        ("mono", &fonts.mono),
+    ]
+    .into_iter()
+    .map(|(role, face)| {
+        (
+            role.to_owned(),
+            face.source()
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned(),
+        )
+    })
+    .collect();
+    // Only the successfully installed font set may describe captures.
+    if kobo_ui::install_typesetter(Box::new(fonts)).is_ok() {
+        let _ = INSTALLED_SOURCES.set(sources);
+    }
     Ok(source)
+}
+
+static INSTALLED_SOURCES: std::sync::OnceLock<Vec<(String, String)>> = std::sync::OnceLock::new();
+
+/// Sources of the font set installed by this crate. Unknown for a custom
+/// externally installed typesetter, rather than guessing the bundled fonts.
+#[must_use]
+pub fn installed_sources() -> Option<&'static [(String, String)]> {
+    INSTALLED_SOURCES.get().map(Vec::as_slice)
 }
 
 #[cfg(test)]

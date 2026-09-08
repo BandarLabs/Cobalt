@@ -52,7 +52,8 @@ def main():
     with tempfile.TemporaryDirectory(prefix='cq-comic-', dir='/tmp') as private:
         env = dict(os.environ, TMPDIR=private, CARGO_TARGET_DIR=str(ROOT/'target'),
                    CARGO_PROFILE_DEV_DEBUG='0', CARGO_INCREMENTAL='0',
-                   KOBO_SIM_PROFILE=args.profile, KOBO_TEXT_SCALE=args.scale)
+                   KOBO_SIM_PROFILE=args.profile, KOBO_TEXT_SCALE=args.scale,
+                   KOBO_SIM_FIXTURE="original-geometric-comic", KOBO_SIM_SEED="0")
         storage = Path(private)/'cobalt-sim-data/panels'
         storage.mkdir(parents=True)
         (storage/'volume.cbz').write_bytes(b'Rar!\x1a\x07\x01\x00' if args.cbr else comic_bytes())
@@ -118,6 +119,12 @@ def main():
                     drive('shot '+label)
                     with Image.open(args.output/'cli-shots'/(label+'.png')) as cli_image:
                         assert cli_image.size == (width, height), 'CLI screenshot used different panel dimensions'
+                    provenance = json.loads((args.output/'cli-shots'/(label+'.json')).read_text())
+                    assert provenance['app'] == 'panels' and provenance['mode'] == 'single-app'
+                    assert provenance['source']['fixture'] == 'original-geometric-comic'
+                    assert len(provenance['source']['binarySha256']) == 64
+                    assert provenance['fonts'], 'Capture has no installed font provenance'
+                    assert provenance['simulation']['profile'] == after['profile']
                     data = dict(simulation=after, layout=layout, diagnostics=diagnostics)
                     (args.output/(label+'.json')).write_text(json.dumps(data, indent=2)+'\n')
                     errors = [issue for issue in diagnostics['issues'] if issue['severity'] == 'error']

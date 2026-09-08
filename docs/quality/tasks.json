@@ -234,8 +234,10 @@
     "pr": 1,
     "group": "Simulator fidelity (SIM-1\u201310)",
     "task": "Stamp captures with source, app, mode, profile, pose, fonts, scales, fixture and seed",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Atomic capture envelope binds pixels to app binary SHA-256, revision/dirty state, mode, profile, pose, installed font sources, scales, fixture and requested seed. PNG and recording sidecars are verified by frame digest. Full extra-large comic simulator route passed."
+    ]
   },
   {
     "id": "SIM-27",
