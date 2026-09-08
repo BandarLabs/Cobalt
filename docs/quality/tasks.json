@@ -664,32 +664,40 @@
     "pr": 1,
     "group": "Platform requirements from read-only hardware research",
     "task": "Create firmware/profile compatibility and recovery evidence format",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Versioned private run evidence retains firmware/profile observations, source dirty state, CLI/transcript/screen digests, step outcomes and unresolved physical assessment. Host plan verified; no hardware measurements claimed."
+    ]
   },
   {
     "id": "HW-18",
     "pr": 1,
     "group": "Platform requirements from read-only hardware research",
     "task": "Prepare Clara BW automation for physical corner/touch/refresh checks",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Clara BW harness prepares gated display smoke and five named physical touch points; seven host tests include rejection of synthetic/wrong identity before panel operations. Physical execution deferred until all three PRs are ready."
+    ]
   },
   {
     "id": "HW-19",
     "pr": 1,
     "group": "Platform requirements from read-only hardware research",
     "task": "Prepare Clara BW sleep/wake, forced-exit and setting-restoration checks",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Combined sleep/wake and forced-exit protocol uses existing guardian/handback facilities. Harness checks owner settings/light, suspend count, boot identity and uptime; Wi-Fi return alone is never accepted. Physical execution remains pending."
+    ]
   },
   {
     "id": "HW-20",
     "pr": 1,
     "group": "Platform requirements from read-only hardware research",
     "task": "Prepare latency, ghosting, resume and power calibration protocol",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Documented matched-baseline physical latency, residue, resume and power protocol distinguishes host/driver/camera evidence and records uncertainty; no simulator calibration applied."
+    ]
   },
   {
     "id": "COMIC-01",

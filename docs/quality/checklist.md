@@ -16,7 +16,7 @@ A checked task requires implementation plus recorded validation. Physical measur
 
 ## Status
 
-494 tracked tasks: 71 completed, 1 deferred by the owner, 422 open. Implementation in progress. Evidence is recorded per task in `tasks.json` and in [the validation log](validation.md).
+494 tracked tasks: 75 completed, 1 deferred by the owner, 418 open. Implementation in progress. Evidence is recorded per task in `tasks.json` and in [the validation log](validation.md).
 
 ## PR 1 · Simulator fidelity (SIM-1–10)
 
@@ -96,10 +96,10 @@ A checked task requires implementation plus recorded validation. Physical measur
 - [ ] **HW-14** Test scheduled wake, USB attach/detach and reconnect.
 - [ ] **HW-15** Avoid duplicate task resumption or indefinite unintended wake.
 - [ ] **HW-16** Keep watchdog and reader handback guarantees intact.
-- [ ] **HW-17** Create firmware/profile compatibility and recovery evidence format.
-- [ ] **HW-18** Prepare Clara BW automation for physical corner/touch/refresh checks.
-- [ ] **HW-19** Prepare Clara BW sleep/wake, forced-exit and setting-restoration checks.
-- [ ] **HW-20** Prepare latency, ghosting, resume and power calibration protocol.
+- [x] **HW-17** Create firmware/profile compatibility and recovery evidence format.
+- [x] **HW-18** Prepare Clara BW automation for physical corner/touch/refresh checks.
+- [x] **HW-19** Prepare Clara BW sleep/wake, forced-exit and setting-restoration checks.
+- [x] **HW-20** Prepare latency, ghosting, resume and power calibration protocol.
 
 ## PR 1 · CBZ/CBR architecture and shared reader
 

@@ -103,6 +103,9 @@ pub fn status_script() -> String {
         .collect::<String>();
     format!(
         "set -u\n\
+         printf 'boot_id: '\n\
+         cat /proc/sys/kernel/random/boot_id 2>/dev/null || printf '<unreadable>'\n\
+         printf '\\n'\n\
          printf 'wake_lock: '\n\
          cat /sys/power/wake_lock 2>/dev/null || printf '<unreadable>'\n\
          printf '\\n'\n\
@@ -687,6 +690,7 @@ mod tests {
         }
         // Suspend evidence, which is what the uptime clock cannot show.
         assert!(script.contains("suspend_events:"));
+        assert!(script.contains("/proc/sys/kernel/random/boot_id"));
         assert!(script.contains("kernel_awake_seconds:"));
         // Pending restart must be decided from our own marker, never from the
         // settings file: the reader rewrites that file during normal operation,

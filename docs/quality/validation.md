@@ -189,3 +189,14 @@ Comic color is enabled only after an identity response reports color support; th
 - New metric-aware construction rejects a screen with an overflowing paragraph and hidden action even though it passes collection-only validation. Collection truncation also remains an error.
 - Sample selection provides 12 original notes, 8 original short readings and 12 arithmetic cards without network, store or account-verification side effects. Sample identities are unique and exports explicitly mark their provenance. App-specific adoption remains in PR 2.
 - ScreenBuilder implementation was moved unchanged into a dedicated module; public types and shared UI contracts remain stable. SDK Clippy (`-D warnings`), strict rustdoc (`RUSTDOCFLAGS=-D warnings`), text-disabled compilation and Rust 1.85.1 ARMv7 musl SDK compilation passed.
+
+
+## Clara BW combined validation preparation
+
+The [physical protocol](clara-bw-validation.md) and `scripts/quality/clara-bw-check.py` prepare the combined owner-assisted run after all three PRs are ready. The default creates a private plan with no device commands. Actual execution first requires a real Clara BW 391 observation; existing HAL firmware/write gates remain in force. Evidence records source/CLI digests and keeps physical assessment pending.
+
+- **7 harness tests passed**: synthetic/wrong-device refusal, stop before panel operations, effect-free planning, named physical touch points, strict setting comparisons, boot/suspend evidence and timeout cleanup of the owned host process group.
+- **19 existing CLI developer-session tests passed** after adding a read-only kernel boot identity to status. An unchanged uptime value cannot hide a different boot.
+- Baseline, display, touch and recovery plans generated successfully. [Example display plan](evidence/hardware/clara-planned-display.json) is explicitly unexecuted. No reader was contacted, no physical timing was measured and no calibration coefficient changed.
+
+Sleep/wake, interrupted work, guardian recovery and setting/frontlight restoration have explicit observations and fail conditions in the protocol. Remaining runtime power implementation and the final 43-app automation must be completed before physical acceptance.
