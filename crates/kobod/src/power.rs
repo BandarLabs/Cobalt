@@ -2,6 +2,9 @@
 //! This module issues decisions; it never writes a kernel power interface.
 use std::collections::BTreeSet;
 
+/// First wire version that can acknowledge the durable save barrier.
+pub const MIN_APP_PROTOCOL: u8 = 14;
+
 pub const PREPARE_TIMEOUT_MILLIS: u64 = 5_000;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -36,6 +39,7 @@ pub enum Refusal {
     Save,
     Deadline,
     InvalidApps,
+    UnsupportedApp,
     GenerationExhausted,
 }
 

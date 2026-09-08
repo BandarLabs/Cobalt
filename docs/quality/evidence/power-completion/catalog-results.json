@@ -1,0 +1,307 @@
+{
+  "source_sha": "3b0dc79592271d1adc870dff03df47a32d055348",
+  "dirty": true,
+  "results": [
+    {
+      "app": "arxiv",
+      "launched": true,
+      "status": "pass",
+      "route": "apps/arxiv/drive.kobo",
+      "exit_code": 0
+    },
+    {
+      "app": "audiobook",
+      "launched": true,
+      "status": "pass",
+      "route": null,
+      "exit_code": 0
+    },
+    {
+      "app": "backgammon",
+      "launched": true,
+      "status": "pass",
+      "route": "apps/backgammon/drive.kobo",
+      "exit_code": 0
+    },
+    {
+      "app": "brief",
+      "launched": true,
+      "status": "pass",
+      "route": null,
+      "exit_code": 0
+    },
+    {
+      "app": "calibre-web",
+      "launched": true,
+      "status": "pass",
+      "route": "apps/calibre-web/drive.kobo",
+      "exit_code": 0
+    },
+    {
+      "app": "chat",
+      "launched": true,
+      "status": "pass",
+      "route": null,
+      "exit_code": 0
+    },
+    {
+      "app": "crossword",
+      "launched": true,
+      "status": "pass",
+      "route": "apps/crossword/drive.kobo",
+      "exit_code": 0
+    },
+    {
+      "app": "deck",
+      "launched": true,
+      "status": "pass",
+      "route": "apps/deck/drive.kobo",
+      "exit_code": 0
+    },
+    {
+      "app": "fanshelf",
+      "launched": true,
+      "status": "pass",
+      "route": "apps/fanshelf/drive.kobo",
+      "exit_code": 0
+    },
+    {
+      "app": "fieldbook",
+      "launched": true,
+      "status": "pass",
+      "route": "apps/fieldbook/drive.kobo",
+      "exit_code": 0
+    },
+    {
+      "app": "flashcards",
+      "launched": true,
+      "status": "pass",
+      "route": "apps/flashcards/drive.kobo",
+      "exit_code": 0
+    },
+    {
+      "app": "frame",
+      "launched": true,
+      "status": "pass",
+      "route": "apps/frame/drive.kobo",
+      "exit_code": 0
+    },
+    {
+      "app": "gallery",
+      "launched": true,
+      "status": "pass",
+      "route": "examples/gallery/drive.txt",
+      "exit_code": 0
+    },
+    {
+      "app": "grimoire",
+      "launched": true,
+      "status": "pass",
+      "route": "apps/grimoire/drive.kobo",
+      "exit_code": 0
+    },
+    {
+      "app": "gutenbird",
+      "launched": true,
+      "status": "pass",
+      "route": null,
+      "exit_code": 0
+    },
+    {
+      "app": "habits",
+      "launched": true,
+      "status": "pass",
+      "route": "apps/habits/drive.kobo",
+      "exit_code": 0
+    },
+    {
+      "app": "hn",
+      "launched": true,
+      "status": "pass",
+      "route": null,
+      "exit_code": 0
+    },
+    {
+      "app": "homepanel",
+      "launched": true,
+      "status": "pass",
+      "route": "apps/homepanel/drive.kobo",
+      "exit_code": 0
+    },
+    {
+      "app": "inkling",
+      "launched": true,
+      "status": "pass",
+      "route": "apps/inkling/drive.kobo",
+      "exit_code": 0
+    },
+    {
+      "app": "kitchencard",
+      "launched": true,
+      "status": "pass",
+      "route": "apps/kitchencard/drive.kobo",
+      "exit_code": 0
+    },
+    {
+      "app": "lichess",
+      "launched": true,
+      "status": "pass",
+      "route": "apps/lichess/drive.kobo",
+      "exit_code": 0
+    },
+    {
+      "app": "logicpack",
+      "launched": true,
+      "status": "pass",
+      "route": "apps/logicpack/drive.kobo",
+      "exit_code": 0
+    },
+    {
+      "app": "magnet",
+      "launched": true,
+      "status": "pass",
+      "route": null,
+      "exit_code": 0
+    },
+    {
+      "app": "morse",
+      "launched": true,
+      "status": "pass",
+      "route": "apps/morse/drive.kobo",
+      "exit_code": 0
+    },
+    {
+      "app": "musicstand",
+      "launched": true,
+      "status": "pass",
+      "route": "apps/musicstand/drive.kobo",
+      "exit_code": 0
+    },
+    {
+      "app": "needles",
+      "launched": true,
+      "status": "pass",
+      "route": "apps/needles/drive.kobo",
+      "exit_code": 0
+    },
+    {
+      "app": "nonograms",
+      "launched": true,
+      "status": "pass",
+      "route": "apps/nonograms/drive.kobo",
+      "exit_code": 0
+    },
+    {
+      "app": "panels",
+      "launched": true,
+      "status": "pass",
+      "route": "apps/panels/drive.kobo",
+      "exit_code": 0
+    },
+    {
+      "app": "paperterm",
+      "launched": true,
+      "status": "pass",
+      "route": "apps/paperterm/drive.kobo",
+      "exit_code": 0
+    },
+    {
+      "app": "parlor",
+      "launched": true,
+      "status": "pass",
+      "route": "apps/parlor/drive.kobo",
+      "exit_code": 0
+    },
+    {
+      "app": "parser",
+      "launched": true,
+      "status": "pass",
+      "route": "apps/parser/drive.kobo",
+      "exit_code": 0
+    },
+    {
+      "app": "post",
+      "launched": true,
+      "status": "pass",
+      "route": "apps/post/drive.kobo",
+      "exit_code": 0
+    },
+    {
+      "app": "pubquiz",
+      "launched": true,
+      "status": "pass",
+      "route": "apps/pubquiz/drive.kobo",
+      "exit_code": 0
+    },
+    {
+      "app": "readlater",
+      "launched": true,
+      "status": "pass",
+      "route": "apps/readlater/drive.kobo",
+      "exit_code": 0
+    },
+    {
+      "app": "rss",
+      "launched": true,
+      "status": "pass",
+      "route": null,
+      "exit_code": 0
+    },
+    {
+      "app": "rss-miniflux",
+      "launched": true,
+      "status": "pass",
+      "route": "apps/rss-miniflux/drive.kobo",
+      "exit_code": 0
+    },
+    {
+      "app": "sidekick",
+      "launched": true,
+      "status": "pass",
+      "route": "examples/sidekick/drive.txt",
+      "exit_code": 0
+    },
+    {
+      "app": "sudoku",
+      "launched": true,
+      "status": "pass",
+      "route": "apps/sudoku/drive.kobo",
+      "exit_code": 0
+    },
+    {
+      "app": "syncthing",
+      "launched": true,
+      "status": "pass",
+      "route": "apps/syncthing/drive.kobo",
+      "exit_code": 0
+    },
+    {
+      "app": "tictactoe",
+      "launched": true,
+      "status": "pass",
+      "route": "examples/tictactoe/drive.txt",
+      "exit_code": 0
+    },
+    {
+      "app": "todo",
+      "launched": true,
+      "status": "pass",
+      "route": "examples/todo/drive.txt",
+      "exit_code": 0
+    },
+    {
+      "app": "vault",
+      "launched": true,
+      "status": "pass",
+      "route": "apps/vault/drive.kobo",
+      "exit_code": 0
+    },
+    {
+      "app": "verses",
+      "launched": true,
+      "status": "pass",
+      "route": "apps/verses/drive.kobo",
+      "exit_code": 0
+    }
+  ]
+}

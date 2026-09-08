@@ -493,3 +493,11 @@ cover bounce during panel-held preparation, charging refusal/wake and USB
 reconnection. Captures include source/fixture provenance and remain explicitly
 simulated. The charging-wake screen was visually inspected at extra-large size.
 No physical reader or third-party source code was used.
+
+
+The native barrier also checks every hosted app's negotiated protocol before
+pausing any runner. An older app is refused without sending it an unsupported
+save request; the simulator uses the same fixed protocol floor. This check is
+covered by the native Unix-socket fixture. A fresh catalog sweep at `3b0dc79`
+passes **43/43 apps** (36 committed interaction routes, seven launch-only checks),
+excluding Zotero Reader. This sweep predates only the native barrier-version guard.
