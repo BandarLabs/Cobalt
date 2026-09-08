@@ -93,6 +93,15 @@ impl ComicView {
         &self.reader
     }
 
+    /// A bounded cover preview for the owning app's shelf, without moving its page.
+    ///
+    /// # Errors
+    /// Returns the cover page's archive or image decode error.
+    pub fn cover_preview(&mut self) -> Result<kobo_image::Picture, ComicError> {
+        self.reader
+            .thumbnail(self.reader.comic().metadata.cover.unwrap_or(0))
+    }
+
     /// Returns bytes for an acknowledged store write owned by the app.
     ///
     /// # Errors

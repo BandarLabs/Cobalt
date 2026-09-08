@@ -1097,7 +1097,13 @@ physical-device transfer or a claim that every app already offers export.*
 rotation, spreads and right-to-left reading. Persist `memory()` through an
 acknowledged draft, forward actions to `act`, reflow when metrics change, and
 `close` to release picture resources. Restore a position only against its comic.
-See [Panels](apps/panels/README.md) for a complete app integration. CBR/RAR decoding
+For shelf covers, `cover_preview()` returns a bounded image without moving the
+reading position. `kobo_comic::reader::Memory::saved_page(bytes, page_count)`
+validates stored reading memory and returns an optional zero-based page without
+decoding the archive. Use the summary only with unchanged page order, such as a
+content-addressed CBZ; opening the reader still resolves its filename anchor.
+Missing positions and unreadable records remain distinct. See
+[Panels](apps/panels/README.md) for a complete app integration. CBR/RAR decoding
 is deferred; no RAR codec or library is included.
 
 ---
