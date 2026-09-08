@@ -323,3 +323,9 @@ This checkpoint completes BACK-06, GRIM-01 and GRIM-02 as foundation integration
 The shared import flow checks the content-addressed shelf before writing. A complete, verified identical file is reused, including when the owner cancels or the receipt save fails. Only a missing file or a completely read, mismatching partial copy starts a transfer; storage refusals and invalid read responses do not become permission to overwrite. Retrying an interrupted write repeats this check. Post-write verification still rejects corruption, and reopening a missing receipt target remains unavailable. The upload buffer is released before post-write readback.
 
 Rust 1.85.1 SDK tests: **145 passed**, two existing doc examples ignored. Tests use the actual policy shelf with a multi-chunk original and cover duplicate cancellation, receipt failure, read-only probe refusal, partial repair, corruption and missing-file reopening. Strict SDK Clippy passes. No dependency or wire-format change.
+
+## Catalog connection response admission
+
+The shared OPDS entry point now rejects HTML sign-in pages, XML error roots, incomplete/mismatched XML roots and JSON without catalog fields. Valid empty catalogs remain valid. Atom namespace prefixes no longer hide a catalog title. This prevents a successful HTTP response from being reported as a successful library connection merely because it begins with `<` or `{`.
+
+Rust 1.85.1: **58 OPDS unit tests and one Atom/JSON parity test pass**; strict OPDS Clippy passes. Tests include login/error documents, truncated roots, a second document root, legitimate empty catalogs and an alternate Atom prefix. Panels' catalog connection test exercises this distinction in the app integration. No dependency or public wire change.
