@@ -73,8 +73,43 @@ impl Memory {
     /// # Errors
     /// Distinguishes unreadable or newer records from an expected missing one.
     pub fn restore(bytes: Option<&[u8]>, comic: &Comic) -> Result<Self, String> {
-        let Some(bytes) = bytes else {
+        let Some((mut memory, anchor)) = Self::decode_saved(bytes, &Self::new(comic))? else {
             return Ok(Self::new(comic));
+        };
+        memory.page = anchor
+            .as_ref()
+            .and_then(|anchor| comic.pages.iter().position(|name| name == anchor))
+            .unwrap_or(memory.page)
+            .min(comic.pages.len().saturating_sub(1));
+        Ok(memory)
+    }
+
+    /// Read a zero-based saved page for a shelf summary without decoding the archive.
+    /// Use only for an unchanged page order (for example a content-addressed CBZ).
+    /// The reader still resolves the filename anchor when opening the actual comic.
+    /// `None` means no saved position; invalid records are errors, never "not started".
+    ///
+    /// # Errors
+    /// Refuses invalid page counts and the same malformed/newer records as `restore`.
+    pub fn saved_page(bytes: Option<&[u8]>, pages: usize) -> Result<Option<usize>, String> {
+        if !(1..=crate::MAX_ENTRIES).contains(&pages) {
+            return Err("Comic page count is outside the supported range.".into());
+        }
+        let default = Self {
+            page: 0,
+            right_to_left: false,
+            spreads: false,
+            viewport: Viewport::default(),
+        };
+        Ok(Self::decode_saved(bytes, &default)?.map(|(memory, _)| memory.page.min(pages - 1)))
+    }
+
+    fn decode_saved(
+        bytes: Option<&[u8]>,
+        default: &Self,
+    ) -> Result<Option<(Self, Option<String>)>, String> {
+        let Some(bytes) = bytes else {
+            return Ok(None);
         };
         if bytes.len() > MAX_MEMORY_BYTES {
             return Err("Saved reading position is too large.".into());
@@ -82,10 +117,13 @@ impl Memory {
         let source =
             std::str::from_utf8(bytes).map_err(|_| "Saved reading position could not be read.")?;
         if let Ok(page) = source.parse::<usize>() {
-            return Ok(Self {
-                page: page.min(comic.pages.len().saturating_sub(1)),
-                ..Self::new(comic)
-            });
+            return Ok(Some((
+                Self {
+                    page,
+                    ..default.clone()
+                },
+                None,
+            )));
         }
         let value =
             kobo_json::parse(source).map_err(|_| "Saved reading position could not be read.")?;
@@ -120,26 +158,22 @@ impl Memory {
         if !(100..=400).contains(&zoom) || x > 10_000 || y > 10_000 {
             return Err("Saved zoom or pan is outside the supported range.".into());
         }
-        let fallback = num("page")? as usize;
-        let page = comic
-            .pages
-            .iter()
-            .position(|name| name == text("anchor").unwrap_or_default())
-            .unwrap_or(fallback)
-            .min(comic.pages.len().saturating_sub(1));
-        // Require the anchor even when the index still exists.
-        text("anchor")?;
-        Ok(Self {
-            page,
-            right_to_left: boolean("rtl")?,
-            spreads: boolean("spreads")?,
-            viewport: Viewport::new(
-                fit,
-                u16::try_from(zoom).map_err(|_| "Invalid zoom.")?,
-                u16::try_from(x).map_err(|_| "Invalid pan.")?,
-                u16::try_from(y).map_err(|_| "Invalid pan.")?,
-            ),
-        })
+        let page = num("page")? as usize;
+        let anchor = text("anchor")?.to_owned();
+        Ok(Some((
+            Self {
+                page,
+                right_to_left: boolean("rtl")?,
+                spreads: boolean("spreads")?,
+                viewport: Viewport::new(
+                    fit,
+                    u16::try_from(zoom).map_err(|_| "Invalid zoom.")?,
+                    u16::try_from(x).map_err(|_| "Invalid pan.")?,
+                    u16::try_from(y).map_err(|_| "Invalid pan.")?,
+                ),
+            },
+            Some(anchor),
+        )))
     }
 }
 
@@ -291,5 +325,54 @@ impl Reader {
     #[must_use]
     pub fn cached_pages(&self) -> usize {
         self.cache.len()
+    }
+}
+
+#[cfg(test)]
+mod summary_tests {
+    use super::*;
+    #[test]
+    fn saved_page_uses_the_readers_validation_and_preserves_missing_state() {
+        let comic = Comic {
+            pages: vec!["one.png".into(), "two.png".into()],
+            metadata: crate::Metadata::default(),
+        };
+        let mut memory = Memory::new(&comic);
+        memory.page = 1;
+        let bytes = memory.encode(&comic).unwrap();
+        assert_eq!(Memory::saved_page(Some(&bytes), 2).unwrap(), Some(1));
+        assert_eq!(Memory::saved_page(None, 2).unwrap(), None);
+        assert_eq!(Memory::saved_page(Some(b"99"), 2).unwrap(), Some(1));
+        assert!(Memory::saved_page(None, 0).is_err());
+        let text = String::from_utf8(bytes).unwrap();
+        for bad in [
+            text.replace("\"version\":1", "\"version\":2"),
+            text.replace("\"zoom\":100", "\"zoom\":999"),
+            text.replace("\"rtl\":false", "\"rtl\":null"),
+            text.replace("\"anchor\"", "\"missing\""),
+            "{}".into(),
+        ] {
+            assert!(
+                Memory::restore(Some(bad.as_bytes()), &comic).is_err(),
+                "{bad}"
+            );
+            assert!(
+                Memory::saved_page(Some(bad.as_bytes()), 2).is_err(),
+                "{bad}"
+            );
+        }
+        assert!(Memory::saved_page(Some(&vec![b'x'; MAX_MEMORY_BYTES + 1]), 2).is_err());
+    }
+    #[test]
+    fn reader_resolves_anchors_while_summary_requires_unchanged_order() {
+        let mut comic = Comic {
+            pages: vec!["one.png".into(), "two.png".into()],
+            metadata: crate::Metadata::default(),
+        };
+        let memory = Memory::new(&comic);
+        let bytes = memory.encode(&comic).unwrap();
+        comic.pages.reverse();
+        assert_eq!(Memory::restore(Some(&bytes), &comic).unwrap().page, 1);
+        assert_eq!(Memory::saved_page(Some(&bytes), 2).unwrap(), Some(0));
     }
 }
