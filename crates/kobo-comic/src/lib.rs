@@ -5,6 +5,11 @@ use std::collections::BTreeSet;
 use std::io::{Cursor, Read};
 use zip::{CompressionMethod, ZipArchive};
 
+mod metadata;
+pub use metadata::Metadata;
+pub mod reader;
+pub mod viewport;
+
 pub const MAX_ARCHIVE_BYTES: usize = 64 * 1024 * 1024;
 pub const MAX_ENTRIES: usize = 2048;
 pub const MAX_DIRECTORY_BYTES: usize = 1024 * 1024;
@@ -13,6 +18,7 @@ pub const MAX_EXPANDED_BYTES: u64 = 512 * 1024 * 1024;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Comic {
     pub pages: Vec<String>,
+    pub metadata: Metadata,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -261,7 +267,7 @@ fn natural_order(left: &str, right: &str) -> Ordering {
 /// # Errors
 /// Returns a specific archive, format, safety or resource-limit error.
 pub fn inspect(bytes: &[u8]) -> Result<Comic, ComicError> {
-    let archive = open(bytes)?;
+    let mut archive = open(bytes)?;
     let mut pages = archive
         .file_names()
         .filter(|name| page_name(name))
@@ -271,8 +277,24 @@ pub fn inspect(bytes: &[u8]) -> Result<Comic, ComicError> {
     if pages.is_empty() {
         Err(ComicError::Empty)
     } else {
-        Ok(Comic { pages })
+        let metadata = metadata::read(&mut archive, pages.len());
+        Ok(Comic { pages, metadata })
     }
+}
+
+/// Content determines the format. A misleading extension produces guidance,
+/// while genuine RAR content is refused regardless of its filename.
+///
+/// # Errors
+/// Returns the same bounded archive errors as [`inspect`].
+pub fn inspect_named(bytes: &[u8], filename: &str) -> Result<(Comic, Option<String>), ComicError> {
+    let comic = inspect(bytes)?;
+    let extension = filename.rsplit_once('.').map(|(_, ext)| ext);
+    let notice = (!extension.is_some_and(|ext| ext.eq_ignore_ascii_case("cbz"))).then(|| {
+        "This file contains a CBZ comic. Use a .cbz filename so other readers can recognize it."
+            .into()
+    });
+    Ok((comic, notice))
 }
 
 /// Decode one page, checking the ZIP CRC and image limits. No page cache is retained here.

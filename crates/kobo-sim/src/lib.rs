@@ -23,6 +23,73 @@ use kobo_protocol::{read_from, write_to, Frame, Lifecycle, Message};
 use kobo_ui::{ActionId, DisplayMetrics, Node, NodeId, Screen, Surface};
 
 const MAX_HTTP_HEADER: usize = 8 * 1024;
+
+static OBSERVATION: LazyLock<Result<Option<kobo_profile::observation::Observation>, String>> =
+    LazyLock::new(|| {
+        let Some(path) = std::env::var_os("KOBO_SIM_OBSERVATION") else {
+            return Ok(None);
+        };
+        let mut source = String::new();
+        fs::File::open(path)
+            .and_then(|file| {
+                file.take(kobo_profile::observation::MAX_BYTES as u64 + 1)
+                    .read_to_string(&mut source)
+            })
+            .map_err(|error| format!("read hardware observation: {error}"))?;
+        kobo_profile::observation::Observation::parse(&source).map(Some)
+    });
+
+fn configured_profile() -> io::Result<&'static DeviceProfile> {
+    let requested = match std::env::var("KOBO_SIM_PROFILE") {
+        Ok(value) => Some(value),
+        Err(std::env::VarError::NotPresent) => None,
+        Err(error) => return Err(io::Error::new(io::ErrorKind::InvalidInput, error)),
+    };
+    profile_from_observation(requested.as_deref(), observation()?)
+}
+
+fn observation() -> io::Result<Option<&'static kobo_profile::observation::Observation>> {
+    OBSERVATION
+        .as_ref()
+        .map(Option::as_ref)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error.clone()))
+}
+
+fn profile_from_observation(
+    requested: Option<&str>,
+    observation: Option<&kobo_profile::observation::Observation>,
+) -> io::Result<&'static DeviceProfile> {
+    let Some(observation) = observation else {
+        return parse_profile(requested);
+    };
+    let profile = kobo_profile::identify_profile(&observation.snapshot).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "observation does not match a supported Cobalt profile",
+        )
+    })?;
+    if requested.is_some_and(|id| id != profile.id) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "requested profile does not match the hardware observation",
+        ));
+    }
+    if profile.validate(&observation.snapshot).readiness == kobo_profile::Readiness::Rejected {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "hardware observation geometry does not match its profile",
+        ));
+    }
+    let framebuffer = observation.snapshot.framebuffer.as_ref().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "observation has no framebuffer",
+        )
+    })?;
+    PanelPose::resolve(profile, framebuffer)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error.to_string()))?;
+    Ok(profile)
+}
 fn parse_profile(requested: Option<&str>) -> io::Result<&'static DeviceProfile> {
     match requested {
         None => Ok(&CLARA_BW_391),
@@ -40,9 +107,11 @@ fn parse_profile(requested: Option<&str>) -> io::Result<&'static DeviceProfile> 
 }
 
 fn validate_configuration() -> io::Result<()> {
-    parse_profile(std::env::var("KOBO_SIM_PROFILE").ok().as_deref())?;
-    if let Ok(value) = std::env::var("KOBO_TEXT_SCALE") {
-        validate_scale(&value)?;
+    configured_profile()?;
+    match std::env::var("KOBO_TEXT_SCALE") {
+        Ok(value) => validate_scale(&value)?,
+        Err(std::env::VarError::NotPresent) => {}
+        Err(error) => return Err(io::Error::new(io::ErrorKind::InvalidInput, error)),
     }
     configured_backends()?;
     Ok(())
@@ -61,7 +130,10 @@ fn parse_backends(value: Option<&str>) -> io::Result<kobo_policy::Declared> {
 fn configured_backends() -> io::Result<kobo_policy::Declared> {
     match std::env::var("KOBO_SIM_BACKENDS") {
         Ok(value) => parse_backends(Some(&value)),
-        Err(std::env::VarError::NotPresent) => parse_backends(None),
+        Err(std::env::VarError::NotPresent) => match observation()? {
+            Some(observation) => parse_backends(Some(&observation.available_backends.join(","))),
+            None => parse_backends(None),
+        },
         Err(error) => Err(io::Error::new(io::ErrorKind::InvalidInput, error)),
     }
 }
@@ -72,15 +144,28 @@ fn validate_scale(value: &str) -> io::Result<()> {
             format!("Unknown text size {value:?}. Use default, large, extra-large, or a supported percentage.")))
 }
 
-static PROFILE: LazyLock<&'static DeviceProfile> = LazyLock::new(|| {
-    parse_profile(std::env::var("KOBO_SIM_PROFILE").ok().as_deref())
-        .expect("validate simulator profile before starting")
-});
+static PROFILE: LazyLock<&'static DeviceProfile> =
+    LazyLock::new(|| configured_profile().expect("validate simulator profile before starting"));
 /// The simulator asserts an orientation rather than observing one, because it
 /// has no device. That is legitimate here and nowhere near a real framebuffer:
 /// it means the browser exercises exactly the transform the selected profile
 /// was measured at.
-static POSE: LazyLock<PanelPose<'static>> = LazyLock::new(|| PanelPose::reference(*PROFILE));
+static POSE: LazyLock<PanelPose<'static>> = LazyLock::new(|| {
+    observation().expect("validated observation").map_or_else(
+        || PanelPose::reference(*PROFILE),
+        |value| {
+            PanelPose::resolve(
+                *PROFILE,
+                value
+                    .snapshot
+                    .framebuffer
+                    .as_ref()
+                    .expect("validated framebuffer"),
+            )
+            .expect("validated observation pose")
+        },
+    )
+});
 
 #[must_use]
 pub fn selected_profile() -> &'static DeviceProfile {
@@ -943,6 +1028,7 @@ fn is_picture_message(message: &Message) -> bool {
 struct AppState {
     screen: Screen,
     app_name: String,
+    secret_directory: PathBuf,
     chrome: kobo_ui::Chrome,
     orientation: kobo_ui::Orientation,
     /// How many screens the application has painted since it started.
@@ -980,6 +1066,7 @@ impl AppState {
         Self {
             screen: Screen::new(0, Vec::new()),
             app_name: "app".into(),
+            secret_directory: std::env::temp_dir().join(SIM_SECRETS),
             chrome: kobo_ui::Chrome::default(),
             orientation: kobo_ui::Orientation::Portrait,
             paints: 0,
@@ -1557,14 +1644,14 @@ fn simulation_json(
             "\"yMin\":{},\"yMax\":{}}}}},\"scenario\":{},",
             "\"lifecycle\":{},\"transition\":{},\"refreshCount\":{},",
             "\"partialsSinceClean\":{},\"touch\":{},",
-            "\"panelApproximation\":true}}"
+            "\"panelApproximation\":true,\"observation\":{},\"backends\":{}}}"
         ),
         json_string(PROFILE.id),
         json_string(PROFILE.model),
         PROFILE.width,
         PROFILE.height,
         PROFILE.pixels_per_inch,
-        PROFILE.rotation,
+        POSE.rotation(),
         json_string(PROFILE.touch_name),
         PROFILE.touch_x_min,
         PROFILE.touch_x_max,
@@ -1576,6 +1663,20 @@ fn simulation_json(
         panel.planner.refreshes(),
         panel.planner.dirty(),
         touch,
+        observation().ok().flatten().map_or_else(
+            || "null".into(),
+            |value| value.to_json().unwrap_or_else(|_| "null".into())
+        ),
+        format!(
+            "[{}]",
+            configured_backends()
+                .map(|value| value
+                    .iter()
+                    .map(|c| json_string(c.manifest_name()))
+                    .collect::<Vec<_>>()
+                    .join(","))
+                .unwrap_or_default()
+        ),
     )
 }
 
@@ -1934,9 +2035,7 @@ fn scenario_task_error(
     match scenario {
         Scenario::Offline if network => Some(kobo_protocol::TaskError::Offline),
         Scenario::HostDown if network => Some(kobo_protocol::TaskError::Unreachable),
-        Scenario::LowBattery | Scenario::PermissionDenied if network => {
-            Some(kobo_protocol::TaskError::Denied)
-        }
+        Scenario::PermissionDenied if network => Some(kobo_protocol::TaskError::Denied),
         Scenario::MissingSecret
             if matches!(
                 task,
@@ -1956,6 +2055,26 @@ fn scenario_task_error(
     }
 }
 
+fn simulated_task_error(
+    scenario: Scenario,
+    task: &kobo_protocol::Task,
+    declared: &kobo_policy::Declared,
+    backends: &kobo_policy::Declared,
+) -> Option<kobo_protocol::TaskError> {
+    if matches!(
+        task,
+        kobo_protocol::Task::Fetch { .. } | kobo_protocol::Task::Post { .. }
+    ) {
+        if !declared.holds(kobo_policy::Capability::Network) {
+            return Some(kobo_protocol::TaskError::Denied);
+        }
+        if !backends.holds(kobo_policy::Capability::Network) {
+            return Some(kobo_protocol::TaskError::Offline);
+        }
+    }
+    scenario_task_error(scenario, task)
+}
+
 #[allow(
     clippy::too_many_lines,
     reason = "one exhaustive protocol message dispatcher"
@@ -1969,10 +2088,11 @@ fn read_app_messages(
 ) -> io::Result<()> {
     // The simulator owns no hardware, so it answers state queries from a
     // believable model and refuses everything that would change a real device.
+    let backends = configured_backends()?;
     let mut services = DeviceServices::new(
         declared.clone(),
         kobo_policy::PowerPolicy::DEFAULT,
-        kobo_policy::Backends::with(configured_backends()?.iter()),
+        kobo_policy::Backends::with(backends.iter()),
     );
     // There is no bezel here to hold a magnet against, so the state the hall
     // sensor reports is set on the way in. Without this the second half of
@@ -2076,7 +2196,9 @@ fn read_app_messages(
                 )?;
             }
             Message::Spawn { task, work } => {
-                if let Some(error) = scenario_task_error(current_scenario(state), &work) {
+                if let Some(error) =
+                    simulated_task_error(current_scenario(state), &work, declared, &backends)
+                {
                     note(
                         state,
                         &format!("task {} injected failure: {error:?}", task.0),
@@ -2178,7 +2300,11 @@ fn simulated_app_request(
         {
             return Ok(Some(DeviceResult::Denied(DenyReason::NotDeclared)));
         }
-        let directory = std::env::temp_dir().join(SIM_SECRETS);
+        let directory = state
+            .lock()
+            .map_err(|_| io::Error::other("app state lock poisoned"))?
+            .secret_directory
+            .clone();
         let result =
             kobo_policy::credentials::install_app_secret(&directory, caller, name, value.as_str())
                 .map_or_else(DeviceResult::Failed, |()| DeviceResult::Done);
@@ -2735,6 +2861,27 @@ frame().catch(error=>status.textContent=error.message);
 #[cfg(test)]
 mod tests {
     #[test]
+    fn observations_cannot_silently_select_an_unrelated_profile_or_pose() {
+        let mut observation = kobo_profile::observation::Observation::parse(include_str!(
+            "../../../docs/quality/fixtures/clara-bw-synthetic.json"
+        ))
+        .unwrap();
+        assert_eq!(
+            super::profile_from_observation(None, Some(&observation))
+                .unwrap()
+                .id,
+            "clara-bw-391"
+        );
+        assert!(
+            super::profile_from_observation(Some("libra-colour-390"), Some(&observation)).is_err()
+        );
+        observation.snapshot.framebuffer.as_mut().unwrap().rotation = 2;
+        assert!(super::profile_from_observation(None, Some(&observation)).is_err());
+        observation.snapshot.framebuffer.as_mut().unwrap().rotation = 3;
+        observation.snapshot.framebuffer.as_mut().unwrap().stride += 1;
+        assert!(super::profile_from_observation(None, Some(&observation)).is_err());
+    }
+    #[test]
     fn local_manifest_is_authoritative_and_cannot_borrow_a_catalog_identity() {
         let mut app = kobo_catalog::bundled().unwrap().remove(0);
         app.id = "local-reader".into();
@@ -2833,12 +2980,16 @@ mod tests {
     fn simulated_secret_install_is_authorized_and_visible_to_tasks() {
         use kobo_protocol::{DeviceRequest, DeviceResult, SecretValue};
 
-        let directory = std::env::temp_dir().join(SIM_SECRETS);
+        let directory = private_temp_dir();
         let path = directory.join("apps/zotero-reader/zotero");
-        let _ignored = fs::remove_dir_all(directory.join("apps/zotero-reader"));
         let state = Arc::new(Mutex::new(AppState::with_apps(Arc::new(Mutex::new(
             SimulatedApps::default(),
         )))));
+        state
+            .lock()
+            .unwrap()
+            .secret_directory
+            .clone_from(&directory);
         let request = DeviceRequest::SetSecret {
             name: "zotero".to_owned(),
             value: SecretValue::new("private-token"),
@@ -2855,7 +3006,7 @@ mod tests {
             app_result(&state, "todo", Scenario::Normal, &request),
             DeviceResult::Denied(_)
         ));
-        let _ignored = fs::remove_dir_all(directory.join("apps/zotero-reader"));
+        fs::remove_dir_all(directory).expect("remove owned test directory");
     }
 
     #[test]
@@ -3275,6 +3426,17 @@ mod tests {
         );
         assert_eq!(scenario_task_error(Scenario::MissingSecret, &fetch), None);
         assert_eq!(scenario_task_error(Scenario::Normal, &fetch), None);
+        assert_eq!(scenario_task_error(Scenario::LowBattery, &fetch), None);
+        let none = kobo_policy::Declared::parse([]).unwrap();
+        let network = kobo_policy::Declared::parse(["network"]).unwrap();
+        assert_eq!(
+            simulated_task_error(Scenario::MissingSecret, &credentialed_get, &none, &network),
+            Some(kobo_protocol::TaskError::Denied)
+        );
+        assert_eq!(
+            simulated_task_error(Scenario::Normal, &fetch, &network, &none),
+            Some(kobo_protocol::TaskError::Offline)
+        );
     }
 
     #[test]

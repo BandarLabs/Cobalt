@@ -849,10 +849,13 @@ dependencies = [
 name = "kobo-bookview"
 version = "0.3.11"
 dependencies = [
+ "kobo-comic",
  "kobo-doc",
  "kobo-image",
+ "kobo-profile",
  "kobo-read",
  "kobo-sdk",
+ "kobo-text",
  "kobo-ui",
 ]
 
@@ -916,6 +919,8 @@ version = "0.3.11"
 dependencies = [
  "flate2",
  "kobo-image",
+ "kobo-json",
+ "kobo-xml",
  "zip",
 ]
 
@@ -1250,11 +1255,13 @@ dependencies = [
 name = "kobo-panels"
 version = "0.1.0"
 dependencies = [
+ "kobo-bookview",
  "kobo-comic",
  "kobo-image",
  "kobo-json",
  "kobo-opds",
  "kobo-sdk",
+ "kobo-state",
  "kobo-ui",
 ]
 
@@ -1308,6 +1315,9 @@ dependencies = [
 [[package]]
 name = "kobo-profile"
 version = "0.3.11"
+dependencies = [
+ "kobo-json",
+]
 
 [[package]]
 name = "kobo-protocol"

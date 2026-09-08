@@ -4705,6 +4705,15 @@ pub trait KoboApp {
     /// has to guess whether its state was written.
     fn on_store(&mut self, _context: &mut Context, _result: StoreResult) {}
 
+    /// Receives the answer to a record save together with its requested key.
+    /// Store replies arrive in request order, including failures that carry no
+    /// key on the wire. Override this to acknowledge a particular draft without
+    /// attributing another record or shelf's failure to it. Existing apps keep
+    /// receiving these answers through `on_store` by default.
+    fn on_save(&mut self, context: &mut Context, _key: &str, result: StoreResult) {
+        self.on_store(context, result);
+    }
+
     /// Receives everything a terminal has to say: that it opened, what the
     /// program printed, that it finished, or that the request was refused.
     fn on_shell_event(&mut self, _context: &mut Context, _event: ShellEvent) {}
@@ -4738,9 +4747,9 @@ pub struct AppRunner<A> {
     started: bool,
     pending: VecDeque<DeviceRequest>,
     /// Store requests sent but not yet answered. Every request is answered
-    /// exactly once, so a count is enough and the request itself need not be
-    /// kept: unlike a device answer, a store answer names its own key.
-    pending_stores: usize,
+    /// exactly once, in request order. Save keys are retained because denied
+    /// results carry no key. Payloads are never copied into this queue.
+    pending_stores: VecDeque<Option<String>>,
     /// Task counters live here rather than in `Context`, because a fresh
     /// context is built for every callback. Left in the context they would
     /// restart at one on each dispatch, so the second callback to spawn work
@@ -4785,7 +4794,7 @@ impl<A: KoboApp> AppRunner<A> {
             metrics: DisplayMetrics::default(),
             started: false,
             pending: VecDeque::new(),
-            pending_stores: 0,
+            pending_stores: VecDeque::new(),
             next_task: 0,
             in_flight: 0,
             settled: false,
@@ -4988,8 +4997,11 @@ impl<A: KoboApp> AppRunner<A> {
 
     /// Delivers one store answer.
     pub fn store_result(&mut self, result: StoreResult) -> Vec<Command> {
-        self.pending_stores = self.pending_stores.saturating_sub(1);
-        self.dispatch(|app, context| app.on_store(context, result))
+        let saved_key = self.pending_stores.pop_front().flatten();
+        self.dispatch(|app, context| match saved_key {
+            Some(key) => app.on_save(context, &key, result),
+            None => app.on_store(context, result),
+        })
     }
 
     /// Delivers one terminal event.
@@ -5010,7 +5022,7 @@ impl<A: KoboApp> AppRunner<A> {
     /// the runtime rather than the clean shutdown it looks like from here.
     #[must_use]
     pub fn outstanding_answers(&self) -> usize {
-        self.pending.len() + self.pending_stores
+        self.pending.len() + self.pending_stores.len()
     }
 
     #[must_use]
@@ -5077,8 +5089,11 @@ impl<A: KoboApp> AppRunner<A> {
         for command in &commands {
             match command {
                 Command::Device(request) => self.pending.push_back(request.clone()),
-                Command::Store(_) => {
-                    self.pending_stores = self.pending_stores.saturating_add(1);
+                Command::Store(request) => {
+                    self.pending_stores.push_back(match request {
+                        StoreRequest::Save { key, .. } => Some(key.clone()),
+                        _ => None,
+                    });
                 }
                 _ => {}
             }
@@ -5357,6 +5372,40 @@ impl Client {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn save_failures_keep_the_requested_key_without_copying_payloads() {
+        #[derive(Default)]
+        struct App {
+            answers: Vec<Option<String>>,
+        }
+        impl super::KoboApp for App {
+            fn on_action(&mut self, _: &mut super::Context, _: super::ActionId) {}
+            fn on_start(&mut self, context: &mut super::Context) {
+                context.store().save("position", b"1".to_vec());
+                context.store().load("library");
+                context.store().save("draft", b"letter".to_vec());
+            }
+            fn on_save(&mut self, _: &mut super::Context, key: &str, _: super::StoreResult) {
+                self.answers.push(Some(key.into()));
+            }
+            fn on_store(&mut self, _: &mut super::Context, _: super::StoreResult) {
+                self.answers.push(None);
+            }
+        }
+        let mut runner = super::AppRunner::new(App::default());
+        runner.start();
+        assert_eq!(runner.outstanding_answers(), 3);
+        runner.store_result(super::StoreResult::Denied(super::StoreError::TooFull));
+        runner.store_result(super::StoreResult::Denied(super::StoreError::TooFull));
+        runner.store_result(super::StoreResult::Saved {
+            key: "draft".into(),
+        });
+        assert_eq!(
+            runner.app_mut().answers,
+            [Some("position".into()), None, Some("draft".into())]
+        );
+        assert_eq!(runner.outstanding_answers(), 0);
+    }
     use super::*;
     use std::thread;
 

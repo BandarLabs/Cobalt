@@ -42,6 +42,8 @@
 
 use std::collections::{BTreeMap, VecDeque};
 
+pub mod comic;
+
 use kobo_doc::{Block, Document, FORMULA_PICTURE_EM, FORMULA_PICTURE_PREFIX};
 use kobo_read::{Memory, Outcome, Reader};
 use kobo_sdk::{

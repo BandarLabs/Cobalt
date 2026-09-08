@@ -77,6 +77,100 @@ fn rar_content_gets_conversion_guidance_regardless_of_extension() {
 }
 
 #[test]
+fn metadata_is_bounded_optional_and_filename_never_overrides_content() {
+    let png = kobo_image::encode_png_grey(2, 2, &[0, 64, 128, 255]).unwrap();
+    let bytes = fixture(&[("2.png", &png), ("1.png", &png), ("ComicInfo.xml", b"<ComicInfo><Title>Rain</Title><Manga>YesAndRightToLeft</Manga><Pages><Page Image='1' Type='FrontCover'/></Pages></ComicInfo>")], CompressionMethod::Deflated);
+    let (comic, notice) = inspect_named(&bytes, "volume.cbr").unwrap();
+    assert_eq!(comic.pages, ["1.png", "2.png"]);
+    assert_eq!(comic.metadata.title.as_deref(), Some("Rain"));
+    assert_eq!(comic.metadata.cover, Some(1));
+    assert!(notice.unwrap().contains(".cbz filename"));
+    assert!(inspect_named(&bytes, "volume.CBZ").unwrap().1.is_none());
+    let oversized = vec![b' '; 64 * 1024 + 1];
+    for metadata in [&b"<ComicInfo><Title>Incomplete"[..], oversized.as_slice()] {
+        let bytes = fixture(
+            &[("1.png", &png), ("ComicInfo.xml", metadata)],
+            CompressionMethod::Deflated,
+        );
+        let comic = inspect(&bytes).unwrap();
+        assert!(comic.metadata.warning.is_some());
+        assert!(page(&bytes, &comic, 0).is_ok());
+    }
+}
+
+#[test]
+fn source_crops_preserve_exact_pixels_and_reject_overflow() {
+    let source =
+        kobo_image::Picture::from_rgb(2, 2, vec![255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 0])
+            .unwrap();
+    let cropped = source.crop(1, 0, 1, 2).unwrap();
+    assert_eq!(cropped.colour(), Some(&[0, 255, 0, 255, 255, 0][..]));
+    assert!(source.crop(u32::MAX, 0, 2, 2).is_err());
+    assert!(source.crop(0, 0, 0, 1).is_err());
+}
+
+#[test]
+fn shared_reader_restores_anchors_preferences_and_keeps_decoding_lazy() {
+    use crate::{
+        reader::Reader,
+        viewport::{Fit, Viewport},
+    };
+    let png = kobo_image::encode_png_grey(2, 2, &[0, 64, 128, 255]).unwrap();
+    let bytes = fixture(
+        &[
+            ("1.png", &png),
+            ("2.png", &png),
+            ("3.png", &png),
+            ("4.png", b"not an image"),
+        ],
+        CompressionMethod::Deflated,
+    );
+    let mut reader = Reader::open(bytes.clone()).unwrap();
+    assert_eq!(reader.cached_pages(), 0);
+    assert!(reader.jump(1));
+    reader.memory_mut().right_to_left = true;
+    reader.memory_mut().viewport = Viewport::new(Fit::Width, 200, 7500, 10000);
+    let saved = reader.memory().encode(reader.comic()).unwrap();
+    for index in 0..3 {
+        reader.thumbnail(index).unwrap();
+        assert!(reader.cached_pages() <= 2);
+    }
+    assert_eq!(
+        reader.memory().page,
+        1,
+        "previews must not move the bookmark"
+    );
+    let mut reopened = Reader::open(bytes).unwrap();
+    reopened.restore(Some(&saved)).unwrap();
+    assert_eq!(reopened.memory(), reader.memory());
+    assert!(reopened.render((100, 200)).is_ok());
+    assert!(reopened.jump(3));
+    assert!(
+        reopened.render((100, 200)).is_err(),
+        "a damaged later page should fail when selected, not block earlier reading"
+    );
+    assert!(reopened.jump(2));
+    assert!(reopened.render((100, 200)).is_ok());
+    let prior = reopened.memory().clone();
+    assert!(reopened.restore(Some(b"damaged")).is_err());
+    assert_eq!(reopened.memory(), &prior);
+    reopened.restore(Some(b"1")).unwrap();
+    assert_eq!(
+        reopened.memory().page,
+        1,
+        "migrate the previous Panels format"
+    );
+    let mut changed = reader.comic().clone();
+    changed.pages.insert(0, "0.png".into());
+    assert_eq!(
+        crate::reader::Memory::restore(Some(&saved), &changed)
+            .unwrap()
+            .page,
+        2
+    );
+}
+
+#[test]
 fn rejects_unsafe_names_even_when_the_entry_is_not_a_page() {
     for name in [
         "../secret.txt",
@@ -171,4 +265,33 @@ fn archive_inspection_is_lazy_but_invalid_images_fail_on_open() {
     assert!(matches!(page(&bytes, &comic, 0), Err(ComicError::Image(_))));
     let empty = fixture(&[("notes.txt", b"notes")], CompressionMethod::Stored);
     assert_eq!(inspect(&empty), Err(ComicError::Empty));
+}
+
+#[test]
+fn spread_turns_keep_a_declared_cover_separate_on_both_sides() {
+    let bytes = fixture(
+        &[
+            ("0.png", b"image"),
+            ("1.png", b"image"),
+            ("2.png", b"image"),
+            ("3.png", b"image"),
+            (
+                "ComicInfo.xml",
+                b"<ComicInfo><Pages><Page Image=\"1\" Type=\"FrontCover\"/></Pages></ComicInfo>",
+            ),
+        ],
+        CompressionMethod::Stored,
+    );
+    let mut reader = crate::reader::Reader::open(bytes).unwrap();
+    reader.memory_mut().spreads = true;
+    let landscape = (300, 200);
+    assert_eq!(reader.visible_pages(landscape), vec![0]);
+    assert!(reader.turn(true, landscape));
+    assert_eq!(reader.visible_pages(landscape), vec![1]);
+    assert!(reader.turn(true, landscape));
+    assert_eq!(reader.visible_pages(landscape), vec![2, 3]);
+    assert!(reader.turn(false, landscape));
+    assert_eq!(reader.visible_pages(landscape), vec![1]);
+    assert!(reader.turn(false, landscape));
+    assert_eq!(reader.visible_pages(landscape), vec![0]);
 }

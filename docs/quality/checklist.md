@@ -16,7 +16,7 @@ A checked task requires implementation plus recorded validation. Physical measur
 
 ## Status
 
-494 tracked tasks: 35 completed, 1 deferred by the owner, 458 open. Implementation in progress. Evidence is recorded per task in `tasks.json` and in [the validation log](validation.md).
+494 tracked tasks: 51 completed, 1 deferred by the owner, 442 open. Implementation in progress. Evidence is recorded per task in `tasks.json` and in [the validation log](validation.md).
 
 ## PR 1 · Simulator fidelity (SIM-1–10)
 
@@ -26,7 +26,7 @@ A checked task requires implementation plus recorded validation. Physical measur
 - [x] **SIM-04** Share runtime Back/chrome composition with browser simulation.
 - [ ] **SIM-05** Route shell Back and app-owned Back consistently.
 - [x] **SIM-06** Use declared app capabilities instead of granting every capability.
-- [ ] **SIM-07** Respect device-supported service backends in simulation.
+- [x] **SIM-07** Respect device-supported service backends in simulation.
 - [x] **SIM-08** Inject missing credentials for all credentialed network tasks.
 - [ ] **SIM-09** Return production-equivalent failure reasons.
 - [x] **SIM-10** Cover streaming requests with offline and timeout injection.
@@ -80,10 +80,10 @@ A checked task requires implementation plus recorded validation. Physical measur
 
 ## PR 1 · Platform requirements from read-only hardware research
 
-- [ ] **HW-01** Export versioned observations from Cobalt device probes.
-- [ ] **HW-02** Record measured, inferred and unverified profile fields separately.
-- [ ] **HW-03** Load observation fixtures into the simulator without importing third-party device tables.
-- [ ] **HW-04** Keep digitizer mapping separate from display pose.
+- [x] **HW-01** Export versioned observations from Cobalt device probes.
+- [x] **HW-02** Record measured, inferred and unverified profile fields separately.
+- [x] **HW-03** Load observation fixtures into the simulator without importing third-party device tables.
+- [x] **HW-04** Keep digitizer mapping separate from display pose.
 - [x] **HW-05** Handle lost input and resynchronization explicitly.
 - [ ] **HW-06** Preserve backend-specific refresh intents and waveform capability checks.
 - [ ] **HW-07** Record real refresh submission/completion markers and timing.
@@ -109,20 +109,20 @@ A checked task requires implementation plus recorded validation. Physical measur
 - [x] **COMIC-04** Move comic archive metadata and natural page ordering into shared code.
 - [x] **COMIC-05** Support CBZ using bounded archive reads and validated images.
 - [ ] **COMIC-06 — deferred by owner** CBR support is out of scope for now; no RAR decoder or restricted UnRAR dependency will be added.
-- [ ] **COMIC-07** Identify format by content and report extension mismatch helpfully.
+- [x] **COMIC-07** Identify format by content and report extension mismatch helpfully.
 - [x] **COMIC-08** Reject corrupt, encrypted or unsupported archives with a specific recovery action.
 - [x] **COMIC-09** Bound entries, archive bytes, expanded bytes, image pixels and decode resources.
 - [x] **COMIC-10** Reject traversal, duplicate names, symlinks and unsafe extraction targets.
 - [x] **COMIC-11** Handle numeric filenames, nested folders and non-page metadata.
-- [ ] **COMIC-12** Preserve title, page order, reading direction and cover metadata.
-- [ ] **COMIC-13** Provide shared comic page fit, width, zoom and pan controls.
-- [ ] **COMIC-14** Provide page jump, thumbnails and stable Back/return position.
-- [ ] **COMIC-15** Persist page, direction and viewport per book.
-- [ ] **COMIC-16** Support RTL and two-page spreads with a reachable single-page fallback.
-- [ ] **COMIC-17** Keep page decode lazy and prefetch/cache bounded.
+- [x] **COMIC-12** Preserve title, page order, reading direction and cover metadata.
+- [x] **COMIC-13** Provide shared comic page fit, width, zoom and pan controls.
+- [x] **COMIC-14** Provide page jump, thumbnails and stable Back/return position.
+- [x] **COMIC-15** Persist page, direction and viewport per book.
+- [x] **COMIC-16** Support RTL and two-page spreads with a reachable single-page fallback.
+- [x] **COMIC-17** Keep page decode lazy and prefetch/cache bounded.
 - [ ] **COMIC-18** Route local comics through the same import preview and receipt as other documents.
 - [x] **COMIC-19** Test original CBZ fixtures and hostile/corrupt archives; test clear refusal of CBR.
-- [ ] **COMIC-20** Verify Clara-sized comic reading, scaling, navigation and reopen in simulator.
+- [x] **COMIC-20** Verify Clara-sized comic reading, scaling, navigation and reopen in simulator.
 
 ## PR 2 · arXiv
 
@@ -366,12 +366,12 @@ A checked task requires implementation plus recorded validation. Physical measur
 
 ## PR 2 · Panels
 
-- [ ] **PANELS-01** Use shared comic archive/reader components.
+- [x] **PANELS-01** Use shared comic archive/reader components.
 - [ ] **PANELS-02** Guide server or local-comic import.
 - [ ] **PANELS-03** Provide original sample comic pages.
 - [ ] **PANELS-04** Show thumbnails and reading progress.
-- [ ] **PANELS-05** Expose page zoom, fit and spread controls.
-- [ ] **PANELS-06** Verify RTL reading.
+- [x] **PANELS-05** Expose page zoom, fit and spread controls.
+- [x] **PANELS-06** Verify RTL reading.
 - [ ] **PANELS-07** Verify interrupted download and offline resume.
 
 ## PR 2 · Paperterm

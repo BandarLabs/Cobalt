@@ -4,6 +4,7 @@ mod archive;
 mod komga;
 mod transfer;
 
+use kobo_bookview::comic::{ComicView, Outcome as ComicOutcome, SaveState};
 use kobo_opds::{Feed, ImageSource, Publication};
 use kobo_sdk::keyboard::{Keyboard, Pressed};
 use kobo_sdk::{
@@ -11,6 +12,8 @@ use kobo_sdk::{
     Screen, ScreenBuilder, ShelfDownload, ShelfProgress, ShelfUpload, StoreResult, Task, TaskId,
     TaskOutcome, TilePicture,
 };
+use kobo_state::draft::{Draft, Status as DraftStatus};
+use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::process::ExitCode;
 
@@ -18,7 +21,6 @@ const SIDELOAD: &str = "volume.cbz";
 const LIBRARY: &str = "library";
 const PARTIAL_META: &str = "partial";
 const PARTIAL_BLOB: &str = "partial.cbz";
-const PAGE: PictureHandle = PictureHandle(1);
 const COVER: PictureHandle = PictureHandle(2);
 const MAX_IMAGE: u32 = 4 * 1024 * 1024;
 
@@ -38,7 +40,6 @@ enum Awaiting {
     Catalog,
     Cover,
     Comic,
-    Sideload,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -64,12 +65,10 @@ struct Pending {
 
 struct Panels {
     route: Route,
-    bytes: Option<Vec<u8>>,
-    comic: Option<archive::Comic>,
+    view: Option<ComicView>,
+    pending_memory: Option<Vec<u8>>,
     opened: Option<Kept>,
-    page: usize,
     rtl: bool,
-    picture: Option<TilePicture>,
     cover: Option<TilePicture>,
     notice: Option<String>,
     task: Option<(TaskId, Awaiting)>,
@@ -88,18 +87,18 @@ struct Panels {
     partial_load: Option<ShelfDownload>,
     pending_open: Option<Kept>,
     paused: bool,
+    progress: BTreeMap<String, Draft>,
+    progress_active: Option<(String, u64)>,
 }
 
 impl Default for Panels {
     fn default() -> Self {
         Self {
             route: Route::Library,
-            bytes: None,
-            comic: None,
+            view: None,
+            pending_memory: None,
             opened: None,
-            page: 0,
             rtl: false,
-            picture: None,
             cover: None,
             notice: None,
             task: None,
@@ -118,6 +117,8 @@ impl Default for Panels {
             partial_load: None,
             pending_open: None,
             paused: false,
+            progress: BTreeMap::new(),
+            progress_active: None,
         }
     }
 }
@@ -178,6 +179,13 @@ impl Panels {
                         Glyph::Book,
                     )
                 }));
+        }
+        if self
+            .progress
+            .values()
+            .any(|draft| matches!(draft.status(), DraftStatus::Failed(_)))
+        {
+            screen = screen.button("retry-reading-save", "Retry saving positions");
         }
         screen.button("load-sideload", "Open added comic").build()
     }
@@ -318,28 +326,9 @@ impl Panels {
     }
 
     fn reader_screen(&self) -> Screen {
-        let Some(comic) = &self.comic else {
-            return self.library_screen();
-        };
-        let title = self
-            .opened
+        self.view
             .as_ref()
-            .map_or("Comic", |opened| opened.title.as_str());
-        let mut screen = self.with_notice(
-            ScreenBuilder::new("panels-reader")
-                .top_bar(title)
-                .top_bar_action("rtl", if self.rtl { "RTL" } else { "LTR" })
-                .secondary(format!("Page {} of {}", self.page + 1, comic.pages.len()))
-                .owns_back(true),
-        );
-        if let Some(picture) = self.picture {
-            screen = screen.unframed_picture(picture, 154);
-        } else if self.notice.is_none() {
-            screen = screen.activity("Opening page", None);
-        } else {
-            screen = screen.secondary("Use the page edges to continue reading.");
-        }
-        screen.page_turns("previous", "next").build()
+            .map_or_else(|| self.library_screen(), ComicView::screen)
     }
 
     fn fetch_catalog(&mut self, context: &mut Context, url: String) {
@@ -390,12 +379,18 @@ impl Panels {
     }
 
     fn load_sideload(&mut self, context: &mut Context) {
-        self.task = context
-            .spawn(Task::ReadFile {
-                path: SIDELOAD.to_owned(),
-            })
-            .map(|task| (task, Awaiting::Sideload));
-        self.notice = Some("Opening added comic.".to_owned());
+        let kept = self
+            .library
+            .iter()
+            .find(|entry| entry.key == SIDELOAD)
+            .cloned()
+            .unwrap_or(Kept {
+                key: SIDELOAD.into(),
+                title: "Added comic".into(),
+                pages: 0,
+                rtl: false,
+            });
+        self.open_kept(context, &kept);
     }
 
     fn begin_download(&mut self, context: &mut Context) {
@@ -503,17 +498,15 @@ impl Panels {
         context.store().save(LIBRARY, encode_library(&self.library));
         context.store().save(PARTIAL_META, Vec::new());
         context.shelf().remove(PARTIAL_BLOB);
-        self.bytes = Some(download.received);
-        self.comic = Some(comic);
-        self.opened = Some(kept);
-        self.page = 0;
-        self.picture = None;
-        self.route = Route::Reader;
-        self.notice = None;
-        self.display_page(context);
+        self.open_bytes(context, download.received, kept, None);
     }
 
     fn open_kept(&mut self, context: &mut Context, kept: &Kept) {
+        if self.progress.len() >= 64 && !self.progress.contains_key(&progress_key(&kept.key)) {
+            self.notice =
+                Some("Save the pending reading positions before opening another comic.".into());
+            return;
+        }
         self.pending_open = Some(kept.clone());
         self.notice = Some("Opening comic.".to_owned());
         context.store().load(progress_key(&kept.key));
@@ -528,79 +521,137 @@ impl Panels {
         self.shelf_load = Some(download);
     }
 
-    fn open_bytes(&mut self, context: &mut Context, bytes: Vec<u8>, kept: Kept, page: usize) {
-        let comic = match archive::inspect(&bytes) {
-            Ok(comic) => comic,
+    fn open_bytes(
+        &mut self,
+        context: &mut Context,
+        bytes: Vec<u8>,
+        mut kept: Kept,
+        memory: Option<&[u8]>,
+    ) {
+        let mut view = match ComicView::open(context, bytes, &kept.title) {
+            Ok(view) => view,
             Err(error) => {
                 self.notice = Some(error.to_string());
                 self.route = Route::Library;
                 return;
             }
         };
-        self.page = page.min(comic.pages.len().saturating_sub(1));
-        self.rtl = kept.rtl;
+        kept.pages = view.reader().comic().pages.len();
+        if let Some(title) = &view.reader().comic().metadata.title {
+            kept.title.clone_from(title);
+        }
+        if view.reader().comic().metadata.right_to_left.is_none() {
+            view.set_direction(context, kept.rtl);
+        }
+        if let Some(draft) = self
+            .progress
+            .get(&progress_key(&kept.key))
+            .filter(|draft| draft.status() != DraftStatus::Saved)
+        {
+            view.restore(context, Some(draft.bytes()));
+        } else if memory.is_some() {
+            view.restore(context, memory);
+        }
+        kept.rtl = view.reader().memory().right_to_left;
+        self.library.retain(|entry| entry.key != kept.key);
+        self.library.insert(0, kept.clone());
+        context.store().save(LIBRARY, encode_library(&self.library));
         self.opened = Some(kept);
-        self.bytes = Some(bytes);
-        self.comic = Some(comic);
-        self.picture = None;
+        self.view = Some(view);
         self.route = Route::Reader;
         self.notice = None;
-        self.display_page(context);
+        self.sync_progress_status();
     }
 
-    fn display_page(&mut self, context: &mut Context) {
-        let (Some(bytes), Some(comic)) = (&self.bytes, &self.comic) else {
+    fn save_reading_state(&mut self, context: &mut Context) {
+        if let (Some(opened), Some(view)) = (&self.opened, &self.view) {
+            match view.memory() {
+                Ok(bytes) => {
+                    let key = progress_key(&opened.key);
+                    let draft = self.progress.entry(key).or_insert_with(|| {
+                        Draft::restored(Vec::new(), kobo_comic::reader::MAX_MEMORY_BYTES)
+                            .expect("bounded empty draft")
+                    });
+                    if draft.replace(bytes).is_err() {
+                        self.notice =
+                            Some("Reading position could not be prepared for saving.".into());
+                    }
+                }
+                Err(error) => self.notice = Some(error),
+            }
+        }
+        self.pump_progress(context);
+    }
+
+    fn pump_progress(&mut self, context: &mut Context) {
+        if self.progress_active.is_none() {
+            for (key, draft) in &mut self.progress {
+                if let Some(write) = draft.begin() {
+                    self.progress_active = Some((key.clone(), write.revision));
+                    context.store().save(key, write.bytes);
+                    break;
+                }
+            }
+        }
+        self.sync_progress_status();
+    }
+
+    fn sync_progress_status(&mut self) {
+        if let (Some(opened), Some(view)) = (&self.opened, &mut self.view) {
+            let state =
+                self.progress
+                    .get(&progress_key(&opened.key))
+                    .map_or(SaveState::Saved, |draft| match draft.status() {
+                        DraftStatus::Saved => SaveState::Saved,
+                        DraftStatus::Unsaved | DraftStatus::Saving => SaveState::Pending,
+                        DraftStatus::Failed(_) => SaveState::Failed,
+                    });
+            view.set_save_state(state);
+        }
+    }
+
+    fn observe_progress(&mut self, context: &mut Context, result: &StoreResult) {
+        let Some((key, revision)) = self.progress_active.as_ref() else {
             return;
         };
-        match archive::page(bytes, comic, self.page) {
-            Ok(picture) => {
-                let picture = match picture.fit_enlarging(976, 1120) {
-                    Ok(fitted) => fitted,
-                    Err(_) => picture,
-                };
-                self.picture = context.put_picture(
-                    PAGE,
-                    picture.width(),
-                    picture.height(),
-                    picture.grey().to_vec(),
-                );
-                self.notice = self
-                    .picture
-                    .is_none()
-                    .then_some("This page is too large to display.".to_owned());
+        let outcome = match result {
+            StoreResult::Saved { key: saved } if saved == key => Ok(()),
+            // The SDK associates even a denied response with its requested key.
+            StoreResult::Denied(_) => {
+                Err("Reading position was not saved. Free some space and retry.".into())
             }
-            Err(error) => {
-                self.picture = None;
-                self.notice = Some(error.to_string());
-            }
+            _ => return,
+        };
+        if let Some(draft) = self.progress.get_mut(key) {
+            draft.finish(*revision, outcome.clone());
+        }
+        self.progress_active = None;
+        let current = self.opened.as_ref().map(|opened| progress_key(&opened.key));
+        self.progress.retain(|key, draft| {
+            Some(key) == current.as_ref() || draft.status() != DraftStatus::Saved
+        });
+        if outcome.is_ok() {
+            self.pump_progress(context);
+        } else {
+            self.sync_progress_status();
         }
     }
 
-    fn save_reading_state(&self, context: &mut Context) {
-        if let Some(opened) = &self.opened {
-            context.store().save(
-                progress_key(&opened.key),
-                self.page.to_string().into_bytes(),
-            );
+    fn retry_progress(&mut self, context: &mut Context) {
+        for draft in self.progress.values_mut() {
+            draft.retry();
         }
+        self.pump_progress(context);
     }
 
     fn turn(&mut self, context: &mut Context, forward: bool) {
-        let Some(comic) = &self.comic else {
-            return;
-        };
-        let forward = if self.rtl { !forward } else { forward };
-        if forward && self.page + 1 < comic.pages.len() {
-            self.page += 1;
-        } else if !forward && self.page > 0 {
-            self.page -= 1;
-        } else {
-            return;
+        if self
+            .view
+            .as_mut()
+            .is_some_and(|view| view.turn(context, forward))
+        {
+            self.save_reading_state(context);
         }
-        self.picture = None;
-        self.notice = None;
-        self.save_reading_state(context);
-        self.display_page(context);
     }
 
     fn catalog_link(&self, next: bool) -> Option<String> {
@@ -643,7 +694,8 @@ impl Panels {
             ShelfProgress::Done => {
                 let bytes = self.shelf_load.take().expect("active shelf load").take();
                 if let Some(kept) = self.pending_open.take() {
-                    self.open_bytes(context, bytes, kept, self.page);
+                    let memory = self.pending_memory.take();
+                    self.open_bytes(context, bytes, kept, memory.as_deref());
                 }
                 true
             }
@@ -721,18 +773,59 @@ impl KoboApp for Panels {
                 .as_ref()
                 .is_some_and(|kept| key == progress_key(&kept.key))
             {
-                self.page = value
-                    .as_deref()
-                    .and_then(|bytes| std::str::from_utf8(bytes).ok())
-                    .and_then(|text| text.parse().ok())
-                    .unwrap_or(0);
+                self.pending_memory = value;
                 self.start_shelf_load(context);
             }
         }
         self.show(context);
     }
 
+    fn on_save(&mut self, context: &mut Context, key: &str, result: StoreResult) {
+        if self
+            .progress_active
+            .as_ref()
+            .is_some_and(|(active, _)| active == key)
+        {
+            self.observe_progress(context, &result);
+        }
+        self.on_store(context, result);
+    }
+
+    fn on_background(&mut self, context: &mut Context) {
+        self.save_reading_state(context);
+    }
+
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one exhaustive catalog and reader action dispatcher"
+    )]
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
+        if self.route == Route::Reader {
+            if let Some(view) = &mut self.view {
+                match view.act(context, action) {
+                    ComicOutcome::RetrySave => {
+                        self.retry_progress(context);
+                        self.show(context);
+                        return;
+                    }
+                    ComicOutcome::Changed => {
+                        self.save_reading_state(context);
+                        self.show(context);
+                        return;
+                    }
+                    ComicOutcome::Exit => {
+                        self.save_reading_state(context);
+                        if let Some(mut view) = self.view.take() {
+                            view.close(context);
+                        }
+                        self.route = Route::Library;
+                        self.show(context);
+                        return;
+                    }
+                    ComicOutcome::Elsewhere => {}
+                }
+            }
+        }
         if self.route == Route::Search {
             if let Some(Pressed::Submitted) = self.keyboard.press(action) {
                 let entered = self.keyboard.take();
@@ -742,7 +835,9 @@ impl KoboApp for Panels {
             self.show(context);
             return;
         }
-        if action == ActionId::BACK {
+        if action == action_id("retry-reading-save") {
+            self.retry_progress(context);
+        } else if action == ActionId::BACK {
             match self.route {
                 Route::Reader | Route::Download => {
                     self.save_reading_state(context);
@@ -849,25 +944,6 @@ impl KoboApp for Panels {
                 }
             }
             (Awaiting::Cover, TaskOutcome::Completed(bytes)) => self.set_cover(context, &bytes),
-            (Awaiting::Sideload, TaskOutcome::Completed(bytes)) => {
-                let title = "Added comic".to_owned();
-                match archive::inspect(&bytes) {
-                    Ok(comic) => {
-                        self.open_bytes(
-                            context,
-                            bytes,
-                            Kept {
-                                key: SIDELOAD.to_owned(),
-                                title,
-                                pages: comic.pages.len(),
-                                rtl: self.rtl,
-                            },
-                            0,
-                        );
-                    }
-                    Err(error) => self.notice = Some(error.to_string()),
-                }
-            }
             (Awaiting::Comic, TaskOutcome::Completed(chunk)) => {
                 let result = self
                     .transfer
@@ -978,6 +1054,62 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn failed_position_save_keeps_latest_page_and_retry_acknowledges_that_revision() {
+        use kobo_sdk::{AppRunner, Context, KoboApp, StoreError, StoreResult};
+        struct Harness(super::Panels);
+        impl KoboApp for Harness {
+            fn on_start(&mut self, context: &mut Context) {
+                self.0.open_bytes(
+                    context,
+                    include_bytes!("../../../docs/quality/fixtures/original-pages.cbz").to_vec(),
+                    super::Kept {
+                        key: "fixture.cbz".into(),
+                        title: "Rain".into(),
+                        pages: 4,
+                        rtl: false,
+                    },
+                    None,
+                );
+            }
+            fn on_action(&mut self, context: &mut Context, action: kobo_sdk::ActionId) {
+                self.0.on_action(context, action);
+            }
+            fn on_store(&mut self, context: &mut Context, result: StoreResult) {
+                self.0.on_store(context, result);
+            }
+            fn on_save(&mut self, context: &mut Context, key: &str, result: StoreResult) {
+                self.0.on_save(context, key, result);
+            }
+        }
+        let mut runner = AppRunner::new(Harness(super::Panels::default()));
+        runner.start(); // Library save is still outstanding.
+        runner.action(action_id("comic-next"));
+        runner.action(action_id("comic-next")); // Coalesced while page 2 is being saved.
+        let key = super::progress_key("fixture.cbz");
+        runner.store_result(StoreResult::Denied(StoreError::TooFull)); // Library, not position.
+        assert!(runner.app_mut().0.progress_active.is_some());
+        runner.store_result(StoreResult::Denied(StoreError::TooFull)); // Actual position save.
+        let app = &runner.app_mut().0;
+        assert_eq!(app.view.as_ref().unwrap().reader().memory().page, 2);
+        assert!(matches!(
+            app.progress[&key].status(),
+            super::DraftStatus::Failed(_)
+        ));
+        runner.action(action_id("comic-save-retry"));
+        let app = &runner.app_mut().0;
+        let latest = kobo_comic::reader::Memory::restore(
+            Some(app.progress[&key].bytes()),
+            app.view.as_ref().unwrap().reader().comic(),
+        )
+        .unwrap();
+        assert_eq!(latest.page, 2);
+        runner.store_result(StoreResult::Saved { key: key.clone() });
+        assert_eq!(
+            runner.app_mut().0.progress[&key].status(),
+            super::DraftStatus::Saved
+        );
+    }
     use super::{
         decode_library, decode_pending, encode_library, encode_pending, shelf_key, Kept, Panels,
         Pending,

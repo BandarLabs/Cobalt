@@ -1899,18 +1899,44 @@ fn build_device(device: bool) -> Result<(), String> {
 }
 
 fn doctor(arguments: &[String]) -> Result<(), String> {
-    if let Some(position) = arguments
-        .iter()
-        .position(|argument| is_device_flag(argument))
-    {
-        let host = arguments
-            .get(position + 1)
-            .ok_or("usage: kobo doctor --device <host>")?;
+    let (host, json) = parse_doctor(arguments)?;
+    if let Some(host) = host {
+        if json {
+            let artifact = RemoteArtifact {
+                program: RemoteProgram::DoctorJson,
+                ..RemoteArtifact::doctor()
+            };
+            return run_remote_fixed_artifact(host, &artifact);
+        }
         return remote_doctor(host);
     }
     let binary = sibling_binary("kobo-doctor");
     let mut command = Command::new(&binary);
+    if json {
+        command.env("KOBO_DOCTOR_JSON", "1");
+    }
     run_status(&mut command, format!("{}", binary.display()))
+}
+
+fn parse_doctor(arguments: &[String]) -> Result<(Option<&str>, bool), String> {
+    let usage = "usage: kobo doctor [--device HOST] [--json]";
+    let mut host = None;
+    let mut json = false;
+    let mut args = arguments.iter();
+    while let Some(arg) = args.next() {
+        if arg == "--json" && !json {
+            json = true;
+        } else if is_device_flag(arg) && host.is_none() {
+            let value = args.next().ok_or(usage)?;
+            if !valid_device_host(value) {
+                return Err("device host contains unsupported characters".into());
+            }
+            host = Some(value.as_str());
+        } else {
+            return Err(usage.into());
+        }
+    }
+    Ok((host, json))
 }
 
 /// Watches the touch panel read-only so the profile's touch transform can be
@@ -2720,6 +2746,7 @@ fn device_build_command(package: &str, features: Option<&str>) -> Result<Command
 #[derive(Clone)]
 enum RemoteProgram {
     Doctor,
+    DoctorJson,
     /// The same read-only doctor binary, additionally watching touch for the
     /// given number of seconds.
     TouchProbe(u64),
@@ -2771,7 +2798,9 @@ impl RemoteArtifact {
             RemoteProgram::Record { seconds, .. } => {
                 Duration::from_secs(*seconds) + TOUCH_PROBE_OVERHEAD
             }
-            RemoteProgram::Doctor | RemoteProgram::Capture => REMOTE_COMMAND_TIMEOUT,
+            RemoteProgram::Doctor | RemoteProgram::DoctorJson | RemoteProgram::Capture => {
+                REMOTE_COMMAND_TIMEOUT
+            }
             // A sequence sleeps on the device for as long as it was asked to,
             // so the host has to outlast the sleeping as well as the transfer.
             #[cfg(feature = "device-write")]
@@ -3043,6 +3072,7 @@ fn remote_fixed_artifact_script(
 ) -> String {
     let execution = match program {
         RemoteProgram::Doctor => "\"$bin\"".to_owned(),
+        RemoteProgram::DoctorJson => "KOBO_DOCTOR_JSON=1 \"$bin\"".to_owned(),
         // Read-only, like the doctor it is: it opens the framebuffer for
         // reading and never grabs, refreshes or writes, so it is safe to point
         // at a device with the stock reader in the foreground.
@@ -3106,6 +3136,7 @@ fn remote_fixed_artifact_script(
     };
     let checksum_error = match program {
         RemoteProgram::Doctor
+        | RemoteProgram::DoctorJson
         | RemoteProgram::TouchProbe(_)
         | RemoteProgram::Capture
         | RemoteProgram::Record { .. } => "uploaded doctor checksum does not match",
@@ -6416,7 +6447,7 @@ fn print_help() {
            present <app> --device IP [--seconds N]  Run one app on the panel\n\
            stop --device IP       Hand the panel back to the reader now\n\
            build [--device]       Build host workspace or ARM safe doctor, disabled kobod, and sample app\n\
-           doctor [--device IP]   Run read-only device diagnostics\n\
+           doctor [--device IP] [--json]   Run read-only device diagnostics\n\
            devices [--subnet A.B.C]  Find every reader on the local network\n\
            app-link status|unpair --device IP  Inspect or revoke browser pairing\n\
            session --device IP    Keep a device awake and on Wi-Fi while developing\n\
@@ -7477,6 +7508,21 @@ mod tests {
 
     #[test]
     fn remote_doctor_uses_strict_hosts_and_workspace_artifact() {
+        fn arguments(values: &[&str]) -> Vec<String> {
+            values.iter().map(|v| (*v).to_owned()).collect()
+        }
+        assert_eq!(
+            super::parse_doctor(&arguments(&["--json", "--device", "192.0.2.1"])),
+            Ok((Some("192.0.2.1"), true))
+        );
+        for invalid in [
+            vec!["--json", "--json"],
+            vec!["--device"],
+            vec!["--device", "reader;reboot"],
+            vec!["--surprise"],
+        ] {
+            assert!(super::parse_doctor(&arguments(&invalid)).is_err());
+        }
         assert!(valid_device_host("192.0.2.1"));
         assert!(valid_device_host("kobo-reader_1"));
         assert!(!valid_device_host(""));

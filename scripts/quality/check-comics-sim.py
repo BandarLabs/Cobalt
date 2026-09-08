@@ -41,6 +41,7 @@ def main():
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--scale', default='default')
     parser.add_argument('--profile', default='clara-bw-391')
+    parser.add_argument('--reader-tools', action='store_true', help='Exercise shared controls, RTL, spreads and process restart')
     parser.add_argument('--cbr', action='store_true', help='Check explicit CBR refusal')
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
@@ -58,20 +59,28 @@ def main():
         log_path = args.output/'simulator.log'
         with log_path.open('w') as log:
             try:
-                process = subprocess.Popen([str(binary), 'dev', '127.0.0.1:0'], cwd=ROOT/'apps/panels',
-                                           env=env, stdout=log, stderr=log, start_new_session=True)
-                deadline = time.monotonic() + 120
-                address = None
-                while time.monotonic() < deadline:
-                    if process.poll() is not None:
-                        raise RuntimeError('Simulator exited: ' + log_path.read_text()[-2000:])
-                    match = re.search(r'Kobo app simulator: http://(127\.0\.0\.1:\d+)', log_path.read_text())
-                    if match:
-                        address = match.group(1)
-                        break
-                    time.sleep(.1)
-                if address is None:
-                    raise RuntimeError('Simulator startup timed out')
+                def start():
+                    nonlocal process
+                    log.seek(0)
+                    log.truncate()
+                    process = subprocess.Popen([str(binary), 'dev', '127.0.0.1:0'], cwd=ROOT/'apps/panels',
+                                               env=env, stdout=log, stderr=log, start_new_session=True)
+                    deadline = time.monotonic() + 120
+                    address = None
+                    while time.monotonic() < deadline:
+                        if process.poll() is not None:
+                            raise RuntimeError('Simulator exited: ' + log_path.read_text()[-2000:])
+                        match = re.search(r'Kobo app simulator: http://(127\.0\.0\.1:\d+)', log_path.read_text())
+                        if match:
+                            address = match.group(1)
+                            break
+                        time.sleep(.1)
+                    if address is None:
+                        raise RuntimeError('Simulator startup timed out')
+
+                    return address
+
+                address = start()
 
                 def get(endpoint):
                     with urllib.request.urlopen(f'http://{address}/{endpoint}', timeout=5) as response:
@@ -131,12 +140,76 @@ def main():
                     drive(f'tap-at {profile["width"]//10},{y}')
                     wait_for('Page 1 of 3')
                     assert 'Page 1 of 3' in capture('04-previous'), 'Previous page failed'
+                    if args.reader_tools:
+                        drive('scenario storage-full')
+                        drive(f'tap-at {x},{y}')
+                        wait_for('Position not saved')
+                        capture('15-position-save-failed')
+                        drive('tap Reading')
+                        drive('scenario normal')
+                        drive('tap Retry saving')
+                        wait_for('Read')
+                        drive('tap Read')
+                        wait_for('Page 2 of 3')
+                        assert 'Position not saved' not in capture('16-position-retry-saved')
+                        drive(f'tap-at {profile["width"]//10},{y}')
+                        wait_for('Page 1 of 3')
+                        drive('tap Reading')
+                        capture('05-reading-controls')
+                        drive('tap Go to page')
+                        capture('06-page-keypad')
+                        drive('tap 2')
+                        drive('tap Go')
+                        wait_for('Page 2 of 3')
+                        drive('tap Reading')
+                        drive('tap Zoom in')
+                        drive('tap Move page')
+                        drive('tap Down')
+                        capture('07-pan')
+                        drive('tap Read')
+                        drive('tap Reading')
+                        drive('tap Pages')
+                        capture('08-page-previews')
+                        drive('tap Return to reading')
+                        drive('tap Reading')
+                        drive('tap More')
+                        drive('tap Left to right')
+                        capture('09-reading-options')
+                        drive('tap Read')
+                        drive(f'tap-at {profile["width"]//10},{y}')
+                        wait_for('Page 3 of 3')
+                        drive(f'tap-at {x},{y}')
+                        wait_for('Page 2 of 3')
+                        drive('tap Reading')
+                        drive('tap More')
+                        drive('tap Single pages')
+                        drive('tap Rotate page')
+                        wait_for('Pages 2')
+                        capture('10-rtl-spread')
+                        drive('tap Reading')
+                        drive('tap More')
+                        drive('tap Rotate page')
+                        wait_for('Page 2 of 3')
+                        capture('11-before-restart')
+                        os.killpg(process.pid, signal.SIGTERM)
+                        process.wait(timeout=5)
+                        address = start()
+                        wait_for('Open added comic')
+                        drive('tap Open added comic')
+                        wait_for('Page 2 of 3')
+                        capture('12-reopened')
+                        drive('tap Reading')
+                        assert '125%' in capture('13-restored-zoom')
+                        drive('tap More')
+                        restored = capture('14-restored-direction')
+                        assert 'Right to left' in restored and 'Two-page spreads' in restored
+                        drive('tap Read')
                     back = next(node for node in json.loads(get('layout'))['nodes'] if node['kind'] == 'Back')
                     drive(f'tap-at {back["centre"]["x"]},{back["centre"]["y"]}')
                     wait_for('Open added comic')
                     assert 'On this reader' in capture('05-library-return') or 'Open added comic' in get('layout').decode(), 'Back did not return to library'
                 (args.output/'result.json').write_text(json.dumps(dict(status='passed', profile=args.profile,
-                    scale=args.scale, cbr=args.cbr, original_fixture=True), indent=2)+'\n')
+                    scale=args.scale, cbr=args.cbr, reader_tools=args.reader_tools, original_fixture=True), indent=2)+'\n')
             finally:
                 if process is not None and process.poll() is None:
                     os.killpg(process.pid, signal.SIGTERM)

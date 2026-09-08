@@ -1,6 +1,6 @@
 # Shared comic support
 
-Decision, 8 September 2026: keep Panels as the comic library and reader. Put archive inspection, page ordering and bounded page decoding in `kobo-comic`, with reusable reading controls above it. Imports and other readers can use this contract without copying Panels internals. A second comic app would duplicate the library, reading position and import workflow.
+Decision, 8 September 2026: keep Panels as the comic library and reader. Put archive inspection, page ordering and bounded page decoding in `kobo-comic`, with reusable `ComicView` reading controls in `kobo-bookview`. Imports and other readers can use this contract without copying Panels internals. A second comic app would duplicate the library, reading position and import workflow.
 
 CBZ is the supported format for this program. CBR is explicitly deferred with the owner's agreement. Identify RAR content and explain that the owner needs a CBZ copy; renaming an extension cannot convert an archive. Do not invoke external RAR tools, bundle an UnRAR binary, or implement a new RAR codec.
 
@@ -20,6 +20,13 @@ The [unrar wrapper](https://docs.rs/unrar/latest/unrar/#license) offers MIT/Apac
 - Use deterministic numeric filename ordering, including nested folders. Ignore metadata and hidden files as pages. Preserve the ordered names so a saved page index is stable for an unchanged archive.
 - Share the existing bounded PNG/JPEG decoder. Unsupported formats, corrupt pages and oversized input must produce a specific explanation instead of disappearing from the library.
 
-The archive byte limit is not a promise that every comic below it fits the current Panels transfer path. That path currently has its own smaller limit and holds the archive in memory; the app/import work must make those limits consistent before shipping. Larger collections should ultimately read pages from a seekable shelf instead of loading a whole volume into RAM.
+The shared reader and Panels transfer now use the same 64 MiB archive limit. The archive remains in memory; only page decoding is lazy. This is an admission bound, not a measured memory-headroom guarantee. Larger collections should ultimately read pages from a seekable shelf instead of loading a whole volume into RAM.
 
 Hardware validation will run on the owner's Clara BW after all three PRs are ready. Simulator checks do not establish physical decode latency, memory headroom or display fidelity.
+
+
+## Reading and metadata
+
+`ComicView` provides page/width fit, bounded zoom and pan, page jump, thumbnail browsing, RTL and landscape spreads with an explicit single-page option. Covers stay separate. The app saves a versioned filename anchor and reading preferences using acknowledged storage; failed saves retain the newest position for an explicit retry.
+
+A bounded subset of ComicInfo supports title, series, number, reading direction and a front-cover index. Optional malformed details produce guidance while leaving pages readable. The [ComicInfo documentation](https://github.com/anansi-project/comicinfo/blob/main/DOCUMENTATION.md) and [version 2 schema reference](https://anansi-project.github.io/docs/comicinfo/schemas/v2.0) are format references only; no upstream schema, implementation or fixture was copied.

@@ -1,3 +1,2 @@
-//! Shared comic archives; Panels owns the library and reading journey.
-
-pub use kobo_comic::{inspect, page, Comic};
+//! Archive inspection shared with the document reader and host imports.
+pub use kobo_comic::inspect;

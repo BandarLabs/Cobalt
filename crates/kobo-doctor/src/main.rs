@@ -95,6 +95,22 @@ fn require_profile(
 }
 
 fn main() -> ExitCode {
+    if std::env::var_os("KOBO_DOCTOR_JSON").is_some() {
+        return match json_probe() {
+            Ok(json) => {
+                println!("{json}");
+                ExitCode::SUCCESS
+            }
+            Err(error) => {
+                eprintln!("probe failed: {error}");
+                ExitCode::FAILURE
+            }
+        };
+    }
+    human_probe()
+}
+
+fn human_probe() -> ExitCode {
     println!("Kobo doctor 0.1.0");
     println!("mode: read-only (query ioctls only)");
 
@@ -209,6 +225,15 @@ fn main() -> ExitCode {
     }
 
     ExitCode::SUCCESS
+}
+
+fn json_probe() -> Result<String, String> {
+    let snapshot = probe_device().map_err(|error| error.to_string())?;
+    let captured_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| error.to_string())?
+        .as_secs();
+    kobo_profile::observation::Observation::probe(snapshot, captured_at).to_json()
 }
 
 /// Prints the whole panel as base64 grey, one byte per pixel.

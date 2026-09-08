@@ -62,8 +62,10 @@
     "pr": 1,
     "group": "Simulator fidelity (SIM-1\u201310)",
     "task": "Respect device-supported service backends in simulation",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Simulator service and network policies honor explicit or observation-derived backends; missing backends are not grants. 51 simulator tests pass."
+    ]
   },
   {
     "id": "SIM-08",
@@ -484,32 +486,40 @@
     "pr": 1,
     "group": "Platform requirements from read-only hardware research",
     "task": "Export versioned observations from Cobalt device probes",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Read-only doctor --json exports bounded cobalt.hardware-observation version 1; doctor and profile tests pass, including ARMv7 MSRV compilation."
+    ]
   },
   {
     "id": "HW-02",
     "pr": 1,
     "group": "Platform requirements from read-only hardware research",
     "task": "Record measured, inferred and unverified profile fields separately",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Observation schema separates observed facts, inferred Cobalt profile mapping, origin and unverified calibration; synthetic fixture labels survive round-trip."
+    ]
   },
   {
     "id": "HW-03",
     "pr": 1,
     "group": "Platform requirements from read-only hardware research",
     "task": "Load observation fixtures into the simulator without importing third-party device tables",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "KOBO_SIM_OBSERVATION loads bounded observations, rejects profile/geometry mismatches and derives pose and available backends. Observation-driven comic journey passes."
+    ]
   },
   {
     "id": "HW-04",
     "pr": 1,
     "group": "Platform requirements from read-only hardware research",
     "task": "Keep digitizer mapping separate from display pose",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Observation loading resolves display pose independently of the profile digitizer transform; invalid poses and geometry are refused. Existing PanelPose and mapping tests remain passing."
+    ]
   },
   {
     "id": "HW-05",
@@ -706,8 +716,10 @@
     "pr": 1,
     "group": "CBZ/CBR architecture and shared reader",
     "task": "Identify format by content and report extension mismatch helpfully",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Shared inspect_named identifies content independently of extension and returns CBZ naming guidance. RAR bytes behind .cbz refuse with recovery guidance in simulator."
+    ]
   },
   {
     "id": "COMIC-08",
@@ -754,48 +766,60 @@
     "pr": 1,
     "group": "CBZ/CBR architecture and shared reader",
     "task": "Preserve title, page order, reading direction and cover metadata",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Bounded ComicInfo metadata preserves title, series, number, RTL and cover without changing natural page order. Malformed optional metadata leaves readable pages available; 17 core tests pass."
+    ]
   },
   {
     "id": "COMIC-13",
     "pr": 1,
     "group": "CBZ/CBR architecture and shared reader",
     "task": "Provide shared comic page fit, width, zoom and pan controls",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Shared ComicView exposes fit page, fit width, 100\u2013400% zoom and normalized pan. Cropping happens before enlargement. All profile/scale/orientation layout and reachable-action checks pass."
+    ]
   },
   {
     "id": "COMIC-14",
     "pr": 1,
     "group": "CBZ/CBR architecture and shared reader",
     "task": "Provide page jump, thumbnails and stable Back/return position",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Shared page keypad, lazy two-page thumbnail browser and app-owned Back retain position. Default and extra-large simulator journeys pass."
+    ]
   },
   {
     "id": "COMIC-15",
     "pr": 1,
     "group": "CBZ/CBR architecture and shared reader",
     "task": "Persist page, direction and viewport per book",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Versioned per-book filename anchors, direction, spread preference and viewport persist. Legacy decimal positions migrate. Failed saves retain latest edits with correlated acknowledgements and explicit retry; real storage-full/retry/restart flow passes."
+    ]
   },
   {
     "id": "COMIC-16",
     "pr": 1,
     "group": "CBZ/CBR architecture and shared reader",
     "task": "Support RTL and two-page spreads with a reachable single-page fallback",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "RTL side zones and landscape spreads are driven in simulator, with reachable single-page toggle. Cover-isolation regression covers both sides of an explicitly selected cover."
+    ]
   },
   {
     "id": "COMIC-17",
     "pr": 1,
     "group": "CBZ/CBR architecture and shared reader",
     "task": "Keep page decode lazy and prefetch/cache bounded",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Two-page LRU cache and visible-page-only decode; thumbnails are bounded. Invalid later-page regression proves earlier reading is available; no unbounded prefetch."
+    ]
   },
   {
     "id": "COMIC-18",
@@ -820,8 +844,10 @@
     "pr": 1,
     "group": "CBZ/CBR architecture and shared reader",
     "task": "Verify Clara-sized comic reading, scaling, navigation and reopen in simulator",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Clara BW default and extra-large shared-reader journeys validate controls, scaling, navigation and process restart. Extra-large journey additionally injects storage-full and verifies successful retry."
+    ]
   },
   {
     "id": "ARXIV-01",
@@ -2100,8 +2126,10 @@
     "pr": 2,
     "group": "Panels",
     "task": "Use shared comic archive/reader components",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Panels uses shared kobo-comic and ComicView in kobo-bookview; app owns library and acknowledged persistence. 8 Panels tests pass."
+    ]
   },
   {
     "id": "PANELS-02",
@@ -2132,16 +2160,20 @@
     "pr": 2,
     "group": "Panels",
     "task": "Expose page zoom, fit and spread controls",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Panels exposes shared fit, zoom, pan and spread controls, verified by actual simulator taps at default and extra-large text sizes."
+    ]
   },
   {
     "id": "PANELS-06",
     "pr": 2,
     "group": "Panels",
     "task": "Verify RTL reading",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Actual simulator taps verify RTL page zones, landscape spread order and restored reading direction after process restart."
+    ]
   },
   {
     "id": "PANELS-07",

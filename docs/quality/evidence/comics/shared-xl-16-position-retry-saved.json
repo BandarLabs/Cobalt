@@ -1,0 +1,189 @@
+{
+  "simulation": {
+    "profile": {
+      "id": "clara-bw-391",
+      "model": "Kobo Clara BW",
+      "width": 1072,
+      "height": 1448,
+      "pixelsPerInch": 300,
+      "rotation": 3,
+      "touch": {
+        "name": "cyttsp5_mt",
+        "xMin": 0,
+        "xMax": 1447,
+        "yMin": 0,
+        "yMax": 1071
+      }
+    },
+    "scenario": "normal",
+    "lifecycle": "foreground",
+    "transition": {
+      "waveform": "GL16",
+      "full": false,
+      "refresh": 13,
+      "dirty": 870097,
+      "regions": [
+        {
+          "waveform": "GL16",
+          "region": {
+            "x": 0,
+            "y": 8,
+            "width": 1072,
+            "height": 160
+          }
+        },
+        {
+          "waveform": "GL16",
+          "region": {
+            "x": 48,
+            "y": 184,
+            "width": 912,
+            "height": 1088
+          }
+        },
+        {
+          "waveform": "GL16",
+          "region": {
+            "x": 0,
+            "y": 1304,
+            "width": 1072,
+            "height": 136
+          }
+        }
+      ],
+      "region": {
+        "x": 0,
+        "y": 8,
+        "width": 1072,
+        "height": 1432
+      }
+    },
+    "refreshCount": 13,
+    "partialsSinceClean": 870097,
+    "touch": {
+      "display": {
+        "x": 536,
+        "y": 1379
+      },
+      "raw": {
+        "x": 1379,
+        "y": 535
+      }
+    },
+    "panelApproximation": true,
+    "observation": null,
+    "backends": [
+      "network",
+      "battery-read",
+      "frontlight-control",
+      "wifi-control",
+      "library",
+      "cover-sensor"
+    ]
+  },
+  "layout": {
+    "paints": 13,
+    "nodes": [
+      {
+        "kind": "TopBar",
+        "x": 0,
+        "y": 0,
+        "width": 1072,
+        "height": 100,
+        "centre": {
+          "x": 536,
+          "y": 50
+        },
+        "action": null,
+        "lines": []
+      },
+      {
+        "kind": "Back",
+        "x": 47,
+        "y": 0,
+        "width": 100,
+        "height": 100,
+        "centre": {
+          "x": 97,
+          "y": 50
+        },
+        "action": 4294967295,
+        "lines": []
+      },
+      {
+        "kind": "BarAction(ActionId(487004783))",
+        "x": 793,
+        "y": 0,
+        "width": 232,
+        "height": 100,
+        "centre": {
+          "x": 909,
+          "y": 50
+        },
+        "action": 487004783,
+        "lines": [
+          "Reading"
+        ]
+      },
+      {
+        "kind": "TopBarTitle",
+        "x": 171,
+        "y": 18,
+        "width": 598,
+        "height": 64,
+        "centre": {
+          "x": 470,
+          "y": 50
+        },
+        "action": null,
+        "lines": [
+          "Added comic"
+        ]
+      },
+      {
+        "kind": "Divider",
+        "x": 0,
+        "y": 100,
+        "width": 1072,
+        "height": 4,
+        "centre": {
+          "x": 536,
+          "y": 102
+        },
+        "action": null,
+        "lines": []
+      },
+      {
+        "kind": "Secondary",
+        "x": 47,
+        "y": 116,
+        "width": 978,
+        "height": 50,
+        "centre": {
+          "x": 536,
+          "y": 141
+        },
+        "action": 2456245216,
+        "lines": [
+          "Page 2 of 3"
+        ]
+      },
+      {
+        "kind": "Picture(PictureHandle(2000))",
+        "x": 116,
+        "y": 178,
+        "width": 840,
+        "height": 1157,
+        "centre": {
+          "x": 536,
+          "y": 756
+        },
+        "action": 2456245216,
+        "lines": []
+      }
+    ]
+  },
+  "diagnostics": {
+    "issues": []
+  }
+}
