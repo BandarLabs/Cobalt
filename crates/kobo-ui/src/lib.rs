@@ -12831,7 +12831,11 @@ fn board_label_style(node: &LayoutNode) -> (FontSize, TextScale) {
     // A digit is a board mark, not prose. At the smallest legal square the
     // largest caption can still be too tall. Short marks may step down the
     // scale to fit; long app labels remain errors instead of tiny text.
-    if short {
+    if node
+        .text_lines
+        .first()
+        .is_some_and(|text| text.chars().count() <= 3)
+    {
         for candidate in TextScale::STEPS
             .into_iter()
             .take_while(|candidate| *candidate != scale)

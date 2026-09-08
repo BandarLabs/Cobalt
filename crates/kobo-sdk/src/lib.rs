@@ -585,6 +585,23 @@ impl Context {
         })
     }
 
+    /// Paginate interface prose for an app-requested orientation. Pair this
+    /// with `set_orientation` and measure the rest of the view with
+    /// `metrics().oriented(orientation)`; the physical handshake is unchanged.
+    #[must_use]
+    pub fn paginate_oriented(
+        &self,
+        text: &str,
+        nav_bar: bool,
+        orientation: Orientation,
+    ) -> Vec<Vec<String>> {
+        let measuring = Self {
+            metrics: self.metrics.oriented(orientation),
+            ..Self::default()
+        };
+        measuring.paginate(text, nav_bar)
+    }
+
     /// Breaks a book into pages, measured in the reading face.
     ///
     /// The companion to [`ScreenBuilder::reading`], and the only correct way to

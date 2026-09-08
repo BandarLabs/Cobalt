@@ -1664,6 +1664,8 @@ that survives a restart), `examples/gallery` (every primitive on one screen),
 
 `ScreenBuilder::board` and `board_with_selection` keep puzzle geometry fixed as interface text grows. The shared renderer and diagnostics choose the largest semantic mark size that fits each square (heading, body, then caption). Key labels retain their normal body size. Keep board labels short; long words and labels that exceed caption capacity remain layout errors. A selected row or column can use the existing per-cell selection state; the app should identify the focused square independently.
 
-At the smallest legal square, one- or two-character board marks can step down the interface scale if even caption size would clip. Rendering and diagnostics use the same bounded choice. Long labels and ordinary keys do not receive this fallback.
+At the smallest legal square, up to three-character board marks can step down the interface scale if even caption size would clip. Rendering and diagnostics use the same bounded choice. Long labels and ordinary keys do not receive this fallback.
 
 `ScreenBuilder::grid_with_selection(columns, square, cells)` accepts `(action, label, selected)` tuples. On nonsquare key grids, selected keys keep their filled field and add an ink outline. Use this for candidate toggles or retained keypad choices; keep labels unchanged so selection does not increase their measured width.
+
+`Context::paginate_oriented(text, nav_bar, orientation)` measures interface prose for an app-requested orientation, retaining status and page-control space. Pair it with `Context::set_orientation` and `metrics().oriented(orientation)` for the rest of the view.
