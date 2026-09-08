@@ -4,8 +4,8 @@
   "short_label": "Panels",
   "summary": "Read comics added from your computer or Komga library.",
   "page_description": "Enjoy your comics on Kobo with clear page controls and support for Komga libraries.",
-  "version": "0.1.0",
-  "release_notes": "Enjoy your comics on Kobo with clear page controls and support for Komga libraries.",
+  "version": "0.1.1",
+  "release_notes": "Read CBZ comics with fit, zoom, page thumbnails and saved positions. Requires Cobalt 0.3.12.",
   "glyph": "reader",
   "capabilities": [
     "network"

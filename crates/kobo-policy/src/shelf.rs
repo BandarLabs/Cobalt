@@ -88,6 +88,16 @@ impl Shelf {
     /// what the store does with them.
     #[must_use]
     pub fn handle(&self, request: &StoreRequest) -> Option<StoreResult> {
+        self.handle_with_write_fault(request, None)
+    }
+
+    /// Uses ordinary key, offset and quota checks before an injected write failure.
+    #[must_use]
+    pub fn handle_with_write_fault(
+        &self,
+        request: &StoreRequest,
+        fault: Option<crate::WriteFault>,
+    ) -> Option<StoreResult> {
         let root = match &self.root {
             Some(root) => root.as_path(),
             None => {
@@ -106,7 +116,7 @@ impl Shelf {
                 offset,
                 bytes,
                 last,
-            } => Some(Self::write(root, name, *offset, bytes, *last)),
+            } => Some(Self::write(root, name, *offset, bytes, *last, fault)),
             StoreRequest::ShelfRead {
                 name,
                 offset,
@@ -118,15 +128,19 @@ impl Shelf {
         }
     }
 
-    fn write(root: &Path, name: &str, offset: u32, bytes: &[u8], last: bool) -> StoreResult {
+    fn write(
+        root: &Path,
+        name: &str,
+        offset: u32,
+        bytes: &[u8],
+        last: bool,
+        fault: Option<crate::WriteFault>,
+    ) -> StoreResult {
         if !is_valid_key(name) {
             return StoreResult::Denied(StoreError::BadKey);
         }
         if bytes.len() > MAX_SHELF_CHUNK {
             return StoreResult::Denied(StoreError::TooFull);
-        }
-        if fs::create_dir_all(root).is_err() {
-            return StoreResult::Denied(StoreError::Unwritable);
         }
         let partial = partial_path(root, name);
         let chunk = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
@@ -142,10 +156,10 @@ impl Shelf {
             if !path_for(root, name).exists() && count(root) >= MAX_SHELF_BLOBS {
                 return StoreResult::Denied(StoreError::TooFull);
             }
-            let _ignored = fs::remove_file(&partial);
         }
 
-        let so_far = size_of(&partial).unwrap_or(0);
+        let previous_partial = size_of(&partial).unwrap_or(0);
+        let so_far = if offset == 0 { 0 } else { previous_partial };
         if u64::from(offset) != so_far {
             return StoreResult::Denied(StoreError::Missing);
         }
@@ -153,11 +167,29 @@ impl Shelf {
         // Counted against what this application already holds, not counting
         // the partial being replaced -- an application that cannot re-download
         // a book it already has is an application that cannot repair itself.
-        if usage(root).saturating_add(chunk) > MAX_SHELF_BYTES {
+        let replaced = if offset == 0 { previous_partial } else { 0 };
+        if usage(root).saturating_sub(replaced).saturating_add(chunk) > MAX_SHELF_BYTES {
             return StoreResult::Denied(StoreError::TooFull);
+        }
+        if let Some(fault) = fault {
+            return StoreResult::Denied(fault.error());
+        }
+        // The first chunk establishes the root durably. Later chunks are
+        // progress acknowledgements; publishing the last chunk is the commit.
+        if offset == 0 {
+            if let Err(error) = crate::persistence::ensure_directory(root) {
+                return StoreResult::Denied(crate::persistence::store_error(&error));
+            }
         }
         if !room_for(root, chunk) {
             return StoreResult::Denied(StoreError::NoRoom);
+        }
+        if offset == 0 {
+            match fs::remove_file(&partial) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return StoreResult::Denied(crate::persistence::store_error(&error)),
+            }
         }
 
         match append(&partial, offset, bytes) {
@@ -168,18 +200,16 @@ impl Shelf {
                 // nobody can read, and this is the exact moment we know it is
                 // never going to be finished.
                 let _ignored = fs::remove_file(&partial);
-                return StoreResult::Denied(if error.kind() == std::io::ErrorKind::StorageFull {
-                    StoreError::NoRoom
-                } else {
-                    StoreError::Unwritable
-                });
+                return StoreResult::Denied(crate::persistence::store_error(&error));
             }
         }
 
         let size = so_far.saturating_add(chunk);
-        if last && publish(&partial, &path_for(root, name)).is_err() {
-            let _ignored = fs::remove_file(&partial);
-            return StoreResult::Denied(StoreError::Unwritable);
+        if last {
+            if let Err(error) = crate::persistence::publish(&partial, &path_for(root, name)) {
+                let _ignored = fs::remove_file(&partial);
+                return StoreResult::Denied(crate::persistence::store_error(&error));
+            }
         }
         StoreResult::ShelfWritten {
             name: name.into(),
@@ -228,9 +258,11 @@ impl Shelf {
         // Both copies. Leaving the partial behind would mean a caller that
         // asked for something to be gone is still paying for it, and cannot
         // see it to ask again.
-        let _ignored = fs::remove_file(path_for(root, name));
-        let _ignored = fs::remove_file(partial_path(root, name));
-        StoreResult::ShelfRemoved { name: name.into() }
+        match crate::persistence::remove(root, &[&path_for(root, name), &partial_path(root, name)])
+        {
+            Ok(()) => StoreResult::ShelfRemoved { name: name.into() },
+            Err(_) => StoreResult::Denied(StoreError::Unwritable),
+        }
     }
 
     fn list(root: &Path) -> StoreResult {
@@ -327,23 +359,6 @@ fn append(partial: &Path, offset: u32, bytes: &[u8]) -> std::io::Result<()> {
     Ok(())
 }
 
-fn publish(partial: &Path, final_path: &Path) -> std::io::Result<()> {
-    {
-        let file = fs::File::open(partial)?;
-        // Before the rename, not after: a rename that lands before the bytes
-        // do leaves a correctly named book full of zeroes, and this device is
-        // reset by a hardware watchdog with nothing flushed.
-        file.sync_all()?;
-    }
-    fs::rename(partial, final_path)?;
-    if let Some(directory) = final_path.parent() {
-        if let Ok(handle) = fs::File::open(directory) {
-            let _ignored = handle.sync_all();
-        }
-    }
-    Ok(())
-}
-
 fn read_at(path: &Path, offset: u64, into: &mut [u8]) -> std::io::Result<()> {
     use std::io::Read;
     let mut file = fs::File::open(path)?;
@@ -394,6 +409,67 @@ mod tests {
                 length,
             })
             .expect("a shelf request")
+    }
+
+    #[test]
+    fn injected_failure_preserves_partial_and_published_data_and_validation() {
+        let root = temporary_root();
+        let shelf = Shelf::new(&root);
+        assert!(matches!(
+            write(&shelf, "book", 0, b"original", true),
+            StoreResult::ShelfWritten { .. }
+        ));
+        assert!(matches!(
+            write(&shelf, "book", 0, b"pending", false),
+            StoreResult::ShelfWritten { .. }
+        ));
+        let request = |name: &str, offset, bytes: Vec<u8>| StoreRequest::ShelfWrite {
+            name: name.into(),
+            offset,
+            bytes,
+            last: true,
+        };
+        let fault = Some(crate::WriteFault::NoRoom);
+        for (request, error) in [
+            (request("../book", 0, vec![]), StoreError::BadKey),
+            (
+                request("book", 0, vec![0; MAX_SHELF_CHUNK + 1]),
+                StoreError::TooFull,
+            ),
+            (request("book", 1, vec![1]), StoreError::Missing),
+            (request("book", 0, b"new".to_vec()), StoreError::NoRoom),
+            (request("book", 7, b"next".to_vec()), StoreError::NoRoom),
+        ] {
+            assert_eq!(
+                shelf.handle_with_write_fault(&request, fault),
+                Some(StoreResult::Denied(error))
+            );
+            assert_eq!(fs::read(path_for(&root, "book")).unwrap(), b"original");
+            assert_eq!(fs::read(partial_path(&root, "book")).unwrap(), b"pending");
+        }
+        assert_eq!(
+            shelf.handle_with_write_fault(
+                &StoreRequest::ShelfRead {
+                    name: "book".into(),
+                    offset: 0,
+                    length: 100
+                },
+                fault
+            ),
+            Some(read(&shelf, "book", 0, 100))
+        );
+        assert!(matches!(
+            shelf.handle_with_write_fault(
+                &StoreRequest::ShelfRemove {
+                    name: "book".into()
+                },
+                fault
+            ),
+            Some(StoreResult::ShelfRemoved { .. })
+        ));
+        assert!(!partial_path(&root, "book").exists());
+        assert!(!path_for(&root, "book").exists());
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -536,6 +612,20 @@ mod tests {
                 "{name:?} was accepted as a blob name to read"
             );
         }
+    }
+
+    #[test]
+    fn shelf_remove_refuses_a_file_that_cannot_be_unlinked_and_keeps_it() {
+        let root = temporary_root();
+        fs::create_dir_all(path_for(&root, "book")).unwrap();
+        let shelf = Shelf::new(&root);
+        assert_eq!(
+            shelf.handle(&StoreRequest::ShelfRemove {
+                name: "book".into()
+            }),
+            Some(StoreResult::Denied(StoreError::Unwritable))
+        );
+        assert!(path_for(&root, "book").is_dir());
     }
 
     #[test]

@@ -8,13 +8,16 @@
 //! application asking for something unreasonable gets a reduced grant rather
 //! than the device it asked for.
 
+pub mod clock;
 pub mod credentials;
 pub mod library;
+mod persistence;
 pub mod services;
 pub mod shelf;
 pub mod store;
 pub mod tasks;
 
+pub use persistence::WriteFault;
 pub use services::{request_capability, Backends, DeviceServices, DeviceState};
 pub use tasks::{Finished, RejectReason, TaskRunner, MAX_TASKS_IN_FLIGHT};
 

@@ -7,6 +7,7 @@ license.workspace = true
 publish = false
 
 [dependencies]
+kobo-comic = { path = "../kobo-comic" }
 kobo-doc = { path = "../kobo-doc" }
 kobo-image = { path = "../kobo-image" }
 kobo-read = { path = "../kobo-read" }
@@ -15,3 +16,7 @@ kobo-ui = { path = "../kobo-ui" }
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+kobo-profile = { path = "../kobo-profile" }
+kobo-text = { path = "../kobo-text" }

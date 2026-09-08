@@ -17,7 +17,6 @@ use std::process::ExitCode;
 const SOLVED: &str = "solved";
 const PHOTO_FILE: &str = "photo.png";
 const REVEAL: PictureHandle = PictureHandle(41);
-const PER_PAGE: usize = 6;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 enum Route {
@@ -123,13 +122,16 @@ impl Default for Game {
 
 impl Game {
     fn show(&self, context: &mut Context) {
-        context.set_screen(self.screen().with_own_back(self.route != Route::Browser));
+        context.set_screen(
+            self.screen(context)
+                .with_own_back(self.route != Route::Browser),
+        );
     }
 
-    fn screen(&self) -> Screen {
+    fn screen(&self, context: &Context) -> Screen {
         match self.route {
-            Route::Browser => self.browser(),
-            Route::Play => self.play(),
+            Route::Browser => self.browser(context),
+            Route::Play => self.play(context),
             Route::Gate => ScreenBuilder::new("nonograms-size-gate")
                 .top_bar("Nonograms")
                 .error_state("This puzzle needs a larger Cobalt panel grid. 5×5 through 9×9 fit this reader.")
@@ -148,53 +150,68 @@ impl Game {
         }
     }
 
-    fn browser(&self) -> Screen {
-        let pages = self.puzzles.len().div_ceil(PER_PAGE);
-        let start = self.page * PER_PAGE;
-        let mut screen = ScreenBuilder::new("nonograms-browser")
+    fn browser_pages(&self, context: &Context) -> Vec<Vec<usize>> {
+        let details = self
+            .puzzles
+            .iter()
+            .map(|puzzle| {
+                format!(
+                    "{} · {}×{}",
+                    if self.solved.contains(&puzzle.id) {
+                        "Solved"
+                    } else {
+                        "Not started"
+                    },
+                    puzzle.side,
+                    puzzle.side
+                )
+            })
+            .collect::<Vec<_>>();
+        let rows = self
+            .puzzles
+            .iter()
+            .zip(&details)
+            .map(|(puzzle, detail)| (puzzle.title.as_str(), detail.as_str(), ""))
+            .collect::<Vec<_>>();
+        context.paginate_rows_below_section(&rows, true, kobo_sdk::Position::AtTheFoot, None)
+    }
+
+    fn browser(&self, context: &Context) -> Screen {
+        let pages = self.browser_pages(context);
+        let page = self.page.min(pages.len().saturating_sub(1));
+        let visible = pages.get(page).map(Vec::as_slice).unwrap_or_default();
+        ScreenBuilder::new("nonograms-browser")
             .top_bar("Nonograms")
-            .secondary("Every bundled puzzle is solvable by row and column logic alone.")
             .section_with_value(
                 "Bundled puzzles",
                 format!("{} of {}", self.solved.len(), self.puzzles.len()),
             )
-            .rows(
-                self.puzzles[start..(start + PER_PAGE).min(self.puzzles.len())]
-                    .iter()
-                    .enumerate()
-                    .map(|(offset, puzzle)| {
-                        let status = if self.solved.contains(&puzzle.id) {
-                            "Solved"
-                        } else {
-                            "Not started"
-                        };
-                        (
-                            format!("puzzle-{}", start + offset),
-                            puzzle.title.clone(),
-                            format!("{status} · {}×{}", puzzle.side, puzzle.side),
-                            kobo_sdk::Glyph::Grid,
-                        )
-                    }),
-            );
-        if pages > 1 {
-            screen = screen
-                .page_turns("previous-page", "next-page")
-                .page_position(
-                    u16::try_from(self.page + 1).unwrap_or(u16::MAX),
-                    u16::try_from(pages).unwrap_or(u16::MAX),
-                );
-        }
-        screen
-            .buttons([
-                ("photo", "Make a photo puzzle"),
-                ("how-to-play", "How to play"),
-            ])
+            .rows(visible.iter().map(|&index| {
+                let puzzle = &self.puzzles[index];
+                let status = if self.solved.contains(&puzzle.id) {
+                    "Solved"
+                } else {
+                    "Not started"
+                };
+                (
+                    format!("puzzle-{index}"),
+                    puzzle.title.clone(),
+                    format!("{status} · {}×{}", puzzle.side, puzzle.side),
+                    kobo_sdk::Glyph::Grid,
+                )
+            }))
+            .page_turns("previous-page", "next-page")
+            .page_position(
+                u16::try_from(page + 1).unwrap_or(u16::MAX),
+                u16::try_from(pages.len().max(1)).unwrap_or(u16::MAX),
+            )
+            .action_bar([("photo", "Photo puzzle"), ("how-to-play", "How to play")])
             .build()
     }
 
-    fn play(&self) -> Screen {
+    fn play(&self, context: &Context) -> Screen {
         let Some(puzzle) = self.puzzle() else {
-            return self.browser();
+            return self.browser(context);
         };
         // A 9×9 board uses nearly all of the vertical budget. Put its notice
         // in the fixed top bar so the control band does not move or clip.
@@ -600,7 +617,7 @@ impl KoboApp for Game {
         } else if action == action_id("previous-page") && self.page > 0 {
             self.page -= 1;
         } else if action == action_id("next-page")
-            && (self.page + 1) * PER_PAGE < self.puzzles.len()
+            && self.page + 1 < self.browser_pages(context).len()
         {
             self.page += 1;
         } else if action == action_id("photo") {
@@ -704,16 +721,56 @@ mod tests {
     fn browser_links_to_short_rules() {
         let mut game = Game::default();
         assert!(game
-            .screen()
+            .screen(&Context::default())
             .layout_with(&CLARA_BW_METRICS, &Chrome::default())
             .rect_of_action(action_id("how-to-play"))
             .is_some());
         game.route = Route::HowTo;
         assert!(game
-            .screen()
+            .screen(&Context::default())
             .diagnostics(&CLARA_BW_METRICS, &Chrome::measuring(true))
             .issues
             .is_empty());
+    }
+
+    #[test]
+    fn every_browser_page_keeps_puzzles_and_tools_reachable() {
+        for (width, height, pixels_per_inch) in
+            [(1072, 1448, 300), (1448, 1072, 300), (758, 1024, 212)]
+        {
+            for text_scale in kobo_ui::TextScale::STEPS {
+                let metrics = kobo_ui::DisplayMetrics {
+                    width,
+                    height,
+                    pixels_per_inch,
+                    text_scale,
+                };
+                let context = kobo_sdk::AppRunner::with_metrics(Game::default(), metrics).context();
+                let mut game = Game::default();
+                let pages = game.browser_pages(&context);
+                assert_eq!(
+                    pages.iter().flatten().copied().collect::<Vec<_>>(),
+                    (0..game.puzzles.len()).collect::<Vec<_>>()
+                );
+                for (page, indices) in pages.iter().enumerate() {
+                    game.page = page;
+                    let screen = game.browser(&context);
+                    let chrome = Chrome::measuring(true);
+                    let issues = screen.diagnostics(&metrics, &chrome).issues;
+                    assert!(issues.is_empty(), "{metrics:?}: {issues:?}");
+                    let layout = screen.layout_with(&metrics, &chrome);
+                    for action in ["photo".to_owned(), "how-to-play".to_owned()]
+                        .into_iter()
+                        .chain(indices.iter().map(|index| format!("puzzle-{index}")))
+                    {
+                        assert!(
+                            layout.rect_of_action(action_id(&action)).is_some(),
+                            "{metrics:?}: {action}"
+                        );
+                    }
+                }
+            }
+        }
     }
 
     #[test]
@@ -960,7 +1017,7 @@ mod tests {
         let mut context = Context::default();
         game.select(&mut context, 0);
         let layout = game
-            .play()
+            .play(&Context::default())
             .layout_with(&CLARA_BW_METRICS, &Chrome::default());
         for cell in 0..game.marks.len() {
             assert!(layout
@@ -968,7 +1025,7 @@ mod tests {
                 .is_some());
         }
         let diagnostics = game
-            .play()
+            .play(&Context::default())
             .diagnostics(&CLARA_BW_METRICS, &Chrome::default());
         assert!(diagnostics.issues.is_empty(), "{:?}", diagnostics.issues);
         assert_eq!(Cell::Filled, Mark::Fill.cell());
@@ -990,7 +1047,7 @@ mod tests {
             game.run_entry = true;
             game.notice = Some(notice.to_owned());
 
-            let screen = game.play().with_own_back(true);
+            let screen = game.play(&Context::default()).with_own_back(true);
             let diagnostics = screen.diagnostics(&CLARA_BW_METRICS, &Chrome::default());
             assert!(diagnostics.issues.is_empty(), "{notice}: {diagnostics:?}");
             let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::default());
@@ -1038,7 +1095,7 @@ mod tests {
     #[test]
     fn browser_and_photo_screens_have_no_layout_errors() {
         let game = Game::default();
-        for screen in [game.browser(), game.photo()] {
+        for screen in [game.browser(&Context::default()), game.photo()] {
             assert!(screen
                 .diagnostics(&CLARA_BW_METRICS, &Chrome::default())
                 .issues

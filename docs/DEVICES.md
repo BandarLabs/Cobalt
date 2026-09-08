@@ -71,8 +71,9 @@ kobo session --device <address> --keep-awake on
 
 `--wifi-always-on` writes the reader's own developer setting, which is read at
 startup, so it applies from the next reader restart. `--keep-awake` takes a
-kernel wake lock that lives in RAM. Both clear on a reboot, and neither is
-sufficient on its own on this firmware. *Keeping a device reachable while
+two-minute kernel wake-lock lease. It expires without renewal and clears on
+reboot; the Wi-Fi setting persists until restored. Neither is sufficient on its
+own on this firmware. *Keeping a device reachable while
 developing*, below, explains what actually stops the suspend and how it was
 measured.
 
@@ -581,8 +582,15 @@ kobo session --device <address> --wifi-always-on on
 kobo session --device <address> --restore-reader-config
 ```
 
-`--keep-awake` holds a named kernel wake lock. It lives in RAM only and always
-clears on reboot, so it cannot leave a device permanently unable to sleep.
+`--keep-awake on` acquires a named two-minute kernel wake-lock lease. Every
+acquisition includes the timeout, including renewal of an already-held lock.
+For a longer attended session, use `kobo session --device <address> --hold 15`: it
+renews every 30 seconds for 15 minutes (at most eight hours). If the command or
+connection stops, the last lease expires after two minutes without a reboot.
+`--keep-awake off` releases it immediately. This bounds the kernel lock; it does
+not override a stock-reader request to suspend, as the measurements below show.
+The timed writes are covered by host tests; physical expiry will be checked in
+the combined Clara BW acceptance run.
 
 `--wifi-always-on` sets the reader's own `ForceWifiOn` developer setting. A
 pristine backup is taken before the first change, the file is rewritten through

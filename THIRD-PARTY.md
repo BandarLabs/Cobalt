@@ -17,7 +17,7 @@ cargo metadata --format-version 1 --all-features
 | Selected licence | Crates |
 | --- | --- |
 | Apache-2.0 | dependencies that offer Apache-2.0 as an alternative, including `image`, `http`, `rustls`, `libc`, `png`, `flate2`, `ttf-parser`, and their transitive dependencies |
-| MIT | `bytes`, `byteorder-lite`, `memchr`, `minimp3`, `minimp3-sys`, `pulldown-cmark`, `pulldown-cmark-escape`, `simd-adler32`, `slice-ring-buffer`, `vt100` |
+| MIT | `bytes`, `byteorder-lite`, `memchr`, `minimp3`, `minimp3-sys`, `pulldown-cmark`, `pulldown-cmark-escape`, `simd-adler32`, `slice-ring-buffer`, `vt100`, `zip` |
 | Apache-2.0 and ISC | `ring` |
 | ISC | `rustls-webpki`, `untrusted` |
 | BSD-3-Clause | `subtle` |
@@ -34,6 +34,21 @@ notices in `licenses/LICENSE-Rust-dependencies.txt`. That includes `ring`'s
 Apache-2.0 and ISC terms and the CDLA-Permissive-2.0 agreement for the Mozilla
 CA data bundled by `webpki-roots`. The GPL-3.0-or-later terms selected for
 `shakmaty` ship separately in `licenses/LICENSE-shakmaty.txt`.
+
+## Comic archive dependency
+
+The shared CBZ reader uses `zip` 4.6.1 (MIT), with default features disabled,
+Stored and DEFLATE compression only, and `flate2`'s pure Rust backend. Its
+resolved normal dependency closure is `crc32fast` 1.5.1, `cfg-if` 1.0.4,
+`flate2` 1.1.10, `miniz_oxide` 0.9.1, `adler2` 2.0.1,
+`simd-adler32` 0.3.10, `indexmap` 2.14.2, `equivalent` 1.0.2,
+`hashbrown` 0.17.1 and `memchr` 2.8.3. Each offers MIT or Apache-2.0;
+select Apache-2.0 when offered, otherwise MIT. ZIP's notice is included in
+the Rust dependency notices above. No upstream archive fixtures are copied.
+CBR is deferred; no RAR decoder is linked or invoked.
+
+See [the shared comic decision](docs/quality/comic-reader-decision.md) for
+resource limits, remaining release checks and the dependency assessment.
 
 ## Bundled content
 

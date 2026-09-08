@@ -1,6 +1,6 @@
 use kobo_policy::{DeviceServices, TaskRunner};
 
-use kobo_protocol::{Frame, LogLevel, Message, TaskError, TaskOutcome};
+use kobo_protocol::{Frame, LogLevel, Message};
 use kobo_ui::{display_metrics_from_env, Screen, Surface};
 use std::env;
 use std::error::Error;
@@ -463,9 +463,25 @@ fn restart_reader(state: &Path) -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
     let reader = Reader::load(state)?;
+    let mut light_recovery = if state.join("frontlight").exists() {
+        Err("front light recovery was not permitted by the hardware profile".to_owned())
+    } else {
+        Ok(())
+    };
     match kobo_hal::probe_device() {
         Ok(snapshot) => match kobo_profile::write_ready_profile(&snapshot) {
             Ok(profile) => {
+                light_recovery = kobo_hal::frontlight::Frontlight::recover(state)
+                    .map_err(|error| format!("front light recovery failed: {error}"))
+                    .map(|restored| {
+                        if restored {
+                            println!("original front light restored and verified");
+                        }
+                    });
+                if let Err(error) = &light_recovery {
+                    blackbox::trace(error);
+                    println!("{error}; restarting the reader anyway");
+                }
                 let mut executables = profile.leftover_radio_daemons.to_vec();
                 if profile.reap_nickel_supplicant
                     && !executables.contains(&kobo_hal::network::SUPPLICANT_EXECUTABLE)
@@ -508,8 +524,19 @@ fn restart_reader(state: &Path) -> Result<(), Box<dyn Error>> {
             "reader restarted as pid {pid}, but the freeze watchdog could not be resumed ({error}); it returns on the next reboot"
         ),
     }
-    println!("{}", clear_session_files(state));
+    println!("{}", complete_recovery(state, light_recovery)?);
     Ok(())
+}
+
+#[cfg_attr(not(feature = "device-write"), allow(dead_code))]
+fn complete_recovery(state: &Path, light: Result<(), String>) -> Result<String, String> {
+    light.map_err(|error| {
+        format!(
+            "the reader is running, but {error}; recovery state retained at {}",
+            state.display()
+        )
+    })?;
+    Ok(clear_session_files(state))
 }
 
 /// Removes what a session that died without cleaning up left behind.
@@ -748,14 +775,15 @@ fn serve_application(
             .with_line_streams(std::sync::Arc::new(kobo_net::LineStreams::default()))
             .with_app_secrets(&secrets, name)
             .with_credential_policy(std::sync::Arc::new(
-                move |credential, url, usage, body, content_type| {
-                    kobo_policy::credentials::allowed_request(
+                move |credential, url, usage, body, content_type, server| {
+                    kobo_policy::credentials::allowed_request_with_server(
                         &credential_app,
                         credential,
                         url,
                         usage,
                         body,
                         content_type,
+                        server,
                     )
                 },
             ))
@@ -861,27 +889,8 @@ fn serve_application(
             Message::Launch { name } => println!("launch requested: {name}"),
             Message::Log { level, message } => log_app(level, &message),
             Message::DeviceRequest(request) => {
-                let result = if let kobo_protocol::DeviceRequest::SetSecret {
-                    name: secret_name,
-                    value,
-                } = &request
-                {
-                    if kobo_policy::credentials::may_set(name, secret_name) {
-                        kobo_policy::credentials::install_app_secret(
-                            &secrets,
-                            name,
-                            secret_name,
-                            value.as_str(),
-                        )
-                        .map_or_else(kobo_protocol::DeviceResult::Failed, |()| {
-                            kobo_protocol::DeviceResult::Done
-                        })
-                    } else {
-                        kobo_protocol::DeviceResult::Denied(kobo_protocol::DenyReason::NotDeclared)
-                    }
-                } else {
-                    services.handle(request.clone())
-                };
+                let result = kobo_policy::credentials::handle_install(&secrets, name, &request)
+                    .unwrap_or_else(|| services.handle(request.clone()));
                 println!("device request {request:?} -> {result:?}");
                 write_shared(
                     &writer,
@@ -899,17 +908,16 @@ fn serve_application(
                     .submit(task, work);
                 if let Err(reason) = submitted {
                     println!("task {} refused: {reason:?}", task.0);
-                    write_shared(
-                        &writer,
-                        &Frame {
-                            version: frame.version,
-                            request_id: frame.request_id,
-                            message: Message::TaskOutcome {
-                                task,
-                                outcome: TaskOutcome::Failed(TaskError::Denied),
+                    if let Some(outcome) = reason.outcome() {
+                        write_shared(
+                            &writer,
+                            &Frame {
+                                version: frame.version,
+                                request_id: frame.request_id,
+                                message: Message::TaskOutcome { task, outcome },
                             },
-                        },
-                    )?;
+                        )?;
+                    }
                 }
             }
             Message::StoreRequest(request) => {
@@ -960,6 +968,10 @@ fn serve_application(
             | Message::DeviceResult(_)
             | Message::StoreResult(_)
             | Message::Lifecycle(_)
+            | Message::PrepareSuspend { .. }
+            | Message::SuspendReady { .. }
+            | Message::Resume { .. }
+            | Message::ScheduledWake { .. }
             | Message::CoverChanged { .. }
             | Message::PageTurn { .. }
             | Message::ShellEvent(_) => {
@@ -1031,11 +1043,7 @@ fn deliver_outcomes(
 /// layout fault that put the first row of the launcher's grid underneath the
 /// title on real hardware while every frame rendered here looked right.
 fn simulated_chrome(name: &str, screen: &Screen) -> kobo_ui::Chrome {
-    let chrome = kobo_ui::Chrome::with_back(name != HOME_APPLICATION);
-    if screen.reading {
-        return chrome;
-    }
-    chrome.with_status(simulated_status())
+    kobo_ui::Chrome::for_screen(screen, name == HOME_APPLICATION, Some(simulated_status()))
 }
 
 /// Everything the band shows, invented and fixed.
@@ -1342,6 +1350,27 @@ mod tests {
         // Recovery runs on every abnormal exit, including ones that already
         // cleaned up, so a second sweep has to be silent rather than an error.
         assert!(super::clear_session_files(&state).contains("cleared 0"));
+    }
+
+    #[test]
+    fn a_failed_light_restore_retains_the_original_recovery_record() {
+        let root = std::env::temp_dir().join(format!(
+            "cobalt-light-recovery-failed-{}",
+            std::process::id()
+        ));
+        fs::create_dir(&root).unwrap();
+        fs::write(root.join("frontlight"), b"original fixture record").unwrap();
+        let error =
+            super::complete_recovery(&root, Err("driver range changed".into())).unwrap_err();
+        assert!(error.contains("the reader is running"));
+        assert_eq!(
+            fs::read(root.join("frontlight")).unwrap(),
+            b"original fixture record"
+        );
+        assert!(super::complete_recovery(&root, Ok(()))
+            .unwrap()
+            .contains("cleared"));
+        assert!(!root.exists());
     }
 
     #[test]

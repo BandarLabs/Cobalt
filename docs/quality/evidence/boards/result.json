@@ -1,0 +1,10 @@
+{
+  "status": "passed",
+  "profile": "clara-bw-391",
+  "scale": "extra-large",
+  "original_fixture": true,
+  "basis": "simulator-sdk-ipc",
+  "fixture_sha256": "e6907a4beba5561ed115cb48265c1af2f9ad872ec4fd2f98c989ae77ca1ddca9",
+  "source_head": "ca9832c1c03a7c161096a200386846c6e78e5402",
+  "source_dirty": true
+}

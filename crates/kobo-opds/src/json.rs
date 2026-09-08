@@ -42,8 +42,19 @@ use kobo_json::Value;
 /// ever has.
 const MAX_SIBLINGS: usize = 32;
 
-pub(crate) fn parse(input: &str, base: &str) -> Result<Feed, kobo_json::ParseError> {
-    let value = kobo_json::parse(input)?;
+pub(crate) fn parse(input: &str, base: &str) -> Result<Feed, crate::Fault> {
+    let value = kobo_json::parse(input).map_err(crate::Fault::Json)?;
+    if value
+        .get("metadata")
+        .and_then(|metadata| metadata.get("title"))
+        .and_then(localized_text)
+        .is_none()
+        && !["navigation", "publications", "groups", "facets"]
+            .iter()
+            .any(|field| value.get(field).and_then(Value::as_array).is_some())
+    {
+        return Err(crate::Fault::NotAFeed);
+    }
     let metadata = value.get("metadata");
 
     let mut feed = Feed {

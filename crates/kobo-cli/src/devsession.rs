@@ -20,6 +20,9 @@ pub const READER_CONFIG_BACKUP: &str = "/mnt/onboard/.kobo/Kobo/Kobo eReader.con
 
 /// Name of the wake lock this tool holds.
 pub const WAKE_LOCK_NAME: &str = "kobo-sdk-dev";
+/// Renewed every 30 seconds by a hold; expiry survives a disconnected computer.
+pub const WAKE_LEASE_SECONDS: u64 = 120;
+const WAKE_LEASE_NANOS: u64 = WAKE_LEASE_SECONDS * 1_000_000_000;
 
 /// Reader binaries searched for evidence that a setting exists in this firmware.
 ///
@@ -103,6 +106,9 @@ pub fn status_script() -> String {
         .collect::<String>();
     format!(
         "set -u\n\
+         printf 'boot_id: '\n\
+         cat /proc/sys/kernel/random/boot_id 2>/dev/null || printf '<unreadable>'\n\
+         printf '\\n'\n\
          printf 'wake_lock: '\n\
          cat /sys/power/wake_lock 2>/dev/null || printf '<unreadable>'\n\
          printf '\\n'\n\
@@ -127,12 +133,12 @@ pub fn status_script() -> String {
 
 /// Returns a script that holds or releases the developer wake lock.
 ///
-/// The wake lock is RAM-only state in the running kernel. Rebooting always
-/// clears it, so this can never leave a device permanently unable to sleep.
+/// Each acquisition expires after two minutes, including if the computer dies.
+/// A hold renews that lease; an explicit release can end it earlier.
 #[must_use]
 pub fn wake_lock_script(switch: Switch) -> String {
     let action = match switch {
-        Switch::On => format!("echo {WAKE_LOCK_NAME} > /sys/power/wake_lock"),
+        Switch::On => format!("echo '{WAKE_LOCK_NAME} {WAKE_LEASE_NANOS}' > /sys/power/wake_lock"),
         Switch::Off => format!(
             "if grep -qw {WAKE_LOCK_NAME} /sys/power/wake_lock 2>/dev/null; then\n\
              \x20 echo {WAKE_LOCK_NAME} > /sys/power/wake_unlock\n\
@@ -156,19 +162,19 @@ pub fn wake_lock_script(switch: Switch) -> String {
 /// Returns a script that re-applies the wake lock and reports whether it had
 /// been lost since the last renewal.
 ///
-/// Writing a name that is already held is a no-op in the kernel, so renewing is
-/// safe to repeat. Something on this firmware clears the lock after a couple of
-/// minutes, so a session that must stay reachable has to renew it.
+/// The kernel timeout is refreshed even when the named lock is already held.
+/// No untimed acquisition is used, so losing SSH cannot leave this hold active.
 #[must_use]
 pub fn wake_lock_renew_script() -> String {
     format!(
         "set -eu\n\
          if grep -qw {WAKE_LOCK_NAME} /sys/power/wake_lock 2>/dev/null; then\n\
-         \x20 echo 'renew: held'\n\
+         \x20 renewal=held\n\
          else\n\
-         \x20 echo {WAKE_LOCK_NAME} > /sys/power/wake_lock\n\
-         \x20 echo 'renew: reacquired'\n\
+         \x20 renewal=reacquired\n\
          fi\n\
+         echo '{WAKE_LOCK_NAME} {WAKE_LEASE_NANOS}' > /sys/power/wake_lock\n\
+         echo \"renew: $renewal\"\n\
          exit\n"
     )
 }
@@ -403,7 +409,9 @@ mod tests {
     #[test]
     fn wake_lock_scripts_are_ram_only_and_named() {
         let on = wake_lock_script(Switch::On);
-        assert!(on.contains(&format!("echo {WAKE_LOCK_NAME} > /sys/power/wake_lock")));
+        assert!(on.contains(&format!(
+            "echo '{WAKE_LOCK_NAME} 120000000000' > /sys/power/wake_lock"
+        )));
         let off = wake_lock_script(Switch::Off);
         assert!(off.contains(&format!("echo {WAKE_LOCK_NAME} > /sys/power/wake_unlock")));
         for script in [&on, &off] {
@@ -646,7 +654,7 @@ mod tests {
     }
 
     #[test]
-    fn renewing_reacquires_a_cleared_lock_and_leaves_a_held_one_alone() {
+    fn renewing_refreshes_the_deadline_of_both_new_and_existing_locks() {
         let script = wake_lock_renew_script();
         assert!(script.contains(WAKE_LOCK_NAME));
         assert!(script.contains("/sys/power/wake_lock"));
@@ -654,9 +662,36 @@ mod tests {
         assert!(!script.contains("wake_unlock"));
         assert!(!script.contains("/sys/power/state"));
         assert!(!script.contains("autosleep"));
-        assert!(script.contains("renew: held"));
-        assert!(script.contains("renew: reacquired"));
+        assert!(script.contains("renewal=held"));
+        assert!(script.contains("renewal=reacquired"));
         assert!(script.ends_with("exit\n"));
+    }
+
+    #[test]
+    fn shell_renewal_always_writes_a_bounded_lease() {
+        let root = std::env::temp_dir().join(format!("cobalt-wake-lease-{}", std::process::id()));
+        std::fs::create_dir(&root).unwrap();
+        let file = root.join("wake_lock");
+        let script =
+            wake_lock_renew_script().replace("/sys/power/wake_lock", file.to_str().unwrap());
+        for (initial, expected) in [("", "reacquired"), (WAKE_LOCK_NAME, "held")] {
+            std::fs::write(&file, initial).unwrap();
+            let output = std::process::Command::new("sh")
+                .arg("-c")
+                .arg(&script)
+                .output()
+                .unwrap();
+            assert!(output.status.success());
+            assert_eq!(
+                String::from_utf8(output.stdout).unwrap(),
+                format!("renew: {expected}\n")
+            );
+            assert_eq!(
+                std::fs::read_to_string(&file).unwrap(),
+                format!("{WAKE_LOCK_NAME} 120000000000\n")
+            );
+        }
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -687,6 +722,7 @@ mod tests {
         }
         // Suspend evidence, which is what the uptime clock cannot show.
         assert!(script.contains("suspend_events:"));
+        assert!(script.contains("/proc/sys/kernel/random/boot_id"));
         assert!(script.contains("kernel_awake_seconds:"));
         // Pending restart must be decided from our own marker, never from the
         // settings file: the reader rewrites that file during normal operation,

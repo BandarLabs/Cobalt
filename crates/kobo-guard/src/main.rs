@@ -1,7 +1,7 @@
 //! Crash cleanup and screen hand-back.
 //!
 //! The guardian captures the whole screen before a child runs, supervises that
-//! child, and puts the screen back on every exit path: success, failure,
+//! child, and restores the screen and captured front light on every child exit: success, failure,
 //! signal, or timeout. It is the mechanism that turns an application crash into
 //! a cosmetic event rather than something the owner has to reboot out of.
 //!
@@ -99,6 +99,7 @@ fn run(arguments: &[String]) -> Result<String, String> {
     let screen = session
         .capture(whole_screen)
         .map_err(|error| format!("capture whole screen: {error}"))?;
+    let light = kobo_hal::frontlight::Frontlight::open();
     let plan = RefreshPlan::new(
         whole_screen,
         RefreshIntent::QualityContent,
@@ -116,7 +117,7 @@ fn run(arguments: &[String]) -> Result<String, String> {
         Ok(())
     };
     let outcome = supervise(&request);
-    let restored = restore(&session, &screen, plan);
+    let restored = restore_owned(light.as_ref(), || restore(&session, &screen, plan));
 
     damaged?;
     let outcome = outcome?;
@@ -124,6 +125,26 @@ fn run(arguments: &[String]) -> Result<String, String> {
     Ok(format!(
         "guarded session finished: {outcome}; {bytes} screen bytes restored and verified"
     ))
+}
+
+/// Try both restorations even if either one fails. This runs in the parent,
+/// so a killed or aborted child cannot skip it.
+fn restore_owned(
+    light: Option<&kobo_hal::frontlight::Frontlight>,
+    screen: impl FnOnce() -> Result<usize, String>,
+) -> Result<usize, String> {
+    let restored_light = light.map_or(Ok(()), |light| {
+        light
+            .restore()
+            .map(|_| ())
+            .map_err(|error| format!("restore front light: {error}"))
+    });
+    let restored_screen = screen();
+    match (restored_light, restored_screen) {
+        (Ok(()), Ok(bytes)) => Ok(bytes),
+        (Err(light), Err(screen)) => Err(format!("{light}; {screen}")),
+        (Err(error), Ok(_)) | (Ok(()), Err(error)) => Err(error),
+    }
 }
 
 /// Inverts a fixed region so a hardware run has real damage to undo.
@@ -519,6 +540,69 @@ mod tests {
         fn drop(&mut self) {
             let _ignored = std::fs::remove_dir_all(&self.root);
         }
+    }
+
+    #[test]
+    fn a_killed_child_cannot_skip_light_recovery_and_both_restorations_are_attempted() {
+        let scripts = TempScripts::new();
+        let light_root = scripts.root.join("backlight");
+        let control = light_root.join("light");
+        std::fs::create_dir_all(&control).unwrap();
+        for (name, value) in [
+            ("brightness", "1"),
+            ("max_brightness", "255"),
+            ("color", "3"),
+            ("max_color", "10"),
+        ] {
+            std::fs::write(control.join(name), value).unwrap();
+        }
+        let light = kobo_hal::frontlight::Frontlight::open_in(&light_root).unwrap();
+        let quote = |path: &std::path::Path| {
+            format!("'{}'", path.display().to_string().replace('\'', "'\\''"))
+        };
+        let program = scripts.write(
+            "change-light-and-exit",
+            &format!(
+                "printf '230\\n' > {}\nprintf '9\\n' > {}\nkill -KILL $$\n",
+                quote(&control.join("brightness")),
+                quote(&control.join("color"))
+            ),
+        );
+        assert_eq!(
+            supervise(&Request {
+                program,
+                timeout: Duration::from_secs(2),
+                prove_restore: false
+            }),
+            Ok(Outcome::Signalled)
+        );
+        assert_eq!(
+            std::fs::read_to_string(control.join("brightness"))
+                .unwrap()
+                .trim(),
+            "230"
+        );
+        assert!(super::restore_owned(Some(&light), || Err("screen unavailable".into())).is_err());
+        assert_eq!(
+            std::fs::read_to_string(control.join("brightness"))
+                .unwrap()
+                .trim(),
+            "1"
+        );
+        assert_eq!(
+            std::fs::read_to_string(control.join("color"))
+                .unwrap()
+                .trim(),
+            "3"
+        );
+        std::fs::write(control.join("max_brightness"), "100").unwrap();
+        let mut screen_attempted = false;
+        assert!(super::restore_owned(Some(&light), || {
+            screen_attempted = true;
+            Ok(100)
+        })
+        .is_err());
+        assert!(screen_attempted);
     }
 
     #[test]

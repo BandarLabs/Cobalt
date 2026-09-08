@@ -1446,7 +1446,7 @@ mod tests {
         for (error, expected) in [
             (kobo_sdk::TaskError::Offline, "not on a network"),
             (kobo_sdk::TaskError::Unreachable, "did not answer"),
-            (kobo_sdk::TaskError::TimedOut, "too slow"),
+            (kobo_sdk::TaskError::TimedOut, "took too long"),
         ] {
             let mut runner = AppRunner::new(Feeds {
                 loaded: true,

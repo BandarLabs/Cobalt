@@ -6,6 +6,8 @@ publish = false
 rust-version.workspace = true
 license.workspace = true
 
+[dependencies]
+kobo-json = { path = "../kobo-json" }
+
 [lints]
 workspace = true
-

@@ -1,0 +1,25 @@
+{
+  "status": "passed",
+  "basis": "store-app-sdk-ipc-and-runtime-transactions",
+  "original_fixture": true,
+  "fixture_payload": "inert; not a launch validation",
+  "scale": "extra-large",
+  "app_store": {
+    "mode": "signed-local",
+    "key": "e28a8970753332bd72fef413e6b0b2ef1b4aadda7aa2c141f233712a6876b351",
+    "channel": "beta",
+    "deviceTrust": false
+  },
+  "checks": [
+    "install",
+    "disk-full preserves version",
+    "update",
+    "process restart",
+    "remove preserves data",
+    "reinstall"
+  ],
+  "cli_sha256": "1bf64b917ab4c8c40397e6a7f3c979412528e03d966c578221c41f0e9343a62b",
+  "builder_sha256": "bd22038c7525fea4e77c3ae4a7eed08139cc19b589cc74439fbf3733ff752313",
+  "source_head": "808bf621805d19abc3d1037a781073a1204a3924",
+  "source_dirty": true
+}

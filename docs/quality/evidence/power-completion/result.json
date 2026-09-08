@@ -1,0 +1,20 @@
+{
+  "status": "passed",
+  "hardware_validation": false,
+  "source_head": "19a5f35e86572907752e7726e0767ea149c34f5d",
+  "source_dirty": true,
+  "fixture_sha256": "a5aed2bd10d613b1494038a6b2aa2ba90e38283aff31a9e29b003760f0b91154",
+  "checks": [
+    "failed save blocks sleep",
+    "chained durable save acknowledgements",
+    "task cancellation exactly once",
+    "duplicate scheduled wake ignored",
+    "frontlight restored",
+    "panel completion timeout",
+    "USB blocks entry and wakes",
+    "duplicate power-button edges and wake release",
+    "cover bounce invalidates entry",
+    "charging refuses sleep and wakes",
+    "USB reconnect does not duplicate an attempt"
+  ]
+}

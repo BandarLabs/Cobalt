@@ -3,8 +3,8 @@
   "display_name": "Backgammon",
   "short_label": "Backgammon",
   "summary": "Play complete solo or pass-and-play backgammon on one Kobo.",
-  "version": "0.1.4",
-  "release_notes": "Add a short in-game rules page so play can begin without leaving the board.",
+  "version": "0.1.5",
+  "release_notes": "Update shared controls and page layout for Cobalt 0.3.12.",
   "glyph": "circle",
   "capabilities": []
 }

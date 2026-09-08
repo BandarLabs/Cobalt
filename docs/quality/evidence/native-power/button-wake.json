@@ -1,0 +1,176 @@
+{
+  "app": "todo",
+  "fonts": [
+    {
+      "role": "interface",
+      "source": "AtkinsonHyperlegible-Regular.ttf"
+    },
+    {
+      "role": "display-title",
+      "source": "AtkinsonHyperlegible-Bold.ttf"
+    },
+    {
+      "role": "display-heading",
+      "source": "AtkinsonHyperlegible-Bold.ttf"
+    },
+    {
+      "role": "display-bold",
+      "source": "AtkinsonHyperlegible-Bold.ttf"
+    },
+    {
+      "role": "reading",
+      "source": "AtkinsonHyperlegible-Regular.ttf"
+    },
+    {
+      "role": "mono",
+      "source": "DejaVuSansMono.ttf"
+    }
+  ],
+  "frame": {
+    "colourAppearance": "luminance",
+    "format": "grey8",
+    "sha256": "5fd9c3730f296b65a8d0de83bee58980660a60fc1885bf7c95c185967ec24851",
+    "view": "ideal"
+  },
+  "interfaceScalePercent": 140,
+  "mode": "multi-app",
+  "orientation": "portrait",
+  "paints": "19",
+  "publisherFontHandle": null,
+  "readingScalePercent": 100,
+  "runtimeVersion": "0.3.12",
+  "schema": "cobalt.simulator-capture",
+  "simulation": {
+    "appStore": {
+      "mode": "catalog-preview",
+      "signedTransactions": false
+    },
+    "backends": [
+      "network",
+      "battery-read",
+      "frontlight-control",
+      "wifi-control",
+      "library",
+      "cover-sensor"
+    ],
+    "clock": {
+      "date": "2026-09-08",
+      "mode": "manual",
+      "monotonicMillis": "6000",
+      "unixMillis": "1788850866000",
+      "utcOffsetMinutes": 0
+    },
+    "dirtyPixelsSinceClean": 335828,
+    "hardware": {
+      "batteryPercent": 72,
+      "charging": false,
+      "coverClosed": false,
+      "frontlightAppearanceCalibrated": false,
+      "frontlightPercent": 20,
+      "orientation": "portrait",
+      "orientationControl": "display-composition"
+    },
+    "input": {
+      "forwardKey": 194,
+      "needsResynchronization": false,
+      "quiescent": true,
+      "rawEvents": "7",
+      "source": "synthetic evdev replay"
+    },
+    "lifecycle": "foreground",
+    "navigation": {
+      "app": "todo",
+      "hosted": [
+        "launcher",
+        "todo"
+      ],
+      "mode": "multi-app",
+      "processId": 70192
+    },
+    "observation": null,
+    "panel": {
+      "completed": "23",
+      "contentsKnown": true,
+      "failures": "0",
+      "finishedAtMillis": "4537",
+      "mode": "automatic",
+      "queued": false,
+      "status": "idle",
+      "submissionMarker": null,
+      "submitted": "23",
+      "submittedAtMillis": "4536",
+      "timing": "host control observations; not hardware calibration",
+      "visibleFrame": "last confirmed completion with approximate residue"
+    },
+    "panelApproximation": true,
+    "power": {
+      "generation": "5",
+      "hardwareValidated": false,
+      "lastRefusal": "None",
+      "lastWake": "Some(PowerButton)",
+      "mode": "simulated-entry-with-real-sdk-barrier",
+      "reason": "Some(PowerButton)",
+      "state": "awake",
+      "usbAttached": false
+    },
+    "profile": {
+      "colourPanel": false,
+      "height": 1448,
+      "id": "clara-bw-391",
+      "model": "Kobo Clara BW",
+      "pixelsPerInch": 300,
+      "rotation": 3,
+      "touch": {
+        "name": "cyttsp5_mt",
+        "xMax": 1447,
+        "xMin": 0,
+        "yMax": 1071,
+        "yMin": 0
+      },
+      "width": 1072
+    },
+    "refreshCount": 23,
+    "scenario": "normal",
+    "touch": {
+      "display": {
+        "x": 535,
+        "y": 714
+      },
+      "raw": {
+        "x": 714,
+        "y": 536
+      }
+    },
+    "transition": {
+      "dirty": 335828,
+      "full": false,
+      "refresh": 23,
+      "region": {
+        "height": 40,
+        "width": 728,
+        "x": 272,
+        "y": 448
+      },
+      "regions": [
+        {
+          "region": {
+            "height": 40,
+            "width": 728,
+            "x": 272,
+            "y": 448
+          },
+          "waveform": "GL16"
+        }
+      ],
+      "waveform": "GL16"
+    }
+  },
+  "source": {
+    "binarySha256": "d6afa35668ec4ad19bd1ceb87d175acd3b0edd8338f3f4dd2fb2f0454dfc29b7",
+    "dirty": true,
+    "fixture": "original-power-save-barrier",
+    "requestedSeed": "0",
+    "revision": "fb53080cdb8e51230245b1a0122b8735621b2a6c"
+  },
+  "version": 1
+}

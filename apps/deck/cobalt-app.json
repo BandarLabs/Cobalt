@@ -4,8 +4,8 @@
   "short_label": "Deck",
   "summary": "Turn your Kobo into a remote control for your computer.",
   "page_description": "Pair with your computer and run favorite actions from large, clear controls.",
-  "version": "0.2.0",
-  "release_notes": "Pair with your computer and run favorite actions from large, clear controls.",
+  "version": "0.2.1",
+  "release_notes": "Update shared controls and page layout for Cobalt 0.3.12.",
   "glyph": "grid",
   "capabilities": [
     "network"

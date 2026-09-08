@@ -2,6 +2,8 @@
 
 use std::fmt;
 
+pub mod observation;
+
 /// Which panel-controller interface the device's framebuffer speaks.
 ///
 /// Declared on the profile rather than inferred from `framebuffer_id`, so

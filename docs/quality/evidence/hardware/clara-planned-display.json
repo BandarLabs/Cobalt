@@ -1,0 +1,150 @@
+{
+  "schema": "cobalt.hardware-quality-run",
+  "version": 1,
+  "status": "planned",
+  "source": {
+    "revision": "bdb723ebc70df70fde29dbbd210886af94f259ff",
+    "dirty": true
+  },
+  "profile": "clara-bw-391",
+  "phase": "display",
+  "corner": null,
+  "steps": [
+    {
+      "id": "identity",
+      "argv": [
+        "/Users/abhishekanand/Downloads/cobalt-quality-implementation/target/debug/kobo",
+        "doctor",
+        "--device",
+        "fixture.invalid",
+        "--json"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "session-before",
+      "argv": [
+        "/Users/abhishekanand/Downloads/cobalt-quality-implementation/target/debug/kobo",
+        "session",
+        "--device",
+        "fixture.invalid",
+        "--status"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "light-before",
+      "argv": [
+        "/Users/abhishekanand/Downloads/cobalt-quality-implementation/target/debug/kobo",
+        "shell",
+        "--device",
+        "fixture.invalid",
+        "for control in /sys/class/backlight/* /sys/class/leds/*; do\n  for field in brightness max_brightness color max_color; do\n    if [ -r \"$control/$field\" ]; then\n      printf \"%s=\" \"$control/$field\"; cat \"$control/$field\"\n    fi\n  done\ndone"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "clean-refresh",
+      "argv": [
+        "/Users/abhishekanand/Downloads/cobalt-quality-implementation/target/debug/kobo",
+        "smoke-display",
+        "--device",
+        "fixture.invalid",
+        "--confirm",
+        "REVERSIBLE_PIXELS_GC16"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "whole-screen-restore",
+      "argv": [
+        "/Users/abhishekanand/Downloads/cobalt-quality-implementation/target/debug/kobo",
+        "smoke-display",
+        "--device",
+        "fixture.invalid",
+        "--confirm",
+        "SCREEN_SNAPSHOT_RESTORE"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "fast-refresh",
+      "argv": [
+        "/Users/abhishekanand/Downloads/cobalt-quality-implementation/target/debug/kobo",
+        "smoke-display",
+        "--device",
+        "fixture.invalid",
+        "--confirm",
+        "REVERSIBLE_PIXELS_DU"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "wait-timing",
+      "argv": [
+        "/Users/abhishekanand/Downloads/cobalt-quality-implementation/target/debug/kobo",
+        "smoke-display",
+        "--device",
+        "fixture.invalid",
+        "--confirm",
+        "WAIT_TIMING_GC16_DU"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "session-after",
+      "argv": [
+        "/Users/abhishekanand/Downloads/cobalt-quality-implementation/target/debug/kobo",
+        "session",
+        "--device",
+        "fixture.invalid",
+        "--status"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "light-after",
+      "argv": [
+        "/Users/abhishekanand/Downloads/cobalt-quality-implementation/target/debug/kobo",
+        "shell",
+        "--device",
+        "fixture.invalid",
+        "for control in /sys/class/backlight/* /sys/class/leds/*; do\n  for field in brightness max_brightness color max_color; do\n    if [ -r \"$control/$field\" ]; then\n      printf \"%s=\" \"$control/$field\"; cat \"$control/$field\"\n    fi\n  done\ndone"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "trace",
+      "argv": [
+        "/Users/abhishekanand/Downloads/cobalt-quality-implementation/target/debug/kobo",
+        "logs",
+        "--device",
+        "fixture.invalid",
+        "--dump",
+        "--lines",
+        "200"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "screen",
+      "argv": [
+        "/Users/abhishekanand/Downloads/cobalt-quality-implementation/target/debug/kobo",
+        "shot",
+        "--device",
+        "fixture.invalid",
+        "--out",
+        "/private/tmp/cobalt-clara-plans-jg9vxb5f/display/screen.png"
+      ],
+      "status": "planned"
+    }
+  ],
+  "cli": {
+    "file": "kobo",
+    "bytes": 22613872,
+    "sha256": "022c745b9fc308d0ca44ab5d53d28ca820ba0819cdac3523896f4e9226a9156d"
+  },
+  "physicalAssessment": "pending",
+  "calibrationApplied": false,
+  "timingBasis": "host command duration includes builds, transport and device work"
+}

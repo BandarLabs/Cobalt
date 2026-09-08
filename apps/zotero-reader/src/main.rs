@@ -2021,7 +2021,7 @@ mod tests {
         });
         let drawn = format!("{screen:?}");
         assert!(drawn.contains("Connect Zotero"), "{drawn}");
-        assert!(drawn.contains("Enter credential"), "{drawn}");
+        assert!(drawn.contains("Enter account key"), "{drawn}");
         assert!(drawn.contains("Use computer"), "{drawn}");
     }
 

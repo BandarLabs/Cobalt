@@ -1579,7 +1579,7 @@ dependencies = [
 
 [[package]]
 name = "kobo-doc"
-version = "0.3.11"
+version = "0.3.12"
 dependencies = [
  "kobo-html",
  "miniz_oxide 0.9.1",
@@ -1588,7 +1588,7 @@ dependencies = [
 
 [[package]]
 name = "kobo-flashcards-format"
-version = "0.3.11"
+version = "0.3.12"
 dependencies = [
  "flate2",
  "kobo-image",
@@ -1626,18 +1626,18 @@ dependencies = [
 
 [[package]]
 name = "kobo-html"
-version = "0.3.11"
+version = "0.3.12"
 
 [[package]]
 name = "kobo-image"
-version = "0.3.11"
+version = "0.3.12"
 dependencies = [
  "image",
 ]
 
 [[package]]
 name = "kobo-text"
-version = "0.3.11"
+version = "0.3.12"
 dependencies = [
  "fontdue",
  "kobo-ui",
@@ -1647,7 +1647,7 @@ dependencies = [
 
 [[package]]
 name = "kobo-ui"
-version = "0.3.11"
+version = "0.3.12"
 dependencies = [
  "unicode-segmentation",
  "unicode-width",

@@ -42,6 +42,8 @@
 
 use std::collections::{BTreeMap, VecDeque};
 
+pub mod comic;
+
 use kobo_doc::{Block, Document, FORMULA_PICTURE_EM, FORMULA_PICTURE_PREFIX};
 use kobo_read::{Memory, Outcome, Reader};
 use kobo_sdk::{
@@ -416,6 +418,18 @@ impl BookView {
             }
             None => false,
         }
+    }
+
+    /// Re-measure an open document after a panel or orientation change.
+    /// Reading position, annotations and book-specific type size are retained.
+    /// Returns false when no document is open.
+    pub fn reflow(&mut self, metrics: &DisplayMetrics) -> bool {
+        let Some(reader) = &mut self.reader else {
+            return false;
+        };
+        let memory = reader.memory().clone();
+        reader.restore(memory, metrics);
+        true
     }
 
     /// Where the reader had got to, for saving.
@@ -1388,6 +1402,66 @@ mod tests {
     }
 
     /// Bytes for something the page never mentioned are not held.
+    #[test]
+    fn plain_markdown_and_html_keep_their_anchor_across_orientation_changes() {
+        let prose =
+            "A long paragraph keeps its place while the reader changes the view. ".repeat(12);
+        for (name, source) in [
+            (
+                "chapter.txt",
+                (0..30)
+                    .map(|_| prose.clone())
+                    .collect::<Vec<_>>()
+                    .join("\n\n"),
+            ),
+            (
+                "chapter.md",
+                format!(
+                    "# Chapter\n\n{}",
+                    (0..30)
+                        .map(|_| prose.clone())
+                        .collect::<Vec<_>>()
+                        .join("\n\n")
+                ),
+            ),
+            (
+                "chapter.html",
+                format!(
+                    "<article>{}</article>",
+                    format!("<p>{prose}</p>").repeat(30)
+                ),
+            ),
+        ] {
+            let mut context = Context::default();
+            let mut view = BookView::new();
+            view.open_bytes(&mut context, name, source.as_bytes(), Memory::default())
+                .expect("document");
+            for _ in 0..3 {
+                assert!(view.reader_mut().unwrap().forward());
+            }
+            let memory = view.memory().unwrap().clone();
+            assert!(memory.at > 0, "fixture must leave the beginning");
+            let portrait = context.metrics();
+            let landscape = portrait.oriented(kobo_ui::Orientation::Landscape);
+            assert!(view.reflow(&landscape));
+            assert_eq!(view.memory(), Some(&memory));
+            assert!(view
+                .reader()
+                .unwrap()
+                .page()
+                .iter()
+                .any(|piece| piece.block == memory.at));
+            assert!(view.reflow(&portrait));
+            assert_eq!(view.memory(), Some(&memory));
+            assert!(view
+                .reader()
+                .unwrap()
+                .page()
+                .iter()
+                .any(|piece| piece.block == memory.at));
+        }
+    }
+
     #[test]
     fn a_picture_the_page_never_asked_for_is_refused() {
         let mut context = Context::default();

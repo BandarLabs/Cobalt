@@ -43,17 +43,14 @@ use kobo_hal::supervisor::Suspended;
 use kobo_hal::touch::TouchEvent;
 use kobo_hal::{Rect, RefreshIntent, RefreshPlan, RegionSnapshot};
 use kobo_policy::{Backends, Capability, Declared, DeviceServices, PowerPolicy, TaskRunner};
-use kobo_protocol::{Frame, Lifecycle, Message, TaskError, TaskOutcome};
-use kobo_ui::{
-    ActionId, CellStyle, Chrome, FontHandle, Layout, LayoutKind, PictureCache, Screen, Surface,
-};
+use kobo_protocol::{Frame, Lifecycle, Message, TaskOutcome};
+use kobo_ui::{ActionId, CellStyle, Chrome, Layout, LayoutKind, PictureCache, Screen, Surface};
 use kobo_wifi_trace::{Lifecycle as WifiTraceEvent, TraceClient};
-use std::collections::BTreeMap;
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering as AtomicOrdering};
+use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -85,15 +82,6 @@ fn frame_timing_wanted() -> bool {
     static WANTED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *WANTED.get_or_init(|| std::env::var(FRAME_TIMING).ok().as_deref() == Some("1"))
 }
-
-/// The most publisher faces one application may hold in the runtime at once.
-///
-/// The protocol bounds a single font frame, not how many frames arrive. A book
-/// needs a regular, an italic, a bold and a bold italic, and a handful more for
-/// small caps or a display face; past that an application is accumulating
-/// rather than typesetting, and every face held is parsed outlines and a glyph
-/// cache inside the privileged runtime.
-const MAX_APP_FONTS: usize = 16;
 
 /// Where each application's own keyed state lives, one directory per name.
 const STATE_ROOT: &str = "/mnt/onboard/.adds/cobalt/state";
@@ -199,16 +187,6 @@ const AUTO_UPDATE_QUIET: Duration = Duration::from_secs(60);
 /// Below this charge, background updates wait for a charger. A failed write
 /// to the book partition costs more than a late update is worth.
 const AUTO_UPDATE_MIN_BATTERY: u8 = 20;
-/// How long an application that asked for first refusal on Back is given to
-/// answer it with a screen.
-///
-/// The reader owns the way out, and this is the whole of what an application
-/// is allowed to do with it: draw something new, quickly, or be left behind.
-/// An application that is wedged, or that claimed [`Screen::owns_back`] on a
-/// screen it has nowhere to go back from, costs the reader this much and then
-/// the launcher appears anyway. Two seconds is longer than a screen takes to
-/// build and shorter than a reader waits before tapping again.
-const BACK_GRACE: Duration = Duration::from_secs(2);
 /// How often the stop watcher looks at the flag a signal handler sets.
 ///
 /// Bounds how long the owner holds a device that has been asked to stop and
@@ -349,11 +327,7 @@ impl StatusSource {
 /// said `owns_back`, which is an application declaring it has somewhere of its
 /// own to go, so drawing the control is exactly what it asked for.
 fn chrome_for(screen: &Screen, at_home: bool, status: &mut StatusSource) -> Chrome {
-    let chrome = Chrome::with_back(!at_home || screen.owns_back);
-    if screen.reading {
-        return chrome;
-    }
-    chrome.with_status(status.get().clone())
+    Chrome::for_screen(screen, at_home, Some(status.get().clone()))
 }
 
 /// Assembles one reading of everything the band shows.
@@ -536,9 +510,19 @@ pub fn present(
     let reader = Reader::find().map_err(|error| error.to_string())?;
     let network = kobo_hal::network::Connection::capture();
     let state = PathBuf::from(format!("/tmp/kobo-session-{}", std::process::id()));
+    fs::DirBuilder::new()
+        .mode(0o700)
+        .create(&state)
+        .map_err(|error| format!("create private reader session: {error}"))?;
     reader
         .save(&state)
         .map_err(|error| format!("save reader description: {error}"))?;
+    let frontlight = kobo_hal::frontlight::Frontlight::open();
+    if let Some(light) = &frontlight {
+        light
+            .save_recovery(&state)
+            .map_err(|error| format!("save original front light before takeover: {error}"))?;
+    }
     let watchdog = Arc::new(
         Watchdog::arm(&state, WATCHDOG_CHECK).map_err(|error| format!("arm watchdog: {error}"))?,
     );
@@ -644,7 +628,7 @@ pub fn present(
 
     // One reader thread on the touch descriptor for the whole panel session,
     // started here rather than per application.
-    let taps = TouchSink::default();
+    let taps = TouchSink(Arc::default(), touch.quiescence());
     pump_touch(&mut touch, &taps);
 
     // The buttons and the orientation channel, on hardware that has them.
@@ -683,6 +667,7 @@ pub fn present(
         limits,
         forward_is_194,
         &watchdog,
+        frontlight,
     );
     // No panel work may outlive Cobalt's ownership of the display. This is an
     // explicit lifecycle fence rather than a timing assumption: the stock
@@ -1064,8 +1049,7 @@ fn restore_screen(
 /// Beyond it, the one left alone longest is stopped, because an application
 /// nobody has looked at in a while is cheaper to start again than a device that
 /// runs out of memory while its owner is reading.
-const MAX_HOSTED: usize = 4;
-static NEXT_RUNTIME_FONT: AtomicU32 = AtomicU32::new(1);
+const MAX_HOSTED: usize = kobod::navigation::MAX_HOSTED;
 
 /// One application the runtime is hosting.
 ///
@@ -1076,6 +1060,7 @@ struct Hosted {
     /// applications are removed from the middle when they end.
     id: u64,
     name: String,
+    protocol: u8,
     path: PathBuf,
     /// Root-owned filesystem visible to this application on the device.
     jail: Option<PathBuf>,
@@ -1101,7 +1086,7 @@ struct Hosted {
     /// together when it exits.
     pictures: PictureCache,
     /// Application-local font handles mapped onto runtime-global handles.
-    fonts: BTreeMap<FontHandle, FontHandle>,
+    fonts: kobod::fonts::FontOwner,
     /// Logical direction is app-session scoped and therefore vanishes when
     /// this hosted process exits or the reader resumes.
     orientation: kobo_ui::Orientation,
@@ -1279,7 +1264,7 @@ impl Hosted {
 /// is told, so it can save; its work in flight keeps running and its answers
 /// keep arriving; and what it draws is kept rather than shown. Coming back is
 /// one repaint of a screen the runtime already has.
-#[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_lines, clippy::too_many_arguments)]
 fn host_applications(
     application: &Path,
     display: &DisplaySession,
@@ -1288,7 +1273,12 @@ fn host_applications(
     limits: Limits,
     forward_is_194: bool,
     watchdog: &Arc<Watchdog>,
+    frontlight: Option<kobo_hal::frontlight::Frontlight>,
 ) -> Result<String, String> {
+    // Keep the pre-takeover capture alive across every ordinary return. The
+    // independent watchdog uses its saved record if this process cannot unwind.
+    let light_owner = FrontlightGuard(frontlight);
+    let frontlight = light_owner.0.as_ref();
     // Kept current by the orientation channel: a reader flipped mid-session
     // keeps "forward" pointing forward even though the image does not rotate
     // yet.
@@ -1313,7 +1303,6 @@ fn host_applications(
     // reading taken before anything was changed. Reopening per request would
     // capture whatever the last application set as though it were the owner's
     // own setting, and the light would never go back.
-    let frontlight = kobo_hal::frontlight::Frontlight::open();
     let mut backends = Vec::new();
     if kobo_hal::battery::read().is_some() {
         backends.push(Capability::BatteryRead);
@@ -1387,11 +1376,6 @@ fn host_applications(
             services.observe_frontlight(percent);
         }
     }
-    // A guard rather than a line at the end of the loop, because the loop has
-    // several exits (the session clock, an idle reader, a failed write to an
-    // application) and a front light left bright by whichever path was taken
-    // is exactly the kind of change a reboot should not have to fix.
-    let _restore_light = FrontlightGuard(frontlight.clone());
     // Deliberately already stale, so the first read an application makes is a
     // real measurement rather than the default the services were built with.
     let mut status = StatusSource::new();
@@ -1426,7 +1410,8 @@ fn host_applications(
         // and cleared by the next screen that application draws. The reader's
         // way out is never left waiting on an application: if this is still
         // set when its grace expires, the launcher is shown regardless.
-        let mut back_offered: Option<(u64, Instant)> = None;
+        let navigation_started = Instant::now();
+        let mut back_offered = kobod::navigation::BackOffer::default();
         // The rectangle currently drawn inverted because a finger is on it.
         // The rectangle a finger is resting on, with the metrics its mark was
         // drawn against. Both, because the mark is undone by drawing it again
@@ -1438,14 +1423,20 @@ fn host_applications(
         // while an application works or fails.
         let mut release_due: Option<(Instant, kobo_ui::Rect)> = None;
         // When and where the finger landed, for telling a tap from a hold.
-        let mut landed: Option<(Instant, i32, i32)> = None;
+        let gesture_started = Instant::now();
+        let mut holds = kobo_hal::gesture::HoldTracker::default();
         // Updates the background checker found, held until the panel has been
         // quiet long enough to apply them. A newer report replaces an older
         // one outright: the newer one was computed against newer facts.
         let mut pending_updates: Option<crate::autoupdate::Plan> = None;
+        let mut power = kobod::power::Power::default();
+        let mut power_button = kobod::power::Button::default();
+        let mut consume_wake_touch = false;
 
         loop {
             let now = Instant::now();
+            let navigation_millis =
+                u64::try_from(navigation_started.elapsed().as_millis()).unwrap_or(u64::MAX);
             // Reported from the loop rather than from a thread, so this says
             // the runtime is still serving the panel rather than merely that
             // the process has not been reaped.
@@ -1476,6 +1467,10 @@ fn host_applications(
             // background application has no standing to react to it.
             if let Some(sensor) = cover.as_mut() {
                 if let Some(magnet) = sensor.poll() {
+                    if let Some(effect) = power.wake(kobod::power::WakeReason::Cover) {
+                        apply_power_effect(&mut apps, effect)?;
+                        last_activity = now;
+                    }
                     if let Some(index) = index_of(&apps, front) {
                         apps[index].send(kobo_protocol::Message::CoverChanged {
                             magnet_present: magnet == kobo_hal::cover::Magnet::Present,
@@ -1491,15 +1486,22 @@ fn host_applications(
                 ));
             }
             let idle_at = last_activity + limits.idle;
-            if now >= idle_at {
-                return Ok(finish(
+            if now >= idle_at && power.state() == kobod::power::State::Awake {
+                match begin_power(
+                    &mut power,
                     &apps,
-                    &visited,
-                    &format!(
-                        "nothing was touched for {}, so the reader has it back",
-                        describe(limits.idle)
-                    ),
-                ));
+                    navigation_millis,
+                    kobod::power::SleepReason::Idle,
+                    power_conditions(&apps, touch, kobo_hal::power_source::read()),
+                ) {
+                    Ok(effect) => {
+                        apply_power_effect(&mut apps, effect)?;
+                    }
+                    Err(reason) => {
+                        trace(&format!("idle handback deferred: {reason:?}"));
+                        last_activity = now;
+                    }
+                }
             }
             // Updates found in the background are applied only to a panel
             // nobody is using: enough quiet has passed since the last touch,
@@ -1507,6 +1509,7 @@ fn host_applications(
             // loop exactly as a store install does, which is acceptable here
             // for the same reason it is there: nobody is waiting.
             if pending_updates.is_some()
+                && power.state() == kobod::power::State::Awake
                 && now.saturating_duration_since(last_activity) >= AUTO_UPDATE_QUIET
                 && auto_update_battery_permits()
             {
@@ -1517,40 +1520,41 @@ fn host_applications(
             // An application that was offered Back and drew nothing has had
             // its turn. This is what keeps the guarantee: the way out belongs
             // to the reader whatever the application does or fails to do.
-            if let Some((id, offered_at)) = back_offered {
-                if now.saturating_duration_since(offered_at) >= BACK_GRACE {
-                    back_offered = None;
-                    if id == front {
-                        trace("the application did not answer back, leaving anyway");
-                        let Some(home_id) = id_of_path(&apps, &home) else {
-                            return Ok(finish(&apps, &visited, "the launcher is gone"));
-                        };
-                        front = switch_to(
-                            &mut apps,
-                            front,
-                            home_id,
-                            display,
-                            whole_screen,
-                            &mut surface,
-                            &mut panel,
-                            &home,
-                            &mut status,
-                        )?;
-                    }
-                }
+            if back_offered.take_expired(front, navigation_millis) {
+                trace("the application did not answer back, leaving anyway");
+                let Some(home_id) = id_of_path(&apps, &home) else {
+                    return Ok(finish(&apps, &visited, "the launcher is gone"));
+                };
+                front = switch_to(
+                    &mut apps,
+                    front,
+                    home_id,
+                    display,
+                    whole_screen,
+                    &mut surface,
+                    &mut panel,
+                    &home,
+                    &mut status,
+                )?;
             }
             // Whichever comes first, and never longer than one heartbeat, so a
             // session nobody is touching still proves it is alive.
             let wait = ceiling
                 .saturating_duration_since(now)
-                .min(idle_at.saturating_duration_since(now))
+                .min(if power.state() == kobod::power::State::Preparing {
+                    Duration::from_millis(50)
+                } else {
+                    (last_activity + limits.idle).saturating_duration_since(now)
+                })
                 .min(BEAT_INTERVAL)
                 // So a charger pulled out while nobody is touching the panel
                 // is noticed in seconds rather than at the next heartbeat.
                 .min(STATUS_POLL)
-                .min(back_offered.map_or(BEAT_INTERVAL, |(_, offered_at)| {
-                    (offered_at + BACK_GRACE).saturating_duration_since(now)
-                }))
+                .min(
+                    back_offered
+                        .remaining(navigation_millis)
+                        .unwrap_or(BEAT_INTERVAL),
+                )
                 .min(release_due.map_or(BEAT_INTERVAL, |(deadline, _)| {
                     deadline.saturating_duration_since(now)
                 }));
@@ -1580,6 +1584,9 @@ fn host_applications(
                         continue;
                     };
                     let gone = apps.remove(index);
+                    if let Some(effect) = power.abort(kobod::power::Refusal::Busy) {
+                        apply_power_effect(&mut apps, effect)?;
+                    }
                     visited.push(format!(
                         "{} exited after {} screens",
                         gone.name, gone.painted
@@ -1628,6 +1635,10 @@ fn host_applications(
                             button: button @ (gpio::Button::Page193 | gpio::Button::Page194),
                             pressed: true,
                         } => {
+                            if let Some(effect) = power.wake(kobod::power::WakeReason::Touch) {
+                                apply_power_effect(&mut apps, effect)?;
+                                continue;
+                            }
                             let forward = (button == gpio::Button::Page194) == forward_is_194;
                             if let Some(index) = index_of(&apps, front) {
                                 let at_home = apps[index].path == home;
@@ -1655,10 +1666,38 @@ fn host_applications(
                             button: gpio::Button::Power,
                             pressed,
                         } => {
-                            // Meaning arrives with the power sub-feature:
-                            // short press sleep, long press shutdown. Until
-                            // then the press is at least on the record.
-                            trace(&format!("power button pressed={pressed}"));
+                            match power_button
+                                .event(pressed, power.state() != kobod::power::State::Awake)
+                            {
+                                Some(kobod::power::ButtonAction::Wake) => {
+                                    if let Some(effect) =
+                                        power.wake(kobod::power::WakeReason::PowerButton)
+                                    {
+                                        apply_power_effect(&mut apps, effect)?;
+                                    }
+                                }
+                                Some(kobod::power::ButtonAction::Sleep) => {
+                                    match begin_power(
+                                        &mut power,
+                                        &apps,
+                                        navigation_millis,
+                                        kobod::power::SleepReason::PowerButton,
+                                        power_conditions(
+                                            &apps,
+                                            touch,
+                                            kobo_hal::power_source::read(),
+                                        ),
+                                    ) {
+                                        Ok(effect) => {
+                                            apply_power_effect(&mut apps, effect)?;
+                                        }
+                                        Err(reason) => {
+                                            trace(&format!("power handback deferred: {reason:?}"));
+                                        }
+                                    }
+                                }
+                                None => {}
+                            }
                         }
                         // The kernel's digested accelerometer verdict. Only
                         // the two portrait poses move the key mapping; the
@@ -1708,6 +1747,16 @@ fn host_applications(
                 }
                 Ok(Event::Touch(event)) => {
                     last_activity = Instant::now();
+                    if let Some(effect) = power.wake(kobod::power::WakeReason::Touch) {
+                        apply_power_effect(&mut apps, effect)?;
+                        consume_wake_touch = true;
+                    }
+                    if consume_wake_touch {
+                        if matches!(event, TouchEvent::Up { .. } | TouchEvent::Cancel) {
+                            consume_wake_touch = false;
+                        }
+                        continue;
+                    }
                     let Some(index) = index_of(&apps, front) else {
                         return Ok(finish(&apps, &visited, "nothing is on the panel"));
                     };
@@ -1736,9 +1785,14 @@ fn host_applications(
                     let mut released = None;
                     if let Some(current) = screen.as_ref() {
                         match event {
+                            TouchEvent::Cancel => {
+                                if let Some((rect, metrics, _)) = pressed.take() {
+                                    surface.invert_press(rect, &metrics);
+                                    panel.paint_feedback(display, whole_screen, &surface, rect)?;
+                                }
+                            }
                             TouchEvent::Down { x, y } => {
                                 if let (Ok(x), Ok(y)) = (i32::try_from(x), i32::try_from(y)) {
-                                    landed = Some((Instant::now(), x, y));
                                     let physical = crate::device_metrics();
                                     let (logical_x, logical_y) = kobo_ui::logical_point_with_turn(
                                         orientation,
@@ -1803,19 +1857,6 @@ fn host_applications(
                                 }
                             }
                             TouchEvent::Move { x, y } => {
-                                // A finger that travels is a drag, not a hold.
-                                // Without this, sliding across the page and
-                                // pausing before letting go would mark a
-                                // paragraph the reader never rested on.
-                                if let (Some((_, from_x, from_y)), Ok(x), Ok(y)) =
-                                    (landed, i32::try_from(x), i32::try_from(y))
-                                {
-                                    if (x - from_x).abs() > HOLD_SLIP
-                                        || (y - from_y).abs() > HOLD_SLIP
-                                    {
-                                        landed = None;
-                                    }
-                                }
                                 // Slid off the control. Cancel the press the
                                 // way every other platform does, so the reader
                                 // can see that letting go here will do nothing.
@@ -1843,12 +1884,10 @@ fn host_applications(
                     // hold costs nothing until it has happened: no timer, no
                     // wake, and no gesture that fires while the finger is
                     // still down and cannot be taken back.
-                    let held = match event {
-                        TouchEvent::Up { .. } => landed
-                            .take()
-                            .is_some_and(|(at, _, _)| at.elapsed() >= HOLD_TIME),
-                        _ => false,
-                    };
+                    let held = holds.observe(
+                        event,
+                        u64::try_from(gesture_started.elapsed().as_millis()).unwrap_or(u64::MAX),
+                    );
                     let orientation = apps[index].orientation;
                     let disposition = deliver_touch(
                         &mut apps[index].stream,
@@ -1861,12 +1900,16 @@ fn host_applications(
                     )?;
                     match disposition {
                         Tap::Handled => {}
-                        Tap::OfferedBack => back_offered = Some((front, Instant::now())),
+                        Tap::OfferedBack => back_offered.offer(
+                            front,
+                            u64::try_from(navigation_started.elapsed().as_millis())
+                                .unwrap_or(u64::MAX),
+                        ),
                         Tap::Leave => {
                             // Going back leaves the application running. It is
                             // put behind the launcher rather than ended, so
                             // coming back to it is a repaint, not a restart.
-                            back_offered = None;
+                            back_offered.clear();
                             let Some(home_id) = id_of_path(&apps, &home) else {
                                 return Ok(finish(&apps, &visited, "the launcher is gone"));
                             };
@@ -1896,22 +1939,25 @@ fn host_applications(
                         continue;
                     };
                     match frame.message {
-                        Message::SetScreen(mut screen) => {
-                            if let Some(local) = screen.reading_font {
-                                screen.reading_font = apps[index].fonts.get(&local).copied();
-                            }
-                            let is_front = id == front;
-                            if is_front {
+                        Message::SuspendReady { generation, ready } => {
+                            if let Some(effect) = power.acknowledge(id, generation, ready) {
+                                apply_power_effect(&mut apps, effect)?;
                                 last_activity = Instant::now();
                             }
+                        }
+                        Message::SetScreen(mut screen) => {
+                            if let Some(local) = screen.reading_font {
+                                screen.reading_font = apps[index].fonts.resolve(local);
+                            }
+                            let is_front = id == front;
+                            // App repainting is not owner activity and cannot
+                            // renew an idle session indefinitely.
                             // The answer to a Back that was handed over, if
                             // one was outstanding. Cleared on any screen from
                             // that application rather than a designated one:
                             // the application has drawn, which is all the
                             // runtime asked of it.
-                            if back_offered.is_some_and(|(waiting, _)| waiting == id) {
-                                back_offered = None;
-                            }
+                            back_offered.answer(id);
                             let chrome = chrome_for(&screen, apps[index].path == home, &mut status);
                             let screen =
                                 kobo_ui::ensure_way_back(screen, &chrome, &apps[index].name);
@@ -2013,47 +2059,16 @@ fn host_applications(
                             name,
                             bytes,
                         } => {
-                            // The map entry is only made once the face parses.
-                            // Creating it first let a refused font hold a slot,
-                            // and nothing bounded how many slots one
-                            // application could take: a loop over fresh handles
-                            // would grow the runtime until the device gave out.
-                            let known = apps[index].fonts.contains_key(&handle);
-                            if !known && apps[index].fonts.len() >= MAX_APP_FONTS {
-                                trace(&format!(
-                                    "font {} refused: {MAX_APP_FONTS} already held",
-                                    handle.0
-                                ));
-                            } else {
-                                match kobo_text::BookFont::from_bytes(
-                                    &bytes,
-                                    &name,
-                                    crate::device_metrics(),
-                                ) {
-                                    Ok(book_font) => {
-                                        let runtime_handle =
-                                            *apps[index].fonts.entry(handle).or_insert_with(|| {
-                                                FontHandle(
-                                                    NEXT_RUNTIME_FONT
-                                                        .fetch_add(1, AtomicOrdering::Relaxed),
-                                                )
-                                            });
-                                        kobo_ui::put_book_typesetter(
-                                            runtime_handle,
-                                            Box::new(book_font),
-                                        );
-                                    }
-                                    Err(error) => {
-                                        trace(&format!("font {} refused: {error}", handle.0));
-                                    }
-                                }
+                            if let Err(error) = apps[index].fonts.load(
+                                handle,
+                                &name,
+                                &bytes,
+                                crate::device_metrics(),
+                            ) {
+                                trace(&format!("font {} refused: {error}", handle.0));
                             }
                         }
-                        Message::DropFont { handle } => {
-                            if let Some(runtime_handle) = apps[index].fonts.remove(&handle) {
-                                kobo_ui::drop_book_typesetter(runtime_handle);
-                            }
-                        }
+                        Message::DropFont { handle } => apps[index].fonts.remove(handle),
                         // An application logs to explain itself, and the times
                         // it most needs to be believed are the times it took
                         // the reader down with it. Dropping the line here left
@@ -2115,6 +2130,12 @@ fn host_applications(
                                 kobo_protocol::DeviceResult::Denied(
                                     kobo_protocol::DenyReason::NotDeclared,
                                 )
+                            } else if let Some(result) = kobo_policy::credentials::handle_install(
+                                Path::new(SECRETS),
+                                &apps[index].name,
+                                &request,
+                            ) {
+                                result
                             } else if let Some(reason) = services.refusal_for(&request) {
                                 kobo_protocol::DeviceResult::Denied(reason)
                             } else {
@@ -2530,14 +2551,16 @@ fn host_applications(
                         }
                         Message::Spawn { task, work } => {
                             println!("task {} started for {}", task.0, apps[index].name);
-                            if apps[index].tasks.submit(task, work).is_err() {
+                            if let Some(outcome) = apps[index]
+                                .tasks
+                                .submit(task, work)
+                                .err()
+                                .and_then(kobo_policy::tasks::RejectReason::outcome)
+                            {
                                 reply(
                                     &mut apps[index],
                                     frame.request_id,
-                                    Message::TaskOutcome {
-                                        task,
-                                        outcome: TaskOutcome::Failed(TaskError::Denied),
-                                    },
+                                    Message::TaskOutcome { task, outcome },
                                 )?;
                             }
                         }
@@ -2572,6 +2595,9 @@ fn host_applications(
                             }
                         }
                         Message::Launch { name: wanted } => {
+                            if let Some(effect) = power.abort(kobod::power::Refusal::Busy) {
+                                apply_power_effect(&mut apps, effect)?;
+                            }
                             match open_application(
                                 &mut apps,
                                 &mut next_id,
@@ -2612,6 +2638,9 @@ fn host_applications(
                         | Message::TextHold { .. }
                         | Message::TaskOutcome { .. }
                         | Message::Lifecycle(_)
+                        | Message::PrepareSuspend { .. }
+                        | Message::Resume { .. }
+                        | Message::ScheduledWake { .. }
                         | Message::DeviceResult(_)
                         | Message::StoreResult(_)
                         | Message::CoverChanged { .. }
@@ -2649,6 +2678,34 @@ fn host_applications(
                     })?;
                 }
             }
+            if power.state() == kobod::power::State::Preparing {
+                let source = kobo_hal::power_source::read();
+                let wake = if source.usb == Some(true) {
+                    Some(kobod::power::WakeReason::Usb)
+                } else if source.external == Some(true) {
+                    Some(kobod::power::WakeReason::Charging)
+                } else {
+                    None
+                };
+                if let Some(effect) = wake.and_then(|reason| power.wake(reason)) {
+                    apply_power_effect(&mut apps, effect)?;
+                    last_activity = Instant::now();
+                }
+                let mut conditions = power_conditions(&apps, touch, source);
+                if conditions.tasks_idle {
+                    conditions.panel_idle = display.finish_pending().is_ok();
+                }
+                if let Some(effect) = power.poll(navigation_millis, conditions, false) {
+                    if apply_power_effect(&mut apps, effect)? {
+                        return Ok(finish(
+                            &apps,
+                            &visited,
+                            "saved app work; returning power ownership to the reader",
+                        ));
+                    }
+                    last_activity = Instant::now();
+                }
+            }
         }
     })();
 
@@ -2656,6 +2713,75 @@ fn host_applications(
         stop_hosted(app);
     }
     result
+}
+
+/// Device entry remains reader handback until a kernel/profile combination is
+/// physically validated. The same SDK barrier still protects outstanding saves.
+fn apply_power_effect(apps: &mut [Hosted], effect: kobod::power::Effect) -> Result<bool, String> {
+    use kobod::power::Effect;
+    trace(&format!("power effect {effect:?}"));
+    match effect {
+        Effect::Prepare { generation } => {
+            for app in apps.iter_mut() {
+                app.tasks.pause();
+            }
+            for app in apps {
+                app.send(Message::PrepareSuspend { generation })?;
+            }
+        }
+        Effect::Resume { generation, reason } => {
+            for app in apps.iter_mut() {
+                app.tasks.resume();
+            }
+            for app in apps {
+                app.send(Message::Resume { generation, reason })?;
+            }
+        }
+        Effect::Handback { .. } => return Ok(true),
+        Effect::Enter { .. } => {
+            return Err("Kernel suspend has not been validated for this reader.".into())
+        }
+    }
+    Ok(false)
+}
+
+fn begin_power(
+    power: &mut kobod::power::Power,
+    apps: &[Hosted],
+    now: u64,
+    reason: kobod::power::SleepReason,
+    conditions: kobod::power::Conditions,
+) -> Result<kobod::power::Effect, kobod::power::Refusal> {
+    if apps
+        .iter()
+        .any(|app| app.protocol < kobod::power::MIN_APP_PROTOCOL)
+    {
+        return Err(kobod::power::Refusal::UnsupportedApp);
+    }
+    power.begin(
+        &apps.iter().map(|app| app.id).collect::<Vec<_>>(),
+        now,
+        reason,
+        conditions,
+    )
+}
+
+fn power_conditions(
+    apps: &[Hosted],
+    touch: &TouchSink,
+    source: kobo_hal::power_source::Observation,
+) -> kobod::power::Conditions {
+    kobod::power::Conditions {
+        charging: source.external != Some(false),
+        // This observation describes USB power, not mass-storage ownership.
+        // Unknown USB cannot authorize kernel sleep; this host only hands back.
+        usb_attached: source.usb == Some(true),
+        keep_awake_until: 0, // KeepAwake is not a declared native backend.
+        terminal_open: apps.iter().any(|app| app.shells.is_open()),
+        input_quiet: touch.1.is_quiet(),
+        panel_idle: false, // Replaced only after the display completion fence.
+        tasks_idle: apps.iter().all(|app| app.tasks.is_quiescent()),
+    }
 }
 
 fn index_of(apps: &[Hosted], id: u64) -> Option<usize> {
@@ -2707,14 +2833,14 @@ fn switch_to(
     if front == wanted {
         return Ok(front);
     }
-    if let Some(index) = index_of(apps, front) {
-        // Told before the panel changes, so an application that saves on
-        // leaving has done it before anything else is drawn over it.
-        apps[index].send(Message::Lifecycle(Lifecycle::Background))?;
-    }
     let Some(index) = index_of(apps, wanted) else {
         return Ok(front);
     };
+    if let Some(previous) = index_of(apps, front) {
+        // A lifecycle notification starts the callback asynchronously. It is
+        // not an acknowledgement that the application's saves have finished.
+        apps[previous].send(Message::Lifecycle(Lifecycle::Background))?;
+    }
     apps[index].used = Instant::now();
     apps[index].send(Message::Lifecycle(Lifecycle::Foreground))?;
     // Painted from what the runtime already holds rather than waiting for the
@@ -2978,7 +3104,11 @@ fn evict(apps: &mut Vec<Hosted>, front: u64) {
         .iter()
         .map(|app| (app.id, app.used, app.tasks.in_flight() > 0))
         .collect();
-    let Some(index) = coldest(&seen, front) else {
+    let home = apps
+        .iter()
+        .find(|app| app.name == "launcher")
+        .map(|app| app.id);
+    let Some(index) = kobod::navigation::eviction(&seen, front, home) else {
         return;
     };
     let gone = apps.remove(index);
@@ -2999,12 +3129,9 @@ fn evict(apps: &mut Vec<Hosted>, front: u64) {
 /// nothing on the panel to say so. Such an application is stopped only when
 /// every other candidate is busy too, because refusing to open anything is
 /// worse still.
+#[cfg(test)]
 fn coldest(seen: &[(u64, Instant, bool)], front: u64) -> Option<usize> {
-    seen.iter()
-        .enumerate()
-        .filter(|(_, (id, _, _))| *id != front)
-        .min_by_key(|(_, (_, used, busy))| (*busy, *used))
-        .map(|(index, _)| index)
+    kobod::navigation::eviction(seen, front, None)
 }
 
 /// Starts one application and completes its opening exchange.
@@ -3117,14 +3244,15 @@ fn start_application(
         .with_line_streams(Arc::new(kobo_net::LineStreams::default()))
         .with_app_secrets(SECRETS, &name)
         .with_credential_policy(Arc::new(
-            move |credential, url, usage, body, content_type| {
-                kobo_policy::credentials::allowed_request(
+            move |credential, url, usage, body, content_type, server| {
+                kobo_policy::credentials::allowed_request_with_server(
                     &credential_app,
                     credential,
                     url,
                     usage,
                     body,
                     content_type,
+                    server,
                 )
             },
         ))
@@ -3143,6 +3271,7 @@ fn start_application(
     };
     apps.push(Hosted {
         id,
+        protocol: version,
         // Named explicitly, and only here. A shell on this device is root on a
         // writable root filesystem, so it is the one capability that is never
         // granted by the same blanket line as the rest; when manifests arrive
@@ -3173,7 +3302,7 @@ fn start_application(
         declared,
         screen: None,
         pictures: PictureCache::default(),
-        fonts: BTreeMap::new(),
+        fonts: kobod::fonts::FontOwner::default(),
         orientation: kobo_ui::Orientation::Portrait,
         landscape_turn: kobo_ui::LandscapeTurn::Clockwise,
         painted: 0,
@@ -3210,9 +3339,7 @@ fn stop_hosted(mut app: Hosted) {
         trace(&format!("{} ended with {status}", app.name));
         println!("{} ended with {status}", app.name);
     }
-    for (_, handle) in std::mem::take(&mut app.fonts) {
-        kobo_ui::drop_book_typesetter(handle);
-    }
+    app.fonts.clear();
     app.tasks.shutdown();
     stop_application(&mut app.child, app.jail.as_deref());
     if let Some(failure) = app.child.trace_failure() {
@@ -3347,13 +3474,6 @@ fn installed_name(path: &Path) -> Result<String, String> {
     Ok(name.to_owned())
 }
 
-/// How long a finger must stay down for a touch to count as a hold.
-///
-/// Half a second, which is what every touch platform settled on: shorter and
-/// an unhurried tap becomes a gesture nobody asked for, longer and the reader
-/// concludes the panel is ignoring them and lifts off.
-const HOLD_TIME: Duration = Duration::from_millis(500);
-
 /// Briefly holds a release so an application's next screen can carry it.
 ///
 /// These are far shorter than a panel transition and therefore add no visible
@@ -3413,13 +3533,6 @@ fn release_grace(class: FeedbackKind) -> Duration {
         FeedbackKind::KeyboardKey => KEYBOARD_RELEASE_GRACE,
     }
 }
-
-/// How far the finger may wander and still be holding, in pixels.
-///
-/// A finger resting on glass is never still, and this panel reports every
-/// tremor. Roughly three millimetres on a Clara, which is under the width of
-/// the contact patch, so a hand that is not moving cannot cross it.
-const HOLD_SLIP: i32 = 40;
 
 /// Ends the application, politely if it has already finished and firmly if not.
 fn stop_application(child: &mut ApplicationChild, jail: Option<&Path>) {
@@ -3752,8 +3865,11 @@ fn deliver_touch(
     else {
         return Ok(Tap::Handled);
     };
-    let offered = action == ActionId::BACK;
-    if offered && !current.is_some_and(|screen| screen.owns_back) {
+    let route = kobod::navigation::route(
+        action == ActionId::BACK,
+        current.is_some_and(|screen| screen.owns_back),
+    );
+    if route == kobod::navigation::BackRoute::Leave {
         return Ok(Tap::Leave);
     }
     kobo_protocol::write_to(
@@ -3765,7 +3881,7 @@ fn deliver_touch(
         },
     )
     .map_err(|error| format!("deliver a tap: {error}"))?;
-    Ok(if offered {
+    Ok(if route == kobod::navigation::BackRoute::Offer {
         Tap::OfferedBack
     } else {
         Tap::Handled
@@ -3843,9 +3959,13 @@ impl Painter {
         transition: &FrameTransition,
     ) -> Result<(), String> {
         for update in &transition.regions {
-            Self::apply_region(display, whole_screen, surface, *update)?;
+            if let Err(error) = Self::apply_region(display, whole_screen, surface, *update) {
+                self.frames.invalidate();
+                return Err(error);
+            }
         }
         if !self.frames.commit(surface, transition) {
+            self.frames.invalidate();
             return Err("the frame planner rejected a completed refresh".to_owned());
         }
         Ok(())
@@ -3929,10 +4049,15 @@ impl Painter {
         // line; start.sh already captures stderr.
         if frame_timing_wanted() {
             eprintln!(
-                "frame {}x{} wf={} convert={}ms write={}ms submit={}us fence={}ms completed={} pending={}",
+                "frame {}x{} marker={} backend={:?} requested={:?} applied={:?} wf={} translated={} convert={}ms write={}ms submit={}us fence={}ms completed={} pending={}",
                 region.width,
                 region.height,
+                timing.request.marker,
+                timing.request.backend,
+                timing.request.requested.intent,
+                timing.request.applied.intent,
                 timing.submitted_waveform,
+                timing.translated_waveform,
                 converted.as_millis(),
                 written.saturating_sub(converted).as_millis(),
                 timing.submit.as_micros(),
@@ -3955,7 +4080,10 @@ impl Painter {
 /// twice the two threads would split every report between them. So the thread
 /// is started once and the destination is swapped as applications change.
 #[derive(Clone, Default)]
-struct TouchSink(Arc<Mutex<Option<Sender<Event>>>>);
+struct TouchSink(
+    Arc<Mutex<Option<Sender<Event>>>>,
+    kobo_hal::input::Quiescence,
+);
 
 impl TouchSink {
     fn set(&self, sender: Option<Sender<Event>>) {
@@ -4335,6 +4463,117 @@ mod tests {
     }
 
     #[test]
+    fn native_power_delivery_pauses_tasks_and_resumes_each_host_once() {
+        use super::{ApplicationChild, Hosted};
+        use kobod::power::{Effect, WakeReason};
+        let root =
+            std::env::temp_dir().join(format!("cobalt-native-power-host-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let (runtime, mut client) = std::os::unix::net::UnixStream::pair().unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_secs(1)))
+            .unwrap();
+        let child = std::process::Command::new("/usr/bin/true").spawn().unwrap();
+        let mut apps = vec![Hosted {
+            id: 1,
+            protocol: kobo_protocol::VERSION,
+            name: "fixture".into(),
+            path: root.join("fixture"),
+            jail: None,
+            child: ApplicationChild::ordinary(child),
+            stream: runtime,
+            store: kobo_policy::store::Store::new(root.join("state")),
+            shelf: kobo_policy::shelf::Shelf::new(root.join("shelf")),
+            tasks: TaskRunner::simulated(root.join("data")),
+            declared: kobo_policy::Declared::all(),
+            shells: kobo_shell::Shells::new(&[]),
+            screen: None,
+            pictures: super::PictureCache::default(),
+            fonts: kobod::fonts::FontOwner::default(),
+            orientation: kobo_ui::Orientation::Portrait,
+            landscape_turn: kobo_ui::LandscapeTurn::Clockwise,
+            painted: 0,
+            used: std::time::Instant::now(),
+        }];
+        let mut power = kobod::power::Power::default();
+        apps[0].protocol = kobod::power::MIN_APP_PROTOCOL - 1;
+        assert_eq!(
+            super::begin_power(
+                &mut power,
+                &apps,
+                0,
+                kobod::power::SleepReason::Owner,
+                kobod::power::Conditions {
+                    charging: false,
+                    usb_attached: false,
+                    keep_awake_until: 0,
+                    terminal_open: false,
+                    input_quiet: true,
+                    panel_idle: true,
+                    tasks_idle: true
+                }
+            ),
+            Err(kobod::power::Refusal::UnsupportedApp)
+        );
+        assert_eq!(power.state(), kobod::power::State::Awake);
+        assert!(
+            !apps[0].tasks.is_quiescent(),
+            "an old app must not have its task admission paused"
+        );
+        apps[0].protocol = kobo_protocol::VERSION;
+        assert!(!super::apply_power_effect(&mut apps, Effect::Prepare { generation: 4 }).unwrap());
+        assert!(apps[0].tasks.is_quiescent());
+        assert_eq!(
+            kobo_protocol::read_from(&mut client).unwrap().message,
+            Message::PrepareSuspend { generation: 4 }
+        );
+        assert!(!super::apply_power_effect(
+            &mut apps,
+            Effect::Resume {
+                generation: 4,
+                reason: WakeReason::Touch
+            }
+        )
+        .unwrap());
+        assert!(!apps[0].tasks.is_quiescent());
+        assert_eq!(
+            kobo_protocol::read_from(&mut client).unwrap().message,
+            Message::Resume {
+                generation: 4,
+                reason: WakeReason::Touch
+            }
+        );
+        assert!(super::apply_power_effect(&mut apps, Effect::Enter { generation: 4 }).is_err());
+        assert!(super::apply_power_effect(&mut apps, Effect::Handback { generation: 4 }).unwrap());
+        apps[0].child.process.wait().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn cancelled_touch_cannot_activate_an_app_control() {
+        let (mut writer, mut reader) = std::os::unix::net::UnixStream::pair().unwrap();
+        reader.set_nonblocking(true).unwrap();
+        let result = super::deliver_touch(
+            &mut writer,
+            kobo_hal::touch::TouchEvent::Cancel,
+            None,
+            &kobo_ui::Chrome::default(),
+            false,
+            kobo_ui::Orientation::Portrait,
+            kobo_ui::LandscapeTurn::Clockwise,
+        )
+        .unwrap();
+        assert!(matches!(result, super::Tap::Handled));
+        let mut bytes = [0_u8; 1];
+        assert_eq!(
+            std::io::Read::read(&mut reader, &mut bytes)
+                .unwrap_err()
+                .kind(),
+            std::io::ErrorKind::WouldBlock
+        );
+    }
+
+    #[test]
     fn an_application_cannot_change_protocol_version_after_greeting() {
         let (runtime, mut application) =
             std::os::unix::net::UnixStream::pair().expect("socket pair");
@@ -4378,7 +4617,7 @@ mod tests {
             .with_line_streams(Arc::new(kobo_net::LineStreams::default()))
             .with_app_secrets(&root, "lichess")
             .with_credential_policy(Arc::new(
-                move |credential, url, usage, body, content_type| {
+                move |credential, url, usage, body, content_type, _server| {
                     credential == &Credential::bearer("lichess")
                         && match usage {
                             CredentialUse::Fetch => {

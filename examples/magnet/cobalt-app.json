@@ -1,1 +1,12 @@
-{"id":"magnet","display_name":"Magnet","short_label":"Magnet","summary":"Find the hall sensor behind the bezel and watch it respond to a magnet.","version":"1.0.7","glyph":"magnet","capabilities":["cover-sensor"],"release_notes":"Keep Magnet compatible with Cobalt's protocol-12 runtime."}
+{
+  "id": "magnet",
+  "display_name": "Magnet",
+  "short_label": "Magnet",
+  "summary": "Find the hall sensor behind the bezel and watch it respond to a magnet.",
+  "version": "1.0.8",
+  "glyph": "magnet",
+  "capabilities": [
+    "cover-sensor"
+  ],
+  "release_notes": "Update shared controls and page layout for Cobalt 0.3.12."
+}

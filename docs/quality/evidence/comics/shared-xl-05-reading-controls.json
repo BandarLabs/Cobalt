@@ -1,0 +1,441 @@
+{
+  "simulation": {
+    "profile": {
+      "id": "clara-bw-391",
+      "model": "Kobo Clara BW",
+      "width": 1072,
+      "height": 1448,
+      "pixelsPerInch": 300,
+      "rotation": 3,
+      "touch": {
+        "name": "cyttsp5_mt",
+        "xMin": 0,
+        "xMax": 1447,
+        "yMin": 0,
+        "yMax": 1071
+      }
+    },
+    "scenario": "normal",
+    "lifecycle": "foreground",
+    "transition": {
+      "waveform": "GL16",
+      "full": false,
+      "refresh": 16,
+      "dirty": 1051096,
+      "regions": [
+        {
+          "waveform": "GL16",
+          "region": {
+            "x": 0,
+            "y": 8,
+            "width": 1072,
+            "height": 160
+          }
+        },
+        {
+          "waveform": "GL16",
+          "region": {
+            "x": 48,
+            "y": 184,
+            "width": 912,
+            "height": 1088
+          }
+        },
+        {
+          "waveform": "GL16",
+          "region": {
+            "x": 0,
+            "y": 1304,
+            "width": 1072,
+            "height": 136
+          }
+        }
+      ],
+      "region": {
+        "x": 0,
+        "y": 8,
+        "width": 1072,
+        "height": 1432
+      }
+    },
+    "refreshCount": 16,
+    "partialsSinceClean": 1051096,
+    "touch": {
+      "display": {
+        "x": 909,
+        "y": 50
+      },
+      "raw": {
+        "x": 50,
+        "y": 162
+      }
+    },
+    "panelApproximation": true,
+    "observation": null,
+    "backends": [
+      "network",
+      "battery-read",
+      "frontlight-control",
+      "wifi-control",
+      "library",
+      "cover-sensor"
+    ]
+  },
+  "layout": {
+    "paints": 16,
+    "nodes": [
+      {
+        "kind": "StatusBand",
+        "x": 0,
+        "y": 0,
+        "width": 1072,
+        "height": 59,
+        "centre": {
+          "x": 536,
+          "y": 29
+        },
+        "action": null,
+        "lines": []
+      },
+      {
+        "kind": "StatusClock",
+        "x": 47,
+        "y": 0,
+        "width": 112,
+        "height": 59,
+        "centre": {
+          "x": 103,
+          "y": 29
+        },
+        "action": null,
+        "lines": [
+          "09:41"
+        ]
+      },
+      {
+        "kind": "StatusBattery(Some(Percent(72)), false)",
+        "x": 955,
+        "y": 12,
+        "width": 70,
+        "height": 35,
+        "centre": {
+          "x": 990,
+          "y": 29
+        },
+        "action": null,
+        "lines": []
+      },
+      {
+        "kind": "StatusSignal(Strong)",
+        "x": 896,
+        "y": 12,
+        "width": 35,
+        "height": 35,
+        "centre": {
+          "x": 913,
+          "y": 29
+        },
+        "action": null,
+        "lines": []
+      },
+      {
+        "kind": "StatusBluetooth",
+        "x": 837,
+        "y": 12,
+        "width": 35,
+        "height": 35,
+        "centre": {
+          "x": 854,
+          "y": 29
+        },
+        "action": null,
+        "lines": []
+      },
+      {
+        "kind": "TopBar",
+        "x": 0,
+        "y": 59,
+        "width": 1072,
+        "height": 100,
+        "centre": {
+          "x": 536,
+          "y": 109
+        },
+        "action": null,
+        "lines": []
+      },
+      {
+        "kind": "Back",
+        "x": 47,
+        "y": 59,
+        "width": 100,
+        "height": 100,
+        "centre": {
+          "x": 97,
+          "y": 109
+        },
+        "action": 4294967295,
+        "lines": []
+      },
+      {
+        "kind": "TopBarTitle",
+        "x": 171,
+        "y": 77,
+        "width": 854,
+        "height": 64,
+        "centre": {
+          "x": 598,
+          "y": 109
+        },
+        "action": null,
+        "lines": [
+          "Reading"
+        ]
+      },
+      {
+        "kind": "Divider",
+        "x": 0,
+        "y": 159,
+        "width": 1072,
+        "height": 4,
+        "centre": {
+          "x": 536,
+          "y": 161
+        },
+        "action": null,
+        "lines": []
+      },
+      {
+        "kind": "Secondary",
+        "x": 47,
+        "y": 175,
+        "width": 978,
+        "height": 50,
+        "centre": {
+          "x": 536,
+          "y": 200
+        },
+        "action": null,
+        "lines": [
+          "Fit page \u00b7 100%"
+        ]
+      },
+      {
+        "kind": "Band",
+        "x": 47,
+        "y": 237,
+        "width": 978,
+        "height": 118,
+        "centre": {
+          "x": 536,
+          "y": 296
+        },
+        "action": null,
+        "lines": []
+      },
+      {
+        "kind": "Button(ActionId(1719027168), Enabled, Normal)",
+        "x": 146,
+        "y": 237,
+        "width": 279,
+        "height": 118,
+        "centre": {
+          "x": 285,
+          "y": 296
+        },
+        "action": 1719027168,
+        "lines": [
+          "Fit page"
+        ]
+      },
+      {
+        "kind": "Button(ActionId(2250749549), Enabled, Normal)",
+        "x": 642,
+        "y": 237,
+        "width": 288,
+        "height": 118,
+        "centre": {
+          "x": 786,
+          "y": 296
+        },
+        "action": 2250749549,
+        "lines": [
+          "Fit width"
+        ]
+      },
+      {
+        "kind": "Band",
+        "x": 47,
+        "y": 367,
+        "width": 978,
+        "height": 118,
+        "centre": {
+          "x": 536,
+          "y": 426
+        },
+        "action": null,
+        "lines": []
+      },
+      {
+        "kind": "Button(ActionId(6734719), Enabled, Normal)",
+        "x": 130,
+        "y": 367,
+        "width": 310,
+        "height": 118,
+        "centre": {
+          "x": 285,
+          "y": 426
+        },
+        "action": 6734719,
+        "lines": [
+          "Zoom out"
+        ]
+      },
+      {
+        "kind": "Button(ActionId(3683544126), Enabled, Normal)",
+        "x": 646,
+        "y": 367,
+        "width": 280,
+        "height": 118,
+        "centre": {
+          "x": 786,
+          "y": 426
+        },
+        "action": 3683544126,
+        "lines": [
+          "Zoom in"
+        ]
+      },
+      {
+        "kind": "Band",
+        "x": 47,
+        "y": 497,
+        "width": 978,
+        "height": 118,
+        "centre": {
+          "x": 536,
+          "y": 556
+        },
+        "action": null,
+        "lines": []
+      },
+      {
+        "kind": "Button(ActionId(4091825124), Enabled, Normal)",
+        "x": 115,
+        "y": 497,
+        "width": 340,
+        "height": 118,
+        "centre": {
+          "x": 285,
+          "y": 556
+        },
+        "action": 4091825124,
+        "lines": [
+          "Move page"
+        ]
+      },
+      {
+        "kind": "Button(ActionId(1754307597), Enabled, Normal)",
+        "x": 682,
+        "y": 497,
+        "width": 209,
+        "height": 118,
+        "centre": {
+          "x": 786,
+          "y": 556
+        },
+        "action": 1754307597,
+        "lines": [
+          "More"
+        ]
+      },
+      {
+        "kind": "Band",
+        "x": 47,
+        "y": 627,
+        "width": 978,
+        "height": 118,
+        "centre": {
+          "x": 536,
+          "y": 686
+        },
+        "action": null,
+        "lines": []
+      },
+      {
+        "kind": "Button(ActionId(4243264903), Enabled, Normal)",
+        "x": 169,
+        "y": 627,
+        "width": 232,
+        "height": 118,
+        "centre": {
+          "x": 285,
+          "y": 686
+        },
+        "action": 4243264903,
+        "lines": [
+          "Pages"
+        ]
+      },
+      {
+        "kind": "Button(ActionId(3701605157), Enabled, Normal)",
+        "x": 615,
+        "y": 627,
+        "width": 343,
+        "height": 118,
+        "centre": {
+          "x": 786,
+          "y": 686
+        },
+        "action": 3701605157,
+        "lines": [
+          "Go to page"
+        ]
+      },
+      {
+        "kind": "Spacer",
+        "x": 0,
+        "y": 1306,
+        "width": 1072,
+        "height": 142,
+        "centre": {
+          "x": 536,
+          "y": 1377
+        },
+        "action": 245017629,
+        "lines": []
+      },
+      {
+        "kind": "Divider",
+        "x": 0,
+        "y": 1306,
+        "width": 1072,
+        "height": 4,
+        "centre": {
+          "x": 536,
+          "y": 1308
+        },
+        "action": null,
+        "lines": []
+      },
+      {
+        "kind": "Button(ActionId(245017629), Enabled, Normal)",
+        "x": 47,
+        "y": 1320,
+        "width": 978,
+        "height": 118,
+        "centre": {
+          "x": 536,
+          "y": 1379
+        },
+        "action": 245017629,
+        "lines": [
+          "Read"
+        ]
+      }
+    ]
+  },
+  "diagnostics": {
+    "issues": []
+  }
+}
