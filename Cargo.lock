@@ -906,6 +906,7 @@ dependencies = [
  "kobo-protocol",
  "kobo-sim",
  "kobo-stream",
+ "kobo-ui",
  "kobo-wifi-trace",
  "kobod",
  "ring",

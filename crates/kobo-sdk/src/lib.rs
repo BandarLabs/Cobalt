@@ -2831,16 +2831,7 @@ pub fn action_id(name: &str) -> ActionId {
 }
 
 fn stable_id(value: &str) -> u32 {
-    let mut hash = 0x811c_9dc5_u32;
-    for byte in value.bytes() {
-        hash ^= u32::from(byte);
-        hash = hash.wrapping_mul(0x0100_0193);
-    }
-    if hash == 0 {
-        1
-    } else {
-        hash
-    }
+    ActionId::from_name(value).0
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -5222,6 +5213,7 @@ pub struct Client {
     stream: UnixStream,
     next_request: u32,
     metrics: DisplayMetrics,
+    simulator_callbacks: bool,
 }
 
 impl Client {
@@ -5266,6 +5258,7 @@ impl Client {
         Ok(Self {
             stream,
             next_request: 2,
+            simulator_callbacks: std::env::var("KOBO_SIM_CALLBACKS").as_deref() == Ok("1"),
             metrics: DisplayMetrics {
                 width: i32::from(width),
                 height: i32::from(height),
@@ -5293,6 +5286,7 @@ impl Client {
         &mut self,
         commands: impl IntoIterator<Item = Command>,
     ) -> Result<(), ClientError> {
+        let mut exits = false;
         for command in commands {
             let command = match command {
                 Command::PutPicture {
@@ -5345,7 +5339,10 @@ impl Client {
                 Command::Cancel(task) => Message::Cancel { task },
                 Command::Store(request) => Message::StoreRequest(request),
                 Command::Shell(request) => Message::ShellRequest(request),
-                Command::Exit => Message::Exit,
+                Command::Exit => {
+                    exits = true;
+                    Message::Exit
+                }
                 Command::Launch(name) => Message::Launch { name },
                 Command::PutPicture { .. } => unreachable!("handled above"),
                 Command::DropPicture(handle) => Message::DropPicture { handle },
@@ -5361,6 +5358,12 @@ impl Client {
                 Command::DropFont(handle) => Message::DropFont { handle },
             };
             self.send(message)?;
+        }
+        if self.simulator_callbacks && !exits {
+            self.send(Message::Log {
+                level: LogLevel::Debug,
+                message: kobo_protocol::SIM_CALLBACK_COMPLETE.into(),
+            })?;
         }
         Ok(())
     }

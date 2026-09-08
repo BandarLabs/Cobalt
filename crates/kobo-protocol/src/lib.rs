@@ -60,6 +60,11 @@ pub const MAGIC: [u8; 4] = *b"KOBO";
 /// always did, byte for byte, and a colour one uses tags of its own that an
 /// older runtime refuses rather than misreads.
 pub const VERSION: u8 = 13;
+
+/// Opt-in simulator callback boundary carried in an ordinary debug log frame.
+/// It does not add a wire tag or authorize any runtime operation.
+pub const SIM_CALLBACK_COMPLETE: &str = "cobalt.sim.callback.complete.v1";
+
 /// Folio's tile, section, and page-rail protocol.
 pub const FOLIO_VERSION: u8 = 12;
 /// The pre-Folio protocol retained during the compatibility window.

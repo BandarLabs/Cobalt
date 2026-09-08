@@ -14,6 +14,7 @@ use std::thread;
 
 // Panel policy belongs to the runtime, but the simulator compiles the same
 // source so region and waveform decisions cannot drift.
+mod activity;
 #[path = "../../kobod/src/frame.rs"]
 mod frame;
 use frame::{FramePlanner, FrameTransition, PanelWaveform};
@@ -809,6 +810,9 @@ impl AppServer {
             {
                 eprintln!("the application's connection ended: {error}");
             }
+            if let Ok(mut activity) = reader_writer.activity.lock() {
+                activity.disconnected();
+            }
         });
         Ok(AppSession { state, writer })
     }
@@ -1410,6 +1414,20 @@ impl AppSession {
                 let frame = self.render_frame(true);
                 write_response(&mut stream, 200, "application/octet-stream", &frame)
             }
+            ("GET", "/activity") => {
+                let body = self
+                    .writer
+                    .activity
+                    .lock()
+                    .map_err(|_| io::Error::other("simulator activity lock poisoned"))?
+                    .json();
+                write_response(
+                    &mut stream,
+                    200,
+                    "application/json; charset=utf-8",
+                    body.as_bytes(),
+                )
+            }
             ("GET", "/simulation") => {
                 let body = {
                     let state = self
@@ -1913,6 +1931,7 @@ struct AppWriter {
     sender: Mutex<std::sync::mpsc::Sender<Frame>>,
     /// Fixed by Hello for the lifetime of this one-app session.
     version: u8,
+    activity: Arc<Mutex<activity::Activity>>,
 }
 
 impl AppWriter {
@@ -1928,6 +1947,7 @@ impl AppWriter {
         Arc::new(Self {
             sender: Mutex::new(sender),
             version,
+            activity: Arc::new(Mutex::new(activity::Activity::default())),
         })
     }
 }
@@ -1936,6 +1956,11 @@ impl AppWriter {
 fn write_shared(writer: &Arc<AppWriter>, frame: &Frame) -> io::Result<()> {
     let mut frame = frame.clone();
     frame.version = writer.version;
+    writer
+        .activity
+        .lock()
+        .map_err(|_| io::Error::other("simulator activity lock poisoned"))?
+        .sent(&frame.message);
     writer
         .sender
         .lock()
@@ -2156,6 +2181,16 @@ fn read_app_messages(
                 ));
             }
             message if is_picture_message(&message) => hold(state, message)?,
+            Message::Log {
+                level: kobo_protocol::LogLevel::Debug,
+                message,
+            } if message == kobo_protocol::SIM_CALLBACK_COMPLETE => {
+                writer
+                    .activity
+                    .lock()
+                    .map_err(|_| io::Error::other("simulator activity lock poisoned"))?
+                    .callback_complete();
+            }
             Message::Log { level, message } => note(state, &format!("{level:?}: {message}"))?,
             Message::DeviceRequest(request) => {
                 let scenario = current_scenario(state);
@@ -2196,6 +2231,11 @@ fn read_app_messages(
                 )?;
             }
             Message::Spawn { task, work } => {
+                writer
+                    .activity
+                    .lock()
+                    .map_err(|_| io::Error::other("simulator activity lock poisoned"))?
+                    .started(task, &work);
                 if let Some(error) =
                     simulated_task_error(current_scenario(state), &work, declared, &backends)
                 {
@@ -2417,10 +2457,14 @@ fn deliver_task_outcomes(
         if let kobo_protocol::TaskOutcome::Failed(error) = &finished.outcome {
             eprintln!("task {} failed: {error:?}", finished.task.0);
         }
-        note(
-            state,
-            &format!("task {} -> {:?}", finished.task.0, finished.outcome),
-        )?;
+        let summary = match &finished.outcome {
+            kobo_protocol::TaskOutcome::Completed(bytes) => {
+                format!("completed {} bytes", bytes.len())
+            }
+            kobo_protocol::TaskOutcome::Failed(error) => format!("failed: {error:?}"),
+            kobo_protocol::TaskOutcome::Cancelled => "cancelled".into(),
+        };
+        note(state, &format!("task {} -> {summary}", finished.task.0))?;
         write_shared(
             writer,
             &Frame {

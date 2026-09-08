@@ -16,7 +16,7 @@ A checked task requires implementation plus recorded validation. Physical measur
 
 ## Status
 
-494 tracked tasks: 57 completed, 1 deferred by the owner, 436 open. Implementation in progress. Evidence is recorded per task in `tasks.json` and in [the validation log](validation.md).
+494 tracked tasks: 59 completed, 1 deferred by the owner, 434 open. Implementation in progress. Evidence is recorded per task in `tasks.json` and in [the validation log](validation.md).
 
 ## PR 1 · Simulator fidelity (SIM-1–10)
 
@@ -47,8 +47,8 @@ A checked task requires implementation plus recorded validation. Physical measur
 - [x] **SIM-25** Reject invalid profile and scale arguments.
 - [ ] **SIM-26** Stamp captures with source, app, mode, profile, pose, fonts, scales, fixture and seed.
 - [x] **SIM-27** Assert serious diagnostics at every drive transition.
-- [ ] **SIM-28** Add semantic state/network-effect assertions to drive.
-- [ ] **SIM-29** Use stable control IDs and bounded wait-for-idle in routes.
+- [x] **SIM-28** Add semantic state/network-effect assertions to drive.
+- [x] **SIM-29** Use stable control IDs and bounded wait-for-idle in routes.
 - [x] **SIM-30** Keep refresh results invariant under screenshot sampling cadence.
 
 ## PR 1 · Shared SDK and design contracts

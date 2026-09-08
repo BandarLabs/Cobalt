@@ -173,9 +173,7 @@ impl Driver {
         let result = match verb {
             "tap" => self.tap(rest),
             "tap-id" => {
-                let action = rest
-                    .parse::<u32>()
-                    .map_err(|_| "tap-id takes an unsigned action ID".to_owned())?;
+                let action = parse_action_id(rest)?;
                 let control = self
                     .layout()?
                     .into_iter()
@@ -199,6 +197,9 @@ impl Driver {
                 Ok(())
             }
             "wait-for" => self.wait_for(rest),
+            "wait-for-id" => self.wait_for_id(parse_action_id(rest)?),
+            "wait-idle" => self.wait_idle(rest),
+            "expect-state" => self.expect_state(rest),
             "clean" => self.clean(),
             "lifecycle" => self.post("/lifecycle", rest),
             "scenario" => self.post("/scenario", rest),
@@ -222,7 +223,16 @@ impl Driver {
         result?;
         if matches!(
             verb,
-            "tap" | "tap-id" | "tap-at" | "type" | "wait-for" | "wait" | "scenario" | "lifecycle"
+            "tap"
+                | "tap-id"
+                | "tap-at"
+                | "type"
+                | "wait-for"
+                | "wait-for-id"
+                | "wait-idle"
+                | "wait"
+                | "scenario"
+                | "lifecycle"
         ) {
             self.clean()?;
         }
@@ -315,6 +325,66 @@ impl Driver {
             }
             std::thread::sleep(Duration::from_millis(100));
         }
+    }
+
+    fn wait_for_id(&self, action: u32) -> Result<(), String> {
+        let deadline = Instant::now() + APPEAR_TIMEOUT;
+        loop {
+            if self
+                .layout()?
+                .iter()
+                .any(|control| control.action == Some(action))
+            {
+                return Ok(());
+            }
+            if Instant::now() >= deadline {
+                return Err(format!("action {action} did not become reachable"));
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+
+    fn wait_idle(&self, requested: &str) -> Result<(), String> {
+        let timeout = if requested.is_empty() {
+            10_000
+        } else {
+            requested
+                .parse::<u64>()
+                .map_err(|_| "wait-idle takes a timeout in milliseconds")?
+        };
+        if timeout == 0 || timeout > 60_000 {
+            return Err("wait-idle timeout must be from 1 to 60000 milliseconds".into());
+        }
+        let deadline = Instant::now() + Duration::from_millis(timeout);
+        loop {
+            let report: serde_json::Value = serde_json::from_slice(&self.get("/activity")?)
+                .map_err(|error| format!("read simulator activity: {error}"))?;
+            if activity_idle(&report)? {
+                return Ok(());
+            }
+            if Instant::now() >= deadline {
+                return Err(format!(
+                    "app did not become idle within {timeout} ms: {report}"
+                ));
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+    }
+
+    fn expect_state(&self, expression: &str) -> Result<(), String> {
+        let (target, expected) = expression
+            .split_once(char::is_whitespace)
+            .ok_or("expect-state takes ENDPOINT#JSON_POINTER followed by a JSON value")?;
+        let (endpoint, pointer) = target
+            .split_once('#')
+            .ok_or("expect-state requires an endpoint and #JSON_POINTER")?;
+        if !matches!(endpoint, "/simulation" | "/activity" | "/layout") || !pointer.starts_with('/')
+        {
+            return Err("expect-state uses /simulation, /activity or /layout and a JSON pointer beginning with /".into());
+        }
+        let report: serde_json::Value = serde_json::from_slice(&self.get(endpoint)?)
+            .map_err(|error| format!("read assertion state: {error}"))?;
+        assert_json_pointer(&report, pointer, expected.trim())
     }
 
     /// Asserts the renderer raised no errors about this screen.
@@ -988,6 +1058,59 @@ fn json_number(object: &str, key: &str) -> Option<i64> {
     digits.parse().ok()
 }
 
+fn parse_action_id(value: &str) -> Result<u32, String> {
+    if let Ok(number) = value.parse::<u32>() {
+        return Ok(number);
+    }
+    if value.is_empty()
+        || value.len() > 128
+        || !value.as_bytes()[0].is_ascii_lowercase()
+        || !value
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b".-_".contains(&b))
+    {
+        return Err("action ID must be an unsigned number or a stable action name".into());
+    }
+    Ok(kobo_ui::ActionId::from_name(value).0)
+}
+fn activity_idle(report: &serde_json::Value) -> Result<bool, String> {
+    if report.get("connected").and_then(serde_json::Value::as_bool) != Some(true) {
+        return Err("the app disconnected before becoming idle".into());
+    }
+    if report
+        .get("callbackMarkers")
+        .and_then(serde_json::Value::as_bool)
+        != Some(true)
+    {
+        return Ok(false);
+    }
+    let pending = report
+        .get("pendingCallbacks")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or("simulator activity has no callback count")?;
+    let active = report
+        .get("activeWork")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or("simulator activity has no work count")?;
+    Ok(pending == 0 && active == 0)
+}
+fn assert_json_pointer(
+    report: &serde_json::Value,
+    pointer: &str,
+    expected: &str,
+) -> Result<(), String> {
+    let expected: serde_json::Value = serde_json::from_str(expected)
+        .map_err(|error| format!("expected value is not JSON: {error}"))?;
+    let actual = report
+        .pointer(pointer)
+        .ok_or_else(|| format!("state has no value at {pointer}"))?;
+    if actual == &expected {
+        Ok(())
+    } else {
+        Err(format!("{pointer}: expected {expected}, found {actual}"))
+    }
+}
+
 fn parse_dimensions(bytes: &[u8]) -> Result<(u32, u32), String> {
     let value: serde_json::Value = serde_json::from_slice(bytes)
         .map_err(|error| format!("read simulator profile: {error}"))?;
@@ -1034,6 +1157,31 @@ mod tests {
     use std::path::Path;
 
     const BODY: &str = r#"{"nodes":[{"kind":"Button","x":10,"y":20,"width":30,"height":40,"centre":{"x":25,"y":40},"action":77,"lines":["Search","for a \"book\""]},{"kind":"Divider","x":0,"y":1,"width":2,"height":3,"centre":{"x":1,"y":2},"action":null,"lines":[]}]}"#;
+
+    #[test]
+    fn semantic_assertions_retain_types_and_require_real_callback_completion() {
+        let report = serde_json::json!({"effects": {"post": 0}, "scenario": "offline"});
+        assert!(super::assert_json_pointer(&report, "/effects/post", "0").is_ok());
+        assert!(super::assert_json_pointer(&report, "/effects/post", "\"0\"").is_err());
+        assert!(super::assert_json_pointer(&report, "/missing", "null").is_err());
+        assert!(super::parse_action_id("comic-next").is_ok());
+        assert!(super::parse_action_id("-1").is_err());
+        assert!(super::parse_action_id("4294967296").is_err());
+        assert!(super::parse_action_id("").is_err());
+        for (callbacks, work, expected) in [(0, 0, true), (1, 0, false), (0, 1, false)] {
+            assert_eq!(
+                super::activity_idle(
+                    &serde_json::json!({"connected":true, "callbackMarkers":true, "pendingCallbacks":callbacks, "activeWork":work})
+                ),
+                Ok(expected)
+            );
+        }
+        assert!(super::activity_idle(&serde_json::json!({"connected":false})).is_err());
+        assert!(!super::activity_idle(
+            &serde_json::json!({"connected":true, "callbackMarkers":false})
+        )
+        .unwrap());
+    }
 
     #[test]
     fn capture_dimensions_follow_every_supported_profile_and_reject_bad_metadata() {

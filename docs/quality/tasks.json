@@ -252,16 +252,20 @@
     "pr": 1,
     "group": "Simulator fidelity (SIM-1\u201310)",
     "task": "Add semantic state/network-effect assertions to drive",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Driver expect-state uses typed JSON pointers for simulation, layout and activity assertions. Bounded privacy-preserving counters track submitted network requests and outcomes. Actual comic flow asserts zero fetch/post attempts; 16 driver and 53 simulator tests pass."
+    ]
   },
   {
     "id": "SIM-29",
     "pr": 1,
     "group": "Simulator fidelity (SIM-1\u201310)",
     "task": "Use stable control IDs and bounded wait-for-idle in routes",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Stable action-name hashing is shared by UI, SDK and CLI; tap-id/wait-for-id accept names or numbers. wait-idle uses explicit SDK callback completion plus outstanding work, with a bounded timeout. The extra-large comic route passes with named controls and no fixed capture delay."
+    ]
   },
   {
     "id": "SIM-30",

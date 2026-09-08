@@ -1782,6 +1782,7 @@ impl AppChild {
     fn spawn(executable: &Path, socket: &Path) -> Result<Self, String> {
         let child = Command::new(executable)
             .env("KOBO_SOCKET", socket)
+            .env("KOBO_SIM_CALLBACKS", "1")
             .spawn()
             .map_err(|error| format!("launch {}: {error}", executable.display()))?;
         Ok(Self { child: Some(child) })
@@ -4899,6 +4900,7 @@ fn run_simulation(arguments: &[String]) -> Result<(), String> {
     let app_status = Command::new(workspace_host_binary(package))
         .env("KOBO_SOCKET", &simulation.socket)
         .env("KOBO_SIM_ONESHOT", "1")
+        .env("KOBO_SIM_CALLBACKS", "1")
         .status()
         .map_err(|error| format!("run {package}: {error}"))?;
     let daemon_status = simulation.daemon_wait()?;
@@ -5819,8 +5821,10 @@ const DRIVE_USAGE: &str = "usage: kobo drive [--address host:port] [--shots DIR]
                            \u{20}                 [--record DIR [--fps N] [--ghosting]]\n\
                            \u{20}                 (--script PATH | --step 'tap Search' ...)\n\
                            steps: tap LABEL | tap-id ACTION | tap-at X,Y | type TEXT | shot NAME | expect TEXT\n\
-                           \u{20}       expect-missing TEXT | wait-for TEXT | clean | dump\n\
-                           \u{20}       lifecycle foreground|background | scenario NAME | wait MS\n\
+                           \u{20}       expect-missing TEXT | wait-for TEXT | wait-for-id ACTION | clean | dump\n\
+                           \u{20}       lifecycle foreground|background | scenario NAME | wait MS | wait-idle [MS]\n\
+                           expect-state ENDPOINT#JSON_POINTER JSON_VALUE checks typed state.\n\
+                           tap-id and wait-for-id accept numeric IDs or stable action names.\n\
                            Transition steps also check for serious layout diagnostics.\n\
                            --record films the panel while the script runs and writes numbered\n\
                            \u{20} PNGs, timings.txt, recording.mp4 and recording.gif into DIR.\n\

@@ -2037,6 +2037,17 @@ pub struct NodeId(pub u32);
 pub struct ActionId(pub u32);
 
 impl ActionId {
+    /// Stable action identity shared by app builders and simulator tooling.
+    #[must_use]
+    pub fn from_name(name: &str) -> Self {
+        let mut hash = 0x811c_9dc5_u32;
+        for byte in name.bytes() {
+            hash ^= u32::from(byte);
+            hash = hash.wrapping_mul(0x0100_0193);
+        }
+        Self(hash.max(1))
+    }
+
     /// The reserved identifier for going back.
     ///
     /// Back is owned by the runtime's navigation stack rather than by the
