@@ -1663,3 +1663,7 @@ Worked examples, smallest first: `examples/tictactoe`, `examples/todo` (state
 that survives a restart), `examples/gallery` (every primitive on one screen),
 `examples/terminal`, `examples/brief` (work that continues in the background),
 `examples/launcher`, `examples/chat`, `examples/gutenbird`.
+
+### Marks on a square board
+
+`ScreenBuilder::board` and `board_with_selection` keep puzzle geometry fixed as interface text grows. The shared renderer and diagnostics choose the largest semantic mark size that fits each square (heading, body, then caption). Key labels retain their normal body size. Keep board labels short; long words and labels that exceed caption capacity remain layout errors. A selected row or column can use the existing per-cell selection state; the app should identify the focused square independently.
