@@ -313,3 +313,7 @@ This is partial progress on HW-09/11/13/14/15. The device host does not yet init
 - **104 publishing-tool tests passed.** The package version gate passes against the downloaded beta catalog after verifying its provenance and SHA-256: publication source `a3a96768d83ff8f93ea98c3ee807d96d0b3282e8`, catalog hash `77f34eaaed84ff24ee709931540d998a1b01cdb21ab424cc3f8ae00d8c623610`. All affected packages receive a new version for the changed shared SDK. Zotero Reader receives only mechanical package metadata; its app code remains outside the quality review. No compatibility exemption was introduced.
 
 This checkpoint completes BACK-06, GRIM-01 and GRIM-02 as foundation integration fixes. The other catalog tasks, remaining native power integration and companion workflows are still tracked as open. CBR remains deferred.
+
+## Correlated record-load failures
+
+`KoboApp::on_load` receives the requested record key even when storage refuses a load without returning a key on the wire. Existing apps retain their `on_store` behavior by default. A failed library load can retry while another record and a list request remain outstanding without consuming either answer. Rust 1.85.1 SDK tests: **143 passed**, two existing doc examples ignored; strict SDK Clippy and formatting pass. Panels adopts this callback in the catalog work so a failed library read cannot appear as an empty shelf.

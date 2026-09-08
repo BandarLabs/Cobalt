@@ -8,6 +8,8 @@
 #[cfg(test)]
 mod callback_scale_tests;
 pub mod collections;
+#[cfg(test)]
+mod load_result_tests;
 mod suspend;
 
 pub use kobo_protocol::{
@@ -2446,6 +2448,14 @@ pub trait KoboApp {
     /// has to guess whether its state was written.
     fn on_store(&mut self, _context: &mut Context, _result: StoreResult) {}
 
+    /// Receives a record load together with its requested key, including a
+    /// keyless refusal. This distinguishes a failed library read from another
+    /// pending record's failure without treating either as an empty library.
+    /// Existing applications receive `on_store` by default.
+    fn on_load(&mut self, context: &mut Context, _key: &str, result: StoreResult) {
+        self.on_store(context, result);
+    }
+
     /// Receives the answer to a record save together with its requested key.
     /// Store replies arrive in request order, including failures that carry no
     /// key on the wire. Override this to acknowledge a particular draft without
@@ -2532,6 +2542,7 @@ pub struct AppRunner<A> {
 
 #[derive(Debug)]
 enum StoreReplyTarget {
+    Load(String),
     Save(String),
     Shelf(String),
     Other,
@@ -2768,6 +2779,7 @@ impl<A: KoboApp> AppRunner<A> {
             .pop_front()
             .unwrap_or(StoreReplyTarget::Other);
         self.dispatch(|app, context| match target {
+            StoreReplyTarget::Load(key) => app.on_load(context, &key, result),
             StoreReplyTarget::Save(key) => app.on_save(context, &key, result),
             StoreReplyTarget::Shelf(name) => app.on_shelf(context, &name, result),
             StoreReplyTarget::Other => app.on_store(context, result),
@@ -2869,6 +2881,7 @@ impl<A: KoboApp> AppRunner<A> {
                 Command::Device(request) => self.pending.push_back(request.clone()),
                 Command::Store(request) => {
                     self.pending_stores.push_back(match request {
+                        StoreRequest::Load { key } => StoreReplyTarget::Load(key.clone()),
                         StoreRequest::Save { key, .. } => StoreReplyTarget::Save(key.clone()),
                         StoreRequest::ShelfWrite { name, .. }
                         | StoreRequest::ShelfRead { name, .. }
