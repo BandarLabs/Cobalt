@@ -1097,6 +1097,11 @@ physical-device transfer or a claim that every app already offers export.*
 rotation, spreads and right-to-left reading. Persist `memory()` through an
 acknowledged draft, forward actions to `act`, reflow when metrics change, and
 `close` to release picture resources. Restore a position only against its comic.
+For cover lists, pair `Context::clamped_cover_row` with
+`paginate_cover_rows_below_section`. Both reserve the renderer's wider picture
+column. Use `RowLead::Picture` with a missing handle and glyph fallback for
+uncached covers, so text does not shift when a cover arrives.
+
 For shelf covers, `cover_preview()` returns a bounded image without moving the
 reading position. `kobo_comic::reader::Memory::saved_page(bytes, page_count)`
 validates stored reading memory and returns an optional zero-based page without
