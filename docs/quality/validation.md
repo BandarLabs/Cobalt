@@ -163,3 +163,11 @@ SDK simulator taps now produce evdev contact reports through `TouchDecoder`. Dri
 - Full extra-large comic route: **passed** through the new HAL tap path. It injects lost input and unknown-then-released resynchronization, turns forward/back using raw page keys, checks that release does not turn again, and repeats the panel/storage/restart routes. [Result](evidence/comics/raw-input-result.json), [page-key capture provenance](evidence/comics/raw-page-key-next.json).
 
 Replay is an explicit synthetic input channel, including when a profile has no physical page buttons. It does not claim evdev grabs, hardware sampling rates, GPIO availability or accelerometer/landscape-turn calibration. Browser clicks remain synthesized taps; use raw reports and clock advancement for holds and movement. Press-feedback timing and full-runtime Back/launcher behavior remain separate open fidelity work.
+
+## Interrupted tasks and disconnected apps
+
+- **112 policy and 63 simulator tests passed**. A controlled transfer is cancelled through the session API and reports one `Cancelled` outcome; later work is still accepted. A real socket disconnect with a five-minute timer releases its task runner and output workers, records abandoned work separately from successful/cancelled callbacks, refuses further input and retains the last screen.
+- **17 driver tests passed**; policy/simulator/CLI Clippy with `-D warnings` passed.
+- The extra-large Panels route passed background/foreground events, suppressed background page keys, task cancellation, and a forced `SIGKILL` of its independently created fixture process group. Restarting against the same private storage restores page, zoom, direction and spreads. [Result](evidence/simulator/forced-exit-result.json). This is host process recovery, not a device watchdog or suspend test.
+
+`drive --step 'tasks cancel'` cancels current app tasks and awaits callbacks. The browser exposes the same control. `drive --step 'session disconnect'` closes SDK IPC; it does not claim to send a process signal. `/activity` reports `connected`, `abandoned` and `cleanupComplete`; disconnected sessions never report idle. Cleanup waits for task backends to honor their cancellation contract. Hardware forced-exit and owner-setting restoration remain in the combined Clara BW acceptance run.

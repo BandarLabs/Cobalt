@@ -586,6 +586,15 @@ impl TaskRunner {
         }
     }
 
+    /// Cancels all current tasks while retaining their normal exactly-once
+    /// result delivery. Unlike shutdown, the application stays connected.
+    pub fn cancel_all(&mut self) {
+        let tasks = self.running.keys().copied().collect::<Vec<_>>();
+        for task in tasks {
+            self.cancel(task);
+        }
+    }
+
     /// Collects any tasks that have finished, without blocking.
     pub fn drain(&mut self) -> Vec<Finished> {
         self.queue_manual_timers();
@@ -1104,6 +1113,43 @@ mod tests {
             }
         }
         finished
+    }
+
+    #[test]
+    fn cancelling_all_preserves_outcomes_and_accepts_new_work() {
+        let clock = Arc::new(
+            crate::clock::ManualClock::new(crate::clock::Snapshot {
+                unix_millis: 0,
+                monotonic_millis: 0,
+                utc_offset_minutes: 0,
+            })
+            .unwrap(),
+        );
+        let mut runner = TaskRunner::simulated(".").with_manual_clock(clock);
+        for id in 1..=4 {
+            runner
+                .submit(TaskId(id), Task::Sleep { seconds: 300 })
+                .unwrap();
+        }
+        runner.cancel_all();
+        runner.cancel_all();
+        let outcomes = runner.drain();
+        assert_eq!(outcomes.len(), 4);
+        assert!(outcomes
+            .iter()
+            .all(|item| item.outcome == TaskOutcome::Cancelled));
+        assert!(runner.drain().is_empty());
+        assert_eq!(runner.in_flight(), 0);
+        runner
+            .submit(TaskId(5), Task::Sleep { seconds: 0 })
+            .unwrap();
+        assert_eq!(
+            runner.drain(),
+            vec![Finished {
+                task: TaskId(5),
+                outcome: TaskOutcome::Completed(Vec::new()),
+            }]
+        );
     }
 
     #[test]

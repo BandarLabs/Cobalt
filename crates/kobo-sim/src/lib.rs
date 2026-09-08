@@ -787,8 +787,13 @@ impl AppServer {
             ) {
                 eprintln!("the application's connection ended: {error}");
             }
+            reader_writer.close();
+            if let Ok(mut tasks) = tasks.lock() {
+                tasks.shutdown();
+            }
+            drop(tasks);
             if let Ok(mut activity) = reader_writer.activity.lock() {
-                activity.disconnected();
+                activity.finish_disconnect();
             }
         });
         Ok(AppSession { state, writer })
@@ -1402,7 +1407,28 @@ impl AppSession {
         )
     }
 
+    fn cancel_tasks(&self) -> io::Result<()> {
+        if !self.writer.connected() {
+            return Err(io::Error::other("the application is disconnected"));
+        }
+        let tasks = self
+            .state
+            .lock()
+            .map_err(|_| io::Error::other("app state lock poisoned"))?
+            .tasks
+            .clone()
+            .ok_or_else(|| io::Error::other("no task runner in this session"))?;
+        tasks
+            .lock()
+            .map_err(|_| io::Error::other("task lock poisoned"))?
+            .cancel_all();
+        deliver_task_outcomes(&tasks, &self.writer, &self.state)
+    }
+
     fn replay_input(&self, command: &str) -> io::Result<()> {
+        if !self.writer.connected() {
+            return Err(io::Error::other("the application is disconnected"));
+        }
         let (kind, source) = command
             .split_once(char::is_whitespace)
             .unwrap_or((command, ""));
@@ -1727,6 +1753,21 @@ impl AppSession {
                     200,
                     "application/json; charset=utf-8",
                     body.as_bytes(),
+                )
+            }
+            ("POST", "/tasks") if request.body == b"cancel" => match self.cancel_tasks() {
+                Ok(()) => write_response(&mut stream, 200, "text/plain", b"cancellation requested"),
+                Err(error) => {
+                    write_response(&mut stream, 400, "text/plain", error.to_string().as_bytes())
+                }
+            },
+            ("POST", "/session") if request.body == b"disconnect" => {
+                self.writer.close();
+                write_response(
+                    &mut stream,
+                    200,
+                    "text/plain",
+                    b"application connection closed",
                 )
             }
             ("GET", "/input") => {
@@ -2258,27 +2299,57 @@ struct AppWriter {
     /// `Sender` is `Send` but not `Sync`, and this is held by four threads.
     /// The lock is only ever held across a queue push, which cannot block on
     /// anything, which is the entire point.
-    sender: Mutex<std::sync::mpsc::Sender<Frame>>,
+    sender: Mutex<std::sync::mpsc::Sender<Option<Frame>>>,
+    socket: Arc<UnixStream>,
     /// Fixed by Hello for the lifetime of this one-app session.
     version: u8,
     activity: Arc<Mutex<activity::Activity>>,
 }
 
 impl AppWriter {
-    fn spawn_for(mut stream: UnixStream, version: u8) -> Arc<Self> {
-        let (sender, receiver) = std::sync::mpsc::channel::<Frame>();
+    fn spawn_for(stream: UnixStream, version: u8) -> Arc<Self> {
+        let (sender, receiver) = std::sync::mpsc::channel::<Option<Frame>>();
+        let activity = Arc::new(Mutex::new(activity::Activity::default()));
+        let thread_activity = Arc::clone(&activity);
+        let socket = Arc::new(stream);
+        let thread_socket = Arc::clone(&socket);
         std::thread::spawn(move || {
+            let mut output = &*thread_socket;
             for frame in receiver {
-                if write_protocol_frame(&mut stream, &frame).is_err() {
+                let Some(frame) = frame else {
+                    break;
+                };
+                if write_to(&mut output, &frame).is_err() {
                     break;
                 }
+            }
+            let _ = thread_socket.shutdown(std::net::Shutdown::Both);
+            if let Ok(mut activity) = thread_activity.lock() {
+                activity.disconnected();
             }
         });
         Arc::new(Self {
             sender: Mutex::new(sender),
+            socket,
             version,
-            activity: Arc::new(Mutex::new(activity::Activity::default())),
+            activity,
         })
+    }
+    fn connected(&self) -> bool {
+        self.activity
+            .lock()
+            .is_ok_and(|activity| activity.connected())
+    }
+    fn close(&self) {
+        if let Ok(mut activity) = self.activity.lock() {
+            activity.disconnected();
+        }
+        // Shutdown unblocks both a writer stalled on a full socket and the
+        // session reader. The sentinel also wakes a writer waiting for work.
+        let _ = self.socket.shutdown(std::net::Shutdown::Both);
+        if let Ok(sender) = self.sender.lock() {
+            let _ = sender.send(None);
+        }
     }
 }
 
@@ -2286,16 +2357,21 @@ impl AppWriter {
 fn write_shared(writer: &Arc<AppWriter>, frame: &Frame) -> io::Result<()> {
     let mut frame = frame.clone();
     frame.version = writer.version;
-    writer
-        .activity
-        .lock()
-        .map_err(|_| io::Error::other("simulator activity lock poisoned"))?
-        .sent(&frame.message);
+    {
+        let mut activity = writer
+            .activity
+            .lock()
+            .map_err(|_| io::Error::other("simulator activity lock poisoned"))?;
+        if !activity.connected() {
+            return Err(io::Error::other("the application is disconnected"));
+        }
+        activity.sent(&frame.message);
+    }
     writer
         .sender
         .lock()
         .map_err(|_| io::Error::other("simulator write lock poisoned"))?
-        .send(frame)
+        .send(Some(frame))
         .map_err(|_| io::Error::other("the application is no longer listening"))
 }
 
@@ -2307,6 +2383,9 @@ fn write_shared(writer: &Arc<AppWriter>, frame: &Frame) -> io::Result<()> {
 /// like it had hung.
 fn drain_shell(shells: &Arc<Mutex<kobo_shell::Shells>>, writer: &Arc<AppWriter>) -> io::Result<()> {
     loop {
+        if !writer.connected() {
+            return Ok(());
+        }
         let events = {
             let Ok(mut shells) = shells.lock() else {
                 return Ok(());
@@ -2362,14 +2441,32 @@ fn answer_shell(
 fn simulated_shells(
     writer: &Arc<AppWriter>,
     declared: &kobo_policy::Declared,
-) -> Arc<Mutex<kobo_shell::Shells>> {
+) -> (
+    Arc<Mutex<kobo_shell::Shells>>,
+    thread::JoinHandle<io::Result<()>>,
+) {
     let shells = Arc::new(Mutex::new(kobo_shell::Shells::new(
         &declared.iter().collect::<Vec<_>>(),
     )));
     let draining = Arc::clone(&shells);
     let writer = Arc::clone(writer);
-    std::thread::spawn(move || drain_shell(&draining, &writer));
-    shells
+    let worker = std::thread::spawn(move || drain_shell(&draining, &writer));
+    (shells, worker)
+}
+
+/// Join the output pumps before reporting that a disconnected session has
+/// released its tasks and terminal. Closing the socket also wakes the reader.
+struct SessionWorkers {
+    writer: Arc<AppWriter>,
+    workers: Vec<thread::JoinHandle<io::Result<()>>>,
+}
+impl Drop for SessionWorkers {
+    fn drop(&mut self) {
+        self.writer.close();
+        for worker in self.workers.drain(..) {
+            let _ = worker.join();
+        }
+    }
 }
 
 fn current_scenario(state: &Arc<Mutex<AppState>>) -> Scenario {
@@ -2450,11 +2547,17 @@ fn read_app_messages(
     // was therefore delivered immediately, which is exactly why the gap
     // survived: the only tasks the simulator ever completed were the ones it
     // refused.
+    let mut workers = SessionWorkers {
+        writer: Arc::clone(writer),
+        workers: Vec::with_capacity(2),
+    };
     {
         let draining = Arc::clone(tasks);
         let writer = Arc::clone(writer);
         let state = Arc::clone(state);
-        std::thread::spawn(move || drain_tasks(&draining, &writer, &state));
+        workers.workers.push(std::thread::spawn(move || {
+            drain_tasks(&draining, &writer, &state)
+        }));
     }
     // Kept outside the process so state survives a reload, which is the whole
     // point of a store: a developer restarting the application should see what
@@ -2467,7 +2570,8 @@ fn read_app_messages(
     // dozen network calls to produce a file -- was the one class that could
     // not be run in the simulator at all.
     let shelf = Shelf::new(simulated_data_root(name));
-    let shells = simulated_shells(writer, declared);
+    let (shells, shell_worker) = simulated_shells(writer, declared);
+    workers.workers.push(shell_worker);
     loop {
         let frame = read_protocol_frame(&mut stream)?;
         let request_id = frame.request_id;
@@ -2748,6 +2852,9 @@ fn drain_tasks(
     state: &Arc<Mutex<AppState>>,
 ) -> io::Result<()> {
     loop {
+        if !writer.connected() {
+            return Ok(());
+        }
         deliver_task_outcomes(tasks, writer, state)?;
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
@@ -3396,6 +3503,150 @@ mod tests {
             ),
             DeviceResult::Failed(DeviceError::TimedOut)
         );
+    }
+
+    #[test]
+    fn disconnect_reaps_session_workers_and_preserves_last_screen() {
+        let root = private_temp_dir();
+        let server = AppServer::bind("127.0.0.1:0", root.join("app.sock")).unwrap();
+        let mut peer = UnixStream::connect(root.join("app.sock")).unwrap();
+        peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        write_protocol_frame(
+            &mut peer,
+            &Frame {
+                version: kobo_protocol::VERSION,
+                request_id: 1,
+                message: Message::Hello {
+                    name: "test-app".into(),
+                },
+            },
+        )
+        .unwrap();
+        let session = server.accept_app().unwrap();
+        assert!(matches!(
+            read_protocol_frame(&mut peer).unwrap().message,
+            Message::Welcome { .. }
+        ));
+        session.state.lock().unwrap().set_screen(Screen::new(
+            1,
+            vec![Node::Button {
+                id: NodeId(1),
+                action: ActionId(9),
+                label: "Last screen".into(),
+                state: kobo_ui::ControlState::Enabled,
+                emphasis: kobo_ui::Emphasis::Normal,
+            }],
+        ));
+        let tasks = session.state.lock().unwrap().tasks.clone().unwrap();
+        tasks
+            .lock()
+            .unwrap()
+            .submit(
+                kobo_protocol::TaskId(99),
+                kobo_protocol::Task::Sleep { seconds: 300 },
+            )
+            .unwrap();
+        session.writer.activity.lock().unwrap().started(
+            kobo_protocol::TaskId(99),
+            &kobo_protocol::Task::Sleep { seconds: 300 },
+        );
+        let before = session.screen();
+        drop(peer);
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while std::time::Instant::now() < deadline
+            && !session
+                .writer
+                .activity
+                .lock()
+                .unwrap()
+                .json()
+                .contains("\"cleanupComplete\":true")
+        {
+            thread::sleep(Duration::from_millis(5));
+        }
+        let activity = session.writer.activity.lock().unwrap().json();
+        assert!(activity.contains("\"cleanupComplete\":true"), "{activity}");
+        assert!(activity.contains("\"connected\":false"));
+        assert!(activity.contains("\"abandoned\":1"));
+        assert!(activity.contains("\"idle\":false"));
+        assert_eq!(tasks.lock().unwrap().in_flight(), 0);
+        // Only the retained AppState owns a task runner once the reader and
+        // output pump have exited; this local reference is the second owner.
+        assert_eq!(Arc::strong_count(&tasks), 2);
+        assert_eq!(session.screen(), before);
+        assert!(session.cancel_tasks().is_err());
+        assert!(session.replay_input("gpio 1 193 1").is_err());
+        drop(session);
+        drop(server);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn transfer_cancellation_reaches_the_app_once_and_new_work_remains_possible() {
+        use kobo_protocol::{Task, TaskId, TaskOutcome};
+        use std::sync::atomic::Ordering;
+        let (mut peer, socket) = UnixStream::pair().unwrap();
+        peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        let (started_tx, started_rx) = mpsc::channel();
+        let tasks = Arc::new(Mutex::new(
+            TaskRunner::simulated(".")
+                .with_capabilities([kobo_policy::Capability::Network])
+                .with_fetch(Arc::new(move |_, _, _, _, _, _, cancelled| {
+                    started_tx.send(()).unwrap();
+                    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+                    while !cancelled.load(Ordering::SeqCst) && std::time::Instant::now() < deadline
+                    {
+                        thread::sleep(Duration::from_millis(1));
+                    }
+                    Ok(Vec::new())
+                })),
+        ));
+        let session = AppSession {
+            state: Arc::new(Mutex::new(AppState {
+                tasks: Some(Arc::clone(&tasks)),
+                ..AppState::default()
+            })),
+            writer: AppWriter::spawn_for(socket, kobo_protocol::VERSION),
+        };
+        let work = Task::Fetch {
+            url: "https://fixture.invalid/file".into(),
+            offset: 0,
+            max_bytes: 32,
+            credential: None,
+            headers: vec![],
+        };
+        session
+            .writer
+            .activity
+            .lock()
+            .unwrap()
+            .started(TaskId(7), &work);
+        tasks.lock().unwrap().submit(TaskId(7), work).unwrap();
+        started_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        session.cancel_tasks().unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while tasks.lock().unwrap().in_flight() > 0 && std::time::Instant::now() < deadline {
+            deliver_task_outcomes(&tasks, &session.writer, &session.state).unwrap();
+            thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(
+            read_protocol_frame(&mut peer).unwrap().message,
+            Message::TaskOutcome {
+                task: TaskId(7),
+                outcome: TaskOutcome::Cancelled
+            }
+        );
+        session.cancel_tasks().unwrap();
+        assert!(tasks.lock().unwrap().drain().is_empty());
+        tasks
+            .lock()
+            .unwrap()
+            .submit(TaskId(8), Task::Sleep { seconds: 0 })
+            .unwrap();
+        let outcome = tasks.lock().unwrap().wait(Duration::from_secs(2)).unwrap();
+        assert_eq!(outcome.task, TaskId(8));
+        assert_eq!(outcome.outcome, TaskOutcome::Completed(Vec::new()));
+        session.writer.close();
     }
 
     #[test]

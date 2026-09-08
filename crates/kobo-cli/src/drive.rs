@@ -211,6 +211,11 @@ impl Driver {
             "clean" => self.clean(),
             "lifecycle" => self.post("/lifecycle", rest),
             "scenario" => self.post("/scenario", rest),
+            "tasks" if rest == "cancel" => {
+                self.post("/tasks", rest)?;
+                self.wait_idle("")
+            }
+            "session" if rest == "disconnect" => self.post("/session", rest),
             "input" => {
                 self.post("/input", rest)?;
                 self.wait_idle("")
@@ -253,6 +258,7 @@ impl Driver {
                 | "wait-idle"
                 | "wait"
                 | "input"
+                | "tasks"
                 | "panel"
                 | "device"
                 | "clock"

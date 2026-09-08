@@ -194,6 +194,15 @@ def main():
                     assert 'CBZ copy' in text, 'Missing recovery action'
                 else:
                     assert 'Page 1 of 3' in text, 'Comic did not open'
+                    drive('lifecycle background')
+                    drive('wait-idle')
+                    drive('expect-state /simulation#/lifecycle "background"')
+                    drive('input gpio 1 194 1')
+                    assert 'Page 1 of 3' in get('layout').decode(), 'Background page key reached the app'
+                    drive('lifecycle foreground')
+                    drive('wait-idle')
+                    drive('tasks cancel')
+                    drive('expect-state /activity#/connected true')
                     drive('input gpio 4 3 24')
                     drive('input gpio 1 194 1')
                     wait_for('Page 2 of 3')
@@ -262,7 +271,9 @@ def main():
                         drive('tap-id comic-rotate')
                         wait_for('Page 2 of 3')
                         capture('11-before-restart')
-                        os.killpg(process.pid, signal.SIGTERM)
+                        # This process group was created above solely for this fixture.
+                        # Force exit without orderly SDK shutdown, then reuse its storage.
+                        os.killpg(process.pid, signal.SIGKILL)
                         process.wait(timeout=5)
                         address = start()
                         wait_for('Open added comic')

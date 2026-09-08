@@ -206,8 +206,10 @@
     "pr": 1,
     "group": "Simulator fidelity (SIM-1\u201310)",
     "task": "Inject app kill, lifecycle change and transfer interruption",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Disconnect closes the socket, joins task/terminal output pumps and shuts down active tasks before reporting cleanup complete. Cancel-all delivers normal exactly-once outcomes. 63 simulator and 112 policy tests pass; extra-large Panels route covers background input suppression and SIGKILL of its isolated fixture process group followed by saved-position restoration. Physical crash/handback checks remain scheduled after all three PRs."
+    ]
   },
   {
     "id": "SIM-23",

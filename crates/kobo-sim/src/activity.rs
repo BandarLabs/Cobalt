@@ -23,6 +23,8 @@ pub(super) struct Activity {
     completed: u64,
     failed: u64,
     cancelled: u64,
+    abandoned: u64,
+    cleanup_complete: bool,
 }
 impl Default for Activity {
     fn default() -> Self {
@@ -36,6 +38,8 @@ impl Default for Activity {
             completed: 0,
             failed: 0,
             cancelled: 0,
+            abandoned: 0,
+            cleanup_complete: false,
         }
     }
 }
@@ -94,6 +98,17 @@ impl Activity {
         }
         self.revision = self.revision.saturating_add(1);
     }
+    pub fn connected(&self) -> bool {
+        self.connected
+    }
+    pub fn finish_disconnect(&mut self) {
+        self.abandoned = self.abandoned.saturating_add(self.active.len() as u64);
+        self.active.clear();
+        self.callbacks = 0;
+        self.connected = false;
+        self.cleanup_complete = true;
+        self.revision = self.revision.saturating_add(1);
+    }
     pub fn disconnected(&mut self) {
         self.connected = false;
         self.revision = self.revision.saturating_add(1);
@@ -105,7 +120,7 @@ impl Activity {
             .filter(|kind| **kind == Kind::Sleep)
             .count();
         let work = self.active.len() - sleeping;
-        format!("{{\"revision\":{},\"callbackMarkers\":{},\"connected\":{},\"pendingCallbacks\":{},\"activeWork\":{},\"sleepingTasks\":{},\"idle\":{},\"effects\":{{\"fetch\":{},\"post\":{},\"file\":{},\"sleep\":{}}},\"completed\":{},\"failed\":{},\"cancelled\":{}}}", self.revision, self.barriers, self.connected, self.callbacks, work, sleeping, self.barriers && self.connected && self.callbacks == 0 && work == 0, self.effects[0], self.effects[1], self.effects[2], self.effects[3], self.completed, self.failed, self.cancelled)
+        format!("{{\"revision\":{},\"callbackMarkers\":{},\"connected\":{},\"pendingCallbacks\":{},\"activeWork\":{},\"sleepingTasks\":{},\"idle\":{},\"effects\":{{\"fetch\":{},\"post\":{},\"file\":{},\"sleep\":{}}},\"completed\":{},\"failed\":{},\"cancelled\":{},\"abandoned\":{},\"cleanupComplete\":{}}}", self.revision, self.barriers, self.connected, self.callbacks, work, sleeping, self.barriers && self.connected && self.callbacks == 0 && work == 0, self.effects[0], self.effects[1], self.effects[2], self.effects[3], self.completed, self.failed, self.cancelled, self.abandoned, self.cleanup_complete)
     }
 }
 #[cfg(test)]
