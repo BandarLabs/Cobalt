@@ -17,6 +17,7 @@ mod connect;
 mod deck;
 mod devsession;
 mod drive;
+mod exports;
 mod flashcards;
 mod frame;
 mod host_release;
@@ -299,8 +300,8 @@ const DEVICE_PROBE_INTERVAL: Duration = Duration::from_secs(5);
 const DEVICE_WAIT_MAXIMUM_SECONDS: u64 = 6 * 60 * 60;
 /// How often a held wake lock is re-applied.
 ///
-/// Measured on the device, the lock is cleared somewhere between two and three
-/// minutes after it is taken, so renewal has to be well inside that.
+/// Renew well before the two-minute kernel lease expires, allowing several
+/// missed probes without leaving an indefinite hold after a disconnect.
 const WAKE_LOCK_RENEW_INTERVAL: Duration = Duration::from_secs(30);
 /// Longest a hold may last, so a forgotten session always ends by itself.
 const HOLD_MAXIMUM_MINUTES: u64 = 8 * 60;
@@ -494,6 +495,7 @@ fn run(arguments: &[String]) -> Result<(), String> {
         "frame" => frame::command(&arguments[1..]),
         "vault" => vault::command(&arguments[1..]),
         "sync" => sync::command(&arguments[1..]),
+        "export" => exports::command(&arguments[1..]),
         "needles" => needles::command(&arguments[1..]),
         "nonograms" => nonograms::command(&arguments[1..]),
         "parser" => parser_command(&arguments[1..]),
@@ -2150,8 +2152,8 @@ fn parse_devices(arguments: &[String]) -> Result<String, String> {
 
 /// Controls how long a connected device stays reachable while developing.
 ///
-/// Every action is reversible and none of them touch a partition, the
-/// bootloader, the kernel, firmware, or any book.
+/// These controls change bounded kernel wake leases or the reader's settings;
+/// they do not rewrite partitions, firmware or books.
 fn dev_session(arguments: &[String]) -> Result<(), String> {
     let (host, action) = parse_dev_session(arguments)?;
     if let DevSessionAction::Hold(minutes) = action {
@@ -2179,6 +2181,9 @@ fn dev_session(arguments: &[String]) -> Result<(), String> {
         .map_err(unreachable_device)?;
     print!("{}", String::from_utf8_lossy(&output.stdout));
     if output.status.success() {
+        if matches!(action, DevSessionAction::KeepAwake(devsession::Switch::On)) {
+            println!("The reader can stay awake for two minutes. Use kobo session --device ADDRESS --hold MINUTES for a longer timed session.");
+        }
         // Advising a restart is only true when something actually changed; the
         // reader already holds the intended value otherwise.
         let changes_a_setting = matches!(
@@ -2210,8 +2215,8 @@ fn dev_session(arguments: &[String]) -> Result<(), String> {
 /// developer wake lock, so testing does not need someone tapping the screen.
 ///
 /// The lock is RAM-only kernel state. It is released when the hold ends, and a
-/// reboot clears it regardless, so this can never leave a device unable to
-/// sleep. A device that disappears mid-hold is waited for rather than treated
+/// two-minute kernel lease also expires if the computer disconnects or exits.
+/// A device that disappears mid-hold is waited for rather than treated
 /// as a failure.
 fn hold_device_awake(host: &str, minutes: u64) {
     let remote = format!("root@{host}");
@@ -2247,8 +2252,7 @@ fn hold_device_awake(host: &str, minutes: u64) {
         }
         thread::sleep(WAKE_LOCK_RENEW_INTERVAL);
     }
-    // Releasing is best effort: an unreachable device clears the lock on its
-    // next reboot anyway, so a failure here cannot leave lasting state.
+    // The last lease expires even if this best-effort release cannot connect.
     let released = run_remote_shell(
         &remote,
         &devsession::wake_lock_script(devsession::Switch::Off),
@@ -2260,7 +2264,10 @@ fn hold_device_awake(host: &str, minutes: u64) {
          {lost_contact} missed probe(s), wake lock released: {released}"
     );
     if !released {
-        println!("the wake lock is RAM only and clears on the next reboot");
+        println!(
+            "The last wake lease expires within {} seconds. No reboot is needed.",
+            devsession::WAKE_LEASE_SECONDS
+        );
     }
 }
 
@@ -4521,9 +4528,9 @@ fn describe_unmenu(removed: menu::Removed) -> String {
 
 /// Puts a reader back to how it shipped.
 fn undo_setup(reader: &setup::Mounted, eject: bool) -> Result<(), String> {
+    let settings = setup::revert_settings(&reader.volume)?;
     let removal = setup::remove_payload(&reader.volume)?;
     let ssh = setup::disable_ssh(&reader.volume)?;
-    let settings = setup::revert_settings(&reader.volume)?;
     let unmenued = menu::remove(&reader.volume)?;
     let ejected = ejected_or_explained(&reader.volume, eject);
 
@@ -4543,7 +4550,7 @@ fn undo_setup(reader: &setup::Mounted, eject: bool) -> Result<(), String> {
         if settings.is_empty() {
             "no settings to restore".to_owned()
         } else {
-            format!("settings removed: {}", settings.join(", "))
+            format!("settings restored: {}", settings.join(", "))
         },
         describe_unmenu(unmenued),
         if ejected {
@@ -6493,6 +6500,7 @@ fn print_help() {
            vault push DIR (--device IP | --sim | --out INDEX)  Pack a markdown vault and publish it\n\
            sync setup DIR --folder NAME --device IP  Pair one safe fixed Sync folder\n\
            sync run [--foreground] [--seconds N] Start the private host Syncthing peer\n\
+           export --app APP --device IP --out DIR  Receive a prepared text or image copy\n\
            sync status|stop                      Inspect or stop that dedicated peer\n\
            needles prepare PDF --out FILE       Extract a user-owned PDF for Needles\n\
            needles push FILE --device IP        Transfer a prepared pattern to Needles\n\

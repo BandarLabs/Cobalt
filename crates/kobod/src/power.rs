@@ -235,9 +235,52 @@ impl Power {
     }
 }
 
+/// One physical press can cancel preparation or request handback, never both.
+#[derive(Debug, Default)]
+pub struct Button {
+    pressed: bool,
+    consumed: bool,
+}
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ButtonAction {
+    Wake,
+    Sleep,
+}
+impl Button {
+    pub fn event(&mut self, pressed: bool, preparing: bool) -> Option<ButtonAction> {
+        if pressed {
+            if self.pressed {
+                return None;
+            }
+            self.pressed = true;
+            self.consumed = preparing;
+            preparing.then_some(ButtonAction::Wake)
+        } else {
+            let was_pressed = std::mem::take(&mut self.pressed);
+            let consumed = std::mem::take(&mut self.consumed);
+            (was_pressed && !consumed).then_some(ButtonAction::Sleep)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn duplicate_button_edges_and_cancel_release_cannot_start_another_attempt() {
+        let mut button = Button::default();
+        assert_eq!(button.event(false, false), None);
+        assert_eq!(button.event(true, false), None);
+        assert_eq!(button.event(true, false), None);
+        assert_eq!(button.event(false, false), Some(ButtonAction::Sleep));
+        assert_eq!(button.event(false, true), None);
+        assert_eq!(button.event(true, true), Some(ButtonAction::Wake));
+        assert_eq!(button.event(true, false), None);
+        assert_eq!(button.event(false, false), None);
+        assert_eq!(button.event(true, false), None);
+        assert_eq!(button.event(false, false), Some(ButtonAction::Sleep));
+    }
+
     fn quiet() -> Conditions {
         Conditions {
             charging: false,

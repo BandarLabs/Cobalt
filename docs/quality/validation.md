@@ -376,3 +376,120 @@ and kobod with all targets/features. ARMv7 musl kobod check passed with the 118
 existing platform warnings. No hardware commands were run. Logs:
 `/tmp/cobalt-bound-account-tests.log`, `/tmp/cobalt-bound-account-clippy.log`,
 `/tmp/cobalt-bound-account-arm.log`.
+
+
+### Restore original USB setup preferences (2026-09-08)
+
+USB setup now durably records the owner's original Wi-Fi and sleep values before
+changing the reader configuration. Repeated setup preserves the first record.
+Undo restores only values that still match Cobalt's applied setting, retaining
+later owner edits and unrelated preferences. Undo runs restoration before payload
+removal. Older installations without a record keep their current settings; the
+original values cannot be recovered by guessing. Corrupt/future records and
+failed record writes refuse changes. Both records and configuration updates use
+file flush, atomic replacement and directory flush.
+
+All 55 setup tests passed, including original-value restoration, repeated setup,
+owner changes, missing legacy records and failed/corrupt backups. Strict CLI
+Clippy passed with all targets/features. Logs: `/tmp/cobalt-owner-settings-tests.log`
+and `/tmp/cobalt-owner-settings-clippy.log`. HW-12 still awaits native power
+integration and the planned physical validation.
+
+
+### Native save barrier and power-button edges (2026-09-08)
+
+Native power-button release and idle expiry now enter the shared generation-scoped
+power coordinator. Hosted task admission pauses, SDK save barriers run, and reader
+handback waits for all app acknowledgements, drained workers and the panel fence.
+Save refusal, touch, cover changes and hosted-set changes cancel preparation.
+The native path explicitly selects reader handback; no kernel suspend backend is
+enabled before physical profile/firmware validation. The existing guardian,
+frontlight restoration, reader restart and watchdog recovery remain the owners of
+teardown. Native USB/scheduled-wake/kernel integration remains unfinished.
+
+App repaints no longer renew the owner-activity idle timer. An open terminal and
+charging block automatic preparation. A failed attempt waits for a later idle
+period instead of spinning. Physical power-button edge handling is shared with
+runtime simulation: duplicate presses/releases and releasing a wake press cannot
+start a second attempt. The native input decoder exposes read-only quiescence and
+marks it unsafe if its reader thread ends.
+
+Validation: 163 HAL tests, 25 runtime-library tests and 151 runtime-binary tests
+passed. Strict HAL/runtime/simulator Clippy and the device-write ARMv7 musl runtime
+check passed. The extended multi-app simulator journey passed save failure,
+chained saves, cancellation, scheduled wake, panel deadlines, USB wake, light
+restoration and duplicate button edges. Its evidence explicitly says
+hardware_validation=false. Logs: `/tmp/cobalt-native-power-final-tests.log`,
+`/tmp/cobalt-native-power-final-clippy.log`, `/tmp/cobalt-native-power-arm.log`.
+Evidence: `evidence/native-power/`. Remaining HW tasks are not marked complete
+from these partial native integrations.
+
+
+### Shared export receiver and UI copy (2026-09-08)
+
+SDK-19 and SDK-23 are implemented. `exports::Export` prepares owner-selected text,
+Markdown, PNG or JPEG content with a verified copy and acknowledged offer.
+`kobo export --app APP (--device ADDRESS | --sim) --out FOLDER` uses the existing
+SSH identity/host verification or isolated simulator storage. It bounds reads,
+verifies size/hash, flushes completed files and publishes without replacement;
+repeated identical receiving also retries file/directory durability checks.
+Conflicting names get a suffix. Computer failures never delete reader content.
+The reader reports only local readiness, not remote receipt. No new service,
+network listener, dependency licence or pairing scheme was introduced.
+
+Shared account/error text no longer assumes computer-only setup, guesses an
+outage, or calls a missing requested item an empty library. Three compatibility
+assertions were updated for changed shared wording: Audiobook, RSS, and one
+Zotero Reader account-button assertion. Zotero Reader's implementation and review
+scope remain untouched. The export/copy contract is in `sdk-export-and-copy.md`;
+app-specific adoption remains in the catalog and companion checklists.
+
+Validation: the full workspace all-feature run had 3,135 passing tests and one
+stale account-button assertion. After updating that assertion, its 25-test target
+passed; all **3,136 distinct workspace checks** therefore pass, with four existing
+ignored tests/doc examples. Strict workspace Clippy passes for all targets and
+features. The actual SDK/launcher/simulator-to-CLI journeys pass for original
+text and PNG fixtures at Clara BW extra-large text: no availability before owner
+confirmation, full-storage failure/retry, exact receiving, duplicate reuse and
+corruption preserving the existing computer file. Updated ready/preview/failure
+screens were inspected. No hardware command or SSH transfer was executed.
+
+Logs: `/tmp/cobalt-foundation-export-workspace-tests.log`,
+`/tmp/cobalt-sdk-account-compatibility.log`,
+`/tmp/cobalt-foundation-export-workspace-clippy.log`.
+Evidence: `evidence/exports/result.json` and paired captures. Beta was fetched
+again and remains `7f1a543aa432248f45a69db186e1d6b85c888b17`.
+
+
+### Foundation completion: validated handback and failure parity (2026-09-08)
+
+SIM-09 and HW-09–16 now have implementation and repeatable host evidence. Earlier
+entries describe intermediate work; the final native route is a save barrier
+followed by normal stock-reader handback. It deliberately does not enter kernel
+suspend or advertise RTC wake. Automatic sleep-cover polarity is not inferred
+from a raw magnet event. Radio and watchdog ownership use existing teardown;
+physical behavior and calibration remain acceptance work after all three PRs.
+
+Native power observation discovers supply types and reads bounded status/online
+values, retaining unknown state instead of guessing from a driver name. A cable
+power observation is not a claim about USB mass-storage ownership. The host
+cancels preparation with USB/charging wake reasons. These fields follow the
+[Linux power-supply ABI](https://www.kernel.org/doc/Documentation/ABI/testing/sysfs-class-power).
+
+Every CLI wake acquisition now carries a two-minute expiry; a running hold
+renews it every thirty seconds even when already held. Computer loss therefore
+does not depend on a later SSH release or reboot. This uses the documented
+[nanosecond wake-lock timeout](https://www.kernel.org/doc/Documentation/ABI/testing/sysfs-power),
+with no copied reference implementation. A shell fixture verifies the emitted
+write for both absent and already-held locks. Actual kernel expiry is still a
+Clara BW acceptance measurement.
+
+Validation: 130 policy and 73 simulator tests pass for account fault ordering;
+310 CLI, 164 HAL, 25 runtime library and 151 runtime binary tests pass for the
+power/lease changes. Strict all-target/all-feature Clippy for these five crates
+passes, as does Rust 1.85.1 ARMv7 musl runtime compilation with device-write.
+The [real SDK journey](evidence/power-completion/result.json) additionally passes
+cover bounce during panel-held preparation, charging refusal/wake and USB
+reconnection. Captures include source/fixture provenance and remain explicitly
+simulated. The charging-wake screen was visually inspected at extra-large size.
+No physical reader or third-party source code was used.

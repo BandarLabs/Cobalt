@@ -3028,6 +3028,9 @@ fn simulated_app_request(
         if scenario == Scenario::PermissionDenied {
             return Ok(Some(DeviceResult::Denied(DenyReason::NotDeclared)));
         }
+        if let Some(Err(error)) = kobo_policy::credentials::validate_install(caller, request) {
+            return Ok(Some(error));
+        }
         if scenario == Scenario::StorageFull {
             return Ok(Some(DeviceResult::Failed(DeviceError::Backend)));
         }
@@ -3613,6 +3616,70 @@ mod tests {
             DeviceResult::Denied(_)
         ));
         fs::remove_dir_all(directory).expect("remove owned test directory");
+    }
+
+    #[test]
+    fn account_faults_preserve_native_validation_order_without_writing() {
+        use kobo_protocol::{DenyReason, DeviceError, DeviceRequest, DeviceResult, SecretValue};
+        let directory = private_temp_dir();
+        let state = Arc::new(Mutex::new(AppState::default()));
+        state
+            .lock()
+            .unwrap()
+            .secret_directory
+            .clone_from(&directory);
+        for (caller, request, expected) in [
+            (
+                "todo",
+                DeviceRequest::SetSecret {
+                    name: "openai".into(),
+                    value: SecretValue::new("key"),
+                },
+                DeviceResult::Denied(DenyReason::NotDeclared),
+            ),
+            (
+                "chat",
+                DeviceRequest::SetSecret {
+                    name: "openai".into(),
+                    value: SecretValue::new(""),
+                },
+                DeviceResult::Failed(DeviceError::InvalidInput),
+            ),
+            (
+                "panels",
+                DeviceRequest::SetServerSecret {
+                    name: "komga".into(),
+                    server: "http://books.example".into(),
+                    value: SecretValue::new("reader:password"),
+                },
+                DeviceResult::Failed(DeviceError::InvalidInput),
+            ),
+            (
+                "panels",
+                DeviceRequest::SetServerSecret {
+                    name: "komga".into(),
+                    server: "https://books.example".into(),
+                    value: SecretValue::new("reader:password"),
+                },
+                DeviceResult::Failed(DeviceError::Backend),
+            ),
+        ] {
+            assert_eq!(
+                app_result(&state, caller, Scenario::StorageFull, &request),
+                expected
+            );
+            // A regular host with an unavailable directory has the same result.
+            assert_eq!(
+                kobo_policy::credentials::handle_install(
+                    &directory.join("missing/parent"),
+                    caller,
+                    &request
+                ),
+                Some(expected)
+            );
+        }
+        assert_eq!(fs::read_dir(&directory).unwrap().count(), 0);
+        fs::remove_dir(directory).unwrap();
     }
 
     #[test]

@@ -628,7 +628,7 @@ pub fn present(
 
     // One reader thread on the touch descriptor for the whole panel session,
     // started here rather than per application.
-    let taps = TouchSink::default();
+    let taps = TouchSink(Arc::default(), touch.quiescence());
     pump_touch(&mut touch, &taps);
 
     // The buttons and the orientation channel, on hardware that has them.
@@ -1428,6 +1428,9 @@ fn host_applications(
         // quiet long enough to apply them. A newer report replaces an older
         // one outright: the newer one was computed against newer facts.
         let mut pending_updates: Option<crate::autoupdate::Plan> = None;
+        let mut power = kobod::power::Power::default();
+        let mut power_button = kobod::power::Button::default();
+        let mut consume_wake_touch = false;
 
         loop {
             let now = Instant::now();
@@ -1463,6 +1466,10 @@ fn host_applications(
             // background application has no standing to react to it.
             if let Some(sensor) = cover.as_mut() {
                 if let Some(magnet) = sensor.poll() {
+                    if let Some(effect) = power.wake(kobod::power::WakeReason::Cover) {
+                        apply_power_effect(&mut apps, effect)?;
+                        last_activity = now;
+                    }
                     if let Some(index) = index_of(&apps, front) {
                         apps[index].send(kobo_protocol::Message::CoverChanged {
                             magnet_present: magnet == kobo_hal::cover::Magnet::Present,
@@ -1478,15 +1485,21 @@ fn host_applications(
                 ));
             }
             let idle_at = last_activity + limits.idle;
-            if now >= idle_at {
-                return Ok(finish(
-                    &apps,
-                    &visited,
-                    &format!(
-                        "nothing was touched for {}, so the reader has it back",
-                        describe(limits.idle)
-                    ),
-                ));
+            if now >= idle_at && power.state() == kobod::power::State::Awake {
+                match power.begin(
+                    &apps.iter().map(|app| app.id).collect::<Vec<_>>(),
+                    navigation_millis,
+                    kobod::power::SleepReason::Idle,
+                    power_conditions(&apps, touch, kobo_hal::power_source::read()),
+                ) {
+                    Ok(effect) => {
+                        apply_power_effect(&mut apps, effect)?;
+                    }
+                    Err(reason) => {
+                        trace(&format!("idle handback deferred: {reason:?}"));
+                        last_activity = now;
+                    }
+                }
             }
             // Updates found in the background are applied only to a panel
             // nobody is using: enough quiet has passed since the last touch,
@@ -1494,6 +1507,7 @@ fn host_applications(
             // loop exactly as a store install does, which is acceptable here
             // for the same reason it is there: nobody is waiting.
             if pending_updates.is_some()
+                && power.state() == kobod::power::State::Awake
                 && now.saturating_duration_since(last_activity) >= AUTO_UPDATE_QUIET
                 && auto_update_battery_permits()
             {
@@ -1525,7 +1539,11 @@ fn host_applications(
             // session nobody is touching still proves it is alive.
             let wait = ceiling
                 .saturating_duration_since(now)
-                .min(idle_at.saturating_duration_since(now))
+                .min(if power.state() == kobod::power::State::Preparing {
+                    Duration::from_millis(50)
+                } else {
+                    (last_activity + limits.idle).saturating_duration_since(now)
+                })
                 .min(BEAT_INTERVAL)
                 // So a charger pulled out while nobody is touching the panel
                 // is noticed in seconds rather than at the next heartbeat.
@@ -1564,6 +1582,9 @@ fn host_applications(
                         continue;
                     };
                     let gone = apps.remove(index);
+                    if let Some(effect) = power.abort(kobod::power::Refusal::Busy) {
+                        apply_power_effect(&mut apps, effect)?;
+                    }
                     visited.push(format!(
                         "{} exited after {} screens",
                         gone.name, gone.painted
@@ -1612,6 +1633,10 @@ fn host_applications(
                             button: button @ (gpio::Button::Page193 | gpio::Button::Page194),
                             pressed: true,
                         } => {
+                            if let Some(effect) = power.wake(kobod::power::WakeReason::Touch) {
+                                apply_power_effect(&mut apps, effect)?;
+                                continue;
+                            }
                             let forward = (button == gpio::Button::Page194) == forward_is_194;
                             if let Some(index) = index_of(&apps, front) {
                                 let at_home = apps[index].path == home;
@@ -1639,10 +1664,37 @@ fn host_applications(
                             button: gpio::Button::Power,
                             pressed,
                         } => {
-                            // Meaning arrives with the power sub-feature:
-                            // short press sleep, long press shutdown. Until
-                            // then the press is at least on the record.
-                            trace(&format!("power button pressed={pressed}"));
+                            match power_button
+                                .event(pressed, power.state() != kobod::power::State::Awake)
+                            {
+                                Some(kobod::power::ButtonAction::Wake) => {
+                                    if let Some(effect) =
+                                        power.wake(kobod::power::WakeReason::PowerButton)
+                                    {
+                                        apply_power_effect(&mut apps, effect)?;
+                                    }
+                                }
+                                Some(kobod::power::ButtonAction::Sleep) => {
+                                    match power.begin(
+                                        &apps.iter().map(|app| app.id).collect::<Vec<_>>(),
+                                        navigation_millis,
+                                        kobod::power::SleepReason::PowerButton,
+                                        power_conditions(
+                                            &apps,
+                                            touch,
+                                            kobo_hal::power_source::read(),
+                                        ),
+                                    ) {
+                                        Ok(effect) => {
+                                            apply_power_effect(&mut apps, effect)?;
+                                        }
+                                        Err(reason) => {
+                                            trace(&format!("power handback deferred: {reason:?}"));
+                                        }
+                                    }
+                                }
+                                None => {}
+                            }
                         }
                         // The kernel's digested accelerometer verdict. Only
                         // the two portrait poses move the key mapping; the
@@ -1692,6 +1744,16 @@ fn host_applications(
                 }
                 Ok(Event::Touch(event)) => {
                     last_activity = Instant::now();
+                    if let Some(effect) = power.wake(kobod::power::WakeReason::Touch) {
+                        apply_power_effect(&mut apps, effect)?;
+                        consume_wake_touch = true;
+                    }
+                    if consume_wake_touch {
+                        if matches!(event, TouchEvent::Up { .. } | TouchEvent::Cancel) {
+                            consume_wake_touch = false;
+                        }
+                        continue;
+                    }
                     let Some(index) = index_of(&apps, front) else {
                         return Ok(finish(&apps, &visited, "nothing is on the panel"));
                     };
@@ -1874,14 +1936,19 @@ fn host_applications(
                         continue;
                     };
                     match frame.message {
+                        Message::SuspendReady { generation, ready } => {
+                            if let Some(effect) = power.acknowledge(id, generation, ready) {
+                                apply_power_effect(&mut apps, effect)?;
+                                last_activity = Instant::now();
+                            }
+                        }
                         Message::SetScreen(mut screen) => {
                             if let Some(local) = screen.reading_font {
                                 screen.reading_font = apps[index].fonts.resolve(local);
                             }
                             let is_front = id == front;
-                            if is_front {
-                                last_activity = Instant::now();
-                            }
+                            // App repainting is not owner activity and cannot
+                            // renew an idle session indefinitely.
                             // The answer to a Back that was handed over, if
                             // one was outstanding. Cleared on any screen from
                             // that application rather than a designated one:
@@ -2525,6 +2592,9 @@ fn host_applications(
                             }
                         }
                         Message::Launch { name: wanted } => {
+                            if let Some(effect) = power.abort(kobod::power::Refusal::Busy) {
+                                apply_power_effect(&mut apps, effect)?;
+                            }
                             match open_application(
                                 &mut apps,
                                 &mut next_id,
@@ -2566,7 +2636,6 @@ fn host_applications(
                         | Message::TaskOutcome { .. }
                         | Message::Lifecycle(_)
                         | Message::PrepareSuspend { .. }
-                        | Message::SuspendReady { .. }
                         | Message::Resume { .. }
                         | Message::ScheduledWake { .. }
                         | Message::DeviceResult(_)
@@ -2606,6 +2675,34 @@ fn host_applications(
                     })?;
                 }
             }
+            if power.state() == kobod::power::State::Preparing {
+                let source = kobo_hal::power_source::read();
+                let wake = if source.usb == Some(true) {
+                    Some(kobod::power::WakeReason::Usb)
+                } else if source.external == Some(true) {
+                    Some(kobod::power::WakeReason::Charging)
+                } else {
+                    None
+                };
+                if let Some(effect) = wake.and_then(|reason| power.wake(reason)) {
+                    apply_power_effect(&mut apps, effect)?;
+                    last_activity = Instant::now();
+                }
+                let mut conditions = power_conditions(&apps, touch, source);
+                if conditions.tasks_idle {
+                    conditions.panel_idle = display.finish_pending().is_ok();
+                }
+                if let Some(effect) = power.poll(navigation_millis, conditions, false) {
+                    if apply_power_effect(&mut apps, effect)? {
+                        return Ok(finish(
+                            &apps,
+                            &visited,
+                            "saved app work; returning power ownership to the reader",
+                        ));
+                    }
+                    last_activity = Instant::now();
+                }
+            }
         }
     })();
 
@@ -2613,6 +2710,54 @@ fn host_applications(
         stop_hosted(app);
     }
     result
+}
+
+/// Device entry remains reader handback until a kernel/profile combination is
+/// physically validated. The same SDK barrier still protects outstanding saves.
+fn apply_power_effect(apps: &mut [Hosted], effect: kobod::power::Effect) -> Result<bool, String> {
+    use kobod::power::Effect;
+    trace(&format!("power effect {effect:?}"));
+    match effect {
+        Effect::Prepare { generation } => {
+            for app in apps.iter_mut() {
+                app.tasks.pause();
+            }
+            for app in apps {
+                app.send(Message::PrepareSuspend { generation })?;
+            }
+        }
+        Effect::Resume { generation, reason } => {
+            for app in apps.iter_mut() {
+                app.tasks.resume();
+            }
+            for app in apps {
+                app.send(Message::Resume { generation, reason })?;
+            }
+        }
+        Effect::Handback { .. } => return Ok(true),
+        Effect::Enter { .. } => {
+            return Err("Kernel suspend has not been validated for this reader.".into())
+        }
+    }
+    Ok(false)
+}
+
+fn power_conditions(
+    apps: &[Hosted],
+    touch: &TouchSink,
+    source: kobo_hal::power_source::Observation,
+) -> kobod::power::Conditions {
+    kobod::power::Conditions {
+        charging: source.external != Some(false),
+        // This observation describes USB power, not mass-storage ownership.
+        // Unknown USB cannot authorize kernel sleep; this host only hands back.
+        usb_attached: source.usb == Some(true),
+        keep_awake_until: 0, // KeepAwake is not a declared native backend.
+        terminal_open: apps.iter().any(|app| app.shells.is_open()),
+        input_quiet: touch.1.is_quiet(),
+        panel_idle: false, // Replaced only after the display completion fence.
+        tasks_idle: apps.iter().all(|app| app.tasks.is_quiescent()),
+    }
 }
 
 fn index_of(apps: &[Hosted], id: u64) -> Option<usize> {
@@ -3910,7 +4055,10 @@ impl Painter {
 /// twice the two threads would split every report between them. So the thread
 /// is started once and the destination is swapped as applications change.
 #[derive(Clone, Default)]
-struct TouchSink(Arc<Mutex<Option<Sender<Event>>>>);
+struct TouchSink(
+    Arc<Mutex<Option<Sender<Event>>>>,
+    kobo_hal::input::Quiescence,
+);
 
 impl TouchSink {
     fn set(&self, sender: Option<Sender<Event>>) {
@@ -4287,6 +4435,66 @@ mod tests {
             .unwrap_or_else(|| panic!("task {} did not finish", task.0));
         assert_eq!(finished.task, task);
         assert_eq!(&finished.outcome, expected);
+    }
+
+    #[test]
+    fn native_power_delivery_pauses_tasks_and_resumes_each_host_once() {
+        use super::{ApplicationChild, Hosted};
+        use kobod::power::{Effect, WakeReason};
+        let root =
+            std::env::temp_dir().join(format!("cobalt-native-power-host-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let (runtime, mut client) = std::os::unix::net::UnixStream::pair().unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_secs(1)))
+            .unwrap();
+        let child = std::process::Command::new("/usr/bin/true").spawn().unwrap();
+        let mut apps = vec![Hosted {
+            id: 1,
+            name: "fixture".into(),
+            path: root.join("fixture"),
+            jail: None,
+            child: ApplicationChild::ordinary(child),
+            stream: runtime,
+            store: kobo_policy::store::Store::new(root.join("state")),
+            shelf: kobo_policy::shelf::Shelf::new(root.join("shelf")),
+            tasks: TaskRunner::simulated(root.join("data")),
+            declared: kobo_policy::Declared::all(),
+            shells: kobo_shell::Shells::new(&[]),
+            screen: None,
+            pictures: super::PictureCache::default(),
+            fonts: kobod::fonts::FontOwner::default(),
+            orientation: kobo_ui::Orientation::Portrait,
+            landscape_turn: kobo_ui::LandscapeTurn::Clockwise,
+            painted: 0,
+            used: std::time::Instant::now(),
+        }];
+        assert!(!super::apply_power_effect(&mut apps, Effect::Prepare { generation: 4 }).unwrap());
+        assert!(apps[0].tasks.is_quiescent());
+        assert_eq!(
+            kobo_protocol::read_from(&mut client).unwrap().message,
+            Message::PrepareSuspend { generation: 4 }
+        );
+        assert!(!super::apply_power_effect(
+            &mut apps,
+            Effect::Resume {
+                generation: 4,
+                reason: WakeReason::Touch
+            }
+        )
+        .unwrap());
+        assert!(!apps[0].tasks.is_quiescent());
+        assert_eq!(
+            kobo_protocol::read_from(&mut client).unwrap().message,
+            Message::Resume {
+                generation: 4,
+                reason: WakeReason::Touch
+            }
+        );
+        assert!(super::apply_power_effect(&mut apps, Effect::Enter { generation: 4 }).is_err());
+        assert!(super::apply_power_effect(&mut apps, Effect::Handback { generation: 4 }).unwrap());
+        apps[0].child.process.wait().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

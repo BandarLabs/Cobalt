@@ -117,11 +117,59 @@ def main():
                 post('power', 'usb attach')
                 wait_for(lambda s: s['state'] == 'awake' and s['lastWake'] == 'Some(Usb)')
                 drive('wait-idle', 'shot usb-wake')
+                post('power', 'usb detach')
+                drive('wait-idle')
+                post('power', 'button down')
+                post('power', 'button down')
+                post('power', 'button up')
+                asleep = wait_for(lambda s: s['state'] == 'suspended')
+                post('power', 'button down')
+                awake = wait_for(lambda s: s['state'] == 'awake')
+                post('power', 'button down')
+                post('power', 'button up')
+                drive('wait-idle', 'shot button-wake')
+                assert get('power')['state'] == 'awake', 'Wake release started another sleep attempt'
+                # Cover bounce during a held display must invalidate entry, and
+                # repeated wake signals must not deliver another resume callback.
+                post('panel', 'hold')
+                post('power', 'sleep cover')
+                wait_for(lambda s: s['state'] == 'preparing')
+                post('power', 'wake cover')
+                cover_wake = wait_for(lambda s: s['state'] == 'awake' and s['lastWake'] == 'Some(Cover)')
+                for _ in range(3):
+                    post('power', 'wake cover')
+                assert get('power')['generation'] == cover_wake['generation']
+                for _ in range(8):
+                    if get('panel')['status'] != 'busy':
+                        break
+                    post('panel', 'complete')
+                post('panel', 'auto')
+                drive('wait-idle', 'shot cover-bounce')
+                post('power', 'charging on')
+                post('power', 'sleep')
+                wait_for(lambda s: s['state'] == 'awake' and s['lastRefusal'] == 'Some(Charging)')
+                post('power', 'charging off')
+                post('power', 'sleep')
+                wait_for(lambda s: s['state'] == 'suspended')
+                post('power', 'charging on')
+                wait_for(lambda s: s['state'] == 'awake' and s['lastWake'] == 'Some(Charging)')
+                drive('wait-idle', 'shot charging-wake')
+                post('power', 'charging off')
+                # Disconnect/reconnect makes a new attempt; duplicate attachment
+                # within an attempt cannot restart work a second time.
+                post('power', 'sleep')
+                asleep = wait_for(lambda s: s['state'] == 'suspended')
+                post('power', 'usb attach')
+                wait_for(lambda s: s['state'] == 'awake')
+                post('power', 'usb attach')
+                assert get('power')['generation'] == asleep['generation']
+                post('power', 'usb detach')
+                drive('wait-idle', 'shot reconnected')
                 result = dict(status='passed', hardware_validation=False, source_head=revision,
                               source_dirty=True, fixture_sha256=hashlib.sha256(fixture.read_bytes()).hexdigest(),
                               checks=['failed save blocks sleep', 'chained durable save acknowledgements',
                                       'task cancellation exactly once', 'duplicate scheduled wake ignored',
-                                      'frontlight restored', 'panel completion timeout', 'USB blocks entry and wakes'])
+                                      'frontlight restored', 'panel completion timeout', 'USB blocks entry and wakes', 'duplicate power-button edges and wake release', 'cover bounce invalidates entry', 'charging refuses sleep and wakes', 'USB reconnect does not duplicate an attempt'])
                 (args.output / 'result.json').write_text(json.dumps(result, indent=2) + '\n')
             finally:
                 try:

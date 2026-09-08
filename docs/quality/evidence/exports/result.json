@@ -1,0 +1,19 @@
+{
+  "status": "passed",
+  "hardware_validation": false,
+  "source_head": "d7c86502cd7371d4df6cad353fa41dce80b785d2",
+  "source_dirty": true,
+  "original_fixtures": true,
+  "checks": [
+    {
+      "kind": "text",
+      "status": "passed",
+      "sha256": "f0315704e7af4f3a515e94d5a0919bf79a2bc90373021f1bd3ffa5d1b64daf45"
+    },
+    {
+      "kind": "image",
+      "status": "passed",
+      "sha256": "4e93ba97d19b23421fffc1b2438579cbad0fa28a45c9cf94647c323b03c3dc8d"
+    }
+  ]
+}

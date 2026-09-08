@@ -54,6 +54,7 @@ pub mod board;
 mod builder;
 pub mod credentials;
 pub mod entropy;
+pub mod exports;
 pub mod feedback;
 pub mod imports;
 /// Common application and builder types.
@@ -301,12 +302,12 @@ impl Failure {
             },
             TaskError::Unreachable => Self {
                 state: StandardState::Error,
-                advice: "The service did not answer. It may be down.",
+                advice: "The service did not answer. Try again.",
                 retryable: true,
             },
             TaskError::TimedOut => Self {
                 state: StandardState::Error,
-                advice: "The network was too slow to answer.",
+                advice: "The request took too long. Try again.",
                 retryable: true,
             },
             TaskError::Denied => Self {
@@ -320,7 +321,8 @@ impl Failure {
             // would send them round the same loop.
             TaskError::Unauthorized => Self {
                 state: StandardState::PermissionDenied,
-                advice: "Sign in again on your computer.",
+                advice:
+                    "The service did not accept your account details. Check them and try again.",
                 retryable: false,
             },
             // Names the supported way to fix it rather than a path. The path
@@ -329,7 +331,7 @@ impl Failure {
             // there is a command that does it over Wi-Fi.
             TaskError::NoCredential => Self {
                 state: StandardState::PermissionDenied,
-                advice: "Finish account setup on your computer.",
+                advice: "Add account details to connect this service.",
                 retryable: false,
             },
             TaskError::TooLarge => Self {
@@ -338,8 +340,8 @@ impl Failure {
                 retryable: false,
             },
             TaskError::NotFound => Self {
-                state: StandardState::Empty,
-                advice: "Nothing is available right now.",
+                state: StandardState::Error,
+                advice: "This item could not be found. Refresh the list.",
                 retryable: false,
             },
             TaskError::RateLimited(_) => Self {
@@ -386,7 +388,7 @@ impl Failure {
             },
             StoreError::Unwritable => Self {
                 state: StandardState::Error,
-                advice: "This reader would not save the file.",
+                advice: "The file could not be saved. If trying again does not help, restart the reader.",
                 retryable: false,
             },
             StoreError::Missing => Self {
@@ -398,7 +400,7 @@ impl Failure {
             // is a bug in the application rather than anything the reader did.
             StoreError::BadKey => Self {
                 state: StandardState::Error,
-                advice: "This application asked for a file name the reader will not accept.",
+                advice: "This app could not open or save that file. Check for an app update.",
                 retryable: false,
             },
         }
@@ -3665,7 +3667,7 @@ mod tests {
     fn a_missing_key_keeps_the_customer_facing_remedy() {
         let missing = Failure::of(TaskError::NoCredential);
         let said = missing.naming("elevenlabs");
-        assert_eq!(said, "Finish account setup on your computer.");
+        assert_eq!(said, "Add account details to connect this service.");
 
         // Naming a key is meaningless for a failure that had nothing to do
         // with one, so the sentence is left exactly as it was.

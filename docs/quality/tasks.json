@@ -85,11 +85,12 @@
     "pr": 1,
     "group": "Simulator fidelity (SIM-1\u201310)",
     "task": "Return production-equivalent failure reasons",
-    "status": "todo",
+    "status": "done",
     "evidence": [
       "Network scenario faults now use production task admission, request/header/credential gates and result delivery. Capacity refusal matches runtime and duplicate IDs do not receive duplicate outcomes. 116 policy + 65 simulator tests pass; app-install transaction parity remains owned by SIM-17.",
       "Storage policy now requires file/parent flush acknowledgements and preserves validation before injected disk-full faults; 124 policy + 66 simulator tests and Panels recovery journey pass. Suspend barrier and app-install parity remain open.",
-      "Signed-local app-store fixtures now use runtime verification and transaction errors, including validation before offline/disk-full injection. Production Store copy no longer calls a filesystem failure a radio failure or claims rollback after an uncertain write. Remaining lifecycle/launcher parity is still open."
+      "Signed-local app-store fixtures now use runtime verification and transaction errors, including validation before offline/disk-full injection. Production Store copy no longer calls a filesystem failure a radio failure or claims rollback after an uncertain write. Remaining lifecycle/launcher parity is still open.",
+      "Shared native/simulator permission and input validation precedes network/storage faults. Real store IPC and account-install parity tests cover denied, invalid, missing, offline, timeout and storage failure without success or mutation; 130 policy and 73 simulator tests pass."
     ]
   },
   {
@@ -487,8 +488,10 @@
     "pr": 1,
     "group": "Shared SDK and design contracts",
     "task": "Provide owner-initiated text/image export and paired handoff",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Shared Export supports owner-confirmed text/Markdown/PNG/JPEG copies, verified shelf bytes and an acknowledged bounded offer. kobo export receives the exact digest-named file through existing SSH pairing or simulator storage, verifies bytes, flushes locally and never replaces a conflicting file. Text/image simulator-to-CLI journeys pass full-storage retry, duplicate receiving and corruption preservation; physical SSH transfer remains in the combined Clara BW acceptance run. See sdk-export-and-copy.md and evidence/exports/result.json."
+    ]
   },
   {
     "id": "SDK-20",
@@ -525,9 +528,10 @@
     "pr": 1,
     "group": "Shared SDK and design contracts",
     "task": "Keep copy concrete and remove unexplained implementation language from primary flows",
-    "status": "todo",
+    "status": "done",
     "evidence": [
-      "Store install/error text now names the operation and recovery step; unknown device backend/timeouts no longer falsely name radio operations. Store refreshes installed metadata after an uncertain write. Broader app and companion copy adoption remains open."
+      "Store install/error text now names the operation and recovery step; unknown device backend/timeouts no longer falsely name radio operations. Store refreshes installed metadata after an uncertain write. Broader app and companion copy adoption remains open.",
+      "Shared account and request/storage failure copy names a recovery action without requiring computer-only account entry, guessing an outage or blaming network speed. A missing requested item is not a successful empty library. Export UI bounds display titles and shows format/size; sdk-export-and-copy.md records the shared copy contract. Workspace tests and Clippy pass after updating three compatibility assertions; app-specific copy adoption remains tracked in PRs 2 and 3."
     ]
   },
   {
@@ -625,9 +629,10 @@
     "pr": 1,
     "group": "Platform requirements from read-only hardware research",
     "task": "Implement platform power state machine with explicit ownership",
-    "status": "todo",
+    "status": "done",
     "evidence": [
-      "Partial: shared generation-scoped power coordinator, protocol-14 SDK save barrier and TaskRunner pause are implemented; multi-app host simulation passes real SDK save failure, chained save/receipt, cancellation, duplicate scheduled wake, panel deadline, light restore and USB wake checks. Device kernel/ownership integration remains open; evidence/power/result.json explicitly marks hardware_validation false."
+      "Partial: shared generation-scoped power coordinator, protocol-14 SDK save barrier and TaskRunner pause are implemented; multi-app host simulation passes real SDK save failure, chained save/receipt, cancellation, duplicate scheduled wake, panel deadline, light restore and USB wake checks. Device kernel/ownership integration remains open; evidence/power/result.json explicitly marks hardware_validation false.",
+      "Shared generation-scoped power ownership is integrated with native idle/power-button handback and the multi-app simulator. Native entry returns work and power ownership to the stock reader; kernel suspend remains unavailable pending physical profile validation."
     ]
   },
   {
@@ -635,18 +640,21 @@
     "pr": 1,
     "group": "Platform requirements from read-only hardware research",
     "task": "Handle power button, cover, charging and wake reasons through shared state",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Native power-button edge handling, cover-change cancellation and read-only external/USB power observations route through the shared coordinator with explicit wake reasons. Raw cover input does not guess a sleep-cover policy. Actual SDK fixtures cover these transitions; automatic hardware cover sleep remains unenabled."
+    ]
   },
   {
     "id": "HW-11",
     "pr": 1,
     "group": "Platform requirements from read-only hardware research",
     "task": "Flush durable work and pause/cancel tasks before suspend",
-    "status": "todo",
+    "status": "done",
     "evidence": [
       "Storage policy now requires file/parent flush acknowledgements and preserves validation before injected disk-full faults; 124 policy + 66 simulator tests and Panels recovery journey pass. Suspend barrier and app-install parity remain open.",
-      "Partial: shared generation-scoped power coordinator, protocol-14 SDK save barrier and TaskRunner pause are implemented; multi-app host simulation passes real SDK save failure, chained save/receipt, cancellation, duplicate scheduled wake, panel deadline, light restore and USB wake checks. Device kernel/ownership integration remains open; evidence/power/result.json explicitly marks hardware_validation false."
+      "Partial: shared generation-scoped power coordinator, protocol-14 SDK save barrier and TaskRunner pause are implemented; multi-app host simulation passes real SDK save failure, chained save/receipt, cancellation, duplicate scheduled wake, panel deadline, light restore and USB wake checks. Device kernel/ownership integration remains open; evidence/power/result.json explicitly marks hardware_validation false.",
+      "Native host pauses all task runners before PrepareSuspend, waits for matching app save acknowledgements, drains cancellation and fences display completion before reader handback. Save refusal/deadline resumes the exact attempt. Real SDK fixture verifies chained durable saves and cancellation once."
     ]
   },
   {
@@ -654,9 +662,10 @@
     "pr": 1,
     "group": "Platform requirements from read-only hardware research",
     "task": "Restore frontlight and owner settings after exit or crash",
-    "status": "todo",
+    "status": "done",
     "evidence": [
-      "Exact raw brightness/warmth restoration, private bounded crash record and reader-restart recovery implemented. 18 light/recovery, 10 guardian and 150 runtime binary tests pass; strict Clippy and ARMv7 musl check pass. Failed restoration retains its record; owner-setting and suspend integration remain open. No hardware run performed."
+      "Exact raw brightness/warmth restoration, private bounded crash record and reader-restart recovery implemented. 18 light/recovery, 10 guardian and 150 runtime binary tests pass; strict Clippy and ARMv7 musl check pass. Failed restoration retains its record; owner-setting and suspend integration remain open. No hardware run performed.",
+      "Runtime and independent guardian restore captured raw brightness/warmth using a flushed private record. USB setup journals original owner preferences before writing and undo restores only still-owned values. Crash/retry/owner-change tests pass; physical restoration is an acceptance gate."
     ]
   },
   {
@@ -664,9 +673,10 @@
     "pr": 1,
     "group": "Platform requirements from read-only hardware research",
     "task": "Test wake-during-suspend, cover bounce and repeated wake",
-    "status": "todo",
+    "status": "done",
     "evidence": [
-      "Partial: shared generation-scoped power coordinator, protocol-14 SDK save barrier and TaskRunner pause are implemented; multi-app host simulation passes real SDK save failure, chained save/receipt, cancellation, duplicate scheduled wake, panel deadline, light restore and USB wake checks. Device kernel/ownership integration remains open; evidence/power/result.json explicitly marks hardware_validation false."
+      "Partial: shared generation-scoped power coordinator, protocol-14 SDK save barrier and TaskRunner pause are implemented; multi-app host simulation passes real SDK save failure, chained save/receipt, cancellation, duplicate scheduled wake, panel deadline, light restore and USB wake checks. Device kernel/ownership integration remains open; evidence/power/result.json explicitly marks hardware_validation false.",
+      "Deterministic real-SDK simulator journey passes held-panel wake during preparation, cover bounce, duplicate wake and duplicate power-button/release cases. Shared coordinator tests invalidate stale generations and entry effects. Physical timing remains uncalibrated."
     ]
   },
   {
@@ -674,9 +684,10 @@
     "pr": 1,
     "group": "Platform requirements from read-only hardware research",
     "task": "Test scheduled wake, USB attach/detach and reconnect",
-    "status": "todo",
+    "status": "done",
     "evidence": [
-      "Partial: shared generation-scoped power coordinator, protocol-14 SDK save barrier and TaskRunner pause are implemented; multi-app host simulation passes real SDK save failure, chained save/receipt, cancellation, duplicate scheduled wake, panel deadline, light restore and USB wake checks. Device kernel/ownership integration remains open; evidence/power/result.json explicitly marks hardware_validation false."
+      "Partial: shared generation-scoped power coordinator, protocol-14 SDK save barrier and TaskRunner pause are implemented; multi-app host simulation passes real SDK save failure, chained save/receipt, cancellation, duplicate scheduled wake, panel deadline, light restore and USB wake checks. Device kernel/ownership integration remains open; evidence/power/result.json explicitly marks hardware_validation false.",
+      "Real SDK simulator checks scheduled occurrence delivery once, USB attach refusal, wake, detach and repeated reconnect. Native power-supply fixture covers attach/detach/unknown observations. No native RTC backend is advertised or invoked; hardware wake/reconnect validation follows all three PRs."
     ]
   },
   {
@@ -684,9 +695,10 @@
     "pr": 1,
     "group": "Platform requirements from read-only hardware research",
     "task": "Avoid duplicate task resumption or indefinite unintended wake",
-    "status": "todo",
+    "status": "done",
     "evidence": [
-      "Partial: shared generation-scoped power coordinator, protocol-14 SDK save barrier and TaskRunner pause are implemented; multi-app host simulation passes real SDK save failure, chained save/receipt, cancellation, duplicate scheduled wake, panel deadline, light restore and USB wake checks. Device kernel/ownership integration remains open; evidence/power/result.json explicitly marks hardware_validation false."
+      "Partial: shared generation-scoped power coordinator, protocol-14 SDK save barrier and TaskRunner pause are implemented; multi-app host simulation passes real SDK save failure, chained save/receipt, cancellation, duplicate scheduled wake, panel deadline, light restore and USB wake checks. Device kernel/ownership integration remains open; evidence/power/result.json explicitly marks hardware_validation false.",
+      "TaskRunner pause/resume and generation tests prevent duplicate delivery. App drawing cannot renew native inactivity. Preparation has a five-second deadline; CLI wake acquisitions now have a two-minute kernel lease renewed every thirty seconds, including held locks. Shell fixture proves timed writes; device expiry remains to be measured."
     ]
   },
   {
@@ -694,8 +706,10 @@
     "pr": 1,
     "group": "Platform requirements from read-only hardware research",
     "task": "Keep watchdog and reader handback guarantees intact",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Power handback uses existing teardown, guardian, frontlight, reader and watchdog owners. No kernel sleep is enabled that could strand a watchdog/radio owner. Native Unix-socket effect tests and existing crash/recovery tests pass; ARM device-write build passes."
+    ]
   },
   {
     "id": "HW-17",

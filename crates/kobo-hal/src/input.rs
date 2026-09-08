@@ -80,12 +80,29 @@ impl From<io::Error> for InputError {
     }
 }
 
+/// A read-only view of the input decoder's latest contact state.
+#[derive(Clone, Default)]
+pub struct Quiescence(Arc<AtomicBool>);
+impl Quiescence {
+    #[must_use]
+    pub fn is_quiet(&self) -> bool {
+        self.0.load(Ordering::Acquire)
+    }
+}
+struct DecoderLifetime(Arc<AtomicBool>);
+impl Drop for DecoderLifetime {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
+
 /// Exclusive ownership of the touch panel for the lifetime of this value.
 pub struct TouchSession {
     device: File,
     events: Option<Receiver<TouchEvent>>,
     released: bool,
     grabbed: bool,
+    quiet: Arc<AtomicBool>,
 }
 
 impl TouchSession {
@@ -119,6 +136,7 @@ impl TouchSession {
         // that reports nothing from a decoder that discards everything.
         let trace = std::env::var_os("KOBO_TOUCH_TRACE").is_some();
         thread::spawn(move || {
+            let _health = DecoderLifetime(Arc::clone(&decoder_quiescent));
             let mut reader = reader;
             let mut decoder = TouchDecoder::default();
             let mut buffer = [0_u8; EVENT_BYTES * READ_CHUNK_EVENTS];
@@ -194,7 +212,15 @@ impl TouchSession {
             events: Some(events),
             released: false,
             grabbed,
+            quiet: quiescent,
         })
+    }
+
+    /// A live observation from the one input decoder, including dropped-report
+    /// resynchronization. Hosts must treat false as an outstanding contact.
+    #[must_use]
+    pub fn quiescence(&self) -> Quiescence {
+        Quiescence(Arc::clone(&self.quiet))
     }
 
     /// Waits up to `timeout` for the next touch.
@@ -276,6 +302,17 @@ fn wait_for_quiescence_for(
 #[cfg(test)]
 mod tests {
     use super::{InputError, EVENT_BYTES, QUIESCENT_TIMEOUT, QUIESCENT_WINDOW};
+
+    #[test]
+    fn a_disconnected_decoder_never_reports_safe_input() {
+        let quiet = super::Quiescence::default();
+        assert!(!quiet.is_quiet());
+        quiet.0.store(true, std::sync::atomic::Ordering::Release);
+        let reader = super::DecoderLifetime(std::sync::Arc::clone(&quiet.0));
+        assert!(quiet.is_quiet());
+        drop(reader);
+        assert!(!quiet.is_quiet());
+    }
 
     #[test]
     fn an_evdev_event_is_sixteen_bytes_on_this_target() {

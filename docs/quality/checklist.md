@@ -16,7 +16,9 @@ A checked task requires implementation plus recorded validation. Physical measur
 
 ## Status
 
-494 tracked tasks: 88 completed, 1 deferred by the owner, 405 open. Implementation in progress. Evidence is recorded per task in `tasks.json` and in [the validation log](validation.md).
+The PR 1 implementation checklist is complete; CBR is deferred and COMIC-18 belongs to catalog integration in PR 2. This does not certify hardware accuracy: native sleep hands ownership back to the stock reader, and no generic kernel suspend, RTC wake or automatic cover-sleep backend is enabled. Physical acceptance remains scheduled after all three PRs.
+
+494 tracked tasks: 99 completed, 1 deferred by the owner, 394 open. Implementation in progress. Evidence is recorded per task in `tasks.json` and in [the validation log](validation.md).
 
 ## PR 1 · Simulator fidelity (SIM-1–10)
 
@@ -28,7 +30,7 @@ A checked task requires implementation plus recorded validation. Physical measur
 - [x] **SIM-06** Use declared app capabilities instead of granting every capability.
 - [x] **SIM-07** Respect device-supported service backends in simulation.
 - [x] **SIM-08** Inject missing credentials for all credentialed network tasks.
-- [ ] **SIM-09** Return production-equivalent failure reasons.
+- [x] **SIM-09** Return production-equivalent failure reasons.
 - [x] **SIM-10** Cover streaming requests with offline and timeout injection.
 - [x] **SIM-11** Cover shelf/chunked writes with storage-full injection.
 - [x] **SIM-12** Commit panel transitions when screens arrive rather than when screenshots are requested.
@@ -71,11 +73,11 @@ A checked task requires implementation plus recorded validation. Physical measur
 - [x] **SDK-16** Provide board undo/control conventions.
 - [x] **SDK-17** Provide injectable calendar date, monotonic time and test entropy.
 - [x] **SDK-18** Provide stable inline loading, offline, stale and result surfaces.
-- [ ] **SDK-19** Provide owner-initiated text/image export and paired handoff.
+- [x] **SDK-19** Provide owner-initiated text/image export and paired handoff.
 - [x] **SDK-20** Add metric-aware validation beyond builder collection limits.
 - [x] **SDK-21** Keep physical hit targets, margins and semantic type tokens authoritative.
 - [x] **SDK-22** Document primary/secondary button hierarchy and stable action placement.
-- [ ] **SDK-23** Keep copy concrete and remove unexplained implementation language from primary flows.
+- [x] **SDK-23** Keep copy concrete and remove unexplained implementation language from primary flows.
 - [x] **SDK-24** Separate UI/SDK responsibilities into maintainable modules without duplicating contracts.
 
 ## PR 1 · Platform requirements from read-only hardware research
@@ -88,14 +90,14 @@ A checked task requires implementation plus recorded validation. Physical measur
 - [x] **HW-06** Preserve backend-specific refresh intents and waveform capability checks.
 - [x] **HW-07** Record real refresh submission/completion markers and timing.
 - [x] **HW-08** Preserve conservative color/inversion behavior until calibrated.
-- [ ] **HW-09** Implement platform power state machine with explicit ownership.
-- [ ] **HW-10** Handle power button, cover, charging and wake reasons through shared state.
-- [ ] **HW-11** Flush durable work and pause/cancel tasks before suspend.
-- [ ] **HW-12** Restore frontlight and owner settings after exit or crash.
-- [ ] **HW-13** Test wake-during-suspend, cover bounce and repeated wake.
-- [ ] **HW-14** Test scheduled wake, USB attach/detach and reconnect.
-- [ ] **HW-15** Avoid duplicate task resumption or indefinite unintended wake.
-- [ ] **HW-16** Keep watchdog and reader handback guarantees intact.
+- [x] **HW-09** Implement platform power state machine with explicit ownership.
+- [x] **HW-10** Handle power button, cover, charging and wake reasons through shared state.
+- [x] **HW-11** Flush durable work and pause/cancel tasks before suspend.
+- [x] **HW-12** Restore frontlight and owner settings after exit or crash.
+- [x] **HW-13** Test wake-during-suspend, cover bounce and repeated wake.
+- [x] **HW-14** Test scheduled wake, USB attach/detach and reconnect.
+- [x] **HW-15** Avoid duplicate task resumption or indefinite unintended wake.
+- [x] **HW-16** Keep watchdog and reader handback guarantees intact.
 - [x] **HW-17** Create firmware/profile compatibility and recovery evidence format.
 - [x] **HW-18** Prepare Clara BW automation for physical corner/touch/refresh checks.
 - [x] **HW-19** Prepare Clara BW sleep/wake, forced-exit and setting-restoration checks.
@@ -120,7 +122,7 @@ A checked task requires implementation plus recorded validation. Physical measur
 - [x] **COMIC-15** Persist page, direction and viewport per book.
 - [x] **COMIC-16** Support RTL and two-page spreads with a reachable single-page fallback.
 - [x] **COMIC-17** Keep page decode lazy and prefetch/cache bounded.
-- [x] **COMIC-18** Route local comics through the same import preview and receipt as other documents. App integration is in PR 2.
+- [x] **COMIC-18** Route local comics through the same import preview and receipt as other documents. (Delivered with PR 2.)
 - [x] **COMIC-19** Test original CBZ fixtures and hostile/corrupt archives; test clear refusal of CBR.
 - [x] **COMIC-20** Verify Clara-sized comic reading, scaling, navigation and reopen in simulator.
 

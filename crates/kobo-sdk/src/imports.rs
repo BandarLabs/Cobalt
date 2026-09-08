@@ -393,7 +393,7 @@ impl Import {
     }
 }
 
-fn display_size(bytes: usize) -> String {
+pub(crate) fn display_size(bytes: usize) -> String {
     if bytes >= 1_000_000 {
         format!("{}.{} MB", bytes / 1_000_000, bytes % 1_000_000 / 100_000)
     } else {
