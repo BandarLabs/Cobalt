@@ -241,3 +241,13 @@ Records and final shelf chunks now require the file flush, rename and parent-dir
 - Simulator storage logs retain request IDs and outcomes without record values or shelf bytes.
 
 SIM-09 and HW-11 remain open: app-install failure parity and a runtime suspend barrier still require implementation. Host filesystem tests do not establish durability on a physical reader; that remains part of the combined Clara BW run.
+
+
+## Explicit board geometry, clues and accessible large-board navigation
+
+- **262 UI, 92 protocol and 137 SDK tests passed** (two pre-existing UI tests and two doc examples ignored). This includes one separately run three-number clue regression after the full suite. The board fixture checks every supported profile, three interface sizes and both orientations. Every square of a 64 × 64 board is reachable without renumbering or modifying it. Refused refits preserve the prior window; resizing/rotation reveal the selected square.
+- Pixel checks distinguish all six marks with selection/given states and keep oversized content inside its square. Native square grids also keep their original column count on narrow panels. Wire tests cover every truncated prefix, invalid dimensions/counts/flags/marks, duplicate actions and version gating. Existing version-13 grid payload bytes are unchanged.
+- **66 simulator + 16 runtime library + 149 runtime binary tests passed**. UI/protocol/SDK/simulator strict Clippy and Rust 1.85.1 ARMv7 musl SDK/runtime compilation passed.
+- The original extra-large Clara BW [SDK IPC journey](evidence/boards/result.json) passed selection, horizontal/vertical panning, resizing, complete clue inspection and return. Captures have atomic provenance; [selected mark](evidence/boards/selected.png), [complete clue](evidence/boards/clue.png) and [larger squares](evidence/boards/larger.png) were visually inspected. These captures use ideal pixels and do not claim measured panel residue.
+
+SDK-14/15 are complete as shared contracts. Catalog adoption remains in PR 2. Candidate editing and puzzle rules remain app responsibilities; this fixture is not a playable shipped puzzle. The SDK/runtime wire version is 14, with 11–13 decoder compatibility; install/version coordination remains in the foundation runtime work. No external dependency was added: the simulator example uses the existing local SDK as a development dependency.

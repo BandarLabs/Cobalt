@@ -55,11 +55,16 @@ pub const MAGIC: [u8; 4] = *b"KOBO";
 /// Version 12 adds Folio tile values, card tiles, section links and page rails.
 /// Version 13 adds persistent selected state to grid cells. Its runtime retains
 /// a version-12 reader so already installed Folio applications keep working.
+/// Version 14 adds the bounded board viewport on a new node tag. Versions
+/// 11, 12 and 13 remain readable; board nodes require version 14.
 ///
 /// A colour picture travels the same way: a grey picture still uses the tags it
 /// always did, byte for byte, and a colour one uses tags of its own that an
 /// older runtime refuses rather than misreads.
-pub const VERSION: u8 = 13;
+pub const VERSION: u8 = 14;
+/// Version with persistent selected grid cells, retained for installed apps.
+pub const SELECTED_GRID_VERSION: u8 = 13;
+mod board;
 
 /// Opt-in simulator callback boundary carried in an ordinary debug log frame.
 /// It does not add a wire tag or authorize any runtime operation.
@@ -1856,7 +1861,10 @@ impl From<io::Error> for StreamError {
 /// Returns an error when a message exceeds protocol limits.
 #[allow(clippy::too_many_lines)]
 pub fn encode(frame: &Frame) -> Result<Vec<u8>, ProtocolError> {
-    if !matches!(frame.version, LEGACY_VERSION | FOLIO_VERSION | VERSION) {
+    if !matches!(
+        frame.version,
+        LEGACY_VERSION | FOLIO_VERSION | SELECTED_GRID_VERSION | VERSION
+    ) {
         return Err(ProtocolError::UnsupportedVersion(frame.version));
     }
     let (kind, payload_len) = encoded_message_layout(&frame.message, frame.version)?;
@@ -4075,6 +4083,7 @@ fn encoded_node_len(
             }
             length
         }
+        Node::Board { surface, .. } => board::encoded_len(surface, version)?,
         Node::Grid { cells, .. } => {
             if cells.len() > u8::MAX as usize {
                 return Err(ProtocolError::TooManyNodes);
@@ -4309,7 +4318,10 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, ProtocolError> {
         return Err(ProtocolError::BadMagic);
     }
     let version = bytes[4];
-    if !matches!(version, LEGACY_VERSION | FOLIO_VERSION | VERSION) {
+    if !matches!(
+        version,
+        LEGACY_VERSION | FOLIO_VERSION | SELECTED_GRID_VERSION | VERSION
+    ) {
         return Err(ProtocolError::UnsupportedVersion(bytes[4]));
     }
     let payload_len = u32::from_be_bytes([bytes[6], bytes[7], bytes[8], bytes[9]]) as usize;
@@ -4738,7 +4750,10 @@ pub fn read_from<R: Read>(reader: &mut R) -> Result<Frame, StreamError> {
     if header[..4] != MAGIC {
         return Err(ProtocolError::BadMagic.into());
     }
-    if !matches!(header[4], LEGACY_VERSION | FOLIO_VERSION | VERSION) {
+    if !matches!(
+        header[4],
+        LEGACY_VERSION | FOLIO_VERSION | SELECTED_GRID_VERSION | VERSION
+    ) {
         return Err(ProtocolError::UnsupportedVersion(header[4]).into());
     }
     let payload_len = u32::from_be_bytes([header[6], header[7], header[8], header[9]]) as usize;
@@ -5328,6 +5343,7 @@ fn encode_node(
                 push_string(output, item)?;
             }
         }
+        Node::Board { id, surface } => board::push(output, *id, surface, version)?,
         Node::Grid {
             id,
             columns,
@@ -6713,6 +6729,7 @@ fn decode_node(
             };
             Ok(Node::Terminal { id, rows, cursor })
         }
+        32 if version >= 14 => board::read(reader, id),
         15 => {
             let columns = reader.u8()?;
             if columns == 0 || columns > kobo_ui::MAX_COLUMNS {

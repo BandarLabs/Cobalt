@@ -1446,6 +1446,7 @@ dependencies = [
  "kobo-policy",
  "kobo-profile",
  "kobo-protocol",
+ "kobo-sdk",
  "kobo-shell",
  "kobo-text",
  "kobo-ui",

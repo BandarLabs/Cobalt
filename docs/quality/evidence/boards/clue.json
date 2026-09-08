@@ -1,0 +1,180 @@
+{
+  "app": "board-study",
+  "fonts": [
+    {
+      "role": "interface",
+      "source": "AtkinsonHyperlegible-Regular.ttf"
+    },
+    {
+      "role": "display-title",
+      "source": "AtkinsonHyperlegible-Bold.ttf"
+    },
+    {
+      "role": "display-heading",
+      "source": "AtkinsonHyperlegible-Bold.ttf"
+    },
+    {
+      "role": "display-bold",
+      "source": "AtkinsonHyperlegible-Bold.ttf"
+    },
+    {
+      "role": "reading",
+      "source": "AtkinsonHyperlegible-Regular.ttf"
+    },
+    {
+      "role": "mono",
+      "source": "DejaVuSansMono.ttf"
+    }
+  ],
+  "frame": {
+    "colourAppearance": "luminance",
+    "format": "grey8",
+    "sha256": "d1a721312b388880942b98709fe46d351b3692c4214c7bb0b8e32ba57d508300",
+    "view": "ideal"
+  },
+  "interfaceScalePercent": 140,
+  "mode": "single-app",
+  "orientation": "portrait",
+  "paints": "3",
+  "publisherFontHandle": null,
+  "readingScalePercent": 100,
+  "runtimeVersion": "0.3.11",
+  "schema": "cobalt.simulator-capture",
+  "simulation": {
+    "backends": [
+      "network",
+      "battery-read",
+      "frontlight-control",
+      "wifi-control",
+      "library",
+      "cover-sensor"
+    ],
+    "clock": {
+      "date": "2026-09-08",
+      "mode": "manual",
+      "monotonicMillis": "0",
+      "unixMillis": "1788850860000",
+      "utcOffsetMinutes": 0
+    },
+    "dirtyPixelsSinceClean": 101019,
+    "hardware": {
+      "batteryPercent": 72,
+      "charging": false,
+      "coverClosed": false,
+      "frontlightAppearanceCalibrated": false,
+      "frontlightPercent": 20,
+      "orientation": "portrait",
+      "orientationControl": "display-composition"
+    },
+    "input": {
+      "forwardKey": 194,
+      "needsResynchronization": false,
+      "quiescent": true,
+      "rawEvents": "14",
+      "source": "synthetic evdev replay"
+    },
+    "lifecycle": "foreground",
+    "observation": null,
+    "panel": {
+      "completed": "3",
+      "contentsKnown": true,
+      "failures": "0",
+      "finishedAtMillis": "690",
+      "mode": "automatic",
+      "queued": false,
+      "status": "idle",
+      "submissionMarker": null,
+      "submitted": "3",
+      "submittedAtMillis": "681",
+      "timing": "host control observations; not hardware calibration",
+      "visibleFrame": "last confirmed completion with approximate residue"
+    },
+    "panelApproximation": true,
+    "profile": {
+      "colourPanel": false,
+      "height": 1448,
+      "id": "clara-bw-391",
+      "model": "Kobo Clara BW",
+      "pixelsPerInch": 300,
+      "rotation": 3,
+      "touch": {
+        "name": "cyttsp5_mt",
+        "xMax": 1447,
+        "xMin": 0,
+        "yMax": 1071,
+        "yMin": 0
+      },
+      "width": 1072
+    },
+    "refreshCount": 3,
+    "scenario": "normal",
+    "touch": {
+      "display": {
+        "x": 154,
+        "y": 473
+      },
+      "raw": {
+        "x": 473,
+        "y": 917
+      }
+    },
+    "transition": {
+      "dirty": 101019,
+      "full": false,
+      "refresh": 3,
+      "region": {
+        "height": 840,
+        "width": 952,
+        "x": 40,
+        "y": 88
+      },
+      "regions": [
+        {
+          "region": {
+            "height": 48,
+            "width": 264,
+            "x": 176,
+            "y": 88
+          },
+          "waveform": "GL16"
+        },
+        {
+          "region": {
+            "height": 40,
+            "width": 624,
+            "x": 48,
+            "y": 184
+          },
+          "waveform": "GL16"
+        },
+        {
+          "region": {
+            "height": 144,
+            "width": 672,
+            "x": 256,
+            "y": 248
+          },
+          "waveform": "GL16"
+        },
+        {
+          "region": {
+            "height": 520,
+            "width": 952,
+            "x": 40,
+            "y": 408
+          },
+          "waveform": "GL16"
+        }
+      ],
+      "waveform": "GL16"
+    }
+  },
+  "source": {
+    "binarySha256": null,
+    "dirty": null,
+    "fixture": null,
+    "requestedSeed": null,
+    "revision": null
+  },
+  "version": 1
+}

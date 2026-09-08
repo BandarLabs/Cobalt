@@ -19,21 +19,9 @@ pub const CLEAR: &str = "board.clear";
 
 /// Game meaning belongs to the app. Values may name a number, letter or piece;
 /// notes are a set of at most 32 candidates. No mark relies on color alone.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum Mark {
-    #[default]
-    Empty,
-    Filled,
-    Crossed,
-    Dot,
-    Value(u16),
-    Notes(u32),
-}
-impl Mark {
-    const fn valid(self) -> bool {
-        !matches!(self, Self::Value(0) | Self::Notes(0))
-    }
-}
+pub use kobo_ui::BoardMark as Mark;
+mod viewport;
+pub use viewport::{BoardClues, BoardViewport, Direction, ViewError, Zoom};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Field {
@@ -117,7 +105,7 @@ impl Board {
         if initial.len() != count {
             return Err(BoardError::CellCount);
         }
-        if initial.iter().any(|field| !field.mark.valid()) {
+        if initial.iter().any(|field| !field.mark.is_valid()) {
             return Err(BoardError::InvalidMark);
         }
         Ok(Self {
@@ -142,7 +130,7 @@ impl Board {
             return Err(BoardError::CellCount);
         }
         for (field, mark) in self.initial.iter().zip(marks) {
-            if !mark.valid() {
+            if !mark.is_valid() {
                 return Err(BoardError::InvalidMark);
             }
             if field.locked && field.mark != *mark {
@@ -220,7 +208,7 @@ impl Board {
             if !seen.insert(cell) {
                 return Err(BoardError::DuplicateCell);
             }
-            if !after.valid() {
+            if !after.is_valid() {
                 return Err(BoardError::InvalidMark);
             }
             if field.locked && after != field.mark {

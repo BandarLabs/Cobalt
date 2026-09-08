@@ -429,16 +429,20 @@
     "pr": 1,
     "group": "Shared SDK and design contracts",
     "task": "Extend shared board surface with clue gutters, selection and distinct marks",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Bounded native board viewport with aligned clue gutters, explicit grayscale marks and selection; SDK pan/resize/reveal and full clue inspection. All-profile size/orientation and 4096-cell reachability tests pass; original SDK IPC simulator journey passes. Catalog adoption remains in PR 2."
+    ]
   },
   {
     "id": "SDK-15",
     "pr": 1,
     "group": "Shared SDK and design contracts",
     "task": "Support larger boards with accessible paging/pan/zoom",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Bounded native board viewport with aligned clue gutters, explicit grayscale marks and selection; SDK pan/resize/reveal and full clue inspection. All-profile size/orientation and 4096-cell reachability tests pass; original SDK IPC simulator journey passes. Catalog adoption remains in PR 2."
+    ]
   },
   {
     "id": "SDK-16",

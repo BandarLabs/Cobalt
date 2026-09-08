@@ -2337,7 +2337,7 @@ impl ScreenBuilder {
         }
     }
 
-    fn register(&mut self, name: &str) -> ActionId {
+    pub(crate) fn register(&mut self, name: &str) -> ActionId {
         let action = action_id(name);
         if !self.actions.iter().any(|(known, _)| known == name) {
             self.actions.push((name.to_owned(), action));
@@ -2345,7 +2345,7 @@ impl ScreenBuilder {
         action
     }
 
-    fn next_id(&mut self) -> NodeId {
+    pub(crate) fn next_id(&mut self) -> NodeId {
         let id = NodeId(self.next_node);
         self.next_node = self.next_node.saturating_add(1);
         id

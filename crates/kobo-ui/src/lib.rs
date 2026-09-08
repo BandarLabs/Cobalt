@@ -11,6 +11,9 @@
 
 //! A small retained UI tree and grayscale rasterizer for the Kobo display.
 
+mod board;
+pub use board::{BoardCell, BoardClue, BoardMark, BoardSurface};
+
 use std::cmp::{max, min};
 use std::collections::BTreeMap;
 use std::sync::{Mutex, OnceLock};
@@ -4258,6 +4261,11 @@ pub enum Node {
     /// keyboard, a calculator and a colour picker are all the same shape, and
     /// none of them should need a new primitive in the protocol. So the caller
     /// chooses the columns, and whether cells are square or a single row high.
+    /// A bounded board viewport with explicit marks and aligned clue gutters.
+    Board {
+        id: NodeId,
+        surface: BoardSurface,
+    },
     Grid {
         id: NodeId,
         columns: u8,
@@ -5303,6 +5311,7 @@ impl Node {
             | Self::Splash { id, .. }
             | Self::PagedList { id, .. }
             | Self::Grid { id, .. }
+            | Self::Board { id, .. }
             | Self::Rows { id, .. }
             | Self::Table { id, .. }
             | Self::TileGrid { id, .. }
@@ -5560,6 +5569,9 @@ pub enum LayoutKind {
     /// columns for its cells to turn taller than they are wide, so the size
     /// this label draws at cannot be read off its own rectangle.
     CellLabel(bool),
+    /// Explicit board ink; selection is an outline independent of the mark.
+    BoardMark(BoardMark, bool),
+    BoardClue,
     /// The three nested squares and four connectors behind a Morris board.
     MorrisBoard,
     /// One cell of a table, drawn in the body face.
@@ -5749,6 +5761,7 @@ pub enum LayoutIssueKind {
     },
     EmptyChoice,
     InvalidPictureSource,
+    InvalidBoard,
     /// A bar of destinations with nothing marked as current.
     ///
     /// A warning rather than an error, and deliberately so. `selected: None`
@@ -5857,6 +5870,7 @@ impl std::fmt::Display for LayoutIssue {
             LayoutIssueKind::EmptyChoice => {
                 write!(formatter, "{node}: choice has no tappable answers")
             }
+            LayoutIssueKind::InvalidBoard => formatter.write_str("Board viewport has invalid dimensions, marks or clues."),
             LayoutIssueKind::InvalidPictureSource => {
                 write!(formatter, "{node}: picture source has no area")
             }
@@ -6554,6 +6568,7 @@ fn layout_flow_node(
             | Node::Spacer { .. }
             | Node::Flex { .. }
             | Node::Grid { .. }
+            | Node::Board { .. }
             | Node::Table { .. }
             | Node::Picture { .. }
             | Node::TileGrid { .. }
@@ -7851,6 +7866,18 @@ fn layout_node(
             });
             y.saturating_add(height)
         }
+        Node::Board { id, surface } => board::layout(
+            *id,
+            surface,
+            Rect {
+                x,
+                y,
+                width,
+                height: bottom.saturating_sub(y),
+            },
+            metrics,
+            layout,
+        ),
         Node::Grid {
             id,
             columns,
@@ -7866,7 +7893,7 @@ fn layout_node(
             let pad_deck = *square && requested == 5 && cells.len() == 15;
             // A board's column count is the board, so narrowing it to the touch
             // target would deal a different game. Only free-form grids shrink.
-            let columns = if legacy_typography() || backgammon_board || pad_deck {
+            let columns = if legacy_typography() || *square {
                 requested
             } else {
                 let fits = width
@@ -12144,6 +12171,16 @@ fn validate_node(
                 check_text_coverage(id, item, Face::Text, issues);
             }
         }
+        Node::Board { surface, .. } => {
+            if !surface.is_valid() {
+                issues.push(LayoutIssue {
+                    severity: DiagnosticSeverity::Error,
+                    node: Some(id),
+                    kind: LayoutIssueKind::InvalidBoard,
+                    rect: None,
+                });
+            }
+        }
         Node::Grid { cells, .. } => {
             if cells.len() > MAX_CELLS {
                 issues.push(limit_issue(id, "grid cells", cells.len(), MAX_CELLS));
@@ -12497,6 +12534,9 @@ fn node_enabled_interaction_count(node: &Node) -> usize {
         Node::Chips { chips, .. } | Node::Tabs { tabs: chips, .. } => chips.len(),
         Node::Card { .. } | Node::Band { .. } => 0,
         Node::Grid { cells, .. } => cells.len(),
+        Node::Board { surface, .. } => {
+            surface.cells.len() + surface.row_clues.len() + surface.column_clues.len()
+        }
         Node::Rows { rows, .. } => rows
             .iter()
             .map(|row| 1 + usize::from(row.menu.is_some()))
@@ -12640,7 +12680,8 @@ fn layout_text_style(node: &LayoutNode) -> Option<(FontSize, Face)> {
         }
         LayoutKind::TopBarTitle => BAR_TITLE,
         LayoutKind::OverlayTitle => FontSize::Title,
-        LayoutKind::Secondary
+        LayoutKind::BoardClue
+        | LayoutKind::Secondary
         | LayoutKind::Section
         | LayoutKind::TableHeaderCell
         | LayoutKind::FactLabel
@@ -13622,6 +13663,17 @@ fn render_all_with_selected_font(
                     clip,
                 );
             }
+            LayoutKind::BoardMark(mark, locked) => {
+                board::draw_mark(surface, node.rect, mark, locked, metrics, clip);
+            }
+            LayoutKind::BoardClue => draw_centered(
+                surface,
+                &node.text_lines,
+                node.rect,
+                FontSize::Caption,
+                tone::INK,
+                clip,
+            ),
             LayoutKind::CellLabel(board) => {
                 // A short label on a board is a mark rather than a word: an X,
                 // an O or a Sudoku digit is the content of the cell and should

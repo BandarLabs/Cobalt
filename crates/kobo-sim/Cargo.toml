@@ -21,3 +21,6 @@ kobo-ui = { path = "../kobo-ui" }
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+kobo-sdk = { path = "../kobo-sdk" }
