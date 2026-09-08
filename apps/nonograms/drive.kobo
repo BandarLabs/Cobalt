@@ -1,16 +1,16 @@
 expect Nonograms
-tap How to play
+tap Help
 expect Use the clues to fill the picture
 wait 250
 clean
 shot nonograms-help
 tap Back
-tap Harbor dawn
+tap House
 wait-for-id more
-tap-id board.cell.0
+tap-id board.cell.2
 wait-idle
-tap-id board.row.0
-expect Row 1
+tap-id board.column.2
+expect Column 3
 shot nonograms-clue
 tap-id resume
 tap-id more

@@ -2,10 +2,10 @@
   "id": "nonograms",
   "display_name": "Nonograms",
   "short_label": "Nonograms",
-  "summary": "Solve picture puzzles with attached clues, saved undo and grids up to 25×25.",
+  "summary": "Solve 18 original picture puzzles with attached clues, saved undo and larger grids.",
   "page_description": "Pan larger grids, inspect full clues and keep your marks and undo history when reopening.",
-  "version": "0.1.5",
-  "release_notes": "Adds attached row and column clues, panning, square sizing, persistent undo and acknowledged save recovery.",
+  "version": "0.1.6",
+  "release_notes": "Adds an original picture collection and keeps earlier puzzles and their saved games in a separate collection.",
   "glyph": "grid",
   "capabilities": []
 }

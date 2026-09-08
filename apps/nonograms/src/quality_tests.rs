@@ -351,3 +351,53 @@ fn completion_waits_for_the_solved_index_and_retries_its_failure() {
     r.store_result(StoreResult::Saved { key: SOLVED.into() });
     assert!(r.app().can_suspend());
 }
+
+#[test]
+fn new_collection_does_not_reuse_or_rewrite_an_earlier_save() {
+    let mut r = AppRunner::new(Game::default());
+    r.start();
+    r.store_result(StoreResult::Loaded {
+        key: SOLVED.into(),
+        value: None,
+    });
+    assert_eq!(r.app().pack, Pack::Pictures);
+    assert_eq!(r.app().visible_puzzles(), (60..78).collect::<Vec<_>>());
+    r.action(action_id("pack-toggle"));
+    assert_eq!(r.app().visible_puzzles(), (0..60).collect::<Vec<_>>());
+    r.action(action_id("puzzle-0"));
+    let old = [b"g\n".as_slice(), b"#........................"].concat();
+    r.store_result(StoreResult::Loaded {
+        key: "progress-pack-00".into(),
+        value: Some(old.clone()),
+    });
+    assert_eq!(r.app().marks[0], Mark::Fill);
+    r.action(action_id("back-browser"));
+    r.action(action_id("pack-toggle"));
+    r.action(action_id("puzzle-60"));
+    assert_eq!(
+        r.app().progress_key().as_deref(),
+        Some("progress-picture-house-v1")
+    );
+    let opened = r.store_result(StoreResult::Loaded {
+        key: "progress-picture-house-v1".into(),
+        value: None,
+    });
+    assert!(!opened
+        .iter()
+        .any(|c| matches!(c, Command::Store(StoreRequest::Save { .. }))));
+    let changed = r.action(action_id("board.cell.0"));
+    assert!(changed.iter().any(|c| matches!(c, Command::Store(StoreRequest::Save { key, .. }) if key == "progress-picture-house-v1")));
+    assert!(!changed.iter().any(
+        |c| matches!(c, Command::Store(StoreRequest::Save { key, .. }) if key == "progress-pack-00")
+    ));
+    ack(&mut r);
+    r.action(action_id("back-browser"));
+    r.action(action_id("pack-toggle"));
+    r.action(action_id("puzzle-0"));
+    r.store_result(StoreResult::Loaded {
+        key: "progress-pack-00".into(),
+        value: Some(old),
+    });
+    assert_eq!(r.app().marks[0], Mark::Fill);
+    assert!(r.app().guided);
+}

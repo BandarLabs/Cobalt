@@ -688,3 +688,16 @@ Validation:
 See [the result](evidence/nonograms/result.json), [selected square and clues](evidence/nonograms/02-marked-square.png), [save retry](evidence/nonograms/06-save-recovery.png), [last square](evidence/nonograms/09-last-square.png), and [completed grid](evidence/nonograms/12-completed-puzzle.png). PNG/JSON/layout artifacts preserve actual source, binary, font and profile provenance, including dirty-source status. App/SDK guides, public app page and canonical screenshots are updated.
 
 PR #167 was merged into beta as `c22c946`; its tree matches the previously verified foundation head `4611d20`. PR #168 now targets beta directly. Its merge reconciliation preserves the subsequent catalog changes; the additional shared clue renderer change is included in PR #168. No fourth PR, physical-reader operation, RAR dependency or reference-project source was introduced. Clara BW hardware acceptance remains scheduled after all three PRs.
+
+
+## Nonograms picture collection and earlier-save preservation
+
+NONO-07 is complete in Nonograms 0.1.6. **495 tasks: 117 done, 377 open and one CBR deferral. PR 2 has 25 done and 244 open; PR 3 still has 133 open.**
+
+The default collection now contains 18 distinct original picture drawings, from a house and heart to a castle and bridge, covering all five supported sizes. Their original pixel masters and explicit larger-grid construction are in `scripts/quality/make-nonogram-pictures.py`; the generated `pictures.txt` SHA-256 is `b207347b75d886f8bc58bad5d8cfdad1835e515246b686119a132df8cf69c926`. No external corpus, artwork or reference-project source was used. The generator’s independent Python line solver checks each final image; Rust rechecks the shipped answers and distinctness. Larger grids retain the simple block drawing style.
+
+The Earlier collection retains the previous 60 IDs, answers and progress keys. New pictures use separate `picture-NAME-v1` identities. Switching collections changes only the browser filter/page; it does not rewrite an earlier game. Imported photos return to Pictures. The browser, app instructions and canonical screenshots now show the new collection.
+
+**32 app tests pass**, including the existing layout/recovery suite plus new-picture solvability/distinctness and separate save destinations. Strict Clippy, ARMv7 musl compilation and the published-catalog version gate pass. The final actual extra-large Clara BW SDK simulator repeats the prior clue, panning, undo, completion and recovery journey against Earlier, then saves/restarts/completes the new House picture and verifies the earlier save bytes remain unchanged. It runs the new committed demonstration route. No personal storage or physical reader was used.
+
+See [the full result](evidence/nonogram-pictures/result.json), [House selection](evidence/nonogram-pictures/14-picture-selection.png), [restored House](evidence/nonogram-pictures/15-picture-restored.png) and [completed House](evidence/nonogram-pictures/16-picture-completed.png). Capture metadata records actual binary/source/font/profile provenance and dirty source accurately. The app README, public page and screenshots are updated. Physical acceptance remains scheduled after the three PRs; the catalog and companion program is still in progress.

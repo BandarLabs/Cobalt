@@ -2257,9 +2257,10 @@
     "pr": 2,
     "group": "Nonograms",
     "task": "Replace repetitive bundled stroke patterns with varied original picture puzzles while preserving existing saved games",
-    "status": "todo",
+    "status": "done",
     "evidence": [
-      "The visual acceptance pass found the legacy 60-entry pack uses repeated horizontal stroke patterns. Current play/recovery improvements retain its identities; a varied replacement needs explicit saved-game migration. Added during implementation review on 9 September 2026."
+      "The visual acceptance pass found the legacy 60-entry pack uses repeated horizontal stroke patterns. Current play/recovery improvements retain its identities; a varied replacement needs explicit saved-game migration. Added during implementation review on 9 September 2026.",
+      "18 distinct original picture puzzles now form the default collection, with sizes 5\u201325. The original pixel masters and reproducible independent line-solver generator are included. Rust verifies every shipped answer and distinctness. Earlier retains all 60 original IDs/answers and save keys. The actual SDK simulator restores a new picture, completes House, and proves the earlier save bytes stay unchanged. See evidence/nonogram-pictures/result.json and validation.md."
     ]
   },
   {

@@ -9,7 +9,7 @@ mod solver;
 mod view;
 use kobo_state::draft::{Draft, Status};
 
-use corpus::{bundled, Puzzle};
+use corpus::Puzzle;
 use kobo_image::Picture;
 use kobo_sdk::{
     action_id, ActionId, BannerLevel, Context, KoboApp, PictureHandle, Screen, ScreenBuilder,
@@ -36,6 +36,13 @@ enum Route {
     Menu,
     Clue,
     Restart,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum Pack {
+    #[default]
+    Pictures,
+    Earlier,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -87,6 +94,7 @@ impl Mark {
 )]
 struct Game {
     route: Route,
+    pack: Pack,
     puzzles: Vec<Puzzle>,
     selected: Option<usize>,
     marks: Vec<Mark>,
@@ -118,7 +126,8 @@ impl Default for Game {
     fn default() -> Self {
         Self {
             route: Route::Browser,
-            puzzles: bundled(),
+            pack: Pack::Pictures,
+            puzzles: corpus::catalog(),
             selected: None,
             marks: Vec::new(),
             guided: false,
@@ -190,35 +199,50 @@ impl Game {
         }
     }
 
-    fn browser_pages(&self, context: &Context) -> Vec<Vec<usize>> {
-        let details = self
-            .puzzles
+    fn visible_puzzles(&self) -> Vec<usize> {
+        self.puzzles
             .iter()
-            .map(|puzzle| {
-                format!(
-                    "{} · {}×{} · {}",
-                    if self.solved.contains(&puzzle.id) {
-                        "Solved"
-                    } else {
-                        "Not started"
-                    },
-                    puzzle.side,
-                    puzzle.side,
-                    if puzzle.side > 9 {
-                        "Pan to play"
-                    } else {
-                        puzzle.difficulty()
-                    }
-                )
-            })
-            .collect::<Vec<_>>();
-        let rows = self
-            .puzzles
+            .enumerate()
+            .filter(|(_, puzzle)| puzzle.id.starts_with("pack-") == (self.pack == Pack::Earlier))
+            .map(|(index, _)| index)
+            .collect()
+    }
+
+    fn browser_detail(&self, index: usize) -> String {
+        let puzzle = &self.puzzles[index];
+        format!(
+            "{} · {}×{} · {}",
+            if self.solved.contains(&puzzle.id) {
+                "Solved"
+            } else {
+                "Not started"
+            },
+            puzzle.side,
+            puzzle.side,
+            if puzzle.side > 9 {
+                "Pan to play"
+            } else {
+                puzzle.difficulty()
+            }
+        )
+    }
+
+    fn browser_pages(&self, context: &Context) -> Vec<Vec<usize>> {
+        let indices = self.visible_puzzles();
+        let details: Vec<_> = indices
+            .iter()
+            .map(|&index| self.browser_detail(index))
+            .collect();
+        let rows: Vec<_> = indices
             .iter()
             .zip(&details)
-            .map(|(puzzle, detail)| (puzzle.title.as_str(), detail.as_str(), ""))
-            .collect::<Vec<_>>();
-        context.paginate_rows_below_section(&rows, true, kobo_sdk::Position::AtTheFoot, None)
+            .map(|(&index, detail)| (self.puzzles[index].title.as_str(), detail.as_str(), ""))
+            .collect();
+        context
+            .paginate_rows_below_section(&rows, true, kobo_sdk::Position::AtTheFoot, None)
+            .into_iter()
+            .map(|page| page.into_iter().map(|index| indices[index]).collect())
+            .collect()
     }
 
     fn browser(&self, context: &Context) -> Screen {
@@ -228,29 +252,19 @@ impl Game {
         ScreenBuilder::new("nonograms-browser")
             .top_bar("Nonograms")
             .section_with_value(
-                "Bundled puzzles",
-                format!("{} of {}", self.solved.len(), self.puzzles.len()),
+                if self.pack == Pack::Pictures {
+                    "Picture puzzles"
+                } else {
+                    "Earlier puzzles"
+                },
+                format!("{} puzzles", self.visible_puzzles().len()),
             )
             .rows(visible.iter().map(|&index| {
                 let puzzle = &self.puzzles[index];
-                let status = if self.solved.contains(&puzzle.id) {
-                    "Solved"
-                } else {
-                    "Not started"
-                };
                 (
                     format!("puzzle-{index}"),
                     puzzle.title.clone(),
-                    format!(
-                        "{status} · {}×{} · {}",
-                        puzzle.side,
-                        puzzle.side,
-                        if puzzle.side > 9 {
-                            "Pan to play"
-                        } else {
-                            puzzle.difficulty()
-                        }
-                    ),
+                    self.browser_detail(index),
                     kobo_sdk::Glyph::Grid,
                 )
             }))
@@ -259,7 +273,18 @@ impl Game {
                 u16::try_from(page + 1).unwrap_or(u16::MAX),
                 u16::try_from(pages.len().max(1)).unwrap_or(u16::MAX),
             )
-            .action_bar([("photo", "Photo puzzle"), ("how-to-play", "How to play")])
+            .action_bar([
+                ("photo", "Photos"),
+                ("how-to-play", "Help"),
+                (
+                    "pack-toggle",
+                    if self.pack == Pack::Pictures {
+                        "Earlier"
+                    } else {
+                        "Pictures"
+                    },
+                ),
+            ])
             .build()
     }
 
@@ -318,6 +343,11 @@ impl Game {
     fn select(&mut self, context: &mut Context, index: usize) {
         let Some(puzzle) = self.puzzles.get(index) else {
             return;
+        };
+        self.pack = if puzzle.id.starts_with("pack-") {
+            Pack::Earlier
+        } else {
+            Pack::Pictures
         };
         self.selected = Some(index);
         self.focus = Some(0);
@@ -518,6 +548,7 @@ impl Game {
                     .retain(|puzzle| !puzzle.id.starts_with("photo-"));
                 self.puzzles.push(photo.puzzle);
                 self.filter_solved();
+                self.pack = Pack::Pictures;
                 self.selected = Some(self.puzzles.len() - 1);
                 self.focus = Some(0);
                 self.viewport = None;
@@ -712,7 +743,14 @@ impl KoboApp for Game {
             self.show(context);
             return;
         }
-        if action == action_id("photo-help") && self.route == Route::Photo {
+        if action == action_id("pack-toggle") && self.route == Route::Browser {
+            self.pack = if self.pack == Pack::Pictures {
+                Pack::Earlier
+            } else {
+                Pack::Pictures
+            };
+            self.page = 0;
+        } else if action == action_id("photo-help") && self.route == Route::Photo {
             self.route = Route::PhotoHelp;
             self.help_page = 0;
         } else if action == ActionId::BACK && self.route == Route::PhotoHelp {
@@ -882,7 +920,7 @@ mod tests {
                 let pages = game.browser_pages(&context);
                 assert_eq!(
                     pages.iter().flatten().copied().collect::<Vec<_>>(),
-                    (0..game.puzzles.len()).collect::<Vec<_>>()
+                    game.visible_puzzles()
                 );
                 for (page, indices) in pages.iter().enumerate() {
                     game.page = page;

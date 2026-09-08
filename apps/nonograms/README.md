@@ -1,6 +1,8 @@
 # Nonograms
 
-Fill picture grids using the clues attached to each row and column. Bundled boards from 5×5 through 25×25 are playable. Large boards use a movable window instead of smaller touch targets.
+Solve 18 original picture puzzles using the clues attached to each row and column. The collection includes a house, heart, tree, cup, key, fish, moon, rocket and other small drawings, with boards from 5×5 through 25×25. Large boards use a movable window instead of smaller touch targets.
+
+**Earlier** opens the previous 60-puzzle study pack. Its puzzle IDs, answers and progress keys are unchanged. **Pictures** returns to the new collection. New pictures use separate `picture-NAME-v1` identities, so saving one cannot overwrite an earlier game. Imported photos appear with the picture collection.
 
 ## Play and inspect
 
@@ -37,9 +39,17 @@ The current computer companion sends 5×5, 7×7 or 9×9 photo puzzles:
 kobo nonograms push IMAGE --size N --device READER
 ```
 
-Choose the same size in **Photo puzzle**, then **Open**. The app’s Help screen explains the placeholders. Companion preview, simulator targeting and broader import support are tracked separately in PR 3.
+Choose the same size in **Photos**, then **Open**. The app’s Help screen explains the placeholders. Companion preview, simulator targeting and broader import support are tracked separately in PR 3.
 
-The app accepts an image-derived puzzle only when repeated row/column deductions determine its entire answer. Ambiguous or unsupported inputs are refused. The displayed solver rating is **Easy** for one productive pass, **Medium** for two or three and **Hard** for more. This repeatable guide describes solver work, not measured human difficulty. The existing bundled study pack uses simple line-solvable stroke patterns.
+The app accepts an image-derived puzzle only when repeated row/column deductions determine its entire answer. Ambiguous or unsupported inputs are refused. The displayed solver rating is **Easy** for one productive pass, **Medium** for two or three and **Hard** for more. This repeatable guide describes solver work, not measured human difficulty. The earlier study pack remains available for existing games. The new collection uses 18 distinct original drawings; every answer is determined by the line solver.
+
+## Original drawings
+
+The pixel masters and their larger-grid construction are recorded in [make-nonogram-pictures.py](../../scripts/quality/make-nonogram-pictures.py). No external puzzle corpus or artwork is used. The larger grids deliberately retain the simple block drawing style. The generator independently checks row/column deduction before writing [pictures.txt](assets/pictures.txt); Rust checks the final shipped answers, distinctness and unchanged earlier identities.
+
+```sh
+python3 scripts/quality/make-nonogram-pictures.py
+```
 
 ## Validation
 

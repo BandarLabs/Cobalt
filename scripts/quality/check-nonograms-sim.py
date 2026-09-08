@@ -86,7 +86,10 @@ def main():
                     return any(node['action'] == aid(name) for node in json.loads(get('layout'))['nodes'])
 
                 def choose(index):
-                    drive('wait-for-id puzzle-0')
+                    drive('wait-for-id pack-toggle')
+                    text = ' '.join(line for node in json.loads(get('layout'))['nodes'] for line in node['lines'])
+                    if ('Earlier puzzles' in text) != (index < 60):
+                        drive('tap-id pack-toggle')
                     for _ in range(60):
                         if has(f'puzzle-{index}'):
                             drive(f'tap-id puzzle-{index}', 'wait-for-id more', 'wait-idle')
@@ -156,7 +159,7 @@ def main():
                 os.killpg(process.pid, signal.SIGKILL)
                 process.wait(timeout=5)
                 address = start()
-                drive('wait-for-id puzzle-0', 'tap-id puzzle-0', 'wait-for-id next-puzzle', 'wait-idle')
+                drive('wait-for-id pack-toggle', 'tap-id pack-toggle', 'tap-id puzzle-0', 'wait-for-id next-puzzle', 'wait-idle')
                 capture('13-restored-completion')
                 drive('tap-id undo', 'wait-for-id more', 'wait-idle')
                 assert saved()['marks'][24] == '#'
@@ -184,19 +187,41 @@ def main():
                     if json.loads(get('layout'))['nodes'] == before_help: break
                 else: raise AssertionError('Help did not finish')
                 drive('tap Back')
-                # The committed demonstration route starts with a fresh game.
-                # Reset only this script's own disposable fixture after the
-                # completion/reopen checks above, never owner storage.
+                # The picture demonstration is separate from earlier games.
+                # Preserve the earlier record while opening and saving a new picture.
                 os.killpg(process.pid, signal.SIGKILL)
                 process.wait(timeout=5)
-                (store_root/'progress-pack-00').unlink()
+                earlier_bytes = (store_root/'progress-pack-00').read_bytes()
                 address = start()
-                drive('wait-for-id puzzle-0')
+                drive('wait-for-id pack-toggle')
                 subprocess.run([str(cli),'drive','--address',address,'--ideal','--shots',str(args.output/'route'),'--script',str(ROOT/'apps/nonograms/drive.kobo')],cwd=ROOT,env=env,stdout=log,stderr=log,check=True,timeout=60)
+                capture('14-picture-selection')
+                picture_key = store_root/'progress-picture-house-v1'
+                picture_before = picture_key.read_bytes()
+                assert (store_root/'progress-pack-00').read_bytes() == earlier_bytes
+                restart(60)
+                assert picture_key.read_bytes() == picture_before
+                assert (store_root/'progress-pack-00').read_bytes() == earlier_bytes
+                capture('15-picture-restored')
+                drive('tap-id more', 'tap-id run-entry', 'tap-id resume', 'wait-idle')
+                house = (ROOT/'apps/nonograms/assets/pictures.txt').read_text().splitlines()[0].split('|')[3]
+                for cell, target in enumerate(house):
+                    for _ in range(8):
+                        if has(f'board.cell.{cell}'): break
+                        direction = 'board.up' if cell < 5 else 'board.down'
+                        drive('tap-id '+direction)
+                    else: raise AssertionError('Picture square not reachable')
+                    wanted = '#' if target == '#' else 'x'
+                    for _ in range(3):
+                        if json.loads(picture_key.read_text())['payload']['marks'][cell] == wanted: break
+                        drive(f'tap-id board.cell.{cell}', 'wait-idle')
+                drive('wait-for-id next-puzzle', 'wait-idle')
+                assert (store_root/'progress-pack-00').read_bytes() == earlier_bytes
+                capture('16-picture-completed')
                 result = dict(status='passed',profile=args.profile,scale=args.scale,original_fixture=True,
                     source_head=subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip(),
                     source_dirty=bool(subprocess.check_output(['git','status','--porcelain'],cwd=ROOT)),
-                    checks=['attached clues','mark selection','full clue inspection','forced restart','persistent atomic run undo','failed-save preservation','explicit retry','confirmed restart undo','full completion','completion restart and undo','25x25 panning','last square restart','all help pages','committed route'])
+                    checks=['attached clues','mark selection','full clue inspection','forced restart','persistent atomic run undo','failed-save preservation','explicit retry','confirmed restart undo','full completion','completion restart and undo','25x25 panning','last square restart','all help pages','committed route','new picture restart','earlier save preserved','new picture completion'])
                 (args.output/'result.json').write_text(json.dumps(result,indent=2)+'\n')
             finally:
                 if process is not None and process.poll() is None:

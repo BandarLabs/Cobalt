@@ -18,7 +18,7 @@ A checked task requires implementation plus recorded validation. Physical measur
 
 The PR 1 implementation checklist is complete; CBR is deferred and COMIC-18 belongs to catalog integration in PR 2. This does not certify hardware accuracy: native sleep hands ownership back to the stock reader, and no generic kernel suspend, RTC wake or automatic cover-sleep backend is enabled. Physical acceptance remains scheduled after all three PRs.
 
-495 tracked tasks: 116 completed, 1 deferred by the owner, 378 open. Implementation in progress. Evidence is recorded per task in `tasks.json` and in [the validation log](validation.md).
+495 tracked tasks: 117 completed, 1 deferred by the owner, 377 open. Implementation in progress. Evidence is recorded per task in `tasks.json` and in [the validation log](validation.md).
 
 ## PR 1 · Simulator fidelity (SIM-1–10)
 
@@ -365,7 +365,7 @@ The PR 1 implementation checklist is complete; CBR is deferred and COMIC-18 belo
 - [x] **NONO-04** Make supported larger grids navigable.
 - [x] **NONO-05** Distinguish unsupported sizes before play.
 - [x] **NONO-06** Validate imported puzzle solvability and difficulty.
-- [ ] **NONO-07** Replace repetitive bundled stroke patterns with varied original picture puzzles while preserving existing saved games. (Added during implementation review.)
+- [x] **NONO-07** Replace repetitive bundled stroke patterns with varied original picture puzzles while preserving existing saved games. (Added during implementation review.)
 
 ## PR 2 · Panels
 
