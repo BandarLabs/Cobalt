@@ -9,6 +9,7 @@ pub(crate) enum Input {
     Sleep(SleepReason),
     Wake(WakeReason),
     Usb(bool),
+    Charging(bool),
     Button(bool),
 }
 impl Input {
@@ -23,6 +24,8 @@ impl Input {
             "wake scheduled" => Self::Wake(WakeReason::Scheduled),
             "button down" => Self::Button(true),
             "button up" => Self::Button(false),
+            "charging on" => Self::Charging(true),
+            "charging off" => Self::Charging(false),
             "usb attach" => Self::Usb(true),
             "usb detach" => Self::Usb(false),
             _ => return None,
@@ -192,6 +195,16 @@ impl Controller {
                     .ok()
             }
             Input::Wake(reason) => self.power.wake(reason),
+            Input::Charging(charging) => {
+                for app in apps.iter() {
+                    let mut state = app.session.state.lock().map_err(lock_error)?;
+                    state.hardware.charging = charging;
+                    state.observe_hardware();
+                }
+                charging
+                    .then(|| self.power.wake(WakeReason::Charging))
+                    .flatten()
+            }
             Input::Usb(attached) => {
                 self.usb = attached;
                 attached.then(|| self.power.wake(WakeReason::Usb)).flatten()

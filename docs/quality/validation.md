@@ -450,3 +450,37 @@ Logs: `/tmp/cobalt-foundation-export-workspace-tests.log`,
 `/tmp/cobalt-foundation-export-workspace-clippy.log`.
 Evidence: `evidence/exports/result.json` and paired captures. Beta was fetched
 again and remains `7f1a543aa432248f45a69db186e1d6b85c888b17`.
+
+
+### Foundation completion: validated handback and failure parity (2026-09-08)
+
+SIM-09 and HW-09–16 now have implementation and repeatable host evidence. Earlier
+entries describe intermediate work; the final native route is a save barrier
+followed by normal stock-reader handback. It deliberately does not enter kernel
+suspend or advertise RTC wake. Automatic sleep-cover polarity is not inferred
+from a raw magnet event. Radio and watchdog ownership use existing teardown;
+physical behavior and calibration remain acceptance work after all three PRs.
+
+Native power observation discovers supply types and reads bounded status/online
+values, retaining unknown state instead of guessing from a driver name. A cable
+power observation is not a claim about USB mass-storage ownership. The host
+cancels preparation with USB/charging wake reasons. These fields follow the
+[Linux power-supply ABI](https://www.kernel.org/doc/Documentation/ABI/testing/sysfs-class-power).
+
+Every CLI wake acquisition now carries a two-minute expiry; a running hold
+renews it every thirty seconds even when already held. Computer loss therefore
+does not depend on a later SSH release or reboot. This uses the documented
+[nanosecond wake-lock timeout](https://www.kernel.org/doc/Documentation/ABI/testing/sysfs-power),
+with no copied reference implementation. A shell fixture verifies the emitted
+write for both absent and already-held locks. Actual kernel expiry is still a
+Clara BW acceptance measurement.
+
+Validation: 130 policy and 73 simulator tests pass for account fault ordering;
+310 CLI, 164 HAL, 25 runtime library and 151 runtime binary tests pass for the
+power/lease changes. Strict all-target/all-feature Clippy for these five crates
+passes, as does Rust 1.85.1 ARMv7 musl runtime compilation with device-write.
+The [real SDK journey](evidence/power-completion/result.json) additionally passes
+cover bounce during panel-held preparation, charging refusal/wake and USB
+reconnection. Captures include source/fixture provenance and remain explicitly
+simulated. The charging-wake screen was visually inspected at extra-large size.
+No physical reader or third-party source code was used.

@@ -83,12 +83,7 @@ pub fn install(
     server: &str,
     value: &str,
 ) -> Result<(), DeviceError> {
-    if !may_set(app, name)
-        || !valid_server(server)
-        || value.is_empty()
-        || value.len() > kobo_protocol::MAX_APP_SECRET_BYTES
-        || value.chars().any(char::is_control)
-    {
+    if !may_set(app, name) || !valid_server(server) || !super::valid_value(value) {
         return Err(DeviceError::InvalidInput);
     }
     let path = path(root, app, name).ok_or(DeviceError::InvalidInput)?;
@@ -115,12 +110,7 @@ pub(crate) fn decode(bytes: &str) -> Option<Record> {
     }
     let server = lines.next()?;
     let value = lines.next()?;
-    if lines.next().is_some()
-        || !valid_server(server)
-        || value.is_empty()
-        || value.len() > kobo_protocol::MAX_APP_SECRET_BYTES
-        || value.chars().any(char::is_control)
-    {
+    if lines.next().is_some() || !valid_server(server) || !super::valid_value(value) {
         return None;
     }
     Some(Record {

@@ -300,8 +300,8 @@ const DEVICE_PROBE_INTERVAL: Duration = Duration::from_secs(5);
 const DEVICE_WAIT_MAXIMUM_SECONDS: u64 = 6 * 60 * 60;
 /// How often a held wake lock is re-applied.
 ///
-/// Measured on the device, the lock is cleared somewhere between two and three
-/// minutes after it is taken, so renewal has to be well inside that.
+/// Renew well before the two-minute kernel lease expires, allowing several
+/// missed probes without leaving an indefinite hold after a disconnect.
 const WAKE_LOCK_RENEW_INTERVAL: Duration = Duration::from_secs(30);
 /// Longest a hold may last, so a forgotten session always ends by itself.
 const HOLD_MAXIMUM_MINUTES: u64 = 8 * 60;
@@ -2152,8 +2152,8 @@ fn parse_devices(arguments: &[String]) -> Result<String, String> {
 
 /// Controls how long a connected device stays reachable while developing.
 ///
-/// Every action is reversible and none of them touch a partition, the
-/// bootloader, the kernel, firmware, or any book.
+/// These controls change bounded kernel wake leases or the reader's settings;
+/// they do not rewrite partitions, firmware or books.
 fn dev_session(arguments: &[String]) -> Result<(), String> {
     let (host, action) = parse_dev_session(arguments)?;
     if let DevSessionAction::Hold(minutes) = action {
@@ -2181,6 +2181,9 @@ fn dev_session(arguments: &[String]) -> Result<(), String> {
         .map_err(unreachable_device)?;
     print!("{}", String::from_utf8_lossy(&output.stdout));
     if output.status.success() {
+        if matches!(action, DevSessionAction::KeepAwake(devsession::Switch::On)) {
+            println!("The reader can stay awake for two minutes. Use kobo session --device ADDRESS --hold MINUTES for a longer timed session.");
+        }
         // Advising a restart is only true when something actually changed; the
         // reader already holds the intended value otherwise.
         let changes_a_setting = matches!(
@@ -2212,8 +2215,8 @@ fn dev_session(arguments: &[String]) -> Result<(), String> {
 /// developer wake lock, so testing does not need someone tapping the screen.
 ///
 /// The lock is RAM-only kernel state. It is released when the hold ends, and a
-/// reboot clears it regardless, so this can never leave a device unable to
-/// sleep. A device that disappears mid-hold is waited for rather than treated
+/// two-minute kernel lease also expires if the computer disconnects or exits.
+/// A device that disappears mid-hold is waited for rather than treated
 /// as a failure.
 fn hold_device_awake(host: &str, minutes: u64) {
     let remote = format!("root@{host}");
@@ -2249,8 +2252,7 @@ fn hold_device_awake(host: &str, minutes: u64) {
         }
         thread::sleep(WAKE_LOCK_RENEW_INTERVAL);
     }
-    // Releasing is best effort: an unreachable device clears the lock on its
-    // next reboot anyway, so a failure here cannot leave lasting state.
+    // The last lease expires even if this best-effort release cannot connect.
     let released = run_remote_shell(
         &remote,
         &devsession::wake_lock_script(devsession::Switch::Off),
@@ -2262,7 +2264,10 @@ fn hold_device_awake(host: &str, minutes: u64) {
          {lost_contact} missed probe(s), wake lock released: {released}"
     );
     if !released {
-        println!("the wake lock is RAM only and clears on the next reboot");
+        println!(
+            "The last wake lease expires within {} seconds. No reboot is needed.",
+            devsession::WAKE_LEASE_SECONDS
+        );
     }
 }
 

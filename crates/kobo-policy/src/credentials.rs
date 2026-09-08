@@ -38,27 +38,60 @@ pub fn handle_install(
     app: &str,
     request: &kobo_protocol::DeviceRequest,
 ) -> Option<kobo_protocol::DeviceResult> {
-    use kobo_protocol::{DenyReason, DeviceRequest, DeviceResult};
+    use kobo_protocol::{DeviceRequest, DeviceResult};
+    if let Err(error) = validate_install(app, request)? {
+        return Some(error);
+    }
     let result = match request {
         DeviceRequest::SetSecret { name, value } => {
-            if !may_set(app, name) {
-                return Some(DeviceResult::Denied(DenyReason::NotDeclared));
-            }
             install_app_secret(root, app, name, value.as_str())
         }
         DeviceRequest::SetServerSecret {
             name,
             server,
             value,
-        } => {
-            if !servers::may_set(app, name) {
-                return Some(DeviceResult::Denied(DenyReason::NotDeclared));
-            }
-            servers::install(root, app, name, server, value.as_str())
-        }
+        } => servers::install(root, app, name, server, value.as_str()),
         _ => return None,
     };
     Some(result.map_or_else(DeviceResult::Failed, |()| DeviceResult::Done))
+}
+
+/// Validate an account request before either real storage or an injected fault.
+/// `None` means this request belongs to another device service.
+#[must_use]
+pub fn validate_install(
+    app: &str,
+    request: &kobo_protocol::DeviceRequest,
+) -> Option<Result<(), kobo_protocol::DeviceResult>> {
+    use kobo_protocol::{DenyReason, DeviceError, DeviceRequest, DeviceResult};
+    let (authorized, valid) = match request {
+        DeviceRequest::SetSecret { name, value } => (
+            may_set(app, name),
+            valid_secret_name(name) && valid_value(value.as_str()),
+        ),
+        DeviceRequest::SetServerSecret {
+            name,
+            server,
+            value,
+        } => (
+            servers::may_set(app, name),
+            servers::valid_server(server) && valid_value(value.as_str()),
+        ),
+        _ => return None,
+    };
+    Some(if !authorized {
+        Err(DeviceResult::Denied(DenyReason::NotDeclared))
+    } else if !valid {
+        Err(DeviceResult::Failed(DeviceError::InvalidInput))
+    } else {
+        Ok(())
+    })
+}
+
+fn valid_value(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= kobo_protocol::MAX_APP_SECRET_BYTES
+        && !value.chars().any(char::is_control)
 }
 
 /// Installs an app-entered credential in the verified caller's namespace.
@@ -77,12 +110,7 @@ pub fn install_app_secret(
     name: &str,
     value: &str,
 ) -> Result<(), kobo_protocol::DeviceError> {
-    if !may_set(app, name)
-        || app_secret_path(root, app, name).is_none()
-        || value.is_empty()
-        || value.len() > kobo_protocol::MAX_APP_SECRET_BYTES
-        || value.chars().any(char::is_control)
-    {
+    if !may_set(app, name) || app_secret_path(root, app, name).is_none() || !valid_value(value) {
         return Err(kobo_protocol::DeviceError::InvalidInput);
     }
     private_directory(root)?;

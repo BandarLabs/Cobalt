@@ -33,6 +33,7 @@ pub mod input;
 #[cfg(feature = "device-write")]
 pub mod network;
 pub mod observe;
+pub mod power_source;
 pub mod probe;
 /// Stopping and restarting the stock reader. Available only with
 /// `device-write`, because it acts on a process this program did not create.

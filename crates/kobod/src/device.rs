@@ -1490,7 +1490,7 @@ fn host_applications(
                     &apps.iter().map(|app| app.id).collect::<Vec<_>>(),
                     navigation_millis,
                     kobod::power::SleepReason::Idle,
-                    power_conditions(&apps, touch),
+                    power_conditions(&apps, touch, kobo_hal::power_source::read()),
                 ) {
                     Ok(effect) => {
                         apply_power_effect(&mut apps, effect)?;
@@ -1679,7 +1679,11 @@ fn host_applications(
                                         &apps.iter().map(|app| app.id).collect::<Vec<_>>(),
                                         navigation_millis,
                                         kobod::power::SleepReason::PowerButton,
-                                        power_conditions(&apps, touch),
+                                        power_conditions(
+                                            &apps,
+                                            touch,
+                                            kobo_hal::power_source::read(),
+                                        ),
                                     ) {
                                         Ok(effect) => {
                                             apply_power_effect(&mut apps, effect)?;
@@ -2672,7 +2676,19 @@ fn host_applications(
                 }
             }
             if power.state() == kobod::power::State::Preparing {
-                let mut conditions = power_conditions(&apps, touch);
+                let source = kobo_hal::power_source::read();
+                let wake = if source.usb == Some(true) {
+                    Some(kobod::power::WakeReason::Usb)
+                } else if source.external == Some(true) {
+                    Some(kobod::power::WakeReason::Charging)
+                } else {
+                    None
+                };
+                if let Some(effect) = wake.and_then(|reason| power.wake(reason)) {
+                    apply_power_effect(&mut apps, effect)?;
+                    last_activity = Instant::now();
+                }
+                let mut conditions = power_conditions(&apps, touch, source);
                 if conditions.tasks_idle {
                     conditions.panel_idle = display.finish_pending().is_ok();
                 }
@@ -2726,12 +2742,16 @@ fn apply_power_effect(apps: &mut [Hosted], effect: kobod::power::Effect) -> Resu
     Ok(false)
 }
 
-fn power_conditions(apps: &[Hosted], touch: &TouchSink) -> kobod::power::Conditions {
+fn power_conditions(
+    apps: &[Hosted],
+    touch: &TouchSink,
+    source: kobo_hal::power_source::Observation,
+) -> kobod::power::Conditions {
     kobod::power::Conditions {
-        charging: kobo_hal::battery::read().is_none_or(|battery| battery.charging),
-        // No native USB sleep backend is enabled. Unknown attachment cannot
-        // authorize kernel entry; only the existing reader handback can run.
-        usb_attached: false,
+        charging: source.external != Some(false),
+        // This observation describes USB power, not mass-storage ownership.
+        // Unknown USB cannot authorize kernel sleep; this host only hands back.
+        usb_attached: source.usb == Some(true),
         keep_awake_until: 0, // KeepAwake is not a declared native backend.
         terminal_open: apps.iter().any(|app| app.shells.is_open()),
         input_quiet: touch.1.is_quiet(),
