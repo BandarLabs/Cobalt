@@ -10,7 +10,7 @@ pub use metadata::Metadata;
 pub mod reader;
 pub mod viewport;
 
-pub const MAX_ARCHIVE_BYTES: usize = 64 * 1024 * 1024;
+pub const MAX_ARCHIVE_BYTES: usize = 32 * 1024 * 1024;
 pub const MAX_ENTRIES: usize = 2048;
 pub const MAX_DIRECTORY_BYTES: usize = 1024 * 1024;
 pub const MAX_EXPANDED_BYTES: u64 = 512 * 1024 * 1024;
@@ -97,7 +97,7 @@ fn preflight(bytes: &[u8]) -> Result<(), ComicError> {
         return Err(ComicError::CbrUnsupported);
     }
     if bytes.len() > MAX_ARCHIVE_BYTES {
-        return Err(ComicError::Limit("64 MiB archive"));
+        return Err(ComicError::Limit("32 MiB archive"));
     }
     if !bytes.starts_with(b"PK\x03\x04") && !bytes.starts_with(b"PK\x05\x06") {
         return Err(ComicError::UnknownFormat);

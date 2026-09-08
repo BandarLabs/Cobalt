@@ -749,13 +749,6 @@ impl KoboApp for Panels {
     }
 
     fn on_store(&mut self, context: &mut Context, result: StoreResult) {
-        if self.advance_upload(context, &result)
-            || self.advance_shelf_load(context, &result)
-            || self.advance_partial_load(context, &result)
-        {
-            self.show(context);
-            return;
-        }
         if let StoreResult::Loaded { key, value } = result {
             if key == LIBRARY {
                 self.library = value.as_deref().map(decode_library).unwrap_or_default();
@@ -780,6 +773,29 @@ impl KoboApp for Panels {
         self.show(context);
     }
 
+    fn on_shelf(&mut self, context: &mut Context, name: &str, result: StoreResult) {
+        if self
+            .upload
+            .as_ref()
+            .is_some_and(|(upload, _)| upload.name() == name)
+        {
+            self.advance_upload(context, &result);
+        } else if self
+            .shelf_load
+            .as_ref()
+            .is_some_and(|load| load.name() == name)
+        {
+            self.advance_shelf_load(context, &result);
+        } else if self
+            .partial_load
+            .as_ref()
+            .is_some_and(|load| load.name() == name)
+        {
+            self.advance_partial_load(context, &result);
+        }
+        self.show(context);
+    }
+
     fn on_save(&mut self, context: &mut Context, key: &str, result: StoreResult) {
         if self
             .progress_active
@@ -788,7 +804,7 @@ impl KoboApp for Panels {
         {
             self.observe_progress(context, &result);
         }
-        self.on_store(context, result);
+        self.show(context);
     }
 
     fn on_background(&mut self, context: &mut Context) {
@@ -1054,6 +1070,39 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn record_save_refusals_do_not_fail_an_unrelated_comic_transfer() {
+        use kobo_sdk::{Context, KoboApp, ShelfUpload, StoreError, StoreResult};
+        let mut app = super::Panels {
+            upload: Some((
+                ShelfUpload::new("pending.cbz", b"archive".to_vec()),
+                super::Saving::Complete,
+            )),
+            ..super::Panels::default()
+        };
+        let mut context = Context::default();
+        app.on_save(
+            &mut context,
+            "library",
+            StoreResult::Denied(StoreError::TooFull),
+        );
+        assert!(app.upload.is_some());
+        app.on_shelf(
+            &mut context,
+            "another.cbz",
+            StoreResult::Denied(StoreError::TooFull),
+        );
+        assert!(app.upload.is_some());
+        app.on_shelf(
+            &mut context,
+            "pending.cbz",
+            StoreResult::Denied(StoreError::TooFull),
+        );
+        assert!(app.upload.is_none());
+        assert!(app.paused);
+    }
+
     #[test]
     fn failed_position_save_keeps_latest_page_and_retry_acknowledges_that_revision() {
         use kobo_sdk::{AppRunner, Context, KoboApp, StoreError, StoreResult};

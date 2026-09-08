@@ -20,7 +20,7 @@ The [unrar wrapper](https://docs.rs/unrar/latest/unrar/#license) offers MIT/Apac
 - Use deterministic numeric filename ordering, including nested folders. Ignore metadata and hidden files as pages. Preserve the ordered names so a saved page index is stable for an unchanged archive.
 - Share the existing bounded PNG/JPEG decoder. Unsupported formats, corrupt pages and oversized input must produce a specific explanation instead of disappearing from the library.
 
-The shared reader and Panels transfer now use the same 64 MiB archive limit. The archive remains in memory; only page decoding is lazy. This is an admission bound, not a measured memory-headroom guarantee. Larger collections should ultimately read pages from a seekable shelf instead of loading a whole volume into RAM.
+The shared reader and Panels transfer now use the same 32 MiB archive limit. The archive remains in memory; only page decoding is lazy. This is an admission bound, not a measured memory-headroom guarantee. Larger collections should ultimately read pages from a seekable shelf instead of loading a whole volume into RAM.
 
 Hardware validation will run on the owner's Clara BW after all three PRs are ready. Simulator checks do not establish physical decode latency, memory headroom or display fidelity.
 

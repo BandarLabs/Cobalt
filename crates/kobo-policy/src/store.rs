@@ -35,11 +35,11 @@
 //! reader losing their place in a novel because they scrolled past enough
 //! artwork. So a key under [`kobo_protocol::CACHE_PREFIX`] is a *cache* key: counted
 //! separately, capped separately, and thrown away oldest-first when its own
-//! cap is reached. Durable state can never be refused for want of room a cache
-//! is using, and a cache can never be refused at all.
+//! cap is reached. Durable keys have a separate allowance. Cache writes can
+//! still fail for invalid values, a full filesystem or an I/O failure.
 
 use std::fs;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -109,7 +109,7 @@ impl Store {
         // application that cannot recover from being nearly full.
         if !root.join(key).exists() {
             if is_cache_key(key) {
-                // A cache is never refused. It makes room instead, because the
+                // A cache at its key cap makes room instead, because the
                 // caller's alternative is to go back to the network for
                 // something it is holding in its hand, and because a refusal
                 // here would have to be handled by every caller identically.
@@ -135,16 +135,32 @@ impl Store {
         if !is_valid_key(key) {
             return StoreResult::Denied(StoreError::BadKey);
         }
-        // A key that was never written and a key that cannot be read are the
-        // same answer on purpose: both mean there is nothing to restore, and an
-        // application that treated them differently would have two first-run
-        // paths, only one of which ever gets tested.
-        let value = fs::read(root.join(key))
-            .ok()
-            .filter(|value| value.len() <= MAX_STORE_VALUE);
+        let file = match fs::File::open(root.join(key)) {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return StoreResult::Loaded {
+                    key: key.into(),
+                    value: None,
+                };
+            }
+            Err(_) => return StoreResult::Denied(StoreError::Unwritable),
+        };
+        // A damaged or externally replaced file must not allocate beyond the
+        // store bound or look like first launch. Preserve it for recovery.
+        let mut value = Vec::new();
+        if file
+            .take(MAX_STORE_VALUE as u64 + 1)
+            .read_to_end(&mut value)
+            .is_err()
+        {
+            return StoreResult::Denied(StoreError::Unwritable);
+        }
+        if value.len() > MAX_STORE_VALUE {
+            return StoreResult::Denied(StoreError::TooFull);
+        }
         StoreResult::Loaded {
             key: key.into(),
-            value,
+            value: Some(value),
         }
     }
 
@@ -152,10 +168,13 @@ impl Store {
         if !is_valid_key(key) {
             return StoreResult::Denied(StoreError::BadKey);
         }
-        // Removing something that is not there is a success. The caller wanted
-        // it gone, and it is gone.
-        let _ignored = fs::remove_file(root.join(key));
-        StoreResult::Forgotten { key: key.into() }
+        match fs::remove_file(root.join(key)) {
+            Ok(()) => StoreResult::Forgotten { key: key.into() },
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                StoreResult::Forgotten { key: key.into() }
+            }
+            Err(_) => StoreResult::Denied(StoreError::Unwritable),
+        }
     }
 
     fn list(root: &Path) -> StoreResult {
@@ -260,6 +279,46 @@ mod tests {
         ));
         let _ignored = fs::remove_dir_all(&root);
         root
+    }
+
+    #[test]
+    fn missing_corrupt_and_unreadable_records_are_distinct_without_deletion() {
+        let root = temporary_root();
+        let store = Store::new(&root);
+        let load = StoreRequest::Load {
+            key: "article".into(),
+        };
+        assert_eq!(
+            store.handle(&load),
+            StoreResult::Loaded {
+                key: "article".into(),
+                value: None
+            }
+        );
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("article"), vec![0; MAX_STORE_VALUE + 1]).unwrap();
+        assert_eq!(
+            store.handle(&load),
+            StoreResult::Denied(StoreError::TooFull)
+        );
+        assert_eq!(
+            fs::metadata(root.join("article")).unwrap().len(),
+            MAX_STORE_VALUE as u64 + 1
+        );
+        fs::remove_file(root.join("article")).unwrap();
+        fs::create_dir(root.join("article")).unwrap();
+        assert_eq!(
+            store.handle(&load),
+            StoreResult::Denied(StoreError::Unwritable)
+        );
+        assert_eq!(
+            store.handle(&StoreRequest::Forget {
+                key: "article".into()
+            }),
+            StoreResult::Denied(StoreError::Unwritable)
+        );
+        assert!(root.join("article").is_dir());
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

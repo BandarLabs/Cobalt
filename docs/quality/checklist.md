@@ -16,7 +16,7 @@ A checked task requires implementation plus recorded validation. Physical measur
 
 ## Status
 
-494 tracked tasks: 51 completed, 1 deferred by the owner, 442 open. Implementation in progress. Evidence is recorded per task in `tasks.json` and in [the validation log](validation.md).
+494 tracked tasks: 57 completed, 1 deferred by the owner, 436 open. Implementation in progress. Evidence is recorded per task in `tasks.json` and in [the validation log](validation.md).
 
 ## PR 1 · Simulator fidelity (SIM-1–10)
 
@@ -56,15 +56,15 @@ A checked task requires implementation plus recorded validation. Physical measur
 - [x] **SDK-01** Provide measured pagination for plain text, Markdown and HTML.
 - [x] **SDK-02** Provide bounded paged collections with stable selection and return position.
 - [x] **SDK-03** Preserve reading anchors across scale and orientation changes.
-- [ ] **SDK-04** Compose provider setup from existing credential and URL controls.
-- [ ] **SDK-05** Provide reusable connection test and production error mapping.
-- [ ] **SDK-06** Provide durable content records and migrations.
-- [ ] **SDK-07** Provide bounded article/asset cache and pruning.
+- [x] **SDK-04** Compose provider setup from existing credential and URL controls.
+- [x] **SDK-05** Provide reusable connection test and production error mapping.
+- [x] **SDK-06** Provide durable content records and migrations.
+- [x] **SDK-07** Provide bounded article/asset cache and pruning.
 - [x] **SDK-08** Provide persistent mutation outbox with deduplication and acknowledgement.
 - [x] **SDK-09** Expose retry and conflict states without false success.
 - [x] **SDK-10** Provide save acknowledgement and retry/export for unsaved edits.
-- [ ] **SDK-11** Provide import receipts, progress and verified availability.
-- [ ] **SDK-12** Provide expected-empty, corrupt and unsupported library states.
+- [x] **SDK-11** Provide import receipts, progress and verified availability.
+- [x] **SDK-12** Provide expected-empty, corrupt and unsupported library states.
 - [ ] **SDK-13** Add original sample collections to reusable setup flows.
 - [ ] **SDK-14** Extend shared board surface with clue gutters, selection and distinct marks.
 - [ ] **SDK-15** Support larger boards with accessible paging/pan/zoom.

@@ -45,8 +45,10 @@ pub use kobo_policy::{Capability, Declared, Grant, Grants, PowerPolicy};
 
 pub mod audio;
 pub mod credentials;
+pub mod imports;
 /// Common application and builder types.
 pub mod keyboard;
+pub mod provider;
 pub mod terminal;
 
 pub use audio::{AudioMetadata, AudioPlayer};
@@ -3754,8 +3756,9 @@ impl AppStore<'_> {
     /// again: artwork, a rendered thumbnail, a parsed feed. Cache keys are
     /// counted and capped apart from ordinary ones ([`MAX_CACHE_KEYS`] of
     /// them), so caching a shelf of covers can never cost somebody their place
-    /// in a book -- and a cache write is never refused, it makes room by
-    /// dropping its own oldest entry instead.
+    /// in a book. At its key cap, it makes room by dropping its own oldest
+    /// entry. Invalid data, oversized values and storage failures still refuse
+    /// the write; availability requires its successful acknowledgement.
     ///
     /// Never for anything that cannot be fetched a second time. It will be
     /// gone, and there will be no warning that it went.
@@ -4051,6 +4054,7 @@ pub struct ShelfUpload {
     name: String,
     bytes: Vec<u8>,
     sent: u32,
+    expected: Option<u32>,
 }
 
 impl ShelfUpload {
@@ -4060,6 +4064,7 @@ impl ShelfUpload {
             name: name.into(),
             bytes: bytes.into(),
             sent: 0,
+            expected: None,
         }
     }
 
@@ -4074,6 +4079,9 @@ impl ShelfUpload {
     pub fn advance(&mut self, context: &mut Context, result: &StoreResult) -> ShelfProgress {
         match result {
             StoreResult::ShelfWritten { name, size } if *name == self.name => {
+                if self.expected.take() != Some(*size) {
+                    return ShelfProgress::Failed(StoreError::Missing);
+                }
                 self.sent = *size;
                 if usize::try_from(*size).unwrap_or(usize::MAX) >= self.bytes.len() {
                     ShelfProgress::Done
@@ -4097,6 +4105,7 @@ impl ShelfUpload {
         let to = from.saturating_add(MAX_SHELF_CHUNK).min(self.bytes.len());
         let piece = self.bytes[from..to].to_vec();
         let last = to == self.bytes.len();
+        self.expected = u32::try_from(to).ok();
         context
             .shelf()
             .write(self.name.clone(), self.sent, piece, last);
@@ -4118,6 +4127,7 @@ pub struct ShelfDownload {
     name: String,
     bytes: Vec<u8>,
     limit: usize,
+    expected_size: Option<u32>,
 }
 
 impl ShelfDownload {
@@ -4127,6 +4137,7 @@ impl ShelfDownload {
             name: name.into(),
             bytes: Vec::new(),
             limit: MAX_SHELF_DOWNLOAD,
+            expected_size: None,
         }
     }
 
@@ -4140,6 +4151,7 @@ impl ShelfDownload {
     /// Queues the first read.
     pub fn start(&mut self, context: &mut Context) {
         self.bytes.clear();
+        self.expected_size = None;
         self.request(context);
     }
 
@@ -4169,6 +4181,17 @@ impl ShelfDownload {
         if usize::try_from(*size).unwrap_or(usize::MAX) > self.limit {
             return ShelfProgress::Failed(StoreError::TooFull);
         }
+        if self.expected_size.is_some_and(|expected| expected != *size)
+            || bytes.len() > MAX_SHELF_CHUNK
+            || self
+                .bytes
+                .len()
+                .checked_add(bytes.len())
+                .is_none_or(|end| end > usize::try_from(*size).unwrap_or(usize::MAX))
+        {
+            return ShelfProgress::Failed(StoreError::Missing);
+        }
+        self.expected_size = Some(*size);
         self.bytes.extend_from_slice(bytes);
         let done = u32::try_from(self.bytes.len()).unwrap_or(u32::MAX);
         if done >= *size {
@@ -4714,6 +4737,13 @@ pub trait KoboApp {
         self.on_store(context, result);
     }
 
+    /// Receives a named shelf read/write/remove response, including keyless
+    /// refusals. Route this name to the matching transfer; unrelated state
+    /// writes cannot fail it. Existing apps still receive `on_store` by default.
+    fn on_shelf(&mut self, context: &mut Context, _name: &str, result: StoreResult) {
+        self.on_store(context, result);
+    }
+
     /// Receives everything a terminal has to say: that it opened, what the
     /// program printed, that it finished, or that the request was refused.
     fn on_shell_event(&mut self, _context: &mut Context, _event: ShellEvent) {}
@@ -4749,7 +4779,7 @@ pub struct AppRunner<A> {
     /// Store requests sent but not yet answered. Every request is answered
     /// exactly once, in request order. Save keys are retained because denied
     /// results carry no key. Payloads are never copied into this queue.
-    pending_stores: VecDeque<Option<String>>,
+    pending_stores: VecDeque<StoreReplyTarget>,
     /// Task counters live here rather than in `Context`, because a fresh
     /// context is built for every callback. Left in the context they would
     /// restart at one on each dispatch, so the second callback to spawn work
@@ -4777,6 +4807,13 @@ pub struct AppRunner<A> {
     /// to the background -- because after that the runtime is showing somebody
     /// else's screen and skipping the resend would leave it there.
     displayed: Option<Screen>,
+}
+
+#[derive(Debug)]
+enum StoreReplyTarget {
+    Save(String),
+    Shelf(String),
+    Other,
 }
 
 impl<A: KoboApp> AppRunner<A> {
@@ -4997,10 +5034,14 @@ impl<A: KoboApp> AppRunner<A> {
 
     /// Delivers one store answer.
     pub fn store_result(&mut self, result: StoreResult) -> Vec<Command> {
-        let saved_key = self.pending_stores.pop_front().flatten();
-        self.dispatch(|app, context| match saved_key {
-            Some(key) => app.on_save(context, &key, result),
-            None => app.on_store(context, result),
+        let target = self
+            .pending_stores
+            .pop_front()
+            .unwrap_or(StoreReplyTarget::Other);
+        self.dispatch(|app, context| match target {
+            StoreReplyTarget::Save(key) => app.on_save(context, &key, result),
+            StoreReplyTarget::Shelf(name) => app.on_shelf(context, &name, result),
+            StoreReplyTarget::Other => app.on_store(context, result),
         })
     }
 
@@ -5091,8 +5132,13 @@ impl<A: KoboApp> AppRunner<A> {
                 Command::Device(request) => self.pending.push_back(request.clone()),
                 Command::Store(request) => {
                     self.pending_stores.push_back(match request {
-                        StoreRequest::Save { key, .. } => Some(key.clone()),
-                        _ => None,
+                        StoreRequest::Save { key, .. } => StoreReplyTarget::Save(key.clone()),
+                        StoreRequest::ShelfWrite { name, .. }
+                        | StoreRequest::ShelfRead { name, .. }
+                        | StoreRequest::ShelfRemove { name } => {
+                            StoreReplyTarget::Shelf(name.clone())
+                        }
+                        _ => StoreReplyTarget::Other,
                     });
                 }
                 _ => {}
@@ -5384,6 +5430,7 @@ mod tests {
                 context.store().save("position", b"1".to_vec());
                 context.store().load("library");
                 context.store().save("draft", b"letter".to_vec());
+                context.shelf().read("comic", 0, 16);
             }
             fn on_save(&mut self, _: &mut super::Context, key: &str, _: super::StoreResult) {
                 self.answers.push(Some(key.into()));
@@ -5391,18 +5438,27 @@ mod tests {
             fn on_store(&mut self, _: &mut super::Context, _: super::StoreResult) {
                 self.answers.push(None);
             }
+            fn on_shelf(&mut self, _: &mut super::Context, name: &str, _: super::StoreResult) {
+                self.answers.push(Some(name.into()));
+            }
         }
         let mut runner = super::AppRunner::new(App::default());
         runner.start();
-        assert_eq!(runner.outstanding_answers(), 3);
+        assert_eq!(runner.outstanding_answers(), 4);
         runner.store_result(super::StoreResult::Denied(super::StoreError::TooFull));
         runner.store_result(super::StoreResult::Denied(super::StoreError::TooFull));
         runner.store_result(super::StoreResult::Saved {
             key: "draft".into(),
         });
+        runner.store_result(super::StoreResult::Denied(super::StoreError::Missing));
         assert_eq!(
             runner.app_mut().answers,
-            [Some("position".into()), None, Some("draft".into())]
+            [
+                Some("position".into()),
+                None,
+                Some("draft".into()),
+                Some("comic".into())
+            ]
         );
         assert_eq!(runner.outstanding_answers(), 0);
     }
@@ -6043,6 +6099,62 @@ mod tests {
             context.take_commands().is_empty(),
             "a transfer acted on somebody else's answer"
         );
+    }
+
+    #[test]
+    fn shelf_transfers_reject_overshoot_and_a_changed_volume_before_appending() {
+        let mut context = context();
+        let mut upload = ShelfUpload::new("comic", b"abc".to_vec());
+        upload.start(&mut context);
+        assert_eq!(
+            upload.advance(
+                &mut context,
+                &StoreResult::ShelfWritten {
+                    name: "comic".into(),
+                    size: 4
+                }
+            ),
+            ShelfProgress::Failed(StoreError::Missing)
+        );
+        let mut download = ShelfDownload::new("comic");
+        assert!(matches!(
+            download.advance(
+                &mut context,
+                &StoreResult::ShelfRead {
+                    name: "comic".into(),
+                    offset: 0,
+                    bytes: b"ab".to_vec(),
+                    size: 4
+                }
+            ),
+            ShelfProgress::Moving { .. }
+        ));
+        assert_eq!(
+            download.advance(
+                &mut context,
+                &StoreResult::ShelfRead {
+                    name: "comic".into(),
+                    offset: 2,
+                    bytes: b"cd".to_vec(),
+                    size: 5
+                }
+            ),
+            ShelfProgress::Failed(StoreError::Missing)
+        );
+        assert_eq!(download.bytes(), b"ab");
+        assert_eq!(
+            download.advance(
+                &mut context,
+                &StoreResult::ShelfRead {
+                    name: "comic".into(),
+                    offset: 2,
+                    bytes: b"cde".to_vec(),
+                    size: 4
+                }
+            ),
+            ShelfProgress::Failed(StoreError::Missing)
+        );
+        assert_eq!(download.bytes(), b"ab");
     }
 
     #[test]

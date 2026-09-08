@@ -2,3 +2,5 @@
 
 pub mod draft;
 pub mod outbox;
+
+pub mod record;

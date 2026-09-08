@@ -1383,9 +1383,12 @@ dependencies = [
 name = "kobo-sdk"
 version = "0.3.11"
 dependencies = [
+ "kobo-json",
+ "kobo-net",
  "kobo-policy",
  "kobo-profile",
  "kobo-protocol",
+ "kobo-state",
  "kobo-text",
  "kobo-ui",
  "unicode-width",

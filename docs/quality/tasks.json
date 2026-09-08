@@ -308,32 +308,40 @@
     "pr": 1,
     "group": "Shared SDK and design contracts",
     "task": "Compose provider setup from existing credential and URL controls",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "ProviderSetup composes existing text and runtime-held credential entry, validates HTTPS base addresses, and supports bearer/Basic/named headers. Provider setup layouts pass all profiles and three text sizes."
+    ]
   },
   {
     "id": "SDK-05",
     "pr": 1,
     "group": "Shared SDK and design contracts",
     "task": "Provide reusable connection test and production error mapping",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Bounded provider probe separates HTTP completion from app-validated connection, rejects stale/cancelled results and maps account/offline/timeout failures to reachable recovery. 5 provider tests pass within 118 SDK tests."
+    ]
   },
   {
     "id": "SDK-06",
     "pr": 1,
     "group": "Shared SDK and design contracts",
     "task": "Provide durable content records and migrations",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Bounded versioned Schema supports explicit incremental migrations without changing source bytes, rejects duplicate keys/future schemas and identifies migrated-but-unsaved state. 3 record tests pass; acknowledged Draft remains the persistence boundary."
+    ]
   },
   {
     "id": "SDK-07",
     "pr": 1,
     "group": "Shared SDK and design contracts",
     "task": "Provide bounded article/asset cache and pruning",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Existing cache namespace is capped at 64 keys and 256 KiB per value, prunes oldest-written cache keys independently of durable state, and retains positions. Policy cache isolation/eviction tests pass within 108 policy tests; larger retained content uses the bounded shelf."
+    ]
   },
   {
     "id": "SDK-08",
@@ -370,16 +378,20 @@
     "pr": 1,
     "group": "Shared SDK and design contracts",
     "task": "Provide import receipts, progress and verified availability",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Shared Import provides preview, progress, read-back SHA-256 identity checks and a versioned receipt that must be acknowledged before availability. Real shelf/store integration verifies failed receipt retry without reupload and missing-file detection after reopen."
+    ]
   },
   {
     "id": "SDK-12",
     "pr": 1,
     "group": "Shared SDK and design contracts",
     "task": "Provide expected-empty, corrupt and unsupported library states",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Record decoding distinguishes expected absence, corruption and unsupported versions; store now distinguishes missing files from read errors/oversized records and refuses failed removals. Import receipt restore and actual-file verification preserve separate absent, damaged and unavailable outcomes."
+    ]
   },
   {
     "id": "SDK-13",
