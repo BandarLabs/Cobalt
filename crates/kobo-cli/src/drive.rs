@@ -197,6 +197,12 @@ impl Driver {
             "shot" => self.shot(rest).map(|path| {
                 println!("shot {}", path.display());
             }),
+            "shot-colour" => self.shot_format(rest, true).map(|path| {
+                println!(
+                    "shot {} (ideal color; panel appearance uncalibrated)",
+                    path.display()
+                );
+            }),
             "expect" => self.expect(rest),
             "expect-missing" => {
                 if self.find(rest)?.is_some() {
@@ -459,9 +465,24 @@ impl Driver {
 
     /// Writes the panel out as a PNG and returns where it went.
     fn shot(&mut self, name: &str) -> Result<PathBuf, String> {
-        let capture = self.capture()?;
-        let png = kobo_image::encode_png_grey(capture.width, capture.height, &capture.grey)
-            .map_err(|error| format!("encode the frame: {error}"))?;
+        self.shot_format(name, false)
+    }
+
+    fn shot_format(&mut self, name: &str, colour: bool) -> Result<PathBuf, String> {
+        let bytes = self.get(if colour {
+            "/colour-capture"
+        } else if self.ideal {
+            "/ideal-capture"
+        } else {
+            "/capture"
+        })?;
+        let (metadata, width, height, pixels) = parse_atomic_capture(&bytes)?;
+        let png = if metadata["frame"]["format"] == "rgb24" {
+            kobo_image::encode_png_rgb(width, height, pixels)
+        } else {
+            kobo_image::encode_png_grey(width, height, pixels)
+        }
+        .map_err(|error| format!("encode the frame: {error}"))?;
         self.taken += 1;
         let name = if name.is_empty() {
             format!("{:03}", self.taken)
@@ -475,7 +496,7 @@ impl Driver {
         let sidecar = path.with_extension("json");
         std::fs::write(
             &sidecar,
-            serde_json::to_vec_pretty(&capture.metadata).map_err(|error| error.to_string())?,
+            serde_json::to_vec_pretty(&metadata).map_err(|error| error.to_string())?,
         )
         .map_err(|error| format!("write {}: {error}", sidecar.display()))?;
         Ok(path)
@@ -489,6 +510,9 @@ impl Driver {
             "/capture"
         })?;
         let (metadata, width, height, grey) = parse_atomic_capture(&bytes)?;
+        if metadata["frame"]["format"] != "grey8" {
+            return Err("expected a grayscale recording frame".into());
+        }
         Ok(CapturedFrame {
             metadata,
             width,
@@ -529,13 +553,40 @@ impl Driver {
     /// and then reported that the button did nothing, which is a race that
     /// passes four runs in five and looks exactly like a real defect.
     ///
-    /// A tap that draws nothing new is normal and not an error: the runtime
-    /// drops a repaint identical to what is already displayed, and plenty of
-    /// taps are meant to be inert. So this waits for a paint, and gives up
-    /// quietly.
+    /// SDK callback completion is authoritative, including when the callback
+    /// draws an intermediate screen or starts a long transfer. Active network
+    /// work is not awaited here, so the next step can cancel it. Simulators
+    /// without callback markers retain the bounded legacy paint wait.
     fn touch(&self, x: i32, y: i32) -> Result<(), String> {
         let before = self.paints()?;
         self.post("/touch", &format!("x={x}&y={y}"))?;
+        let deadline = Instant::now() + APPEAR_TIMEOUT;
+        loop {
+            let bytes = match self.get("/activity") {
+                Ok(bytes) => bytes,
+                Err(error) if error == "/activity: the simulator answered 404" => break,
+                Err(error) => return Err(error),
+            };
+            let report: serde_json::Value = serde_json::from_slice(&bytes)
+                .map_err(|error| format!("read simulator activity: {error}"))?;
+            if report["connected"] != true {
+                return Err("the app disconnected while handling the tap".into());
+            }
+            if report["callbackMarkers"] != true {
+                break;
+            }
+            let callbacks = report["pendingCallbacks"]
+                .as_u64()
+                .ok_or("simulator has no callback count")?;
+            if callbacks == 0 {
+                return Ok(());
+            }
+            if Instant::now() >= deadline {
+                return Err("the app did not finish handling the tap within 10 seconds".into());
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        // Older simulators and the built-in counter have no SDK markers.
         for _ in 0..SETTLE_POLLS {
             if self.paints()? != before {
                 return Ok(());
@@ -1135,7 +1186,10 @@ fn parse_atomic_capture(bytes: &[u8]) -> Result<(serde_json::Value, u32, u32, &[
     .map_err(|error| format!("read capture metadata: {error}"))?;
     if metadata["schema"] != "cobalt.simulator-capture"
         || metadata["version"] != 1
-        || metadata["frame"]["format"] != "grey8"
+        || !matches!(
+            metadata["frame"]["format"].as_str(),
+            Some("grey8" | "rgb24")
+        )
     {
         return Err("unsupported capture schema or pixel format".into());
     }
@@ -1145,7 +1199,12 @@ fn parse_atomic_capture(bytes: &[u8]) -> Result<(serde_json::Value, u32, u32, &[
     let (width, height) =
         parse_dimensions(&serde_json::to_vec(simulation).map_err(|error| error.to_string())?)?;
     let frame = &bytes[4 + size..];
-    if frame.len() != width as usize * height as usize {
+    let channels = if metadata["frame"]["format"] == "rgb24" {
+        3
+    } else {
+        1
+    };
+    if frame.len() != width as usize * height as usize * channels {
         return Err("capture pixels do not match the panel size".into());
     }
     if metadata["frame"]["sha256"].as_str() != Some(&kobo_net::sha256::hex_digest(frame)) {
@@ -1270,6 +1329,78 @@ mod tests {
         *capture.last_mut().unwrap() ^= 1;
         assert!(super::parse_atomic_capture(&capture).is_err());
         assert!(super::parse_atomic_capture(&[255, 255, 255, 255]).is_err());
+    }
+
+    #[test]
+    fn tap_waits_past_intermediate_paint_for_callback_but_not_for_network_work() {
+        use std::io::{Read, Write};
+        let server = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = server.local_addr().unwrap().to_string();
+        server.set_nonblocking(true).unwrap();
+        let worker = std::thread::spawn(move || {
+            let mut callbacks = 0;
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+            loop {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "driver did not await callback completion"
+                );
+                let (mut stream, _) = match server.accept() {
+                    Ok(client) => client,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(std::time::Duration::from_millis(1));
+                        continue;
+                    }
+                    Err(error) => panic!("accept driver: {error}"),
+                };
+                stream
+                    .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+                    .unwrap();
+                let mut bytes = [0_u8; 4096];
+                let size = stream.read(&mut bytes).unwrap();
+                let request = String::from_utf8_lossy(&bytes[..size]);
+                let body = if request.starts_with("GET /layout ") {
+                    "{\"paints\":2,\"nodes\":[]}".to_owned()
+                } else if request.starts_with("POST /touch ") {
+                    String::new()
+                } else {
+                    assert!(request.starts_with("GET /activity "));
+                    callbacks += 1;
+                    serde_json::json!({"connected":true,"callbackMarkers":true,"pendingCallbacks":u8::from(callbacks < 3),"activeWork":1}).to_string()
+                };
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                )
+                .unwrap();
+                if callbacks == 3 {
+                    return callbacks;
+                }
+            }
+        });
+        let driver = Driver::new(&address, Path::new("."));
+        driver.touch(10, 20).unwrap();
+        assert_eq!(worker.join().unwrap(), 3);
+    }
+
+    #[test]
+    fn colour_capture_validates_each_channel_and_png_preserves_them() {
+        let pixels = [200_u8, 10, 30, 20, 240, 100];
+        let metadata = serde_json::json!({"schema":"cobalt.simulator-capture", "version":1, "simulation":{"profile":{"width":2,"height":1}}, "frame":{"format":"rgb24", "sha256":kobo_net::sha256::hex_digest(&pixels)}});
+        let encoded = serde_json::to_vec(&metadata).unwrap();
+        let mut bytes = u32::try_from(encoded.len()).unwrap().to_le_bytes().to_vec();
+        bytes.extend(encoded);
+        bytes.extend(pixels);
+        let (_, width, height, restored) = super::parse_atomic_capture(&bytes).unwrap();
+        assert_eq!(restored, pixels);
+        let png = kobo_image::encode_png_rgb(width, height, restored).unwrap();
+        let decoded = kobo_image::decode_colour(&png).unwrap();
+        assert_eq!(decoded.colour(), Some(pixels.as_slice()));
+        assert!(super::parse_atomic_capture(&bytes[..bytes.len() - 1]).is_err());
+        *bytes.last_mut().unwrap() ^= 1;
+        assert!(super::parse_atomic_capture(&bytes).is_err());
     }
 
     #[test]

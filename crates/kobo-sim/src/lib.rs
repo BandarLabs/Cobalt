@@ -322,7 +322,8 @@ impl Simulator {
         self.panel.frame(ideal).to_vec()
     }
 
-    fn capture(&self, ideal: bool) -> io::Result<Vec<u8>> {
+    fn capture(&self, ideal: bool, rgb: bool) -> io::Result<Vec<u8>> {
+        let colour = rgb.then(|| self.panel.ideal_rgb(PROFILE.colour_panel));
         capture::View {
             app: "counter",
             mode: "counter-demo",
@@ -331,8 +332,9 @@ impl Simulator {
             paints: u64::from(self.counter),
             orientation: kobo_ui::Orientation::Portrait,
             simulation: self.simulation_json(),
-            frame: self.panel.frame(ideal),
+            frame: colour.as_deref().unwrap_or_else(|| self.panel.frame(ideal)),
             ideal,
+            rgb,
         }
         .pack()
     }
@@ -485,9 +487,11 @@ impl Server {
                 let frame = self.simulator.ideal_frame();
                 write_response(&mut stream, 200, "application/octet-stream", &frame)
             }
-            ("GET", "/capture" | "/ideal-capture") => {
-                let ideal = request.path == "/ideal-capture";
-                let body = self.simulator.capture(ideal)?;
+            ("GET", "/capture" | "/ideal-capture" | "/colour-capture") => {
+                let ideal = request.path != "/capture";
+                let body = self
+                    .simulator
+                    .capture(ideal, request.path == "/colour-capture")?;
                 write_response(&mut stream, 200, "application/octet-stream", &body)
             }
             ("GET", "/simulation") => {
@@ -1664,13 +1668,15 @@ impl AppSession {
                 let frame = self.render_frame(true);
                 write_response(&mut stream, 200, "application/octet-stream", &frame)
             }
-            ("GET", "/capture" | "/ideal-capture") => {
+            ("GET", "/capture" | "/ideal-capture" | "/colour-capture") => {
                 let body = {
                     let state = self
                         .state
                         .lock()
                         .map_err(|_| io::Error::other("app state lock poisoned"))?;
-                    let ideal = request.path == "/ideal-capture";
+                    let ideal = request.path != "/capture";
+                    let rgb = request.path == "/colour-capture";
+                    let colour = rgb.then(|| state.panel.ideal_rgb(PROFILE.colour_panel));
                     capture::View {
                         app: &state.app_name,
                         mode: "single-app",
@@ -1679,8 +1685,11 @@ impl AppSession {
                         paints: state.paints,
                         orientation: state.orientation,
                         simulation: state.simulation_json(),
-                        frame: state.panel.frame(ideal),
+                        frame: colour
+                            .as_deref()
+                            .unwrap_or_else(|| state.panel.frame(ideal)),
                         ideal,
+                        rgb,
                     }
                     .pack()?
                 };
@@ -2027,7 +2036,7 @@ fn simulation_json(
     format!(
         concat!(
             "{{\"profile\":{{\"id\":{},\"model\":{},\"width\":{},",
-            "\"height\":{},\"pixelsPerInch\":{},\"rotation\":{},",
+            "\"height\":{},\"pixelsPerInch\":{},\"rotation\":{},\"colourPanel\":{},",
             "\"touch\":{{\"name\":{},\"xMin\":{},\"xMax\":{},",
             "\"yMin\":{},\"yMax\":{}}}}},\"scenario\":{},",
             "\"lifecycle\":{},\"transition\":{},\"refreshCount\":{},",
@@ -2040,6 +2049,7 @@ fn simulation_json(
         PROFILE.height,
         PROFILE.pixels_per_inch,
         POSE.rotation(),
+        PROFILE.colour_panel,
         json_string(PROFILE.touch_name),
         PROFILE.touch_x_min,
         PROFILE.touch_x_max,
@@ -2626,7 +2636,13 @@ fn read_app_messages(
                             .lock()
                             .map_err(|_| io::Error::other("app state lock poisoned"))?;
                         state.observe_hardware();
-                        let result = state.services.handle(request.clone());
+                        let mut result = state.services.handle(request.clone());
+                        if let kobo_protocol::DeviceResult::Identity(identity) = &mut result {
+                            identity.profile_id = format!("SIMULATOR:{}", PROFILE.id);
+                            identity.model = format!("Simulated {}", PROFILE.model);
+                            identity.panel_width = PROFILE.width;
+                            identity.panel_height = PROFILE.height;
+                        }
                         if let kobo_protocol::DeviceResult::Frontlight { percent } = &result {
                             state.hardware.frontlight_percent = *percent;
                         }

@@ -66,6 +66,7 @@ struct Pending {
 struct Panels {
     route: Route,
     view: Option<ComicView>,
+    identity: Option<kobo_sdk::DeviceIdentity>,
     pending_memory: Option<Vec<u8>>,
     opened: Option<Kept>,
     rtl: bool,
@@ -96,6 +97,7 @@ impl Default for Panels {
         Self {
             route: Route::Library,
             view: None,
+            identity: None,
             pending_memory: None,
             opened: None,
             rtl: false,
@@ -536,6 +538,13 @@ impl Panels {
                 return;
             }
         };
+        if self
+            .identity
+            .as_ref()
+            .is_some_and(kobo_sdk::DeviceIdentity::colour_panel)
+        {
+            view.set_colour(context, true);
+        }
         kept.pages = view.reader().comic().pages.len();
         if let Some(title) = &view.reader().comic().metadata.title {
             kept.title.clone_from(title);
@@ -743,9 +752,32 @@ impl Panels {
 
 impl KoboApp for Panels {
     fn on_start(&mut self, context: &mut Context) {
+        context.device().read_identity();
         context.store().load(LIBRARY);
         context.store().load(PARTIAL_META);
         self.show(context);
+    }
+
+    fn on_device_result(
+        &mut self,
+        context: &mut Context,
+        request: kobo_sdk::DeviceRequest,
+        result: kobo_sdk::DeviceResult,
+    ) {
+        if request == kobo_sdk::DeviceRequest::ReadIdentity {
+            self.identity = match result {
+                kobo_sdk::DeviceResult::Identity(identity) => Some(identity),
+                _ => None,
+            };
+            let colour = self
+                .identity
+                .as_ref()
+                .is_some_and(kobo_sdk::DeviceIdentity::colour_panel);
+            if let Some(view) = &mut self.view {
+                view.set_colour(context, colour);
+            }
+            self.show(context);
+        }
     }
 
     fn on_store(&mut self, context: &mut Context, result: StoreResult) {

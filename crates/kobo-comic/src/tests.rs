@@ -295,3 +295,35 @@ fn spread_turns_keep_a_declared_cover_separate_on_both_sides() {
     assert!(reader.turn(false, landscape));
     assert_eq!(reader.visible_pages(landscape), vec![0]);
 }
+
+#[test]
+fn colour_is_opt_in_and_survives_viewport_spreads_and_cache_mode_changes() {
+    let rgb = kobo_image::encode_png_rgb(2, 2, &[200, 20, 40].repeat(4)).unwrap();
+    let grey = kobo_image::encode_png_grey(2, 2, &[120; 4]).unwrap();
+    let bytes = fixture(
+        &[("1.png", &rgb), ("2.png", &rgb), ("3.png", &grey)],
+        CompressionMethod::Deflated,
+    );
+    let mut reader = reader::Reader::open(bytes).unwrap();
+    assert!(reader.render((2, 2)).unwrap().colour().is_none());
+    reader.set_colour(true);
+    assert_eq!(reader.cached_pages(), 0);
+    assert_eq!(
+        reader.render((2, 2)).unwrap().colour(),
+        Some([200, 20, 40].repeat(4).as_slice())
+    );
+    reader.memory_mut().spreads = true;
+    reader.jump(1);
+    let spread = reader.render((4, 2)).unwrap();
+    assert_eq!(&spread.colour().unwrap()[..6], &[200, 20, 40, 200, 20, 40]);
+    assert_eq!(&spread.colour().unwrap()[6..12], &[120; 6]);
+    reader.memory_mut().right_to_left = true;
+    assert_eq!(
+        &reader.render((4, 2)).unwrap().colour().unwrap()[..6],
+        &[120; 6]
+    );
+    let position = reader.memory().clone();
+    reader.set_colour(false);
+    assert_eq!(reader.memory(), &position);
+    assert!(reader.render((4, 2)).unwrap().colour().is_none());
+}

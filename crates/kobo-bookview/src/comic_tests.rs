@@ -108,3 +108,35 @@ fn controls_pages_numeric_jump_and_pan_fit_supported_profiles_and_scales() {
         }
     }
 }
+
+#[test]
+fn colour_page_larger_than_wire_budget_is_resized_without_losing_its_channels() {
+    struct ColourApp;
+    impl KoboApp for ColourApp {
+        fn on_action(&mut self, _context: &mut Context, _action: ActionId) {}
+        fn on_start(&mut self, context: &mut Context) {
+            let picture =
+                kobo_image::Picture::from_rgb(1500, 1500, [210, 40, 90].repeat(1500 * 1500))
+                    .unwrap();
+            assert!(put_page(context, PAGE, picture).is_some());
+        }
+    }
+    let commands = AppRunner::new(ColourApp).start();
+    let (width, height, pixels) = commands
+        .iter()
+        .find_map(|command| match command {
+            kobo_sdk::Command::PutPicture {
+                width,
+                height,
+                pixels,
+                format: kobo_sdk::PictureFormat::Rgb,
+                ..
+            } => Some((*width, *height, pixels)),
+            _ => None,
+        })
+        .expect("RGB picture sent");
+    assert_eq!(width, height);
+    assert!(width < 1500);
+    assert!(pixels.len() <= kobo_sdk::MAX_PICTURE_BYTES);
+    assert!(pixels.chunks_exact(3).all(|pixel| pixel == [210, 40, 90]));
+}

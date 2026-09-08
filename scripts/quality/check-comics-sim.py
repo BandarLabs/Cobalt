@@ -18,18 +18,18 @@ from PIL import Image, ImageDraw, ImageFont
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def comic_bytes():
+def comic_bytes(colour=False):
     archive = io.BytesIO()
     with zipfile.ZipFile(archive, 'w', compression=zipfile.ZIP_DEFLATED) as volume:
         for number in (10, 2, 1):
-            page = Image.new('L', (800, 1100), 255)
+            page = Image.new('RGB' if colour else 'L', (800, 1100), (255, 255, 255) if colour else 255)
             draw = ImageDraw.Draw(page)
             # Original geometric panels, with no external artwork or story text.
             font = ImageFont.load_default(size=40)
             draw.text((50, 35), f'Fixture page {number}', fill=0, font=font)
             for index, box in enumerate(((45, 120, 755, 410), (45, 435, 385, 1030), (410, 435, 755, 1030))):
                 draw.rectangle(box, outline=0, width=5)
-                draw.ellipse((box[0]+40, box[1]+45, box[0]+170, box[1]+175), fill=64 + index*64)
+                draw.ellipse((box[0]+40, box[1]+45, box[0]+170, box[1]+175), fill=((210, 45, 70), (40, 155, 95), (30, 100, 220))[index] if colour else 64 + index*64)
             encoded = io.BytesIO()
             page.save(encoded, format='PNG')
             volume.writestr(f'{number}.png', encoded.getvalue())
@@ -43,6 +43,7 @@ def main():
     parser.add_argument('--profile', default='clara-bw-391')
     parser.add_argument('--reader-tools', action='store_true', help='Exercise shared controls, RTL, spreads and process restart')
     parser.add_argument('--cbr', action='store_true', help='Check explicit CBR refusal')
+    parser.add_argument('--colour', action='store_true', help='Inspect original RGB artwork on color and grayscale profiles')
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     binary = ROOT / 'target/debug/kobo'
@@ -57,7 +58,7 @@ def main():
                    KOBO_SIM_CLOCK_MILLIS="1788850860000", KOBO_SIM_UTC_OFFSET_MINUTES="0")
         storage = Path(private)/'cobalt-sim-data/panels'
         storage.mkdir(parents=True)
-        (storage/'volume.cbz').write_bytes(b'Rar!\x1a\x07\x01\x00' if args.cbr else comic_bytes())
+        (storage/'volume.cbz').write_bytes(b'Rar!\x1a\x07\x01\x00' if args.cbr else comic_bytes(args.colour))
         log_path = args.output/'simulator.log'
         with log_path.open('w') as log:
             try:
@@ -194,6 +195,19 @@ def main():
                     assert 'CBZ copy' in text, 'Missing recovery action'
                 else:
                     assert 'Page 1 of 3' in text, 'Comic did not open'
+                    if args.colour:
+                        before_colour = json.loads(get('simulation'))
+                        drive('shot-colour 02-original-colour')
+                        assert before_colour == json.loads(get('simulation')), 'Color capture advanced the panel'
+                        colour_path = args.output/'cli-shots/02-original-colour.png'
+                        with Image.open(colour_path) as picture:
+                            assert picture.mode == 'RGB'
+                            has_colour = any(r != g or g != b for r, g, b in picture.getdata())
+                            assert has_colour == before_colour['profile']['colourPanel'], 'Color profile output mismatch'
+                        colour_metadata = json.loads(colour_path.with_suffix('.json').read_text())
+                        assert colour_metadata['frame']['format'] == 'rgb24'
+                        assert colour_metadata['frame']['view'] == 'ideal'
+                        assert 'uncalibrated' in colour_metadata['frame']['colourAppearance']
                     drive('lifecycle background')
                     drive('wait-idle')
                     drive('expect-state /simulation#/lifecycle "background"')
@@ -291,7 +305,7 @@ def main():
                     wait_for('Open added comic')
                     assert 'On this reader' in capture('05-library-return') or 'Open added comic' in get('layout').decode(), 'Back did not return to library'
                 (args.output/'result.json').write_text(json.dumps(dict(status='passed', profile=args.profile,
-                    scale=args.scale, cbr=args.cbr, reader_tools=args.reader_tools, original_fixture=True), indent=2)+'\n')
+                    scale=args.scale, cbr=args.cbr, colour=args.colour, reader_tools=args.reader_tools, original_fixture=True), indent=2)+'\n')
             finally:
                 if process is not None and process.poll() is None:
                     os.killpg(process.pid, signal.SIGTERM)

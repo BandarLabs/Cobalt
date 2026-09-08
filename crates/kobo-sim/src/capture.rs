@@ -1,5 +1,5 @@
 //! Atomic frame capture envelope: little-endian u32 metadata length, UTF-8 JSON,
-//! then exact grayscale pixels. Metadata and pixels describe one committed frame.
+//! then exact grey8 or rgb24 pixels. Metadata and pixels describe one committed frame.
 
 use kobo_json::{ObjectBuilder as Object, Value};
 use kobo_ui::Screen;
@@ -57,6 +57,7 @@ pub(super) struct View<'a> {
     pub simulation: String,
     pub frame: &'a [u8],
     pub ideal: bool,
+    pub rgb: bool,
 }
 impl View<'_> {
     pub fn pack(self) -> std::io::Result<Vec<u8>> {
@@ -111,7 +112,15 @@ impl View<'_> {
             .set(
                 "frame",
                 Object::new()
-                    .set("format", "grey8")
+                    .set("format", if self.rgb { "rgb24" } else { "grey8" })
+                    .set(
+                        "colourAppearance",
+                        if self.rgb {
+                            "renderer RGB; physical panel appearance uncalibrated"
+                        } else {
+                            "luminance"
+                        },
+                    )
                     .set(
                         "view",
                         if self.ideal {

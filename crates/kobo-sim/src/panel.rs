@@ -212,9 +212,8 @@ impl PanelPreview {
                                 kobo_ui::tone::PAPER
                             }
                         }
-                        // The simulated panel is a Clara BW, which has no colour
-                        // filter: a colour update lands as its luminance, exactly
-                        // as the runtime writes it on that device.
+                        // The residue preview represents luminance. Ideal RGB
+                        // inspection is separate and has no calibrated filter model.
                         PanelWaveform::Gl16 | PanelWaveform::Gc16 | PanelWaveform::Colour => target,
                     };
                     // An LCD cannot reproduce electrophoretic residue. Retaining
@@ -225,6 +224,21 @@ impl PanelPreview {
                 }
             }
         }
+    }
+
+    /// Renderer RGB for inspection. Grayscale profiles deliberately return
+    /// luminance in every channel. This is not a physical color-filter model.
+    pub fn ideal_rgb(&self, colour_panel: bool) -> Vec<u8> {
+        if colour_panel {
+            if let Some(chroma) = self
+                .desired
+                .as_ref()
+                .and_then(|surface| surface.chroma.as_ref())
+            {
+                return chroma.clone();
+            }
+        }
+        self.ideal.iter().flat_map(|grey| [*grey; 3]).collect()
     }
 
     pub fn frame(&self, ideal: bool) -> &[u8] {
@@ -245,6 +259,31 @@ struct Pending {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn ideal_colour_keeps_channels_while_monochrome_uses_luminance_and_reads_do_not_commit() {
+        let mut panel = PanelPreview::new();
+        let mut surface = Surface::new(PROFILE.width as usize, PROFILE.height as usize);
+        surface.blend_colour(0, 0, [220, 30, 80], 255);
+        panel.update(&surface);
+        panel.control("hold").unwrap();
+        surface.blend_colour(0, 0, [10, 170, 240], 255);
+        panel.update(&surface);
+        let state = panel.state_json();
+        let visible = panel.frame(false).to_vec();
+        for _ in 0..3 {
+            assert_eq!(&panel.ideal_rgb(true)[..3], &[10, 170, 240]);
+            assert_eq!(
+                &panel.ideal_rgb(false)[..3],
+                &[kobo_ui::luma([10, 170, 240]); 3]
+            );
+            assert_eq!(panel.state_json(), state);
+            assert_eq!(panel.frame(false), visible);
+        }
+        panel.control("fail").unwrap();
+        assert_eq!(&panel.ideal_rgb(true)[..3], &[10, 170, 240]);
+        assert_eq!(panel.frame(false), visible);
+    }
+
     #[test]
     fn busy_frames_coalesce_without_committing_until_completion_and_failed_retry_cleans() {
         let mut panel = PanelPreview::new();

@@ -1,0 +1,189 @@
+{
+  "app": "panels",
+  "fonts": [
+    {
+      "role": "interface",
+      "source": "AtkinsonHyperlegible-Regular.ttf"
+    },
+    {
+      "role": "display-title",
+      "source": "AtkinsonHyperlegible-Bold.ttf"
+    },
+    {
+      "role": "display-heading",
+      "source": "AtkinsonHyperlegible-Bold.ttf"
+    },
+    {
+      "role": "display-bold",
+      "source": "AtkinsonHyperlegible-Bold.ttf"
+    },
+    {
+      "role": "reading",
+      "source": "AtkinsonHyperlegible-Regular.ttf"
+    },
+    {
+      "role": "mono",
+      "source": "DejaVuSansMono.ttf"
+    }
+  ],
+  "frame": {
+    "colourAppearance": "renderer RGB; physical panel appearance uncalibrated",
+    "format": "rgb24",
+    "sha256": "d7c378cbc173ff7e331e31ce5c3c6b2ba7fd9c09da0395052b3dcb75f3981a2d",
+    "view": "ideal"
+  },
+  "interfaceScalePercent": 100,
+  "mode": "single-app",
+  "orientation": "landscape",
+  "paints": "9",
+  "publisherFontHandle": null,
+  "readingScalePercent": 100,
+  "runtimeVersion": "0.3.11",
+  "schema": "cobalt.simulator-capture",
+  "simulation": {
+    "backends": [
+      "network",
+      "battery-read",
+      "frontlight-control",
+      "wifi-control",
+      "library",
+      "cover-sensor"
+    ],
+    "clock": {
+      "date": "2026-09-08",
+      "mode": "manual",
+      "monotonicMillis": "0",
+      "unixMillis": "1788850860000",
+      "utcOffsetMinutes": 0
+    },
+    "dirtyPixelsSinceClean": 1054345,
+    "hardware": {
+      "batteryPercent": 72,
+      "charging": false,
+      "coverClosed": false,
+      "frontlightAppearanceCalibrated": false,
+      "frontlightPercent": 20,
+      "orientation": "landscape",
+      "orientationControl": "display-composition"
+    },
+    "input": {
+      "forwardKey": 194,
+      "needsResynchronization": false,
+      "quiescent": true,
+      "rawEvents": "42",
+      "source": "synthetic evdev replay"
+    },
+    "lifecycle": "foreground",
+    "observation": null,
+    "panel": {
+      "completed": "10",
+      "contentsKnown": true,
+      "failures": "0",
+      "finishedAtMillis": "244651",
+      "mode": "automatic",
+      "queued": false,
+      "status": "idle",
+      "submissionMarker": null,
+      "submitted": "10",
+      "submittedAtMillis": "244625",
+      "timing": "host control observations; not hardware calibration",
+      "visibleFrame": "last confirmed completion with approximate residue"
+    },
+    "panelApproximation": true,
+    "profile": {
+      "colourPanel": true,
+      "height": 1680,
+      "id": "libra-colour-390",
+      "model": "Kobo Libra Colour",
+      "pixelsPerInch": 300,
+      "rotation": 1,
+      "touch": {
+        "name": "Elan Touchscreen",
+        "xMax": 1680,
+        "xMin": 0,
+        "yMax": 1264,
+        "yMin": 0
+      },
+      "width": 1264
+    },
+    "refreshCount": 10,
+    "scenario": "normal",
+    "touch": {
+      "display": {
+        "x": 632,
+        "y": 494
+      },
+      "raw": {
+        "x": 1186,
+        "y": 633
+      }
+    },
+    "transition": {
+      "dirty": 1054345,
+      "full": false,
+      "refresh": 10,
+      "region": {
+        "height": 1680,
+        "width": 1248,
+        "x": 8,
+        "y": 0
+      },
+      "regions": [
+        {
+          "region": {
+            "height": 1680,
+            "width": 136,
+            "x": 8,
+            "y": 0
+          },
+          "waveform": "GL16"
+        },
+        {
+          "region": {
+            "height": 1680,
+            "width": 960,
+            "x": 216,
+            "y": 0
+          },
+          "waveform": "COLOUR"
+        },
+        {
+          "region": {
+            "height": 72,
+            "width": 56,
+            "x": 1192,
+            "y": 48
+          },
+          "waveform": "GL16"
+        },
+        {
+          "region": {
+            "height": 224,
+            "width": 32,
+            "x": 1200,
+            "y": 168
+          },
+          "waveform": "GL16"
+        },
+        {
+          "region": {
+            "height": 184,
+            "width": 64,
+            "x": 1192,
+            "y": 1448
+          },
+          "waveform": "GL16"
+        }
+      ],
+      "waveform": "COLOUR"
+    }
+  },
+  "source": {
+    "binarySha256": "69b9aeb63a5b7af3d5ecc7a0726b3bb6f7671b2cfe1f5323e50f251fd60c25fc",
+    "dirty": true,
+    "fixture": "original-rgb-comic",
+    "requestedSeed": null,
+    "revision": "639ebc18cf6660bd9a9a0070fbf93ea447df5291"
+  },
+  "version": 1
+}

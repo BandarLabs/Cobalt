@@ -226,8 +226,10 @@
     "pr": 1,
     "group": "Simulator fidelity (SIM-1\u201310)",
     "task": "Add color output and label uncalibrated appearance clearly",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Opt-in ideal RGB capture and browser inspection on color profiles, explicitly uncalibrated; grayscale profiles return luminance. Original RGB comic journeys pass on Libra Colour and Clara BW. Fixed RGB loss in shared landscape rendering, comic decode/spreads and SDK picture delivery; color enabled only after host identity. Browser color/cancellation controls and portrait/landscape captures verified."
+    ]
   },
   {
     "id": "SIM-25",

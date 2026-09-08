@@ -302,6 +302,15 @@ pub fn inspect_named(bytes: &[u8], filename: &str) -> Result<(Comic, Option<Stri
 /// # Errors
 /// Returns an archive, missing-page or image decoding error.
 pub fn page(bytes: &[u8], comic: &Comic, index: usize) -> Result<kobo_image::Picture, ComicError> {
+    page_with_colour(bytes, comic, index, false)
+}
+
+pub(crate) fn page_with_colour(
+    bytes: &[u8],
+    comic: &Comic,
+    index: usize,
+    colour: bool,
+) -> Result<kobo_image::Picture, ComicError> {
     let name = comic.pages.get(index).ok_or(ComicError::PageUnavailable)?;
     let mut archive = open(bytes)?;
     let mut file = archive.by_name(name).map_err(damaged)?;
@@ -316,7 +325,12 @@ pub fn page(bytes: &[u8], comic: &Comic, index: usize) -> Result<kobo_image::Pic
     if encoded.len() > kobo_image::MAX_SOURCE_BYTES {
         return Err(ComicError::Limit("4 MiB per page"));
     }
-    kobo_image::decode(&encoded).map_err(|error| ComicError::Image(error.to_string()))
+    let decoded = if colour {
+        kobo_image::decode_colour(&encoded)
+    } else {
+        kobo_image::decode(&encoded)
+    };
+    decoded.map_err(|error| ComicError::Image(error.to_string()))
 }
 
 #[cfg(test)]

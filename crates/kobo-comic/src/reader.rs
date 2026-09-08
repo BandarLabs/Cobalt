@@ -1,4 +1,4 @@
-//! Per-volume reading memory and a lazy, two-page grayscale decode cache.
+//! Per-volume reading memory and a lazy, two-page decode cache with opt-in color.
 //! Persistence is acknowledged by the caller's store; encoding is not saving.
 
 use crate::{
@@ -149,6 +149,7 @@ pub struct Reader {
     comic: Comic,
     memory: Memory,
     cache: VecDeque<(usize, Picture)>,
+    colour: bool,
 }
 impl Reader {
     /// Opens one bounded archive without decoding any page.
@@ -163,6 +164,7 @@ impl Reader {
             comic,
             memory,
             cache: VecDeque::new(),
+            colour: false,
         })
     }
     #[must_use]
@@ -230,6 +232,15 @@ impl Reader {
         self.jump(next)
     }
 
+    /// Enable only after the host has reported color support. Cached grayscale
+    /// pages must be decoded again, without changing the reading position.
+    pub fn set_colour(&mut self, enabled: bool) {
+        if self.colour != enabled {
+            self.colour = enabled;
+            self.cache.clear();
+        }
+    }
+
     fn decoded(&mut self, index: usize) -> Result<&Picture, ComicError> {
         if let Some(at) = self.cache.iter().position(|(page, _)| *page == index) {
             let entry = self.cache.remove(at).expect("known cache entry");
@@ -238,7 +249,15 @@ impl Reader {
             while self.cache.len() >= MAX_CACHED_PAGES {
                 self.cache.pop_back();
             }
-            let picture = crate::page(&self.bytes, &self.comic, index)?;
+            let picture = crate::page_with_colour(&self.bytes, &self.comic, index, self.colour)?;
+            let bytes = |p: &Picture| p.grey().len() + p.colour().map_or(0, <[u8]>::len);
+            // At most two pages and one maximum-sized RGB+grey decode's bytes.
+            let limit = usize::try_from(kobo_image::MAX_PIXELS).unwrap_or(usize::MAX / 4) * 4;
+            while !self.cache.is_empty()
+                && self.cache.iter().map(|(_, p)| bytes(p)).sum::<usize>() + bytes(&picture) > limit
+            {
+                self.cache.pop_back();
+            }
             self.cache.push_front((index, picture));
         }
         Ok(&self.cache.front().expect("decoded page").1)

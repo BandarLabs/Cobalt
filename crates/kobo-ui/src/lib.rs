@@ -13159,14 +13159,23 @@ fn rotate_landscape(logical: &Surface, physical: &mut Surface, turn: LandscapeTu
     if logical.width != physical.height || logical.height != physical.width {
         return;
     }
+    physical.chroma = logical
+        .chroma
+        .as_ref()
+        .map(|_| vec![255; physical.pixels.len() * 3]);
     for logical_y in 0..logical.height {
         for logical_x in 0..logical.width {
             let (physical_x, physical_y) = match turn {
                 LandscapeTurn::Clockwise => (physical.width - 1 - logical_y, logical_x),
                 LandscapeTurn::CounterClockwise => (logical_y, physical.height - 1 - logical_x),
             };
-            physical.pixels[physical_y * physical.width + physical_x] =
-                logical.pixels[logical_y * logical.width + logical_x];
+            let destination = physical_y * physical.width + physical_x;
+            let source = logical_y * logical.width + logical_x;
+            physical.pixels[destination] = logical.pixels[source];
+            if let (Some(from), Some(to)) = (&logical.chroma, &mut physical.chroma) {
+                to[destination * 3..destination * 3 + 3]
+                    .copy_from_slice(&from[source * 3..source * 3 + 3]);
+            }
         }
     }
 }
@@ -22789,3 +22798,7 @@ mod figure_tests {
         assert_eq!(physical.pixels, vec![4, 1, 5, 2, 6, 3]);
     }
 }
+
+#[cfg(test)]
+#[path = "colour_orientation_tests.rs"]
+mod colour_orientation_tests;

@@ -138,7 +138,9 @@ pub fn spread(
     };
     let left = left.fit_enlarging(width / 2, height)?;
     let right = right.fit_enlarging(width - width / 2, height)?;
-    let mut pixels = vec![255; width as usize * height as usize];
+    let colour = left.colour().is_some() || right.colour().is_some();
+    let channels = if colour { 3 } else { 1 };
+    let mut pixels = vec![255; width as usize * height as usize * channels];
     for (page, offset, area) in [
         (&left, 0, width / 2),
         (&right, width / 2, width - width / 2),
@@ -148,11 +150,25 @@ pub fn spread(
         for row in 0..page.height() {
             let from = row as usize * page.width() as usize;
             let to = (y + row) as usize * width as usize + x as usize;
-            pixels[to..to + page.width() as usize]
-                .copy_from_slice(&page.grey()[from..from + page.width() as usize]);
+            if colour {
+                for column in 0..page.width() as usize {
+                    let source = from + column;
+                    let destination = (to + column) * 3;
+                    let rgb = page.colour().map(|p| &p[source * 3..source * 3 + 3]);
+                    pixels[destination..destination + 3]
+                        .copy_from_slice(rgb.unwrap_or(&[page.grey()[source]; 3]));
+                }
+            } else {
+                pixels[to..to + page.width() as usize]
+                    .copy_from_slice(&page.grey()[from..from + page.width() as usize]);
+            }
         }
     }
-    Picture::from_grey(width, height, pixels)
+    if colour {
+        Picture::from_rgb(width, height, pixels)
+    } else {
+        Picture::from_grey(width, height, pixels)
+    }
 }
 
 #[cfg(test)]

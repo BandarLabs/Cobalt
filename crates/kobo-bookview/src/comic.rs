@@ -113,6 +113,15 @@ impl ComicView {
         }
         self.paint(context);
     }
+    /// Call with the result of the host identity query, not an inferred model.
+    pub fn set_colour(&mut self, context: &mut Context, supported: bool) {
+        self.reader.set_colour(supported);
+        self.paint(context);
+        if self.mode == Mode::Pages {
+            self.preview(context);
+        }
+    }
+
     pub fn set_direction(&mut self, context: &mut Context, rtl: bool) {
         self.reader.memory_mut().right_to_left = rtl;
         self.paint(context);
@@ -351,12 +360,7 @@ impl ComicView {
         let target = self.target();
         match self.reader.render(target) {
             Ok(picture) => {
-                self.picture = context.put_picture(
-                    PAGE,
-                    picture.width(),
-                    picture.height(),
-                    picture.into_grey(),
-                );
+                self.picture = put_page(context, PAGE, picture);
                 if self.picture.is_none() {
                     self.notice = Some(
                         "There is not enough picture memory. Close and reopen this comic.".into(),
@@ -377,10 +381,11 @@ impl ComicView {
             let handle =
                 PictureHandle(THUMB_BASE + u32::try_from(index - self.preview_start).unwrap_or(0));
             context.drop_picture(handle);
-            let preview =
-                self.reader.thumbnail(index).ok().and_then(|p| {
-                    context.put_picture(handle, p.width(), p.height(), p.into_grey())
-                });
+            let preview = self
+                .reader
+                .thumbnail(index)
+                .ok()
+                .and_then(|p| put_page(context, handle, p));
             self.previews.push(preview);
         }
     }
@@ -552,5 +557,38 @@ impl ComicView {
             self.paint(context);
         }
         Outcome::Changed
+    }
+}
+
+/// Keep RGB only when its bounded wire representation fits. Otherwise reduce
+/// its dimensions, preserving aspect ratio and color instead of dropping it.
+fn put_page(
+    context: &mut Context,
+    handle: PictureHandle,
+    mut picture: kobo_image::Picture,
+) -> Option<TilePicture> {
+    if picture.colour().is_some() {
+        let max_pixels = kobo_sdk::MAX_PICTURE_BYTES / 3;
+        while picture.grey().len() > max_pixels {
+            picture = picture
+                .fit(
+                    (picture.width() * 9 / 10).max(1),
+                    (picture.height() * 9 / 10).max(1),
+                )
+                .ok()?;
+        }
+        context.put_colour_picture(
+            handle,
+            picture.width(),
+            picture.height(),
+            picture.into_colour()?,
+        )
+    } else {
+        context.put_picture(
+            handle,
+            picture.width(),
+            picture.height(),
+            picture.into_grey(),
+        )
     }
 }
