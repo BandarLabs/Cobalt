@@ -1673,3 +1673,5 @@ At the smallest legal square, up to three-character board marks can step down th
 `ScreenBuilder::grid_with_selection(columns, square, cells)` accepts `(action, label, selected)` tuples. On nonsquare key grids, selected keys keep their filled field and add an ink outline. Use this for candidate toggles or retained keypad choices; keep labels unchanged so selection does not increase their measured width.
 
 `Context::paginate_oriented(text, nav_bar, orientation)` measures interface prose for an app-requested orientation, retaining status and page-control space. Pair it with `Context::set_orientation` and `metrics().oriented(orientation)` for the rest of the view.
+
+Board viewports shade and outline the selected square’s matching row and column clue targets. Panning retains absolute row/column identities; the complete clue remains available through its existing inspection action. Nonograms provides an app-level example with attached clues and persistent undo.

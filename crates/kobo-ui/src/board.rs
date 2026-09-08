@@ -229,10 +229,26 @@ pub(super) fn layout(
                     .collect::<Vec<_>>()
                     .join(" ")
             };
+            let selected = board.cells.iter().enumerate().any(|(cell, value)| {
+                value.selected
+                    && if vertical {
+                        cell % usize::from(board.columns) == index
+                    } else {
+                        cell / usize::from(board.columns) == index
+                    }
+            });
             layout.nodes.push(LayoutNode {
                 id,
                 rect,
-                kind: LayoutKind::Cell(clue.action, CellStyle::Plain, false),
+                kind: LayoutKind::Cell(
+                    clue.action,
+                    if selected {
+                        CellStyle::Key
+                    } else {
+                        CellStyle::Plain
+                    },
+                    selected,
+                ),
                 text_lines: vec![format!(
                     "{axis} {} clue: {all}",
                     usize::from(start) + index + 1
@@ -392,6 +408,68 @@ mod tests {
                 _ => vec!["1".into(), "2".into(), "…".into()],
             };
             assert_eq!(clue.text_lines, expected);
+        }
+    }
+
+    #[test]
+    fn selected_square_highlights_only_its_matching_clue_targets() {
+        for chosen in 0..6 {
+            let surface = BoardSurface {
+                columns: 3,
+                row_start: 20,
+                column_start: 12,
+                cell_tenth_mm: 120,
+                cells: (0..6)
+                    .map(|cell| BoardCell {
+                        action: ActionId(u32::try_from(cell).unwrap() + 1),
+                        mark: BoardMark::Empty,
+                        given: false,
+                        selected: cell == chosen,
+                    })
+                    .collect(),
+                row_clues: (0..2)
+                    .map(|row| BoardClue {
+                        action: ActionId(100 + row),
+                        values: vec![1],
+                    })
+                    .collect(),
+                column_clues: (0..3)
+                    .map(|column| BoardClue {
+                        action: ActionId(200 + column),
+                        values: vec![1],
+                    })
+                    .collect(),
+            };
+            let screen = Screen::new(
+                1,
+                vec![Node::Board {
+                    id: NodeId(1),
+                    surface,
+                }],
+            );
+            let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::default());
+            let selected: Vec<_> = layout
+                .nodes
+                .iter()
+                .filter_map(|node| match node.kind {
+                    LayoutKind::Cell(action, CellStyle::Key, true) => Some(action.0),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(
+                selected,
+                vec![
+                    100 + u32::try_from(chosen).unwrap() / 3,
+                    200 + u32::try_from(chosen).unwrap() % 3
+                ]
+            );
+            for action in selected {
+                let rect = layout.rect_of_action(ActionId(action)).unwrap();
+                assert_eq!(
+                    layout.hit_test(rect.x + rect.width / 2, rect.y + rect.height / 2),
+                    Some(ActionId(action))
+                );
+            }
         }
     }
 
