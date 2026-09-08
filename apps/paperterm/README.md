@@ -92,5 +92,18 @@ and successful typing in both directions afterward.
 
 The live fixture's `--pair-on-reader` option enters the address and private code
 through the actual keyboard and verifies the saved pairing before exercising
-the terminal. Load/save failure recovery for pairing remains an open quality
-item; hardware trust transfer and physical acceptance remain separate checks.
+the terminal. Hardware trust transfer and physical acceptance remain separate checks.
+
+If saved pairing cannot be read, choose **Retry reading** or **Continue without
+saving**. The latter keeps the stored data untouched for the entire run. A new
+connection is saved only after the computer confirms pairing. If saving fails,
+the terminal remains usable and its status shows **Not saved**. Open **Pairing**
+to choose **Retry saving**, return to the session, or change computers.
+Reconnecting and resizing do not retry a failed save automatically.
+
+<img width="300" src="screenshots/read-failed.png" alt="Paperterm offering to retry reading saved pairing or continue without saving">
+<img width="300" src="screenshots/pairing-not-saved.png" alt="Paperterm explaining that pairing was not saved while the terminal session can continue">
+
+The live fixture supports `--load-failure --save-failure` for explicit recovery,
+or `--load-failure --temporary-pairing` to verify a temporary connection. Both
+require `--pair-on-reader` and exercise the same two-way terminal journey.

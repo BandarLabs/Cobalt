@@ -2348,9 +2348,9 @@
     "pr": 2,
     "group": "Paperterm",
     "task": "Guide host setup and pairing",
-    "status": "todo",
+    "status": "done",
     "evidence": [
-      "Partial: three setup steps, Help, address/code validation, editable errors and preserved code drafts; actual on-screen pairing against the private TLS host and successful save pass. Remaining: handle pairing-store load/save failures with an explicit recovery path; current on_store only handles Loaded."
+      "Guided setup, editable address/code validation and offline preview; new pairing is saved only after a valid host handshake. Failed reads offer Retry reading or Continue without saving; failed saves keep the live session usable and retry only on request. Single-flight saves acknowledge exact snapshots. Both storage-recovery and temporary-pairing live journeys pass 19 checks over private trusted TLS; 42 app tests, strict Clippy and ARMv7 checking pass. See docs/quality/evidence/paperterm and validation.md."
     ]
   },
   {

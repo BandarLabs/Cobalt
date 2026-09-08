@@ -23,8 +23,15 @@ def main():
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--profile', default='clara-bw-391')
     parser.add_argument('--pair-on-reader', action='store_true')
+    parser.add_argument('--load-failure', action='store_true')
+    parser.add_argument('--save-failure', action='store_true')
+    parser.add_argument('--temporary-pairing', action='store_true')
     parser.add_argument('--scale', default='extra-large')
     args = parser.parse_args()
+    if (args.load_failure or args.save_failure or args.temporary_pairing) and not args.pair_on_reader:
+        parser.error('storage checks require --pair-on-reader')
+    if args.temporary_pairing and (not args.load_failure or args.save_failure):
+        parser.error('--temporary-pairing requires --load-failure and excludes --save-failure')
     args.output.mkdir(parents=True, exist_ok=True)
     target = Path(os.environ.get('CARGO_TARGET_DIR', str(ROOT/'target'))).resolve()
     cli = target/'debug/kobo'
@@ -98,6 +105,8 @@ print("DONE", flush=True)
                 store = private/'cobalt-sim-state/paperterm'
                 store.mkdir(parents=True)
                 code = (config/'stream/pairing').read_text().strip()
+                if args.load_failure:
+                    (store/'pairing').mkdir()
                 if not args.pair_on_reader:
                     (store/'pairing').write_text(f'127.0.0.1:{port}\n{code}')
                 simulator = subprocess.Popen([str(cli), 'dev', '127.0.0.1:0'], cwd=ROOT/'apps/paperterm',
@@ -132,6 +141,14 @@ print("DONE", flush=True)
                     assert not [i for i in diagnostics['issues'] if i['severity']=='error'], diagnostics
                     (args.output/(name+'.layout.json')).write_text(json.dumps(get('layout'), indent=2)+'\n')
 
+                if args.load_failure:
+                    drive('wait-for-id retry-pairing-load')
+                    capture('00-read-failed')
+                    if args.temporary_pairing:
+                        drive('tap-id temporary-pairing')
+                    else:
+                        (store/'pairing').rmdir()
+                        drive('tap-id retry-pairing-load')
                 if args.pair_on_reader:
                     drive('wait-for-id setup', 'tap-id setup', 'tap-id trust', 'tap-id start',
                           'tap-id enter-address', 'tap-id kb.layer', f'type 127.0.0.1:{port}', 'tap-id kb.enter')
@@ -141,9 +158,18 @@ print("DONE", flush=True)
                             drive('tap-id kb.layer')
                             symbols = not symbols
                         drive('type '+character)
+                    if args.save_failure:
+                        drive('scenario storage-full')
                     drive('tap-id kb.enter')
                 drive('wait-for-id toggle-keyboard', 'wait-for READY>')
-                assert (store/'pairing').read_text() == f'127.0.0.1:{port}\n{code}'
+                if args.save_failure or args.temporary_pairing:
+                    drive('wait-for Not saved')
+                    assert not (store/'pairing').is_file()
+                    drive('tap-id pairing-menu')
+                    capture('00-pairing-not-saved')
+                    drive('tap-id return-session')
+                else:
+                    assert (store/'pairing').read_text() == f'127.0.0.1:{port}\n{code}'
                 capture('01-connected-terminal')
                 drive('tap-id toggle-keyboard', 'wait-for SIZE')
                 capture('02-keyboard-and-resize')
@@ -162,6 +188,14 @@ print("DONE", flush=True)
                 capture('02e-reconnected')
                 drive('type reader', 'tap enter', 'wait-for FROM READER: reader')
                 capture('03-reader-to-host')
+                if args.save_failure:
+                    assert not (store/'pairing').exists(), 'Pairing retried without an explicit request'
+                    drive('tap-id pairing-menu', 'tap-id retry-pairing', 'wait-for Pairing is saved')
+                    capture('03a-pairing-saved')
+                    assert (store/'pairing').read_text() == f'127.0.0.1:{port}\n{code}'
+                    drive('tap-id return-session', 'wait-for Connected')
+                if args.temporary_pairing:
+                    assert (store/'pairing').is_dir(), 'Temporary connection changed saved storage'
                 assert 'FROM READER: reader' in drain_host(), 'Reader input did not reach the host PTY'
                 os.write(master, b'laptop')
                 drive('wait-for laptop')
@@ -184,12 +218,19 @@ print("DONE", flush=True)
                 assert len(grids) >= 2 or grids[0][1] == 64, grids
                 result = dict(status='passed', profile=args.profile, scale=args.scale,
                               orientation='portrait', negotiated_grids=grids,
+                              storage_checks=dict(load_failure=args.load_failure, save_failure=args.save_failure, temporary=args.temporary_pairing),
                               source_head=subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip(),
                               source_dirty=bool(subprocess.check_output(['git', 'status', '--porcelain'], cwd=ROOT)),
                               basis='real-host-pty-and-sdk-simulator-over-trusted-tls', pairing='entered through on-screen keyboard' if args.pair_on_reader else 'private seeded fixture',
                               checks=['reconnect retains output and keyboard toggle', 'connection restored', 'failed input pauses without replay', 'explicit input resume', 'portrait captures', 'measured grid on keyboard toggle', 'prompt without newline', 'laptop raw mode', 'trusted TLS', 'reader input to host',
                                       'laptop input before Enter', 'same-session output', 'PTY grid negotiation', 'wide output',
                                       'reader Ctrl-C', 'retained final screen', 'laptop terminal restoration'])
+                if args.load_failure:
+                    result['checks'].append('failed pairing read has an explicit recovery path')
+                if args.save_failure:
+                    result['checks'].append('failed pairing save retries only on request')
+                if args.temporary_pairing:
+                    result['checks'].append('temporary connection leaves pairing storage untouched')
                 (args.output/'result.json').write_text(json.dumps(result, indent=2)+'\n')
             finally:
                 for process in [simulator, host]:

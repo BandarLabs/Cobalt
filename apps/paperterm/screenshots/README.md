@@ -19,3 +19,8 @@ come from the committed offline route. Its fetch/post counters remain zero.
 live status/recovery journeys. Current evidence is under `onboarding`,
 `paired-live` and `status-default`; earlier evidence folders retain earlier
 versions and their historical row counts.
+
+`read-failed.png` and `pairing-not-saved.png` show actual Extra-large storage
+recovery screens. Evidence under `storage-recovery` checks explicit read/save
+retry without interrupting the shared terminal; `temporary-pairing` checks that
+continuing without saving leaves the original store path untouched.

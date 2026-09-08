@@ -883,3 +883,35 @@ PAPER-01 stays open: pairing-store load/save failures still need explicit
 recovery, since `on_store` currently handles only `Loaded`. The overall checklist
 is **127 done, 367 open and one deferred CBR task**; PR 2 has 35/269 complete.
 Physical Clara BW acceptance and the companion PR remain pending.
+
+## Paperterm pairing storage recovery — 9 September 2026
+
+Paperterm 0.1.6 completes PAPER-01. A failed pairing read offers Retry reading
+or Continue without saving; temporary sessions never write pairing data. New
+credentials are saved only after the computer confirms a valid handshake, so
+an unreachable or rejected connection cannot replace a saved connection.
+Single-flight writes track the exact acknowledged snapshot. A failed save
+leaves the terminal usable, displays Not saved, and offers Retry saving from
+Pairing. Polls and resizing do not silently retry the write. The connection
+menu retains the negotiated terminal dimensions while output continues.
+
+The [storage recovery journey](evidence/paperterm/storage-recovery/result.json)
+and [temporary connection journey](evidence/paperterm/temporary-pairing/result.json)
+each pass **19 checks** on portrait Clara BW at Extra-large. Both use the actual
+SDK app, a real laptop/host PTY and private trusted TLS. The former retries a
+failed read and explicitly retries a failed save after successful reader input;
+the latter proves the original unreadable store path remains untouched. Both
+also verify reconnect, two-way input, uncertain-input recovery, wide output,
+Ctrl-C and laptop terminal restoration. Actual PNG captures and layout metadata
+are included; the source was the pre-commit working tree based on c612cb1.
+
+**42 app tests**, strict all-target Clippy, Rust 1.85.1 ARMv7 musl checking and
+the published-catalog version gate pass. Recovery layouts cover all nine text
+sizes; existing grid and entry coverage retains all eight supported profiles.
+The app README, simulator instructions, release notes, generated app page and
+actual screenshots are updated. No physical reader execution is claimed.
+
+All six Paperterm checklist tasks are now complete for local/simulator validation.
+The program totals **128 done, 366 open and one deferred CBR task**; PR 2 has
+**36/269 complete**. Physical Clara BW acceptance remains scheduled after all
+three PRs, and all 133 companion tasks remain open.

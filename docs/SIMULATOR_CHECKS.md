@@ -62,3 +62,11 @@ input, explicit resume, offline reconnect with the keyboard open and closed,
 and restored two-way input. The committed `apps/paperterm/drive.kobo` route
 separately covers the welcome, offline preview, setup pages and corrected form
 errors, asserting zero fetch/post effects throughout.
+
+For pairing storage recovery, add `--pair-on-reader --load-failure --save-failure`.
+The fixture makes the private pairing path unreadable, retries the read, injects
+a full store, and verifies that reader input still reaches the laptop before
+explicitly retrying the save. Network recovery must not silently retry saving.
+Use `--pair-on-reader --load-failure --temporary-pairing` instead to verify a
+connection that leaves the original pairing path untouched throughout the run.
+Each storage route includes the full two-way session and captures recovery UI.
