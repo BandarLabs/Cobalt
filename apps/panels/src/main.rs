@@ -1,6 +1,7 @@
 //! A local and self-hosted comics shelf with resumable downloads.
 
 mod archive;
+mod catalog;
 mod komga;
 mod library;
 mod server;
@@ -76,7 +77,8 @@ struct Panels {
     catalog: Option<Feed>,
     server: server::Server,
     catalog_url: String,
-    history: Vec<(String, Feed)>,
+    catalog_page: usize,
+    history: Vec<(String, Feed, usize, String)>,
     selected: Option<Publication>,
     query: String,
     keyboard: Keyboard,
@@ -115,6 +117,7 @@ impl Default for Panels {
             catalog: None,
             server: server::Server::default(),
             catalog_url: String::new(),
+            catalog_page: 0,
             history: Vec::new(),
             selected: None,
             query: String::new(),
@@ -190,9 +193,9 @@ impl Panels {
             Route::Library => self.library_screen(context),
             Route::Server => self.server.screen(),
             Route::ImportHelp => self.import_help_screen(),
-            Route::Catalog => self.catalog_screen(),
+            Route::Catalog => self.catalog_screen(context),
             Route::Search => self.search_screen(),
-            Route::Detail => self.detail_screen(),
+            Route::Detail => self.detail_screen(context),
             Route::Download => self.download_screen(),
             Route::Reader => self.reader_screen(context),
             Route::SavingLibrary => self.saving_library_screen(),
@@ -338,77 +341,6 @@ impl Panels {
         }
     }
 
-    fn catalog_screen(&self) -> Screen {
-        let title = self
-            .catalog
-            .as_ref()
-            .and_then(|feed| feed.title.as_deref())
-            .unwrap_or("Home library");
-        let mut base = ScreenBuilder::new("panels-catalog")
-            .top_bar(title)
-            .owns_back(true);
-        if self.catalog.is_some() {
-            base = base.top_bar_action("search", "Search");
-        }
-        let mut screen = self.with_notice(base);
-        let Some(feed) = &self.catalog else {
-            return if self.notice.is_some() {
-                screen
-                    .splash(
-                        Some(Glyph::Reader),
-                        "Library unavailable",
-                        "Return to Browse to check the server address and account details.",
-                    )
-                    .primary_button("retry-catalog", "Try again")
-                    .build()
-            } else {
-                screen.activity("Opening library", None).build()
-            };
-        };
-        let query = self.query.to_ascii_lowercase();
-        let publications = feed
-            .publications
-            .iter()
-            .enumerate()
-            .filter(|(_, publication)| {
-                query.is_empty() || publication.title.to_ascii_lowercase().contains(&query)
-            });
-        screen = screen.rows(
-            feed.navigation
-                .iter()
-                .enumerate()
-                .map(|(index, item)| {
-                    (
-                        format!("section-{index}"),
-                        item.title.clone(),
-                        item.summary.clone().unwrap_or_else(|| "Open".to_owned()),
-                        Glyph::Reader,
-                    )
-                })
-                .chain(publications.map(|(index, item)| {
-                    (
-                        format!("volume-{index}"),
-                        item.title.clone(),
-                        item.authors.join(", "),
-                        Glyph::Book,
-                    )
-                })),
-        );
-        if !query.is_empty() {
-            screen = screen.secondary(format!("Results for “{}”", self.query));
-        }
-        if let Some(previous) = feed.previous() {
-            screen = screen.button(
-                "catalog-previous",
-                previous.title.as_deref().unwrap_or("Previous"),
-            );
-        }
-        if let Some(next) = feed.next() {
-            screen = screen.button("catalog-next", next.title.as_deref().unwrap_or("More"));
-        }
-        screen.build()
-    }
-
     fn search_screen(&self) -> Screen {
         ScreenBuilder::new("panels-search")
             .top_bar("Search")
@@ -419,9 +351,9 @@ impl Panels {
             .build()
     }
 
-    fn detail_screen(&self) -> Screen {
+    fn detail_screen(&self, context: &Context) -> Screen {
         let Some(publication) = &self.selected else {
-            return self.catalog_screen();
+            return self.catalog_screen(context);
         };
         let mut screen = self.with_notice(
             ScreenBuilder::new("panels-detail")
@@ -491,7 +423,11 @@ impl Panels {
     }
 
     fn fetch_catalog(&mut self, context: &mut Context, url: String) {
+        if let Some((task, _)) = self.task.take() {
+            context.cancel(task);
+        }
         self.catalog = None;
+        self.catalog_page = 0;
         self.catalog_url.clone_from(&url);
         self.task = context
             .spawn_retrying(komga::fetch(url))
@@ -1233,6 +1169,7 @@ impl KoboApp for Panels {
             if let Some(Pressed::Submitted) = self.keyboard.press(action) {
                 let entered = self.keyboard.take();
                 entered.trim().clone_into(&mut self.query);
+                self.catalog_page = 0;
                 self.route = Route::Catalog;
             }
             self.show(context);
@@ -1258,9 +1195,14 @@ impl KoboApp for Panels {
                 }
                 Route::Detail | Route::Search => self.route = Route::Catalog,
                 Route::Catalog => {
-                    if let Some((url, feed)) = self.history.pop() {
+                    if let Some((task, _)) = self.task.take() {
+                        context.cancel(task);
+                    }
+                    if let Some((url, feed, page, query)) = self.history.pop() {
                         self.catalog_url = url;
                         self.catalog = Some(feed);
+                        self.catalog_page = page;
+                        self.query = query;
                     } else {
                         self.route = Route::Library;
                     }
@@ -1314,13 +1256,16 @@ impl KoboApp for Panels {
             let kept = self.library_entries()[index].clone();
             self.open_kept(context, &kept);
         } else if self.route == Route::Catalog {
-            if action == action_id("catalog-next") || action == action_id("catalog-previous") {
+            if action == action_id("catalog-page-back") {
+                self.catalog_page = self.catalog_page.saturating_sub(1);
+            } else if action == action_id("catalog-page-next") {
+                self.catalog_page = (self.catalog_page + 1)
+                    .min(self.catalog_pages(context).len().saturating_sub(1));
+            } else if action == action_id("catalog-next") || action == action_id("catalog-previous")
+            {
                 let next = action == action_id("catalog-next");
                 if let Some(url) = self.catalog_link(next) {
-                    if let Some(feed) = self.catalog.take() {
-                        self.history.push((self.catalog_url.clone(), feed));
-                    }
-                    self.fetch_catalog(context, url);
+                    self.follow_catalog(context, url);
                 }
             } else if let Some(index) = self.catalog.as_ref().and_then(|feed| {
                 (0..feed.navigation.len())
@@ -1329,10 +1274,7 @@ impl KoboApp for Panels {
                 let url = self.catalog.as_ref().expect("catalog").navigation[index]
                     .href
                     .clone();
-                if let Some(feed) = self.catalog.take() {
-                    self.history.push((self.catalog_url.clone(), feed));
-                }
-                self.fetch_catalog(context, url);
+                self.follow_catalog(context, url);
             } else if let Some(publication) = self.catalog.as_ref().and_then(|feed| {
                 feed.publications
                     .iter()
@@ -1355,6 +1297,7 @@ impl KoboApp for Panels {
                     Ok(feed) if self.server.setup.verified() && self.server.is_saved() => {
                         self.catalog = Some(feed);
                         self.catalog_url = url;
+                        self.catalog_page = 0;
                         self.notice = None;
                         self.route = Route::Catalog;
                     }

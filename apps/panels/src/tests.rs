@@ -570,3 +570,93 @@ fn first_run_and_import_guide_fit_portrait_text_sizes() {
         }
     }
 }
+
+fn large_catalog() -> kobo_opds::Feed {
+    let mut source = String::from(
+        r#"<feed xmlns="http://www.w3.org/2005/Atom"><title>The garden library</title><link rel="next" href="next"/>"#,
+    );
+    for index in 0..128 {
+        source.push_str(&format!(r#"<entry><id>volume-{index}</id><title>Garden {index}: notes from a long summer beside the river</title><author><name>A. Gardener</name></author><link rel="http://opds-spec.org/acquisition" type="application/zip" href="{index}.cbz"/></entry>"#));
+    }
+    source.push_str("</feed>");
+    super::komga::parse(source.as_bytes(), "https://library.example/catalog").unwrap()
+}
+
+#[test]
+fn catalog_pages_keep_all_original_actions_reachable_at_every_text_size() {
+    use kobo_sdk::AppRunner;
+    let feed = large_catalog();
+    assert_eq!(feed.publications.len(), 128);
+    for (width, height, pixels_per_inch) in [(1072, 1448, 300), (1448, 1072, 300), (758, 1024, 212)]
+    {
+        for text_scale in kobo_ui::TextScale::STEPS {
+            let metrics = kobo_ui::DisplayMetrics {
+                width,
+                height,
+                pixels_per_inch,
+                text_scale,
+            };
+            let context = AppRunner::with_metrics(Panels::default(), metrics).context();
+            let mut app = Panels {
+                catalog: Some(feed.clone()),
+                notice: Some("Your saved comics are still available offline.".into()),
+                ..Panels::default()
+            };
+            let rows = app.catalog_rows();
+            let pages = app.catalog_pages(&context);
+            assert_eq!(
+                pages.iter().flatten().copied().collect::<Vec<_>>(),
+                (0..129).collect::<Vec<_>>()
+            );
+            for page in [0, pages.len() - 1] {
+                app.catalog_page = page;
+                let diagnostics = app
+                    .catalog_screen(&context)
+                    .diagnostics(&metrics, &Chrome::measuring(true));
+                assert!(
+                    diagnostics.issues.is_empty(),
+                    "{metrics:?}: {:?}",
+                    diagnostics.issues
+                );
+                for &row in &pages[page] {
+                    assert!(diagnostics
+                        .layout
+                        .rect_of_action(action_id(&rows[row].0))
+                        .is_some());
+                }
+            }
+            app.query = "Garden 127:".into();
+            assert_eq!(app.catalog_rows()[0].0, "volume-127");
+        }
+    }
+}
+
+#[test]
+fn catalog_back_restores_the_selected_local_page_and_query() {
+    use kobo_sdk::{Context, KoboApp};
+    let mut app = Panels {
+        catalog: Some(large_catalog()),
+        catalog_page: 4,
+        catalog_url: "https://library.example/catalog".into(),
+        query: "Garden".into(),
+        route: super::Route::Catalog,
+        ..Panels::default()
+    };
+    let mut context = Context::default();
+    app.follow_catalog(&mut context, "https://library.example/next".into());
+    assert_eq!(app.catalog_page, 0);
+    assert!(app.query.is_empty());
+    let task = app.task.as_ref().map(|(task, _)| *task).unwrap();
+    app.on_action(&mut context, kobo_sdk::ActionId::BACK);
+    app.on_task(
+        &mut context,
+        task,
+        kobo_sdk::TaskOutcome::Completed(
+            br#"<feed xmlns="http://www.w3.org/2005/Atom"><title>Late response</title></feed>"#
+                .to_vec(),
+        ),
+    );
+    assert_eq!(app.catalog_page, 4);
+    assert_eq!(app.query, "Garden");
+    assert_eq!(app.catalog.as_ref().unwrap().publications.len(), 128);
+}

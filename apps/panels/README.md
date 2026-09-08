@@ -45,9 +45,13 @@ errors are refused. An address save failure offers a retry; reopening restores
 the last acknowledged address. Changing servers requires entering account
 details for the new server.
 
-Existing browsing supports nested catalogs, filtering the current page, cover
-art and bounded CBZ downloads. Complete interrupted-download validation, catalog
-pagination and shelf progress summaries remain open quality tasks. Recovery data
+Browsing paginates each server response at the active interface size, including
+its navigation and next/previous links. Search filters the current response while
+preserving each original title action. Back restores the previous local page and
+search; cancelled or late requests cannot replace that restored view. Catalog
+history is bounded to 16 entries. Cover art and bounded CBZ downloads remain
+available. Interrupted-download validation and shelf progress summaries remain
+open quality tasks. Recovery data
 is retained until a completed comic's library save succeeds; this does not yet
 cover every interrupted-download case.
 

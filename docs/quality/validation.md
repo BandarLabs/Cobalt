@@ -534,3 +534,20 @@ physical reader was contacted; network admission is covered by policy/app tests.
 PANELS-02 and PANELS-03 are complete. Shelf thumbnails/progress and validated
 interrupted-download recovery remain open (PANELS-04 and PANELS-07); the current
 remote partial-file flow still needs stronger persistence and identity checks.
+
+
+### Panels: reachable server catalogs and Back restoration (2026-09-08)
+
+Large Komga responses now use measured local pages, with bounded title/summary
+previews and reachable server pagination links. Search preserves each original
+publication/section action. Nested navigation retains the local page and query;
+Back cancels outstanding work so a late server response cannot replace the
+restored page. History is bounded to 16 responses. The Search glyph keeps its
+accessible label and fits where the text action overflowed at maximum scale.
+
+**26 Panels tests and strict Clippy pass.** A 128-book original OPDS fixture checks
+all 129 actions, including the server-next link, across every text scale on
+Clara BW portrait/landscape and 758×1024/212 ppi. It checks both ends of the local
+pages, filtered original IDs and late-response refusal after Back. This addition
+uses app/policy tests rather than a live network library. No extra todo is marked
+complete: PANELS-04 and PANELS-07 remain open.
