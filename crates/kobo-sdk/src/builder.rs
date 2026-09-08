@@ -1809,17 +1809,34 @@ impl ScreenBuilder {
     /// board look like a board. Without it a cell is one touch target high,
     /// which is what a keyboard wants.
     #[must_use]
-    pub fn grid<I, N, L>(mut self, columns: u8, square: bool, cells: I) -> Self
+    pub fn grid<I, N, L>(self, columns: u8, square: bool, cells: I) -> Self
     where
         I: IntoIterator<Item = (N, L)>,
+        N: AsRef<str>,
+        L: Into<String>,
+    {
+        self.grid_with_selection(
+            columns,
+            square,
+            cells.into_iter().map(|(name, label)| (name, label, false)),
+        )
+    }
+
+    /// A grid with explicit selected keys. Selection uses an ink outline in
+    /// addition to the ordinary key field; the app retains toggle behavior.
+    /// Labels need no added brackets or check characters to communicate state.
+    #[must_use]
+    pub fn grid_with_selection<I, N, L>(mut self, columns: u8, square: bool, cells: I) -> Self
+    where
+        I: IntoIterator<Item = (N, L, bool)>,
         N: AsRef<str>,
         L: Into<String>,
     {
         let id = self.next_id();
         let mut source = cells.into_iter();
         let mut cells = Vec::new();
-        for (name, label) in source.by_ref().take(MAX_CELLS) {
-            cells.push(Cell::new(self.register(name.as_ref()), label));
+        for (name, label, selected) in source.by_ref().take(MAX_CELLS) {
+            cells.push(Cell::new(self.register(name.as_ref()), label).with_selected(selected));
         }
         if source.next().is_some() {
             self.warn_limit(id, "grid cells", MAX_CELLS);

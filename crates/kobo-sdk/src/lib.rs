@@ -10,6 +10,8 @@ mod callback_scale_tests;
 pub mod collections;
 #[cfg(test)]
 mod load_result_tests;
+#[cfg(test)]
+mod selected_grid_tests;
 mod suspend;
 
 pub use kobo_protocol::{

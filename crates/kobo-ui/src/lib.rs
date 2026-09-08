@@ -13820,13 +13820,25 @@ fn render_all_with_selected_font(
             // always been read, and it takes forty-five outlines off the panel.
             // Nothing at all: the picture is the whole of it.
             LayoutKind::Cell(_, CellStyle::Plain, _) => {}
-            LayoutKind::Cell(_, CellStyle::Key, _) => fill_rounded_clipped(
-                surface,
-                node.rect,
-                metrics.tenth_mm(BUTTON_RADIUS_TENTH_MM),
-                tone::SURFACE,
-                clip,
-            ),
+            LayoutKind::Cell(_, CellStyle::Key, selected) => {
+                fill_rounded_clipped(
+                    surface,
+                    node.rect,
+                    metrics.tenth_mm(BUTTON_RADIUS_TENTH_MM),
+                    tone::SURFACE,
+                    clip,
+                );
+                if selected {
+                    stroke_rounded_clipped(
+                        surface,
+                        node.rect,
+                        metrics.tenth_mm(BUTTON_RADIUS_TENTH_MM),
+                        tone::INK,
+                        metrics.button_border(),
+                        clip,
+                    );
+                }
+            }
             LayoutKind::Cell(_, CellStyle::Pad, _) => {
                 let radius = metrics.tenth_mm(PAD_RADIUS_TENTH_MM);
                 fill_rounded_clipped(surface, node.rect, radius, tone::PAPER, clip);
