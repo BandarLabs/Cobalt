@@ -10131,6 +10131,12 @@ pub fn row_text_width(metrics: &DisplayMetrics, area: ProseArea) -> i32 {
 }
 
 /// The same, for a list whose lead column is not a mark's.
+/// Text width for rows whose leading column reserves room for cover artwork.
+#[must_use]
+pub fn cover_row_text_width(metrics: &DisplayMetrics, area: ProseArea) -> i32 {
+    row_text_width_beside(metrics, area, metrics.touch_target_default())
+}
+
 fn row_text_width_beside(metrics: &DisplayMetrics, area: ProseArea, lead: i32) -> i32 {
     let padding = metrics.space(Space::Small);
     max(1, area.width - lead - padding * 2)
@@ -10659,6 +10665,16 @@ pub fn paginate_rows_with_trailing(
     area: ProseArea,
 ) -> Vec<Vec<usize>> {
     paginate_rows_measured(rows, metrics, area, false, row_mark_column(metrics))
+}
+
+/// Paginate rows with a cover-sized leading column, including glyph fallbacks.
+#[must_use]
+pub fn paginate_cover_rows(
+    rows: &[(&str, &str, &str)],
+    metrics: &DisplayMetrics,
+    area: ProseArea,
+) -> Vec<Vec<usize>> {
+    paginate_rows_measured(rows, metrics, area, false, metrics.touch_target_default())
 }
 
 /// The same, for a ranked list, whose rows lead with digits rather than a mark.

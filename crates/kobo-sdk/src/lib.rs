@@ -691,6 +691,20 @@ impl Context {
         })
     }
 
+    /// Clamp a title using the wider leading column of cover rows.
+    #[must_use]
+    pub fn clamped_cover_row(&self, text: &str, lines: usize, nav_bar: bool) -> String {
+        kobo_ui::with_text_scale(self.metrics.text_scale, || {
+            let area = self.metrics.prose_area(true, nav_bar);
+            kobo_ui::clamp_lines(
+                text,
+                kobo_ui::cover_row_text_width(&self.metrics, area),
+                kobo_ui::FontSize::Body,
+                lines,
+            )
+        })
+    }
+
     /// The same, for a row that carries `trailing` at its trailing edge.
     ///
     /// The value keeps its column and the title gives up its own, so a title
@@ -886,6 +900,30 @@ impl Context {
         position: Position,
         notice: Option<&str>,
     ) -> Vec<Vec<usize>> {
+        self.paginate_rows_below_section_by(rows, nav_bar, position, notice, false)
+    }
+
+    /// Measure cover rows below a section and optional banner. Reserve the same
+    /// cover column for missing images with `RowLead::Picture` and its fallback.
+    #[must_use]
+    pub fn paginate_cover_rows_below_section(
+        &self,
+        rows: &[(&str, &str, &str)],
+        nav_bar: bool,
+        position: Position,
+        notice: Option<&str>,
+    ) -> Vec<Vec<usize>> {
+        self.paginate_rows_below_section_by(rows, nav_bar, position, notice, true)
+    }
+
+    fn paginate_rows_below_section_by(
+        &self,
+        rows: &[(&str, &str, &str)],
+        nav_bar: bool,
+        position: Position,
+        notice: Option<&str>,
+        covers: bool,
+    ) -> Vec<Vec<usize>> {
         kobo_ui::with_text_scale(self.metrics.text_scale, || {
             let mut area = self.area_for(nav_bar, position);
             if let Some(notice) = notice {
@@ -900,7 +938,11 @@ impl Context {
                 .saturating_sub(kobo_ui::section_height(&self.metrics))
                 .saturating_sub(area.gap)
                 .max(1);
-            kobo_ui::paginate_rows_with_trailing(rows, &self.metrics, area)
+            if covers {
+                kobo_ui::paginate_cover_rows(rows, &self.metrics, area)
+            } else {
+                kobo_ui::paginate_rows_with_trailing(rows, &self.metrics, area)
+            }
         })
     }
 
