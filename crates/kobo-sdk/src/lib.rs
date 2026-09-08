@@ -1355,6 +1355,22 @@ impl AppSecrets<'_> {
                 value: kobo_protocol::SecretValue::new(value.into()),
             }));
     }
+    /// Save an account together with its owner-selected HTTPS server.
+    /// The runtime restricts use to its approved application and provider.
+    pub fn set_server(
+        &mut self,
+        name: impl Into<String>,
+        server: impl Into<String>,
+        value: impl Into<String>,
+    ) {
+        self.context
+            .commands
+            .push(Command::Device(DeviceRequest::SetServerSecret {
+                name: name.into(),
+                server: server.into(),
+                value: kobo_protocol::SecretValue::new(value.into()),
+            }));
+    }
 }
 
 impl Applications<'_> {

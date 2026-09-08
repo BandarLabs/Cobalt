@@ -346,3 +346,33 @@ HTTP Basic setup now collects username and password separately and stores the co
 Account entry uses a fixed Back control and places the keyboard beneath the entered value. The existing Shift and delete actions now use original vector symbols, retaining semantic labels and stable action IDs. Their glyph tags are appended as 66/67 to the prepared protocol-14/Cobalt-0.3.12 runtime; they do not renumber earlier glyphs or require another dependency. The bundled body font lacks these Unicode symbols, so rendering does not depend on a host-font fallback.
 
 Rust 1.85.1: **148 SDK, 265 UI and 93 protocol tests pass**, with two existing UI and two existing SDK doc examples ignored. Strict Clippy passes for all three crates. Account prompt, username, password, key and saving screens fit every text-size step on all declared portrait profiles plus a 758×1024/212-PPI test geometry. Password-space preservation, cancellation, invalid Basic usernames and redaction are tested. The initially chosen 600×800/212-PPI stress geometry was not a declared reader profile; portrait account tests now use declared profiles and the stated additional geometry. Landscape account-entry validation remains separate work.
+
+## Native credential-save parity
+
+The native app host now handles credential saves through the same private, durable writer as the simulator and file-rendering host. Previously, the native path could fall through to a generic service success without installing the secret. The generic service now refuses an unhandled credential save instead of reporting success. The shared handler preserves the exact app/name allowlist and returns failure when the private directory cannot be written; an unrelated app cannot install a credential.
+
+App-entered credentials also retain exact whitespace when the task runner reads them. Legacy owner-managed credential files keep their existing whitespace/newline trimming. Rust 1.85.1: **127 policy and 72 simulator tests pass**, strict policy/simulator/runtime Clippy passes, and the ARM runtime check passes with its existing platform warnings. The regression checks acknowledged bytes, refused app identity, unwritable storage and preserved owner-file contents. This is host testing and cross-compilation, not physical reader execution.
+
+Panels' new configurable-server flow remains uncommitted catalog work: its attempted account save was correctly refused by the current allowlist, and its network policy still admits only the historical fixed root. Binding a saved credential to the selected server is required before that flow is complete. No general destination allowance was added.
+
+
+### Server-bound account storage (2026-09-08)
+
+Protocol 14 adds a server-account request. The runtime writes the selected HTTPS
+server and exact account value in one private, durably acknowledged record.
+Panels/Komga is the only enabled provider. Requests must remain within that
+origin, port and base path, use the approved Basic header and fetch method, and
+pass host authorization. Corrupt records fail closed without falling back to a
+legacy account. Authenticated redirects remain refused by the transport.
+
+The SDK collects separate username and password fields, refuses oversized combined
+values before sending them, waits for the matching save acknowledgement, and
+keeps the old computer instructions hidden for scoped accounts until a supported
+companion flow exists. Native and simulated hosts use the same installer.
+
+Validation: 130 policy, 94 protocol, 149 SDK and 72 simulator tests passed (445
+total; two existing SDK doctests ignored). Strict Clippy passed for these crates
+and kobod with all targets/features. ARMv7 musl kobod check passed with the 118
+existing platform warnings. No hardware commands were run. Logs:
+`/tmp/cobalt-bound-account-tests.log`, `/tmp/cobalt-bound-account-clippy.log`,
+`/tmp/cobalt-bound-account-arm.log`.

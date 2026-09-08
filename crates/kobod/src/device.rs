@@ -2060,6 +2060,12 @@ fn host_applications(
                                 kobo_protocol::DeviceResult::Denied(
                                     kobo_protocol::DenyReason::NotDeclared,
                                 )
+                            } else if let Some(result) = kobo_policy::credentials::handle_install(
+                                Path::new(SECRETS),
+                                &apps[index].name,
+                                &request,
+                            ) {
+                                result
                             } else if let Some(reason) = services.refusal_for(&request) {
                                 kobo_protocol::DeviceResult::Denied(reason)
                             } else {
@@ -3069,14 +3075,15 @@ fn start_application(
         .with_line_streams(Arc::new(kobo_net::LineStreams::default()))
         .with_app_secrets(SECRETS, &name)
         .with_credential_policy(Arc::new(
-            move |credential, url, usage, body, content_type| {
-                kobo_policy::credentials::allowed_request(
+            move |credential, url, usage, body, content_type, server| {
+                kobo_policy::credentials::allowed_request_with_server(
                     &credential_app,
                     credential,
                     url,
                     usage,
                     body,
                     content_type,
+                    server,
                 )
             },
         ))
@@ -4350,7 +4357,7 @@ mod tests {
             .with_line_streams(Arc::new(kobo_net::LineStreams::default()))
             .with_app_secrets(&root, "lichess")
             .with_credential_policy(Arc::new(
-                move |credential, url, usage, body, content_type| {
+                move |credential, url, usage, body, content_type, _server| {
                     credential == &Credential::bearer("lichess")
                         && match usage {
                             CredentialUse::Fetch => {

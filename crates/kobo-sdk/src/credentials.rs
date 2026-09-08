@@ -36,6 +36,7 @@ pub struct CredentialSetup {
     problem: Option<String>,
     basic: bool,
     username: String,
+    server: Option<String>,
 }
 
 impl fmt::Debug for CredentialSetup {
@@ -67,6 +68,7 @@ impl CredentialSetup {
             problem: None,
             basic: false,
             username: String::new(),
+            server: None,
         }
     }
 
@@ -76,6 +78,38 @@ impl CredentialSetup {
     pub const fn with_basic(mut self) -> Self {
         self.basic = true;
         self
+    }
+
+    /// Bind subsequent account entry to an owner-selected server.
+    ///
+    /// # Errors
+    /// Refuses malformed addresses or changes while a save is pending.
+    pub fn bind_server(&mut self, server: &str) -> Result<(), String> {
+        if self.view == View::Saving || !kobo_protocol::valid_secret_server(server) {
+            return Err("Add a valid HTTPS server address first.".into());
+        }
+        self.close();
+        self.server = Some(server.into());
+        Ok(())
+    }
+
+    fn submit(&mut self, context: &mut Context, value: String) {
+        self.username.clear();
+        self.entry.close();
+        if value.is_empty()
+            || value.len() > kobo_protocol::MAX_APP_SECRET_BYTES
+            || value.chars().any(char::is_control)
+        {
+            self.problem = Some("These account details are too long or contain a line break. Check them and try again.".into());
+            self.view = View::Prompt;
+            return;
+        }
+        if let Some(server) = &self.server {
+            context.secrets().set_server(&self.name, server, value);
+        } else {
+            context.secrets().set(&self.name, value);
+        }
+        self.view = View::Saving;
     }
 
     #[must_use]
@@ -114,17 +148,18 @@ impl CredentialSetup {
                 if let Some(problem) = &self.problem {
                     screen = screen.banner(crate::BannerLevel::Attention, problem);
                 }
-                screen
-                    .button(
-                        ENTER,
-                        if self.basic {
-                            "Sign in"
-                        } else {
-                            "Enter account key"
-                        },
-                    )
-                    .button(CLI, "Use computer")
-                    .build()
+                screen = screen.button(
+                    ENTER,
+                    if self.basic {
+                        "Sign in"
+                    } else {
+                        "Enter account key"
+                    },
+                );
+                if self.server.is_none() {
+                    screen = screen.button(CLI, "Use computer");
+                }
+                screen.build()
             }
             View::Username => ScreenBuilder::new("account-username")
                 .top_bar("Username")
@@ -176,6 +211,7 @@ impl CredentialSetup {
         if matches!(self.view, View::Username | View::Password) {
             if action == ActionId::BACK {
                 self.entry.close();
+                self.username.clear();
                 self.view = View::Prompt;
                 return Some(CredentialEvent::Changed);
             }
@@ -197,11 +233,7 @@ impl CredentialSetup {
                     }
                 }
                 Typing::Submitted(password) => {
-                    context
-                        .secrets()
-                        .set(self.name.clone(), format!("{}:{password}", self.username));
-                    self.username.clear();
-                    self.view = View::Saving;
+                    self.submit(context, format!("{}:{password}", self.username));
                 }
                 Typing::Cancelled => self.view = View::Prompt,
                 Typing::Changed => {}
@@ -210,13 +242,13 @@ impl CredentialSetup {
         }
         if self.view == View::Entry {
             if action == ActionId::BACK {
+                self.entry.close();
                 self.view = View::Prompt;
                 return Some(CredentialEvent::Changed);
             }
             return match self.entry.handle_verbatim(action) {
                 Some(Typing::Submitted(value)) => {
-                    context.secrets().set(self.name.clone(), value);
-                    self.view = View::Saving;
+                    self.submit(context, value);
                     Some(CredentialEvent::Changed)
                 }
                 Some(Typing::Cancelled) => {
@@ -226,6 +258,9 @@ impl CredentialSetup {
                 Some(Typing::Changed) => Some(CredentialEvent::Changed),
                 None => None,
             };
+        }
+        if self.view == View::Saving {
+            return Some(CredentialEvent::Changed);
         }
         if action == ActionId::BACK {
             self.close();
@@ -241,7 +276,7 @@ impl CredentialSetup {
                 };
                 Some(CredentialEvent::Changed)
             }
-            (View::Prompt, value) if value == action_id(CLI) => {
+            (View::Prompt, value) if value == action_id(CLI) && self.server.is_none() => {
                 self.view = View::Cli;
                 Some(CredentialEvent::Changed)
             }
@@ -258,8 +293,14 @@ impl CredentialSetup {
         request: &DeviceRequest,
         result: &DeviceResult,
     ) -> Option<CredentialEvent> {
-        let DeviceRequest::SetSecret { name, .. } = request else {
-            return None;
+        let name = match request {
+            DeviceRequest::SetSecret { name, .. } if self.server.is_none() => name,
+            DeviceRequest::SetServerSecret { name, server, .. }
+                if self.server.as_ref() == Some(server) =>
+            {
+                name
+            }
+            _ => return None,
         };
         if name != &self.name || self.view != View::Saving {
             return None;
@@ -269,18 +310,22 @@ impl CredentialSetup {
                 self.close();
                 Some(CredentialEvent::Saved)
             }
-            DeviceResult::Denied(reason) => {
-                self.problem = Some(format!("The runtime refused this credential: {reason}."));
+            DeviceResult::Denied(_) => {
+                self.problem =
+                    Some("This app cannot save this account. Update Cobalt and try again.".into());
                 self.view = View::Prompt;
                 Some(CredentialEvent::Changed)
             }
-            DeviceResult::Failed(error) => {
-                self.problem = Some(format!("The credential could not be saved: {error}."));
+            DeviceResult::Failed(_) => {
+                self.problem = Some(
+                    "Account details were not saved. Check the reader’s free space and try again."
+                        .into(),
+                );
                 self.view = View::Prompt;
                 Some(CredentialEvent::Changed)
             }
             _ => {
-                self.problem = Some("The runtime returned an unexpected answer.".to_owned());
+                self.problem = Some("Saving could not be confirmed. Try again.".to_owned());
                 self.view = View::Prompt;
                 Some(CredentialEvent::Changed)
             }
@@ -292,6 +337,59 @@ impl CredentialSetup {
 mod tests {
     use super::{CredentialEvent, CredentialSetup};
     use crate::{action_id, Command, Context, DeviceRequest, DeviceResult};
+
+    #[test]
+    fn server_account_waits_for_matching_ack_and_refuses_oversized_pairs() {
+        let mut setup = CredentialSetup::new("komga", "Komga").with_basic();
+        let mut context = Context::default();
+        setup.bind_server("https://books.example").unwrap();
+        setup.open();
+        setup.on_action(&mut context, action_id("credential.enter"));
+        setup.entry.open_with("reader");
+        setup.on_action(&mut context, action_id("kb.enter"));
+        setup.entry.open_with("  private  ");
+        setup.on_action(&mut context, action_id("kb.enter"));
+        let commands = context.take_commands();
+        let [Command::Device(
+            request @ DeviceRequest::SetServerSecret {
+                name,
+                server,
+                value,
+            },
+        )] = commands.as_slice()
+        else {
+            panic!("missing bound save")
+        };
+        assert_eq!(name, "komga");
+        assert_eq!(server, "https://books.example");
+        assert_eq!(value.as_str(), "reader:  private  ");
+        setup.on_action(&mut context, crate::ActionId::BACK);
+        assert_eq!(setup.view, super::View::Saving);
+        assert!(setup.bind_server("https://another.example").is_err());
+        assert_eq!(
+            setup.on_device_result(
+                &DeviceRequest::SetSecret {
+                    name: "komga".into(),
+                    value: kobo_protocol::SecretValue::new("x")
+                },
+                &DeviceResult::Done
+            ),
+            None
+        );
+        assert_eq!(
+            setup.on_device_result(request, &DeviceResult::Done),
+            Some(CredentialEvent::Saved)
+        );
+        setup.open();
+        setup.on_action(&mut context, action_id("credential.enter"));
+        setup.entry.open_with("u".repeat(300));
+        setup.on_action(&mut context, action_id("kb.enter"));
+        setup.entry.open_with("p".repeat(300));
+        setup.on_action(&mut context, action_id("kb.enter"));
+        assert!(context.take_commands().is_empty());
+        assert_eq!(setup.view, super::View::Prompt);
+        assert!(setup.problem.is_some());
+    }
 
     #[test]
     fn entered_secret_is_sent_to_the_runtime_and_never_drawn() {

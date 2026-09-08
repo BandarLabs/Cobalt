@@ -45,6 +45,7 @@ pub struct ProviderSetup {
     advice: Option<String>,
     needs_wifi: bool,
     sample: bool,
+    server_accounts: bool,
     samples: Option<crate::samples::Collection>,
 }
 
@@ -92,6 +93,7 @@ impl ProviderSetup {
             advice: None,
             needs_wifi: false,
             sample,
+            server_accounts: false,
             samples: None,
         })
     }
@@ -128,6 +130,14 @@ impl ProviderSetup {
             return Err("Invalid account header configuration.".into());
         }
         Ok(self)
+    }
+
+    /// Bind entered accounts to the configured server. Enable only for a
+    /// provider supported by the runtime's server account policy.
+    #[must_use]
+    pub const fn with_server_accounts(mut self) -> Self {
+        self.server_accounts = true;
+        self
     }
 
     /// Validate before replacing the previous address; never silently downgrade
@@ -255,6 +265,12 @@ impl ProviderSetup {
         } else if action == action_id(ACCOUNT) {
             self.cancel(context);
             self.connection = Connection::Unchecked;
+            if self.server_accounts {
+                if let Err(reason) = self.credentials.bind_server(&self.address) {
+                    self.advice = Some(reason);
+                    return Some(Event::Changed);
+                }
+            }
             self.credentials.open();
         } else if action == action_id(TEST) {
             self.cancel(context);
