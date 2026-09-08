@@ -3846,9 +3846,13 @@ impl Painter {
         transition: &FrameTransition,
     ) -> Result<(), String> {
         for update in &transition.regions {
-            Self::apply_region(display, whole_screen, surface, *update)?;
+            if let Err(error) = Self::apply_region(display, whole_screen, surface, *update) {
+                self.frames.invalidate();
+                return Err(error);
+            }
         }
         if !self.frames.commit(surface, transition) {
+            self.frames.invalidate();
             return Err("the frame planner rejected a completed refresh".to_owned());
         }
         Ok(())

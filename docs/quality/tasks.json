@@ -184,8 +184,10 @@
     "pr": 1,
     "group": "Simulator fidelity (SIM-1\u201310)",
     "task": "Model panel submission, busy state, completion and failure",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Bounded pending/latest panel frames, explicit submission/completion/failure controls and host timestamps. Reads never complete a refresh. Failed and busy output rejects touch; retry cleans the whole panel. 58 simulator tests, 149 runtime tests and 16 runtime-library tests pass; full extra-large comic failure/recovery route and browser recovery pass; ARMv7 Rust 1.85.1 runtime check passes."
+    ]
   },
   {
     "id": "SIM-21",

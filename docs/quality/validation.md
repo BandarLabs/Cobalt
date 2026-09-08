@@ -138,3 +138,16 @@ Removed approximately 7.2 GiB of three inactive `/tmp/cobalt-...-target` Cargo c
 The browser uses the atomic frame envelope and waits for app callbacks after simulator controls. Inspector markup/styles/scripts now live in `shell.html`. Its refresh-debt label correctly reports repainted pixels; the former “partials / 8” label attached a count to a pixel total. The JSON field is now `dirtyPixelsSinceClean`.
 
 Frontlight controls update service values, not calibrated visual illumination. Display orientation composes the existing screen; the app's own rotation action is required to exercise application reflow. Digitizer mapping remains separate. These are explicit inspector limits, not claims of hardware accuracy. A first browser fixture launch hit the Unix socket path limit under macOS's long default temporary path; rerunning in a short private `/tmp` directory succeeded. CLI handling of that path remains open.
+
+
+## Panel submission, completion and recovery
+
+The simulator can hold updates in progress, retain only the newest queued frame, complete or fail a submission, and retry. The planner commits only confirmed completions. Screenshots cannot complete work. Visible pixels while busy or failed represent the last confirmed frame, and metadata marks current contents uncertain. Input is refused until the panel is ready. Retrying a failed update requires whole-panel cleaning while retaining the refresh sequence. The runtime also invalidates its planner on an actual region-submission failure, so any retry cannot rely on partly updated content.
+
+- Simulator: **58 tests passed**. Runtime with `device-write`: **149 binary + 16 library tests passed**. Cases cover queue coalescing, no sampling-induced completion, failed/cancelled control refusal, uncertain input, full-clean recovery and sequence preservation.
+- Simulator, CLI and runtime Clippy, all targets with `device-write` and `-D warnings`: **passed**.
+- Rust 1.85.1 ARMv7 musl runtime check with `device-write`: **passed**.
+- Full extra-large comic journey: **passed**, including eight unchanged captures while busy, a second queued frame, failed completion, refused tap, full-clean retry and the existing reader/save/restart checks. [Result](evidence/comics/panel-recovery-result.json), [last-confirmed screen after failure](evidence/simulator/panel-failed.png), [uncertain-state metadata](evidence/simulator/panel-failed.json).
+- Browser hold → advance clock → fail → retry → complete → automatic: **passed**, ending in an acknowledged full refresh with no layout or console errors. [State](evidence/simulator/panel-browser-result.json).
+
+Pending and latest surfaces are bounded to the selected profile; this is a controlled simulator queue model, not a measured hardware pipeline. Submission timestamps record host control observations. The model does not claim electrophoretic timing, intermediate pixels, device busy-ioctl behavior or physical waveform calibration. Input replay and physical timings remain open.

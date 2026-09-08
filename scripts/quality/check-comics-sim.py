@@ -149,7 +149,35 @@ def main():
                 drive('expect-state /device#/coverClosed true')
                 drive('device cover open')
                 drive('device battery 72 unplugged')
-                drive('expect-state /clock#/monotonicMillis "60000"')
+                drive('panel hold')
+                held_frame = get('frame')
+                drive('clock advance 60000')
+                drive('expect-state /panel#/status "busy"')
+                drive('expect-state /panel#/contentsKnown false')
+                for _ in range(8):
+                    assert get('frame') == held_frame, 'Pending refresh changed visible pixels'
+                drive('device battery 44 charging')
+                drive('expect-state /panel#/queued true')
+                drive('panel complete')
+                drive('expect-state /panel#/status "busy"')
+                drive('panel fail')
+                drive('expect-state /panel#/status "failed"')
+                capture('00-panel-refresh-failed')
+                request = urllib.request.Request(f'http://{address}/touch', data=b'x=500&y=500', method='POST')
+                try:
+                    urllib.request.urlopen(request, timeout=5)
+                    raise AssertionError('An uncertain panel accepted a tap')
+                except urllib.error.HTTPError as error:
+                    assert error.code == 409
+                drive('panel retry')
+                drive('expect-state /panel#/contentsKnown false')
+                drive('panel complete')
+                drive('expect-state /panel#/status "idle"')
+                drive('expect-state /panel#/contentsKnown true')
+                drive('panel auto')
+                drive('device battery 72 unplugged')
+
+                drive('expect-state /clock#/monotonicMillis "120000"')
                 capture('01-library')
                 drive('tap-id load-sideload')
                 wait_for('CBR is not supported yet' if args.cbr else 'Page 1 of 3')

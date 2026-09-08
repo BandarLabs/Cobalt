@@ -211,6 +211,7 @@ impl Driver {
             "clean" => self.clean(),
             "lifecycle" => self.post("/lifecycle", rest),
             "scenario" => self.post("/scenario", rest),
+            "panel" => self.post("/panel", rest),
             "device" => {
                 self.post("/device", rest)?;
                 self.wait_idle("")
@@ -247,6 +248,7 @@ impl Driver {
                 | "wait-for-id"
                 | "wait-idle"
                 | "wait"
+                | "panel"
                 | "device"
                 | "clock"
                 | "scenario"
@@ -398,10 +400,10 @@ impl Driver {
             .ok_or("expect-state requires an endpoint and #JSON_POINTER")?;
         if !matches!(
             endpoint,
-            "/simulation" | "/activity" | "/layout" | "/clock" | "/device"
+            "/simulation" | "/activity" | "/layout" | "/clock" | "/device" | "/panel"
         ) || !pointer.starts_with('/')
         {
-            return Err("expect-state uses /simulation, /activity, /layout, /clock or /device and a JSON pointer beginning with /".into());
+            return Err("expect-state uses /simulation, /activity, /layout, /clock, /device or /panel and a JSON pointer beginning with /".into());
         }
         let report: serde_json::Value = serde_json::from_slice(&self.get(endpoint)?)
             .map_err(|error| format!("read assertion state: {error}"))?;

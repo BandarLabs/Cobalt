@@ -18,10 +18,12 @@ mod activity;
 mod capture;
 mod clock;
 mod hardware;
+mod panel;
 pub use capture::CaptureSource;
+use panel::PanelPreview;
 #[path = "../../kobod/src/frame.rs"]
 mod frame;
-use frame::{FramePlanner, FrameTransition, PanelWaveform};
+
 use kobo_policy::{shelf::Shelf, store::Store, DeviceServices, TaskRunner};
 use kobo_profile::{DeviceProfile, PanelPose, CLARA_BW_391, SUPPORTED_PROFILES};
 use kobo_protocol::{read_from, write_to, Frame, Lifecycle, Message};
@@ -261,98 +263,6 @@ impl Scenario {
 struct SimulatedTouch {
     display: (u32, u32),
     raw: (i32, i32),
-}
-
-/// The panel's visible state, including a deliberately labelled approximation
-/// of residue left by non-cleaning updates.
-#[derive(Debug)]
-struct PanelPreview {
-    planner: FramePlanner,
-    ideal: Vec<u8>,
-    visible: Vec<u8>,
-    last: Option<FrameTransition>,
-}
-
-impl PanelPreview {
-    fn new() -> Self {
-        let width = PROFILE.width as usize;
-        let height = PROFILE.height as usize;
-        let pixels = width.saturating_mul(height);
-        Self {
-            planner: FramePlanner::new(width, height),
-            ideal: vec![kobo_ui::tone::PAPER; pixels],
-            visible: vec![kobo_ui::tone::INK; pixels],
-            last: None,
-        }
-    }
-
-    fn update(&mut self, surface: &Surface) {
-        self.ideal.clear();
-        self.ideal.extend_from_slice(&surface.pixels);
-        let Some(transition) = self.planner.plan(surface) else {
-            self.last = None;
-            return;
-        };
-        if transition.full {
-            self.visible.copy_from_slice(&surface.pixels);
-        } else {
-            self.apply_partial(surface, &transition);
-        }
-        if self.planner.commit(surface, &transition) {
-            self.last = Some(transition);
-        }
-    }
-
-    fn apply_partial(&mut self, surface: &Surface, transition: &FrameTransition) {
-        for update in &transition.regions {
-            let (Ok(left), Ok(top), Ok(width), Ok(height)) = (
-                usize::try_from(update.region.x),
-                usize::try_from(update.region.y),
-                usize::try_from(update.region.width),
-                usize::try_from(update.region.height),
-            ) else {
-                continue;
-            };
-            for y in top..top.saturating_add(height) {
-                let row = y.saturating_mul(surface.width);
-                for x in left..left.saturating_add(width) {
-                    let index = row.saturating_add(x);
-                    let Some(target) = surface.pixels.get(index).copied() else {
-                        continue;
-                    };
-                    let Some(visible) = self.visible.get_mut(index) else {
-                        continue;
-                    };
-                    let target = match update.waveform {
-                        PanelWaveform::Du => {
-                            if target < 128 {
-                                kobo_ui::tone::INK
-                            } else {
-                                kobo_ui::tone::PAPER
-                            }
-                        }
-                        // The simulated panel is a Clara BW, which has no colour
-                        // filter: a colour update lands as its luminance, exactly
-                        // as the runtime writes it on that device.
-                        PanelWaveform::Gl16 | PanelWaveform::Gc16 | PanelWaveform::Colour => target,
-                    };
-                    // An LCD cannot reproduce electrophoretic residue. Retaining
-                    // one sixteenth of the previous displayed value makes stale
-                    // edges visible without claiming hardware-measured physics.
-                    *visible = u8::try_from((u16::from(target) * 15 + u16::from(*visible)) / 16)
-                        .unwrap_or(target);
-                }
-            }
-        }
-    }
-
-    fn frame(&self, ideal: bool) -> &[u8] {
-        if ideal {
-            &self.ideal
-        } else {
-            &self.visible
-        }
-    }
 }
 
 /// A deterministic interactive counter used to exercise rendering and hit testing.
@@ -1379,8 +1289,14 @@ impl AppState {
             None,
             self.orientation,
         );
+        let before = self.panel.planner.refreshes();
         self.panel.update(&surface);
-        if let Some(transition) = &self.panel.last {
+        if let Some(transition) = self
+            .panel
+            .last
+            .as_ref()
+            .filter(|transition| transition.refresh != before)
+        {
             self.record(format!(
                 "refresh: {} waveform: {} full: {}",
                 transition.refresh,
@@ -1561,6 +1477,9 @@ impl AppSession {
             .state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if !state.panel.accepts_input() {
+            return None;
+        }
         state.last_touch = Some(SimulatedTouch {
             display: mapped,
             raw,
@@ -1687,6 +1606,34 @@ impl AppSession {
                     body.as_bytes(),
                 )
             }
+            ("GET", "/panel") => {
+                let state = self
+                    .state
+                    .lock()
+                    .map_err(|_| io::Error::other("app state lock poisoned"))?;
+                write_response(
+                    &mut stream,
+                    200,
+                    "application/json",
+                    state.panel.state_json().to_json().as_bytes(),
+                )
+            }
+            ("POST", "/panel") => {
+                let command = std::str::from_utf8(&request.body).unwrap_or("");
+                let mut state = self
+                    .state
+                    .lock()
+                    .map_err(|_| io::Error::other("app state lock poisoned"))?;
+                match state.panel.control(command) {
+                    Ok(()) => {
+                        state.record(format!("panel: {command}"));
+                        write_response(&mut stream, 200, "text/plain", b"ok")
+                    }
+                    Err(error) => {
+                        write_response(&mut stream, 400, "text/plain", error.to_string().as_bytes())
+                    }
+                }
+            }
             ("GET", "/device") => {
                 let state = self
                     .state
@@ -1721,6 +1668,16 @@ impl AppSession {
                 }
             }
             ("POST", "/touch") => {
+                if !self
+                    .state
+                    .lock()
+                    .map_err(|_| io::Error::other("app state lock poisoned"))?
+                    .panel
+                    .accepts_input()
+                {
+                    return write_response(&mut stream, 409, "text/plain", b"Panel is busy or its contents are uncertain. Complete the update or retry the failed refresh before tapping.");
+                }
+
                 let response = parse_touch(&request.body)
                     .and_then(|(x, y)| self.touch_action(x, y))
                     .map_or(Ok(()), |action| self.send_action(action));
@@ -1894,7 +1851,7 @@ fn simulation_json(
             "\"yMin\":{},\"yMax\":{}}}}},\"scenario\":{},",
             "\"lifecycle\":{},\"transition\":{},\"refreshCount\":{},",
             "\"dirtyPixelsSinceClean\":{},\"touch\":{},",
-            "\"panelApproximation\":true,\"observation\":{},\"backends\":{}}}"
+            "\"panelApproximation\":true,\"panel\":{},\"observation\":{},\"backends\":{}}}"
         ),
         json_string(PROFILE.id),
         json_string(PROFILE.model),
@@ -1913,6 +1870,7 @@ fn simulation_json(
         panel.planner.refreshes(),
         panel.planner.dirty(),
         touch,
+        panel.state_json().to_json(),
         observation().ok().flatten().map_or_else(
             || "null".into(),
             |value| value.to_json().unwrap_or_else(|_| "null".into())
@@ -2969,6 +2927,7 @@ fn write_response(
         204 => "No Content",
         400 => "Bad Request",
         404 => "Not Found",
+        409 => "Conflict",
         _ => "Internal Server Error",
     };
     write!(
@@ -3912,6 +3871,7 @@ mod tests {
             writer: AppWriter::spawn_for(server, kobo_protocol::VERSION),
         };
 
+        session.state.lock().unwrap().commit_frame();
         let frame = session.render_frame(false);
         let width = usize::try_from(profile_metrics().width).expect("panel width");
         let inked = (physical.y..physical.y + physical.height)
