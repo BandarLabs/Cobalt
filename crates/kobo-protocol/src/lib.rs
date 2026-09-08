@@ -58,6 +58,7 @@ pub const MAGIC: [u8; 4] = *b"KOBO";
 /// Version 14 adds the bounded board viewport on a new node tag. Versions
 /// 11, 12 and 13 remain readable; board nodes require version 14.
 /// Version 14 also adds generation-scoped suspend barriers on new message tags.
+/// Its beta numbered-grid tag 33 carries corner clue numbers; tag 15 stays byte-compatible.
 ///
 /// A colour picture travels the same way: a grey picture still uses the tags it
 /// always did, byte for byte, and a colour one uses tags of its own that an
@@ -4217,7 +4218,17 @@ fn encoded_node_len(
             length
         }
         Node::Board { surface, .. } => board::encoded_len(surface, version)?,
-        Node::Grid { cells, .. } => {
+        Node::Grid { cells, square, .. } => {
+            let numbered = cells.iter().any(|cell| cell.corner.is_some());
+            if numbered
+                && (version < 14
+                    || !square
+                    || cells
+                        .iter()
+                        .any(|c| c.corner.is_some_and(|n| n == 0 || n > 99)))
+            {
+                return Err(ProtocolError::InvalidValue("numbered board"));
+            }
             if cells.len() > u8::MAX as usize {
                 return Err(ProtocolError::TooManyNodes);
             }
@@ -4228,6 +4239,9 @@ fn encoded_node_len(
                 add_encoded_len(&mut length, encoded_string_len(&cell.label)?)?;
                 add_encoded_len(&mut length, if cell.glyph.is_some() { 2 } else { 1 })?;
                 if version >= 13 {
+                    add_encoded_len(&mut length, 1)?;
+                }
+                if numbered {
                     add_encoded_len(&mut length, 1)?;
                 }
             }
@@ -5504,7 +5518,13 @@ fn encode_node(
             square,
             cells,
         } => {
-            output.push(15);
+            let numbered = cells.iter().any(|cell| cell.corner.is_some());
+            if numbered && (version < 14 || !square) {
+                return Err(ProtocolError::InvalidValue(
+                    "numbered board requires protocol 14",
+                ));
+            }
+            output.push(if numbered { 33 } else { 15 });
             push_u32(output, id.0);
             output.push(*columns);
             output.push(u8::from(*square));
@@ -5521,6 +5541,13 @@ fn encode_node(
                 }
                 if version >= 13 {
                     output.push(u8::from(cell.selected));
+                }
+                if numbered {
+                    let number = cell.corner.unwrap_or(0);
+                    if number > 99 {
+                        return Err(ProtocolError::InvalidValue("clue number"));
+                    }
+                    output.push(number);
                 }
             }
         }
@@ -6888,7 +6915,7 @@ fn decode_node(
             Ok(Node::Terminal { id, rows, cursor })
         }
         32 if version >= 14 => board::read(reader, id),
-        15 => {
+        tag @ (15 | 33) if tag == 15 || version >= 14 => {
             let columns = reader.u8()?;
             if columns == 0 || columns > kobo_ui::MAX_COLUMNS {
                 return Err(ProtocolError::InvalidValue("grid columns"));
@@ -6917,7 +6944,7 @@ fn decode_node(
                     ),
                     _ => return Err(ProtocolError::InvalidValue("cell glyph flag")),
                 };
-                cells.push(if version >= 13 {
+                let mut cell = if version >= 13 {
                     cell.with_selected(match reader.u8()? {
                         0 => false,
                         1 => true,
@@ -6925,7 +6952,18 @@ fn decode_node(
                     })
                 } else {
                     cell
-                });
+                };
+                if tag == 33 {
+                    if !square {
+                        return Err(ProtocolError::InvalidValue("numbered board must be square"));
+                    }
+                    cell.corner = match reader.u8()? {
+                        0 => None,
+                        n @ 1..=99 => Some(n),
+                        _ => return Err(ProtocolError::InvalidValue("clue number")),
+                    };
+                }
+                cells.push(cell);
             }
             Ok(Node::Grid {
                 id,
@@ -8893,6 +8931,40 @@ mod node_coverage_tests {
             Message::SetScreen(screen) => screen,
             other => panic!("expected a screen, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn numbered_boards_round_trip_without_changing_installed_grid_frames() {
+        let mut cell = Cell::new(ActionId(11), "H").with_selected(true);
+        cell.corner = Some(12);
+        let screen = Screen::new(
+            1,
+            vec![Node::Grid {
+                id: NodeId(1),
+                columns: 1,
+                square: true,
+                cells: vec![cell],
+            }],
+        );
+        assert_eq!(round_trip(screen.clone()), screen);
+        let mut frame = Frame {
+            version: VERSION,
+            request_id: 1,
+            message: Message::SetScreen(screen),
+        };
+        let bytes = encode(&frame).unwrap();
+        for end in 0..bytes.len() {
+            assert!(decode(&bytes[..end]).is_err());
+        }
+        frame.version = SELECTED_GRID_VERSION;
+        assert!(encode(&frame).is_err());
+        frame.version = VERSION;
+        if let Message::SetScreen(s) = &mut frame.message {
+            if let Node::Grid { cells, .. } = &mut s.nodes[0] {
+                cells[0].corner = Some(100);
+            }
+        }
+        assert!(encode(&frame).is_err());
     }
 
     #[test]

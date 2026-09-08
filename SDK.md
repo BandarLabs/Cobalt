@@ -1675,3 +1675,27 @@ At the smallest legal square, up to three-character board marks can step down th
 `Context::paginate_oriented(text, nav_bar, orientation)` measures interface prose for an app-requested orientation, retaining status and page-control space. Pair it with `Context::set_orientation` and `metrics().oriented(orientation)` for the rest of the view.
 
 Board viewports shade and outline the selected square’s matching row and column clue targets. Panning retains absolute row/column identities; the complete clue remains available through its existing inspection action. Nonograms provides an app-level example with attached clues and persistent undo.
+
+
+### Numbered crossword grids (beta)
+
+`ScreenBuilder::crossword_board(columns, cells)` takes `(action_name, letter,
+corner_number, active_word)` tuples. It draws joined black rules, centered
+letters and small upper-left clue numbers. `'#'` denotes a solid, noninteractive
+block; `' '` denotes an empty letter square. Numbers are 1–99. Number at least
+one start square. Keep the same absolute action IDs as letters change; the app
+owns clue navigation and answer checking. Crossword's screenshot and complete
+example are in `apps/crossword`.
+
+The protocol-14 beta uses a distinct numbered-grid node tag (33), so ordinary
+grid frames remain byte-compatible with installed apps. Numbered boards refuse
+older protocol versions; deploy the matching beta runtime with the app. No
+existing grid label is interpreted as an embedded numbering format.
+
+Short keyboard labels fit their physical key rectangles, including compact
+landscape rows at large text settings. Top-bar text actions use caption size
+when body text cannot fit the bar's height; measurement and drawing agree.
+Touch targets are not reduced. `kobo drive` typing first resolves visible SDK
+keyboard actions, preventing an existing crossword letter from stealing a tap.
+It still taps actual screen coordinates, and custom keyboards retain label
+matching when no SDK keyboard is present.

@@ -1959,6 +1959,34 @@ impl ScreenBuilder {
         self
     }
 
+    /// A newspaper-style grid: joined squares, corner numbers and centered letters.
+    /// Requires the protocol-14 beta runtime's numbered-board node.
+    #[must_use]
+    pub fn crossword_board<I, N>(mut self, columns: u8, cells: I) -> Self
+    where
+        I: IntoIterator<Item = (N, char, Option<u8>, bool)>,
+        N: AsRef<str>,
+    {
+        let id = self.next_id();
+        let cells = cells
+            .into_iter()
+            .take(MAX_CELLS)
+            .map(|(name, letter, corner, selected)| {
+                let mut cell = Cell::new(self.register(name.as_ref()), letter.to_string())
+                    .with_selected(selected);
+                cell.corner = corner.filter(|n| (1..=99).contains(n));
+                cell
+            })
+            .collect();
+        self.nodes.push(Node::Grid {
+            id,
+            columns: columns.clamp(1, MAX_COLUMNS),
+            square: true,
+            cells,
+        });
+        self
+    }
+
     /// A row of buttons that each have a picture as well as a word.
     ///
     /// For the handful of actions that have a drawing everybody already knows:

@@ -2296,6 +2296,10 @@ pub struct BarAction {
 /// phone platforms draw and what a printed keyboard looks like.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub enum CellStyle {
+    /// Solid crossword block, never a letter square.
+    CrosswordBlock,
+    /// Joined white crossword square with a restrained active-word highlight.
+    Crossword,
     #[default]
     Board,
     /// A shaded playable square on a conventional draughts board.
@@ -3632,7 +3636,12 @@ fn layout_top_bar(
             // narrower than the bar is tall is one a thumb misses.
             control
         } else {
-            let (text_width, _) = measure_text(&action.label, FontSize::Body);
+            let size = if FontSize::Body.line_height() <= control {
+                FontSize::Body
+            } else {
+                FontSize::Caption
+            };
+            let (text_width, _) = measure_text(&action.label, size);
             max(
                 control,
                 text_width.saturating_add(metrics.space(Space::Medium)),
@@ -4862,6 +4871,8 @@ pub struct Cell {
     pub glyph: Option<Glyph>,
     /// Drawn inverted while this cell is the current board selection.
     pub selected: bool,
+    /// Small crossword clue number in the upper-left corner (1–99).
+    pub corner: Option<u8>,
 }
 
 impl Cell {
@@ -4872,6 +4883,7 @@ impl Cell {
             label: label.into(),
             glyph: None,
             selected: false,
+            corner: None,
         }
     }
 
@@ -5740,6 +5752,7 @@ impl LayoutKind {
     #[must_use]
     pub const fn acts_on(&self) -> Option<ActionId> {
         match *self {
+            Self::Cell(_, CellStyle::CrosswordBlock, _) => None,
             Self::Button(action, ControlState::Enabled, _)
             | Self::BarAction(action)
             | Self::BarGlyph(action, _)
@@ -7969,6 +7982,8 @@ fn layout_node(
             };
             let (mut x, mut width, gutter) = if backgammon_board {
                 (0, metrics.width, 0)
+            } else if *square && cells.iter().any(|cell| cell.corner.is_some()) {
+                (x, width, 0)
             } else if pad_deck {
                 (x, width, metrics.space(Space::Small))
             } else {
@@ -8072,6 +8087,10 @@ fn layout_node(
                     } else {
                         CellStyle::BackgammonBottom
                     }
+                } else if *square && cells.iter().any(|c| c.corner.is_some()) && cell.label == "#" {
+                    CellStyle::CrosswordBlock
+                } else if *square && cells.iter().any(|c| c.corner.is_some()) {
+                    CellStyle::Crossword
                 } else if morris_board {
                     CellStyle::Plain
                 } else if draughts_board && (row + column) % 2 == 1 {
@@ -8165,12 +8184,35 @@ fn layout_node(
                                 text_lines: vec![cell.label.clone()],
                             });
                         }
-                        None => layout.nodes.push(LayoutNode {
-                            id: *id,
-                            rect,
-                            kind: LayoutKind::CellLabel(style == CellStyle::Board),
-                            text_lines: vec![cell.label.clone()],
-                        }),
+                        None if style == CellStyle::CrosswordBlock => (),
+                        None => {
+                            layout.nodes.push(LayoutNode {
+                                id: *id,
+                                rect,
+                                kind: LayoutKind::CellLabel(matches!(
+                                    style,
+                                    CellStyle::Board | CellStyle::Crossword
+                                )),
+                                text_lines: vec![cell.label.clone()],
+                            });
+                            if let Some(number) = cell.corner.filter(|n| (1..=99).contains(n)) {
+                                let inset = metrics.rule_thickness() * 2;
+                                layout.nodes.push(LayoutNode {
+                                    id: *id,
+                                    rect: Rect {
+                                        x: rect.x + inset,
+                                        y: rect.y + inset,
+                                        width: rect.width / 4,
+                                        height: (rect.height / 6)
+                                            .max(with_text_scale(TextScale::Smallest, || {
+                                                FontSize::Caption.line_height()
+                                            })),
+                                    },
+                                    kind: LayoutKind::CellLabel(true),
+                                    text_lines: vec![number.to_string()],
+                                });
+                            }
+                        }
                     }
                 }
             }
@@ -12662,7 +12704,13 @@ fn node_enabled_interaction_count(node: &Node) -> usize {
         Node::Field { clear, .. } => 1 + usize::from(clear.is_some()),
         Node::Chips { chips, .. } | Node::Tabs { tabs: chips, .. } => chips.len(),
         Node::Card { .. } | Node::Band { .. } => 0,
-        Node::Grid { cells, .. } => cells.len(),
+        Node::Grid { cells, square, .. } => {
+            let crossword = *square && cells.iter().any(|cell| cell.corner.is_some());
+            cells
+                .iter()
+                .filter(|cell| !crossword || cell.label != "#")
+                .count()
+        }
         Node::Board { surface, .. } => {
             surface.cells.len() + surface.row_clues.len() + surface.column_clues.len()
         }
@@ -12740,6 +12788,8 @@ fn validate_layout_nodes(layout: &Layout, metrics: &DisplayMetrics, issues: &mut
         };
         let scale = if matches!(node.kind, LayoutKind::CellLabel(true)) {
             board_label_style(node).1
+        } else if matches!(node.kind, LayoutKind::CellLabel(false)) {
+            key_label_style(node).1
         } else {
             text_scale()
         };
@@ -12854,11 +12904,49 @@ fn board_label_size(node: &LayoutNode) -> FontSize {
     board_label_style(node).0
 }
 
+// Keyboard keys keep physical targets. Fit their short labels within those targets,
+// including the compact landscape keyboard at the largest reader text settings.
+fn key_label_style(node: &LayoutNode) -> (FontSize, TextScale) {
+    let current = text_scale();
+    let fits = |size: FontSize| {
+        size.line_height() <= node.rect.height
+            && node
+                .text_lines
+                .iter()
+                .all(|line| measure_text(line, size).0 <= node.rect.width)
+    };
+    for size in [FontSize::Body, FontSize::Caption] {
+        if fits(size) {
+            return (size, current);
+        }
+    }
+    for scale in TextScale::STEPS
+        .into_iter()
+        .take_while(|s| *s != current)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+    {
+        if with_text_scale(scale, || fits(FontSize::Caption)) {
+            return (FontSize::Caption, scale);
+        }
+    }
+    (FontSize::Caption, current)
+}
+
 fn layout_text_style(node: &LayoutNode) -> Option<(FontSize, Face)> {
     let size = match node.kind {
         LayoutKind::Heading(level) => FontSize::for_heading_level(level),
         LayoutKind::CellLabel(true) => board_label_size(node),
+        LayoutKind::CellLabel(false) => key_label_style(node).0,
         LayoutKind::TopBarTitle => BAR_TITLE,
+        LayoutKind::BarAction(_) => {
+            if FontSize::Body.line_height() <= node.rect.height {
+                FontSize::Body
+            } else {
+                FontSize::Caption
+            }
+        }
         LayoutKind::OverlayTitle => FontSize::Title,
         LayoutKind::BoardClue
         | LayoutKind::Secondary
@@ -12885,10 +12973,8 @@ fn layout_text_style(node: &LayoutNode) -> Option<(FontSize, Face)> {
         | LayoutKind::Quote(..)
         | LayoutKind::Button(..)
         | LayoutKind::PagedList
-        | LayoutKind::BarAction(_)
         | LayoutKind::RowTitle
         | LayoutKind::RowTitleDone
-        | LayoutKind::CellLabel(_)
         | LayoutKind::ChoicePrompt
         | LayoutKind::ChoiceOption(_, _)
         | LayoutKind::StepperValue
@@ -13781,6 +13867,21 @@ fn render_all_with_selected_font(
             // ruled squares and an empty cell stays paper white. Filling would
             // make every move a full-cell change, which is slow on E Ink and
             // looks like a mistake.
+            LayoutKind::Cell(_, CellStyle::Crossword, selected) => {
+                if selected {
+                    fill_clipped(surface, node.rect, tone::SURFACE, clip);
+                }
+                stroke_clipped(
+                    surface,
+                    node.rect,
+                    tone::INK,
+                    metrics.rule_thickness(),
+                    clip,
+                );
+            }
+            LayoutKind::Cell(_, CellStyle::CrosswordBlock, _) => {
+                fill_clipped(surface, node.rect, tone::INK, clip);
+            }
             LayoutKind::Cell(_, CellStyle::Board, true) => {
                 fill_clipped(surface, node.rect, tone::SURFACE, clip);
                 stroke_clipped(
@@ -13884,7 +13985,7 @@ fn render_all_with_selected_font(
                 let (size, scale) = if board {
                     board_label_style(&node)
                 } else {
-                    (FontSize::Body, text_scale())
+                    key_label_style(&node)
                 };
                 with_text_scale(scale, || {
                     draw_centered(surface, &node.text_lines, node.rect, size, tone::INK, clip);
@@ -14205,7 +14306,11 @@ fn render_all_with_selected_font(
                 surface,
                 &node.text_lines,
                 node.rect,
-                FontSize::Body,
+                if FontSize::Body.line_height() <= node.rect.height {
+                    FontSize::Body
+                } else {
+                    FontSize::Caption
+                },
                 tone::INK,
                 clip,
             ),

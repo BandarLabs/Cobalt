@@ -18,7 +18,9 @@ A checked task requires implementation plus recorded validation. Physical measur
 
 The PR 1 implementation checklist is complete; CBR is deferred and COMIC-18 belongs to catalog integration in PR 2. This does not certify hardware accuracy: native sleep hands ownership back to the stock reader, and no generic kernel suspend, RTC wake or automatic cover-sleep backend is enabled. Physical acceptance remains scheduled after all three PRs.
 
-495 tracked tasks: 117 completed, 1 deferred by the owner, 377 open. Implementation in progress. Evidence is recorded per task in `tasks.json` and in [the validation log](validation.md).
+495 tracked tasks: 122 completed, 1 deferred by the owner, 372 open. Implementation in progress. Evidence is recorded per task in `tasks.json` and in [the validation log](validation.md).
+
+Design direction: use the familiar visual conventions of each app, restrained controls and plain copy. Crossword follows printed crossword typography and grids. Paperterm is the next app priority, including a real two-way laptop terminal session.
 
 ## PR 1 · Simulator fidelity (SIM-1–10)
 
@@ -178,11 +180,11 @@ The PR 1 implementation checklist is complete; CBR is deferred and COMIC-18 belo
 
 ## PR 2 · Crossword
 
-- [ ] **CROSS-01** Render numbered cells and active word distinctly.
-- [ ] **CROSS-02** Keep clue and entry together.
-- [ ] **CROSS-03** Add puzzle corpus/import and difficulty.
-- [ ] **CROSS-04** Add check/reveal choices.
-- [ ] **CROSS-05** Persist completion and statistics.
+- [x] **CROSS-01** Render numbered cells and active word distinctly.
+- [x] **CROSS-02** Keep clue and entry together.
+- [x] **CROSS-03** Add puzzle corpus/import and difficulty.
+- [x] **CROSS-04** Add check/reveal choices.
+- [x] **CROSS-05** Persist completion and statistics.
 
 ## PR 2 · Deck app
 

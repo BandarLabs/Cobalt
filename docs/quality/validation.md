@@ -701,3 +701,59 @@ The Earlier collection retains the previous 60 IDs, answers and progress keys. N
 **32 app tests pass**, including the existing layout/recovery suite plus new-picture solvability/distinctness and separate save destinations. Strict Clippy, ARMv7 musl compilation and the published-catalog version gate pass. The final actual extra-large Clara BW SDK simulator repeats the prior clue, panning, undo, completion and recovery journey against Earlier, then saves/restarts/completes the new House picture and verifies the earlier save bytes remain unchanged. It runs the new committed demonstration route. No personal storage or physical reader was used.
 
 See [the full result](evidence/nonogram-pictures/result.json), [House selection](evidence/nonogram-pictures/14-picture-selection.png), [restored House](evidence/nonogram-pictures/15-picture-restored.png) and [completed House](evidence/nonogram-pictures/16-picture-completed.png). Capture metadata records actual binary/source/font/profile provenance and dirty source accurately. The app README, public page and screenshots are updated. Physical acceptance remains scheduled after the three PRs; the catalog and companion program is still in progress.
+
+
+## Crossword: numbered grids, complete play and acknowledged saves
+
+CROSS-01–05 are complete in Crossword 0.1.3. **495 tasks: 122 done, 372 open,
+and one CBR deferral. PR 2 has 30 done and 239 open; PR 3 has 133 open.**
+Paperterm's live two-way laptop terminal session is the owner's next priority.
+
+Crossword uses a conventional black-and-white grid with joined black rules,
+small upper-left clue numbers, centered letters and solid noninteractive blocks.
+The active word is shaded lightly. The first puzzle, Odds and ends, has ten
+unique crossing answers of three or more letters; the other three are explicitly
+word squares. Starter/Easy/Medium are editorial guides. The previous 5×5 answer
+and its saved progress remain intact. This is a bundled-corpus edition: `.puz`,
+`.ipuz`, rebuses and large Sunday imports are not advertised or counted as shipped.
+The obsolete test-only header parser was removed.
+
+The app deliberately requests portrait so the full clue, word and keyboard stay
+together at the largest text setting. Entry accepts one letter or a whole word,
+limits input to A–Z and the current word length, and preserves invalid partial
+entry for correction. Checking never changes the letters. Reveal and Restart
+ask first; undo survives reopening. A revealed correct guess still counts as
+assistance. Empty Undo and Clear controls are disabled. Separate progress,
+completion history and assistance counts for all four puzzles fit a bounded
+24 KiB schema with 32 undo steps each. Exact write acknowledgements govern
+saved state. Full storage retains the latest draft and exposes Retry save;
+legacy records migrate only after editing, and invalid/future records stay intact.
+
+The SDK adds a numbered-grid node on beta protocol-14 tag 33; ordinary tag-15
+grid bytes are unchanged. The matching beta runtime is required. Shared key
+labels fit their physical rectangles at large text sizes, and top-bar action
+measurement/drawing agree when body type is too tall. A real simulator run
+exposed `kobo drive type` selecting an existing crossword letter instead of a
+keyboard key. The driver now prefers SDK keyboard actions, still through actual
+touch coordinates; custom keyboards keep their existing fallback.
+
+**11 app tests pass**, covering corpus validity, all nine sizes on two portrait
+profiles, every clue/error entry at Largest, noninteractive blocks, bounded
+history, save acknowledgements, corrupt/future records and legacy migration.
+Shared validation passes **152 SDK, 268 UI and 95 protocol tests**; the UI has two
+existing ignores. **21 driver tests pass serially.** The broad CLI run had one
+local socket WouldBlock timeout under concurrent test load (301 passed); its
+callback timing test passes in the serial driver run. Strict all-target Clippy,
+ARMv7 musl checking with Rust 1.85.1 and the published-catalog version gate pass.
+
+The [actual extra-large Clara BW simulator result](evidence/crossword/result.json)
+passes 17 checks, including full completion, forced reopening, undo, full-storage
+preservation/retry, all help pages, both clue directions, the committed drive
+route, actual legacy migration and unreadable-record preservation. Captures
+assert zero fetch/post effects and retain source/binary/font/profile provenance.
+See the [numbered grid](evidence/crossword/02-numbered-grid.png),
+[complete crossword](evidence/crossword/08-completed-crossword.png),
+[save recovery](evidence/crossword/05-save-recovery.png) and
+[preserved unreadable record](evidence/crossword/15-unreadable-preserved.png).
+The app and SDK guides, public app page and screenshots are updated. Physical
+Clara BW acceptance remains after all three PRs.

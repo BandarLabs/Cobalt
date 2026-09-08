@@ -1,15 +1,13 @@
 expect Crossword
-tap How to play
-expect Fill the white squares
-wait 250
-clean
-shot crossword-help
-tap Play
-tap-at 111,227
-type h
-tap Enter letter
-expect 1 Across
-tap Clues
-expect Across clues
+tap-id puzzle-3
+tap-id cell-0
+type cat
+tap Enter
+expect Clues
 clean
 shot crossword-play
+tap-id clues
+tap-id clue-0
+expect Enter
+clean
+shot crossword-entry

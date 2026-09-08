@@ -1214,17 +1214,19 @@
     "pr": 2,
     "group": "Crossword",
     "task": "Render numbered cells and active word distinctly",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Shared numbered-grid component draws joined black rules, small upper-left clue numbers, centered letters and noninteractive black blocks. The active word has a restrained highlight. Actual extra-large Clara BW capture: evidence/crossword/02-numbered-grid.png."
+    ]
   },
   {
     "id": "CROSS-02",
     "pr": 2,
     "group": "Crossword",
     "task": "Keep clue and entry together",
-    "status": "todo",
+    "status": "done",
     "evidence": [
-      "Extra-large simulator route cannot find the letter key after its coordinate-based cell tap (drive.kobo line 9). Needs investigation alongside clue/entry layout; not counted complete. See evidence/board-regression."
+      "Portrait clue entry retains the full clue, selected word and keyboard. All nine sizes pass on both portrait profiles, including every clue and validation messages at Largest. The real drive route also exposed and fixed matching crossword letters stealing simulated keyboard taps. evidence/crossword/03-clue-and-entry.png; result.json."
     ]
   },
   {
@@ -1232,24 +1234,30 @@
     "pr": 2,
     "group": "Crossword",
     "task": "Add puzzle corpus/import and difficulty",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Four bounded offline puzzles have editorial Starter/Easy/Medium guides: one original blocked mini with ten distinct crossing answers of at least three letters, plus three word squares. The prior 5\u00d75 answer remains unchanged. No import is advertised; the old test-only .puz header parser is removed. Corpus crossing, numbering and complete-solve tests pass."
+    ]
   },
   {
     "id": "CROSS-04",
     "pr": 2,
     "group": "Crossword",
     "task": "Add check/reveal choices",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Check reports wrong/empty letters without modifying them; reveal and restart ask first and support persistent undo. Revealing even a correct guess counts assistance, and undo retains assistance counts. Actual simulator checks, reveal confirmation and restart/undo pass: evidence/crossword/result.json."
+    ]
   },
   {
     "id": "CROSS-05",
     "pr": 2,
     "group": "Crossword",
     "task": "Persist completion and statistics",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "A bounded 24 KiB identity-checked record retains four grids, completion history, check/reveal counts, selection, direction and 32 undo steps each. Draft releases one write at a time and exact acknowledgements advance saved state. Full storage preserves the latest edit with explicit retry; legacy migration, forced reopen and unreadable-record preservation pass in the actual simulator. evidence/crossword/result.json."
+    ]
   },
   {
     "id": "DECK-01",
@@ -2373,7 +2381,9 @@
     "group": "Paperterm",
     "task": "Validate wide rows, cursor and keyboard input",
     "status": "todo",
-    "evidence": []
+    "evidence": [
+      "Owner priority after Crossword: prove a live two-way laptop terminal session with output streamed to the reader and reader input delivered back to the same host PTY; simulator first, Clara BW acceptance after all three PRs."
+    ]
   },
   {
     "id": "PAPER-06",
