@@ -26,6 +26,7 @@ members = [
     "crates/kobo-sdk",
     "crates/kobo-shell",
     "crates/kobo-stream",
+    "crates/kobo-state",
     "crates/kobo-sidekickd",
     "crates/kobo-sim",
     "crates/kobo-smoke",

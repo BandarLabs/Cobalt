@@ -1732,6 +1732,13 @@ fn host_applications(
                     let mut released = None;
                     if let Some(current) = screen.as_ref() {
                         match event {
+                            TouchEvent::Cancel => {
+                                landed = None;
+                                if let Some((rect, metrics, _)) = pressed.take() {
+                                    surface.invert_press(rect, &metrics);
+                                    panel.paint_feedback(display, whole_screen, &surface, rect)?;
+                                }
+                            }
                             TouchEvent::Down { x, y } => {
                                 if let (Ok(x), Ok(y)) = (i32::try_from(x), i32::try_from(y)) {
                                     landed = Some((Instant::now(), x, y));
@@ -4328,6 +4335,30 @@ mod tests {
             .unwrap_or_else(|| panic!("task {} did not finish", task.0));
         assert_eq!(finished.task, task);
         assert_eq!(&finished.outcome, expected);
+    }
+
+    #[test]
+    fn cancelled_touch_cannot_activate_an_app_control() {
+        let (mut writer, mut reader) = std::os::unix::net::UnixStream::pair().unwrap();
+        reader.set_nonblocking(true).unwrap();
+        let result = super::deliver_touch(
+            &mut writer,
+            kobo_hal::touch::TouchEvent::Cancel,
+            None,
+            &kobo_ui::Chrome::default(),
+            false,
+            kobo_ui::Orientation::Portrait,
+            kobo_ui::LandscapeTurn::Clockwise,
+        )
+        .unwrap();
+        assert!(matches!(result, super::Tap::Handled));
+        let mut bytes = [0_u8; 1];
+        assert_eq!(
+            std::io::Read::read(&mut reader, &mut bytes)
+                .unwrap_err()
+                .kind(),
+            std::io::ErrorKind::WouldBlock
+        );
     }
 
     #[test]

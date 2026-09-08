@@ -1648,6 +1648,19 @@ fn dev_sdk_app(address: &str) -> Result<(), String> {
     let dev_session = DevSessionGuard::new()?;
     let server = kobo_sim::AppServer::bind(address, &dev_session.socket)
         .map_err(|error| format!("start app simulator: {error}"))?;
+    let server = match fs::File::open("cobalt-app.json") {
+        Ok(file) => {
+            let mut source = String::new();
+            file.take(64 * 1024 + 1)
+                .read_to_string(&mut source)
+                .map_err(|error| format!("read app manifest: {error}"))?;
+            server
+                .with_manifest(&source)
+                .map_err(|error| error.to_string())?
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => server,
+        Err(error) => return Err(format!("read app manifest: {error}")),
+    };
     server
         .set_nonblocking(true)
         .map_err(|error| format!("configure app simulator: {error}"))?;
@@ -5433,7 +5446,7 @@ fn shot_command(arguments: &[String]) -> Result<(), String> {
         drive::decode_capture(&transcript)?
     } else {
         let driver = drive::Driver::new(&address, Path::new(".")).ideal(ideal);
-        let (width, height) = drive::SIMULATED_PANEL;
+        let (width, height) = driver.dimensions()?;
         (width, height, driver.frame()?)
     };
     let png = kobo_image::encode_png_grey(width, height, &grey)
@@ -5774,9 +5787,10 @@ const SHOT_USAGE: &str =
 const DRIVE_USAGE: &str = "usage: kobo drive [--address host:port] [--shots DIR] [--ideal]\n\
                            \u{20}                 [--record DIR [--fps N] [--ghosting]]\n\
                            \u{20}                 (--script PATH | --step 'tap Search' ...)\n\
-                           steps: tap LABEL | tap-at X,Y | type TEXT | shot NAME | expect TEXT\n\
+                           steps: tap LABEL | tap-id ACTION | tap-at X,Y | type TEXT | shot NAME | expect TEXT\n\
                            \u{20}       expect-missing TEXT | wait-for TEXT | clean | dump\n\
                            \u{20}       lifecycle foreground|background | scenario NAME | wait MS\n\
+                           Transition steps also check for serious layout diagnostics.\n\
                            --record films the panel while the script runs and writes numbered\n\
                            \u{20} PNGs, timings.txt, recording.mp4 and recording.gif into DIR.\n\
                            \u{20} Frames are residue-free unless --ghosting asks for the real\n\

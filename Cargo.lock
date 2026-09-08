@@ -1442,6 +1442,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "kobo-state"
+version = "0.3.11"
+dependencies = [
+ "kobo-json",
+ "kobo-policy",
+ "kobo-protocol",
+]
+
+[[package]]
 name = "kobo-store"
 version = "0.3.11"
 dependencies = [

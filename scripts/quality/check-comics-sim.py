@@ -78,7 +78,7 @@ def main():
                         return response.read()
 
                 def drive(step):
-                    subprocess.run([str(binary), 'drive', '--address', address, '--step', step], cwd=ROOT,
+                    subprocess.run([str(binary), 'drive', '--address', address, '--shots', str(args.output/'cli-shots'), '--step', step], cwd=ROOT,
                                    env=env, check=True, timeout=20, stdout=log, stderr=log)
 
                 def wait_for(text):
@@ -104,6 +104,9 @@ def main():
                     diagnostics = json.loads(get('diagnostics'))
                     width, height = before['profile']['width'], before['profile']['height']
                     Image.frombytes('L', (width, height), raw).save(args.output/(label+'.png'))
+                    drive('shot '+label)
+                    with Image.open(args.output/'cli-shots'/(label+'.png')) as cli_image:
+                        assert cli_image.size == (width, height), 'CLI screenshot used different panel dimensions'
                     data = dict(simulation=after, layout=layout, diagnostics=diagnostics)
                     (args.output/(label+'.json')).write_text(json.dumps(data, indent=2)+'\n')
                     errors = [issue for issue in diagnostics['issues'] if issue['severity'] == 'error']

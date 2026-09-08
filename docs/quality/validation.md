@@ -44,3 +44,25 @@ The selected ZIP normal dependency closure is recorded in `THIRD-PARTY.md`. Publ
 ## Still open
 
 The foundation is incomplete. This checkpoint does not claim comic zoom/pan, metadata preferences, thumbnails, durable sideload-library registration, whole-volume streaming, full-runtime app switching, simulator hardware observations, all SDK contracts, catalog polish or companion work is done. The existing Panels transfer cap is still lower than the shared archive admission cap; reconcile it in the app/import work. Physical display, suspend/wake and memory/latency measurements require the owner's Clara BW.
+
+## Save acknowledgements, mutation outbox and driver checks
+
+- `cargo test -p kobo-state`: **11 unit tests and 1 actual-store integration test passed**. Covers save-before-send, stale acknowledgements, edits during a write, failed storage, byte/count limits, corrupt/future snapshots, restart after a provider acknowledgement and retry/conflict retention.
+- `cargo clippy -p kobo-state --all-targets -- -D warnings`: passed, including the actual-store integration test.
+- `cargo test -p kobo-cli drive::tests`: **15 passed**. Captures/recordings now follow the selected profile rather than assuming Clara dimensions. A new regression checks every supported profile and rejects missing/oversized/invalid dimensions. Transition commands automatically reject serious layout diagnostics, and Back has a semantic name even though its glyph has no painted text. `tap-id` uses the reachable control's action ID and still sends a real coordinate tap.
+- Driven Panels CBZ flow on `libra-colour-390`: **passed**, including actual CLI PNG dimensions at every capture and serious-diagnostic checks. This verifies geometry in the existing grayscale simulation; it is not color calibration.
+
+## Lost input recovery and local manifests
+
+The HAL now cancels incomplete gestures on `SYN_DROPPED`, ignores events through the next report boundary, and queries current contact state before accepting a new gesture. Unsupported or failed queries keep input blocked rather than inventing a release. Quiescence checks no longer treat a disconnected or unresolved stream as idle. The runtime clears press feedback on cancellation and cannot turn it into an app action. This follows the [Linux input event contract](https://docs.kernel.org/input/event-codes.html#ev-syn); no local OSS reference implementation was copied.
+
+- HAL with `device-write`: **153 tests passed**.
+- Runtime with `device-write`: **148 tests passed**.
+- ABI/HAL/runtime Clippy with `-D warnings`: **passed**.
+- Rust 1.85.1 ARMv7 musl runtime check with `device-write`: **passed** using the installed `armv7-unknown-linux-musleabihf-gcc` and archiver. The first attempt could not find the compiler under Cargo's default name. This is compilation, not physical execution.
+- Simulator: **50 tests passed**, including local manifest identity/capability isolation and production `Unsupported` versus `NotDeclared` service refusal.
+- Simulator and CLI Clippy with `-D warnings`: **passed**.
+
+`kobo dev` reads the working app's bounded `cobalt-app.json`; its identity must match the SDK Hello. Unknown apps without metadata get no implicit capabilities. The default simulated backends are a conservative development model (network, battery, frontlight, Wi-Fi, cover and library), not a hardware measurement. `KOBO_SIM_BACKENDS` selects an explicit comma-separated set; an empty value simulates no services, and invalid names fail startup. Observation-derived backend configuration remains open.
+
+Physical lost-input recovery and settings restoration are still part of the combined Clara BW run after all three PRs.

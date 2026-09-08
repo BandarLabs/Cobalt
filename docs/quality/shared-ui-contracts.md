@@ -32,3 +32,13 @@ Use ordinary task language in owner screens and commands. Name the document, des
 Exercise each adopted contract with enough records/text to require several pages, at the owner's default and extra-large interface sizes. Test deletion of the selected record, refresh reordering, return from details and reopen from saved position. Drive the actual hit target and assert the resulting content. Query serious layout diagnostics at each transition; a screenshot that merely looks plausible is insufficient.
 
 The shared text/Markdown/HTML reading pipeline already existed on beta. Foundation work reuses it and adds an explicit orientation reflow entry point plus regression coverage. This is not a second document renderer. See [the validation log](validation.md) for executed checks and remaining hardware work.
+
+## Saving drafts and queued provider changes
+
+`kobo-state::draft::Draft` tracks the latest owner edits separately from the one write in flight. Give it the app store's byte limit. `begin()` returns a revision and bytes; retain that revision alongside the specific store request. Feed only that request's result to `finish`. An older successful write leaves subsequent edits unsaved. On failure, keep the draft on screen, offer retry, and export `bytes()` if requested. An export is not a save acknowledgement.
+
+`kobo-state::outbox::Outbox` provides bounded, versioned snapshots for idempotent provider changes. Queue record intent without credentials. Save the bytes returned by `checkpoint()` under one app-owned key and serialize writes to that key. Call `saved(checkpoint.revision)` only after the matching successful store response. Until then, `begin()` releases no remote work. Call `finish(sequence, result)` after checking the provider's status/body; acknowledge a successful mutation only when the provider accepted it. Save the resulting queue again before releasing more work.
+
+A crash between provider acknowledgement and local removal can replay a mutation. The app must use an idempotent state-setting API or a provider idempotency key. “Archive this record” is suitable; “create another message” without provider deduplication is not. A newer value cannot overwrite an in-flight request. Retry and conflict states persist, and conflicts require reconciliation before an explicit retry. Corrupt or newer-version snapshots return an error; keep their bytes for recovery instead of silently creating an empty queue. Existing app-specific legacy queues still need migration during adoption.
+
+The shared crate keeps SDK publication independent of workspace-only JSON/state storage modules. First-party apps can depend on it alongside `kobo-sdk`. No additional third-party runtime dependency is introduced by these state helpers.

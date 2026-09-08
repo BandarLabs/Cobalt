@@ -48,11 +48,15 @@ const APPEAR_TIMEOUT: Duration = Duration::from_secs(10);
 /// Half a second in total. Long enough for a screen that has to be encoded,
 /// sent over a socket, decoded and laid out; short enough that a script full of
 /// deliberately inert taps does not become a script that takes a minute.
+const RESPONSE_LIMIT: u64 = 16 * 1024 * 1024;
 const SETTLE_POLLS: u32 = 25;
 const SETTLE_INTERVAL: std::time::Duration = std::time::Duration::from_millis(20);
 
-pub const SIMULATED_PANEL: (u32, u32) = (1072, 1448);
+#[cfg(test)]
+const SIMULATED_PANEL: (u32, u32) = (1072, 1448);
+#[cfg(test)]
 const FRAME_WIDTH: u32 = SIMULATED_PANEL.0;
+#[cfg(test)]
 const FRAME_HEIGHT: u32 = SIMULATED_PANEL.1;
 
 /// How the device announces a screenshot inside its ordinary report.
@@ -84,9 +88,11 @@ impl Control {
 
     /// Whether one of this node's lines is exactly `needle`.
     fn says_exactly(&self, needle: &str) -> bool {
-        self.lines
-            .iter()
-            .any(|line| line.trim().eq_ignore_ascii_case(needle.trim()))
+        (self.kind == "Back" && needle.trim().eq_ignore_ascii_case("back"))
+            || self
+                .lines
+                .iter()
+                .any(|line| line.trim().eq_ignore_ascii_case(needle.trim()))
     }
 
     /// Whether a finger on the middle of this node would do anything.
@@ -164,8 +170,19 @@ impl Driver {
     pub fn step(&mut self, line: &str) -> Result<(), String> {
         let (verb, rest) = line.split_once(char::is_whitespace).unwrap_or((line, ""));
         let rest = rest.trim();
-        match verb {
+        let result = match verb {
             "tap" => self.tap(rest),
+            "tap-id" => {
+                let action = rest
+                    .parse::<u32>()
+                    .map_err(|_| "tap-id takes an unsigned action ID".to_owned())?;
+                let control = self
+                    .layout()?
+                    .into_iter()
+                    .find(|control| control.action == Some(action))
+                    .ok_or_else(|| format!("action {action} is not reachable on this screen"))?;
+                self.touch(control.centre.0, control.centre.1)
+            }
             "tap-at" => {
                 let (x, y) = parse_point(rest)?;
                 self.touch(x, y)
@@ -201,7 +218,15 @@ impl Driver {
                 Ok(())
             }
             other => Err(format!("unknown step {other:?}")),
+        };
+        result?;
+        if matches!(
+            verb,
+            "tap" | "tap-id" | "tap-at" | "type" | "wait-for" | "wait" | "scenario" | "lifecycle"
+        ) {
+            self.clean()?;
         }
+        Ok(())
     }
 
     /// Taps the control whose label carries `label`.
@@ -300,25 +325,39 @@ impl Driver {
     /// notices they are missing.
     fn clean(&mut self) -> Result<(), String> {
         let body = self.get("/diagnostics")?;
-        let body = String::from_utf8_lossy(&body).into_owned();
-        let errors = json_objects(&body)
-            .into_iter()
-            .filter(|issue| json_field(issue, "severity").as_deref() == Some("error"))
-            .filter_map(|issue| json_field(&issue, "message"))
-            .collect::<Vec<_>>();
-        if errors.is_empty() {
-            return Ok(());
+        let report: serde_json::Value = serde_json::from_slice(&body)
+            .map_err(|error| format!("read layout diagnostics: {error}"))?;
+        let issues = report
+            .get("issues")
+            .and_then(serde_json::Value::as_array)
+            .ok_or("layout diagnostics contain no issue list")?;
+        let mut errors = Vec::new();
+        for issue in issues {
+            let message = issue
+                .get("message")
+                .and_then(serde_json::Value::as_str)
+                .ok_or("layout diagnostic has no explanation")?;
+            match issue.get("severity").and_then(serde_json::Value::as_str) {
+                Some("warning") => eprintln!("layout warning: {message}"),
+                Some("error") => errors.push(message),
+                _ => return Err("layout diagnostic has an unknown severity".into()),
+            }
         }
-        Err(format!(
-            "the renderer refused this screen: {}",
-            errors.join("; ")
-        ))
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(format!(
+                "the renderer refused this screen: {}",
+                errors.join("; ")
+            ))
+        }
     }
 
     /// Writes the panel out as a PNG and returns where it went.
     fn shot(&mut self, name: &str) -> Result<PathBuf, String> {
+        let (width, height) = self.dimensions()?;
         let frame = self.frame()?;
-        let png = kobo_image::encode_png_grey(FRAME_WIDTH, FRAME_HEIGHT, &frame)
+        let png = kobo_image::encode_png_grey(width, height, &frame)
             .map_err(|error| format!("encode the frame: {error}"))?;
         self.taken += 1;
         let name = if name.is_empty() {
@@ -350,14 +389,20 @@ impl Driver {
     /// out as a picture skewed one pixel further with every row.
     pub fn frame(&self) -> Result<Vec<u8>, String> {
         let frame = self.get(if self.ideal { "/ideal-frame" } else { "/frame" })?;
-        let expected = (FRAME_WIDTH as usize) * (FRAME_HEIGHT as usize);
+        let (width, height) = self.dimensions()?;
+        let expected = (width as usize) * (height as usize);
         if frame.len() != expected {
             return Err(format!(
-                "the simulator sent {} bytes for a {FRAME_WIDTH}x{FRAME_HEIGHT} panel, not {expected}",
+                "the simulator sent {} bytes for a {width}x{height} panel, not {expected}",
                 frame.len()
             ));
         }
         Ok(frame)
+    }
+
+    /// Physical frame dimensions reported by the selected simulator profile.
+    pub fn dimensions(&self) -> Result<(u32, u32), String> {
+        parse_dimensions(&self.get("/simulation")?)
     }
 
     /// Everything the renderer put on the panel.
@@ -454,9 +499,12 @@ impl Driver {
             .write_all(request.as_bytes())
             .map_err(|error| format!("send {method} {path}: {error}"))?;
         let mut answer = Vec::new();
-        stream
+        Read::take(&mut stream, RESPONSE_LIMIT + 1)
             .read_to_end(&mut answer)
             .map_err(|error| format!("read the answer to {method} {path}: {error}"))?;
+        if answer.len() as u64 > RESPONSE_LIMIT {
+            return Err(format!("the answer to {method} {path} exceeds 16 MiB"));
+        }
         split_response(&answer, path)
     }
 }
@@ -535,6 +583,7 @@ impl FrameLog {
 pub struct Recorder {
     /// A second connection to the same simulator, used only for frames.
     sampler: Driver,
+    dimensions: (u32, u32),
     started: Instant,
     log: Arc<Mutex<FrameLog>>,
     stop: Arc<AtomicBool>,
@@ -562,6 +611,7 @@ impl Recorder {
             ));
         }
         let sampler = Driver::new(address, Path::new(".")).ideal(!ghosting);
+        let dimensions = sampler.dimensions()?;
         let mut opening = FrameLog::default();
         opening.sample(0, sampler.frame()?);
 
@@ -604,6 +654,7 @@ impl Recorder {
         };
         Ok(Self {
             sampler,
+            dimensions,
             started,
             log,
             stop,
@@ -650,7 +701,11 @@ impl Recorder {
             log.frames.len(),
             log.looked
         );
-        Ok((FRAME_WIDTH, FRAME_HEIGHT, std::mem::take(&mut log.frames)))
+        Ok((
+            self.dimensions.0,
+            self.dimensions.1,
+            std::mem::take(&mut log.frames),
+        ))
     }
 }
 
@@ -933,6 +988,27 @@ fn json_number(object: &str, key: &str) -> Option<i64> {
     digits.parse().ok()
 }
 
+fn parse_dimensions(bytes: &[u8]) -> Result<(u32, u32), String> {
+    let value: serde_json::Value = serde_json::from_slice(bytes)
+        .map_err(|error| format!("read simulator profile: {error}"))?;
+    let profile = value
+        .get("profile")
+        .ok_or("simulator response has no profile")?;
+    let dimension = |name| {
+        profile
+            .get(name)
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|number| u32::try_from(number).ok())
+            .filter(|&number| number > 0)
+            .ok_or_else(|| format!("simulator profile has an invalid {name}"))
+    };
+    let (width, height) = (dimension("width")?, dimension("height")?);
+    if u64::from(width) * u64::from(height) > kobo_image::MAX_PIXELS {
+        return Err("simulator profile exceeds the screenshot pixel limit".into());
+    }
+    Ok((width, height))
+}
+
 fn parse_point(text: &str) -> Result<(i32, i32), String> {
     let (x, y) = text
         .split_once([',', ' '])
@@ -958,6 +1034,66 @@ mod tests {
     use std::path::Path;
 
     const BODY: &str = r#"{"nodes":[{"kind":"Button","x":10,"y":20,"width":30,"height":40,"centre":{"x":25,"y":40},"action":77,"lines":["Search","for a \"book\""]},{"kind":"Divider","x":0,"y":1,"width":2,"height":3,"centre":{"x":1,"y":2},"action":null,"lines":[]}]}"#;
+
+    #[test]
+    fn capture_dimensions_follow_every_supported_profile_and_reject_bad_metadata() {
+        for profile in kobo_profile::SUPPORTED_PROFILES {
+            let metadata =
+                serde_json::json!({"profile": {"width": profile.width, "height": profile.height}});
+            assert_eq!(
+                super::parse_dimensions(metadata.to_string().as_bytes()).unwrap(),
+                (profile.width, profile.height)
+            );
+        }
+        for metadata in [
+            r#"{"profile":{"width":0,"height":1448}}"#,
+            r#"{"profile":{"width":1072.5,"height":1448}}"#,
+            r#"{"profile":{"width":4294967295,"height":4294967295}}"#,
+            r#"{"width":1072,"height":1448}"#,
+        ] {
+            assert!(super::parse_dimensions(metadata.as_bytes()).is_err());
+        }
+    }
+
+    #[test]
+    fn back_is_addressable_without_painted_text() {
+        let back = super::Control {
+            kind: "Back".into(),
+            centre: (50, 100),
+            lines: vec![],
+            action: Some(u32::MAX),
+        };
+        assert!(back.says_exactly("Back"));
+        assert!(!back.says_exactly("Next"));
+    }
+
+    #[test]
+    fn a_transition_fails_when_the_renderer_reports_an_unreachable_control() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap().to_string();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+                .unwrap();
+            let mut request = [0; 4096];
+            let length = stream.read(&mut request).unwrap();
+            assert!(String::from_utf8_lossy(&request[..length]).starts_with("GET /diagnostics "));
+            let body = r#"{"issues":[{"severity":"error","message":"Button outside panel"}]}"#;
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .unwrap();
+        });
+        let error = Driver::new(&address, Path::new("."))
+            .step("wait 0")
+            .unwrap_err();
+        assert!(error.contains("Button outside panel"));
+        server.join().unwrap();
+    }
 
     #[test]
     fn the_layout_reader_finds_every_node_and_its_words() {

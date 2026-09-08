@@ -52,8 +52,10 @@
     "pr": 1,
     "group": "Simulator fidelity (SIM-1\u201310)",
     "task": "Use declared app capabilities instead of granting every capability",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Local publishing manifest is bounded and identity-checked; declared capabilities feed task, shell and service policy. Unknown apps have no grants. 50 simulator tests and CLI/simulator Clippy pass."
+    ]
   },
   {
     "id": "SIM-07",
@@ -238,8 +240,10 @@
     "pr": 1,
     "group": "Simulator fidelity (SIM-1\u201310)",
     "task": "Assert serious diagnostics at every drive transition",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Drive transition commands automatically query serious diagnostics and reject malformed reports; mocked unreachable-button regression and actual Clara/Libra comic flows pass."
+    ]
   },
   {
     "id": "SIM-28",
@@ -334,24 +338,30 @@
     "pr": 1,
     "group": "Shared SDK and design contracts",
     "task": "Provide persistent mutation outbox with deduplication and acknowledgement",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "kobo-state Outbox provides bounded versioned save-before-send snapshots, pending-key coalescing, one immutable request in flight and matching acknowledgements; actual-store reopen test passes."
+    ]
   },
   {
     "id": "SDK-09",
     "pr": 1,
     "group": "Shared SDK and design contracts",
     "task": "Expose retry and conflict states without false success",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Persisted retry and conflict states pause outbox delivery until explicit retry/reconciliation; failed local writes cannot release remote work; tests cover restart and stale responses."
+    ]
   },
   {
     "id": "SDK-10",
     "pr": 1,
     "group": "Shared SDK and design contracts",
     "task": "Provide save acknowledgement and retry/export for unsaved edits",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "kobo-state Draft retains latest edits across failed/stale store responses, serializes writes and exposes retry/export bytes without false saved status; 3 draft regressions pass."
+    ]
   },
   {
     "id": "SDK-11",
@@ -506,8 +516,10 @@
     "pr": 1,
     "group": "Platform requirements from read-only hardware research",
     "task": "Handle lost input and resynchronization explicitly",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "HAL cancellation/resynchronization and quiescence regressions pass (153 HAL, 148 runtime tests); Rust 1.85.1 ARMv7 device-write check and Clippy pass. Physical validation awaits the combined Clara BW run."
+    ]
   },
   {
     "id": "HW-06",

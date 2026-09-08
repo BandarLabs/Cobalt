@@ -44,7 +44,26 @@ fn validate_configuration() -> io::Result<()> {
     if let Ok(value) = std::env::var("KOBO_TEXT_SCALE") {
         validate_scale(&value)?;
     }
+    configured_backends()?;
     Ok(())
+}
+
+fn parse_backends(value: Option<&str>) -> io::Result<kobo_policy::Declared> {
+    // These are the modeled services from Cobalt's existing runtime. Optional
+    // audio, Bluetooth and power ownership need an explicit fixture. This is
+    // a conservative development model, not a hardware observation.
+    let value = value
+        .unwrap_or("network,battery-read,frontlight-control,wifi-control,cover-sensor,library");
+    kobo_policy::Declared::parse(value.split(',').filter(|name| !name.is_empty()))
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))
+}
+
+fn configured_backends() -> io::Result<kobo_policy::Declared> {
+    match std::env::var("KOBO_SIM_BACKENDS") {
+        Ok(value) => parse_backends(Some(&value)),
+        Err(std::env::VarError::NotPresent) => parse_backends(None),
+        Err(error) => Err(io::Error::new(io::ErrorKind::InvalidInput, error)),
+    }
 }
 
 fn validate_scale(value: &str) -> io::Result<()> {
@@ -534,6 +553,7 @@ pub struct AppServer {
     apps: Arc<Mutex<SimulatedApps>>,
     socket_path: PathBuf,
     socket_identity: (u64, u64),
+    manifest: Option<kobo_catalog::App>,
 }
 
 impl AppServer {
@@ -576,7 +596,28 @@ impl AppServer {
             apps: Arc::new(Mutex::new(SimulatedApps::default())),
             socket_path,
             socket_identity: (metadata.dev(), metadata.ino()),
+            manifest: None,
         })
+    }
+
+    /// Uses the local publishing manifest, including its capability declaration.
+    /// The SDK Hello must match its identity; an unrelated bundled app cannot
+    /// supply permissions for this process.
+    ///
+    /// # Errors
+    /// Returns invalid-data for malformed or oversized metadata.
+    pub fn with_manifest(mut self, source: &str) -> io::Result<Self> {
+        if source.len() > 64 * 1024 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "app manifest exceeds 64 KiB",
+            ));
+        }
+        self.manifest = Some(
+            kobo_catalog::App::parse(source)
+                .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?,
+        );
+        Ok(self)
     }
 
     /// Returns the validated loopback HTTP address.
@@ -647,6 +688,7 @@ impl AppServer {
                 "SDK application name is not a safe data directory name",
             ));
         }
+        let declared = session_declaration(&name, self.manifest.as_ref())?;
         write_protocol_frame(
             stream,
             &Frame {
@@ -677,7 +719,9 @@ impl AppServer {
             // and the developer is told which one: a reader that dies quietly
             // leaves an application talking to nobody, with a panel that keeps
             // showing the last good screen and ignores every tap.
-            if let Err(error) = read_app_messages(reader, &name, &reader_writer, &reader_state) {
+            if let Err(error) =
+                read_app_messages(reader, &name, &declared, &reader_writer, &reader_state)
+            {
                 eprintln!("the application's connection ended: {error}");
             }
         });
@@ -1025,6 +1069,26 @@ fn app_declaration(name: &str) -> kobo_policy::Declared {
         })
         .unwrap_or_default();
     kobo_policy::Declared::parse(names).expect("validated capabilities")
+}
+
+fn session_declaration(
+    name: &str,
+    manifest: Option<&kobo_catalog::App>,
+) -> io::Result<kobo_policy::Declared> {
+    let Some(manifest) = manifest else {
+        return Ok(app_declaration(name));
+    };
+    if manifest.id != name {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "SDK identity {name:?} does not match manifest {:?}",
+                manifest.id
+            ),
+        ));
+    }
+    kobo_policy::Declared::parse(manifest.capabilities.iter().map(String::as_str))
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
 }
 
 fn simulated_app(
@@ -1839,9 +1903,12 @@ fn answer_shell(
 /// The point of the simulator is that an application behaves the same here as
 /// on the panel, and an application that could not open a terminal in
 /// development would have to be tested on the device to be tested at all.
-fn simulated_shells(writer: &Arc<AppWriter>, name: &str) -> Arc<Mutex<kobo_shell::Shells>> {
+fn simulated_shells(
+    writer: &Arc<AppWriter>,
+    declared: &kobo_policy::Declared,
+) -> Arc<Mutex<kobo_shell::Shells>> {
     let shells = Arc::new(Mutex::new(kobo_shell::Shells::new(
-        &app_declaration(name).iter().collect::<Vec<_>>(),
+        &declared.iter().collect::<Vec<_>>(),
     )));
     let draining = Arc::clone(&shells);
     let writer = Arc::clone(writer);
@@ -1896,15 +1963,16 @@ fn scenario_task_error(
 fn read_app_messages(
     mut stream: UnixStream,
     name: &str,
+    declared: &kobo_policy::Declared,
     writer: &Arc<AppWriter>,
     state: &Arc<Mutex<AppState>>,
 ) -> io::Result<()> {
     // The simulator owns no hardware, so it answers state queries from a
     // believable model and refuses everything that would change a real device.
     let mut services = DeviceServices::new(
-        app_declaration(name),
+        declared.clone(),
         kobo_policy::PowerPolicy::DEFAULT,
-        kobo_policy::Backends::with(kobo_policy::Capability::ALL),
+        kobo_policy::Backends::with(configured_backends()?.iter()),
     );
     // There is no bezel here to hold a magnet against, so the state the hall
     // sensor reports is set on the way in. Without this the second half of
@@ -1913,7 +1981,7 @@ fn read_app_messages(
         std::env::var("KOBO_MAGNET").as_deref(),
         Ok("1" | "present")
     ));
-    let tasks = Arc::new(Mutex::new(simulated_tasks(name)));
+    let tasks = Arc::new(Mutex::new(simulated_tasks(name, declared)));
     // Drained on its own thread for the same reason terminal output is. The
     // message loop below blocks on the application's socket, so an outcome
     // that arrived while nothing was being typed used to sit in the channel
@@ -1938,7 +2006,7 @@ fn read_app_messages(
     // dozen network calls to produce a file -- was the one class that could
     // not be run in the simulator at all.
     let shelf = Shelf::new(simulated_data_root(name));
-    let shells = simulated_shells(writer, name);
+    let shells = simulated_shells(writer, declared);
     loop {
         let frame = read_protocol_frame(&mut stream)?;
         let request_id = frame.request_id;
@@ -2290,7 +2358,7 @@ pub const OFFLINE: &str = "KOBO_SIM_OFFLINE";
 /// only be developed on the device, which is the one thing this project is
 /// arranged to avoid. Capabilities come from the app's publishing manifest;
 /// an unknown app has no implicit network or shell permission.
-fn simulated_tasks(name: &str) -> TaskRunner {
+fn simulated_tasks(name: &str, declared: &kobo_policy::Declared) -> TaskRunner {
     // The same owner trust roots the device loads, from the host's own
     // directory. Once per process: roots are process-wide and the TLS
     // configuration refuses additions after it is first used.
@@ -2334,7 +2402,7 @@ fn simulated_tasks(name: &str) -> TaskRunner {
                 )
             },
         ))
-        .with_capabilities(app_declaration(name).iter())
+        .with_capabilities(declared.iter())
 }
 
 /// Directory the host simulator uses for one application's shelf.
@@ -2666,6 +2734,65 @@ frame().catch(error=>status.textContent=error.message);
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn local_manifest_is_authoritative_and_cannot_borrow_a_catalog_identity() {
+        let mut app = kobo_catalog::bundled().unwrap().remove(0);
+        app.id = "local-reader".into();
+        app.capabilities = vec!["network".into()];
+        let declared = super::session_declaration("local-reader", Some(&app)).unwrap();
+        assert_eq!(
+            declared.iter().collect::<Vec<_>>(),
+            vec![kobo_policy::Capability::Network]
+        );
+        assert!(super::session_declaration("terminal", Some(&app)).is_err());
+        app.capabilities.clear();
+        assert_eq!(
+            super::session_declaration("local-reader", Some(&app))
+                .unwrap()
+                .iter()
+                .count(),
+            0
+        );
+        assert_eq!(
+            super::session_declaration("unknown-app", None)
+                .unwrap()
+                .iter()
+                .count(),
+            0
+        );
+    }
+
+    #[test]
+    fn unavailable_backend_and_undeclared_service_match_runtime_refusals() {
+        use kobo_policy::{Backends, Declared, DeviceServices, PowerPolicy};
+        use kobo_protocol::{DenyReason, DeviceRequest, DeviceResult};
+        let available = super::parse_backends(Some("battery-read")).unwrap();
+        let mut services = DeviceServices::new(
+            Declared::all(),
+            PowerPolicy::DEFAULT,
+            Backends::with(available.iter()),
+        );
+        assert_eq!(
+            services.handle(DeviceRequest::ReadCover),
+            DeviceResult::Denied(DenyReason::Unsupported)
+        );
+        assert!(matches!(
+            services.handle(DeviceRequest::ReadBattery),
+            DeviceResult::Battery { .. }
+        ));
+        let mut undeclared = DeviceServices::new(
+            Declared::parse([]).unwrap(),
+            PowerPolicy::DEFAULT,
+            Backends::with(available.iter()),
+        );
+        assert_eq!(
+            undeclared.handle(DeviceRequest::ReadBattery),
+            DeviceResult::Denied(DenyReason::NotDeclared)
+        );
+        assert!(super::parse_backends(Some("typo")).is_err());
+        assert_eq!(super::parse_backends(Some("")).unwrap().iter().count(), 0);
+    }
+
     use super::*;
     use std::io::{Read, Write};
 
@@ -2990,7 +3117,7 @@ mod tests {
         // simulator refuses requests, and an application that can only reach
         // the network on the device can only be built on the device. Failure
         // handling is still reachable, deliberately, through one variable.
-        let mut online = simulated_tasks("gallery");
+        let mut online = simulated_tasks("gallery", &app_declaration("gallery"));
         assert!(
             online
                 .submit(

@@ -16,7 +16,7 @@ A checked task requires implementation plus recorded validation. Physical measur
 
 ## Status
 
-494 tracked tasks: 29 completed, 1 deferred by the owner, 464 open. Implementation in progress. Evidence is recorded per task in `tasks.json` and in [the validation log](validation.md).
+494 tracked tasks: 35 completed, 1 deferred by the owner, 458 open. Implementation in progress. Evidence is recorded per task in `tasks.json` and in [the validation log](validation.md).
 
 ## PR 1 · Simulator fidelity (SIM-1–10)
 
@@ -25,7 +25,7 @@ A checked task requires implementation plus recorded validation. Physical measur
 - [x] **SIM-03** Restore ambient scales after rendering to prevent cross-request leakage.
 - [x] **SIM-04** Share runtime Back/chrome composition with browser simulation.
 - [ ] **SIM-05** Route shell Back and app-owned Back consistently.
-- [ ] **SIM-06** Use declared app capabilities instead of granting every capability.
+- [x] **SIM-06** Use declared app capabilities instead of granting every capability.
 - [ ] **SIM-07** Respect device-supported service backends in simulation.
 - [x] **SIM-08** Inject missing credentials for all credentialed network tasks.
 - [ ] **SIM-09** Return production-equivalent failure reasons.
@@ -46,7 +46,7 @@ A checked task requires implementation plus recorded validation. Physical measur
 - [ ] **SIM-24** Add color output and label uncalibrated appearance clearly.
 - [x] **SIM-25** Reject invalid profile and scale arguments.
 - [ ] **SIM-26** Stamp captures with source, app, mode, profile, pose, fonts, scales, fixture and seed.
-- [ ] **SIM-27** Assert serious diagnostics at every drive transition.
+- [x] **SIM-27** Assert serious diagnostics at every drive transition.
 - [ ] **SIM-28** Add semantic state/network-effect assertions to drive.
 - [ ] **SIM-29** Use stable control IDs and bounded wait-for-idle in routes.
 - [x] **SIM-30** Keep refresh results invariant under screenshot sampling cadence.
@@ -60,9 +60,9 @@ A checked task requires implementation plus recorded validation. Physical measur
 - [ ] **SDK-05** Provide reusable connection test and production error mapping.
 - [ ] **SDK-06** Provide durable content records and migrations.
 - [ ] **SDK-07** Provide bounded article/asset cache and pruning.
-- [ ] **SDK-08** Provide persistent mutation outbox with deduplication and acknowledgement.
-- [ ] **SDK-09** Expose retry and conflict states without false success.
-- [ ] **SDK-10** Provide save acknowledgement and retry/export for unsaved edits.
+- [x] **SDK-08** Provide persistent mutation outbox with deduplication and acknowledgement.
+- [x] **SDK-09** Expose retry and conflict states without false success.
+- [x] **SDK-10** Provide save acknowledgement and retry/export for unsaved edits.
 - [ ] **SDK-11** Provide import receipts, progress and verified availability.
 - [ ] **SDK-12** Provide expected-empty, corrupt and unsupported library states.
 - [ ] **SDK-13** Add original sample collections to reusable setup flows.
@@ -84,7 +84,7 @@ A checked task requires implementation plus recorded validation. Physical measur
 - [ ] **HW-02** Record measured, inferred and unverified profile fields separately.
 - [ ] **HW-03** Load observation fixtures into the simulator without importing third-party device tables.
 - [ ] **HW-04** Keep digitizer mapping separate from display pose.
-- [ ] **HW-05** Handle lost input and resynchronization explicitly.
+- [x] **HW-05** Handle lost input and resynchronization explicitly.
 - [ ] **HW-06** Preserve backend-specific refresh intents and waveform capability checks.
 - [ ] **HW-07** Record real refresh submission/completion markers and timing.
 - [ ] **HW-08** Preserve conservative color/inversion behavior until calibrated.

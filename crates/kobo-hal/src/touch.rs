@@ -24,9 +24,21 @@ impl InputEvent32 {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TouchEvent {
-    Down { x: u32, y: u32 },
-    Move { x: u32, y: u32 },
-    Up { x: u32, y: u32 },
+    /// The event stream lost part of a gesture. Clear press/hold feedback;
+    /// never interpret this as a release or activate a control.
+    Cancel,
+    Down {
+        x: u32,
+        y: u32,
+    },
+    Move {
+        x: u32,
+        y: u32,
+    },
+    Up {
+        x: u32,
+        y: u32,
+    },
 }
 
 const MAX_TOUCH_SLOTS: usize = 32;
@@ -58,6 +70,14 @@ impl SlotState {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum Recovery {
+    #[default]
+    Ready,
+    Discarding,
+    Query,
+}
+
 #[derive(Debug)]
 pub struct TouchDecoder {
     slots: [SlotState; MAX_TOUCH_SLOTS],
@@ -65,6 +85,7 @@ pub struct TouchDecoder {
     primary_slot: Option<usize>,
     blocked_until_quiescent: bool,
     unknown_slot_activity: bool,
+    recovery: Recovery,
 }
 
 impl Default for TouchDecoder {
@@ -75,12 +96,24 @@ impl Default for TouchDecoder {
             primary_slot: None,
             blocked_until_quiescent: false,
             unknown_slot_activity: false,
+            recovery: Recovery::Ready,
         }
     }
 }
 
 impl TouchDecoder {
     pub fn push(&mut self, event: InputEvent32, pose: &PanelPose<'_>) -> Option<TouchEvent> {
+        if (event.kind, event.code) == (input::EV_SYN, input::SYN_DROPPED) {
+            *self = Self::default();
+            self.recovery = Recovery::Discarding;
+            return Some(TouchEvent::Cancel);
+        }
+        if self.recovery != Recovery::Ready {
+            if (event.kind, event.code) == (input::EV_SYN, input::SYN_REPORT) {
+                self.recovery = Recovery::Query;
+            }
+            return None;
+        }
         match (event.kind, event.code) {
             (input::EV_ABS, input::ABS_MT_SLOT) => {
                 self.current_slot = usize::try_from(event.value)
@@ -131,9 +164,38 @@ impl TouchDecoder {
         None
     }
 
+    /// A hardware snapshot is needed only after a complete report boundary.
+    #[must_use]
+    pub fn needs_resynchronization(&self) -> bool {
+        self.recovery == Recovery::Query
+    }
+
+    /// Cancel the old gesture until the kernel confirms all contacts released.
+    /// Failed queries remain blocked and are retried at the next report boundary.
+    pub fn resynchronize(&mut self, snapshot: Option<input::TouchSnapshot>) {
+        if !self.needs_resynchronization() {
+            return;
+        }
+        match snapshot {
+            Some(snapshot) if !snapshot.active => {
+                *self = Self::default();
+                self.current_slot = Some(usize::from(snapshot.slot.unwrap_or(0)));
+                if self
+                    .current_slot
+                    .is_some_and(|slot| slot >= MAX_TOUCH_SLOTS)
+                {
+                    self.current_slot = None;
+                    self.recovery = Recovery::Discarding;
+                }
+            }
+            _ => self.recovery = Recovery::Discarding,
+        }
+    }
+
     #[must_use]
     pub fn is_quiescent(&self) -> bool {
-        !self.unknown_slot_activity
+        self.recovery == Recovery::Ready
+            && !self.unknown_slot_activity
             && self.primary_slot.is_none()
             && self.slots.iter().all(|slot| slot.tracking_id.is_none())
     }
@@ -534,5 +596,75 @@ mod tests {
             code: input::SYN_REPORT,
             value: 0,
         }
+    }
+    #[test]
+    fn dropped_reports_cancel_without_releasing_and_wait_for_a_kernel_snapshot() {
+        let mut decoder = TouchDecoder::default();
+        assert!(matches!(
+            feed(&mut decoder, CAPTURED_PRESS).as_slice(),
+            [TouchEvent::Down { .. }]
+        ));
+        assert_eq!(
+            feed(&mut decoder, &[(input::EV_SYN, input::SYN_DROPPED, 0)]),
+            [TouchEvent::Cancel]
+        );
+        assert!(!decoder.is_quiescent());
+        assert!(!decoder.needs_resynchronization());
+        // A release in the incomplete report cannot activate the old control.
+        assert!(feed(
+            &mut decoder,
+            &[
+                (input::EV_KEY, input::BTN_TOUCH, 0),
+                (input::EV_SYN, input::SYN_REPORT, 0)
+            ]
+        )
+        .is_empty());
+        assert!(decoder.needs_resynchronization());
+        decoder.resynchronize(Some(input::TouchSnapshot {
+            active: true,
+            slot: Some(0),
+        }));
+        assert!(!decoder.is_quiescent());
+        assert!(feed(&mut decoder, CAPTURED_PRESS).is_empty());
+        decoder.resynchronize(Some(input::TouchSnapshot {
+            active: false,
+            slot: Some(0),
+        }));
+        assert!(decoder.is_quiescent());
+        assert!(matches!(
+            feed(&mut decoder, CAPTURED_PRESS).as_slice(),
+            [TouchEvent::Down { .. }]
+        ));
+    }
+
+    #[test]
+    fn failed_or_unsafe_resynchronization_does_not_guess_contact_state() {
+        let mut decoder = TouchDecoder::default();
+        feed(
+            &mut decoder,
+            &[
+                (input::EV_SYN, input::SYN_DROPPED, 0),
+                (input::EV_SYN, input::SYN_REPORT, 0),
+            ],
+        );
+        decoder.resynchronize(None);
+        assert!(!decoder.is_quiescent());
+        assert!(feed(&mut decoder, CAPTURED_PRESS).is_empty());
+        decoder.resynchronize(Some(input::TouchSnapshot {
+            active: false,
+            slot: Some(200),
+        }));
+        assert!(!decoder.is_quiescent());
+        assert!(feed(&mut decoder, CAPTURED_PRESS).is_empty());
+        decoder.resynchronize(Some(input::TouchSnapshot {
+            active: false,
+            slot: Some(7),
+        }));
+        assert!(decoder.is_quiescent());
+        // The selected kernel slot is retained even when it is not re-emitted.
+        assert!(matches!(
+            feed(&mut decoder, CAPTURED_PRESS).as_slice(),
+            [TouchEvent::Down { .. }]
+        ));
     }
 }
