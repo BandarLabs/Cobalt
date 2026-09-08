@@ -52,3 +52,13 @@ directory (`~/.config/kobo/trust`); ordinary certificate verification remains
 active. No owner identity or trust roots are changed. Live long polls remain
 outstanding by design, so this route waits for visible content instead of
 waiting for all tasks to become idle. See the [portrait session](../apps/paperterm/screenshots/terminal.png).
+
+
+Add `--pair-on-reader` to enter the private address and code through the on-screen
+keyboard instead of seeding the pairing record. This verifies the reader-side
+form and its successful save; the fixture still installs trust locally, so it
+does not claim hardware trust transfer. The live route also checks uncertain
+input, explicit resume, offline reconnect with the keyboard open and closed,
+and restored two-way input. The committed `apps/paperterm/drive.kobo` route
+separately covers the welcome, offline preview, setup pages and corrected form
+errors, asserting zero fetch/post effects throughout.

@@ -22,6 +22,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--profile', default='clara-bw-391')
+    parser.add_argument('--pair-on-reader', action='store_true')
     parser.add_argument('--scale', default='extra-large')
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
@@ -97,7 +98,8 @@ print("DONE", flush=True)
                 store = private/'cobalt-sim-state/paperterm'
                 store.mkdir(parents=True)
                 code = (config/'stream/pairing').read_text().strip()
-                (store/'pairing').write_text(f'127.0.0.1:{port}\n{code}')
+                if not args.pair_on_reader:
+                    (store/'pairing').write_text(f'127.0.0.1:{port}\n{code}')
                 simulator = subprocess.Popen([str(cli), 'dev', '127.0.0.1:0'], cwd=ROOT/'apps/paperterm',
                                              env=env, stdout=log, stderr=log, start_new_session=True)
                 deadline = time.monotonic()+120
@@ -130,7 +132,18 @@ print("DONE", flush=True)
                     assert not [i for i in diagnostics['issues'] if i['severity']=='error'], diagnostics
                     (args.output/(name+'.layout.json')).write_text(json.dumps(get('layout'), indent=2)+'\n')
 
+                if args.pair_on_reader:
+                    drive('wait-for-id setup', 'tap-id setup', 'tap-id trust', 'tap-id start',
+                          'tap-id enter-address', 'tap-id kb.layer', f'type 127.0.0.1:{port}', 'tap-id kb.enter')
+                    symbols = False
+                    for character in code:
+                        if character.isdigit() != symbols:
+                            drive('tap-id kb.layer')
+                            symbols = not symbols
+                        drive('type '+character)
+                    drive('tap-id kb.enter')
                 drive('wait-for-id toggle-keyboard', 'wait-for READY>')
+                assert (store/'pairing').read_text() == f'127.0.0.1:{port}\n{code}'
                 capture('01-connected-terminal')
                 drive('tap-id toggle-keyboard', 'wait-for SIZE')
                 capture('02-keyboard-and-resize')
@@ -141,6 +154,12 @@ print("DONE", flush=True)
                 drive('scenario normal', 'wait-for-id resume-input')
                 drive('tap-id resume-input', 'wait-for-id kb.r0c0')
                 capture('02b-input-resumed')
+                drive('scenario offline', 'tap-id toggle-keyboard', 'wait-for Reconnecting')
+                capture('02c-reconnecting-keys-closed')
+                drive('tap-id toggle-keyboard', 'expect Reconnecting')
+                capture('02d-reconnecting-keys-open')
+                drive('scenario normal', 'wait-for Connected')
+                capture('02e-reconnected')
                 drive('type reader', 'tap enter', 'wait-for FROM READER: reader')
                 capture('03-reader-to-host')
                 assert 'FROM READER: reader' in drain_host(), 'Reader input did not reach the host PTY'
@@ -167,8 +186,8 @@ print("DONE", flush=True)
                               orientation='portrait', negotiated_grids=grids,
                               source_head=subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip(),
                               source_dirty=bool(subprocess.check_output(['git', 'status', '--porcelain'], cwd=ROOT)),
-                              basis='real-host-pty-and-sdk-simulator-over-trusted-tls', pairing='private seeded fixture',
-                              checks=['failed input pauses without replay', 'explicit input resume', 'portrait captures', 'measured grid on keyboard toggle', 'prompt without newline', 'laptop raw mode', 'trusted TLS', 'reader input to host',
+                              basis='real-host-pty-and-sdk-simulator-over-trusted-tls', pairing='entered through on-screen keyboard' if args.pair_on_reader else 'private seeded fixture',
+                              checks=['reconnect retains output and keyboard toggle', 'connection restored', 'failed input pauses without replay', 'explicit input resume', 'portrait captures', 'measured grid on keyboard toggle', 'prompt without newline', 'laptop raw mode', 'trusted TLS', 'reader input to host',
                                       'laptop input before Enter', 'same-session output', 'PTY grid negotiation', 'wide output',
                                       'reader Ctrl-C', 'retained final screen', 'laptop terminal restoration'])
                 (args.output/'result.json').write_text(json.dumps(result, indent=2)+'\n')

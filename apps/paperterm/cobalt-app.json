@@ -3,12 +3,12 @@
   "display_name": "Paperterm",
   "short_label": "Paperterm",
   "summary": "Pair with a computer to mirror a terminal session on e-ink.",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "glyph": "terminal",
   "capabilities": [
     "network"
   ],
-  "release_notes": "Use portrait terminal layouts and pause safely when input delivery is uncertain.",
+  "release_notes": "Try an offline preview, follow setup steps and correct pairing details without losing your entry.",
   "setup": {
     "steps": [
       {

@@ -5,7 +5,18 @@ e-ink while its pty, shell, command, and credentials remain on the computer.
 The app has only the `network` capability; it cannot run a shell and does not
 store terminal content.
 
-<img width="300" src="screenshots/pairing.png" alt="Paperterm pairing address field and keyboard in the Clara BW simulator">
+<img width="300" src="screenshots/welcome.png" alt="Paperterm first run offering a computer connection or an offline preview">
+
+On first launch, **Try a preview** shows original sample output without making
+network requests or saving changes. **Connect a computer** walks through host
+setup, trust installation and starting a session, one command per page. Run
+`kobo devices` on the computer to find the reader's address for trust installation.
+
+The address accepts a host name, IPv4 or bracketed IPv6, with port 9332 as the
+default. Invalid entries remain editable. Codes require six letters or numbers;
+uppercase entry is normalized to the lowercase printed by the host. **Help**
+returns to the steps, and **Address** lets you revise the address without losing
+an unfinished code. Unreadable saved pairing is left untouched.
 
 Start the host once with `kobo stream init`, install its root with
 `kobo trust set stream --device READER_IP`, then run:
@@ -17,9 +28,13 @@ kobo stream --interactive -- /bin/sh
 Paperterm uses portrait on every supported reader. The shared terminal uses
 a smaller monospace size than interface labels, scaled by the panel's physical
 resolution and the owner's text setting. On Clara BW at Default, the measured
-grid is **75 columns × 49 rows**, or **75 × 27** with the keyboard open. Larger
+grid is **75 columns × 47 rows**, or **75 × 25** with the keyboard open. Larger
 text settings reduce the column count instead of compressing the glyphs. Other
 readers negotiate their own measured grid; 80 columns is not forced.
+
+A line above the terminal shows connection state and the reader's mode: Read only,
+Controls or Keyboard. Reconnect notices remain above the retained output, and
+the keyboard can be opened or closed while reconnecting.
 
 The app sends this grid in `/hello`,
 and holds the last received rows behind a `Connection lost. Reconnecting.` banner when the host
@@ -70,3 +85,12 @@ queue fills. Read-only sessions cannot send input.
 Malformed screen deltas leave the last output intact and trigger reconnect.
 The live simulator route includes an injected input timeout, explicit resume
 and successful typing in both directions afterward.
+
+
+<img width="300" src="screenshots/preview.png" alt="Read-only offline terminal preview with a clear sample-output notice">
+<img width="300" src="screenshots/reconnecting.png" alt="Paperterm reconnecting while keeping its terminal output and keyboard visible">
+
+The live fixture's `--pair-on-reader` option enters the address and private code
+through the actual keyboard and verifies the saved pairing before exercising
+the terminal. Load/save failure recovery for pairing remains an open quality
+item; hardware trust transfer and physical acceptance remain separate checks.

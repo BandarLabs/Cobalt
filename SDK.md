@@ -1142,6 +1142,10 @@ wraps its lines exactly where the reader sees them wrap; an application that
 did its own arithmetic about bars and keyboards would be wrong the first time
 either changed.
 
+An empty terminal is a valid waiting state, not hidden content. It still
+negotiates a measured grid; diagnostics do not report an empty terminal as
+offscreen.
+
 Terminal text uses `FontSize::Terminal`, a 1.8 mm monospace em before the owner's
 text scale. Interface labels retain their normal sizes. The same font metrics
 control layout, cursor cells, painting and the negotiated PTY grid. Width is

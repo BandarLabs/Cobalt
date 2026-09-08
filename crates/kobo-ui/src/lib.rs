@@ -12552,6 +12552,7 @@ fn validate_content_bounds(
         // does an empty list. Neither is content that layout hid.
         let expects_rect = !matches!(node, Node::Rows { rows, .. } if rows.is_empty())
             && !matches!(node, Node::Grid { cells, .. } if cells.is_empty())
+            && !matches!(node, Node::Terminal { rows, .. } if rows.is_empty())
             && !matches!(node, Node::Flex { .. });
         let completely_hidden = expects_rect
             && (rects.is_empty()
@@ -16119,6 +16120,27 @@ mod tests {
                 node.rect
             );
         }
+    }
+
+    #[test]
+    fn an_empty_terminal_waiting_for_output_is_not_hidden_content() {
+        let screen = Screen::new(
+            1,
+            vec![Node::Terminal {
+                id: NodeId(1),
+                rows: vec![],
+                cursor: None,
+            }],
+        );
+        assert!(screen
+            .diagnostics(&CLARA_BW_METRICS, &Chrome::default())
+            .issues
+            .is_empty());
+        let (columns, rows) = terminal_grid_for(&screen, &CLARA_BW_METRICS);
+        assert!(
+            columns > 0 && rows > 0,
+            "empty terminals must still negotiate a grid"
+        );
     }
 
     /// A ten-key row on a narrow panel turns each cell taller than it is

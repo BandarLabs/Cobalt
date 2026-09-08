@@ -2349,32 +2349,38 @@
     "group": "Paperterm",
     "task": "Guide host setup and pairing",
     "status": "todo",
-    "evidence": []
+    "evidence": [
+      "Partial: three setup steps, Help, address/code validation, editable errors and preserved code drafts; actual on-screen pairing against the private TLS host and successful save pass. Remaining: handle pairing-store load/save failures with an explicit recovery path; current on_store only handles Loaded."
+    ]
   },
   {
     "id": "PAPER-02",
     "pr": 2,
     "group": "Paperterm",
     "task": "Provide sample/read-only preview",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Offline read-only preview, sample-output notice and connection entry point. The committed extra-large simulator route passes with zero fetch/post effects; unit tests also exclude network/save effects. See docs/quality/evidence/paperterm/onboarding."
+    ]
   },
   {
     "id": "PAPER-03",
     "pr": 2,
     "group": "Paperterm",
     "task": "Keep session mode and connection visible",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Connection state and Read only/Controls/Keyboard labels above the terminal. Mode/recovery unit coverage and actual connected, paused, reconnecting and ended captures in docs/quality/evidence/paperterm/paired-live and status-default."
+    ]
   },
   {
     "id": "PAPER-04",
     "pr": 2,
     "group": "Paperterm",
     "task": "Explain reconnect and retain a usable keyboard toggle",
-    "status": "todo",
+    "status": "done",
     "evidence": [
-      "Partial: 0.1.4 pauses uncertain input, discards bounded queued keys, requires explicit Resume and preserves output; 31 tests plus a 15-check actual live timeout/recovery journey pass. See docs/quality/evidence/paperterm/input-recovery. Full connection/onboarding polish remains open."
+      "Reconnect notices stay above retained output. The actual live route opens/closes the keyboard while offline, restores connection and two-way typing, and separately checks explicit resume after uncertain input. Both Default and Extra-large journeys pass 17 checks."
     ]
   },
   {

@@ -833,3 +833,53 @@ metadata/layout are retained. Relevant app docs and screenshots are updated.
 PAPER-04 has partial evidence; full onboarding, preview, mode visibility and
 connection polish remain open. The overall checklist stays at 124 done,
 370 open and one deferred CBR task.
+
+
+## Paperterm preview, pairing forms and connection state · 9 September 2026
+
+Paperterm 0.1.5 adds a first-run choice between connecting a computer and a
+read-only offline preview. The preview uses original sample output, makes no
+network requests and saves no changes. Setup is split into three short pages:
+prepare the host, install trust and start the session. The guide uses the
+existing `kobo devices` command to find the reader's address. Help and an Address
+shortcut preserve unfinished form values.
+
+Addresses are validated before URL construction: names, IPv4 and bracketed IPv6
+are accepted, with 9332 as the default port; URL credentials, paths, queries,
+invalid ports and invalid numeric IPv4 are rejected. Six-character alphanumeric
+codes normalize to the lowercase printed by the host. Invalid entry remains in
+the field. Unreadable saved pairing remains untouched without starting network
+work. The actual [offline route](evidence/paperterm/onboarding/result.json) passes
+welcome, preview, each setup page, corrected address/code errors and code-draft
+preservation, with zero fetch/post effects. Screenshots and metadata are included.
+
+A status line distinguishes Connecting, Connected, Reconnecting, Input paused
+and Session ended, and reports Read only, Controls or Keyboard when known.
+Notices sit above the retained terminal output; the keyboard toggle remains
+usable during an ordinary disconnect. The SDK now recognizes a terminal with
+zero rows as a valid waiting state instead of falsely reporting hidden content.
+The initial on-screen pairing run exposed that diagnostic, and the offline
+reconnect run exposed the previous below-terminal warning placement; both are
+fixed and the final routes pass.
+
+The [Extra-large live journey](evidence/paperterm/paired-live/result.json) enters
+the actual address and private code through the on-screen keyboard, verifies the
+saved pairing, and passes 17 live checks, including explicit input recovery,
+offline keyboard toggling and restored two-way input. The
+[Default live journey](evidence/paperterm/status-default/result.json) also passes
+17 checks. Normal grids with the status line are **75 × 47 / 75 × 25** on Clara
+BW Default and **54 × 33 / 54 × 18** at Extra-large, for hidden/open keyboards.
+The temporary TLS roots are installed locally by the fixture; hardware trust
+transfer is not claimed.
+
+Validation passes **38 app and 269 UI tests** (two existing UI ignores), strict
+all-target Clippy, Rust 1.85.1 ARMv7 musl checking and the published-catalog
+version gate. Entry, help, preview, error and empty-terminal layouts cover all
+eight supported profiles at all nine text sizes. App, SDK and simulator docs
+and actual screenshots are updated.
+
+PAPER-02, PAPER-03 and PAPER-04 are complete for local/simulator validation.
+PAPER-01 stays open: pairing-store load/save failures still need explicit
+recovery, since `on_store` currently handles only `Loaded`. The overall checklist
+is **127 done, 367 open and one deferred CBR task**; PR 2 has 35/269 complete.
+Physical Clara BW acceptance and the companion PR remain pending.
