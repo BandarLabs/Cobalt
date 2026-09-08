@@ -1,0 +1,19 @@
+{
+  "status": "passed",
+  "basis": "real-host-sdk-processes",
+  "scale": "extra-large",
+  "hardware_validation": false,
+  "checks": [
+    "shell Back",
+    "app-owned Back",
+    "retained process and state",
+    "four-process bound",
+    "shared panel history",
+    "launcher retained during eviction",
+    "killed app returns to launcher",
+    "durable state after relaunch"
+  ],
+  "cli_sha256": "6b60b4f01ec7b4aa3c83642d09a935343abb3b0afcd94423c09a3ab22b7273b7",
+  "source_head": "35c30b05f49013e5eac6eeab7a0d2baa2ced67a8",
+  "source_dirty": true
+}

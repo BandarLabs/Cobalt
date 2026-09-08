@@ -16,7 +16,7 @@ A checked task requires implementation plus recorded validation. Physical measur
 
 ## Status
 
-494 tracked tasks: 82 completed, 1 deferred by the owner, 411 open. Implementation in progress. Evidence is recorded per task in `tasks.json` and in [the validation log](validation.md).
+494 tracked tasks: 84 completed, 1 deferred by the owner, 409 open. Implementation in progress. Evidence is recorded per task in `tasks.json` and in [the validation log](validation.md).
 
 ## PR 1 · Simulator fidelity (SIM-1–10)
 
@@ -24,7 +24,7 @@ A checked task requires implementation plus recorded validation. Physical measur
 - [x] **SIM-02** Apply the same scale context to measurement, diagnostics and hit testing.
 - [x] **SIM-03** Restore ambient scales after rendering to prevent cross-request leakage.
 - [x] **SIM-04** Share runtime Back/chrome composition with browser simulation.
-- [ ] **SIM-05** Route shell Back and app-owned Back consistently.
+- [x] **SIM-05** Route shell Back and app-owned Back consistently.
 - [x] **SIM-06** Use declared app capabilities instead of granting every capability.
 - [x] **SIM-07** Respect device-supported service backends in simulation.
 - [x] **SIM-08** Inject missing credentials for all credentialed network tasks.
@@ -35,7 +35,7 @@ A checked task requires implementation plus recorded validation. Physical measur
 - [x] **SIM-13** Make screenshot endpoints read-only.
 - [x] **SIM-14** Record bounded screen, input and refresh event histories.
 - [x] **SIM-15** Generate simulator Store fixtures from the catalog registry.
-- [ ] **SIM-16** Exercise actual launcher/app transitions in full-runtime mode.
+- [x] **SIM-16** Exercise actual launcher/app transitions in full-runtime mode.
 - [x] **SIM-17** Exercise signed install, update and remove against local fixture packages.
 - [x] **SIM-18** Add deterministic virtual clock controls.
 - [x] **SIM-19** Replay raw touch down, move, up, hold and page-button events through the HAL.

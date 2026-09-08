@@ -6,6 +6,8 @@
 //! [`AppRunner::action`] from their platform event loop.
 
 pub mod collections;
+#[cfg(test)]
+mod callback_scale_tests;
 
 pub use kobo_protocol::{
     is_valid_key, AppInfo, AppLinkState, AudioPlaybackState, AudioSource, BatteryDetail,
@@ -834,13 +836,31 @@ impl Context {
         nav_bar: bool,
         position: Position,
     ) -> Vec<Vec<usize>> {
+        self.paginate_rows_below_section(rows, nav_bar, position, None)
+    }
+
+    /// Measure rows after a section and an optional inline banner, reserving
+    /// both their actual heights. Use the same banner text when building.
+    #[must_use]
+    pub fn paginate_rows_below_section(
+        &self,
+        rows: &[(&str, &str, &str)],
+        nav_bar: bool,
+        position: Position,
+        notice: Option<&str>,
+    ) -> Vec<Vec<usize>> {
+        kobo_ui::with_text_scale(self.metrics.text_scale, || {
         let mut area = self.area_for(nav_bar, position);
+        if let Some(notice) = notice {
+            area.height = area.height.saturating_sub(kobo_ui::banner_height(notice, area.width, &self.metrics)).saturating_sub(area.gap).max(1);
+        }
         area.height = area
             .height
             .saturating_sub(kobo_ui::section_height(&self.metrics))
             .saturating_sub(area.gap)
             .max(1);
         kobo_ui::paginate_rows_with_trailing(rows, &self.metrics, area)
+        })
     }
 
     /// The page a list gets, given where it says which page that is.
@@ -2703,7 +2723,15 @@ impl<A: KoboApp> AppRunner<A> {
             context.settle();
         }
         let started = std::time::Instant::now();
-        callback(&mut self.app, &mut context);
+        // Measurement inside app callbacks uses the same interface scale as
+        // the runtime. The renderer's scoped environment cannot set thread
+        // locals in this separate process. Restore the caller's environment
+        // afterwards, including when a callback unwinds.
+        kobo_ui::with_text_scale(self.metrics.text_scale, || {
+            kobo_ui::with_reading_scale(self.metrics.text_scale, || {
+                callback(&mut self.app, &mut context);
+            });
+        });
         let elapsed = started.elapsed();
         self.next_task = context.next_task;
         self.in_flight = context.in_flight;

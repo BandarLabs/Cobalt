@@ -11,6 +11,7 @@ name = "kobo"
 path = "src/main.rs"
 
 [dependencies]
+kobo-catalog = { path = "../kobo-catalog" }
 kobo-ui = { path = "../kobo-ui" }
 kobo-app-store = { path = "../kobo-app-store" }
 kobo-sim = { path = "../kobo-sim" }

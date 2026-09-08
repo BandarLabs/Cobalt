@@ -44,16 +44,13 @@ use kobo_hal::touch::TouchEvent;
 use kobo_hal::{Rect, RefreshIntent, RefreshPlan, RegionSnapshot};
 use kobo_policy::{Backends, Capability, Declared, DeviceServices, PowerPolicy, TaskRunner};
 use kobo_protocol::{Frame, Lifecycle, Message, TaskOutcome};
-use kobo_ui::{
-    ActionId, CellStyle, Chrome, FontHandle, Layout, LayoutKind, PictureCache, Screen, Surface,
-};
+use kobo_ui::{ActionId, CellStyle, Chrome, Layout, LayoutKind, PictureCache, Screen, Surface};
 use kobo_wifi_trace::{Lifecycle as WifiTraceEvent, TraceClient};
-use std::collections::BTreeMap;
 use std::fs;
 use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering as AtomicOrdering};
+use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -85,15 +82,6 @@ fn frame_timing_wanted() -> bool {
     static WANTED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *WANTED.get_or_init(|| std::env::var(FRAME_TIMING).ok().as_deref() == Some("1"))
 }
-
-/// The most publisher faces one application may hold in the runtime at once.
-///
-/// The protocol bounds a single font frame, not how many frames arrive. A book
-/// needs a regular, an italic, a bold and a bold italic, and a handful more for
-/// small caps or a display face; past that an application is accumulating
-/// rather than typesetting, and every face held is parsed outlines and a glyph
-/// cache inside the privileged runtime.
-const MAX_APP_FONTS: usize = 16;
 
 /// Where each application's own keyed state lives, one directory per name.
 const STATE_ROOT: &str = "/mnt/onboard/.adds/cobalt/state";
@@ -199,16 +187,6 @@ const AUTO_UPDATE_QUIET: Duration = Duration::from_secs(60);
 /// Below this charge, background updates wait for a charger. A failed write
 /// to the book partition costs more than a late update is worth.
 const AUTO_UPDATE_MIN_BATTERY: u8 = 20;
-/// How long an application that asked for first refusal on Back is given to
-/// answer it with a screen.
-///
-/// The reader owns the way out, and this is the whole of what an application
-/// is allowed to do with it: draw something new, quickly, or be left behind.
-/// An application that is wedged, or that claimed [`Screen::owns_back`] on a
-/// screen it has nowhere to go back from, costs the reader this much and then
-/// the launcher appears anyway. Two seconds is longer than a screen takes to
-/// build and shorter than a reader waits before tapping again.
-const BACK_GRACE: Duration = Duration::from_secs(2);
 /// How often the stop watcher looks at the flag a signal handler sets.
 ///
 /// Bounds how long the owner holds a device that has been asked to stop and
@@ -1071,8 +1049,7 @@ fn restore_screen(
 /// Beyond it, the one left alone longest is stopped, because an application
 /// nobody has looked at in a while is cheaper to start again than a device that
 /// runs out of memory while its owner is reading.
-const MAX_HOSTED: usize = 4;
-static NEXT_RUNTIME_FONT: AtomicU32 = AtomicU32::new(1);
+const MAX_HOSTED: usize = kobod::navigation::MAX_HOSTED;
 
 /// One application the runtime is hosting.
 ///
@@ -1108,7 +1085,7 @@ struct Hosted {
     /// together when it exits.
     pictures: PictureCache,
     /// Application-local font handles mapped onto runtime-global handles.
-    fonts: BTreeMap<FontHandle, FontHandle>,
+    fonts: kobod::fonts::FontOwner,
     /// Logical direction is app-session scoped and therefore vanishes when
     /// this hosted process exits or the reader resumes.
     orientation: kobo_ui::Orientation,
@@ -1432,7 +1409,8 @@ fn host_applications(
         // and cleared by the next screen that application draws. The reader's
         // way out is never left waiting on an application: if this is still
         // set when its grace expires, the launcher is shown regardless.
-        let mut back_offered: Option<(u64, Instant)> = None;
+        let navigation_started = Instant::now();
+        let mut back_offered = kobod::navigation::BackOffer::default();
         // The rectangle currently drawn inverted because a finger is on it.
         // The rectangle a finger is resting on, with the metrics its mark was
         // drawn against. Both, because the mark is undone by drawing it again
@@ -1453,6 +1431,8 @@ fn host_applications(
 
         loop {
             let now = Instant::now();
+            let navigation_millis =
+                u64::try_from(navigation_started.elapsed().as_millis()).unwrap_or(u64::MAX);
             // Reported from the loop rather than from a thread, so this says
             // the runtime is still serving the panel rather than merely that
             // the process has not been reaped.
@@ -1524,27 +1504,22 @@ fn host_applications(
             // An application that was offered Back and drew nothing has had
             // its turn. This is what keeps the guarantee: the way out belongs
             // to the reader whatever the application does or fails to do.
-            if let Some((id, offered_at)) = back_offered {
-                if now.saturating_duration_since(offered_at) >= BACK_GRACE {
-                    back_offered = None;
-                    if id == front {
-                        trace("the application did not answer back, leaving anyway");
-                        let Some(home_id) = id_of_path(&apps, &home) else {
-                            return Ok(finish(&apps, &visited, "the launcher is gone"));
-                        };
-                        front = switch_to(
-                            &mut apps,
-                            front,
-                            home_id,
-                            display,
-                            whole_screen,
-                            &mut surface,
-                            &mut panel,
-                            &home,
-                            &mut status,
-                        )?;
-                    }
-                }
+            if back_offered.take_expired(front, navigation_millis) {
+                trace("the application did not answer back, leaving anyway");
+                let Some(home_id) = id_of_path(&apps, &home) else {
+                    return Ok(finish(&apps, &visited, "the launcher is gone"));
+                };
+                front = switch_to(
+                    &mut apps,
+                    front,
+                    home_id,
+                    display,
+                    whole_screen,
+                    &mut surface,
+                    &mut panel,
+                    &home,
+                    &mut status,
+                )?;
             }
             // Whichever comes first, and never longer than one heartbeat, so a
             // session nobody is touching still proves it is alive.
@@ -1555,9 +1530,11 @@ fn host_applications(
                 // So a charger pulled out while nobody is touching the panel
                 // is noticed in seconds rather than at the next heartbeat.
                 .min(STATUS_POLL)
-                .min(back_offered.map_or(BEAT_INTERVAL, |(_, offered_at)| {
-                    (offered_at + BACK_GRACE).saturating_duration_since(now)
-                }))
+                .min(
+                    back_offered
+                        .remaining(navigation_millis)
+                        .unwrap_or(BEAT_INTERVAL),
+                )
                 .min(release_due.map_or(BEAT_INTERVAL, |(deadline, _)| {
                     deadline.saturating_duration_since(now)
                 }));
@@ -1858,12 +1835,16 @@ fn host_applications(
                     )?;
                     match disposition {
                         Tap::Handled => {}
-                        Tap::OfferedBack => back_offered = Some((front, Instant::now())),
+                        Tap::OfferedBack => back_offered.offer(
+                            front,
+                            u64::try_from(navigation_started.elapsed().as_millis())
+                                .unwrap_or(u64::MAX),
+                        ),
                         Tap::Leave => {
                             // Going back leaves the application running. It is
                             // put behind the launcher rather than ended, so
                             // coming back to it is a repaint, not a restart.
-                            back_offered = None;
+                            back_offered.clear();
                             let Some(home_id) = id_of_path(&apps, &home) else {
                                 return Ok(finish(&apps, &visited, "the launcher is gone"));
                             };
@@ -1895,7 +1876,7 @@ fn host_applications(
                     match frame.message {
                         Message::SetScreen(mut screen) => {
                             if let Some(local) = screen.reading_font {
-                                screen.reading_font = apps[index].fonts.get(&local).copied();
+                                screen.reading_font = apps[index].fonts.resolve(local);
                             }
                             let is_front = id == front;
                             if is_front {
@@ -1906,9 +1887,7 @@ fn host_applications(
                             // that application rather than a designated one:
                             // the application has drawn, which is all the
                             // runtime asked of it.
-                            if back_offered.is_some_and(|(waiting, _)| waiting == id) {
-                                back_offered = None;
-                            }
+                            back_offered.answer(id);
                             let chrome = chrome_for(&screen, apps[index].path == home, &mut status);
                             let screen =
                                 kobo_ui::ensure_way_back(screen, &chrome, &apps[index].name);
@@ -2010,47 +1989,16 @@ fn host_applications(
                             name,
                             bytes,
                         } => {
-                            // The map entry is only made once the face parses.
-                            // Creating it first let a refused font hold a slot,
-                            // and nothing bounded how many slots one
-                            // application could take: a loop over fresh handles
-                            // would grow the runtime until the device gave out.
-                            let known = apps[index].fonts.contains_key(&handle);
-                            if !known && apps[index].fonts.len() >= MAX_APP_FONTS {
-                                trace(&format!(
-                                    "font {} refused: {MAX_APP_FONTS} already held",
-                                    handle.0
-                                ));
-                            } else {
-                                match kobo_text::BookFont::from_bytes(
-                                    &bytes,
-                                    &name,
-                                    crate::device_metrics(),
-                                ) {
-                                    Ok(book_font) => {
-                                        let runtime_handle =
-                                            *apps[index].fonts.entry(handle).or_insert_with(|| {
-                                                FontHandle(
-                                                    NEXT_RUNTIME_FONT
-                                                        .fetch_add(1, AtomicOrdering::Relaxed),
-                                                )
-                                            });
-                                        kobo_ui::put_book_typesetter(
-                                            runtime_handle,
-                                            Box::new(book_font),
-                                        );
-                                    }
-                                    Err(error) => {
-                                        trace(&format!("font {} refused: {error}", handle.0));
-                                    }
-                                }
+                            if let Err(error) = apps[index].fonts.load(
+                                handle,
+                                &name,
+                                &bytes,
+                                crate::device_metrics(),
+                            ) {
+                                trace(&format!("font {} refused: {error}", handle.0));
                             }
                         }
-                        Message::DropFont { handle } => {
-                            if let Some(runtime_handle) = apps[index].fonts.remove(&handle) {
-                                kobo_ui::drop_book_typesetter(runtime_handle);
-                            }
-                        }
+                        Message::DropFont { handle } => apps[index].fonts.remove(handle),
                         // An application logs to explain itself, and the times
                         // it most needs to be believed are the times it took
                         // the reader down with it. Dropping the line here left
@@ -2706,14 +2654,14 @@ fn switch_to(
     if front == wanted {
         return Ok(front);
     }
-    if let Some(index) = index_of(apps, front) {
-        // Told before the panel changes, so an application that saves on
-        // leaving has done it before anything else is drawn over it.
-        apps[index].send(Message::Lifecycle(Lifecycle::Background))?;
-    }
     let Some(index) = index_of(apps, wanted) else {
         return Ok(front);
     };
+    if let Some(previous) = index_of(apps, front) {
+        // A lifecycle notification starts the callback asynchronously. It is
+        // not an acknowledgement that the application's saves have finished.
+        apps[previous].send(Message::Lifecycle(Lifecycle::Background))?;
+    }
     apps[index].used = Instant::now();
     apps[index].send(Message::Lifecycle(Lifecycle::Foreground))?;
     // Painted from what the runtime already holds rather than waiting for the
@@ -2977,7 +2925,11 @@ fn evict(apps: &mut Vec<Hosted>, front: u64) {
         .iter()
         .map(|app| (app.id, app.used, app.tasks.in_flight() > 0))
         .collect();
-    let Some(index) = coldest(&seen, front) else {
+    let home = apps
+        .iter()
+        .find(|app| app.name == "launcher")
+        .map(|app| app.id);
+    let Some(index) = kobod::navigation::eviction(&seen, front, home) else {
         return;
     };
     let gone = apps.remove(index);
@@ -2998,12 +2950,9 @@ fn evict(apps: &mut Vec<Hosted>, front: u64) {
 /// nothing on the panel to say so. Such an application is stopped only when
 /// every other candidate is busy too, because refusing to open anything is
 /// worse still.
+#[cfg(test)]
 fn coldest(seen: &[(u64, Instant, bool)], front: u64) -> Option<usize> {
-    seen.iter()
-        .enumerate()
-        .filter(|(_, (id, _, _))| *id != front)
-        .min_by_key(|(_, (_, used, busy))| (*busy, *used))
-        .map(|(index, _)| index)
+    kobod::navigation::eviction(seen, front, None)
 }
 
 /// Starts one application and completes its opening exchange.
@@ -3172,7 +3121,7 @@ fn start_application(
         declared,
         screen: None,
         pictures: PictureCache::default(),
-        fonts: BTreeMap::new(),
+        fonts: kobod::fonts::FontOwner::default(),
         orientation: kobo_ui::Orientation::Portrait,
         landscape_turn: kobo_ui::LandscapeTurn::Clockwise,
         painted: 0,
@@ -3209,9 +3158,7 @@ fn stop_hosted(mut app: Hosted) {
         trace(&format!("{} ended with {status}", app.name));
         println!("{} ended with {status}", app.name);
     }
-    for (_, handle) in std::mem::take(&mut app.fonts) {
-        kobo_ui::drop_book_typesetter(handle);
-    }
+    app.fonts.clear();
     app.tasks.shutdown();
     stop_application(&mut app.child, app.jail.as_deref());
     if let Some(failure) = app.child.trace_failure() {
@@ -3737,8 +3684,11 @@ fn deliver_touch(
     else {
         return Ok(Tap::Handled);
     };
-    let offered = action == ActionId::BACK;
-    if offered && !current.is_some_and(|screen| screen.owns_back) {
+    let route = kobod::navigation::route(
+        action == ActionId::BACK,
+        current.is_some_and(|screen| screen.owns_back),
+    );
+    if route == kobod::navigation::BackRoute::Leave {
         return Ok(Tap::Leave);
     }
     kobo_protocol::write_to(
@@ -3750,7 +3700,7 @@ fn deliver_touch(
         },
     )
     .map_err(|error| format!("deliver a tap: {error}"))?;
-    Ok(if offered {
+    Ok(if route == kobod::navigation::BackRoute::Offer {
         Tap::OfferedBack
     } else {
         Tap::Handled

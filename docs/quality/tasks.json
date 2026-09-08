@@ -16,7 +16,8 @@
     "task": "Apply the same scale context to measurement, diagnostics and hit testing",
     "status": "done",
     "evidence": [
-      "Scoped environment applied in layout, render and diagnostics; simulator uses the same chrome and metrics for hit testing."
+      "Scoped environment applied in layout, render and diagnostics; simulator uses the same chrome and metrics for hit testing.",
+      "SDK callback measurements now use and restore explicit interface/reading scale. Actual catalog rows with result banners fit both tested profiles at three sizes; shared square grids preserve geometry and trailing controls across supported profiles and poses."
     ]
   },
   {
@@ -44,8 +45,10 @@
     "pr": 1,
     "group": "Simulator fidelity (SIM-1–10)",
     "task": "Route shell Back and app-owned Back consistently",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Shared runtime Back ownership/deadline and protected-launcher eviction policy; real launcher, Todo, Store, Magnet and Tic-tac-toe host processes pass the extra-large Clara BW journey, retained/evicted/killed app recovery and shared panel-history checks. See evidence/runtime/result.json. Kernel sandbox/suspend remain device-only; signed transaction fixtures remain separately exercised in single-app mode."
+    ]
   },
   {
     "id": "SIM-06",
@@ -154,8 +157,10 @@
     "pr": 1,
     "group": "Simulator fidelity (SIM-1–10)",
     "task": "Exercise actual launcher/app transitions in full-runtime mode",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Shared runtime Back ownership/deadline and protected-launcher eviction policy; real launcher, Todo, Store, Magnet and Tic-tac-toe host processes pass the extra-large Clara BW journey, retained/evicted/killed app recovery and shared panel-history checks. See evidence/runtime/result.json. Kernel sandbox/suspend remain device-only; signed transaction fixtures remain separately exercised in single-app mode."
+    ]
   },
   {
     "id": "SIM-17",

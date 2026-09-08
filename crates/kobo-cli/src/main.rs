@@ -17,6 +17,7 @@ mod connect;
 mod deck;
 mod devsession;
 mod drive;
+mod runtime_dev;
 mod flashcards;
 mod frame;
 mod host_release;
@@ -1615,6 +1616,9 @@ fn generated_app_source() -> String {
 }
 
 fn dev(arguments: &[String]) -> Result<(), String> {
+    if arguments.first().is_some_and(|arg| arg == "--runtime") {
+        return runtime_dev::run(&arguments[1..]);
+    }
     let (built_in, address) = match arguments {
         [] => (false, "127.0.0.1:8787"),
         [address] if address == "--builtin" => (true, "127.0.0.1:8787"),
@@ -6473,6 +6477,7 @@ fn print_help() {
          Commands:\n\
            new <name>             Create a Rust application\n\
            dev [--builtin] [address]  Run this SDK app in the browser simulator\n\
+           dev --runtime [address] [--apps IDs]  Run launcher and selected local apps\n\
            drive --script PATH    Drive a running simulator and save PNG screenshots\n\
            drive --script PATH --record DIR  ... and film it, no hardware needed\n\
            deck set PAD --launch APP|--url URL|--run CMD  Assign a Deck pad on this computer\n\

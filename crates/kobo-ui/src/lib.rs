@@ -1002,6 +1002,37 @@ mod responsive_profile_tests {
     }
 
     #[test]
+    fn square_boards_keep_their_geometry_and_trailing_controls_at_larger_sizes() {
+        for (name, base) in panels() {
+            for text_scale in [TextScale::Default, TextScale::Large, TextScale::ExtraLarge] {
+                let metrics = DisplayMetrics { text_scale, ..base };
+                let screen = Screen::new(1, vec![
+                    Node::Heading { id: NodeId(1), text: "O to play".into(), level: 1 },
+                    Node::Grid { id: NodeId(2), columns: 3, square: true,
+                        cells: (1..=9).map(|id| Cell::new(ActionId(id), "O")).collect() },
+                    Node::Grid { id: NodeId(3), columns: 2, square: false,
+                        cells: vec![Cell::new(ActionId(10), "Reset game"), Cell::new(ActionId(11), "How to play")] },
+                ]).with_top_bar(TopBar::new(NodeId(4), "Tic-tac-toe"));
+                let diagnostics = screen.diagnostics(&metrics, &Chrome::measuring(true));
+                assert!(!diagnostics.has_errors(), "{name} {text_scale:?}: {:?}", diagnostics.issues);
+                let cells = diagnostics.layout.nodes.iter()
+                    .filter(|node| node.id == NodeId(2) && matches!(node.kind, LayoutKind::Cell(..)))
+                    .collect::<Vec<_>>();
+                assert_eq!(cells.len(), 9);
+                for cell in &cells {
+                    assert_eq!(cell.rect.width, cell.rect.height);
+                    assert!(cell.rect.width >= metrics.touch_target_minimum());
+                }
+                assert_eq!(cells[0].rect.y, cells[2].rect.y);
+                assert!(cells[3].rect.y > cells[2].rect.y);
+                for action in 1..=11 {
+                    assert!(diagnostics.layout.nodes.iter().any(|node| node.kind.acts_on() == Some(ActionId(action))));
+                }
+            }
+        }
+    }
+
+    #[test]
     fn long_document_regions_yield_to_trailing_controls() {
         for (name, metrics) in panels() {
             let screen = Screen::new(
@@ -7903,7 +7934,7 @@ fn layout_node(
                     .max(1);
                 requested.min(fits)
             };
-            let (x, width, gutter) = if backgammon_board {
+            let (mut x, mut width, gutter) = if backgammon_board {
                 (0, metrics.width, 0)
             } else if pad_deck {
                 (x, width, metrics.space(Space::Small))
@@ -7915,7 +7946,16 @@ fn layout_node(
             } else {
                 0
             };
-            let cell_width = (width - gutter * (columns - 1) - block_extra * 2) / columns;
+            let mut cell_width = (width - gutter * (columns - 1) - block_extra * 2) / columns;
+            if *square && !legacy_typography() && !backgammon_board && !cells.is_empty() {
+                let rows = i32::try_from(cells.len().min(MAX_CELLS).div_ceil(usize::try_from(columns).unwrap_or(1))).unwrap_or(i32::MAX);
+                let vertical_gaps = gutter * (rows - 1) + ((rows - 1) / 3) * block_extra;
+                let fits_height = bottom.saturating_sub(y).saturating_sub(vertical_gaps) / rows;
+                cell_width = cell_width.min(fits_height.max(metrics.touch_target_minimum()));
+                let board_width = cell_width * columns + gutter * (columns - 1) + block_extra * 2;
+                x = x.saturating_add((width - board_width).max(0) / 2);
+                width = board_width;
+            }
             // A square cell is what makes a board read as a board. A grid that
             // is not square is a keyboard, and there one row of touch target
             // is exactly right and anything taller wastes the panel.
@@ -8767,9 +8807,7 @@ fn layout_node(
         Node::Banner { id, level, text } => {
             let padding = metrics.space(Space::Small);
             let lines = wrap_text(text, width - 2 * padding, FontSize::Body);
-            let height = (lines.len() as i32 * FontSize::Body.line_height())
-                .saturating_add(2 * padding)
-                .max(metrics.touch_target_minimum());
+            let height = banner_height_for_lines(lines.len(), metrics);
             layout.nodes.push(LayoutNode {
                 id: *id,
                 rect: Rect {
@@ -10328,6 +10366,22 @@ pub fn section_height(metrics: &DisplayMetrics) -> i32 {
         .saturating_add(metrics.space(Space::Tight))
 }
 
+/// The banner's actual measured height, for paginators reserving an inline
+/// result before their rows. `width` is the content width, including padding.
+#[must_use]
+pub fn banner_height(text: &str, width: i32, metrics: &DisplayMetrics) -> i32 {
+    with_text_scale(metrics.text_scale, || {
+        let width = if legacy_typography() { width } else { width.min(metrics.readable_width()) };
+        let lines = wrap_text(text, width - 2 * metrics.space(Space::Small), FontSize::Body);
+        banner_height_for_lines(lines.len(), metrics)
+    })
+}
+
+fn banner_height_for_lines(lines: usize, metrics: &DisplayMetrics) -> i32 {
+    i32::try_from(lines).unwrap_or(i32::MAX).saturating_mul(FontSize::Body.line_height())
+        .saturating_add(2 * metrics.space(Space::Small)).max(metrics.touch_target_minimum())
+}
+
 /// Breaks a list into pages, keeping every section header with its first row.
 ///
 /// `rows` carries an optional section title against each row; the title is
@@ -10457,6 +10511,7 @@ fn flow_node_bottom(
     let flexible = matches!(
         node,
         Node::Text { .. } | Node::RichText { .. } | Node::PagedList { .. } | Node::Terminal { .. }
+            | Node::Grid { square: true, .. }
     );
     let protects_interaction = following.iter().any(node_has_enabled_interaction);
     if matches!(node, Node::Splash { .. }) || (flexible && protects_interaction) {

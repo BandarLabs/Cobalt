@@ -21,6 +21,7 @@ mod clock;
 mod hardware;
 mod input;
 mod panel;
+pub mod runtime;
 pub use capture::CaptureSource;
 use panel::PanelPreview;
 #[path = "../../kobod/src/frame.rs"]
@@ -582,6 +583,7 @@ pub struct AppServer {
     manifest: Option<kobo_catalog::App>,
     capture_source: CaptureSource,
     time: clock::Time,
+    runtime_navigation: bool,
 }
 
 impl AppServer {
@@ -629,7 +631,16 @@ impl AppServer {
             manifest: None,
             capture_source: CaptureSource::default(),
             time,
+            runtime_navigation: false,
         })
+    }
+
+    /// Enable process handoffs for the runtime host. Single-app previews keep
+    /// reporting requested launches without claiming that they took place.
+    #[must_use]
+    pub fn with_runtime_navigation(mut self) -> Self {
+        self.runtime_navigation = true;
+        self
     }
 
     /// Uses the local publishing manifest, including its capability declaration.
@@ -719,7 +730,9 @@ impl AppServer {
     }
 
     fn start_session(&self, stream: &mut UnixStream) -> io::Result<AppSession> {
+        stream.set_read_timeout(Some(std::time::Duration::from_secs(10)))?;
         let hello = read_protocol_frame(stream)?;
+        stream.set_read_timeout(None)?;
         // Kept, not just checked. The name is the identity credential policy
         // is written against, so a simulator that threw it away could not
         // apply the same policy the device applies.
@@ -751,6 +764,10 @@ impl AppServer {
         )?;
         let reader = stream.try_clone()?;
         let mut initial = AppState::with_apps(Arc::clone(&self.apps));
+        initial.runtime_navigation = self.runtime_navigation;
+        if self.runtime_navigation {
+            initial.lifecycle = Lifecycle::Background;
+        }
         initial.services = DeviceServices::new(
             declared.clone(),
             kobo_policy::PowerPolicy::DEFAULT,
@@ -918,15 +935,23 @@ fn hold(state: &Arc<Mutex<AppState>>, message: Message) -> io::Result<()> {
             handle,
             name,
             bytes,
-        } => match kobo_text::BookFont::from_bytes(&bytes, &name, profile_metrics()) {
-            Ok(font) => {
-                kobo_ui::put_book_typesetter(handle, Box::new(font));
-                Ok(())
+        } => {
+            let outcome = state
+                .lock()
+                .map_err(|_| io::Error::other("app state unavailable"))?
+                .fonts
+                .load(handle, &name, &bytes, profile_metrics());
+            match outcome {
+                Ok(()) => Ok(()),
+                Err(error) => note(state, &format!("font {} refused: {error}", handle.0)),
             }
-            Err(error) => note(state, &format!("font {} refused: {error}", handle.0)),
-        },
+        }
         Message::DropFont { handle } => {
-            kobo_ui::drop_book_typesetter(handle);
+            state
+                .lock()
+                .map_err(|_| io::Error::other("app state unavailable"))?
+                .fonts
+                .remove(handle);
             Ok(())
         }
         other => hold_picture(state, other),
@@ -1043,6 +1068,7 @@ struct AppState {
     /// a cover and a panel that does not would be a real difference rather than
     /// a simulator shortcut.
     pictures: kobo_ui::PictureCache,
+    fonts: kobod::fonts::FontOwner,
     /// A disposable low-budget cache used only while the pressure scenario is
     /// active. Keeping it separate makes leaving the scenario restore the
     /// normal preview instead of permanently deleting pictures the app sent.
@@ -1052,6 +1078,11 @@ struct AppState {
     lifecycle: Lifecycle,
     last_touch: Option<SimulatedTouch>,
     apps: Arc<Mutex<SimulatedApps>>,
+    runtime_navigation: bool,
+    navigation: std::collections::VecDeque<String>,
+    back_offer: kobod::navigation::BackOffer,
+    hosted: Vec<String>,
+    process_id: Option<u32>,
 }
 
 impl Default for AppState {
@@ -1084,12 +1115,18 @@ impl AppState {
             paints: 0,
             logs: Vec::new(),
             pictures: kobo_ui::PictureCache::default(),
+            fonts: kobod::fonts::FontOwner::default(),
             pressure_pictures: kobo_ui::PictureCache::new(256 * 1024),
             panel: PanelPreview::new(),
             scenario: Scenario::Normal,
             lifecycle: Lifecycle::Foreground,
             last_touch: None,
             apps,
+            runtime_navigation: false,
+            navigation: std::collections::VecDeque::new(),
+            back_offer: kobod::navigation::BackOffer::default(),
+            hosted: Vec::new(),
+            process_id: None,
         }
     }
 }
@@ -1249,6 +1286,34 @@ impl AppState {
         let mut value = kobo_json::parse(&base).expect("simulator JSON");
         if let kobo_json::Value::Object(fields) = &mut value {
             fields.push((
+                "navigation".into(),
+                kobo_json::ObjectBuilder::new()
+                    .set(
+                        "mode",
+                        if self.runtime_navigation {
+                            "multi-app"
+                        } else {
+                            "single-app"
+                        },
+                    )
+                    .set("app", self.app_name.as_str())
+                    .set(
+                        "processId",
+                        self.process_id
+                            .map_or(kobo_json::Value::Null, kobo_json::Value::from),
+                    )
+                    .set(
+                        "hosted",
+                        kobo_json::Value::Array(
+                            self.hosted
+                                .iter()
+                                .map(|name| kobo_json::Value::from(name.as_str()))
+                                .collect(),
+                        ),
+                    )
+                    .build(),
+            ));
+            fields.push((
                 "appStore".into(),
                 self.apps
                     .lock()
@@ -1355,7 +1420,11 @@ impl AppState {
         }
     }
 
-    fn set_screen(&mut self, screen: Screen) {
+    fn set_screen(&mut self, mut screen: Screen) {
+        screen.reading_font = screen
+            .reading_font
+            .and_then(|local| self.fonts.resolve(local));
+        self.back_offer.answer(1);
         self.screen = screen;
         self.update_chrome();
         self.screen = kobo_ui::ensure_way_back(self.screen.clone(), &self.chrome, &self.app_name);
@@ -1365,6 +1434,9 @@ impl AppState {
     }
 
     fn commit_frame(&mut self) {
+        if self.runtime_navigation && self.lifecycle == Lifecycle::Background {
+            return;
+        }
         let mut surface = Surface::new(PROFILE.width as usize, PROFILE.height as usize);
         kobo_ui::render_oriented(
             &self.screen,
@@ -1433,6 +1505,9 @@ impl AppSession {
     ///
     /// Returns an error if the SDK connection is closed or its writer is poisoned.
     pub fn send_action(&self, action: ActionId) -> io::Result<()> {
+        if !self.route_input(&Message::Action { action })? {
+            return Ok(());
+        }
         self.state
             .lock()
             .map_err(|_| io::Error::other("app state lock poisoned"))?
@@ -1537,6 +1612,9 @@ impl AppSession {
             messages
         };
         for message in messages {
+            if !self.route_input(&message)? {
+                continue;
+            }
             write_shared(
                 &self.writer,
                 &Frame {
@@ -1715,7 +1793,11 @@ impl AppSession {
                     let colour = rgb.then(|| state.panel.ideal_rgb(PROFILE.colour_panel));
                     capture::View {
                         app: &state.app_name,
-                        mode: "single-app",
+                        mode: if state.runtime_navigation {
+                            "multi-app"
+                        } else {
+                            "single-app"
+                        },
                         screen: &state.screen,
                         source: &state.capture_source,
                         paints: state.paints,
@@ -2649,9 +2731,23 @@ fn read_app_messages(
                 let mut state = state
                     .lock()
                     .map_err(|_| io::Error::other("app state lock poisoned"))?;
-                state.record(format!(
-                    "Info: asked to launch {name}; the simulator hosts one application"
-                ));
+                if state.runtime_navigation {
+                    if state.lifecycle == Lifecycle::Foreground
+                        && valid_app_name(&name)
+                        && state.navigation.len() < 8
+                    {
+                        state.navigation.push_back(name);
+                    } else {
+                        state.record(
+                            "launch refused: background, invalid name or full navigation queue"
+                                .into(),
+                        );
+                    }
+                } else {
+                    state.record(format!(
+                        "Info: asked to launch {name}; the simulator hosts one application"
+                    ));
+                }
             }
             message if is_picture_message(&message) => hold(state, message)?,
             Message::Log {

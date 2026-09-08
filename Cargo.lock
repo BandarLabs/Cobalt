@@ -897,6 +897,7 @@ name = "kobo-cli"
 version = "0.3.12"
 dependencies = [
  "kobo-app-store",
+ "kobo-catalog",
  "kobo-doc",
  "kobo-frame-host",
  "kobo-image",
@@ -1474,6 +1475,7 @@ dependencies = [
 name = "kobo-store"
 version = "0.3.12"
 dependencies = [
+ "kobo-catalog",
  "kobo-sdk",
  "kobo-ui",
  "qrcodegen",

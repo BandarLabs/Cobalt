@@ -86,12 +86,21 @@ impl Store {
             .zip(&states)
             .map(|(entry, state)| (entry.title.as_str(), entry.summary.as_str(), state.as_str()))
             .collect::<Vec<_>>();
-        let without_controls =
-            context.paginate_rows_with_trailing_after_section_at(&rows, false, Position::Elsewhere);
+        let without_controls = context.paginate_rows_below_section(
+            &rows,
+            false,
+            Position::Elsewhere,
+            self.notice.as_deref(),
+        );
         // A one-page catalog draws no bottom bar and gets that room for apps.
         // Once it turns, measure again with the navigation bar it will draw.
         let page_indices = if without_controls.len() > 1 {
-            context.paginate_rows_with_trailing_after_section_at(&rows, true, Position::Elsewhere)
+            context.paginate_rows_below_section(
+                &rows,
+                true,
+                Position::Elsewhere,
+                self.notice.as_deref(),
+            )
         } else {
             without_controls
         };
@@ -1020,6 +1029,59 @@ mod tests {
             entries: vec![app("notes", None)],
         });
         assert!(matches!(runner.app().view, View::Working { .. }));
+    }
+
+    #[test]
+    fn actual_catalog_and_result_banners_fit_at_each_interface_size() {
+        let entries = kobo_catalog::bundled()
+            .unwrap()
+            .into_iter()
+            .map(|entry| AppInfo {
+                id: entry.id,
+                title: entry.title,
+                label: entry.label,
+                summary: entry.summary,
+                version: entry.version,
+                minimum_cobalt_version: env!("CARGO_PKG_VERSION").into(),
+                glyph: Glyph::App,
+                capabilities: entry.capabilities,
+                installed_version: None,
+            })
+            .collect::<Vec<_>>();
+        for panel in [CLARA_BW_METRICS, ELIPSA_2E_METRICS] {
+            for scale in [TextScale::Default, TextScale::Large, TextScale::ExtraLarge] {
+                let metrics = DisplayMetrics {
+                    text_scale: scale,
+                    ..panel
+                };
+                for notice in [
+                    None,
+                    Some(app_failure(DeviceError::Backend)),
+                    Some("Quality fixture installed."),
+                ] {
+                    let context = AppRunner::with_metrics(Store::default(), metrics).context();
+                    let mut store = Store::default();
+                    store.replace_entries(entries.clone());
+                    store.notice = notice.map(str::to_owned);
+                    let mut shown = BTreeSet::new();
+                    for page in 0..entries.len() {
+                        store.page = page;
+                        let screen = store.catalog(&context);
+                        let report = screen.diagnostics(&metrics, &Chrome::measuring(true));
+                        assert!(!report.has_errors(), "{metrics:?}: {:?}", report.issues);
+                        for node in report.layout.nodes {
+                            if let LayoutKind::Row(action, ..) = node.kind {
+                                shown.insert(action);
+                            }
+                        }
+                        if store.page < page {
+                            break;
+                        }
+                    }
+                    assert_eq!(shown.len(), entries.len());
+                }
+            }
+        }
     }
 
     #[test]
