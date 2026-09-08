@@ -12738,20 +12738,28 @@ fn validate_layout_nodes(layout: &Layout, metrics: &DisplayMetrics, issues: &mut
         let Some((size, face)) = layout_text_style(node) else {
             continue;
         };
-        let too_wide = node
-            .text_lines
-            .iter()
-            .any(|line| measure_text_in(line, size, face).0 > node.rect.width);
-        // A section keeps its title and its value in `text_lines`, but draws
-        // them beside each other on one line with the hairline between. Counting
-        // them as two lines reported every `section_with_value` on every screen
-        // as text overflowing a rect it fits inside perfectly well.
-        let rows = if matches!(node.kind, LayoutKind::Section) {
-            1
+        let scale = if matches!(node.kind, LayoutKind::CellLabel(true)) {
+            board_label_style(node).1
         } else {
-            i32::try_from(node.text_lines.len()).unwrap_or(i32::MAX)
+            text_scale()
         };
-        let too_tall = rows.saturating_mul(size.line_height_in(face)) > node.rect.height;
+        let (too_wide, too_tall) = with_text_scale(scale, || {
+            let too_wide = node
+                .text_lines
+                .iter()
+                .any(|line| measure_text_in(line, size, face).0 > node.rect.width);
+            // A section keeps its title and its value in `text_lines`, but draws
+            // them beside each other on one line with the hairline between. Counting
+            // them as two lines reported every `section_with_value` on every screen
+            // as text overflowing a rect it fits inside perfectly well.
+            let rows = if matches!(node.kind, LayoutKind::Section) {
+                1
+            } else {
+                i32::try_from(node.text_lines.len()).unwrap_or(i32::MAX)
+            };
+            let too_tall = rows.saturating_mul(size.line_height_in(face)) > node.rect.height;
+            (too_wide, too_tall)
+        });
         if too_wide || too_tall {
             issues.push(LayoutIssue {
                 severity: DiagnosticSeverity::Error,
@@ -12799,23 +12807,47 @@ const fn is_tappable(kind: LayoutKind) -> bool {
 // Board marks fit the square; enlarging interface text must not clip a digit.
 // The renderer and diagnostics share this choice. Ordinary key labels retain
 // their body size, so an undersized application control still reports a fault.
-fn board_label_size(node: &LayoutNode) -> FontSize {
+fn board_label_style(node: &LayoutNode) -> (FontSize, TextScale) {
+    let scale = text_scale();
     let short = node
         .text_lines
         .first()
         .is_some_and(|text| text.chars().count() <= 2);
-    [FontSize::Heading, FontSize::Body, FontSize::Caption]
+    let fits = |size: FontSize| {
+        size.line_height() * i32::try_from(node.text_lines.len()).unwrap_or(i32::MAX)
+            <= node.rect.height
+            && node
+                .text_lines
+                .iter()
+                .all(|line| measure_text(line, size).0 <= node.rect.width)
+    };
+    if let Some(size) = [FontSize::Heading, FontSize::Body, FontSize::Caption]
         .into_iter()
         .filter(|size| short || *size != FontSize::Heading)
-        .find(|size| {
-            size.line_height() * i32::try_from(node.text_lines.len()).unwrap_or(i32::MAX)
-                <= node.rect.height
-                && node
-                    .text_lines
-                    .iter()
-                    .all(|line| measure_text(line, *size).0 <= node.rect.width)
-        })
-        .unwrap_or(FontSize::Caption)
+        .find(|size| fits(*size))
+    {
+        return (size, scale);
+    }
+    // A digit is a board mark, not prose. At the smallest legal square the
+    // largest caption can still be too tall. Short marks may step down the
+    // scale to fit; long app labels remain errors instead of tiny text.
+    if short {
+        for candidate in TextScale::STEPS
+            .into_iter()
+            .take_while(|candidate| *candidate != scale)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+        {
+            if with_text_scale(candidate, || fits(FontSize::Caption)) {
+                return (FontSize::Caption, candidate);
+            }
+        }
+    }
+    (FontSize::Caption, scale)
+}
+fn board_label_size(node: &LayoutNode) -> FontSize {
+    board_label_style(node).0
 }
 
 fn layout_text_style(node: &LayoutNode) -> Option<(FontSize, Face)> {
@@ -13833,12 +13865,14 @@ fn render_all_with_selected_font(
                 // rectangle: a board cell and a keyboard key can be the same
                 // shape, and only the board's mark is meant to be the size of
                 // the whole cell.
-                let size = if board {
-                    board_label_size(&node)
+                let (size, scale) = if board {
+                    board_label_style(&node)
                 } else {
-                    FontSize::Body
+                    (FontSize::Body, text_scale())
                 };
-                draw_centered(surface, &node.text_lines, node.rect, size, tone::INK, clip);
+                with_text_scale(scale, || {
+                    draw_centered(surface, &node.text_lines, node.rect, size, tone::INK, clip);
+                });
             }
             LayoutKind::Divider => fill_clipped(surface, node.rect, tone::RULE, clip),
             LayoutKind::RowRule => fill_clipped(surface, node.rect, tone::RULE_LIGHT, clip),
@@ -16004,6 +16038,29 @@ mod tests {
 
     /// The rule the test above guards against still has to fire for what it
     /// was written for: a short mark on an actual board.
+    #[test]
+    fn short_board_marks_can_fit_below_the_current_caption_scale_without_shrinking_words() {
+        let edge = with_text_scale(TextScale::Default, || FontSize::Caption.line_height());
+        with_text_scale(TextScale::Largest, || {
+            let mut node = LayoutNode {
+                id: NodeId(1),
+                rect: Rect {
+                    x: 0,
+                    y: 0,
+                    width: edge,
+                    height: edge,
+                },
+                kind: LayoutKind::CellLabel(true),
+                text_lines: vec!["8".into()],
+            };
+            let (size, scale) = board_label_style(&node);
+            assert_ne!(scale, TextScale::Largest);
+            assert!(with_text_scale(scale, || size.line_height() <= edge));
+            node.text_lines = vec!["Long label".into()];
+            assert_eq!(board_label_style(&node).1, TextScale::Largest);
+        });
+    }
+
     #[test]
     fn board_labels_use_the_largest_semantic_size_that_fits_the_square() {
         for scale in TextScale::STEPS {
