@@ -251,3 +251,13 @@ SIM-09 and HW-11 remain open: app-install failure parity and a runtime suspend b
 - The original extra-large Clara BW [SDK IPC journey](evidence/boards/result.json) passed selection, horizontal/vertical panning, resizing, complete clue inspection and return. Captures have atomic provenance; [selected mark](evidence/boards/selected.png), [complete clue](evidence/boards/clue.png) and [larger squares](evidence/boards/larger.png) were visually inspected. These captures use ideal pixels and do not claim measured panel residue.
 
 SDK-14/15 are complete as shared contracts. Catalog adoption remains in PR 2. Candidate editing and puzzle rules remain app responsibilities; this fixture is not a playable shipped puzzle. The SDK/runtime wire version is 14, with 11–13 decoder compatibility; install/version coordination remains in the foundation runtime work. No external dependency was added: the simulator example uses the existing local SDK as a development dependency.
+
+
+## Exact light restoration and crash handback
+
+Front-light restoration now writes and verifies the captured raw brightness and warmth, avoiding loss from percentage rounding. Driver ranges must still match. A failed warmth write does not prevent the brightness attempt, and guardian screen restoration still runs if light restoration fails. Runtime creates a private session directory and flushes a bounded light record before arming its watchdog and stopping the reader. Recovery validates that record and the normal hardware write gate before restoring the light and restarting the stock reader.
+
+- **18 front-light/recovery and 10 guardian tests passed**, including low raw values, changed ranges, malformed/path-escaping records, a deliberately killed fixture child, and independent screen/light failures.
+- **150 runtime binary and 16 runtime library tests passed**. Failed light recovery retains its session record while allowing the reader to restart; a successful recovery clears it. Strict Clippy and Rust 1.85.1 ARMv7 musl runtime/guardian compilation passed.
+
+The guardian can restore after its child exits; this does not claim recovery if the guardian itself is killed. Runtime crash recovery uses its independent watchdog. A retained failure record is diagnostic evidence, not an automatic instruction to overwrite settings once the reader is running. Owner-setting/suspend integration and physical Clara BW validation remain open under HW-12.

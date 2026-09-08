@@ -50,7 +50,7 @@ use kobo_ui::{
 use kobo_wifi_trace::{Lifecycle as WifiTraceEvent, TraceClient};
 use std::collections::BTreeMap;
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering as AtomicOrdering};
@@ -532,9 +532,19 @@ pub fn present(
     let reader = Reader::find().map_err(|error| error.to_string())?;
     let network = kobo_hal::network::Connection::capture();
     let state = PathBuf::from(format!("/tmp/kobo-session-{}", std::process::id()));
+    fs::DirBuilder::new()
+        .mode(0o700)
+        .create(&state)
+        .map_err(|error| format!("create private reader session: {error}"))?;
     reader
         .save(&state)
         .map_err(|error| format!("save reader description: {error}"))?;
+    let frontlight = kobo_hal::frontlight::Frontlight::open();
+    if let Some(light) = &frontlight {
+        light
+            .save_recovery(&state)
+            .map_err(|error| format!("save original front light before takeover: {error}"))?;
+    }
     let watchdog = Arc::new(
         Watchdog::arm(&state, WATCHDOG_CHECK).map_err(|error| format!("arm watchdog: {error}"))?,
     );
@@ -679,6 +689,7 @@ pub fn present(
         limits,
         forward_is_194,
         &watchdog,
+        frontlight,
     );
     // No panel work may outlive Cobalt's ownership of the display. This is an
     // explicit lifecycle fence rather than a timing assumption: the stock
@@ -1275,7 +1286,7 @@ impl Hosted {
 /// is told, so it can save; its work in flight keeps running and its answers
 /// keep arriving; and what it draws is kept rather than shown. Coming back is
 /// one repaint of a screen the runtime already has.
-#[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_lines, clippy::too_many_arguments)]
 fn host_applications(
     application: &Path,
     display: &DisplaySession,
@@ -1284,7 +1295,12 @@ fn host_applications(
     limits: Limits,
     forward_is_194: bool,
     watchdog: &Arc<Watchdog>,
+    frontlight: Option<kobo_hal::frontlight::Frontlight>,
 ) -> Result<String, String> {
+    // Keep the pre-takeover capture alive across every ordinary return. The
+    // independent watchdog uses its saved record if this process cannot unwind.
+    let light_owner = FrontlightGuard(frontlight);
+    let frontlight = light_owner.0.as_ref();
     // Kept current by the orientation channel: a reader flipped mid-session
     // keeps "forward" pointing forward even though the image does not rotate
     // yet.
@@ -1309,7 +1325,6 @@ fn host_applications(
     // reading taken before anything was changed. Reopening per request would
     // capture whatever the last application set as though it were the owner's
     // own setting, and the light would never go back.
-    let frontlight = kobo_hal::frontlight::Frontlight::open();
     let mut backends = Vec::new();
     if kobo_hal::battery::read().is_some() {
         backends.push(Capability::BatteryRead);
@@ -1383,11 +1398,6 @@ fn host_applications(
             services.observe_frontlight(percent);
         }
     }
-    // A guard rather than a line at the end of the loop, because the loop has
-    // several exits (the session clock, an idle reader, a failed write to an
-    // application) and a front light left bright by whichever path was taken
-    // is exactly the kind of change a reboot should not have to fix.
-    let _restore_light = FrontlightGuard(frontlight.clone());
     // Deliberately already stale, so the first read an application makes is a
     // real measurement rather than the default the services were built with.
     let mut status = StatusSource::new();

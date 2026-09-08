@@ -2,7 +2,7 @@
   {
     "id": "SIM-01",
     "pr": 1,
-    "group": "Simulator fidelity (SIM-1\u201310)",
+    "group": "Simulator fidelity (SIM-1–10)",
     "task": "Apply interface and reading scales consistently to rendering",
     "status": "done",
     "evidence": [
@@ -12,7 +12,7 @@
   {
     "id": "SIM-02",
     "pr": 1,
-    "group": "Simulator fidelity (SIM-1\u201310)",
+    "group": "Simulator fidelity (SIM-1–10)",
     "task": "Apply the same scale context to measurement, diagnostics and hit testing",
     "status": "done",
     "evidence": [
@@ -22,7 +22,7 @@
   {
     "id": "SIM-03",
     "pr": 1,
-    "group": "Simulator fidelity (SIM-1\u201310)",
+    "group": "Simulator fidelity (SIM-1–10)",
     "task": "Restore ambient scales after rendering to prevent cross-request leakage",
     "status": "done",
     "evidence": [
@@ -32,7 +32,7 @@
   {
     "id": "SIM-04",
     "pr": 1,
-    "group": "Simulator fidelity (SIM-1\u201310)",
+    "group": "Simulator fidelity (SIM-1–10)",
     "task": "Share runtime Back/chrome composition with browser simulation",
     "status": "done",
     "evidence": [
@@ -42,7 +42,7 @@
   {
     "id": "SIM-05",
     "pr": 1,
-    "group": "Simulator fidelity (SIM-1\u201310)",
+    "group": "Simulator fidelity (SIM-1–10)",
     "task": "Route shell Back and app-owned Back consistently",
     "status": "todo",
     "evidence": []
@@ -50,7 +50,7 @@
   {
     "id": "SIM-06",
     "pr": 1,
-    "group": "Simulator fidelity (SIM-1\u201310)",
+    "group": "Simulator fidelity (SIM-1–10)",
     "task": "Use declared app capabilities instead of granting every capability",
     "status": "done",
     "evidence": [
@@ -60,7 +60,7 @@
   {
     "id": "SIM-07",
     "pr": 1,
-    "group": "Simulator fidelity (SIM-1\u201310)",
+    "group": "Simulator fidelity (SIM-1–10)",
     "task": "Respect device-supported service backends in simulation",
     "status": "done",
     "evidence": [
@@ -70,7 +70,7 @@
   {
     "id": "SIM-08",
     "pr": 1,
-    "group": "Simulator fidelity (SIM-1\u201310)",
+    "group": "Simulator fidelity (SIM-1–10)",
     "task": "Inject missing credentials for all credentialed network tasks",
     "status": "done",
     "evidence": [
@@ -80,7 +80,7 @@
   {
     "id": "SIM-09",
     "pr": 1,
-    "group": "Simulator fidelity (SIM-1\u201310)",
+    "group": "Simulator fidelity (SIM-1–10)",
     "task": "Return production-equivalent failure reasons",
     "status": "todo",
     "evidence": [
@@ -91,7 +91,7 @@
   {
     "id": "SIM-10",
     "pr": 1,
-    "group": "Simulator fidelity (SIM-1\u201310)",
+    "group": "Simulator fidelity (SIM-1–10)",
     "task": "Cover streaming requests with offline and timeout injection",
     "status": "done",
     "evidence": [
@@ -101,7 +101,7 @@
   {
     "id": "SIM-11",
     "pr": 1,
-    "group": "Simulator fidelity (SIM-1\u201310)",
+    "group": "Simulator fidelity (SIM-1–10)",
     "task": "Cover shelf/chunked writes with storage-full injection",
     "status": "done",
     "evidence": [
@@ -111,7 +111,7 @@
   {
     "id": "SIM-12",
     "pr": 1,
-    "group": "Simulator fidelity (SIM-1\u201310)",
+    "group": "Simulator fidelity (SIM-1–10)",
     "task": "Commit panel transitions when screens arrive rather than when screenshots are requested",
     "status": "done",
     "evidence": [
@@ -121,7 +121,7 @@
   {
     "id": "SIM-13",
     "pr": 1,
-    "group": "Simulator fidelity (SIM-1\u201310)",
+    "group": "Simulator fidelity (SIM-1–10)",
     "task": "Make screenshot endpoints read-only",
     "status": "done",
     "evidence": [
@@ -131,7 +131,7 @@
   {
     "id": "SIM-14",
     "pr": 1,
-    "group": "Simulator fidelity (SIM-1\u201310)",
+    "group": "Simulator fidelity (SIM-1–10)",
     "task": "Record bounded screen, input and refresh event histories",
     "status": "done",
     "evidence": [
@@ -141,7 +141,7 @@
   {
     "id": "SIM-15",
     "pr": 1,
-    "group": "Simulator fidelity (SIM-1\u201310)",
+    "group": "Simulator fidelity (SIM-1–10)",
     "task": "Generate simulator Store fixtures from the catalog registry",
     "status": "done",
     "evidence": [
@@ -151,7 +151,7 @@
   {
     "id": "SIM-16",
     "pr": 1,
-    "group": "Simulator fidelity (SIM-1\u201310)",
+    "group": "Simulator fidelity (SIM-1–10)",
     "task": "Exercise actual launcher/app transitions in full-runtime mode",
     "status": "todo",
     "evidence": []
@@ -159,7 +159,7 @@
   {
     "id": "SIM-17",
     "pr": 1,
-    "group": "Simulator fidelity (SIM-1\u201310)",
+    "group": "Simulator fidelity (SIM-1–10)",
     "task": "Exercise signed install, update and remove against local fixture packages",
     "status": "todo",
     "evidence": []
@@ -167,7 +167,7 @@
   {
     "id": "SIM-18",
     "pr": 1,
-    "group": "Simulator fidelity (SIM-1\u201310)",
+    "group": "Simulator fidelity (SIM-1–10)",
     "task": "Add deterministic virtual clock controls",
     "status": "done",
     "evidence": [
@@ -177,7 +177,7 @@
   {
     "id": "SIM-19",
     "pr": 1,
-    "group": "Simulator fidelity (SIM-1\u201310)",
+    "group": "Simulator fidelity (SIM-1–10)",
     "task": "Replay raw touch down, move, up, hold and page-button events through the HAL",
     "status": "done",
     "evidence": [
@@ -187,7 +187,7 @@
   {
     "id": "SIM-20",
     "pr": 1,
-    "group": "Simulator fidelity (SIM-1\u201310)",
+    "group": "Simulator fidelity (SIM-1–10)",
     "task": "Model panel submission, busy state, completion and failure",
     "status": "done",
     "evidence": [
@@ -197,7 +197,7 @@
   {
     "id": "SIM-21",
     "pr": 1,
-    "group": "Simulator fidelity (SIM-1\u201310)",
+    "group": "Simulator fidelity (SIM-1–10)",
     "task": "Expose battery, charging, frontlight, cover and orientation controls",
     "status": "done",
     "evidence": [
@@ -207,7 +207,7 @@
   {
     "id": "SIM-22",
     "pr": 1,
-    "group": "Simulator fidelity (SIM-1\u201310)",
+    "group": "Simulator fidelity (SIM-1–10)",
     "task": "Inject app kill, lifecycle change and transfer interruption",
     "status": "done",
     "evidence": [
@@ -217,7 +217,7 @@
   {
     "id": "SIM-23",
     "pr": 1,
-    "group": "Simulator fidelity (SIM-1\u201310)",
+    "group": "Simulator fidelity (SIM-1–10)",
     "task": "Keep ideal and approximate panel output distinct",
     "status": "done",
     "evidence": [
@@ -227,7 +227,7 @@
   {
     "id": "SIM-24",
     "pr": 1,
-    "group": "Simulator fidelity (SIM-1\u201310)",
+    "group": "Simulator fidelity (SIM-1–10)",
     "task": "Add color output and label uncalibrated appearance clearly",
     "status": "done",
     "evidence": [
@@ -237,7 +237,7 @@
   {
     "id": "SIM-25",
     "pr": 1,
-    "group": "Simulator fidelity (SIM-1\u201310)",
+    "group": "Simulator fidelity (SIM-1–10)",
     "task": "Reject invalid profile and scale arguments",
     "status": "done",
     "evidence": [
@@ -247,7 +247,7 @@
   {
     "id": "SIM-26",
     "pr": 1,
-    "group": "Simulator fidelity (SIM-1\u201310)",
+    "group": "Simulator fidelity (SIM-1–10)",
     "task": "Stamp captures with source, app, mode, profile, pose, fonts, scales, fixture and seed",
     "status": "done",
     "evidence": [
@@ -257,7 +257,7 @@
   {
     "id": "SIM-27",
     "pr": 1,
-    "group": "Simulator fidelity (SIM-1\u201310)",
+    "group": "Simulator fidelity (SIM-1–10)",
     "task": "Assert serious diagnostics at every drive transition",
     "status": "done",
     "evidence": [
@@ -267,7 +267,7 @@
   {
     "id": "SIM-28",
     "pr": 1,
-    "group": "Simulator fidelity (SIM-1\u201310)",
+    "group": "Simulator fidelity (SIM-1–10)",
     "task": "Add semantic state/network-effect assertions to drive",
     "status": "done",
     "evidence": [
@@ -277,7 +277,7 @@
   {
     "id": "SIM-29",
     "pr": 1,
-    "group": "Simulator fidelity (SIM-1\u201310)",
+    "group": "Simulator fidelity (SIM-1–10)",
     "task": "Use stable control IDs and bounded wait-for-idle in routes",
     "status": "done",
     "evidence": [
@@ -287,7 +287,7 @@
   {
     "id": "SIM-30",
     "pr": 1,
-    "group": "Simulator fidelity (SIM-1\u201310)",
+    "group": "Simulator fidelity (SIM-1–10)",
     "task": "Keep refresh results invariant under screenshot sampling cadence",
     "status": "done",
     "evidence": [
@@ -642,7 +642,9 @@
     "group": "Platform requirements from read-only hardware research",
     "task": "Restore frontlight and owner settings after exit or crash",
     "status": "todo",
-    "evidence": []
+    "evidence": [
+      "Exact raw brightness/warmth restoration, private bounded crash record and reader-restart recovery implemented. 18 light/recovery, 10 guardian and 150 runtime binary tests pass; strict Clippy and ARMv7 musl check pass. Failed restoration retains its record; owner-setting and suspend integration remain open. No hardware run performed."
+    ]
   },
   {
     "id": "HW-13",
@@ -843,7 +845,7 @@
     "task": "Provide shared comic page fit, width, zoom and pan controls",
     "status": "done",
     "evidence": [
-      "Shared ComicView exposes fit page, fit width, 100\u2013400% zoom and normalized pan. Cropping happens before enlargement. All profile/scale/orientation layout and reachable-action checks pass."
+      "Shared ComicView exposes fit page, fit width, 100–400% zoom and normalized pan. Cropping happens before enlargement. All profile/scale/orientation layout and reachable-action checks pass."
     ]
   },
   {
@@ -4036,7 +4038,7 @@
     "id": "OWNERQA-11",
     "pr": 3,
     "group": "Owner experience and final validation",
-    "task": "Prepare 6\u20138-person nontechnical usability protocol including assistive technology",
+    "task": "Prepare 6–8-person nontechnical usability protocol including assistive technology",
     "status": "todo",
     "evidence": []
   },
