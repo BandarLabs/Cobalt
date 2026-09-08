@@ -16,7 +16,7 @@ A checked task requires implementation plus recorded validation. Physical measur
 
 ## Status
 
-494 tracked tasks: 87 completed, 1 deferred by the owner, 406 open. Implementation in progress. Evidence is recorded per task in `tasks.json` and in [the validation log](validation.md).
+494 tracked tasks: 89 completed, 1 deferred by the owner, 404 open. Implementation in progress. Evidence is recorded per task in `tasks.json` and in [the validation log](validation.md).
 
 ## PR 1 · Simulator fidelity (SIM-1–10)
 
@@ -71,11 +71,11 @@ A checked task requires implementation plus recorded validation. Physical measur
 - [x] **SDK-16** Provide board undo/control conventions.
 - [x] **SDK-17** Provide injectable calendar date, monotonic time and test entropy.
 - [x] **SDK-18** Provide stable inline loading, offline, stale and result surfaces.
-- [ ] **SDK-19** Provide owner-initiated text/image export and paired handoff.
+- [x] **SDK-19** Provide owner-initiated text/image export and paired handoff.
 - [x] **SDK-20** Add metric-aware validation beyond builder collection limits.
 - [x] **SDK-21** Keep physical hit targets, margins and semantic type tokens authoritative.
 - [x] **SDK-22** Document primary/secondary button hierarchy and stable action placement.
-- [ ] **SDK-23** Keep copy concrete and remove unexplained implementation language from primary flows.
+- [x] **SDK-23** Keep copy concrete and remove unexplained implementation language from primary flows.
 - [x] **SDK-24** Separate UI/SDK responsibilities into maintainable modules without duplicating contracts.
 
 ## PR 1 · Platform requirements from read-only hardware research

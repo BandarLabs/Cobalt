@@ -174,7 +174,9 @@ impl ProviderSetup {
     pub fn invalid_response(&mut self) {
         if self.connection == Connection::AwaitingValidation {
             self.connection = Connection::Unchecked;
-            self.advice = Some("The server answered, but it did not return the expected account details. Check the address.".into());
+            self.advice = Some(
+                "This address did not return the expected content. Check it and try again.".into(),
+            );
         }
     }
     fn cancel(&mut self, context: &mut Context) {

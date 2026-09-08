@@ -414,3 +414,39 @@ hardware_validation=false. Logs: `/tmp/cobalt-native-power-final-tests.log`,
 `/tmp/cobalt-native-power-final-clippy.log`, `/tmp/cobalt-native-power-arm.log`.
 Evidence: `evidence/native-power/`. Remaining HW tasks are not marked complete
 from these partial native integrations.
+
+
+### Shared export receiver and UI copy (2026-09-08)
+
+SDK-19 and SDK-23 are implemented. `exports::Export` prepares owner-selected text,
+Markdown, PNG or JPEG content with a verified copy and acknowledged offer.
+`kobo export --app APP (--device ADDRESS | --sim) --out FOLDER` uses the existing
+SSH identity/host verification or isolated simulator storage. It bounds reads,
+verifies size/hash, flushes completed files and publishes without replacement;
+repeated identical receiving also retries file/directory durability checks.
+Conflicting names get a suffix. Computer failures never delete reader content.
+The reader reports only local readiness, not remote receipt. No new service,
+network listener, dependency licence or pairing scheme was introduced.
+
+Shared account/error text no longer assumes computer-only setup, guesses an
+outage, or calls a missing requested item an empty library. Three compatibility
+assertions were updated for changed shared wording: Audiobook, RSS, and one
+Zotero Reader account-button assertion. Zotero Reader's implementation and review
+scope remain untouched. The export/copy contract is in `sdk-export-and-copy.md`;
+app-specific adoption remains in the catalog and companion checklists.
+
+Validation: the full workspace all-feature run had 3,135 passing tests and one
+stale account-button assertion. After updating that assertion, its 25-test target
+passed; all **3,136 distinct workspace checks** therefore pass, with four existing
+ignored tests/doc examples. Strict workspace Clippy passes for all targets and
+features. The actual SDK/launcher/simulator-to-CLI journeys pass for original
+text and PNG fixtures at Clara BW extra-large text: no availability before owner
+confirmation, full-storage failure/retry, exact receiving, duplicate reuse and
+corruption preserving the existing computer file. Updated ready/preview/failure
+screens were inspected. No hardware command or SSH transfer was executed.
+
+Logs: `/tmp/cobalt-foundation-export-workspace-tests.log`,
+`/tmp/cobalt-sdk-account-compatibility.log`,
+`/tmp/cobalt-foundation-export-workspace-clippy.log`.
+Evidence: `evidence/exports/result.json` and paired captures. Beta was fetched
+again and remains `7f1a543aa432248f45a69db186e1d6b85c888b17`.

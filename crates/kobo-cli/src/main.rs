@@ -17,6 +17,7 @@ mod connect;
 mod deck;
 mod devsession;
 mod drive;
+mod exports;
 mod flashcards;
 mod frame;
 mod host_release;
@@ -494,6 +495,7 @@ fn run(arguments: &[String]) -> Result<(), String> {
         "frame" => frame::command(&arguments[1..]),
         "vault" => vault::command(&arguments[1..]),
         "sync" => sync::command(&arguments[1..]),
+        "export" => exports::command(&arguments[1..]),
         "needles" => needles::command(&arguments[1..]),
         "nonograms" => nonograms::command(&arguments[1..]),
         "parser" => parser_command(&arguments[1..]),
@@ -6493,6 +6495,7 @@ fn print_help() {
            vault push DIR (--device IP | --sim | --out INDEX)  Pack a markdown vault and publish it\n\
            sync setup DIR --folder NAME --device IP  Pair one safe fixed Sync folder\n\
            sync run [--foreground] [--seconds N] Start the private host Syncthing peer\n\
+           export --app APP --device IP --out DIR  Receive a prepared text or image copy\n\
            sync status|stop                      Inspect or stop that dedicated peer\n\
            needles prepare PDF --out FILE       Extract a user-owned PDF for Needles\n\
            needles push FILE --device IP        Transfer a prepared pattern to Needles\n\

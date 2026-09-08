@@ -905,6 +905,7 @@ dependencies = [
  "kobo-net",
  "kobo-profile",
  "kobo-protocol",
+ "kobo-sdk",
  "kobo-sim",
  "kobo-stream",
  "kobo-ui",

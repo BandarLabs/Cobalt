@@ -487,8 +487,10 @@
     "pr": 1,
     "group": "Shared SDK and design contracts",
     "task": "Provide owner-initiated text/image export and paired handoff",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Shared Export supports owner-confirmed text/Markdown/PNG/JPEG copies, verified shelf bytes and an acknowledged bounded offer. kobo export receives the exact digest-named file through existing SSH pairing or simulator storage, verifies bytes, flushes locally and never replaces a conflicting file. Text/image simulator-to-CLI journeys pass full-storage retry, duplicate receiving and corruption preservation; physical SSH transfer remains in the combined Clara BW acceptance run. See sdk-export-and-copy.md and evidence/exports/result.json."
+    ]
   },
   {
     "id": "SDK-20",
@@ -525,9 +527,10 @@
     "pr": 1,
     "group": "Shared SDK and design contracts",
     "task": "Keep copy concrete and remove unexplained implementation language from primary flows",
-    "status": "todo",
+    "status": "done",
     "evidence": [
-      "Store install/error text now names the operation and recovery step; unknown device backend/timeouts no longer falsely name radio operations. Store refreshes installed metadata after an uncertain write. Broader app and companion copy adoption remains open."
+      "Store install/error text now names the operation and recovery step; unknown device backend/timeouts no longer falsely name radio operations. Store refreshes installed metadata after an uncertain write. Broader app and companion copy adoption remains open.",
+      "Shared account and request/storage failure copy names a recovery action without requiring computer-only account entry, guessing an outage or blaming network speed. A missing requested item is not a successful empty library. Export UI bounds display titles and shows format/size; sdk-export-and-copy.md records the shared copy contract. Workspace tests and Clippy pass after updating three compatibility assertions; app-specific copy adoption remains tracked in PRs 2 and 3."
     ]
   },
   {
