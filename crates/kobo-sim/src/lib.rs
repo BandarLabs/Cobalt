@@ -18,6 +18,7 @@ mod activity;
 mod capture;
 mod clock;
 mod hardware;
+mod input;
 mod panel;
 pub use capture::CaptureSource;
 use panel::PanelPreview;
@@ -1011,6 +1012,7 @@ struct AppState {
     capture_source: CaptureSource,
     time: clock::Time,
     hardware: kobo_policy::DeviceState,
+    input: input::Replay,
     services: DeviceServices,
     clock_snapshot: kobo_policy::clock::Snapshot,
     tasks: Option<Arc<Mutex<TaskRunner>>>,
@@ -1057,6 +1059,7 @@ impl AppState {
             capture_source: CaptureSource::default(),
             time,
             hardware: kobo_policy::DeviceState::default(),
+            input: input::Replay::new(&POSE),
             services: DeviceServices::new(
                 kobo_policy::Declared::parse([]).expect("no grants"),
                 kobo_policy::PowerPolicy::DEFAULT,
@@ -1207,12 +1210,50 @@ impl AppState {
         let mut value = kobo_json::parse(&base).expect("simulator JSON");
         if let kobo_json::Value::Object(fields) = &mut value {
             fields.push(("clock".into(), self.time.json(self.clock_snapshot)));
+            fields.push(("input".into(), self.input.json()));
             fields.push((
                 "hardware".into(),
                 hardware::json(self.effective_hardware(), self.orientation),
             ));
         }
         value.to_json()
+    }
+
+    fn input_event(&mut self, event: kobo_hal::TouchEvent, held: bool) -> Option<Message> {
+        let kobo_hal::TouchEvent::Up { x, y } = event else {
+            return None;
+        };
+        let raw = POSE.display_to_touch(x, y)?;
+        self.last_touch = Some(SimulatedTouch {
+            display: (x, y),
+            raw,
+        });
+        let physical = profile_metrics();
+        let (x, y) = kobo_ui::logical_point(
+            self.orientation,
+            physical.width,
+            i32::try_from(x).ok()?,
+            i32::try_from(y).ok()?,
+        );
+        let layout = self
+            .screen
+            .layout_with(&physical.oriented(self.orientation), &self.chrome);
+        if held {
+            if let Some((action, hit)) = layout.hold.zip(layout.hit_text(x, y)) {
+                return Some(Message::TextHold {
+                    action,
+                    context: hit.context,
+                    start: hit.start,
+                    end: hit.end,
+                });
+            }
+        }
+        let action = if held {
+            layout.hit_hold(x, y).or_else(|| layout.hit_test(x, y))
+        } else {
+            layout.hit_test(x, y)
+        }?;
+        Some(Message::Action { action })
     }
 
     fn effective_hardware(&self) -> kobo_policy::DeviceState {
@@ -1361,6 +1402,87 @@ impl AppSession {
         )
     }
 
+    fn replay_input(&self, command: &str) -> io::Result<()> {
+        let (kind, source) = command
+            .split_once(char::is_whitespace)
+            .unwrap_or((command, ""));
+        let messages = {
+            let mut state = self
+                .state
+                .lock()
+                .map_err(|_| io::Error::other("app state lock poisoned"))?;
+            if !state.panel.accepts_input() {
+                return Err(io::Error::other(
+                    "panel must be ready before replaying input",
+                ));
+            }
+            let millis = state.time.now()?.monotonic_millis;
+            let mut messages = Vec::new();
+            match kind {
+                "touch" => {
+                    let events = state.input.touch(source, &POSE, millis)?;
+                    for (event, held) in events {
+                        if let Some(message) = state.input_event(event, held) {
+                            messages.push(message);
+                        }
+                    }
+                }
+                "tap" => {
+                    let (x, y) = parse_touch(source.as_bytes())
+                        .ok_or_else(|| io::Error::other("invalid tap coordinates"))?;
+                    let events = state.input.tap(
+                        u32::try_from(x).map_err(io::Error::other)?,
+                        u32::try_from(y).map_err(io::Error::other)?,
+                        &POSE,
+                        millis,
+                    )?;
+                    for (event, held) in events {
+                        if let Some(message) = state.input_event(event, held) {
+                            messages.push(message);
+                        }
+                    }
+                }
+                "gpio" => {
+                    if let Some(forward) = state.input.gpio(source)? {
+                        let layout = state.screen.layout_with(
+                            &profile_metrics().oriented(state.orientation),
+                            &state.chrome,
+                        );
+                        match layout.page_turns {
+                            kobo_ui::PagingState::Declared(turns) => {
+                                messages.push(Message::Action {
+                                    action: if forward { turns.next } else { turns.previous },
+                                });
+                            }
+                            kobo_ui::PagingState::None => {
+                                messages.push(Message::PageTurn { forward });
+                            }
+                            kobo_ui::PagingState::SuppressedByOverlay => {}
+                        }
+                    }
+                }
+                "resync" => state.input.resynchronize(source)?,
+                _ => return Err(io::Error::other("input expects touch, gpio or resync")),
+            }
+            state.record(format!("input: {command}"));
+            if state.lifecycle == Lifecycle::Background {
+                messages.clear();
+            }
+            messages
+        };
+        for message in messages {
+            write_shared(
+                &self.writer,
+                &Frame {
+                    version: kobo_protocol::VERSION,
+                    request_id: 0,
+                    message,
+                },
+            )?;
+        }
+        Ok(())
+    }
+
     fn change_hardware(&self, command: &str) -> io::Result<()> {
         let change = hardware::Change::parse(command).ok_or_else(|| io::Error::other(
             "device expects battery PERCENT charging|unplugged, frontlight PERCENT, cover open|closed, or orientation portrait|landscape"))?;
@@ -1469,6 +1591,7 @@ impl AppSession {
         Ok(())
     }
 
+    #[cfg(test)]
     fn touch_action(&self, x: i32, y: i32) -> Option<ActionId> {
         let display = (u32::try_from(x).ok()?, u32::try_from(y).ok()?);
         let raw = POSE.display_to_touch(display.0, display.1)?;
@@ -1606,6 +1729,26 @@ impl AppSession {
                     body.as_bytes(),
                 )
             }
+            ("GET", "/input") => {
+                let state = self
+                    .state
+                    .lock()
+                    .map_err(|_| io::Error::other("app state lock poisoned"))?;
+                write_response(
+                    &mut stream,
+                    200,
+                    "application/json",
+                    state.input.json().to_json().as_bytes(),
+                )
+            }
+            ("POST", "/input") => {
+                match self.replay_input(std::str::from_utf8(&request.body).unwrap_or("")) {
+                    Ok(()) => write_response(&mut stream, 200, "text/plain", b"ok"),
+                    Err(error) => {
+                        write_response(&mut stream, 400, "text/plain", error.to_string().as_bytes())
+                    }
+                }
+            }
             ("GET", "/panel") => {
                 let state = self
                     .state
@@ -1678,17 +1821,14 @@ impl AppSession {
                     return write_response(&mut stream, 409, "text/plain", b"Panel is busy or its contents are uncertain. Complete the update or retry the failed refresh before tapping.");
                 }
 
-                let response = parse_touch(&request.body)
-                    .and_then(|(x, y)| self.touch_action(x, y))
-                    .map_or(Ok(()), |action| self.send_action(action));
+                let response = std::str::from_utf8(&request.body)
+                    .map_err(io::Error::other)
+                    .and_then(|source| self.replay_input(&format!("tap {source}")));
                 match response {
                     Ok(()) => write_response(&mut stream, 204, "text/plain; charset=utf-8", b""),
-                    Err(_) => write_response(
-                        &mut stream,
-                        503,
-                        "text/plain; charset=utf-8",
-                        b"SDK unavailable",
-                    ),
+                    Err(error) => {
+                        write_response(&mut stream, 400, "text/plain", error.to_string().as_bytes())
+                    }
                 }
             }
             ("POST", "/scenario") => match Scenario::parse(&request.body) {
@@ -3817,6 +3957,54 @@ mod tests {
         let before = session.state.lock().unwrap().hardware;
         assert!(session.change_hardware("battery 101 charging").is_err());
         assert_eq!(session.state.lock().unwrap().hardware, before);
+    }
+
+    #[test]
+    fn raw_hold_and_page_press_deliver_real_messages_and_background_input_is_quiet() {
+        let clock = Arc::new(
+            kobo_policy::clock::ManualClock::new(kobo_policy::clock::Snapshot {
+                unix_millis: 1_704_067_200_000,
+                monotonic_millis: 0,
+                utc_offset_minutes: 0,
+            })
+            .unwrap(),
+        );
+        let (mut client, server) = UnixStream::pair().unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_millis(50)))
+            .unwrap();
+        let mut state = AppState {
+            time: clock::Time::Manual(Arc::clone(&clock)),
+            ..AppState::default()
+        };
+        state.set_screen(Screen::new(4, Vec::new()).with_hold(ActionId(13)));
+        let session = AppSession {
+            state: Arc::new(Mutex::new(state)),
+            writer: AppWriter::spawn_for(server, kobo_protocol::VERSION),
+        };
+        let (x, y) = POSE.display_to_touch(500, 500).unwrap();
+        session
+            .replay_input(&format!("touch 3 47 0;3 57 9;3 53 {x};3 54 {y};0 0 0"))
+            .unwrap();
+        clock.advance(Duration::from_millis(500)).unwrap();
+        session.replay_input("touch 3 57 -1;0 0 0").unwrap();
+        assert_eq!(
+            read_protocol_frame(&mut client).unwrap().message,
+            Message::Action {
+                action: ActionId(13)
+            }
+        );
+        session.replay_input("gpio 4 3 24").unwrap();
+        session.replay_input("gpio 1 194 1").unwrap();
+        assert_eq!(
+            read_protocol_frame(&mut client).unwrap().message,
+            Message::PageTurn { forward: true }
+        );
+        session.replay_input("gpio 1 194 0").unwrap();
+        assert!(read_protocol_frame(&mut client).is_err());
+        session.state.lock().unwrap().lifecycle = Lifecycle::Background;
+        session.replay_input("gpio 1 194 1").unwrap();
+        assert!(read_protocol_frame(&mut client).is_err());
     }
 
     #[test]

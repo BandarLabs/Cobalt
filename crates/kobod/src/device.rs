@@ -1434,7 +1434,8 @@ fn host_applications(
         // while an application works or fails.
         let mut release_due: Option<(Instant, kobo_ui::Rect)> = None;
         // When and where the finger landed, for telling a tap from a hold.
-        let mut landed: Option<(Instant, i32, i32)> = None;
+        let gesture_started = Instant::now();
+        let mut holds = kobo_hal::gesture::HoldTracker::default();
         // Updates the background checker found, held until the panel has been
         // quiet long enough to apply them. A newer report replaces an older
         // one outright: the newer one was computed against newer facts.
@@ -1733,7 +1734,6 @@ fn host_applications(
                     if let Some(current) = screen.as_ref() {
                         match event {
                             TouchEvent::Cancel => {
-                                landed = None;
                                 if let Some((rect, metrics, _)) = pressed.take() {
                                     surface.invert_press(rect, &metrics);
                                     panel.paint_feedback(display, whole_screen, &surface, rect)?;
@@ -1741,7 +1741,6 @@ fn host_applications(
                             }
                             TouchEvent::Down { x, y } => {
                                 if let (Ok(x), Ok(y)) = (i32::try_from(x), i32::try_from(y)) {
-                                    landed = Some((Instant::now(), x, y));
                                     let physical = crate::device_metrics();
                                     let (logical_x, logical_y) = kobo_ui::logical_point_with_turn(
                                         orientation,
@@ -1806,19 +1805,6 @@ fn host_applications(
                                 }
                             }
                             TouchEvent::Move { x, y } => {
-                                // A finger that travels is a drag, not a hold.
-                                // Without this, sliding across the page and
-                                // pausing before letting go would mark a
-                                // paragraph the reader never rested on.
-                                if let (Some((_, from_x, from_y)), Ok(x), Ok(y)) =
-                                    (landed, i32::try_from(x), i32::try_from(y))
-                                {
-                                    if (x - from_x).abs() > HOLD_SLIP
-                                        || (y - from_y).abs() > HOLD_SLIP
-                                    {
-                                        landed = None;
-                                    }
-                                }
                                 // Slid off the control. Cancel the press the
                                 // way every other platform does, so the reader
                                 // can see that letting go here will do nothing.
@@ -1846,12 +1832,10 @@ fn host_applications(
                     // hold costs nothing until it has happened: no timer, no
                     // wake, and no gesture that fires while the finger is
                     // still down and cannot be taken back.
-                    let held = match event {
-                        TouchEvent::Up { .. } => landed
-                            .take()
-                            .is_some_and(|(at, _, _)| at.elapsed() >= HOLD_TIME),
-                        _ => false,
-                    };
+                    let held = holds.observe(
+                        event,
+                        u64::try_from(gesture_started.elapsed().as_millis()).unwrap_or(u64::MAX),
+                    );
                     let orientation = apps[index].orientation;
                     let disposition = deliver_touch(
                         &mut apps[index].stream,
@@ -3350,13 +3334,6 @@ fn installed_name(path: &Path) -> Result<String, String> {
     Ok(name.to_owned())
 }
 
-/// How long a finger must stay down for a touch to count as a hold.
-///
-/// Half a second, which is what every touch platform settled on: shorter and
-/// an unhurried tap becomes a gesture nobody asked for, longer and the reader
-/// concludes the panel is ignoring them and lifts off.
-const HOLD_TIME: Duration = Duration::from_millis(500);
-
 /// Briefly holds a release so an application's next screen can carry it.
 ///
 /// These are far shorter than a panel transition and therefore add no visible
@@ -3416,13 +3393,6 @@ fn release_grace(class: FeedbackKind) -> Duration {
         FeedbackKind::KeyboardKey => KEYBOARD_RELEASE_GRACE,
     }
 }
-
-/// How far the finger may wander and still be holding, in pixels.
-///
-/// A finger resting on glass is never still, and this panel reports every
-/// tremor. Roughly three millimetres on a Clara, which is under the width of
-/// the contact patch, so a hand that is not moving cannot cross it.
-const HOLD_SLIP: i32 = 40;
 
 /// Ends the application, politely if it has already finished and firmly if not.
 fn stop_application(child: &mut ApplicationChild, jail: Option<&Path>) {

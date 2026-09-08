@@ -176,8 +176,10 @@
     "pr": 1,
     "group": "Simulator fidelity (SIM-1\u201310)",
     "task": "Replay raw touch down, move, up, hold and page-button events through the HAL",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Synthetic evdev touch and GPIO replay use Cobalt HAL decoders and the same HoldTracker as device runtime. Bounded batches, explicit lost-input resynchronization, foreground delivery and page press/release mapping are verified. Ordinary SDK simulator taps now pass through the HAL decoder. 61 simulator, 154 HAL, 149 runtime and 16 runtime-library tests pass; full extra-large comic route and ARMv7 Rust 1.85.1 runtime check pass."
+    ]
   },
   {
     "id": "SIM-20",

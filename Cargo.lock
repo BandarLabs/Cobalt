@@ -1438,7 +1438,9 @@ dependencies = [
 name = "kobo-sim"
 version = "0.3.11"
 dependencies = [
+ "kobo-abi",
  "kobo-catalog",
+ "kobo-hal",
  "kobo-json",
  "kobo-net",
  "kobo-policy",

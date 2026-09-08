@@ -151,3 +151,15 @@ The simulator can hold updates in progress, retain only the newest queued frame,
 - Browser hold → advance clock → fail → retry → complete → automatic: **passed**, ending in an acknowledged full refresh with no layout or console errors. [State](evidence/simulator/panel-browser-result.json).
 
 Pending and latest surfaces are bounded to the selected profile; this is a controlled simulator queue model, not a measured hardware pipeline. Submission timestamps record host control observations. The model does not claim electrophoretic timing, intermediate pixels, device busy-ioctl behavior or physical waveform calibration. Input replay and physical timings remain open.
+
+
+## Raw input replay through HAL
+
+SDK simulator taps now produce evdev contact reports through `TouchDecoder`. Driver `input touch` accepts bounded raw down/move/up reports, `input gpio` uses the actual GPIO decoder, and `input resync` supplies explicit synthetic query outcomes after `SYN_DROPPED`. The device runtime and simulator share `HoldTracker` with the existing 500 ms / 40 pixel policy. A backward clock, movement past the threshold, cancellation or unmatched release cannot manufacture a hold. Text holds and page events use existing SDK messages and layout hit testing. Background input produces no app messages.
+
+- HAL with `device-write`: **154 tests passed**; simulator: **61 passed**; runtime: **149 binary + 16 library passed**. Cases cover real decoder output, shared hold classification, key press versus release/repeat, portrait key mapping, atomic bad-batch refusal, explicit unknown/active/released resynchronization and real app-facing hold/page messages.
+- HAL, simulator, CLI and runtime Clippy, all targets with `device-write` and `-D warnings`: **passed**.
+- Rust 1.85.1 ARMv7 musl runtime check with `device-write`: **passed**.
+- Full extra-large comic route: **passed** through the new HAL tap path. It injects lost input and unknown-then-released resynchronization, turns forward/back using raw page keys, checks that release does not turn again, and repeats the panel/storage/restart routes. [Result](evidence/comics/raw-input-result.json), [page-key capture provenance](evidence/comics/raw-page-key-next.json).
+
+Replay is an explicit synthetic input channel, including when a profile has no physical page buttons. It does not claim evdev grabs, hardware sampling rates, GPIO availability or accelerometer/landscape-turn calibration. Browser clicks remain synthesized taps; use raw reports and clock advancement for holds and movement. Press-feedback timing and full-runtime Back/launcher behavior remain separate open fidelity work.

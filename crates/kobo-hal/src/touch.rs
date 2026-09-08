@@ -78,7 +78,7 @@ enum Recovery {
     Query,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct TouchDecoder {
     slots: [SlotState; MAX_TOUCH_SLOTS],
     current_slot: Option<usize>,

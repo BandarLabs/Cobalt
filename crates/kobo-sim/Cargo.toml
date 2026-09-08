@@ -7,6 +7,8 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+kobo-hal = { path = "../kobo-hal" }
+kobo-abi = { path = "../kobo-abi" }
 kobo-json = { path = "../kobo-json" }
 kobo-catalog = { path = "../kobo-catalog" }
 kobo-net = { path = "../kobo-net" }

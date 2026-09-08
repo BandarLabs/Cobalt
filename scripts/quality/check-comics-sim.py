@@ -178,6 +178,13 @@ def main():
                 drive('device battery 72 unplugged')
 
                 drive('expect-state /clock#/monotonicMillis "120000"')
+                drive('input touch 0 3 0;0 0 0')
+                drive('expect-state /input#/needsResynchronization true')
+                drive('expect-state /input#/quiescent false')
+                drive('input resync unknown')
+                drive('input touch 0 0 0')
+                drive('input resync released')
+                drive('expect-state /input#/quiescent true')
                 capture('01-library')
                 drive('tap-id load-sideload')
                 wait_for('CBR is not supported yet' if args.cbr else 'Page 1 of 3')
@@ -187,6 +194,15 @@ def main():
                     assert 'CBZ copy' in text, 'Missing recovery action'
                 else:
                     assert 'Page 1 of 3' in text, 'Comic did not open'
+                    drive('input gpio 4 3 24')
+                    drive('input gpio 1 194 1')
+                    wait_for('Page 2 of 3')
+                    drive('input gpio 1 194 0')
+                    assert 'Page 2 of 3' in capture('02-page-key-next'), 'Key release turned another page'
+                    drive('input gpio 1 193 1')
+                    drive('input gpio 1 193 0')
+                    wait_for('Page 1 of 3')
+
                     profile = json.loads(get('simulation'))['profile']
                     x, y = profile['width']*9//10, profile['height']//2
                     drive(f'tap-at {x},{y}')
