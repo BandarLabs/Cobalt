@@ -57,6 +57,7 @@ struct Running {
     cancel: Arc<AtomicBool>,
     handle: Option<thread::JoinHandle<()>>,
     stream: Option<RunningStream>,
+    manual_deadline: Option<u64>,
 }
 
 struct RunningStream {
@@ -317,6 +318,7 @@ pub struct TaskRunner {
     /// polled: a device that idles at zero power must not spin a loop to
     /// discover work it could have been told about.
     wake: Option<Arc<Wake>>,
+    manual_clock: Option<Arc<crate::clock::ManualClock>>,
 }
 
 impl std::fmt::Debug for TaskRunner {
@@ -358,7 +360,16 @@ impl TaskRunner {
             secrets: None,
             credentials: None,
             wake: None,
+            manual_clock: None,
         }
+    }
+
+    /// Runs sleep tasks on an explicitly advanced clock. Network deadlines
+    /// remain real transport deadlines. Call drain after advancing the clock.
+    #[must_use]
+    pub fn with_manual_clock(mut self, clock: Arc<crate::clock::ManualClock>) -> Self {
+        self.manual_clock = Some(clock);
+        self
     }
 
     /// Grants capabilities. Anything not granted is refused at submission.
@@ -485,6 +496,25 @@ impl TaskRunner {
             }
         }
 
+        if let (Some(clock), Task::Sleep { seconds }) = (&self.manual_clock, &work) {
+            use crate::clock::Clock;
+            let now = clock.now().map_err(|_| RejectReason::AtCapacity)?;
+            let deadline = now
+                .monotonic_millis
+                .checked_add(u64::from((*seconds).min(MAX_SLEEP_SECONDS)) * 1000)
+                .ok_or(RejectReason::AtCapacity)?;
+            self.running.insert(
+                task,
+                Running {
+                    cancel: Arc::new(AtomicBool::new(false)),
+                    handle: None,
+                    stream: None,
+                    manual_deadline: Some(deadline),
+                },
+            );
+            return Ok(());
+        }
+
         let cancel = Arc::new(AtomicBool::new(false));
         let stream = line_stream_url(&work).map(|url| RunningStream {
             url,
@@ -535,6 +565,7 @@ impl TaskRunner {
                 cancel,
                 handle: Some(handle),
                 stream,
+                manual_deadline: None,
             },
         );
         Ok(())
@@ -557,6 +588,7 @@ impl TaskRunner {
 
     /// Collects any tasks that have finished, without blocking.
     pub fn drain(&mut self) -> Vec<Finished> {
+        self.queue_manual_timers();
         let mut finished = Vec::new();
         while let Ok(item) = self.receiver.try_recv() {
             self.reap(item.task);
@@ -568,12 +600,50 @@ impl TaskRunner {
     /// Waits up to `timeout` for one task to finish.
     #[must_use]
     pub fn wait(&mut self, timeout: Duration) -> Option<Finished> {
+        self.queue_manual_timers();
         match self.receiver.recv_timeout(timeout) {
             Ok(item) => {
                 self.reap(item.task);
                 Some(item)
             }
             Err(RecvTimeoutError::Timeout | RecvTimeoutError::Disconnected) => None,
+        }
+    }
+
+    fn queue_manual_timers(&mut self) {
+        use crate::clock::Clock;
+        let Some(now) = self
+            .manual_clock
+            .as_ref()
+            .and_then(|clock| clock.now().ok())
+        else {
+            return;
+        };
+        let mut due = self
+            .running
+            .iter()
+            .filter_map(|(task, running)| {
+                let deadline = running.manual_deadline?;
+                let cancelled = running.cancel.load(Ordering::SeqCst);
+                (cancelled || deadline <= now.monotonic_millis)
+                    .then_some((deadline, task.0, cancelled))
+            })
+            .collect::<Vec<_>>();
+        due.sort_unstable();
+        for (_, id, cancelled) in due {
+            let task = TaskId(id);
+            // Clear before queueing, so successive drains cannot duplicate it.
+            if let Some(running) = self.running.get_mut(&task) {
+                running.manual_deadline = None;
+            }
+            let _ = self.sender.send(Finished {
+                task,
+                outcome: if cancelled {
+                    TaskOutcome::Cancelled
+                } else {
+                    TaskOutcome::Completed(Vec::new())
+                },
+            });
         }
     }
 
@@ -1034,6 +1104,64 @@ mod tests {
             }
         }
         finished
+    }
+
+    #[test]
+    fn manual_timers_preserve_limits_order_cancellation_and_wall_independence() {
+        use crate::clock::{ManualClock, Snapshot};
+        let clock = Arc::new(
+            ManualClock::new(Snapshot {
+                unix_millis: 0,
+                monotonic_millis: 0,
+                utc_offset_minutes: 0,
+            })
+            .unwrap(),
+        );
+        let mut runner = TaskRunner::simulated(".").with_manual_clock(Arc::clone(&clock));
+        for (id, seconds) in [(3, 2), (1, 2), (2, 1), (4, 300)] {
+            runner.submit(TaskId(id), Task::Sleep { seconds }).unwrap();
+        }
+        assert_eq!(
+            runner.submit(TaskId(5), Task::Sleep { seconds: 0 }),
+            Err(RejectReason::AtCapacity)
+        );
+        assert_eq!(
+            runner.submit(TaskId(1), Task::Sleep { seconds: 0 }),
+            Err(RejectReason::DuplicateId)
+        );
+        assert!(runner.drain().is_empty());
+        clock.set_wall(86_400_000, 0).unwrap();
+        assert!(runner.drain().is_empty());
+        runner.cancel(TaskId(4));
+        assert_eq!(
+            runner.drain(),
+            vec![Finished {
+                task: TaskId(4),
+                outcome: TaskOutcome::Cancelled
+            }]
+        );
+        clock.advance(Duration::from_secs(2)).unwrap();
+        let finished = runner.drain();
+        assert_eq!(
+            finished.iter().map(|item| item.task.0).collect::<Vec<_>>(),
+            vec![2, 1, 3]
+        );
+        assert!(finished
+            .iter()
+            .all(|item| item.outcome == TaskOutcome::Completed(Vec::new())));
+        assert!(runner.drain().is_empty());
+        assert_eq!(runner.in_flight(), 0);
+        runner
+            .submit(TaskId(9), Task::Sleep { seconds: 500 })
+            .unwrap();
+        clock.advance(Duration::from_secs(300)).unwrap();
+        assert_eq!(runner.wait(Duration::ZERO).unwrap().task, TaskId(9));
+        runner
+            .submit(TaskId(10), Task::Sleep { seconds: 1 })
+            .unwrap();
+        runner.shutdown();
+        clock.advance(Duration::from_secs(1)).unwrap();
+        assert!(runner.drain().is_empty());
     }
 
     #[test]

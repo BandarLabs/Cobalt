@@ -16,7 +16,7 @@ A checked task requires implementation plus recorded validation. Physical measur
 
 ## Status
 
-494 tracked tasks: 60 completed, 1 deferred by the owner, 433 open. Implementation in progress. Evidence is recorded per task in `tasks.json` and in [the validation log](validation.md).
+494 tracked tasks: 62 completed, 1 deferred by the owner, 431 open. Implementation in progress. Evidence is recorded per task in `tasks.json` and in [the validation log](validation.md).
 
 ## PR 1 · Simulator fidelity (SIM-1–10)
 
@@ -37,7 +37,7 @@ A checked task requires implementation plus recorded validation. Physical measur
 - [x] **SIM-15** Generate simulator Store fixtures from the catalog registry.
 - [ ] **SIM-16** Exercise actual launcher/app transitions in full-runtime mode.
 - [ ] **SIM-17** Exercise signed install, update and remove against local fixture packages.
-- [ ] **SIM-18** Add deterministic virtual clock controls.
+- [x] **SIM-18** Add deterministic virtual clock controls.
 - [ ] **SIM-19** Replay raw touch down, move, up, hold and page-button events through the HAL.
 - [ ] **SIM-20** Model panel submission, busy state, completion and failure.
 - [ ] **SIM-21** Expose battery, charging, frontlight, cover and orientation controls.
@@ -69,7 +69,7 @@ A checked task requires implementation plus recorded validation. Physical measur
 - [ ] **SDK-14** Extend shared board surface with clue gutters, selection and distinct marks.
 - [ ] **SDK-15** Support larger boards with accessible paging/pan/zoom.
 - [ ] **SDK-16** Provide board undo/control conventions.
-- [ ] **SDK-17** Provide injectable calendar date, monotonic time and test entropy.
+- [x] **SDK-17** Provide injectable calendar date, monotonic time and test entropy.
 - [ ] **SDK-18** Provide stable inline loading, offline, stale and result surfaces.
 - [ ] **SDK-19** Provide owner-initiated text/image export and paired handoff.
 - [ ] **SDK-20** Add metric-aware validation beyond builder collection limits.

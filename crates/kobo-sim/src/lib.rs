@@ -16,6 +16,7 @@ use std::thread;
 // source so region and waveform decisions cannot drift.
 mod activity;
 mod capture;
+mod clock;
 pub use capture::CaptureSource;
 #[path = "../../kobod/src/frame.rs"]
 mod frame;
@@ -663,6 +664,7 @@ pub struct AppServer {
     socket_identity: (u64, u64),
     manifest: Option<kobo_catalog::App>,
     capture_source: CaptureSource,
+    time: clock::Time,
 }
 
 impl AppServer {
@@ -674,6 +676,7 @@ impl AppServer {
     /// path, an unsafe socket parent, or a listener binding failure.
     pub fn bind(address: &str, socket_path: impl AsRef<Path>) -> io::Result<Self> {
         validate_configuration()?;
+        let time = clock::Time::configured()?;
         install_typeface();
         let socket_path = socket_path.as_ref().to_path_buf();
         validate_socket_parent(&socket_path)?;
@@ -707,6 +710,7 @@ impl AppServer {
             socket_identity: (metadata.dev(), metadata.ino()),
             manifest: None,
             capture_source: CaptureSource::default(),
+            time,
         })
     }
 
@@ -831,6 +835,14 @@ impl AppServer {
         let mut initial = AppState::with_apps(Arc::clone(&self.apps));
         initial.app_name.clone_from(&name);
         initial.capture_source = self.capture_source.clone();
+        initial.time = self.time.clone();
+        initial.clock_snapshot = initial.time.now()?;
+        let mut runner = simulated_tasks(&name, &declared);
+        if let Some(clock) = initial.time.manual() {
+            runner = runner.with_manual_clock(clock);
+        }
+        let tasks = Arc::new(Mutex::new(runner));
+        initial.tasks = Some(Arc::clone(&tasks));
         let state = Arc::new(Mutex::new(initial));
         let reader_state = Arc::clone(&state);
         // One writer for the whole session, shared by every thread that has
@@ -845,9 +857,14 @@ impl AppServer {
             // and the developer is told which one: a reader that dies quietly
             // leaves an application talking to nobody, with a panel that keeps
             // showing the last good screen and ignores every tap.
-            if let Err(error) =
-                read_app_messages(reader, &name, &declared, &reader_writer, &reader_state)
-            {
+            if let Err(error) = read_app_messages(
+                reader,
+                &name,
+                &declared,
+                &reader_writer,
+                &reader_state,
+                &tasks,
+            ) {
                 eprintln!("the application's connection ended: {error}");
             }
             if let Ok(mut activity) = reader_writer.activity.lock() {
@@ -1073,6 +1090,9 @@ struct AppState {
     screen: Screen,
     app_name: String,
     capture_source: CaptureSource,
+    time: clock::Time,
+    clock_snapshot: kobo_policy::clock::Snapshot,
+    tasks: Option<Arc<Mutex<TaskRunner>>>,
     secret_directory: PathBuf,
     chrome: kobo_ui::Chrome,
     orientation: kobo_ui::Orientation,
@@ -1108,10 +1128,15 @@ impl Default for AppState {
 
 impl AppState {
     fn with_apps(apps: Arc<Mutex<SimulatedApps>>) -> Self {
+        let time = clock::Time::default();
+        let clock_snapshot = time.now().expect("host clock must be in 1970..9999");
         Self {
             screen: Screen::new(0, Vec::new()),
             app_name: "app".into(),
             capture_source: CaptureSource::default(),
+            time,
+            clock_snapshot,
+            tasks: None,
             secret_directory: std::env::temp_dir().join(SIM_SECRETS),
             chrome: kobo_ui::Chrome::default(),
             orientation: kobo_ui::Orientation::Portrait,
@@ -1250,9 +1275,24 @@ fn simulated_app(
 }
 
 impl AppState {
+    fn simulation_json(&self) -> String {
+        let base = simulation_json(&self.panel, self.scenario, self.lifecycle, self.last_touch);
+        let mut value = kobo_json::parse(&base).expect("simulator JSON");
+        if let kobo_json::Value::Object(fields) = &mut value {
+            fields.push(("clock".into(), self.time.json(self.clock_snapshot)));
+        }
+        value.to_json()
+    }
+
     fn update_chrome(&mut self) {
+        if let Ok(snapshot) = self.time.now() {
+            self.clock_snapshot = snapshot;
+        }
         let status = kobo_ui::Status {
-            clock: "09:41".into(),
+            clock: self.clock_snapshot.hour_minute().map_or_else(
+                || "--:--".into(),
+                |(hour, minute)| format!("{hour:02}:{minute:02}"),
+            ),
             signal: if self.scenario == Scenario::Offline {
                 kobo_ui::Signal::Off
             } else {
@@ -1368,6 +1408,24 @@ impl AppSession {
         )
     }
 
+    fn change_clock(&self, command: &str) -> io::Result<()> {
+        let tasks = {
+            let mut state = self
+                .state
+                .lock()
+                .map_err(|_| io::Error::other("app state lock poisoned"))?;
+            state.time.change(command)?;
+            state.record(format!("clock: {command}"));
+            state.update_chrome();
+            state.commit_frame();
+            state.tasks.clone()
+        };
+        if let Some(tasks) = tasks {
+            deliver_task_outcomes(&tasks, &self.writer, &self.state)?;
+        }
+        Ok(())
+    }
+
     fn send_lifecycle(&self, lifecycle: Lifecycle) -> io::Result<()> {
         write_shared(
             &self.writer,
@@ -1470,12 +1528,7 @@ impl AppSession {
                         source: &state.capture_source,
                         paints: state.paints,
                         orientation: state.orientation,
-                        simulation: simulation_json(
-                            &state.panel,
-                            state.scenario,
-                            state.lifecycle,
-                            state.last_touch,
-                        ),
+                        simulation: state.simulation_json(),
                         frame: state.panel.frame(ideal),
                         ideal,
                     }
@@ -1503,12 +1556,7 @@ impl AppSession {
                         .state
                         .lock()
                         .unwrap_or_else(std::sync::PoisonError::into_inner);
-                    simulation_json(
-                        &state.panel,
-                        state.scenario,
-                        state.lifecycle,
-                        state.last_touch,
-                    )
+                    state.simulation_json()
                 };
                 write_response(
                     &mut stream,
@@ -1556,6 +1604,23 @@ impl AppSession {
                     "application/json; charset=utf-8",
                     body.as_bytes(),
                 )
+            }
+            ("GET", "/clock") => {
+                let state = self
+                    .state
+                    .lock()
+                    .map_err(|_| io::Error::other("app state lock poisoned"))?;
+                let body = state.time.json(state.time.now()?).to_json();
+                write_response(&mut stream, 200, "application/json", body.as_bytes())
+            }
+            ("POST", "/clock") => {
+                let command = std::str::from_utf8(&request.body).unwrap_or("");
+                match self.change_clock(command) {
+                    Ok(()) => write_response(&mut stream, 200, "text/plain", b"ok"),
+                    Err(error) => {
+                        write_response(&mut stream, 400, "text/plain", error.to_string().as_bytes())
+                    }
+                }
             }
             ("POST", "/touch") => {
                 let response = parse_touch(&request.body)
@@ -2179,6 +2244,7 @@ fn read_app_messages(
     declared: &kobo_policy::Declared,
     writer: &Arc<AppWriter>,
     state: &Arc<Mutex<AppState>>,
+    tasks: &Arc<Mutex<TaskRunner>>,
 ) -> io::Result<()> {
     // The simulator owns no hardware, so it answers state queries from a
     // believable model and refuses everything that would change a real device.
@@ -2195,7 +2261,6 @@ fn read_app_messages(
         std::env::var("KOBO_MAGNET").as_deref(),
         Ok("1" | "present")
     ));
-    let tasks = Arc::new(Mutex::new(simulated_tasks(name, declared)));
     // Drained on its own thread for the same reason terminal output is. The
     // message loop below blocks on the application's socket, so an outcome
     // that arrived while nothing was being typed used to sit in the channel
@@ -2204,7 +2269,7 @@ fn read_app_messages(
     // survived: the only tasks the simulator ever completed were the ones it
     // refused.
     {
-        let draining = Arc::clone(&tasks);
+        let draining = Arc::clone(tasks);
         let writer = Arc::clone(writer);
         let state = Arc::clone(state);
         std::thread::spawn(move || drain_tasks(&draining, &writer, &state));
@@ -2375,7 +2440,7 @@ fn read_app_messages(
                 ));
             }
         }
-        deliver_task_outcomes(&tasks, writer, state)?;
+        deliver_task_outcomes(tasks, writer, state)?;
     }
 }
 
@@ -2515,10 +2580,13 @@ fn deliver_task_outcomes(
     writer: &Arc<AppWriter>,
     state: &Arc<Mutex<AppState>>,
 ) -> io::Result<()> {
-    let finished = tasks
+    // Serialize draining through queue delivery. A clock advance must not
+    // return while another drain has removed due timers but not queued their
+    // callbacks yet.
+    let mut tasks = tasks
         .lock()
-        .map_err(|_| io::Error::other("simulator task lock poisoned"))?
-        .drain();
+        .map_err(|_| io::Error::other("simulator task lock poisoned"))?;
+    let finished = tasks.drain();
     for finished in finished {
         // A failure is always printed, whatever the log setting. It is the one
         // line that explains a screen the developer is looking at, and the
@@ -3684,6 +3752,85 @@ mod tests {
         let restored = kobo_ui::Pictures::get(state.active_pictures(), handle)
             .expect("normal cache survived the scenario");
         assert_eq!(restored.grey, &[kobo_ui::tone::INK]);
+    }
+
+    #[test]
+    fn manual_clock_delivers_due_callbacks_before_return_and_capture_reads_do_not_tick() {
+        let clock = Arc::new(
+            kobo_policy::clock::ManualClock::new(kobo_policy::clock::Snapshot {
+                unix_millis: 1_704_067_200_000,
+                monotonic_millis: 0,
+                utc_offset_minutes: 0,
+            })
+            .unwrap(),
+        );
+        let tasks = Arc::new(Mutex::new(
+            TaskRunner::simulated(".").with_manual_clock(Arc::clone(&clock)),
+        ));
+        tasks
+            .lock()
+            .unwrap()
+            .submit(
+                kobo_protocol::TaskId(7),
+                kobo_protocol::Task::Sleep { seconds: 30 },
+            )
+            .unwrap();
+        let (mut client, server) = UnixStream::pair().unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_secs(1)))
+            .unwrap();
+        let session = AppSession {
+            state: Arc::new(Mutex::new(AppState {
+                time: clock::Time::Manual(clock),
+                tasks: Some(tasks),
+                ..AppState::default()
+            })),
+            writer: AppWriter::spawn_for(server, kobo_protocol::VERSION),
+        };
+        session.change_clock("set 1704153600000 330").unwrap();
+        assert_eq!(
+            session
+                .state
+                .lock()
+                .unwrap()
+                .clock_snapshot
+                .monotonic_millis,
+            0
+        );
+        let before = session.state.lock().unwrap().simulation_json();
+        for _ in 0..5 {
+            session.render_frame(false);
+            assert_eq!(session.state.lock().unwrap().simulation_json(), before);
+        }
+        session.change_clock("advance 30000").unwrap();
+        let received = read_protocol_frame(&mut client).unwrap();
+        assert_eq!(
+            received.message,
+            Message::TaskOutcome {
+                task: kobo_protocol::TaskId(7),
+                outcome: kobo_protocol::TaskOutcome::Completed(Vec::new())
+            }
+        );
+        assert!(session
+            .writer
+            .activity
+            .lock()
+            .unwrap()
+            .json()
+            .contains("pendingCallbacks"));
+        assert_eq!(
+            session
+                .state
+                .lock()
+                .unwrap()
+                .clock_snapshot
+                .monotonic_millis,
+            30_000
+        );
+        let before = session.state.lock().unwrap().simulation_json();
+        assert!(session.change_clock("advance -1").is_err());
+        assert!(session.change_clock("advance 999999999999").is_err());
+        assert_eq!(session.state.lock().unwrap().simulation_json(), before);
     }
 
     #[test]

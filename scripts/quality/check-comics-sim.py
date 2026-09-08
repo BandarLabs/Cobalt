@@ -53,7 +53,8 @@ def main():
         env = dict(os.environ, TMPDIR=private, CARGO_TARGET_DIR=str(ROOT/'target'),
                    CARGO_PROFILE_DEV_DEBUG='0', CARGO_INCREMENTAL='0',
                    KOBO_SIM_PROFILE=args.profile, KOBO_TEXT_SCALE=args.scale,
-                   KOBO_SIM_FIXTURE="original-geometric-comic", KOBO_SIM_SEED="0")
+                   KOBO_SIM_FIXTURE="original-geometric-comic", KOBO_SIM_SEED="0",
+                   KOBO_SIM_CLOCK_MILLIS="1788850860000", KOBO_SIM_UTC_OFFSET_MINUTES="0")
         storage = Path(private)/'cobalt-sim-data/panels'
         storage.mkdir(parents=True)
         (storage/'volume.cbz').write_bytes(b'Rar!\x1a\x07\x01\x00' if args.cbr else comic_bytes())
@@ -133,6 +134,13 @@ def main():
 
                 wait_for('Open added comic')
                 drive('wait-for-id load-sideload')
+                drive('wait-idle')
+                drive('expect-state /clock#/mode "manual"')
+                drive('clock advance 60000')
+                drive('expect-state /clock#/monotonicMillis "60000"')
+                drive('clock set 1788850920000 330')
+                drive('expect-state /clock#/utcOffsetMinutes 330')
+                drive('expect-state /clock#/monotonicMillis "60000"')
                 capture('01-library')
                 drive('tap-id load-sideload')
                 wait_for('CBR is not supported yet' if args.cbr else 'Page 1 of 3')

@@ -166,8 +166,10 @@
     "pr": 1,
     "group": "Simulator fidelity (SIM-1\u201310)",
     "task": "Add deterministic virtual clock controls",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Manual clock drives the same bounded task runner sleep outcomes; explicit wall corrections preserve monotonic deadlines. Driver clock advance/set plus semantic clock assertions pass the full extra-large comic route. Transport timeouts remain real."
+    ]
   },
   {
     "id": "SIM-19",
@@ -436,8 +438,10 @@
     "pr": 1,
     "group": "Shared SDK and design contracts",
     "task": "Provide injectable calendar date, monotonic time and test entropy",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Shared injectable Clock, SystemClock and ManualClock provide calendar date, explicit UTC offset and monotonic snapshots. SystemEntropy fails explicitly; FixtureEntropy supplies reproducible seeded game choices with unbiased bounded sampling. 111 policy and 120 SDK tests pass; ARMv7 Rust 1.85.1 SDK check passes."
+    ]
   },
   {
     "id": "SDK-18",

@@ -115,3 +115,15 @@ Screenshots and retained recording frames now receive a JSON sidecar from the sa
 - Full extra-large comic route: **passed**, including atomic captures, navigation, rotation, process restart, storage failure and retry. Each capture checks source and font provenance, dimensions and serious diagnostics. [Result](evidence/comics/atomic-capture-result.json), [failure screen](evidence/comics/atomic-capture-save-failed.png), [matching provenance](evidence/comics/atomic-capture-save-failed.json).
 
 The capture identifies this verification build as a dirty working tree on its parent revision; it does not mislabel uncommitted changes as that commit. Physical panel calibration remains pending.
+
+
+## Controllable time and fixture entropy
+
+- Policy: **111 tests passed**; SDK: **120 passed**; simulator: **54 passed**. Cases cover Gregorian leap centuries, UTC-offset date boundaries, wall corrections without changing monotonic time, atomic rejection of overflow, sleep admission limits, ordering, cancellation, clamping and exactly-once completion. Simulator callback delivery is serialized with clock advancement. Two existing SDK documentation examples remain ignored.
+- Clippy for policy, SDK, simulator and CLI, all targets with `-D warnings`: **passed**.
+- Rust 1.85.1 ARMv7 musl SDK check: **passed**, including installed-font provenance and clock/entropy APIs.
+- Full extra-large comic simulator journey with manual clock: **passed**, including driver advancement, explicit offset change and typed clock assertions. [Result](evidence/comics/manual-clock-result.json), [capture provenance](evidence/comics/manual-clock-library.json).
+
+The simulator clock controls sleep callbacks and its status clock; HTTP transport deadlines stay real. Existing apps reading their own operating-system clock are not automatically rewritten. Catalog adoption of the injectable SDK clock/date and entropy contracts remains in PR 2. A fixed UTC offset is explicit and does not claim automatic time-zone or daylight-saving rules. Capture metadata retains the clock snapshot used for the committed screen, so screenshot sampling does not alter it.
+
+Removed approximately 7.2 GiB of three inactive `/tmp/cobalt-...-target` Cargo caches after checking their cache markers, contents and absence of running users. Source files, original checkout edits and review evidence were preserved.

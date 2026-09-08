@@ -43,8 +43,10 @@ pub use kobo_policy as permissions;
 
 pub use kobo_policy::{Capability, Declared, Grant, Grants, PowerPolicy};
 
+pub use kobo_policy::clock;
 pub mod audio;
 pub mod credentials;
+pub mod entropy;
 pub mod imports;
 /// Common application and builder types.
 pub mod keyboard;
