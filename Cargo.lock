@@ -1238,11 +1238,13 @@ dependencies = [
 
 [[package]]
 name = "kobo-nonograms"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "kobo-image",
+ "kobo-json",
  "kobo-net",
  "kobo-sdk",
+ "kobo-state",
  "kobo-ui",
 ]
 

@@ -2190,9 +2190,11 @@
     "pr": 2,
     "group": "Nonograms",
     "task": "Attach clues to matching rows and columns",
-    "status": "todo",
+    "status": "done",
     "evidence": [
-      "Extra-large simulator refuses Harbor dawn after selection: node 9 text does not fit its rectangle. See evidence/board-regression."
+      "Extra-large simulator refuses Harbor dawn after selection: node 9 text does not fit its rectangle. See evidence/board-regression.",
+      "Shared BoardViewport attaches clues to matching cells. Geometry tests check row Y/heights and column X/widths across all nine scales, two profiles and both orientations; actual SDK captures inspect complete gutter clues.",
+      "See docs/quality/validation.md and evidence/nonograms/result.json. No physical-reader certification."
     ]
   },
   {
@@ -2200,40 +2202,65 @@
     "pr": 2,
     "group": "Nonograms",
     "task": "Show selected line and marks distinctly",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Filled, crossed and blank marks stay distinct; the selected square and its two matching clue targets have an ink outline and shaded field. A shared UI regression checks every selection in a panned window, with unchanged action IDs and hit tests; actual app captures show the highlights.",
+      "See docs/quality/validation.md and evidence/nonograms/result.json. No physical-reader certification."
+    ]
   },
   {
     "id": "NONO-03",
     "pr": 2,
     "group": "Nonograms",
     "task": "Provide undo",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "64 bounded undo snapshots persist with exact puzzle identity. Single marks, whole runs and confirmed restart undo atomically. Tests and actual SDK forced restarts verify history, completion undo, failed-write preservation and retry acknowledgements.",
+      "See docs/quality/validation.md and evidence/nonograms/result.json. No physical-reader certification."
+    ]
   },
   {
     "id": "NONO-04",
     "pr": 2,
     "group": "Nonograms",
     "task": "Make supported larger grids navigable",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "All bundled 5, 7, 9, 15 and 25-square boards use measured, overlapping windows and square-size controls. Every cell is reached in automated layout sweeps; actual SDK journey edits square 624 and restores its mark and visible selection after forced restart.",
+      "See docs/quality/validation.md and evidence/nonograms/result.json. No physical-reader certification."
+    ]
   },
   {
     "id": "NONO-05",
     "pr": 2,
     "group": "Nonograms",
     "task": "Distinguish unsupported sizes before play",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "The browser identifies larger boards as Pan to play; 5\u201325 grids are supported and other sizes are refused. Photo selector advertises only the current companion sizes 5, 7 and 9. The size gate and instructions fit the tested scales/profiles/orientations.",
+      "See docs/quality/validation.md and evidence/nonograms/result.json. No physical-reader certification."
+    ]
   },
   {
     "id": "NONO-06",
     "pr": 2,
     "group": "Nonograms",
     "task": "Validate imported puzzle solvability and difficulty",
+    "status": "done",
+    "evidence": [
+      "Photo acceptance requires complete row/column deduction against its actual answer; ambiguous input is refused. A repeatable pass-count difficulty guide is displayed in options and explained in photo help. Existing brute-force candidate checks, photo fairness/refusal tests and all-page layout checks pass. Companion pre-transfer validation remains NONOCLI-02.",
+      "See docs/quality/validation.md and evidence/nonograms/result.json. No physical-reader certification."
+    ]
+  },
+  {
+    "id": "NONO-07",
+    "pr": 2,
+    "group": "Nonograms",
+    "task": "Replace repetitive bundled stroke patterns with varied original picture puzzles while preserving existing saved games",
     "status": "todo",
-    "evidence": []
+    "evidence": [
+      "The visual acceptance pass found the legacy 60-entry pack uses repeated horizontal stroke patterns. Current play/recovery improvements retain its identities; a varied replacement needs explicit saved-game migration. Added during implementation review on 9 September 2026."
+    ]
   },
   {
     "id": "PANELS-01",

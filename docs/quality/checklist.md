@@ -4,7 +4,7 @@ Source: the 8 September 2026 app/SDK/simulator/companion review. The ten new app
 
 ## Delivery plan
 
-Three stacked PRs rooted in freshly fetched `beta` (`7f1a543`):
+Three PRs rooted in `beta`. The initial base was `7f1a543`; PR 1 is now merged as `c22c946` and PR 2 targets beta directly:
 
 1. **Foundation:** simulator/runtime parity, shared SDK/document/board contracts, platform test interfaces and comic decoding/reading. Includes catalog integration fixes exposed by the stricter shared layout checks. Branch `beta-quality-foundation`, base `beta`.
 2. **Catalog:** complete and polish the 43 existing app journeys using those contracts. Branch `beta-quality-apps`, initially based on PR 1.
@@ -18,7 +18,7 @@ A checked task requires implementation plus recorded validation. Physical measur
 
 The PR 1 implementation checklist is complete; CBR is deferred and COMIC-18 belongs to catalog integration in PR 2. This does not certify hardware accuracy: native sleep hands ownership back to the stock reader, and no generic kernel suspend, RTC wake or automatic cover-sleep backend is enabled. Physical acceptance remains scheduled after all three PRs.
 
-494 tracked tasks: 110 completed, 1 deferred by the owner, 383 open. Implementation in progress. Evidence is recorded per task in `tasks.json` and in [the validation log](validation.md).
+495 tracked tasks: 116 completed, 1 deferred by the owner, 378 open. Implementation in progress. Evidence is recorded per task in `tasks.json` and in [the validation log](validation.md).
 
 ## PR 1 · Simulator fidelity (SIM-1–10)
 
@@ -359,12 +359,13 @@ The PR 1 implementation checklist is complete; CBR is deferred and COMIC-18 belo
 
 ## PR 2 · Nonograms
 
-- [ ] **NONO-01** Attach clues to matching rows and columns.
-- [ ] **NONO-02** Show selected line and marks distinctly.
-- [ ] **NONO-03** Provide undo.
-- [ ] **NONO-04** Make supported larger grids navigable.
-- [ ] **NONO-05** Distinguish unsupported sizes before play.
-- [ ] **NONO-06** Validate imported puzzle solvability and difficulty.
+- [x] **NONO-01** Attach clues to matching rows and columns.
+- [x] **NONO-02** Show selected line and marks distinctly.
+- [x] **NONO-03** Provide undo.
+- [x] **NONO-04** Make supported larger grids navigable.
+- [x] **NONO-05** Distinguish unsupported sizes before play.
+- [x] **NONO-06** Validate imported puzzle solvability and difficulty.
+- [ ] **NONO-07** Replace repetitive bundled stroke patterns with varied original picture puzzles while preserving existing saved games. (Added during implementation review.)
 
 ## PR 2 · Panels
 

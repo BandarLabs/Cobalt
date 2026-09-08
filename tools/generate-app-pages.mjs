@@ -58,7 +58,7 @@ const screenshots = {
   morse: ["morse.png", "A letter filling the Kobo screen while the front light sends Morse code"],
   musicstand: ["musicstand.png", "Music Stand showing a marked half-page score view for Bach's Cello Suite No. 1."],
   needles: ["needles.png", "Needles pattern screen with row and repeat counters and a large +1 row button."],
-  nonograms: ["nonograms.png", "Nonogram puzzle on a Kobo showing numbered cells, row clues, and guided marking mode."],
+  nonograms: ["nonograms.png", "Actual Nonograms simulator capture showing a selected square and its matching row and column clues."],
   panels: ["panels.png", "Panels library in the Clara BW simulator showing the original A small garden cover and saved page 2 of 4."],
   paperterm: ["paperterm.png", "Paperterm pairing screen with computer address field and on-screen keyboard on a Kobo Clara BW."],
   parlor: ["parlor.png", "Reversi opening board showing four legal moves and touch controls."],

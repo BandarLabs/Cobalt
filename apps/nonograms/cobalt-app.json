@@ -2,10 +2,10 @@
   "id": "nonograms",
   "display_name": "Nonograms",
   "short_label": "Nonograms",
-  "summary": "Solve a bundled touch-first picture grid offline.",
-  "page_description": "Solve a touch-first picture grid by cycling each square through fill, X, and blank.",
-  "version": "0.1.4",
-  "release_notes": "Keep puzzle pages, help and photo controls reachable across reader sizes.",
+  "summary": "Solve picture puzzles with attached clues, saved undo and grids up to 25×25.",
+  "page_description": "Pan larger grids, inspect full clues and keep your marks and undo history when reopening.",
+  "version": "0.1.5",
+  "release_notes": "Adds attached row and column clues, panning, square sizing, persistent undo and acknowledged save recovery.",
   "glyph": "grid",
   "capabilities": []
 }

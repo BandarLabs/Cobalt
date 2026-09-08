@@ -30,6 +30,20 @@ impl Puzzle {
             .collect()
     }
 
+    /// The rating counts complete passes of ordinary row/column deductions.
+    /// It describes this solver's work, not a measured human solving time.
+    #[must_use]
+    pub fn difficulty(&self) -> &'static str {
+        match crate::solver::solve_board_rated(self.side, &self.row_clues(), &self.column_clues()) {
+            Some((board, rounds)) if !board.contains(&Cell::Unknown) => match rounds {
+                0..=1 => "Easy",
+                2..=3 => "Medium",
+                _ => "Hard",
+            },
+            _ => "Needs guessing",
+        }
+    }
+
     #[must_use]
     pub fn is_line_solvable(&self) -> bool {
         solve_board(self.side, &self.row_clues(), &self.column_clues()).is_some_and(|board| {
