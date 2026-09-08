@@ -442,8 +442,10 @@
     "pr": 1,
     "group": "Shared SDK and design contracts",
     "task": "Provide board undo/control conventions",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Shared bounded board transactions/Undo/Redo/Clear preserve givens, reject partial invalid moves, retain redo after no-op/refusal, and keep control geometry stable across profiles/scales/poses. 134 SDK tests pass; strict Clippy and ARM Rust 1.85.1 compile pass. Catalog adoption remains PR 2."
+    ]
   },
   {
     "id": "SDK-17",

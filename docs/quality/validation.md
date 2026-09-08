@@ -200,3 +200,12 @@ The [physical protocol](clara-bw-validation.md) and `scripts/quality/clara-bw-ch
 - Baseline, display, touch and recovery plans generated successfully. [Example display plan](evidence/hardware/clara-planned-display.json) is explicitly unexecuted. No reader was contacted, no physical timing was measured and no calibration coefficient changed.
 
 Sleep/wake, interrupted work, guardian recovery and setting/frontlight restoration have explicit observations and fail conditions in the protocol. Remaining runtime power implementation and the final 43-app automation must be completed before physical acceptance.
+
+
+## Board transactions and controls
+
+- **134 SDK tests passed** (two existing doc examples ignored), including whole-run undo, undoable reset/clear, protected givens, atomic invalid restoration/edits, redo preservation and both move/count memory bounds.
+- Undo/Redo/Clear keep identical rectangles across empty, played and undone states at every supported profile, three interface sizes and both orientations. Only available operations are actionable.
+- SDK Clippy with `-D warnings` and Rust 1.85.1 ARMv7 musl compilation passed.
+
+The board model bounds dimensions to 64 × 64 and history to 64 moves/8,192 cell changes. It does not persist by itself. Larger-board viewport, clue surface and game-specific catalog adoption remain open.

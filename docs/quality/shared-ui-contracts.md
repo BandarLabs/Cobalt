@@ -101,3 +101,12 @@ Keep `ScreenBuilder::inline_status(feedback::Status)` in the same place across d
 `ProviderSetup::with_samples(samples::Collection::Notes)` attaches original offline content to the existing sample choice; `Reading` and `Cards` are also available. On `Event::Sample`, open a separate sample session using `setup.samples()`. Sample exports carry an explicit schema, `sample: true` and stable `sample.*` identities. Never merge them into an account's data or use the sample event as a connection check. App adoption is part of the catalog PR.
 
 Before publishing a screen, use `build_checked_with(&logical_metrics, &chrome)` to catch text overflow, hidden content and unreachable controls in addition to builder truncation. Use the same logical landscape metrics and chrome as rendering. The existing `build_checked()` keeps its collection-only behavior for compatibility. Rendering, metrics and diagnostics remain in `kobo-ui`; `kobo-sdk/src/builder.rs` owns only construction of that shared tree.
+
+
+## Board edits and undo
+
+Use `board::Board` for bounded mark edits, with immutable puzzle givens in `Field::given` and editable squares in `Field::editable`. Games own their rules and meaning of values/candidate bits. A run entry, candidate removal or reset is one `apply` transaction and one Undo. Duplicate/out-of-range cells, changed givens and invalid marks refuse the entire move. Unchanged or rejected moves preserve Redo; a new accepted move after Undo abandons that future.
+
+Keep `board_history_controls(&board)` in the same layout slot. Its Undo, Redo and Clear buttons retain their positions and use semantic disabled state. Dispatch the `board::UNDO`, `REDO` and `CLEAR` names to the model; follow Undo/Redo's selected square when the larger-board viewport is implemented. Ask before resetting a played puzzle, then keep that reset undoable.
+
+Save changed marks through acknowledged durable state. `restore` rejects changed givens and never invents history; the app must first validate puzzle identity, version and game-specific mark meanings. The model is in memory and does not claim to save anything. It retains at most 64 moves and 8,192 cell changes across Undo and Redo for a board up to 64 × 64. Oldest moves are evicted when either bound is reached; app copy must not promise unlimited history. Clue gutters, the larger-board viewport and catalog adoption remain separate work.

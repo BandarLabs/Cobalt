@@ -45,6 +45,7 @@ pub use kobo_policy::{Capability, Declared, Grant, Grants, PowerPolicy};
 
 pub use kobo_policy::clock;
 pub mod audio;
+pub mod board;
 mod builder;
 pub mod credentials;
 pub mod entropy;
