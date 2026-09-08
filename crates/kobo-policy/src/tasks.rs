@@ -128,8 +128,9 @@ pub type Poster = dyn Fn(
 ///
 /// Secret files alone are not authority: without this second decision an
 /// application could name a real key and an attacker-controlled destination.
-pub type CredentialAuthorizer =
-    dyn Fn(&Credential, &str, CredentialUse, Option<&str>, Option<&str>) -> bool + Send + Sync;
+pub type CredentialAuthorizer = dyn Fn(&Credential, &str, CredentialUse, Option<&str>, Option<&str>, Option<&str>) -> bool
+    + Send
+    + Sync;
 
 /// Headers an application may not set, because the runtime decides them.
 ///
@@ -178,14 +179,27 @@ fn resolved_credential(
     let Some(wanted) = wanted else {
         return Ok(None);
     };
-    if credentials.is_none_or(|allows| !allows(wanted, url, usage, body, content_type)) {
+    let bound = bound_secret(secrets, &wanted.secret)?;
+    let server = bound.as_ref().map(|record| record.server.as_str());
+    if let Some(server) = server {
+        let app = secrets
+            .and_then(|store| store.app.as_deref())
+            .ok_or(TaskError::Denied)?;
+        if !crate::credentials::servers::allowed(app, wanted, server, url, usage) {
+            return Err(TaskError::Denied);
+        }
+    }
+    if credentials.is_none_or(|allows| !allows(wanted, url, usage, body, content_type, server)) {
         return Err(TaskError::Denied);
     }
     // Not `Denied`. The application asked for a key it is allowed to ask for,
     // by the name the runtime publishes, and the check above already said so.
     // What is missing is the key itself, which is the reader owner's to
     // install.
-    let Some(value) = scoped_secret(secrets, &wanted.secret) else {
+    let Some(value) = bound
+        .map(|record| record.value)
+        .or_else(|| scoped_secret(secrets, &wanted.secret))
+    else {
         return Err(TaskError::NoCredential);
     };
     Ok(Some((
@@ -212,7 +226,7 @@ fn credential_is_authorized(
     let Some(wanted) = wanted else {
         return Err(TaskError::Denied);
     };
-    if credentials.is_some_and(|allows| allows(wanted, url, usage, body, content_type)) {
+    if credentials.is_some_and(|allows| allows(wanted, url, usage, body, content_type, None)) {
         Ok(())
     } else {
         Err(TaskError::Denied)
@@ -774,6 +788,32 @@ struct Backends<'a> {
     network_failure: Option<TaskError>,
 }
 
+fn bound_secret(
+    store: Option<&SecretStore>,
+    name: &str,
+) -> Result<Option<crate::credentials::servers::Record>, TaskError> {
+    let Some(store) = store else {
+        return Ok(None);
+    };
+    let Some(app) = store.app.as_deref() else {
+        return Ok(None);
+    };
+    if !crate::credentials::servers::may_set(app, name) {
+        return Ok(None);
+    }
+    let path =
+        crate::credentials::servers::path(&store.root, app, name).ok_or(TaskError::Denied)?;
+    match std::fs::symlink_metadata(&path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(_) => return Err(TaskError::Denied),
+        Ok(_) => {}
+    }
+    let bytes = read_secret_value(&store.root, &path, false).ok_or(TaskError::Denied)?;
+    crate::credentials::servers::decode(&bytes)
+        .map(Some)
+        .ok_or(TaskError::Denied)
+}
+
 /// Reads a named secret.
 ///
 /// The name is treated as one path component and nothing else: no separators,
@@ -1225,7 +1265,7 @@ mod tests {
                 panic!("fault reached real transport")
             }))
             .with_line_streams(Arc::new(LineStreams::default()))
-            .with_credential_policy(Arc::new(|_, _, _, _, _| true))
+            .with_credential_policy(Arc::new(|_, _, _, _, _, _| true))
     }
 
     #[test]
@@ -1294,7 +1334,7 @@ mod tests {
             collect(&mut runner, 1)[0].outcome,
             TaskOutcome::Failed(TaskError::Denied)
         );
-        runner = runner.with_credential_policy(Arc::new(|_, _, _, _, _| false));
+        runner = runner.with_credential_policy(Arc::new(|_, _, _, _, _, _| false));
         runner
             .submit_with_fault(TaskId(2), fault_fetch(), Some(TaskError::NoCredential))
             .unwrap();
@@ -1302,7 +1342,7 @@ mod tests {
             collect(&mut runner, 1)[0].outcome,
             TaskOutcome::Failed(TaskError::Denied)
         );
-        runner = runner.with_credential_policy(Arc::new(|_, _, _, _, _| true));
+        runner = runner.with_credential_policy(Arc::new(|_, _, _, _, _, _| true));
         for (id, fault) in [
             (3, TaskError::NoCredential),
             (4, TaskError::Offline),
@@ -1799,7 +1839,7 @@ mod tests {
             .with_capabilities([Capability::Network])
             .with_secrets(secrets)
             .with_line_streams(streams)
-            .with_credential_policy(Arc::new(|_, _, _, _, _| true));
+            .with_credential_policy(Arc::new(|_, _, _, _, _, _| true));
         runner
             .submit(
                 TaskId(1),
@@ -1889,7 +1929,7 @@ mod tests {
         let mut runner = TaskRunner::simulated(temp_root("controls-root"))
             .with_capabilities([Capability::Network])
             .with_secrets(directory)
-            .with_credential_policy(Arc::new(|credential, url, usage, body, content_type| {
+            .with_credential_policy(Arc::new(|credential, url, usage, body, content_type, _| {
                 credential.secret == "openai"
                     && url == "https://example.invalid/seek"
                     && usage == CredentialUse::Post
@@ -2011,7 +2051,7 @@ mod tests {
             .with_capabilities([Capability::Network])
             .with_secrets(secret_dir("stream-owner-race"))
             .with_line_streams(Arc::clone(&streams))
-            .with_credential_policy(Arc::new(|_, _, _, _, _| true));
+            .with_credential_policy(Arc::new(|_, _, _, _, _, _| true));
 
         runner.submit(TaskId(1), work()).expect("submit first open");
         accepted
@@ -2157,6 +2197,74 @@ mod tests {
     }
 
     #[test]
+    fn bound_accounts_fail_closed_without_legacy_fallback() {
+        let root = temp_root("bound-account-resolution");
+        std::fs::write(root.join("komga"), "legacy:must-not-leak").unwrap();
+        crate::credentials::servers::install(
+            &root,
+            "panels",
+            "komga",
+            "https://chosen.example/books",
+            "reader:  exact  ",
+        )
+        .unwrap();
+        let store = SecretStore {
+            root: root.clone(),
+            app: Some("panels".into()),
+        };
+        let allow: &super::CredentialAuthorizer = &|_, _, _, _, _, _| true;
+        let credential = Credential::basic("komga");
+        let resolve = |url| {
+            super::resolved_credential(
+                Some(&credential),
+                url,
+                CredentialUse::Fetch,
+                None,
+                None,
+                Some(allow),
+                Some(&store),
+            )
+        };
+        assert_eq!(
+            resolve("https://chosen.example/books/opds").unwrap(),
+            Some((
+                "Authorization".into(),
+                format!("Basic {}", super::base64(b"reader:  exact  "))
+            ))
+        );
+        for url in [
+            "https://elsewhere.example/books",
+            "https://chosen.example/other",
+            "https://komga.local/opds/v1.2/catalog",
+        ] {
+            assert_eq!(resolve(url), Err(TaskError::Denied), "{url}");
+        }
+        let deny: &super::CredentialAuthorizer = &|_, _, _, _, _, _| false;
+        assert_eq!(
+            super::resolved_credential(
+                Some(&credential),
+                "https://chosen.example/books",
+                CredentialUse::Fetch,
+                None,
+                None,
+                Some(deny),
+                Some(&store)
+            ),
+            Err(TaskError::Denied)
+        );
+        std::fs::write(root.join("apps/panels/servers/komga"), "corrupt").unwrap();
+        assert_eq!(
+            resolve("https://komga.local/opds/v1.2/catalog"),
+            Err(TaskError::Denied)
+        );
+        assert_eq!(
+            resolve("https://chosen.example/books"),
+            Err(TaskError::Denied)
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn app_scoped_credentials_precede_global_owner_credentials() {
         let root = temp_root("app-secret-precedence");
         std::fs::write(root.join("openai"), "owner-global").expect("global secret");
@@ -2239,7 +2347,7 @@ mod tests {
         let mut runner = TaskRunner::simulated(temp_root("nosecret"))
             .with_capabilities([Capability::Network])
             .with_secrets(temp_root("nosecret-empty"))
-            .with_credential_policy(Arc::new(|_, _, _, _, _| true))
+            .with_credential_policy(Arc::new(|_, _, _, _, _, _| true))
             .with_post(Arc::new(move |_, _, _, _, _, _, _, _| {
                 observed.store(true, Ordering::SeqCst);
                 Ok(Vec::new())
@@ -2276,7 +2384,7 @@ mod tests {
         let mut runner = TaskRunner::simulated(temp_root("resolved-root"))
             .with_capabilities([Capability::Network])
             .with_secrets(directory)
-            .with_credential_policy(Arc::new(|credential, url, _, _, _| {
+            .with_credential_policy(Arc::new(|credential, url, _, _, _, _| {
                 credential.secret == "openai" && url == "https://example.invalid/"
             }))
             .with_post(Arc::new(|_, _, _, credential, _, _, _, _| {
@@ -2313,7 +2421,7 @@ mod tests {
         let mut runner = TaskRunner::simulated(temp_root("removed-root"))
             .with_capabilities([Capability::Network])
             .with_secrets(&directory)
-            .with_credential_policy(Arc::new(|_, _, _, _, _| true))
+            .with_credential_policy(Arc::new(|_, _, _, _, _, _| true))
             .with_fetch(Arc::new(move |_, _, _, _, _, _, _| {
                 observed.fetch_add(1, Ordering::SeqCst);
                 Ok(Vec::new())
@@ -2347,7 +2455,7 @@ mod tests {
         let mut runner = TaskRunner::simulated(temp_root("wrong-destination-root"))
             .with_capabilities([Capability::Network])
             .with_secrets(directory)
-            .with_credential_policy(Arc::new(|credential, url, _, _, _| {
+            .with_credential_policy(Arc::new(|credential, url, _, _, _, _| {
                 credential.secret == "openai" && url == "https://api.openai.com/v1/chat/completions"
             }))
             .with_post(Arc::new(move |_, _, _, _, _, _, _, _| {
@@ -2380,7 +2488,7 @@ mod tests {
         let mut runner = TaskRunner::simulated(temp_root("read-only-method-root"))
             .with_capabilities([Capability::Network])
             .with_secrets(directory)
-            .with_credential_policy(Arc::new(|credential, url, usage, _, _| {
+            .with_credential_policy(Arc::new(|credential, url, usage, _, _, _| {
                 credential.secret == "openai"
                     && url == "https://example.invalid/items"
                     && usage == CredentialUse::Fetch

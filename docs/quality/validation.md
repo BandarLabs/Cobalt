@@ -345,3 +345,25 @@ The native app host now handles credential saves through the same private, durab
 App-entered credentials also retain exact whitespace when the task runner reads them. Legacy owner-managed credential files keep their existing whitespace/newline trimming. Rust 1.85.1: **127 policy and 72 simulator tests pass**, strict policy/simulator/runtime Clippy passes, and the ARM runtime check passes with its existing platform warnings. The regression checks acknowledged bytes, refused app identity, unwritable storage and preserved owner-file contents. This is host testing and cross-compilation, not physical reader execution.
 
 Panels' new configurable-server flow remains uncommitted catalog work: its attempted account save was correctly refused by the current allowlist, and its network policy still admits only the historical fixed root. Binding a saved credential to the selected server is required before that flow is complete. No general destination allowance was added.
+
+
+### Server-bound account storage (2026-09-08)
+
+Protocol 14 adds a server-account request. The runtime writes the selected HTTPS
+server and exact account value in one private, durably acknowledged record.
+Panels/Komga is the only enabled provider. Requests must remain within that
+origin, port and base path, use the approved Basic header and fetch method, and
+pass host authorization. Corrupt records fail closed without falling back to a
+legacy account. Authenticated redirects remain refused by the transport.
+
+The SDK collects separate username and password fields, refuses oversized combined
+values before sending them, waits for the matching save acknowledgement, and
+keeps the old computer instructions hidden for scoped accounts until a supported
+companion flow exists. Native and simulated hosts use the same installer.
+
+Validation: 130 policy, 94 protocol, 149 SDK and 72 simulator tests passed (445
+total; two existing SDK doctests ignored). Strict Clippy passed for these crates
+and kobod with all targets/features. ARMv7 musl kobod check passed with the 118
+existing platform warnings. No hardware commands were run. Logs:
+`/tmp/cobalt-bound-account-tests.log`, `/tmp/cobalt-bound-account-clippy.log`,
+`/tmp/cobalt-bound-account-arm.log`.

@@ -63,6 +63,8 @@ pub const MAGIC: [u8; 4] = *b"KOBO";
 /// always did, byte for byte, and a colour one uses tags of its own that an
 /// older runtime refuses rather than misreads.
 pub const VERSION: u8 = 14;
+/// Version introducing server-bound account records.
+pub const SERVER_ACCOUNT_VERSION: u8 = 14;
 /// Version with persistent selected grid cells, retained for installed apps.
 pub const SELECTED_GRID_VERSION: u8 = 13;
 mod board;
@@ -1239,6 +1241,13 @@ pub enum DeviceRequest {
     /// Applications may submit a value entered by the owner, but cannot read
     /// the stored value back.
     SetSecret { name: String, value: SecretValue },
+    /// Save account details together with their owner-selected HTTPS server.
+    /// The runtime keeps the destination and value in one atomic record.
+    SetServerSecret {
+        name: String,
+        server: String,
+        value: SecretValue,
+    },
     /// List documents already on the card and in the stock reader's library.
     ///
     /// The application never names a path. What comes back is an opaque id
@@ -2819,6 +2828,25 @@ fn encode_device_request(
         DeviceRequest::SetSecret { .. } => {
             return Err(ProtocolError::InvalidValue("application secret"));
         }
+        DeviceRequest::SetServerSecret {
+            name,
+            server,
+            value,
+        } if version >= SERVER_ACCOUNT_VERSION
+            && valid_app_id(name)
+            && valid_secret_server(server)
+            && !value.as_str().is_empty()
+            && value.as_str().len() <= MAX_APP_SECRET_BYTES
+            && !value.as_str().chars().any(char::is_control) =>
+        {
+            output.push(50);
+            push_string(output, name)?;
+            push_string(output, server)?;
+            push_string(output, value.as_str())?;
+        }
+        DeviceRequest::SetServerSecret { .. } => {
+            return Err(ProtocolError::InvalidValue("server account"))
+        }
         DeviceRequest::ListLibrary => output.push(48),
         DeviceRequest::ReadLibrary { id } if valid_library_id(id) => {
             output.push(49);
@@ -2835,6 +2863,16 @@ fn encode_device_request(
 ///
 /// CLI installation remains available for larger machine-generated material.
 pub const MAX_APP_SECRET_BYTES: usize = 512;
+
+/// A bounded server address without embedded account details or query tokens.
+#[must_use]
+pub fn valid_secret_server(server: &str) -> bool {
+    server.starts_with("https://")
+        && server.len() <= 512
+        && !server.contains(['@', '?', '#', '\\'])
+        && !server.chars().any(char::is_whitespace)
+        && !server.chars().any(char::is_control)
+}
 
 /// Sixty-four lowercase hex characters: the only shape a SHA-256 hex digest
 /// has. Checked at both ends of the wire, so a digest that cannot possibly
@@ -3146,6 +3184,24 @@ fn decode_device_request(
             }
             Ok(DeviceRequest::SetSecret {
                 name,
+                value: SecretValue::new(value),
+            })
+        }
+        50 if version >= SERVER_ACCOUNT_VERSION => {
+            let name = reader.string()?;
+            let server = reader.string()?;
+            let value = reader.string()?;
+            if !valid_app_id(&name)
+                || !valid_secret_server(&server)
+                || value.is_empty()
+                || value.len() > MAX_APP_SECRET_BYTES
+                || value.chars().any(char::is_control)
+            {
+                return Err(ProtocolError::InvalidValue("server account"));
+            }
+            Ok(DeviceRequest::SetServerSecret {
+                name,
+                server,
                 value: SecretValue::new(value),
             })
         }
@@ -7554,6 +7610,48 @@ mod tests {
         };
         let bytes = encode(&read).expect("encode");
         assert_eq!(decode(&bytes).expect("decode"), read);
+    }
+
+    #[test]
+    fn server_accounts_roundtrip_only_with_scope_aware_protocol() {
+        let frame = Frame {
+            version: SERVER_ACCOUNT_VERSION,
+            request_id: 19,
+            message: Message::DeviceRequest(DeviceRequest::SetServerSecret {
+                name: "komga".into(),
+                server: "https://books.example/library".into(),
+                value: SecretValue::new("reader:private-value"),
+            }),
+        };
+        let bytes = encode(&frame).unwrap();
+        assert_eq!(decode(&bytes).unwrap(), frame);
+        assert!(!format!("{:?}", frame.message).contains("private-value"));
+        for version in 11..SERVER_ACCOUNT_VERSION {
+            assert!(encode(&Frame {
+                version,
+                ..frame.clone()
+            })
+            .is_err());
+            let mut legacy = bytes.clone();
+            legacy[4] = version;
+            assert!(decode(&legacy).is_err());
+        }
+        for server in [
+            "http://books.example",
+            "https://reader@books.example",
+            "https://books.example?key=x",
+            "https://books.example/#a",
+        ] {
+            let invalid = Frame {
+                message: Message::DeviceRequest(DeviceRequest::SetServerSecret {
+                    name: "komga".into(),
+                    server: server.into(),
+                    value: SecretValue::new("reader:private-value"),
+                }),
+                ..frame.clone()
+            };
+            assert!(encode(&invalid).is_err(), "{server}");
+        }
     }
 
     #[test]

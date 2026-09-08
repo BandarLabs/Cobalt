@@ -9,7 +9,10 @@ use kobo_net::{has_origin, parse};
 use kobo_protocol::{Credential, CredentialUse, SecretHeader};
 use std::fs;
 use std::io::Write;
-use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
+
+#[path = "credential_servers.rs"]
+pub mod servers;
 use std::path::{Path, PathBuf};
 
 /// The directory below the owner secret root reserved for app-entered values.
@@ -36,15 +39,26 @@ pub fn handle_install(
     request: &kobo_protocol::DeviceRequest,
 ) -> Option<kobo_protocol::DeviceResult> {
     use kobo_protocol::{DenyReason, DeviceRequest, DeviceResult};
-    let DeviceRequest::SetSecret { name, value } = request else {
-        return None;
+    let result = match request {
+        DeviceRequest::SetSecret { name, value } => {
+            if !may_set(app, name) {
+                return Some(DeviceResult::Denied(DenyReason::NotDeclared));
+            }
+            install_app_secret(root, app, name, value.as_str())
+        }
+        DeviceRequest::SetServerSecret {
+            name,
+            server,
+            value,
+        } => {
+            if !servers::may_set(app, name) {
+                return Some(DeviceResult::Denied(DenyReason::NotDeclared));
+            }
+            servers::install(root, app, name, server, value.as_str())
+        }
+        _ => return None,
     };
-    Some(if may_set(app, name) {
-        install_app_secret(root, app, name, value.as_str())
-            .map_or_else(DeviceResult::Failed, |()| DeviceResult::Done)
-    } else {
-        DeviceResult::Denied(DenyReason::NotDeclared)
-    })
+    Some(result.map_or_else(DeviceResult::Failed, |()| DeviceResult::Done))
 }
 
 /// Installs an app-entered credential in the verified caller's namespace.
@@ -77,6 +91,14 @@ pub fn install_app_secret(
     let directory = apps.join(app);
     private_directory(&directory)?;
 
+    write_private_record(&directory, name, value.as_bytes())
+}
+
+fn write_private_record(
+    directory: &Path,
+    name: &str,
+    bytes: &[u8],
+) -> Result<(), kobo_protocol::DeviceError> {
     let temporary = directory.join(format!(".{name}.new"));
     let destination = directory.join(name);
     if temporary.exists() {
@@ -95,10 +117,10 @@ pub fn install_app_secret(
             .mode(0o600)
             .open(&temporary)?;
         file.set_permissions(fs::Permissions::from_mode(0o600))?;
-        file.write_all(value.as_bytes())?;
+        file.write_all(bytes)?;
         file.sync_all()?;
         fs::rename(&temporary, &destination)?;
-        fs::File::open(&directory)?.sync_all()
+        fs::File::open(directory)?.sync_all()
     })();
     if result.is_err() {
         let _ignored = fs::remove_file(&temporary);
@@ -110,12 +132,27 @@ fn private_directory(path: &Path) -> Result<(), kobo_protocol::DeviceError> {
     match fs::symlink_metadata(path) {
         Ok(metadata) if metadata.file_type().is_dir() => {}
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            fs::create_dir(path).map_err(|_| kobo_protocol::DeviceError::Backend)?;
+            fs::DirBuilder::new()
+                .mode(0o700)
+                .create(path)
+                .map_err(|_| kobo_protocol::DeviceError::Backend)?;
         }
         Ok(_) | Err(_) => return Err(kobo_protocol::DeviceError::Backend),
     }
     fs::set_permissions(path, fs::Permissions::from_mode(0o700))
-        .map_err(|_| kobo_protocol::DeviceError::Backend)
+        .map_err(|_| kobo_protocol::DeviceError::Backend)?;
+    fs::File::open(path)
+        .and_then(|directory| directory.sync_all())
+        .map_err(|_| kobo_protocol::DeviceError::Backend)?;
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        fs::File::open(parent)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|_| kobo_protocol::DeviceError::Backend)?;
+    }
+    Ok(())
 }
 
 /// Whether a credential name is exactly one portable path component.
@@ -162,6 +199,24 @@ pub fn may_set(app: &str, name: &str) -> bool {
 #[must_use]
 pub fn allowed(app: &str, credential: &Credential, url: &str, usage: CredentialUse) -> bool {
     allowed_request(app, credential, url, usage, None, None)
+}
+
+/// Apply the reviewed provider policy to an atomically loaded server binding,
+/// or retain the exact existing rules for legacy owner-managed credentials.
+#[must_use]
+pub fn allowed_request_with_server(
+    app: &str,
+    credential: &Credential,
+    url: &str,
+    usage: CredentialUse,
+    body: Option<&str>,
+    content_type: Option<&str>,
+    server: Option<&str>,
+) -> bool {
+    server.map_or_else(
+        || allowed_request(app, credential, url, usage, body, content_type),
+        |server| servers::allowed(app, credential, server, url, usage),
+    )
 }
 
 /// The complete credential decision, including the body shape of writes.

@@ -329,6 +329,7 @@ impl DeviceServices {
             }
             // Only the host's durable credential handler can acknowledge SetSecret.
             DeviceRequest::SetSecret { .. }
+            | DeviceRequest::SetServerSecret { .. }
             | DeviceRequest::ReadAppLink
             | DeviceRequest::BeginAppLink
             | DeviceRequest::PollAppLink
@@ -723,7 +724,8 @@ pub fn request_capability(request: &DeviceRequest) -> Option<Capability> {
         | DeviceRequest::SetAutoUpdate { .. }
         | DeviceRequest::ReadUpdateChannel
         | DeviceRequest::SetUpdateChannel { .. }
-        | DeviceRequest::SetSecret { .. } => return None,
+        | DeviceRequest::SetSecret { .. }
+        | DeviceRequest::SetServerSecret { .. } => return None,
         DeviceRequest::ListLibrary | DeviceRequest::ReadLibrary { .. } => Capability::Library,
     })
 }

@@ -775,14 +775,15 @@ fn serve_application(
             .with_line_streams(std::sync::Arc::new(kobo_net::LineStreams::default()))
             .with_app_secrets(&secrets, name)
             .with_credential_policy(std::sync::Arc::new(
-                move |credential, url, usage, body, content_type| {
-                    kobo_policy::credentials::allowed_request(
+                move |credential, url, usage, body, content_type, server| {
+                    kobo_policy::credentials::allowed_request_with_server(
                         &credential_app,
                         credential,
                         url,
                         usage,
                         body,
                         content_type,
+                        server,
                     )
                 },
             ))
