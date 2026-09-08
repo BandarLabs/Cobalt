@@ -16,7 +16,7 @@ A checked task requires implementation plus recorded validation. Physical measur
 
 ## Status
 
-494 tracked tasks: 62 completed, 1 deferred by the owner, 431 open. Implementation in progress. Evidence is recorded per task in `tasks.json` and in [the validation log](validation.md).
+494 tracked tasks: 63 completed, 1 deferred by the owner, 430 open. Implementation in progress. Evidence is recorded per task in `tasks.json` and in [the validation log](validation.md).
 
 ## PR 1 · Simulator fidelity (SIM-1–10)
 
@@ -40,7 +40,7 @@ A checked task requires implementation plus recorded validation. Physical measur
 - [x] **SIM-18** Add deterministic virtual clock controls.
 - [ ] **SIM-19** Replay raw touch down, move, up, hold and page-button events through the HAL.
 - [ ] **SIM-20** Model panel submission, busy state, completion and failure.
-- [ ] **SIM-21** Expose battery, charging, frontlight, cover and orientation controls.
+- [x] **SIM-21** Expose battery, charging, frontlight, cover and orientation controls.
 - [ ] **SIM-22** Inject app kill, lifecycle change and transfer interruption.
 - [x] **SIM-23** Keep ideal and approximate panel output distinct.
 - [ ] **SIM-24** Add color output and label uncalibrated appearance clearly.

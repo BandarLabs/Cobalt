@@ -192,8 +192,10 @@
     "pr": 1,
     "group": "Simulator fidelity (SIM-1\u201310)",
     "task": "Expose battery, charging, frontlight, cover and orientation controls",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Browser and driver controls set battery, charging, frontlight, cover and display orientation. App service reads match observations; foreground cover edges use the real SDK message. 56 simulator tests pass, full extra-large comic route passes, browser actions verified against service state and narrow viewport has no horizontal overflow. Illumination and app reflow limits are explicit."
+    ]
   },
   {
     "id": "SIM-22",

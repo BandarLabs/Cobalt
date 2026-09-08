@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kobo Clara BW simulator</title>
+<style>
+:root { color-scheme:dark; --workspace:#151515; --panel:#222; --raised:#2b2b2b; --border:#5c5c5c; --text:#f7f7f7; --muted:#c6c6c6; --paper:#f8f8f8; --focus:#fff; --accent:#9fd4ff; --warning:#ffd18b; --error:#ffb4ab; --space-1:8px; --space-2:16px; --space-3:24px; }
+* { box-sizing:border-box; }
+body { margin:0; min-height:100vh; background:var(--workspace); color:var(--text); font:16px/1.5 system-ui,sans-serif; }
+button,select,canvas { font:inherit; }
+button,select { min-height:44px; border:1px solid var(--border); border-radius:4px; }
+button { padding:0 14px; background:var(--raised); color:var(--text); font-weight:700; cursor:pointer; }
+button:hover { border-color:var(--text); }
+button:focus-visible,select:focus-visible,canvas:focus-visible,input:focus-visible { outline:3px solid var(--focus); outline-offset:3px; }
+.toolbar { min-height:68px; display:flex; align-items:center; gap:var(--space-2); padding:12px max(var(--space-2), calc((100vw - 1480px)/2)); border-bottom:1px solid var(--border); background:var(--panel); }
+.toolbar h1 { margin:0; font-size:1.05rem; letter-spacing:.01em; }
+.toolbar p { margin:0 auto 0 0; color:var(--muted); font-size:.875rem; }
+.badge { padding:4px 9px; border:1px solid var(--border); border-radius:999px; color:var(--accent); font:700 .75rem/1.4 ui-monospace,monospace; }
+.primary { border-color:var(--text); background:var(--text); color:var(--workspace); }
+main { max-width:1480px; margin:auto; padding:clamp(16px,3vw,40px); }
+.workspace { display:grid; grid-template-columns:minmax(0,1fr) 320px; gap:var(--space-3); align-items:start; }
+.device { margin:0; overflow:auto; padding:16px; border:1px solid var(--border); background:var(--panel); }
+.screen { position:relative; width:min(100%,1072px); margin:auto; overflow:hidden; background:#000; }
+.device canvas { display:block; width:100%; height:auto; background:var(--paper); image-rendering:pixelated; touch-action:manipulation; }
+.device canvas.clean-flash { animation:clean-flash 460ms steps(1,end); }
+@keyframes clean-flash { 0%,100% { filter:none; } 22% { filter:brightness(0); } 52% { filter:brightness(4); } }
+figcaption { margin-top:12px; color:var(--muted); font-size:.875rem; }
+.inspector { display:grid; gap:var(--space-2); }
+.card { padding:16px; border:1px solid var(--border); background:var(--panel); }
+.card h2 { margin:0 0 10px; font-size:.95rem; }
+.status { min-height:1.5em; margin:0; color:var(--muted); }
+.facts { display:grid; grid-template-columns:1fr auto; gap:6px 12px; margin:0; font-size:.8125rem; }
+.facts dt { color:var(--muted); }
+.facts dd { margin:0; text-align:right; font-family:ui-monospace,monospace; }
+.control { display:grid; gap:6px; margin-top:12px; color:var(--muted); font-size:.875rem; }
+.control input { width:100%; min-height:44px; padding:0 10px; background:var(--raised); color:var(--text); border:1px solid var(--border); }
+form button { margin-top:10px; }
+.control select { width:100%; padding:0 10px; background:var(--raised); color:var(--text); }
+.check { display:flex; align-items:center; gap:9px; min-height:44px; color:var(--muted); font-size:.875rem; }
+.check input { width:18px; height:18px; }
+.buttons { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:10px; }
+.diagnostics { max-height:30vh; overflow:auto; margin:8px 0 0; padding-left:20px; color:var(--muted); font-size:.8125rem; }
+.diagnostics li + li { margin-top:8px; }
+.diagnostics .error { color:var(--error); }
+.diagnostics .warning { color:var(--warning); }
+.note { margin:10px 0 0; color:var(--muted); font-size:.75rem; }
+@media (max-width:900px) { .toolbar { align-items:flex-start; flex-wrap:wrap; } .toolbar p { order:4; width:100%; } .workspace { grid-template-columns:1fr; } .inspector { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+@media (max-width:620px) { .inspector { grid-template-columns:1fr; } .device { padding:8px; } .badge { display:none; } }
+@media (prefers-reduced-motion:reduce) { .device canvas.clean-flash { animation:none; } }
+@media (prefers-contrast:more) { :root { --workspace:#000; --panel:#000; --raised:#000; --border:#fff; --text:#fff; --muted:#fff; --accent:#fff; --warning:#fff; --error:#fff; } }
+</style>
+</head>
+<body>
+<header class="toolbar">
+  <h1>Kobo simulator</h1>
+  <span class="badge" id="profile-badge">clara-bw-391</span>
+  <p>Shared renderer, touch transform and refresh planner</p>
+  <button class="primary" type="button" id="refresh">Refresh frame</button>
+</header>
+<main>
+<div class="workspace">
+  <figure class="device">
+    <div class="screen"><canvas id="display" width="1072" height="1448" tabindex="0" role="application" aria-label="Kobo grayscale display" aria-describedby="instructions"></canvas></div>
+    <figcaption id="instructions">Kobo panel preview. Click or tap to exercise the selected profile's configured controller transform and SDK hit testing.</figcaption>
+  </figure>
+  <aside class="inspector" aria-label="Simulator inspector">
+    <section class="card">
+      <h2>Session</h2>
+      <p class="status" id="status" aria-live="polite">Loading frame.</p>
+      <label class="control" for="scenario">Deterministic scenario
+        <select id="scenario">
+          <option value="normal">Normal</option>
+          <option value="offline">Offline</option>
+          <option value="low-battery">Low battery</option>
+          <option value="permission-denied">Permission denied</option>
+          <option value="missing-secret">Missing secret</option>
+          <option value="network-timeout">Network timeout</option>
+          <option value="storage-full">Storage full</option>
+          <option value="cache-pressure">Image cache pressure</option>
+        </select>
+      </label>
+      <div class="buttons">
+        <button type="button" data-lifecycle="background">Background</button>
+        <button type="button" data-lifecycle="foreground">Foreground</button>
+      </div>
+    </section>
+    <section class="card" id="device-controls" hidden>
+      <h2>Device state</h2>
+      <form id="battery-form">
+        <label class="control">Battery (%) <input id="battery-percent" type="number" min="0" max="100" required value="72"></label>
+        <label class="check"><input id="charging" type="checkbox"> Charging</label>
+        <button type="submit">Set battery</button>
+      </form>
+      <form id="light-form">
+        <label class="control">Front light (%) <input id="light-percent" type="number" min="0" max="100" required value="20"></label>
+        <button type="submit">Set light</button>
+      </form>
+      <label class="control">Cover <select id="cover"><option value="open">Open</option><option value="closed">Closed</option></select></label>
+      <label class="control">Display orientation <select id="device-orientation"><option value="portrait">Portrait</option><option value="landscape">Landscape</option></select></label>
+      <p class="note">Light values reach app services; the preview does not model illumination. Orientation rotates the existing screen. Use the app's rotation control to test its reflow.</p>
+      <form id="clock-form" hidden>
+        <label class="control">Advance time (seconds) <input id="clock-seconds" type="number" min="0" max="604800" required value="60"></label>
+        <button type="submit">Advance clock</button>
+      </form>
+    </section>
+    <section class="card">
+      <h2>Panel transition</h2>
+      <dl class="facts">
+        <dt>Waveform</dt><dd id="waveform">—</dd>
+        <dt>Update</dt><dd id="update-kind">—</dd>
+        <dt>Changed region</dt><dd id="region">—</dd>
+        <dt>Refresh count</dt><dd id="refresh-count">0</dd>
+        <dt>Repainted since clean</dt><dd id="partial-count">0 px</dd>
+      </dl>
+      <label class="check"><input type="checkbox" id="ideal"> Show ideal pixels</label>
+      <label class="check"><input type="checkbox" id="refresh-region" checked> Outline refresh region</label>
+      <p class="note">Ideal pixels use the shared renderer. Residue and panel timing remain uncalibrated.</p>
+    </section>
+    <section class="card">
+      <h2>Device profile</h2>
+      <dl class="facts">
+        <dt>Panel</dt><dd id="geometry">1072 × 1448</dd>
+        <dt>Density</dt><dd id="density">300 PPI</dd>
+        <dt>Framebuffer rotation</dt><dd id="rotation">3</dd>
+        <dt>Lifecycle</dt><dd id="lifecycle">foreground</dd>
+        <dt>Display touch</dt><dd id="display-touch">—</dd>
+        <dt>Raw touch</dt><dd id="raw-touch">—</dd>
+      </dl>
+    </section>
+    <section class="card">
+      <h2>Layout diagnostics</h2>
+      <label class="check"><input type="checkbox" id="overlay" checked> Show diagnostic outlines</label>
+      <ul class="diagnostics" id="diagnostics"><li>Checking screen…</li></ul>
+    </section>
+  </aside>
+</div>
+</main>
+<script>
+const canvas=document.getElementById("display"), ctx=canvas.getContext("2d",{alpha:false});
+const status=document.getElementById("status"),list=document.getElementById("diagnostics"),overlay=document.getElementById("overlay");
+const ideal=document.getElementById("ideal"),refreshRegion=document.getElementById("refresh-region"),scenario=document.getElementById("scenario");
+let point={x:536,y:177},issues=[],profile={width:1072,height:1448},transition=null,lastFlash=0;
+function checked(response){if(!response.ok)throw Error("Simulator request failed ("+response.status+")");return response;}
+function showDiagnostics(){list.replaceChildren();if(!issues.length){const item=document.createElement("li");item.textContent="No layout issues.";list.append(item);return;}for(const issue of issues){const item=document.createElement("li");item.className=issue.severity;item.textContent=issue.message;list.append(item);}}
+function outline(rect,color,width){if(!rect)return;ctx.save();ctx.lineWidth=width;ctx.strokeStyle=color;ctx.strokeRect(rect.x+width/2,rect.y+width/2,Math.max(0,rect.width-width),Math.max(0,rect.height-width));ctx.restore();}
+function drawOverlays(){if(refreshRegion.checked&&transition)for(const update of transition.regions)outline(update.region,"#006fbb",6);if(!overlay.checked)return;for(const issue of issues){outline(issue.rect,issue.severity==="error"?"#d00000":"#b56a00",5);}}
+function showDevice(sim){document.getElementById("device-controls").hidden=!sim.hardware;if(!sim.hardware)return;const h=sim.hardware;function value(id,v){const input=document.getElementById(id);if(document.activeElement!==input)input.value=v;}value("battery-percent",h.batteryPercent);value("light-percent",h.frontlightPercent);value("cover",h.coverClosed?"closed":"open");value("device-orientation",h.orientation);if(document.activeElement!==document.getElementById("charging"))document.getElementById("charging").checked=h.charging;document.getElementById("clock-form").hidden=sim.clock?.mode!=="manual";}
+function showSimulation(sim){showDevice(sim);profile=sim.profile;transition=sim.transition;scenario.value=sim.scenario;document.getElementById("profile-badge").textContent=profile.id;document.getElementById("geometry").textContent=profile.width+" × "+profile.height;document.getElementById("density").textContent=profile.pixelsPerInch+" PPI";document.getElementById("rotation").textContent=profile.rotation;document.getElementById("lifecycle").textContent=sim.lifecycle;const touch=sim.touch;document.getElementById("display-touch").textContent=touch?touch.display.x+", "+touch.display.y:"—";document.getElementById("raw-touch").textContent=touch?touch.raw.x+", "+touch.raw.y:"—";document.getElementById("waveform").textContent=transition?transition.waveform:"—";document.getElementById("update-kind").textContent=transition?(transition.full?"full / cleaning":"partial"):"unchanged";document.getElementById("region").textContent=transition?(transition.regions.length===1?transition.region.width+"×"+transition.region.height+" @ "+transition.region.x+","+transition.region.y:transition.regions.length+" regions"):"—";document.getElementById("refresh-count").textContent=sim.refreshCount;document.getElementById("partial-count").textContent=sim.dirtyPixelsSinceClean.toLocaleString()+" px";}
+async function frame(){const path=ideal.checked?"/ideal-capture":"/capture";const response=checked(await fetch(path,{cache:"no-store"}));const buffer=await response.arrayBuffer();if(buffer.byteLength<4)throw Error("Incomplete capture");const length=new DataView(buffer).getUint32(0,true);if(length>131072||4+length>buffer.byteLength)throw Error("Invalid capture metadata");const metadata=JSON.parse(new TextDecoder().decode(new Uint8Array(buffer,4,length)));if(metadata.schema!=="cobalt.simulator-capture"||metadata.version!==1)throw Error("Unsupported capture format");const raw=new Uint8Array(buffer,4+length);const simulation=metadata.simulation;const diagnostics=await fetch("/diagnostics",{cache:"no-store"}).then(checked).then(r=>r.json());issues=diagnostics.issues;showSimulation(simulation);if(raw.length!==profile.width*profile.height)throw Error("Invalid "+profile.id+" frame");if(canvas.width!==profile.width||canvas.height!==profile.height){canvas.width=profile.width;canvas.height=profile.height;}const image=ctx.createImageData(profile.width,profile.height);for(let i=0;i<raw.length;i++){const p=i*4;image.data[p]=image.data[p+1]=image.data[p+2]=raw[i];image.data[p+3]=255;}ctx.putImageData(image,0,0);showDiagnostics();drawOverlays();if(!ideal.checked&&transition&&transition.full&&transition.refresh!==lastFlash){lastFlash=transition.refresh;canvas.classList.remove("clean-flash");void canvas.offsetWidth;canvas.classList.add("clean-flash");}status.textContent=issues.length?"Frame loaded with "+issues.length+" diagnostic"+(issues.length===1?"":"s")+".":"Frame loaded; layout clean.";}
+function touchLocation(event){const rect=canvas.getBoundingClientRect();return{x:Math.floor((event.clientX-rect.left)*profile.width/rect.width),y:Math.floor((event.clientY-rect.top)*profile.height/rect.height)};}
+async function touch(next){point=next;checked(await fetch("/touch",{method:"POST",headers:{"Content-Type":"text/plain"},body:"x="+point.x+"&y="+point.y}));await frame();status.textContent="Touch delivered through the selected profile transform.";}
+async function idle(){const deadline=performance.now()+5000;while(performance.now()<deadline){const response=await fetch("/activity",{cache:"no-store"});if(response.status===404)return;const activity=await checked(response).json();if(!activity.callbackMarkers||activity.idle)return;await new Promise(resolve=>setTimeout(resolve,25));}throw Error("The app is still working. Refresh the frame to check its progress.");}
+async function post(path,body){checked(await fetch(path,{method:"POST",headers:{"Content-Type":"text/plain"},body}));await idle();await frame();}
+canvas.addEventListener("pointerup",event=>{event.preventDefault();touch(touchLocation(event)).catch(error=>status.textContent=error.message);});
+canvas.addEventListener("keydown",event=>{if(event.key==="Enter"||event.key===" "){event.preventDefault();touch(point).catch(error=>status.textContent=error.message);}});
+document.getElementById("refresh").addEventListener("click",()=>frame().catch(error=>status.textContent=error.message));
+for(const control of [overlay,ideal,refreshRegion])control.addEventListener("change",()=>frame().catch(error=>status.textContent=error.message));
+scenario.addEventListener("change",()=>post("/scenario",scenario.value).catch(error=>status.textContent=error.message));
+for(const button of document.querySelectorAll("[data-lifecycle]"))button.addEventListener("click",()=>post("/lifecycle",button.dataset.lifecycle).catch(error=>status.textContent=error.message));
+const failure=error=>{status.textContent=error.message;};
+document.getElementById("battery-form").addEventListener("submit",event=>{event.preventDefault();post("/device","battery "+document.getElementById("battery-percent").value+" "+(document.getElementById("charging").checked?"charging":"unplugged")).catch(failure);});
+document.getElementById("light-form").addEventListener("submit",event=>{event.preventDefault();post("/device","frontlight "+document.getElementById("light-percent").value).catch(failure);});
+for(const [id,command] of [["cover","cover"],["device-orientation","orientation"]])document.getElementById(id).addEventListener("change",event=>post("/device",command+" "+event.target.value).catch(failure));
+document.getElementById("clock-form").addEventListener("submit",event=>{event.preventDefault();post("/clock","advance "+Number(document.getElementById("clock-seconds").value)*1000).catch(failure);});
+frame().catch(error=>status.textContent=error.message);
+</script>
+</body></html>

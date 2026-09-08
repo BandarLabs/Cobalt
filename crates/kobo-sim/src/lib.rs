@@ -17,6 +17,7 @@ use std::thread;
 mod activity;
 mod capture;
 mod clock;
+mod hardware;
 pub use capture::CaptureSource;
 #[path = "../../kobod/src/frame.rs"]
 mod frame;
@@ -833,6 +834,14 @@ impl AppServer {
         )?;
         let reader = stream.try_clone()?;
         let mut initial = AppState::with_apps(Arc::clone(&self.apps));
+        initial.services = DeviceServices::new(
+            declared.clone(),
+            kobo_policy::PowerPolicy::DEFAULT,
+            kobo_policy::Backends::with(configured_backends()?.iter()),
+        );
+        initial.hardware.magnet_present =
+            matches!(std::env::var("KOBO_MAGNET").as_deref(), Ok("1" | "present"));
+        initial.observe_hardware();
         initial.app_name.clone_from(&name);
         initial.capture_source = self.capture_source.clone();
         initial.time = self.time.clone();
@@ -1091,6 +1100,8 @@ struct AppState {
     app_name: String,
     capture_source: CaptureSource,
     time: clock::Time,
+    hardware: kobo_policy::DeviceState,
+    services: DeviceServices,
     clock_snapshot: kobo_policy::clock::Snapshot,
     tasks: Option<Arc<Mutex<TaskRunner>>>,
     secret_directory: PathBuf,
@@ -1135,6 +1146,12 @@ impl AppState {
             app_name: "app".into(),
             capture_source: CaptureSource::default(),
             time,
+            hardware: kobo_policy::DeviceState::default(),
+            services: DeviceServices::new(
+                kobo_policy::Declared::parse([]).expect("no grants"),
+                kobo_policy::PowerPolicy::DEFAULT,
+                kobo_policy::Backends::none(),
+            ),
             clock_snapshot,
             tasks: None,
             secret_directory: std::env::temp_dir().join(SIM_SECRETS),
@@ -1280,8 +1297,32 @@ impl AppState {
         let mut value = kobo_json::parse(&base).expect("simulator JSON");
         if let kobo_json::Value::Object(fields) = &mut value {
             fields.push(("clock".into(), self.time.json(self.clock_snapshot)));
+            fields.push((
+                "hardware".into(),
+                hardware::json(self.effective_hardware(), self.orientation),
+            ));
         }
         value.to_json()
+    }
+
+    fn effective_hardware(&self) -> kobo_policy::DeviceState {
+        kobo_policy::DeviceState {
+            battery_percent: if self.scenario == Scenario::LowBattery {
+                5
+            } else {
+                self.hardware.battery_percent
+            },
+            ..self.hardware
+        }
+    }
+
+    fn observe_hardware(&mut self) {
+        let observed = self.effective_hardware();
+        self.services
+            .observe_battery(observed.battery_percent, observed.charging);
+        self.services
+            .observe_frontlight(observed.frontlight_percent);
+        self.services.set_magnet(observed.magnet_present);
     }
 
     fn update_chrome(&mut self) {
@@ -1299,13 +1340,9 @@ impl AppState {
                 kobo_ui::Signal::Strong
             },
             battery: Some(kobo_ui::Percent::new(
-                if self.scenario == Scenario::LowBattery {
-                    5
-                } else {
-                    72
-                },
+                self.effective_hardware().battery_percent,
             )),
-            charging: false,
+            charging: self.hardware.charging,
             bluetooth: true,
         };
         self.chrome =
@@ -1408,6 +1445,50 @@ impl AppSession {
         )
     }
 
+    fn change_hardware(&self, command: &str) -> io::Result<()> {
+        let change = hardware::Change::parse(command).ok_or_else(|| io::Error::other(
+            "device expects battery PERCENT charging|unplugged, frontlight PERCENT, cover open|closed, or orientation portrait|landscape"))?;
+        let event = {
+            let mut state = self
+                .state
+                .lock()
+                .map_err(|_| io::Error::other("app state lock poisoned"))?;
+            let before = state.hardware;
+            match change {
+                hardware::Change::Battery { percent, charging } => {
+                    state.hardware.battery_percent = percent;
+                    state.hardware.charging = charging;
+                }
+                hardware::Change::Frontlight(percent) => {
+                    state.hardware.frontlight_percent = percent;
+                }
+                hardware::Change::Cover(present) => state.hardware.magnet_present = present,
+                hardware::Change::Orientation(orientation) => state.orientation = orientation,
+            }
+            state.observe_hardware();
+            state.update_chrome();
+            state.commit_frame();
+            state.record(format!("device observation: {command}"));
+            (before.magnet_present != state.hardware.magnet_present
+                && state.lifecycle == Lifecycle::Foreground
+                && configured_backends()?.holds(kobo_policy::Capability::CoverSensor))
+            .then_some(Message::CoverChanged {
+                magnet_present: state.hardware.magnet_present,
+            })
+        };
+        if let Some(message) = event {
+            write_shared(
+                &self.writer,
+                &Frame {
+                    version: kobo_protocol::VERSION,
+                    request_id: 0,
+                    message,
+                },
+            )?;
+        }
+        Ok(())
+    }
+
     fn change_clock(&self, command: &str) -> io::Result<()> {
         let tasks = {
             let mut state = self
@@ -1462,6 +1543,7 @@ impl AppSession {
             return Ok(());
         }
         state.scenario = scenario;
+        state.observe_hardware();
         if scenario == Scenario::CachePressure {
             state.pressure_pictures = kobo_ui::PictureCache::new(256 * 1024);
         }
@@ -1604,6 +1686,22 @@ impl AppSession {
                     "application/json; charset=utf-8",
                     body.as_bytes(),
                 )
+            }
+            ("GET", "/device") => {
+                let state = self
+                    .state
+                    .lock()
+                    .map_err(|_| io::Error::other("app state lock poisoned"))?;
+                let body = hardware::json(state.effective_hardware(), state.orientation).to_json();
+                write_response(&mut stream, 200, "application/json", body.as_bytes())
+            }
+            ("POST", "/device") => {
+                match self.change_hardware(std::str::from_utf8(&request.body).unwrap_or("")) {
+                    Ok(()) => write_response(&mut stream, 200, "text/plain", b"ok"),
+                    Err(error) => {
+                        write_response(&mut stream, 400, "text/plain", error.to_string().as_bytes())
+                    }
+                }
             }
             ("GET", "/clock") => {
                 let state = self
@@ -1795,7 +1893,7 @@ fn simulation_json(
             "\"touch\":{{\"name\":{},\"xMin\":{},\"xMax\":{},",
             "\"yMin\":{},\"yMax\":{}}}}},\"scenario\":{},",
             "\"lifecycle\":{},\"transition\":{},\"refreshCount\":{},",
-            "\"partialsSinceClean\":{},\"touch\":{},",
+            "\"dirtyPixelsSinceClean\":{},\"touch\":{},",
             "\"panelApproximation\":true,\"observation\":{},\"backends\":{}}}"
         ),
         json_string(PROFILE.id),
@@ -2246,21 +2344,7 @@ fn read_app_messages(
     state: &Arc<Mutex<AppState>>,
     tasks: &Arc<Mutex<TaskRunner>>,
 ) -> io::Result<()> {
-    // The simulator owns no hardware, so it answers state queries from a
-    // believable model and refuses everything that would change a real device.
     let backends = configured_backends()?;
-    let mut services = DeviceServices::new(
-        declared.clone(),
-        kobo_policy::PowerPolicy::DEFAULT,
-        kobo_policy::Backends::with(backends.iter()),
-    );
-    // There is no bezel here to hold a magnet against, so the state the hall
-    // sensor reports is set on the way in. Without this the second half of
-    // every cover-aware screen is unreachable off hardware.
-    services.set_magnet(matches!(
-        std::env::var("KOBO_MAGNET").as_deref(),
-        Ok("1" | "present")
-    ));
     // Drained on its own thread for the same reason terminal output is. The
     // message loop below blocks on the application's socket, so an outcome
     // that arrived while nothing was being typed used to sit in the channel
@@ -2328,26 +2412,23 @@ fn read_app_messages(
             Message::Log { level, message } => note(state, &format!("{level:?}: {message}"))?,
             Message::DeviceRequest(request) => {
                 let scenario = current_scenario(state);
-                services.observe_battery(
-                    if scenario == Scenario::LowBattery {
-                        5
-                    } else {
-                        72
-                    },
-                    false,
-                );
                 let result =
                     if let Some(result) = simulated_app_request(state, name, scenario, &request)? {
                         result
-                    } else if !simulated_platform_request_allowed(name, &request) {
+                    } else if !simulated_platform_request_allowed(name, &request)
+                        || scenario == Scenario::PermissionDenied
+                    {
                         kobo_protocol::DeviceResult::Denied(kobo_protocol::DenyReason::NotDeclared)
                     } else {
-                        match scenario {
-                            Scenario::PermissionDenied => kobo_protocol::DeviceResult::Denied(
-                                kobo_protocol::DenyReason::NotDeclared,
-                            ),
-                            _ => services.handle(request.clone()),
+                        let mut state = state
+                            .lock()
+                            .map_err(|_| io::Error::other("app state lock poisoned"))?;
+                        state.observe_hardware();
+                        let result = state.services.handle(request.clone());
+                        if let kobo_protocol::DeviceResult::Frontlight { percent } = &result {
+                            state.hardware.frontlight_percent = *percent;
                         }
+                        result
                     };
                 {
                     let mut state = state
@@ -2898,146 +2979,7 @@ fn write_response(
     stream.write_all(body)
 }
 
-const SHELL: &str = r##"<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Kobo Clara BW simulator</title>
-<style>
-:root { color-scheme:dark; --workspace:#151515; --panel:#222; --raised:#2b2b2b; --border:#5c5c5c; --text:#f7f7f7; --muted:#c6c6c6; --paper:#f8f8f8; --focus:#fff; --accent:#9fd4ff; --warning:#ffd18b; --error:#ffb4ab; --space-1:8px; --space-2:16px; --space-3:24px; }
-* { box-sizing:border-box; }
-body { margin:0; min-height:100vh; background:var(--workspace); color:var(--text); font:16px/1.5 system-ui,sans-serif; }
-button,select,canvas { font:inherit; }
-button,select { min-height:44px; border:1px solid var(--border); border-radius:4px; }
-button { padding:0 14px; background:var(--raised); color:var(--text); font-weight:700; cursor:pointer; }
-button:hover { border-color:var(--text); }
-button:focus-visible,select:focus-visible,canvas:focus-visible,input:focus-visible { outline:3px solid var(--focus); outline-offset:3px; }
-.toolbar { min-height:68px; display:flex; align-items:center; gap:var(--space-2); padding:12px max(var(--space-2), calc((100vw - 1480px)/2)); border-bottom:1px solid var(--border); background:var(--panel); }
-.toolbar h1 { margin:0; font-size:1.05rem; letter-spacing:.01em; }
-.toolbar p { margin:0 auto 0 0; color:var(--muted); font-size:.875rem; }
-.badge { padding:4px 9px; border:1px solid var(--border); border-radius:999px; color:var(--accent); font:700 .75rem/1.4 ui-monospace,monospace; }
-.primary { border-color:var(--text); background:var(--text); color:var(--workspace); }
-main { max-width:1480px; margin:auto; padding:clamp(16px,3vw,40px); }
-.workspace { display:grid; grid-template-columns:minmax(0,1fr) 320px; gap:var(--space-3); align-items:start; }
-.device { margin:0; overflow:auto; padding:16px; border:1px solid var(--border); background:var(--panel); }
-.screen { position:relative; width:min(100%,1072px); margin:auto; overflow:hidden; background:#000; }
-.device canvas { display:block; width:100%; height:auto; background:var(--paper); image-rendering:pixelated; touch-action:manipulation; }
-.device canvas.clean-flash { animation:clean-flash 460ms steps(1,end); }
-@keyframes clean-flash { 0%,100% { filter:none; } 22% { filter:brightness(0); } 52% { filter:brightness(4); } }
-figcaption { margin-top:12px; color:var(--muted); font-size:.875rem; }
-.inspector { display:grid; gap:var(--space-2); }
-.card { padding:16px; border:1px solid var(--border); background:var(--panel); }
-.card h2 { margin:0 0 10px; font-size:.95rem; }
-.status { min-height:1.5em; margin:0; color:var(--muted); }
-.facts { display:grid; grid-template-columns:1fr auto; gap:6px 12px; margin:0; font-size:.8125rem; }
-.facts dt { color:var(--muted); }
-.facts dd { margin:0; text-align:right; font-family:ui-monospace,monospace; }
-.control { display:grid; gap:6px; margin-top:12px; color:var(--muted); font-size:.875rem; }
-.control select { width:100%; padding:0 10px; background:var(--raised); color:var(--text); }
-.check { display:flex; align-items:center; gap:9px; min-height:44px; color:var(--muted); font-size:.875rem; }
-.check input { width:18px; height:18px; }
-.buttons { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:10px; }
-.diagnostics { max-height:30vh; overflow:auto; margin:8px 0 0; padding-left:20px; color:var(--muted); font-size:.8125rem; }
-.diagnostics li + li { margin-top:8px; }
-.diagnostics .error { color:var(--error); }
-.diagnostics .warning { color:var(--warning); }
-.note { margin:10px 0 0; color:var(--muted); font-size:.75rem; }
-@media (max-width:900px) { .toolbar { align-items:flex-start; flex-wrap:wrap; } .toolbar p { order:4; width:100%; } .workspace { grid-template-columns:1fr; } .inspector { grid-template-columns:repeat(2,minmax(0,1fr)); } }
-@media (max-width:620px) { .inspector { grid-template-columns:1fr; } .device { padding:8px; } .badge { display:none; } }
-@media (prefers-reduced-motion:reduce) { .device canvas.clean-flash { animation:none; } }
-@media (prefers-contrast:more) { :root { --workspace:#000; --panel:#000; --raised:#000; --border:#fff; --text:#fff; --muted:#fff; --accent:#fff; --warning:#fff; --error:#fff; } }
-</style>
-</head>
-<body>
-<header class="toolbar">
-  <h1>Kobo simulator</h1>
-  <span class="badge" id="profile-badge">clara-bw-391</span>
-  <p>Shared renderer, touch transform and refresh planner</p>
-  <button class="primary" type="button" id="refresh">Refresh frame</button>
-</header>
-<main>
-<div class="workspace">
-  <figure class="device">
-    <div class="screen"><canvas id="display" width="1072" height="1448" tabindex="0" role="application" aria-label="Kobo grayscale display" aria-describedby="instructions"></canvas></div>
-    <figcaption id="instructions">Kobo panel preview. Click or tap to exercise the selected profile's measured controller transform and SDK hit testing.</figcaption>
-  </figure>
-  <aside class="inspector" aria-label="Simulator inspector">
-    <section class="card">
-      <h2>Session</h2>
-      <p class="status" id="status" aria-live="polite">Loading frame.</p>
-      <label class="control" for="scenario">Deterministic scenario
-        <select id="scenario">
-          <option value="normal">Normal</option>
-          <option value="offline">Offline</option>
-          <option value="low-battery">Low battery</option>
-          <option value="permission-denied">Permission denied</option>
-          <option value="missing-secret">Missing secret</option>
-          <option value="network-timeout">Network timeout</option>
-          <option value="storage-full">Storage full</option>
-          <option value="cache-pressure">Image cache pressure</option>
-        </select>
-      </label>
-      <div class="buttons">
-        <button type="button" data-lifecycle="background">Background</button>
-        <button type="button" data-lifecycle="foreground">Foreground</button>
-      </div>
-    </section>
-    <section class="card">
-      <h2>Panel transition</h2>
-      <dl class="facts">
-        <dt>Waveform</dt><dd id="waveform">—</dd>
-        <dt>Update</dt><dd id="update-kind">—</dd>
-        <dt>Changed region</dt><dd id="region">—</dd>
-        <dt>Refresh count</dt><dd id="refresh-count">0</dd>
-        <dt>Since clean</dt><dd id="partial-count">0 / 8</dd>
-      </dl>
-      <label class="check"><input type="checkbox" id="ideal"> Show ideal pixels</label>
-      <label class="check"><input type="checkbox" id="refresh-region" checked> Outline refresh region</label>
-      <p class="note">Residue is an explicit visual approximation. Pixel output and refresh selection are exact.</p>
-    </section>
-    <section class="card">
-      <h2>Clara BW profile</h2>
-      <dl class="facts">
-        <dt>Panel</dt><dd id="geometry">1072 × 1448</dd>
-        <dt>Density</dt><dd id="density">300 PPI</dd>
-        <dt>Framebuffer rotation</dt><dd id="rotation">3</dd>
-        <dt>Lifecycle</dt><dd id="lifecycle">foreground</dd>
-        <dt>Display touch</dt><dd id="display-touch">—</dd>
-        <dt>Raw touch</dt><dd id="raw-touch">—</dd>
-      </dl>
-    </section>
-    <section class="card">
-      <h2>Layout diagnostics</h2>
-      <label class="check"><input type="checkbox" id="overlay" checked> Show diagnostic outlines</label>
-      <ul class="diagnostics" id="diagnostics"><li>Checking screen…</li></ul>
-    </section>
-  </aside>
-</div>
-</main>
-<script>
-const canvas=document.getElementById("display"), ctx=canvas.getContext("2d",{alpha:false});
-const status=document.getElementById("status"),list=document.getElementById("diagnostics"),overlay=document.getElementById("overlay");
-const ideal=document.getElementById("ideal"),refreshRegion=document.getElementById("refresh-region"),scenario=document.getElementById("scenario");
-let point={x:536,y:177},issues=[],profile={width:1072,height:1448},transition=null,lastFlash=0;
-function checked(response){if(!response.ok)throw Error("Simulator request failed ("+response.status+")");return response;}
-function showDiagnostics(){list.replaceChildren();if(!issues.length){const item=document.createElement("li");item.textContent="No layout issues.";list.append(item);return;}for(const issue of issues){const item=document.createElement("li");item.className=issue.severity;item.textContent=issue.message;list.append(item);}}
-function outline(rect,color,width){if(!rect)return;ctx.save();ctx.lineWidth=width;ctx.strokeStyle=color;ctx.strokeRect(rect.x+width/2,rect.y+width/2,Math.max(0,rect.width-width),Math.max(0,rect.height-width));ctx.restore();}
-function drawOverlays(){if(refreshRegion.checked&&transition)for(const update of transition.regions)outline(update.region,"#006fbb",6);if(!overlay.checked)return;for(const issue of issues){outline(issue.rect,issue.severity==="error"?"#d00000":"#b56a00",5);}}
-function showSimulation(sim){profile=sim.profile;transition=sim.transition;scenario.value=sim.scenario;document.getElementById("profile-badge").textContent=profile.id;document.getElementById("geometry").textContent=profile.width+" × "+profile.height;document.getElementById("density").textContent=profile.pixelsPerInch+" PPI";document.getElementById("rotation").textContent=profile.rotation;document.getElementById("lifecycle").textContent=sim.lifecycle;const touch=sim.touch;document.getElementById("display-touch").textContent=touch?touch.display.x+", "+touch.display.y:"—";document.getElementById("raw-touch").textContent=touch?touch.raw.x+", "+touch.raw.y:"—";document.getElementById("waveform").textContent=transition?transition.waveform:"—";document.getElementById("update-kind").textContent=transition?(transition.full?"full / cleaning":"partial"):"unchanged";document.getElementById("region").textContent=transition?(transition.regions.length===1?transition.region.width+"×"+transition.region.height+" @ "+transition.region.x+","+transition.region.y:transition.regions.length+" regions"):"—";document.getElementById("refresh-count").textContent=sim.refreshCount;document.getElementById("partial-count").textContent=sim.partialsSinceClean+" / 8";}
-async function frame(){const path=ideal.checked?"/ideal-frame":"/frame";const response=checked(await fetch(path,{cache:"no-store"}));const raw=new Uint8Array(await response.arrayBuffer());const [diagnostics,simulation]=await Promise.all([fetch("/diagnostics",{cache:"no-store"}).then(checked).then(r=>r.json()),fetch("/simulation",{cache:"no-store"}).then(checked).then(r=>r.json())]);issues=diagnostics.issues;showSimulation(simulation);if(raw.length!==profile.width*profile.height)throw Error("Invalid "+profile.id+" frame");if(canvas.width!==profile.width||canvas.height!==profile.height){canvas.width=profile.width;canvas.height=profile.height;}const image=ctx.createImageData(profile.width,profile.height);for(let i=0;i<raw.length;i++){const p=i*4;image.data[p]=image.data[p+1]=image.data[p+2]=raw[i];image.data[p+3]=255;}ctx.putImageData(image,0,0);showDiagnostics();drawOverlays();if(!ideal.checked&&transition&&transition.full&&transition.refresh!==lastFlash){lastFlash=transition.refresh;canvas.classList.remove("clean-flash");void canvas.offsetWidth;canvas.classList.add("clean-flash");}status.textContent=issues.length?"Frame loaded with "+issues.length+" diagnostic"+(issues.length===1?"":"s")+".":"Frame loaded; layout clean.";}
-function touchLocation(event){const rect=canvas.getBoundingClientRect();return{x:Math.floor((event.clientX-rect.left)*profile.width/rect.width),y:Math.floor((event.clientY-rect.top)*profile.height/rect.height)};}
-async function touch(next){point=next;checked(await fetch("/touch",{method:"POST",headers:{"Content-Type":"text/plain"},body:"x="+point.x+"&y="+point.y}));await frame();status.textContent="Touch delivered through the selected profile transform.";}
-async function post(path,body){checked(await fetch(path,{method:"POST",headers:{"Content-Type":"text/plain"},body}));await frame();}
-canvas.addEventListener("pointerup",event=>{event.preventDefault();touch(touchLocation(event)).catch(error=>status.textContent=error.message);});
-canvas.addEventListener("keydown",event=>{if(event.key==="Enter"||event.key===" "){event.preventDefault();touch(point).catch(error=>status.textContent=error.message);}});
-document.getElementById("refresh").addEventListener("click",()=>frame().catch(error=>status.textContent=error.message));
-for(const control of [overlay,ideal,refreshRegion])control.addEventListener("change",()=>frame().catch(error=>status.textContent=error.message));
-scenario.addEventListener("change",()=>post("/scenario",scenario.value).catch(error=>status.textContent=error.message));
-for(const button of document.querySelectorAll("[data-lifecycle]"))button.addEventListener("click",()=>post("/lifecycle",button.dataset.lifecycle).catch(error=>status.textContent=error.message));
-frame().catch(error=>status.textContent=error.message);
-</script>
-</body></html>"##;
+const SHELL: &str = include_str!("shell.html");
 
 #[cfg(test)]
 mod tests {
@@ -3549,7 +3491,7 @@ mod tests {
         let payload = simulator.simulation_json();
         assert_eq!(before, payload);
         assert!(payload.contains("\"refreshCount\":1"));
-        assert!(payload.contains("\"partialsSinceClean\":0"));
+        assert!(payload.contains("\"dirtyPixelsSinceClean\":0"));
     }
 
     #[test]
@@ -3831,6 +3773,91 @@ mod tests {
         assert!(session.change_clock("advance -1").is_err());
         assert!(session.change_clock("advance 999999999999").is_err());
         assert_eq!(session.state.lock().unwrap().simulation_json(), before);
+    }
+
+    #[test]
+    fn hardware_controls_update_service_reads_and_only_emit_foreground_cover_edges() {
+        use kobo_protocol::{DeviceRequest, DeviceResult};
+        let (mut client, server) = UnixStream::pair().unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_millis(50)))
+            .unwrap();
+        let session = AppSession {
+            state: Arc::new(Mutex::new(AppState {
+                services: DeviceServices::simulated(),
+                ..AppState::default()
+            })),
+            writer: AppWriter::spawn_for(server, kobo_protocol::VERSION),
+        };
+        session.change_hardware("battery 18 charging").unwrap();
+        session.change_hardware("frontlight 39").unwrap();
+        {
+            let mut state = session.state.lock().unwrap();
+            assert_eq!(
+                state.services.handle(DeviceRequest::ReadBattery),
+                DeviceResult::Battery {
+                    percent: 18,
+                    charging: true
+                }
+            );
+            assert_eq!(
+                state.services.handle(DeviceRequest::ReadFrontlight),
+                DeviceResult::Frontlight { percent: 39 }
+            );
+        }
+        session.set_scenario(Scenario::LowBattery).unwrap();
+        assert_eq!(
+            session
+                .state
+                .lock()
+                .unwrap()
+                .services
+                .handle(DeviceRequest::ReadBattery),
+            DeviceResult::Battery {
+                percent: 5,
+                charging: true
+            }
+        );
+        session.set_scenario(Scenario::Normal).unwrap();
+        assert_eq!(
+            session
+                .state
+                .lock()
+                .unwrap()
+                .services
+                .handle(DeviceRequest::ReadBattery),
+            DeviceResult::Battery {
+                percent: 18,
+                charging: true
+            }
+        );
+        session.change_hardware("cover closed").unwrap();
+        assert_eq!(
+            read_protocol_frame(&mut client).unwrap().message,
+            Message::CoverChanged {
+                magnet_present: true
+            }
+        );
+        session.change_hardware("cover closed").unwrap();
+        assert!(read_protocol_frame(&mut client).is_err());
+        session.state.lock().unwrap().lifecycle = Lifecycle::Background;
+        session.change_hardware("cover open").unwrap();
+        assert!(read_protocol_frame(&mut client).is_err());
+        assert_eq!(
+            session
+                .state
+                .lock()
+                .unwrap()
+                .services
+                .handle(DeviceRequest::ReadCover),
+            DeviceResult::Cover {
+                available: true,
+                magnet_present: false
+            }
+        );
+        let before = session.state.lock().unwrap().hardware;
+        assert!(session.change_hardware("battery 101 charging").is_err());
+        assert_eq!(session.state.lock().unwrap().hardware, before);
     }
 
     #[test]

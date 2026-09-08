@@ -1,0 +1,45 @@
+{
+  "device": {
+    "batteryPercent": 18,
+    "charging": true,
+    "frontlightPercent": 39,
+    "coverClosed": true,
+    "orientation": "portrait",
+    "frontlightAppearanceCalibrated": false,
+    "orientationControl": "display-composition"
+  },
+  "clock": {
+    "mode": "manual",
+    "unixMillis": "1788850920000",
+    "monotonicMillis": "60000",
+    "utcOffsetMinutes": 0,
+    "date": "2026-09-08"
+  },
+  "activity": {
+    "revision": 7,
+    "callbackMarkers": true,
+    "connected": true,
+    "pendingCallbacks": 0,
+    "activeWork": 0,
+    "sleepingTasks": 0,
+    "idle": true,
+    "effects": {
+      "fetch": 0,
+      "post": 0,
+      "file": 0,
+      "sleep": 0
+    },
+    "completed": 0,
+    "failed": 0,
+    "cancelled": 0
+  },
+  "diagnostics": {
+    "issues": []
+  },
+  "browser": {
+    "consoleErrors": 0,
+    "narrowViewportWidth": 390,
+    "documentScrollWidth": 390,
+    "orientationControls": "landscape and portrait passed"
+  }
+}

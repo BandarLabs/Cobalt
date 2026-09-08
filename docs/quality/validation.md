@@ -127,3 +127,14 @@ The capture identifies this verification build as a dirty working tree on its pa
 The simulator clock controls sleep callbacks and its status clock; HTTP transport deadlines stay real. Existing apps reading their own operating-system clock are not automatically rewritten. Catalog adoption of the injectable SDK clock/date and entropy contracts remains in PR 2. A fixed UTC offset is explicit and does not claim automatic time-zone or daylight-saving rules. Capture metadata retains the clock snapshot used for the committed screen, so screenshot sampling does not alter it.
 
 Removed approximately 7.2 GiB of three inactive `/tmp/cobalt-...-target` Cargo caches after checking their cache markers, contents and absence of running users. Source files, original checkout edits and review evidence were preserved.
+
+
+## Simulator device observations and browser controls
+
+- Simulator: **56 tests passed**; simulator and CLI Clippy, all targets with `-D warnings`: **passed**. Controls reject invalid/ambiguous values without mutation. Battery reads, charging and frontlight use the same observed values as the simulator. Low-battery injection preserves the owner's modeled charging state and restores the prior battery observation when removed. Cover events are edge-only and foreground-only, using the production SDK event.
+- Full extra-large comic route: **passed** with driver battery/charging/frontlight/cover commands and state assertions. [Result](evidence/comics/device-controls-result.json).
+- In-app browser controls: battery 18% charging, light 39%, closed cover and 60-second clock advancement verified against service state. Landscape/portrait composition had no layout errors for the tested empty Panels library. Browser console had no errors. At viewport width 390, document scroll width was also 390. [Recorded state](evidence/simulator/device-browser-result.json).
+
+The browser uses the atomic frame envelope and waits for app callbacks after simulator controls. Inspector markup/styles/scripts now live in `shell.html`. Its refresh-debt label correctly reports repainted pixels; the former “partials / 8” label attached a count to a pixel total. The JSON field is now `dirtyPixelsSinceClean`.
+
+Frontlight controls update service values, not calibrated visual illumination. Display orientation composes the existing screen; the app's own rotation action is required to exercise application reflow. Digitizer mapping remains separate. These are explicit inspector limits, not claims of hardware accuracy. A first browser fixture launch hit the Unix socket path limit under macOS's long default temporary path; rerunning in a short private `/tmp` directory succeeded. CLI handling of that path remains open.

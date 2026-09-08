@@ -72,3 +72,10 @@ Depend on `kobo_sdk::clock::Clock` for date and elapsed-time decisions. `SystemC
 Use `entropy::SystemEntropy` for game choices and propagate source failures. `Entropy::below` uses bounded rejection sampling rather than biased modulo-only selection. `FixtureEntropy::new(seed)` is explicitly for deterministic tests and samples; it must never generate credentials, pairing secrets or security identifiers. Apps must select fixture entropy explicitly. Merely recording a requested seed in capture metadata does not mean an app has adopted it.
 
 For simulator sleep tests, start `kobo dev` with `KOBO_SIM_CLOCK_MILLIS=<Unix milliseconds>` and optional `KOBO_SIM_UTC_OFFSET_MINUTES`. Drive `clock advance 60000` or `clock set 1704153600000 330`, then assert `/clock` fields with `expect-state`. One advancement completes sleeps due at that point; a callback that schedules another sleep starts its next deadline at the new time. The driver waits for resulting callbacks. Individual advances are capped at seven days. Real network deadlines are unchanged; existing apps' direct OS clock reads do not become virtual automatically.
+
+
+## Simulator device controls
+
+`kobo drive` accepts `device battery 18 charging`, `device battery 72 unplugged`, `device frontlight 39`, `device cover closed|open` and `device orientation portrait|landscape`. Percentages outside 0–100 are refused. Assert the effective observations using `/device` in `expect-state`; captures include them under `simulation.hardware`. The low-battery scenario overlays 5% without destroying the configured battery value. App service requests continue through declared-capability/backend/power policy. Cover events are sent on actual edges to the foreground app when a cover backend is modeled.
+
+Browser inspector controls use the same endpoints. Frontlight values do not model LCD illumination. Display orientation changes composition and hit testing of the current screen; use the app's own rotation control when verifying its measured reflow. Device controls do not add a physical backend or establish measured calibration.
