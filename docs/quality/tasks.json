@@ -2244,16 +2244,20 @@
     "pr": 2,
     "group": "Panels",
     "task": "Guide server or local-comic import",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Shared server/account setup persists the acknowledged HTTPS address and binds the account to its origin/base path. Missing local input opens a four-step USB guide. Tests cover storage refusal/retry, invalid responses, guide Back and text-size layouts; real SDK simulator verifies account and address after process restart."
+    ]
   },
   {
     "id": "PANELS-03",
     "pr": 2,
     "group": "Panels",
     "task": "Provide original sample comic pages",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Bundled four-page A small garden is original artwork/text with a deterministic generator using the existing licensed font. It follows normal CBZ preview/copy/receipt/library acknowledgements. Extra-large Clara simulator passes full-storage retry, reading and forced-exit/reopen on the saved second page."
+    ]
   },
   {
     "id": "PANELS-04",

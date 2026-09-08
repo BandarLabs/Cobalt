@@ -501,3 +501,36 @@ save request; the simulator uses the same fixed protocol floor. This check is
 covered by the native Unix-socket fixture. A fresh catalog sweep at `3b0dc79`
 passes **43/43 apps** (36 committed interaction routes, seven launch-only checks),
 excluding Zotero Reader. This sweep predates only the native barrier-version guard.
+
+
+### Panels: server setup, import guide and original sample (2026-09-08)
+
+Panels now guides a Komga connection on the reader. The HTTPS address is stored
+through acknowledged, versioned settings; account entry uses the shared
+server-bound credential contract. A failed address save blocks connection
+checking until retry succeeds. Only a valid OPDS result opens browsing; login
+pages and generic error responses stay in setup. The manifest and generated app
+page now describe these implemented steps instead of a fixed-server CLI secret.
+
+A missing local file opens four short USB steps. They explain the actual folder,
+filename, size limit and safe ejection. The bundled four-page *A small garden*
+uses original drawing geometry and captions, with a deterministic generator and
+the repository's existing font. It enters the same preview, verified-copy,
+receipt and library-save flow as an owner file. No external comic/artwork or
+reference-project implementation is included.
+
+**24 Panels tests pass**, including all portrait text scales on Clara BW and
+758×1024 at 212 ppi; the guide was shortened after a largest-scale overflow was
+caught. Strict all-target Clippy, ARMv7 musl compilation and the published-catalog
+version gate pass. The [full extra-large simulator journey](evidence/panels-onboarding/result.json)
+passes account/address restart, USB steps, full-storage sample retry, reading and
+forced-exit restore, plus the existing zoom/pan/RTL/spread and durable-position
+journey. [Sample page](evidence/panels-onboarding/35-sample-first-page.png),
+[USB folder step](evidence/panels-onboarding/31-import-guide-folder.png) and
+[restored server](evidence/panels-onboarding/25-server-reopened.png) were visually
+inspected. Captures include binary/source provenance. No live Komga service or
+physical reader was contacted; network admission is covered by policy/app tests.
+
+PANELS-02 and PANELS-03 are complete. Shelf thumbnails/progress and validated
+interrupted-download recovery remain open (PANELS-04 and PANELS-07); the current
+remote partial-file flow still needs stronger persistence and identity checks.

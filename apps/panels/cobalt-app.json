@@ -5,7 +5,7 @@
   "summary": "Read comics added from your computer or Komga library.",
   "page_description": "Enjoy your comics on Kobo with clear page controls and support for Komga libraries.",
   "version": "0.1.2",
-  "release_notes": "Preview CBZ imports, keep verified copies, and retry failed library saves. Browse longer comic shelves at every text size. Requires Cobalt 0.3.12.",
+  "release_notes": "Preview verified CBZ imports, try an original sample comic, and connect a Komga account on your reader. Requires Cobalt 0.3.12.",
   "glyph": "reader",
   "capabilities": [
     "network"
@@ -13,11 +13,10 @@
   "setup": {
     "steps": [
       {
-        "text": "Local CBZ reading needs no service. Komga mode requires an HTTPS Komga OPDS endpoint."
+        "text": "Choose Try a sample comic to read offline, or Add comic for USB import instructions. CBZ files up to 32 MB are supported; CBR and PDF are not."
       },
       {
-        "text": "For a private Komga library, install its HTTP Basic credential under the exact name komga.",
-        "command": "kobo secret set komga --device <address>"
+        "text": "To use Komga, choose Browse and enter your HTTPS server address. Add your username and password in Account details, then check the connection."
       }
     ]
   }

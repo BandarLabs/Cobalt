@@ -444,3 +444,129 @@ fn primary_library_controls_fit_the_actual_panel() {
         .issues
         .is_empty());
 }
+
+#[test]
+fn configured_server_must_return_a_catalog_before_browsing_opens() {
+    use kobo_json::ObjectBuilder;
+    use kobo_sdk::{Command, Context, KoboApp, StoreResult, TaskOutcome};
+    let mut app = Panels::default();
+    let mut context = Context::default();
+    let record = kobo_state::record::Schema::new("panels.server", 1, 2048)
+        .unwrap()
+        .encode(
+            &ObjectBuilder::new()
+                .set("address", "https://library.example/comics")
+                .build(),
+        )
+        .unwrap();
+    app.on_load(
+        &mut context,
+        super::server::KEY,
+        StoreResult::Loaded {
+            key: super::server::KEY.into(),
+            value: Some(record),
+        },
+    );
+    app.on_action(&mut context, action_id("browse-komga"));
+    assert_eq!(app.route, super::Route::Server);
+    for valid in [false, true] {
+        app.on_action(&mut context, action_id(kobo_sdk::provider::TEST));
+        let (id, url) = context
+            .take_commands()
+            .into_iter()
+            .find_map(|command| match command {
+                Command::Spawn {
+                    task,
+                    work: kobo_sdk::Task::Fetch { url, .. },
+                } => Some((task, url)),
+                _ => None,
+            })
+            .expect("connection check");
+        assert_eq!(url, "https://library.example/comics/opds/v1.2/catalog");
+        app.on_task(&mut context, id, TaskOutcome::Completed(if valid {
+            br#"<feed xmlns="http://www.w3.org/2005/Atom"><title>My comics</title><entry><title>Rain</title><link rel="http://opds-spec.org/acquisition/open-access" href="rain.cbz" type="application/x-cbz"/></entry></feed>"#.to_vec()
+        } else { b"<html>Sign in to this server</html>".to_vec() }));
+        assert_eq!(app.server.setup.is_connected(), valid);
+        assert_eq!(
+            app.route,
+            if valid {
+                super::Route::Catalog
+            } else {
+                super::Route::Server
+            }
+        );
+    }
+    assert_eq!(app.catalog.as_ref().unwrap().publications[0].title, "Rain");
+}
+
+#[test]
+fn missing_file_opens_the_guide_and_sample_waits_for_confirmation() {
+    use kobo_sdk::{Context, KoboApp, StoreError, StoreResult};
+    let mut app = Panels {
+        loaded: true,
+        library: Some(super::Library::restore(None).unwrap()),
+        ..Panels::default()
+    };
+    let mut context = Context::default();
+    app.load_sideload(&mut context);
+    let _commands = context.take_commands();
+    app.on_shelf(
+        &mut context,
+        super::SIDELOAD,
+        StoreResult::Denied(StoreError::Missing),
+    );
+    assert_eq!(app.route, super::Route::ImportHelp);
+    assert_eq!(app.import_help_page, 0);
+    app.on_action(&mut context, action_id("import-help-next"));
+    assert_eq!(app.import_help_page, 1);
+    app.on_action(&mut context, kobo_sdk::ActionId::BACK);
+    assert_eq!(app.import_help_page, 0);
+    let _commands = context.take_commands();
+    app.load_sample();
+    assert_eq!(
+        app.import.as_ref().unwrap().stage(),
+        super::ImportStage::Preview
+    );
+    assert_eq!(app.import_entry.as_ref().unwrap().title, "A small garden");
+    assert_eq!(app.import_entry.as_ref().unwrap().pages, 4);
+    assert!(app.library_entries().is_empty());
+    assert!(context.take_commands().is_empty());
+    app.cancel_import();
+    assert!(app.library_entries().is_empty());
+}
+
+#[test]
+fn first_run_and_import_guide_fit_portrait_text_sizes() {
+    use kobo_sdk::AppRunner;
+    for (width, height, pixels_per_inch) in [(1072, 1448, 300), (758, 1024, 212)] {
+        for text_scale in kobo_ui::TextScale::STEPS {
+            let metrics = kobo_ui::DisplayMetrics {
+                width,
+                height,
+                pixels_per_inch,
+                text_scale,
+            };
+            let context = AppRunner::with_metrics(Panels::default(), metrics).context();
+            let mut app = Panels {
+                loaded: true,
+                library: Some(super::Library::restore(None).unwrap()),
+                ..Panels::default()
+            };
+            for page in 0..4 {
+                app.import_help_page = page;
+                let screen = app.import_help_screen();
+                let diagnostics = screen.diagnostics(&metrics, &Chrome::measuring(true));
+                assert!(
+                    diagnostics.issues.is_empty(),
+                    "page {page}, {metrics:?}: {:?}",
+                    diagnostics.issues
+                );
+            }
+            assert!(app
+                .library_screen(&context)
+                .diagnostics(&metrics, &Chrome::measuring(true))
+                .issues
+                .is_empty());
+        }
+    }
+}

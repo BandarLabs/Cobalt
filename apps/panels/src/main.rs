@@ -3,6 +3,7 @@
 mod archive;
 mod komga;
 mod library;
+mod server;
 mod sideload;
 use library::{Kept, Library};
 mod transfer;
@@ -38,6 +39,8 @@ enum Route {
     Reader,
     SavingLibrary,
     Import,
+    ImportHelp,
+    Server,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -71,6 +74,7 @@ struct Panels {
     notice: Option<String>,
     task: Option<(TaskId, Awaiting)>,
     catalog: Option<Feed>,
+    server: server::Server,
     catalog_url: String,
     history: Vec<(String, Feed)>,
     selected: Option<Publication>,
@@ -81,6 +85,7 @@ struct Panels {
     completed_cleanup: Option<String>,
     loaded: bool,
     library_page: usize,
+    import_help_page: usize,
     transfer: Option<transfer::Download>,
     pending: Option<Pending>,
     upload: Option<(ShelfUpload, Saving)>,
@@ -108,6 +113,7 @@ impl Default for Panels {
             notice: None,
             task: None,
             catalog: None,
+            server: server::Server::default(),
             catalog_url: String::new(),
             history: Vec::new(),
             selected: None,
@@ -118,6 +124,7 @@ impl Default for Panels {
             completed_cleanup: None,
             loaded: false,
             library_page: 0,
+            import_help_page: 0,
             transfer: None,
             pending: None,
             upload: None,
@@ -181,6 +188,8 @@ impl Panels {
     fn screen(&self, context: &Context) -> Screen {
         match self.route {
             Route::Library => self.library_screen(context),
+            Route::Server => self.server.screen(),
+            Route::ImportHelp => self.import_help_screen(),
             Route::Catalog => self.catalog_screen(),
             Route::Search => self.search_screen(),
             Route::Detail => self.detail_screen(),
@@ -270,11 +279,13 @@ impl Panels {
             return screen.activity("Opening your shelf", None).build();
         }
         if self.library_entries().is_empty() {
-            screen = screen.splash(
-                Some(Glyph::Reader),
-                "Your shelf is empty",
-                "Browse your home library or add a comic from your computer.",
-            );
+            screen = screen
+                .splash(
+                    Some(Glyph::Reader),
+                    "Your shelf is empty",
+                    "Browse your home library or add a comic from your computer.",
+                )
+                .button("sample-comic", "Try a sample comic");
         } else {
             let pages = self.library_pages(context);
             let page = self.library_page.min(pages.len().saturating_sub(1));
@@ -346,7 +357,7 @@ impl Panels {
                     .splash(
                         Some(Glyph::Reader),
                         "Library unavailable",
-                        "Check the address and sign-in on your computer, then try again.",
+                        "Return to Browse to check the server address and account details.",
                     )
                     .primary_button("retry-catalog", "Try again")
                     .build()
@@ -896,6 +907,7 @@ impl KoboApp for Panels {
         context.device().read_identity();
         context.store().load(LIBRARY);
         context.store().load(PARTIAL_META);
+        context.store().load(server::KEY);
         self.show(context);
     }
 
@@ -905,6 +917,15 @@ impl KoboApp for Panels {
         request: kobo_sdk::DeviceRequest,
         result: kobo_sdk::DeviceResult,
     ) {
+        if self
+            .server
+            .setup
+            .on_device_result(&request, &result)
+            .is_some()
+        {
+            self.show(context);
+            return;
+        }
         if request == kobo_sdk::DeviceRequest::ReadIdentity {
             self.identity = match result {
                 kobo_sdk::DeviceResult::Identity(identity) => Some(identity),
@@ -922,6 +943,11 @@ impl KoboApp for Panels {
     }
 
     fn on_load(&mut self, context: &mut Context, key: &str, result: StoreResult) {
+        if key == server::KEY {
+            self.server.load(&result);
+            self.show(context);
+            return;
+        }
         if matches!(&result, StoreResult::Loaded { key: loaded, .. } if loaded == key) {
             self.on_store(context, result);
             return;
@@ -1042,6 +1068,11 @@ impl KoboApp for Panels {
     }
 
     fn on_save(&mut self, context: &mut Context, key: &str, result: StoreResult) {
+        if key == server::KEY {
+            self.server.saved(context, &result);
+            self.show(context);
+            return;
+        }
         if self
             .import
             .as_ref()
@@ -1083,6 +1114,7 @@ impl KoboApp for Panels {
 
     fn on_background(&mut self, context: &mut Context) {
         self.save_reading_state(context);
+        self.server.pump(context);
         if let Some(library) = &mut self.library {
             library.pump(context);
         }
@@ -1096,6 +1128,7 @@ impl KoboApp for Panels {
                 .progress
                 .values()
                 .all(|draft| draft.status() == DraftStatus::Saved)
+            && self.server.can_suspend()
             && self.upload.is_none()
             && self.import.as_ref().is_none_or(|import| {
                 import.failure().is_none()
@@ -1111,6 +1144,30 @@ impl KoboApp for Panels {
         reason = "one exhaustive catalog and reader action dispatcher"
     )]
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
+        if self.route == Route::ImportHelp {
+            if action == action_id("import-help-next") {
+                self.import_help_page = (self.import_help_page + 1).min(3);
+            } else if action == ActionId::BACK {
+                if self.import_help_page == 0 {
+                    self.route = Route::Library;
+                } else {
+                    self.import_help_page -= 1;
+                }
+            } else if action == action_id("load-sideload") {
+                self.load_sideload(context);
+            } else if action == action_id("sample-comic") {
+                self.load_sample();
+            }
+            self.show(context);
+            return;
+        }
+        if self.route == Route::Server {
+            if self.server.on_action(context, action) == Some(kobo_sdk::provider::Event::Closed) {
+                self.route = Route::Library;
+            }
+            self.show(context);
+            return;
+        }
         if self.route == Route::Import {
             if action == ActionId::BACK
                 || action == action_id("import-cancel")
@@ -1208,7 +1265,7 @@ impl KoboApp for Panels {
                         self.route = Route::Library;
                     }
                 }
-                Route::Library | Route::Import => {}
+                Route::Library | Route::Import | Route::Server | Route::ImportHelp => {}
             }
         } else if action == action_id("retry-library") {
             if let Some(library) = &mut self.library {
@@ -1216,13 +1273,14 @@ impl KoboApp for Panels {
             } else {
                 context.store().load(LIBRARY);
             }
+        } else if action == action_id("sample-comic") {
+            self.load_sample();
         } else if action == action_id("load-sideload") {
             self.load_sideload(context);
         } else if action == action_id("browse-komga") {
             self.history.clear();
             self.query.clear();
-            self.route = Route::Catalog;
-            self.fetch_catalog(context, komga::CATALOG.to_owned());
+            self.route = Route::Server;
         } else if action == action_id("retry-catalog") {
             self.fetch_catalog(context, self.catalog_url.clone());
         } else if action == action_id("search") {
@@ -1290,6 +1348,22 @@ impl KoboApp for Panels {
     }
 
     fn on_task(&mut self, context: &mut Context, task: TaskId, outcome: TaskOutcome) {
+        if let Some(event) = self.server.setup.on_task(task, &outcome) {
+            if let kobo_sdk::provider::Event::Response(bytes) = event {
+                let url = self.server.catalog_url();
+                match komga::parse(&bytes, &url) {
+                    Ok(feed) if self.server.setup.verified() && self.server.is_saved() => {
+                        self.catalog = Some(feed);
+                        self.catalog_url = url;
+                        self.notice = None;
+                        self.route = Route::Catalog;
+                    }
+                    _ => self.server.setup.invalid_response(),
+                }
+            }
+            self.show(context);
+            return;
+        }
         let Some((_, awaiting)) = self.task.take_if(|(known, _)| *known == task) else {
             return;
         };
@@ -1320,7 +1394,8 @@ impl KoboApp for Panels {
             }
             (_, TaskOutcome::Failed(kobo_sdk::TaskError::NoCredential)) => {
                 self.paused = true;
-                self.notice = Some("Finish library sign-in on your computer.".to_owned());
+                self.notice =
+                    Some("Open Browse and update Account details, then try again.".to_owned());
             }
             (_, TaskOutcome::Failed(error)) => {
                 self.paused = true;

@@ -8,8 +8,14 @@ are outside the current supported formats; obtain a CBZ copy of a CBR comic.
 
 ## Add and read a local comic
 
-Send a CBZ file as `volume.cbz` in Panels' shelf directory, then choose **Add
-comic**. Check its title, format and size, then choose **Add to library**. Panels
+Choose **Try a sample comic** to read the bundled four-page *A small garden*
+offline. Its artwork and text are original to Cobalt, and its import follows the
+same confirmation and receipt flow as any other CBZ.
+
+To add your own file, choose **Add comic** for the USB guide. Connect the reader
+by USB, open its drive on your computer, and copy your CBZ as `volume.cbz` under
+`.adds/cobalt/data/panels` (show hidden folders and create `panels` if needed).
+Eject the drive safely, unplug the cable, reopen Panels and choose **Add comic**. Check its title, format and size, then choose **Add to library**. Panels
 keeps a content-addressed copy and verifies its bytes before saving a receipt
 and the comic list. **Available on this reader** appears only after both saves
 succeed. Choose **Open** to read, or return to the shelf to read later.
@@ -27,25 +33,33 @@ position records use bounded content-derived keys, with legacy positions read
 when available. The library accepts the previous tab-separated format through
 an acknowledged migration.
 
-## Current server integration
+## Connect your Komga library
 
-Komga requests use the runtime's HTTP Basic credential named `komga`:
+Choose **Browse Komga**, add your HTTPS server address, then open **Account
+details** and enter your username and password. Cobalt stores the account in
+Panels' private runtime namespace, bound to that server and its base path.
+A reverse-proxy path is supported, for example `https://books.example/komga`.
+The connection check requests `/opds/v1.2/catalog` beneath that address and opens
+the library only after a valid OPDS response. Login pages and generic server
+errors are refused. An address save failure offers a retry; reopening restores
+the last acknowledged address. Changing servers requires entering account
+details for the new server.
 
-```sh
-kobo secret set komga --device <address>
-```
-
-The current catalog endpoint remains `https://komga.local/opds/v1.2/catalog`.
-An editable server setup, complete interrupted-download validation and progress
-summaries on the shelf remain open quality tasks. Existing server browsing
-supports nested catalogs, filtering the current page, cover art and bounded
-CBZ downloads. Recovery data is retained until a completed comic's library save
-succeeds. Do not treat this as a guarantee of every interrupted-download case.
+Existing browsing supports nested catalogs, filtering the current page, cover
+art and bounded CBZ downloads. Complete interrupted-download validation, catalog
+pagination and shelf progress summaries remain open quality tasks. Recovery data
+is retained until a completed comic's library save succeeds; this does not yet
+cover every interrupted-download case.
 
 ```sh
 cargo test -p kobo-panels
 kobo dev
 ```
+
+The sample can be rebuilt with `python3 scripts/quality/make-panels-sample.py`.
+It uses original drawing geometry and the repository's existing licensed font.
+The source, PNG pages and CBZ use the repository license; no external artwork
+or comic text is embedded.
 
 Run `kobo dev` from this app directory. The repository's
 `scripts/quality/check-comics-sim.py` uses original geometric fixtures in private
