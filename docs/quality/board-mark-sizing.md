@@ -5,3 +5,5 @@ Sudoku adoption exposed clipping at Large and higher interface sizes: board squa
 Validation: 266 UI tests pass (two existing ignores). The added regression covers digits, a combining underline, a target square and a note dot at all nine text scales on 212 and 300 ppi panels. It checks the chosen semantic size and matching diagnostics. Actual Sudoku app captures and the complete app journey are recorded on the stacked catalog branch. No physical-reader claim is made.
 
 Nine-column board windows containing complete three-row bands also retain the extra 3×3 separation. This allows overlapping six-row landscape views without changing absolute action IDs or reducing touch targets.
+
+At the smallest legal square, one- or two-character board marks can step down the interface scale if even caption size would clip. Rendering and diagnostics use the same bounded choice. Long labels and ordinary keys do not receive this fallback.
