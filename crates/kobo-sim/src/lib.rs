@@ -2210,10 +2210,17 @@ fn answer_store(
     // The shelf answers first, and answers `None` to everything that is not
     // its own, which is what keeps the two from having to know about each
     // other's request tags.
+    let fault = scenario_refuses_store(current_scenario(state), request)
+        .then_some(kobo_policy::WriteFault::NoRoom);
     let result = shelf
-        .handle(request)
-        .unwrap_or_else(|| store.handle(request));
-    note(state, &format!("store: {request:?} -> {result:?}"))?;
+        .handle_with_write_fault(request, fault)
+        .unwrap_or_else(|| store.handle_with_write_fault(request, fault));
+    let outcome = match &result {
+        kobo_protocol::StoreResult::Denied(error) => format!("denied {error:?}"),
+        _ => "answered".to_owned(),
+    };
+    // Records and shelf chunks may contain private text or imported files.
+    note(state, &format!("store: request {request_id} -> {outcome}"))?;
     write_shared(
         writer,
         &Frame {
@@ -2669,21 +2676,7 @@ fn read_app_messages(
                 submit_simulated_task(tasks, writer, state, task, work, fault)?;
             }
             Message::StoreRequest(request) => {
-                if scenario_refuses_store(current_scenario(state), &request) {
-                    let result =
-                        kobo_protocol::StoreResult::Denied(kobo_protocol::StoreError::TooFull);
-                    note(state, &format!("store: injected {result:?}"))?;
-                    write_shared(
-                        writer,
-                        &Frame {
-                            version: kobo_protocol::VERSION,
-                            request_id,
-                            message: Message::StoreResult(result),
-                        },
-                    )?;
-                } else {
-                    answer_store(writer, request_id, &store, &shelf, &request, state)?;
-                }
+                answer_store(writer, request_id, &store, &shelf, &request, state)?;
             }
             Message::ShellRequest(request) => {
                 answer_shell(writer, request_id, &shells, request)?;
@@ -4070,6 +4063,77 @@ mod tests {
                 Some(kobo_protocol::TaskError::TimedOut)
             );
         }
+    }
+
+    #[test]
+    fn storage_full_uses_policy_validation_and_correlated_ipc_replies() {
+        use kobo_protocol::{StoreError, StoreRequest, StoreResult};
+        let (mut client, server) = UnixStream::pair().unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_secs(1)))
+            .unwrap();
+        let state = Arc::new(Mutex::new(AppState::default()));
+        state.lock().unwrap().scenario = Scenario::StorageFull;
+        let writer = AppWriter::spawn_for(server, kobo_protocol::VERSION);
+        let root = std::env::temp_dir().join(format!(
+            "cobalt-sim-store-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        assert!(!root.exists());
+        let store = Store::new(root.join("store"));
+        let shelf = Shelf::new(root.join("shelf"));
+        for (index, (request, error)) in [
+            (
+                StoreRequest::Save {
+                    key: "../note".into(),
+                    value: vec![],
+                },
+                StoreError::BadKey,
+            ),
+            (
+                StoreRequest::Save {
+                    key: "note".into(),
+                    value: vec![1],
+                },
+                StoreError::NoRoom,
+            ),
+            (
+                StoreRequest::ShelfWrite {
+                    name: "book".into(),
+                    offset: 2,
+                    bytes: vec![1],
+                    last: true,
+                },
+                StoreError::Missing,
+            ),
+            (
+                StoreRequest::ShelfWrite {
+                    name: "book".into(),
+                    offset: 0,
+                    bytes: vec![1],
+                    last: true,
+                },
+                StoreError::NoRoom,
+            ),
+        ]
+        .iter()
+        .enumerate()
+        {
+            let id = u32::try_from(index + 40).unwrap();
+            answer_store(&writer, id, &store, &shelf, request, &state).unwrap();
+            let frame = read_protocol_frame(&mut client).unwrap();
+            assert_eq!(frame.request_id, id);
+            assert_eq!(
+                frame.message,
+                Message::StoreResult(StoreResult::Denied(*error))
+            );
+        }
+        assert!(
+            !root.exists(),
+            "rejected writes must not create directories"
+        );
+        writer.close();
     }
 
     #[test]

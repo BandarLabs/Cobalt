@@ -84,7 +84,8 @@
     "task": "Return production-equivalent failure reasons",
     "status": "todo",
     "evidence": [
-      "Network scenario faults now use production task admission, request/header/credential gates and result delivery. Capacity refusal matches runtime and duplicate IDs do not receive duplicate outcomes. 116 policy + 65 simulator tests pass; app-install transaction parity remains owned by SIM-17."
+      "Network scenario faults now use production task admission, request/header/credential gates and result delivery. Capacity refusal matches runtime and duplicate IDs do not receive duplicate outcomes. 116 policy + 65 simulator tests pass; app-install transaction parity remains owned by SIM-17.",
+      "Storage policy now requires file/parent flush acknowledgements and preserves validation before injected disk-full faults; 124 policy + 66 simulator tests and Panels recovery journey pass. Suspend barrier and app-install parity remain open."
     ]
   },
   {
@@ -627,7 +628,9 @@
     "group": "Platform requirements from read-only hardware research",
     "task": "Flush durable work and pause/cancel tasks before suspend",
     "status": "todo",
-    "evidence": []
+    "evidence": [
+      "Storage policy now requires file/parent flush acknowledgements and preserves validation before injected disk-full faults; 124 policy + 66 simulator tests and Panels recovery journey pass. Suspend barrier and app-install parity remain open."
+    ]
   },
   {
     "id": "HW-12",

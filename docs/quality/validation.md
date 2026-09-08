@@ -230,3 +230,14 @@ The display HAL records `cobalt.refresh-observation` v1 for actual submit/wait c
 - HAL/runtime Clippy with `-D warnings` and Rust 1.85.1 ARMv7 musl runtime compilation passed.
 
 `KOBO_FRAME_TIMING=1` enables JSON on stderr before runtime launch. Timing smoke rows also include markers, and runtime frame lines identify backend, requested/applied intents and translated waveform. The ring retains 128 observations and explicitly counts dropped records. No new waveform, inversion flag, color coefficient or device support was enabled. Completion ioctl success is distinct from measured visible ink settling; Clara BW measurements remain pending.
+
+
+## Durable storage acknowledgements and failure parity
+
+Records and final shelf chunks now require the file flush, rename and parent-directory flush to succeed before reporting success. Creating app directories confirms their parent entries before creating children. Removal reports unlink and directory-flush errors; retry still flushes when the name was already removed. A failed flush can leave the new value visible, so it reports uncertainty rather than promising rollback. Nonfinal shelf chunks acknowledge upload progress, not a completed durable file.
+
+- **124 policy and 66 simulator tests passed**. Fault cases preserve published and partial files, enforce key/offset/size validation before disk-full injection, permit reads/removal, and prevent failed cache eviction from exceeding its allowance. A real IPC test checks correlated policy errors and confirms refused writes create no directories.
+- Policy/simulator strict Clippy and Rust 1.85.1 ARMv7 musl policy compilation passed. The full extra-large [Panels recovery journey](evidence/simulator/durable-storage-reader-result.json) passed, including failed saves, retry and forced exit/reopen. The subsequent cache-unlink guard is covered by policy tests.
+- Simulator storage logs retain request IDs and outcomes without record values or shelf bytes.
+
+SIM-09 and HW-11 remain open: app-install failure parity and a runtime suspend barrier still require implementation. Host filesystem tests do not establish durability on a physical reader; that remains part of the combined Clara BW run.
