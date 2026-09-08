@@ -2838,7 +2838,7 @@ fn read_app_messages(
                                         state.services.wake_hold().unwrap_or_default().as_millis(),
                                     )
                                     .unwrap_or(u64::MAX),
-                                )
+                                );
                             }
                             kobo_protocol::DeviceRequest::AllowSleep => state.wake_until = 0,
                             kobo_protocol::DeviceRequest::ScheduleWake { .. } => {
@@ -2853,7 +2853,7 @@ fn read_app_messages(
                                         )
                                         .unwrap_or(u64::MAX),
                                     ),
-                                )
+                                );
                             }
                             kobo_protocol::DeviceRequest::CancelWake => state.scheduled_wake = None,
                             _ => {}

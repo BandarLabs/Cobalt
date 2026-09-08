@@ -6,7 +6,7 @@ Source: the 8 September 2026 app/SDK/simulator/companion review. The ten new app
 
 Three stacked PRs rooted in freshly fetched `beta` (`7f1a543`):
 
-1. **Foundation:** simulator/runtime parity, shared SDK/document/board contracts, platform test interfaces and comic decoding/reading. Branch `beta-quality-foundation`, base `beta`.
+1. **Foundation:** simulator/runtime parity, shared SDK/document/board contracts, platform test interfaces and comic decoding/reading. Includes catalog integration fixes exposed by the stricter shared layout checks. Branch `beta-quality-foundation`, base `beta`.
 2. **Catalog:** complete and polish the 43 existing app journeys using those contracts. Branch `beta-quality-apps`, initially based on PR 1.
 3. **Companion:** owner onboarding, imports, credentials, recovery and CLI consistency, plus integrated acceptance scripts. Branch `beta-quality-companion`, initially based on PR 2.
 
@@ -16,7 +16,7 @@ A checked task requires implementation plus recorded validation. Physical measur
 
 ## Status
 
-494 tracked tasks: 84 completed, 1 deferred by the owner, 409 open. Implementation in progress. Evidence is recorded per task in `tasks.json` and in [the validation log](validation.md).
+494 tracked tasks: 87 completed, 1 deferred by the owner, 406 open. Implementation in progress. Evidence is recorded per task in `tasks.json` and in [the validation log](validation.md).
 
 ## PR 1 · Simulator fidelity (SIM-1–10)
 
@@ -148,7 +148,7 @@ A checked task requires implementation plus recorded validation. Physical measur
 - [ ] **BACK-03** Separate match setup from moves.
 - [ ] **BACK-04** Show concise turn history.
 - [ ] **BACK-05** Use real entropy with explicit deterministic fixture seeds.
-- [ ] **BACK-06** Resolve opening layout diagnostic.
+- [x] **BACK-06** Resolve opening layout diagnostic.
 
 ## PR 2 · Daily Brief
 
@@ -239,8 +239,8 @@ A checked task requires implementation plus recorded validation. Physical measur
 
 ## PR 2 · Grimoire (APP-9)
 
-- [ ] **GRIM-01** Page spell results using remaining height after filters.
-- [ ] **GRIM-02** Replace cycling filters with labeled selection.
+- [x] **GRIM-01** Page spell results using remaining height after filters.
+- [x] **GRIM-02** Replace cycling filters with labeled selection.
 - [ ] **GRIM-03** Paginate long stat blocks.
 - [ ] **GRIM-04** Improve combat/initiative controls.
 - [ ] **GRIM-05** Explain unavailable source categories.

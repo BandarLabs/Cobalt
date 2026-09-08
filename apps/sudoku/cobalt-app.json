@@ -1,1 +1,10 @@
-{"id":"sudoku","display_name":"Sudoku","short_label":"Sudoku","summary":"Play touch-first Sudoku designed for an e-ink screen.","version":"1.0.9","glyph":"grid","capabilities":[],"release_notes":"Add a compact in-game rules page and a simulator drive for the opening flow."}
+{
+  "id": "sudoku",
+  "display_name": "Sudoku",
+  "short_label": "Sudoku",
+  "summary": "Play touch-first Sudoku designed for an e-ink screen.",
+  "version": "1.0.10",
+  "glyph": "grid",
+  "capabilities": [],
+  "release_notes": "Update shared controls and page layout for Cobalt 0.3.12."
+}

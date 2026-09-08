@@ -4,8 +4,8 @@
   "short_label": "Needles",
   "summary": "Count rows, browse Ravelry collections, and read your synced patterns offline.",
   "page_description": "A knuckle-sized row counter, Ravelry library browser, and offline pattern reader.",
-  "version": "0.1.0",
-  "release_notes": "A knuckle-sized row counter, Ravelry library browser, and offline pattern reader.",
+  "version": "0.1.1",
+  "release_notes": "Update shared controls and page layout for Cobalt 0.3.12.",
   "glyph": "bookmark",
   "capabilities": [
     "network",

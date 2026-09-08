@@ -4,8 +4,8 @@
   "short_label": "Kitchen",
   "summary": "Keep Mealie recipes handy in a counter-friendly cooking view.",
   "page_description": "A Mealie companion that keeps tonight's recipe legible, awake, and usable offline at the counter.",
-  "version": "0.1.0",
-  "release_notes": "A Mealie companion that keeps tonight's recipe legible, awake, and usable offline at the counter.",
+  "version": "0.1.1",
+  "release_notes": "Update shared controls and page layout for Cobalt 0.3.12.",
   "glyph": "reader",
   "capabilities": [
     "network",

@@ -3062,6 +3062,7 @@ impl Screen {
                     gap,
                 );
                 cursor = max(cursor, content_bottom.saturating_sub(trailing));
+                layout.flow_height = cursor.saturating_sub(content_top).max(0);
                 continue;
             }
             let bottom = flow_node_bottom(
@@ -3087,6 +3088,7 @@ impl Screen {
                     &mut layout,
                 )
             });
+            layout.flow_height = cursor.saturating_sub(content_top).max(0);
             cursor = cursor.saturating_add(gap);
         }
 
@@ -5772,6 +5774,9 @@ pub struct Layout {
     pub nodes: Vec<LayoutNode>,
     /// The band between the bars, which is what the page-turn zones cover.
     pub content: Rect,
+    /// Height consumed by flow nodes, including their internal spacing but
+    /// excluding the final gap before the next node.
+    pub flow_height: i32,
     /// What paging means here, including when the answer is "nothing, for
     /// now": see [`PagingState`].
     pub page_turns: PagingState,
@@ -6038,23 +6043,13 @@ impl Layout {
 
     /// How much of the band between the bars is already spoken for.
     ///
-    /// Measured off the placed nodes rather than added up by the caller,
-    /// because the only number that matters is the one the layout engine
-    /// actually arrived at. An application that adds up what it thinks its
-    /// rows cost is guessing at line heights, and being a few pixels short
-    /// here is not a visible bug: the engine drops what does not fit in
-    /// silence.
+    /// Uses the layout cursor rather than the bounds of painted rectangles:
+    /// sections and other components also consume internal spacing after their
+    /// last visible mark. Omitting that spacing gives a following list more
+    /// room than it will actually receive.
     #[must_use]
-    pub fn content_used(&self) -> i32 {
-        self.nodes
-            .iter()
-            .filter(|node| {
-                node.rect.y >= self.content.y
-                    && node.rect.y < self.content.y.saturating_add(self.content.height)
-            })
-            .map(|node| node.rect.y.saturating_add(node.rect.height))
-            .max()
-            .map_or(0, |bottom| bottom.saturating_sub(self.content.y).max(0))
+    pub const fn content_used(&self) -> i32 {
+        self.flow_height
     }
 
     #[must_use]
@@ -8362,7 +8357,9 @@ fn layout_node(
             max_height_tenths_mm,
             framed,
         } => {
-            let ceiling = metrics.tenth_mm(i32::from(*max_height_tenths_mm));
+            let ceiling = metrics
+                .tenth_mm(i32::from(*max_height_tenths_mm))
+                .min(bottom.saturating_sub(y).max(0));
             let (drawn_width, drawn_height) = fit_within(*source, width, ceiling);
             layout.nodes.push(LayoutNode {
                 id: *id,
@@ -10564,6 +10561,7 @@ fn flow_node_bottom(
             | Node::PagedList { .. }
             | Node::Terminal { .. }
             | Node::Grid { square: true, .. }
+            | Node::Picture { .. }
     );
     let protects_interaction = following.iter().any(node_has_enabled_interaction);
     if matches!(node, Node::Splash { .. }) || (flexible && protects_interaction) {
@@ -12485,6 +12483,7 @@ fn validate_content_bounds(
         // A flex draws nothing by design: it moves the cursor and leaves. So
         // does an empty list. Neither is content that layout hid.
         let expects_rect = !matches!(node, Node::Rows { rows, .. } if rows.is_empty())
+            && !matches!(node, Node::Grid { cells, .. } if cells.is_empty())
             && !matches!(node, Node::Flex { .. });
         let completely_hidden = expects_rect
             && (rects.is_empty()
@@ -16317,6 +16316,78 @@ mod tests {
         };
         assert!(matches!(picture(true), LayoutKind::FramedPicture(_)));
         assert!(matches!(picture(false), LayoutKind::Picture(_)));
+    }
+
+    #[test]
+    fn large_pictures_fit_remaining_space_without_hiding_controls() {
+        for (width, height, pixels_per_inch) in
+            [(1072, 1448, 300), (1448, 1072, 300), (758, 1024, 212)]
+        {
+            for text_scale in TextScale::STEPS {
+                let metrics = DisplayMetrics {
+                    width,
+                    height,
+                    pixels_per_inch,
+                    text_scale,
+                };
+                let screen = Screen::new(
+                    1,
+                    vec![
+                        Node::Picture {
+                            id: NodeId(1),
+                            handle: PictureHandle(1),
+                            source: (1072, 1448),
+                            max_height_tenths_mm: 5000,
+                            framed: false,
+                        },
+                        Node::Grid {
+                            id: NodeId(2),
+                            columns: 1,
+                            square: false,
+                            cells: vec![Cell::new(ActionId(2), "Open")],
+                        },
+                    ],
+                )
+                .with_top_bar(TopBar::new(NodeId(3), "Photograph"));
+                let diagnostics = screen.diagnostics(&metrics, &Chrome::measuring(true));
+                assert!(
+                    diagnostics.issues.is_empty(),
+                    "{metrics:?}: {:?}",
+                    diagnostics.issues
+                );
+                let picture = diagnostics
+                    .layout
+                    .nodes
+                    .iter()
+                    .find(|node| matches!(node.kind, LayoutKind::Picture(_)))
+                    .expect("picture");
+                assert!(picture.rect.width > 0 && picture.rect.height > 0);
+                assert!(
+                    (i64::from(picture.rect.width) * 1448 - i64::from(picture.rect.height) * 1072)
+                        .abs()
+                        < 3000,
+                    "aspect ratio"
+                );
+                assert!(diagnostics.layout.rect_of_action(ActionId(2)).is_some());
+            }
+        }
+    }
+
+    #[test]
+    fn an_empty_game_grid_is_not_hidden_content() {
+        let screen = Screen::new(
+            1,
+            vec![Node::Grid {
+                id: NodeId(1),
+                columns: 8,
+                square: true,
+                cells: vec![],
+            }],
+        );
+        assert!(screen
+            .diagnostics(&CLARA_BW_METRICS, &Chrome::measuring(true))
+            .issues
+            .is_empty());
     }
 
     #[test]

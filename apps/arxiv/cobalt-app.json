@@ -1,1 +1,12 @@
-{"id":"arxiv","display_name":"arXiv","short_label":"arXiv","summary":"Browse and search arXiv, keep preprints, and read their HTML versions on your Kobo.","version":"1.3.7","glyph":"note","capabilities":["network"],"release_notes":"Keep arXiv compatible with Cobalt's protocol-12 runtime."}
+{
+  "id": "arxiv",
+  "display_name": "arXiv",
+  "short_label": "arXiv",
+  "summary": "Browse and search arXiv, keep preprints, and read their HTML versions on your Kobo.",
+  "version": "1.3.8",
+  "glyph": "note",
+  "capabilities": [
+    "network"
+  ],
+  "release_notes": "Update shared controls and page layout for Cobalt 0.3.12."
+}

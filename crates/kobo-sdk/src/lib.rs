@@ -574,7 +574,9 @@ impl Context {
     /// thing a long page pushes off the panel.
     #[must_use]
     pub fn paginate(&self, text: &str, nav_bar: bool) -> Vec<Vec<String>> {
-        kobo_ui::paginate(text, self.paged_area(nav_bar))
+        kobo_ui::with_text_scale(self.metrics.text_scale, || {
+            kobo_ui::paginate(text, self.paged_area(nav_bar))
+        })
     }
 
     /// Breaks a book into pages, measured in the reading face.
@@ -586,7 +588,11 @@ impl Context {
     /// panel to say so.
     #[must_use]
     pub fn paginate_reading(&self, text: &str, nav_bar: bool) -> Vec<Vec<String>> {
-        kobo_ui::paginate(text, self.paged_area_in(nav_bar, kobo_ui::Face::Reading))
+        kobo_ui::with_text_scale(self.metrics.text_scale, || {
+            kobo_ui::with_reading_scale(self.metrics.text_scale, || {
+                kobo_ui::paginate(text, self.paged_area_in(nav_bar, kobo_ui::Face::Reading))
+            })
+        })
     }
 
     /// The same, at a text size other than the reader's own.
@@ -599,21 +605,23 @@ impl Context {
         nav_bar: bool,
         scale: kobo_ui::TextScale,
     ) -> Vec<Vec<String>> {
-        // Measured with the prose actually at that size. Setting it on the
-        // metrics alone moves the margins and leaves the words the size they
-        // were, which is how a page comes out measured for one size and drawn
-        // at another. Only the prose moves: the bars above and below are
-        // interface and keep the reader's own size, which is what makes the
-        // page area the same whatever size the book is set at.
-        kobo_ui::with_reading_scale(scale, || {
-            let metrics = self.metrics_at(scale);
-            let mut area = metrics.prose_area_in(true, nav_bar, kobo_ui::Face::Reading);
-            area.height = area
-                .height
-                .saturating_sub(metrics.status_band_height())
-                .saturating_sub(metrics.page_position_band())
-                .max(1);
-            kobo_ui::paginate(text, area)
+        kobo_ui::with_text_scale(self.metrics.text_scale, || {
+            // Measured with the prose actually at that size. Setting it on the
+            // metrics alone moves the margins and leaves the words the size they
+            // were, which is how a page comes out measured for one size and drawn
+            // at another. Only the prose moves: the bars above and below are
+            // interface and keep the reader's own size, which is what makes the
+            // page area the same whatever size the book is set at.
+            kobo_ui::with_reading_scale(scale, || {
+                let metrics = self.metrics_at(scale);
+                let mut area = metrics.prose_area_in(true, nav_bar, kobo_ui::Face::Reading);
+                area.height = area
+                    .height
+                    .saturating_sub(metrics.status_band_height())
+                    .saturating_sub(metrics.page_position_band())
+                    .max(1);
+                kobo_ui::paginate(text, area)
+            })
         })
     }
 
@@ -629,7 +637,9 @@ impl Context {
         paragraphs: &[(u8, QuoteRole, &str)],
         nav_bar: bool,
     ) -> Vec<Vec<(u8, QuoteRole, String)>> {
-        kobo_ui::paginate_quoted(paragraphs, &self.metrics, self.paged_area(nav_bar))
+        kobo_ui::with_text_scale(self.metrics.text_scale, || {
+            kobo_ui::paginate_quoted(paragraphs, &self.metrics, self.paged_area(nav_bar))
+        })
     }
 
     /// The same, carrying a number of the application's choosing through the
@@ -641,7 +651,9 @@ impl Context {
         paragraphs: &[(u32, u8, QuoteRole, &str)],
         nav_bar: bool,
     ) -> Vec<Vec<(u32, u8, QuoteRole, String)>> {
-        kobo_ui::paginate_tagged(paragraphs, &self.metrics, self.paged_area(nav_bar))
+        kobo_ui::with_text_scale(self.metrics.text_scale, || {
+            kobo_ui::paginate_tagged(paragraphs, &self.metrics, self.paged_area(nav_bar))
+        })
     }
 
     /// `text` cut to the single line a list row can show, ellipsised if it
@@ -664,13 +676,15 @@ impl Context {
     /// already accounts for.
     #[must_use]
     pub fn clamped_row(&self, text: &str, lines: usize, nav_bar: bool) -> String {
-        let area = self.metrics.prose_area(true, nav_bar);
-        kobo_ui::clamp_lines(
-            text,
-            kobo_ui::row_text_width(&self.metrics, area),
-            kobo_ui::FontSize::Body,
-            lines,
-        )
+        kobo_ui::with_text_scale(self.metrics.text_scale, || {
+            let area = self.metrics.prose_area(true, nav_bar);
+            kobo_ui::clamp_lines(
+                text,
+                kobo_ui::row_text_width(&self.metrics, area),
+                kobo_ui::FontSize::Body,
+                lines,
+            )
+        })
     }
 
     /// The same, for a row that carries `trailing` at its trailing edge.
@@ -686,13 +700,15 @@ impl Context {
         lines: usize,
         nav_bar: bool,
     ) -> String {
-        let area = self.metrics.prose_area(true, nav_bar);
-        kobo_ui::clamp_lines(
-            text,
-            kobo_ui::row_title_width(&self.metrics, area, trailing, false),
-            kobo_ui::FontSize::Body,
-            lines,
-        )
+        kobo_ui::with_text_scale(self.metrics.text_scale, || {
+            let area = self.metrics.prose_area(true, nav_bar);
+            kobo_ui::clamp_lines(
+                text,
+                kobo_ui::row_title_width(&self.metrics, area, trailing, false),
+                kobo_ui::FontSize::Body,
+                lines,
+            )
+        })
     }
 
     /// `text` cut to one line of a row that carries an overflow mark.
@@ -701,13 +717,15 @@ impl Context {
     /// a title clamped at the full row width runs under the dots.
     #[must_use]
     pub fn one_line_row_with_menu(&self, text: &str, nav_bar: bool) -> String {
-        let area = self.metrics.prose_area(true, nav_bar);
-        kobo_ui::clamp_lines(
-            text,
-            kobo_ui::row_title_width(&self.metrics, area, "", true),
-            kobo_ui::FontSize::Body,
-            1,
-        )
+        kobo_ui::with_text_scale(self.metrics.text_scale, || {
+            let area = self.metrics.prose_area(true, nav_bar);
+            kobo_ui::clamp_lines(
+                text,
+                kobo_ui::row_title_width(&self.metrics, area, "", true),
+                kobo_ui::FontSize::Body,
+                1,
+            )
+        })
     }
 
     /// The content area an application screen actually gets.
@@ -747,7 +765,9 @@ impl Context {
     /// fold is, and the layout engine simply stops drawing at the bottom.
     #[must_use]
     pub fn paginate_rows(&self, rows: &[(&str, &str)], nav_bar: bool) -> Vec<Vec<usize>> {
-        kobo_ui::paginate_rows(rows, &self.metrics, self.paged_area(nav_bar))
+        kobo_ui::with_text_scale(self.metrics.text_scale, || {
+            kobo_ui::paginate_rows(rows, &self.metrics, self.paged_area(nav_bar))
+        })
     }
 
     /// The content area a screen that pages actually gets.
@@ -802,12 +822,14 @@ impl Context {
         highest: u16,
         position: Position,
     ) -> Vec<Vec<usize>> {
-        kobo_ui::paginate_ranked_rows_with_trailing(
-            rows,
-            &self.metrics,
-            self.area_for(nav_bar, position),
-            highest,
-        )
+        kobo_ui::with_text_scale(self.metrics.text_scale, || {
+            kobo_ui::paginate_ranked_rows_with_trailing(
+                rows,
+                &self.metrics,
+                self.area_for(nav_bar, position),
+                highest,
+            )
+        })
     }
 
     /// The same, for a screen that says which page it is on somewhere else.
@@ -824,7 +846,13 @@ impl Context {
         nav_bar: bool,
         position: Position,
     ) -> Vec<Vec<usize>> {
-        kobo_ui::paginate_rows_with_trailing(rows, &self.metrics, self.area_for(nav_bar, position))
+        kobo_ui::with_text_scale(self.metrics.text_scale, || {
+            kobo_ui::paginate_rows_with_trailing(
+                rows,
+                &self.metrics,
+                self.area_for(nav_bar, position),
+            )
+        })
     }
 
     /// The same, when one section header is drawn immediately above the rows.
@@ -872,6 +900,30 @@ impl Context {
         })
     }
 
+    /// Measure rows below a built prefix containing the same headings, filters,
+    /// or notices that will precede the list. The prefix must not include the
+    /// list itself or a page-position strip; those are reserved here.
+    #[must_use]
+    pub fn paginate_rows_under(
+        &self,
+        rows: &[(&str, &str)],
+        nav_bar: bool,
+        position: Position,
+        placed: &Screen,
+    ) -> Vec<Vec<usize>> {
+        kobo_ui::with_text_scale(self.metrics.text_scale, || {
+            let used = placed
+                .layout_with(&self.metrics, &Chrome::measuring(true))
+                .content_used();
+            let mut area = self.area_for(nav_bar, position);
+            area.height = area
+                .height
+                .saturating_sub(used.saturating_add(area.gap))
+                .max(0);
+            kobo_ui::paginate_rows(rows, &self.metrics, area)
+        })
+    }
+
     /// The page a list gets, given where it says which page that is.
     fn area_for(&self, nav_bar: bool, position: Position) -> kobo_ui::ProseArea {
         match position {
@@ -883,7 +935,9 @@ impl Context {
     /// The same, for rows that carry an overflow mark against their right edge.
     #[must_use]
     pub fn paginate_rows_with_menu(&self, rows: &[(&str, &str)], nav_bar: bool) -> Vec<Vec<usize>> {
-        kobo_ui::paginate_rows_with_menu(rows, &self.metrics, self.paged_area(nav_bar))
+        kobo_ui::with_text_scale(self.metrics.text_scale, || {
+            kobo_ui::paginate_rows_with_menu(rows, &self.metrics, self.paged_area(nav_bar))
+        })
     }
 
     /// The same, where some rows open a new section.
@@ -897,7 +951,9 @@ impl Context {
         rows: &[(Option<&str>, &str, &str)],
         nav_bar: bool,
     ) -> Vec<Vec<usize>> {
-        kobo_ui::paginate_rows_in_sections(rows, &self.metrics, self.paged_area(nav_bar))
+        kobo_ui::with_text_scale(self.metrics.text_scale, || {
+            kobo_ui::paginate_rows_in_sections(rows, &self.metrics, self.paged_area(nav_bar))
+        })
     }
 
     /// Breaks a grid of tiles into pages that fit this panel.
@@ -917,7 +973,9 @@ impl Context {
     /// where a list's is one line.
     #[must_use]
     pub fn paginate_tiles(&self, count: usize, shape: TileShape, nav_bar: bool) -> Vec<Vec<usize>> {
-        kobo_ui::paginate_tiles(count, &self.metrics, shape, self.screen_area(nav_bar))
+        kobo_ui::with_text_scale(self.metrics.text_scale, || {
+            kobo_ui::paginate_tiles(count, &self.metrics, shape, self.screen_area(nav_bar))
+        })
     }
 
     /// Breaks a grid of tiles into pages that fit *under* what is already there.
@@ -935,15 +993,17 @@ impl Context {
         nav_bar: bool,
         placed: &Screen,
     ) -> Vec<Vec<usize>> {
-        let used = placed
-            .layout_with(&self.metrics, &Chrome::measuring(true))
-            .content_used();
-        let mut area = self.screen_area(nav_bar);
-        area.height = area
-            .height
-            .saturating_sub(used.saturating_add(area.gap))
-            .max(1);
-        kobo_ui::paginate_tiles(count, &self.metrics, shape, area)
+        kobo_ui::with_text_scale(self.metrics.text_scale, || {
+            let used = placed
+                .layout_with(&self.metrics, &Chrome::measuring(true))
+                .content_used();
+            let mut area = self.screen_area(nav_bar);
+            area.height = area
+                .height
+                .saturating_sub(used.saturating_add(area.gap))
+                .max(1);
+            kobo_ui::paginate_tiles(count, &self.metrics, shape, area)
+        })
     }
 
     /// Asks the runtime to hand the panel to another application.
