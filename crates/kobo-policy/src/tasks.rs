@@ -788,7 +788,7 @@ fn scoped_secret(store: Option<&SecretStore>, name: &str) -> Option<String> {
     }
     if let Some(app) = store.app.as_deref() {
         let path = crate::credentials::app_secret_path(&store.root, app, name)?;
-        if let Some(value) = read_secret(&store.root, &path) {
+        if let Some(value) = read_secret_value(&store.root, &path, false) {
             return Some(value);
         }
     }
@@ -805,6 +805,10 @@ fn secret(directory: Option<&Path>, name: &str) -> Option<String> {
 }
 
 fn read_secret(root: &Path, path: &Path) -> Option<String> {
+    read_secret_value(root, path, true)
+}
+
+fn read_secret_value(root: &Path, path: &Path, trim: bool) -> Option<String> {
     let root_metadata = std::fs::symlink_metadata(root).ok()?;
     if !root_metadata.file_type().is_dir() {
         return None;
@@ -834,7 +838,7 @@ fn read_secret(root: &Path, path: &Path) -> Option<String> {
         return None;
     }
     let value = String::from_utf8(bytes).ok()?;
-    let value = value.trim().to_owned();
+    let value = if trim { value.trim().to_owned() } else { value };
     if value.is_empty() {
         None
     } else {
@@ -1222,6 +1226,29 @@ mod tests {
             }))
             .with_line_streams(Arc::new(LineStreams::default()))
             .with_credential_policy(Arc::new(|_, _, _, _, _| true))
+    }
+
+    #[test]
+    fn app_entered_secret_preserves_spaces_while_legacy_files_keep_trimming() {
+        let root =
+            std::env::temp_dir().join(format!("cobalt-verbatim-secret-{}", std::process::id()));
+        std::fs::create_dir(&root).unwrap();
+        crate::credentials::install_app_secret(&root, "chat", "openai", "  synthetic key  ")
+            .unwrap();
+        let store = super::SecretStore {
+            root: root.clone(),
+            app: Some("chat".into()),
+        };
+        assert_eq!(
+            super::scoped_secret(Some(&store), "openai").as_deref(),
+            Some("  synthetic key  ")
+        );
+        std::fs::write(root.join("other"), b"legacy-key\n").unwrap();
+        assert_eq!(
+            super::scoped_secret(Some(&store), "other").as_deref(),
+            Some("legacy-key")
+        );
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

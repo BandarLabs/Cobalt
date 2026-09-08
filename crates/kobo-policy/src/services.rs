@@ -321,13 +321,15 @@ impl DeviceServices {
             DeviceRequest::ListInstalledApps
             | DeviceRequest::ReadAppCatalog
             | DeviceRequest::RefreshAppCatalog => Self::empty_apps(),
-            DeviceRequest::InstallApp { .. }
-            | DeviceRequest::UninstallApp { .. }
-            | DeviceRequest::SetSecret { .. } => DeviceResult::Done,
+            DeviceRequest::InstallApp { .. } | DeviceRequest::UninstallApp { .. } => {
+                DeviceResult::Done
+            }
             DeviceRequest::LookupWord { word, language } => {
                 self.lookup_word(word, language.as_deref())
             }
-            DeviceRequest::ReadAppLink
+            // Only the host's durable credential handler can acknowledge SetSecret.
+            DeviceRequest::SetSecret { .. }
+            | DeviceRequest::ReadAppLink
             | DeviceRequest::BeginAppLink
             | DeviceRequest::PollAppLink
             | DeviceRequest::DisconnectAppLink => DeviceResult::Denied(DenyReason::Unsupported),

@@ -3021,10 +3021,8 @@ fn simulated_app_request(
 ) -> io::Result<Option<kobo_protocol::DeviceResult>> {
     use kobo_protocol::{DenyReason, DeviceError, DeviceRequest, DeviceResult};
 
-    if let DeviceRequest::SetSecret { name, value } = request {
-        if scenario == Scenario::PermissionDenied
-            || !kobo_policy::credentials::may_set(caller, name)
-        {
+    if matches!(request, DeviceRequest::SetSecret { .. }) {
+        if scenario == Scenario::PermissionDenied {
             return Ok(Some(DeviceResult::Denied(DenyReason::NotDeclared)));
         }
         let directory = state
@@ -3032,10 +3030,9 @@ fn simulated_app_request(
             .map_err(|_| io::Error::other("app state lock poisoned"))?
             .secret_directory
             .clone();
-        let result =
-            kobo_policy::credentials::install_app_secret(&directory, caller, name, value.as_str())
-                .map_or_else(DeviceResult::Failed, |()| DeviceResult::Done);
-        return Ok(Some(result));
+        return Ok(kobo_policy::credentials::handle_install(
+            &directory, caller, request,
+        ));
     }
 
     let authorized = match request {

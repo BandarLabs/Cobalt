@@ -28,6 +28,25 @@ pub fn app_secret_path(root: &Path, app: &str, name: &str) -> Option<PathBuf> {
     Some(root.join(APP_SECRET_DIRECTORY).join(app).join(name))
 }
 
+/// Handle credential storage consistently in native and simulated hosts.
+/// A success is returned only after the private write has been flushed.
+pub fn handle_install(
+    root: &Path,
+    app: &str,
+    request: &kobo_protocol::DeviceRequest,
+) -> Option<kobo_protocol::DeviceResult> {
+    use kobo_protocol::{DenyReason, DeviceRequest, DeviceResult};
+    let DeviceRequest::SetSecret { name, value } = request else {
+        return None;
+    };
+    Some(if may_set(app, name) {
+        install_app_secret(root, app, name, value.as_str())
+            .map_or_else(DeviceResult::Failed, |()| DeviceResult::Done)
+    } else {
+        DeviceResult::Denied(DenyReason::NotDeclared)
+    })
+}
+
 /// Installs an app-entered credential in the verified caller's namespace.
 ///
 /// Global files directly below `root` remain owner-managed CLI credentials.
@@ -517,6 +536,39 @@ fn zotero_key(value: &str) -> bool {
 mod tests {
     use super::{allowed, allowed_request, install_app_secret, may_set, AUDIOBOOK_VOICES};
     use kobo_protocol::{Credential, CredentialUse};
+
+    #[test]
+    fn shared_install_handler_acknowledges_only_durable_authorized_writes() {
+        use kobo_protocol::{DenyReason, DeviceRequest, DeviceResult, SecretValue};
+        let root =
+            std::env::temp_dir().join(format!("cobalt-credential-handler-{}", std::process::id()));
+        std::fs::create_dir(&root).unwrap();
+        let request = DeviceRequest::SetSecret {
+            name: "openai".into(),
+            value: SecretValue::new("synthetic-key"),
+        };
+        assert_eq!(
+            super::handle_install(&root, "todo", &request),
+            Some(DeviceResult::Denied(DenyReason::NotDeclared))
+        );
+        assert!(!root.join("apps").exists());
+        assert_eq!(
+            super::handle_install(&root, "chat", &request),
+            Some(DeviceResult::Done)
+        );
+        assert_eq!(
+            std::fs::read(root.join("apps/chat/openai")).unwrap(),
+            b"synthetic-key"
+        );
+        let blocked = root.join("not-a-directory");
+        std::fs::write(&blocked, b"preserved").unwrap();
+        assert!(matches!(
+            super::handle_install(&blocked, "chat", &request),
+            Some(DeviceResult::Failed(_))
+        ));
+        assert_eq!(std::fs::read(&blocked).unwrap(), b"preserved");
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn apps_can_install_only_the_credentials_their_policy_consumes() {

@@ -888,27 +888,8 @@ fn serve_application(
             Message::Launch { name } => println!("launch requested: {name}"),
             Message::Log { level, message } => log_app(level, &message),
             Message::DeviceRequest(request) => {
-                let result = if let kobo_protocol::DeviceRequest::SetSecret {
-                    name: secret_name,
-                    value,
-                } = &request
-                {
-                    if kobo_policy::credentials::may_set(name, secret_name) {
-                        kobo_policy::credentials::install_app_secret(
-                            &secrets,
-                            name,
-                            secret_name,
-                            value.as_str(),
-                        )
-                        .map_or_else(kobo_protocol::DeviceResult::Failed, |()| {
-                            kobo_protocol::DeviceResult::Done
-                        })
-                    } else {
-                        kobo_protocol::DeviceResult::Denied(kobo_protocol::DenyReason::NotDeclared)
-                    }
-                } else {
-                    services.handle(request.clone())
-                };
+                let result = kobo_policy::credentials::handle_install(&secrets, name, &request)
+                    .unwrap_or_else(|| services.handle(request.clone()));
                 println!("device request {request:?} -> {result:?}");
                 write_shared(
                     &writer,
