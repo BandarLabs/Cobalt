@@ -200,6 +200,21 @@ Sudoku remains Store-only and is intentionally absent from the USB platform
 package, so installing it verifies delivery of an app that was not already on
 the reader.
 
+## Save an app export to your computer
+
+When an app offers **Ready for your computer**, receive its prepared copy using
+Cobalt's existing reader connection:
+
+```sh
+kobo export --app APP --device reader.local --out "$HOME/Downloads"
+```
+
+Replace `APP` with that app's ID. The command checks the complete file before
+saving, preserves the reader's original, and gives conflicting local names a
+numbered suffix. Retry the same command after a connection or storage failure.
+App adoption is still in progress. See the [export guide](docs/quality/sdk-export-and-copy.md)
+for supported formats and simulator use.
+
 ## Build an app
 
 ```sh

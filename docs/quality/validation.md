@@ -551,3 +551,14 @@ Clara BW portrait/landscape and 758×1024/212 ppi. It checks both ends of the lo
 pages, filtered original IDs and late-response refusal after Back. This addition
 uses app/policy tests rather than a live network library. No extra todo is marked
 complete: PANELS-04 and PANELS-07 remain open.
+## Public documentation follow-through
+
+README, SDK.md and the public SDK page now document the export receiver, verified
+copy lifecycle, acknowledged drafts, server-bound accounts and shared CBZ reader.
+The public SDK page uses the actual committed export fixture screenshot with its
+simulator limitation stated. Device session instructions now explain the timed
+two-minute wake-lock lease, renewal and stock-reader suspend limitation. Simulator
+residue is described as a model awaiting physical calibration. API names and CLI
+lease behavior were checked against source; local image paths and diff whitespace
+were checked. No code or physical-reader behavior changed in this documentation
+update. Beta was fetched again and remains 7f1a543.
