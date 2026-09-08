@@ -986,10 +986,10 @@ fn serve_application(
             | Message::DeviceResult(_)
             | Message::StoreResult(_)
             | Message::Lifecycle(_)
-                        | Message::PrepareSuspend { .. }
-                        | Message::SuspendReady { .. }
-                        | Message::Resume { .. }
-                        | Message::ScheduledWake { .. }
+            | Message::PrepareSuspend { .. }
+            | Message::SuspendReady { .. }
+            | Message::Resume { .. }
+            | Message::ScheduledWake { .. }
             | Message::CoverChanged { .. }
             | Message::PageTurn { .. }
             | Message::ShellEvent(_) => {

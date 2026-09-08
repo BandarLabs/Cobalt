@@ -1006,17 +1006,45 @@ mod responsive_profile_tests {
         for (name, base) in panels() {
             for text_scale in [TextScale::Default, TextScale::Large, TextScale::ExtraLarge] {
                 let metrics = DisplayMetrics { text_scale, ..base };
-                let screen = Screen::new(1, vec![
-                    Node::Heading { id: NodeId(1), text: "O to play".into(), level: 1 },
-                    Node::Grid { id: NodeId(2), columns: 3, square: true,
-                        cells: (1..=9).map(|id| Cell::new(ActionId(id), "O")).collect() },
-                    Node::Grid { id: NodeId(3), columns: 2, square: false,
-                        cells: vec![Cell::new(ActionId(10), "Reset game"), Cell::new(ActionId(11), "How to play")] },
-                ]).with_top_bar(TopBar::new(NodeId(4), "Tic-tac-toe"));
+                let screen = Screen::new(
+                    1,
+                    vec![
+                        Node::Heading {
+                            id: NodeId(1),
+                            text: "O to play".into(),
+                            level: 1,
+                        },
+                        Node::Grid {
+                            id: NodeId(2),
+                            columns: 3,
+                            square: true,
+                            cells: (1..=9).map(|id| Cell::new(ActionId(id), "O")).collect(),
+                        },
+                        Node::Grid {
+                            id: NodeId(3),
+                            columns: 2,
+                            square: false,
+                            cells: vec![
+                                Cell::new(ActionId(10), "Reset game"),
+                                Cell::new(ActionId(11), "How to play"),
+                            ],
+                        },
+                    ],
+                )
+                .with_top_bar(TopBar::new(NodeId(4), "Tic-tac-toe"));
                 let diagnostics = screen.diagnostics(&metrics, &Chrome::measuring(true));
-                assert!(!diagnostics.has_errors(), "{name} {text_scale:?}: {:?}", diagnostics.issues);
-                let cells = diagnostics.layout.nodes.iter()
-                    .filter(|node| node.id == NodeId(2) && matches!(node.kind, LayoutKind::Cell(..)))
+                assert!(
+                    !diagnostics.has_errors(),
+                    "{name} {text_scale:?}: {:?}",
+                    diagnostics.issues
+                );
+                let cells = diagnostics
+                    .layout
+                    .nodes
+                    .iter()
+                    .filter(|node| {
+                        node.id == NodeId(2) && matches!(node.kind, LayoutKind::Cell(..))
+                    })
                     .collect::<Vec<_>>();
                 assert_eq!(cells.len(), 9);
                 for cell in &cells {
@@ -1026,7 +1054,11 @@ mod responsive_profile_tests {
                 assert_eq!(cells[0].rect.y, cells[2].rect.y);
                 assert!(cells[3].rect.y > cells[2].rect.y);
                 for action in 1..=11 {
-                    assert!(diagnostics.layout.nodes.iter().any(|node| node.kind.acts_on() == Some(ActionId(action))));
+                    assert!(diagnostics
+                        .layout
+                        .nodes
+                        .iter()
+                        .any(|node| node.kind.acts_on() == Some(ActionId(action))));
                 }
             }
         }
@@ -7948,7 +7980,13 @@ fn layout_node(
             };
             let mut cell_width = (width - gutter * (columns - 1) - block_extra * 2) / columns;
             if *square && !legacy_typography() && !backgammon_board && !cells.is_empty() {
-                let rows = i32::try_from(cells.len().min(MAX_CELLS).div_ceil(usize::try_from(columns).unwrap_or(1))).unwrap_or(i32::MAX);
+                let rows = i32::try_from(
+                    cells
+                        .len()
+                        .min(MAX_CELLS)
+                        .div_ceil(usize::try_from(columns).unwrap_or(1)),
+                )
+                .unwrap_or(i32::MAX);
                 let vertical_gaps = gutter * (rows - 1) + ((rows - 1) / 3) * block_extra;
                 let fits_height = bottom.saturating_sub(y).saturating_sub(vertical_gaps) / rows;
                 cell_width = cell_width.min(fits_height.max(metrics.touch_target_minimum()));
@@ -10371,15 +10409,26 @@ pub fn section_height(metrics: &DisplayMetrics) -> i32 {
 #[must_use]
 pub fn banner_height(text: &str, width: i32, metrics: &DisplayMetrics) -> i32 {
     with_text_scale(metrics.text_scale, || {
-        let width = if legacy_typography() { width } else { width.min(metrics.readable_width()) };
-        let lines = wrap_text(text, width - 2 * metrics.space(Space::Small), FontSize::Body);
+        let width = if legacy_typography() {
+            width
+        } else {
+            width.min(metrics.readable_width())
+        };
+        let lines = wrap_text(
+            text,
+            width - 2 * metrics.space(Space::Small),
+            FontSize::Body,
+        );
         banner_height_for_lines(lines.len(), metrics)
     })
 }
 
 fn banner_height_for_lines(lines: usize, metrics: &DisplayMetrics) -> i32 {
-    i32::try_from(lines).unwrap_or(i32::MAX).saturating_mul(FontSize::Body.line_height())
-        .saturating_add(2 * metrics.space(Space::Small)).max(metrics.touch_target_minimum())
+    i32::try_from(lines)
+        .unwrap_or(i32::MAX)
+        .saturating_mul(FontSize::Body.line_height())
+        .saturating_add(2 * metrics.space(Space::Small))
+        .max(metrics.touch_target_minimum())
 }
 
 /// Breaks a list into pages, keeping every section header with its first row.
@@ -10510,7 +10559,10 @@ fn flow_node_bottom(
 ) -> i32 {
     let flexible = matches!(
         node,
-        Node::Text { .. } | Node::RichText { .. } | Node::PagedList { .. } | Node::Terminal { .. }
+        Node::Text { .. }
+            | Node::RichText { .. }
+            | Node::PagedList { .. }
+            | Node::Terminal { .. }
             | Node::Grid { square: true, .. }
     );
     let protects_interaction = following.iter().any(node_has_enabled_interaction);

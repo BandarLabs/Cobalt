@@ -659,13 +659,23 @@ pub enum Message {
     /// Sent by the runtime when an application gains or loses the panel.
     Lifecycle(Lifecycle),
     /// Request a generation-scoped save and task barrier before suspend.
-    PrepareSuspend { generation: u64 },
+    PrepareSuspend {
+        generation: u64,
+    },
     /// SDK acknowledgement after callbacks, durable replies and tasks settle.
-    SuspendReady { generation: u64, ready: bool },
+    SuspendReady {
+        generation: u64,
+        ready: bool,
+    },
     /// End this barrier, after resume or an aborted suspend attempt.
-    Resume { generation: u64, reason: WakeReason },
+    Resume {
+        generation: u64,
+        reason: WakeReason,
+    },
     /// A due scheduled wake, delivered only to the application that requested it.
-    ScheduledWake { occurrence: u64 },
+    ScheduledWake {
+        occurrence: u64,
+    },
     /// The runtime's answer to exactly one store request.
     StoreResult(StoreResult),
     /// An application driving a terminal the runtime owns.
@@ -895,13 +905,30 @@ pub enum Lifecycle {
 /// Why a suspend barrier ended. An abort is a wake event without kernel sleep.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
-pub enum WakeReason { Cancelled = 0, PowerButton = 1, Cover = 2, Touch = 3, Scheduled = 4, Usb = 5, Charging = 6, Backend = 7 }
+pub enum WakeReason {
+    Cancelled = 0,
+    PowerButton = 1,
+    Cover = 2,
+    Touch = 3,
+    Scheduled = 4,
+    Usb = 5,
+    Charging = 6,
+    Backend = 7,
+}
 impl WakeReason {
     #[must_use]
     pub const fn from_wire(value: u8) -> Option<Self> {
-        match value { 0 => Some(Self::Cancelled), 1 => Some(Self::PowerButton), 2 => Some(Self::Cover),
-            3 => Some(Self::Touch), 4 => Some(Self::Scheduled), 5 => Some(Self::Usb), 6 => Some(Self::Charging),
-            7 => Some(Self::Backend), _ => None }
+        match value {
+            0 => Some(Self::Cancelled),
+            1 => Some(Self::PowerButton),
+            2 => Some(Self::Cover),
+            3 => Some(Self::Touch),
+            4 => Some(Self::Scheduled),
+            5 => Some(Self::Usb),
+            6 => Some(Self::Charging),
+            7 => Some(Self::Backend),
+            _ => None,
+        }
     }
 }
 
@@ -1988,7 +2015,10 @@ pub fn encode(frame: &Frame) -> Result<Vec<u8>, ProtocolError> {
         Message::DropFont { handle } => push_u32(&mut payload, handle.0),
         Message::PrepareSuspend { generation } => push_u64(&mut payload, *generation),
         Message::ScheduledWake { occurrence } => push_u64(&mut payload, *occurrence),
-        Message::Resume { generation, reason } => { push_u64(&mut payload, *generation); payload.push(*reason as u8); },
+        Message::Resume { generation, reason } => {
+            push_u64(&mut payload, *generation);
+            payload.push(*reason as u8);
+        }
         Message::SuspendReady { generation, ready } => {
             push_u64(&mut payload, *generation);
             payload.push(u8::from(*ready));
@@ -2576,9 +2606,16 @@ fn encoded_message_layout(message: &Message, version: u8) -> Result<(u8, usize),
     }
 }
 
-fn suspend_layout(tag: u8, bytes: usize, generation: u64, version: u8) -> Result<(u8, usize), ProtocolError> {
+fn suspend_layout(
+    tag: u8,
+    bytes: usize,
+    generation: u64,
+    version: u8,
+) -> Result<(u8, usize), ProtocolError> {
     if version < VERSION || generation == 0 {
-        return Err(ProtocolError::InvalidValue("protocol 14 suspend generation"));
+        return Err(ProtocolError::InvalidValue(
+            "protocol 14 suspend generation",
+        ));
     }
     Ok((tag, bytes))
 }
@@ -4755,12 +4792,23 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, ProtocolError> {
         },
         tag @ (37..=40) if version >= VERSION => {
             let generation = reader.u64()?;
-            if generation == 0 { return Err(ProtocolError::InvalidValue("suspend generation")); }
+            if generation == 0 {
+                return Err(ProtocolError::InvalidValue("suspend generation"));
+            }
             match tag {
                 37 => Message::PrepareSuspend { generation },
-                38 => Message::SuspendReady { generation, ready: read_boolean(&mut reader, "suspend ready")? },
-                40 => Message::ScheduledWake { occurrence: generation },
-                _ => Message::Resume { generation, reason: WakeReason::from_wire(reader.u8()?).ok_or(ProtocolError::InvalidValue("wake reason"))? },
+                38 => Message::SuspendReady {
+                    generation,
+                    ready: read_boolean(&mut reader, "suspend ready")?,
+                },
+                40 => Message::ScheduledWake {
+                    occurrence: generation,
+                },
+                _ => Message::Resume {
+                    generation,
+                    reason: WakeReason::from_wire(reader.u8()?)
+                        .ok_or(ProtocolError::InvalidValue("wake reason"))?,
+                },
             }
         }
         value => return Err(ProtocolError::UnknownMessageType(value)),

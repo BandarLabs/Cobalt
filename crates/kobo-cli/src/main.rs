@@ -17,7 +17,6 @@ mod connect;
 mod deck;
 mod devsession;
 mod drive;
-mod runtime_dev;
 mod flashcards;
 mod frame;
 mod host_release;
@@ -25,6 +24,7 @@ mod menu;
 mod needles;
 mod nonograms;
 mod package;
+mod runtime_dev;
 mod vault;
 // Only the `device-write` build dispatches to this, but its tests decide what
 // gets sent to a reader and are worth running on every build. So it compiles

@@ -1369,12 +1369,19 @@ mod tests {
 
     #[test]
     fn paused_runner_cancels_once_and_resume_does_not_replay_work() {
-        let clock = Arc::new(crate::clock::ManualClock::new(crate::clock::Snapshot {
-            unix_millis: 0, monotonic_millis: 0, utc_offset_minutes: 0,
-        }).unwrap());
+        let clock = Arc::new(
+            crate::clock::ManualClock::new(crate::clock::Snapshot {
+                unix_millis: 0,
+                monotonic_millis: 0,
+                utc_offset_minutes: 0,
+            })
+            .unwrap(),
+        );
         let mut runner = TaskRunner::simulated(".").with_manual_clock(clock);
         assert!(!runner.is_quiescent());
-        runner.submit(TaskId(1), Task::Sleep { seconds: 300 }).unwrap();
+        runner
+            .submit(TaskId(1), Task::Sleep { seconds: 300 })
+            .unwrap();
         runner.pause();
         runner.pause();
         assert!(!runner.is_quiescent());
@@ -1382,16 +1389,26 @@ mod tests {
         assert_eq!(outcomes.len(), 1);
         assert_eq!(outcomes[0].outcome, TaskOutcome::Cancelled);
         assert!(runner.is_quiescent());
-        runner.submit(TaskId(2), Task::Sleep { seconds: 300 }).unwrap();
+        runner
+            .submit(TaskId(2), Task::Sleep { seconds: 300 })
+            .unwrap();
         assert!(!runner.is_quiescent());
-        assert_eq!(runner.submit(TaskId(2), Task::Sleep { seconds: 0 }), Err(RejectReason::DuplicateId));
+        assert_eq!(
+            runner.submit(TaskId(2), Task::Sleep { seconds: 0 }),
+            Err(RejectReason::DuplicateId)
+        );
         assert_eq!(runner.drain()[0].outcome, TaskOutcome::Cancelled);
         runner.resume();
         runner.resume();
         assert_eq!(runner.in_flight(), 0);
         assert!(runner.drain().is_empty());
-        runner.submit(TaskId(3), Task::Sleep { seconds: 0 }).unwrap();
-        assert_eq!(runner.drain()[0].outcome, TaskOutcome::Completed(Vec::new()));
+        runner
+            .submit(TaskId(3), Task::Sleep { seconds: 0 })
+            .unwrap();
+        assert_eq!(
+            runner.drain()[0].outcome,
+            TaskOutcome::Completed(Vec::new())
+        );
     }
 
     #[test]

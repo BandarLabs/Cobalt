@@ -57,16 +57,12 @@ impl Study {
                 .text(text)
                 .button("close", "Close")
         } else {
-            ScreenBuilder::new(format!(
-                "board-study-{}-{:?}",
-                view.position(),
-                view.zoom()
-            ))
-            .top_bar("Board study")
-            .secondary(view.position())
-            .board_viewport(&self.board, &self.clues, view)
-            .unwrap()
-            .board_viewport_controls(view)
+            ScreenBuilder::new(format!("board-study-{}-{:?}", view.position(), view.zoom()))
+                .top_bar("Board study")
+                .secondary(view.position())
+                .board_viewport(&self.board, &self.clues, view)
+                .unwrap()
+                .board_viewport_controls(view)
         };
         context.set_screen(
             builder

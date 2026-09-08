@@ -5,9 +5,9 @@
 //! Applications own their state and call [`AppRunner::start`] and
 //! [`AppRunner::action`] from their platform event loop.
 
-pub mod collections;
 #[cfg(test)]
 mod callback_scale_tests;
+pub mod collections;
 mod suspend;
 
 pub use kobo_protocol::{
@@ -471,7 +471,10 @@ pub enum Command {
     SetScreen(Screen),
     /// Requests a logical viewport direction for this app session.
     SetOrientation(Orientation),
-    SuspendReady { generation: u64, ready: bool },
+    SuspendReady {
+        generation: u64,
+        ready: bool,
+    },
     Log {
         level: LogLevel,
         message: String,
@@ -852,16 +855,20 @@ impl Context {
         notice: Option<&str>,
     ) -> Vec<Vec<usize>> {
         kobo_ui::with_text_scale(self.metrics.text_scale, || {
-        let mut area = self.area_for(nav_bar, position);
-        if let Some(notice) = notice {
-            area.height = area.height.saturating_sub(kobo_ui::banner_height(notice, area.width, &self.metrics)).saturating_sub(area.gap).max(1);
-        }
-        area.height = area
-            .height
-            .saturating_sub(kobo_ui::section_height(&self.metrics))
-            .saturating_sub(area.gap)
-            .max(1);
-        kobo_ui::paginate_rows_with_trailing(rows, &self.metrics, area)
+            let mut area = self.area_for(nav_bar, position);
+            if let Some(notice) = notice {
+                area.height = area
+                    .height
+                    .saturating_sub(kobo_ui::banner_height(notice, area.width, &self.metrics))
+                    .saturating_sub(area.gap)
+                    .max(1);
+            }
+            area.height = area
+                .height
+                .saturating_sub(kobo_ui::section_height(&self.metrics))
+                .saturating_sub(area.gap)
+                .max(1);
+            kobo_ui::paginate_rows_with_trailing(rows, &self.metrics, area)
         })
     }
 
@@ -2307,11 +2314,15 @@ pub trait KoboApp {
     fn on_resume(&mut self, _context: &mut Context) {}
 
     /// Save work before sleep. The SDK waits for the resulting acknowledgements.
-    fn on_suspend(&mut self, context: &mut Context) { self.on_background(context); }
+    fn on_suspend(&mut self, context: &mut Context) {
+        self.on_background(context);
+    }
 
     /// Return false while edits cannot be safely left on durable storage.
     /// Override this for app-owned drafts or unresolved save failures.
-    fn can_suspend(&self) -> bool { true }
+    fn can_suspend(&self) -> bool {
+        true
+    }
 
     fn on_scheduled_wake(&mut self, _context: &mut Context) {}
 
@@ -2688,7 +2699,9 @@ impl<A: KoboApp> AppRunner<A> {
     /// Delivers one store answer.
     pub fn store_result(&mut self, result: StoreResult) -> Vec<Command> {
         if matches!(result, StoreResult::Denied(_)) {
-            if let Some(barrier) = &mut self.suspend_barrier { barrier.failed = true; }
+            if let Some(barrier) = &mut self.suspend_barrier {
+                barrier.failed = true;
+            }
         }
         let target = self
             .pending_stores
@@ -3010,7 +3023,9 @@ impl Client {
             let message = match command {
                 Command::SetScreen(screen) => Message::SetScreen(screen),
                 Command::SetOrientation(orientation) => Message::SetOrientation(orientation),
-                Command::SuspendReady { generation, ready } => Message::SuspendReady { generation, ready },
+                Command::SuspendReady { generation, ready } => {
+                    Message::SuspendReady { generation, ready }
+                }
                 Command::Log { level, message } => Message::Log { level, message },
                 Command::Device(request) => Message::DeviceRequest(request),
                 Command::Spawn { task, work } => Message::Spawn { task, work },
@@ -4701,9 +4716,15 @@ pub fn run_on<A: KoboApp>(name: &str, app: A, socket: &Path) -> Result<(), Clien
                 ClientEvent::Store(result) => {
                     client.send_commands(runner.store_result(result))?;
                 }
-                ClientEvent::ScheduledWake(occurrence) => { client.send_commands(runner.deliver_scheduled_wake(occurrence))?; }
-                ClientEvent::PrepareSuspend(generation) => { client.send_commands(runner.prepare_suspend(generation))?; }
-                ClientEvent::Resume(generation, reason) => { client.send_commands(runner.resume_from_suspend(generation, reason))?; }
+                ClientEvent::ScheduledWake(occurrence) => {
+                    client.send_commands(runner.deliver_scheduled_wake(occurrence))?;
+                }
+                ClientEvent::PrepareSuspend(generation) => {
+                    client.send_commands(runner.prepare_suspend(generation))?;
+                }
+                ClientEvent::Resume(generation, reason) => {
+                    client.send_commands(runner.resume_from_suspend(generation, reason))?;
+                }
                 ClientEvent::Lifecycle(state) => {
                     client.send_commands(runner.lifecycle(state))?;
                 }
@@ -4733,7 +4754,9 @@ pub fn run_on<A: KoboApp>(name: &str, app: A, socket: &Path) -> Result<(), Clien
             ClientEvent::Lifecycle(state) => runner.lifecycle(state),
             ClientEvent::ScheduledWake(occurrence) => runner.deliver_scheduled_wake(occurrence),
             ClientEvent::PrepareSuspend(generation) => runner.prepare_suspend(generation),
-            ClientEvent::Resume(generation, reason) => runner.resume_from_suspend(generation, reason),
+            ClientEvent::Resume(generation, reason) => {
+                runner.resume_from_suspend(generation, reason)
+            }
             ClientEvent::Shell(event) => runner.shell_event(event),
             ClientEvent::CoverChanged(present) => runner.cover_changed(present),
             ClientEvent::PageTurn(forward) => runner.page_turn(forward),

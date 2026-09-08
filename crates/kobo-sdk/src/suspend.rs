@@ -142,7 +142,11 @@ mod tests {
         runner.deliver_scheduled_wake(5);
         assert_eq!(runner.app().scheduled, 0);
         runner.resume_from_suspend(1, kobo_protocol::WakeReason::Scheduled);
-        assert_eq!(runner.app().scheduled, 0, "physical wake does not schedule every hosted app");
+        assert_eq!(
+            runner.app().scheduled,
+            0,
+            "physical wake does not schedule every hosted app"
+        );
         runner.deliver_scheduled_wake(5);
         runner.deliver_scheduled_wake(5);
         runner.deliver_scheduled_wake(4);

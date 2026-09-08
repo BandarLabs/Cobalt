@@ -1455,7 +1455,8 @@ impl AppState {
 
     fn commit_frame(&mut self) {
         if self.power_state == kobod::power::State::Suspended
-            || (self.runtime_navigation && self.lifecycle == Lifecycle::Background) {
+            || (self.runtime_navigation && self.lifecycle == Lifecycle::Background)
+        {
             return;
         }
         let mut surface = Surface::new(PROFILE.width as usize, PROFILE.height as usize);
@@ -1939,11 +1940,22 @@ impl AppSession {
                 }
             }
             ("GET", "/power") => {
-                let state = self.state.lock().map_err(|_| io::Error::other("app state unavailable"))?;
-                write_response(&mut stream, 200, "application/json", state.power_status.to_json().as_bytes())
+                let state = self
+                    .state
+                    .lock()
+                    .map_err(|_| io::Error::other("app state unavailable"))?;
+                write_response(
+                    &mut stream,
+                    200,
+                    "application/json",
+                    state.power_status.to_json().as_bytes(),
+                )
             }
             ("POST", "/power") => {
-                let mut state = self.state.lock().map_err(|_| io::Error::other("app state unavailable"))?;
+                let mut state = self
+                    .state
+                    .lock()
+                    .map_err(|_| io::Error::other("app state unavailable"))?;
                 match runtime::power::Input::parse(std::str::from_utf8(&request.body).unwrap_or("")) {
                     Some(input) if state.runtime_navigation && state.power_request.is_none() => {
                         state.power_request = Some(input);
@@ -2799,40 +2811,65 @@ fn read_app_messages(
             Message::Log { level, message } => note(state, &format!("{level:?}: {message}"))?,
             Message::DeviceRequest(request) => {
                 let scenario = current_scenario(state);
-                let result =
-                    if let Some(result) = simulated_app_request(state, name, scenario, &request)? {
-                        result
-                    } else if !simulated_platform_request_allowed(name, &request)
-                        || scenario == Scenario::PermissionDenied
-                    {
-                        kobo_protocol::DeviceResult::Denied(kobo_protocol::DenyReason::NotDeclared)
-                    } else {
-                        let mut state = state
-                            .lock()
-                            .map_err(|_| io::Error::other("app state lock poisoned"))?;
-                        state.observe_hardware();
-                        let mut result = state.services.handle(request.clone());
-                        if matches!(result, kobo_protocol::DeviceResult::Done | kobo_protocol::DeviceResult::Granted { .. }) {
-                            let now = state.time.now()?.monotonic_millis;
-                            match &request {
-                                kobo_protocol::DeviceRequest::KeepAwake { .. } => state.wake_until = now.saturating_add(u64::try_from(state.services.wake_hold().unwrap_or_default().as_millis()).unwrap_or(u64::MAX)),
-                                kobo_protocol::DeviceRequest::AllowSleep => state.wake_until = 0,
-                                kobo_protocol::DeviceRequest::ScheduleWake { .. } => state.scheduled_wake = Some(now.saturating_add(u64::try_from(state.services.scheduled_wake().unwrap_or_default().as_millis()).unwrap_or(u64::MAX))),
-                                kobo_protocol::DeviceRequest::CancelWake => state.scheduled_wake = None,
-                                _ => {},
+                let result = if let Some(result) =
+                    simulated_app_request(state, name, scenario, &request)?
+                {
+                    result
+                } else if !simulated_platform_request_allowed(name, &request)
+                    || scenario == Scenario::PermissionDenied
+                {
+                    kobo_protocol::DeviceResult::Denied(kobo_protocol::DenyReason::NotDeclared)
+                } else {
+                    let mut state = state
+                        .lock()
+                        .map_err(|_| io::Error::other("app state lock poisoned"))?;
+                    state.observe_hardware();
+                    let mut result = state.services.handle(request.clone());
+                    if matches!(
+                        result,
+                        kobo_protocol::DeviceResult::Done
+                            | kobo_protocol::DeviceResult::Granted { .. }
+                    ) {
+                        let now = state.time.now()?.monotonic_millis;
+                        match &request {
+                            kobo_protocol::DeviceRequest::KeepAwake { .. } => {
+                                state.wake_until = now.saturating_add(
+                                    u64::try_from(
+                                        state.services.wake_hold().unwrap_or_default().as_millis(),
+                                    )
+                                    .unwrap_or(u64::MAX),
+                                )
                             }
+                            kobo_protocol::DeviceRequest::AllowSleep => state.wake_until = 0,
+                            kobo_protocol::DeviceRequest::ScheduleWake { .. } => {
+                                state.scheduled_wake = Some(
+                                    now.saturating_add(
+                                        u64::try_from(
+                                            state
+                                                .services
+                                                .scheduled_wake()
+                                                .unwrap_or_default()
+                                                .as_millis(),
+                                        )
+                                        .unwrap_or(u64::MAX),
+                                    ),
+                                )
+                            }
+                            kobo_protocol::DeviceRequest::CancelWake => state.scheduled_wake = None,
+                            _ => {}
                         }
-                        if let kobo_protocol::DeviceResult::Identity(identity) = &mut result {
-                            identity.profile_id = format!("SIMULATOR:{}", PROFILE.id);
-                            identity.model = format!("Simulated {}", PROFILE.model);
-                            identity.panel_width = PROFILE.width;
-                            identity.panel_height = PROFILE.height;
-                        }
-                        if let kobo_protocol::DeviceResult::Frontlight { percent } = &result {
-                            state.hardware.frontlight_percent = *percent;
-                        }
-                        result
-                    };
+                    }
+                    if let kobo_protocol::DeviceResult::Identity(identity) = &mut result {
+                        identity.profile_id = format!("SIMULATOR:{}", PROFILE.id);
+                        identity.model = format!("Simulated {}", PROFILE.model);
+                        identity.panel_width = PROFILE.width;
+                        identity.panel_height = PROFILE.height;
+                    }
+                    if let kobo_protocol::DeviceResult::Frontlight { percent } = &result {
+                        state.hardware.frontlight_percent = *percent;
+                    }
+                    result
+                };
                 {
                     let mut state = state
                         .lock()
@@ -2854,8 +2891,13 @@ fn read_app_messages(
                 submit_simulated_task(tasks, writer, state, task, work, fault)?;
             }
             Message::SuspendReady { generation, ready } => {
-                let mut state = state.lock().map_err(|_| io::Error::other("app state unavailable"))?;
-                if state.power_state == kobod::power::State::Preparing && generation == state.power_generation && state.suspend_reply.is_none() {
+                let mut state = state
+                    .lock()
+                    .map_err(|_| io::Error::other("app state unavailable"))?;
+                if state.power_state == kobod::power::State::Preparing
+                    && generation == state.power_generation
+                    && state.suspend_reply.is_none()
+                {
                     state.suspend_reply = Some((generation, ready));
                 }
             }
@@ -2863,15 +2905,33 @@ fn read_app_messages(
                 answer_store(writer, request_id, &store, &shelf, &request, state)?;
             }
             Message::ShellRequest(request) => {
-                let paused = state.lock().map_err(|_| io::Error::other("app state unavailable"))?.power_state != kobod::power::State::Awake;
+                let paused = state
+                    .lock()
+                    .map_err(|_| io::Error::other("app state unavailable"))?
+                    .power_state
+                    != kobod::power::State::Awake;
                 if paused {
-                    write_shared(writer, &Frame { version: kobo_protocol::VERSION, request_id,
-                        message: Message::ShellEvent(kobo_protocol::ShellEvent::Refused(kobo_protocol::ShellError::Unavailable)) })?;
+                    write_shared(
+                        writer,
+                        &Frame {
+                            version: kobo_protocol::VERSION,
+                            request_id,
+                            message: Message::ShellEvent(kobo_protocol::ShellEvent::Refused(
+                                kobo_protocol::ShellError::Unavailable,
+                            )),
+                        },
+                    )?;
                 } else {
                     answer_shell(writer, request_id, &shells, request)?;
                 }
-                let open = shells.lock().map_err(|_| io::Error::other("shell unavailable"))?.is_open();
-                state.lock().map_err(|_| io::Error::other("app state unavailable"))?.terminal_open = open;
+                let open = shells
+                    .lock()
+                    .map_err(|_| io::Error::other("shell unavailable"))?
+                    .is_open();
+                state
+                    .lock()
+                    .map_err(|_| io::Error::other("app state unavailable"))?
+                    .terminal_open = open;
             }
             Message::Cancel { task } => tasks
                 .lock()
