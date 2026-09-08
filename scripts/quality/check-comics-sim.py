@@ -2,6 +2,7 @@
 """Drive Panels against original local fixtures in isolated simulator storage."""
 import argparse
 import io
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -46,19 +47,22 @@ def main():
     parser.add_argument('--colour', action='store_true', help='Inspect original RGB artwork on color and grayscale profiles')
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
-    binary = ROOT / 'target/debug/kobo'
+    target = Path(os.environ.get('CARGO_TARGET_DIR', str(ROOT / 'target'))).resolve()
+    binary = target / 'debug/kobo'
     if not binary.is_file():
         parser.error('Build kobo-cli before running this check.')
     process = None
     with tempfile.TemporaryDirectory(prefix='cq-comic-', dir='/tmp') as private:
-        env = dict(os.environ, TMPDIR=private, CARGO_TARGET_DIR=str(ROOT/'target'),
+        env = dict(os.environ, TMPDIR=private, CARGO_TARGET_DIR=str(target),
                    CARGO_PROFILE_DEV_DEBUG='0', CARGO_INCREMENTAL='0',
                    KOBO_SIM_PROFILE=args.profile, KOBO_TEXT_SCALE=args.scale,
                    KOBO_SIM_FIXTURE="original-geometric-comic", KOBO_SIM_SEED="0",
                    KOBO_SIM_CLOCK_MILLIS="1788850860000", KOBO_SIM_UTC_OFFSET_MINUTES="0")
         storage = Path(private)/'cobalt-sim-data/panels'
         storage.mkdir(parents=True)
-        (storage/'volume.cbz').write_bytes(b'Rar!\x1a\x07\x01\x00' if args.cbr else comic_bytes(args.colour))
+        fixture = b'Rar!\x1a\x07\x01\x00' if args.cbr else comic_bytes(args.colour)
+        (storage/'volume.cbz').write_bytes(fixture)
+        comic_key = hashlib.sha256(fixture).hexdigest()
         log_path = args.output/'simulator.log'
         with log_path.open('w') as log:
             try:
@@ -131,9 +135,9 @@ def main():
                     (args.output/(label+'.json')).write_text(json.dumps(data, indent=2)+'\n')
                     errors = [issue for issue in diagnostics['issues'] if issue['severity'] == 'error']
                     assert not errors, f'{label}: {errors}'
-                    return json.dumps(layout)
+                    return '\n'.join(' '.join(node.get('lines', [])) for node in layout['nodes'])
 
-                wait_for('Open added comic')
+                wait_for('Add comic')
                 drive('wait-for-id load-sideload')
                 drive('wait-idle')
                 drive('expect-state /clock#/mode "manual"')
@@ -188,6 +192,13 @@ def main():
                 drive('expect-state /input#/quiescent true')
                 capture('01-library')
                 drive('tap-id load-sideload')
+                if not args.cbr:
+                    wait_for('Keep a copy')
+                    capture('01-import-preview')
+                    drive('tap-id import-confirm')
+                    wait_for('Available on this reader')
+                    capture('01-import-receipt')
+                    drive('tap-id import-open')
                 wait_for('CBR is not supported yet' if args.cbr else 'Page 1 of 3')
                 text = capture('02-opened')
                 if args.cbr:
@@ -290,8 +301,8 @@ def main():
                         os.killpg(process.pid, signal.SIGKILL)
                         process.wait(timeout=5)
                         address = start()
-                        wait_for('Open added comic')
-                        drive('tap-id load-sideload')
+                        wait_for('Add comic')
+                        drive('tap-id kept-' + comic_key)
                         wait_for('Page 2 of 3')
                         capture('12-reopened')
                         drive('tap-id comic-controls')
@@ -302,8 +313,8 @@ def main():
                         drive('tap-id comic-read')
                     back = next(node for node in json.loads(get('layout'))['nodes'] if node['kind'] == 'Back')
                     drive(f'tap-at {back["centre"]["x"]},{back["centre"]["y"]}')
-                    wait_for('Open added comic')
-                    assert 'On this reader' in capture('05-library-return') or 'Open added comic' in get('layout').decode(), 'Back did not return to library'
+                    wait_for('Add comic')
+                    assert 'On this reader' in capture('05-library-return') or 'Add comic' in get('layout').decode(), 'Back did not return to library'
                 (args.output/'result.json').write_text(json.dumps(dict(status='passed', profile=args.profile,
                     scale=args.scale, cbr=args.cbr, colour=args.colour, reader_tools=args.reader_tools, original_fixture=True), indent=2)+'\n')
             finally:

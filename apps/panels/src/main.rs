@@ -2,10 +2,14 @@
 
 mod archive;
 mod komga;
+mod library;
+mod sideload;
+use library::{Kept, Library};
 mod transfer;
 
 use kobo_bookview::comic::{ComicView, Outcome as ComicOutcome, SaveState};
 use kobo_opds::{Feed, ImageSource, Publication};
+use kobo_sdk::imports::{Format, Import, Stage as ImportStage};
 use kobo_sdk::keyboard::{Keyboard, Pressed};
 use kobo_sdk::{
     action_id, ActionId, BannerLevel, Context, Credential, Failure, Glyph, KoboApp, PictureHandle,
@@ -14,7 +18,6 @@ use kobo_sdk::{
 };
 use kobo_state::draft::{Draft, Status as DraftStatus};
 use std::collections::BTreeMap;
-use std::fmt::Write as _;
 use std::process::ExitCode;
 
 const SIDELOAD: &str = "volume.cbz";
@@ -33,6 +36,8 @@ enum Route {
     Detail,
     Download,
     Reader,
+    SavingLibrary,
+    Import,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -46,14 +51,6 @@ enum Awaiting {
 enum Saving {
     Partial,
     Complete,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct Kept {
-    key: String,
-    title: String,
-    pages: usize,
-    rtl: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -79,12 +76,18 @@ struct Panels {
     selected: Option<Publication>,
     query: String,
     keyboard: Keyboard,
-    library: Vec<Kept>,
+    library: Option<Library>,
+    library_error: Option<String>,
+    completed_cleanup: Option<String>,
     loaded: bool,
+    library_page: usize,
     transfer: Option<transfer::Download>,
     pending: Option<Pending>,
     upload: Option<(ShelfUpload, Saving)>,
     shelf_load: Option<ShelfDownload>,
+    local_load: Option<ShelfDownload>,
+    import: Option<Import>,
+    import_entry: Option<Kept>,
     partial_load: Option<ShelfDownload>,
     pending_open: Option<Kept>,
     paused: bool,
@@ -110,12 +113,18 @@ impl Default for Panels {
             selected: None,
             query: String::new(),
             keyboard: Keyboard::new(),
-            library: Vec::new(),
+            library: None,
+            library_error: None,
+            completed_cleanup: None,
             loaded: false,
+            library_page: 0,
             transfer: None,
             pending: None,
             upload: None,
             shelf_load: None,
+            local_load: None,
+            import: None,
+            import_entry: None,
             partial_load: None,
             pending_open: None,
             paused: false,
@@ -126,18 +135,76 @@ impl Default for Panels {
 }
 
 impl Panels {
+    fn library_entries(&self) -> &[Kept] {
+        self.library.as_ref().map_or(&[], Library::entries)
+    }
+    fn remember(&mut self, context: &mut Context, kept: Kept) -> bool {
+        if let Some(library) = &mut self.library {
+            match library.remember(kept) {
+                Ok(()) => {
+                    self.library_error = None;
+                    library.pump(context);
+                    return true;
+                }
+                Err(error) => self.notice = Some(format!("This comic could not be added: {error}")),
+            }
+        }
+        false
+    }
+    fn finish_library(&mut self, context: &mut Context) {
+        if self
+            .library
+            .as_ref()
+            .is_some_and(|library| library.status() == DraftStatus::Saved)
+        {
+            if self
+                .completed_cleanup
+                .as_ref()
+                .is_some_and(|key| self.library_entries().iter().any(|comic| &comic.key == key))
+            {
+                self.completed_cleanup = None;
+                context.store().save(PARTIAL_META, Vec::new());
+                context.shelf().remove(PARTIAL_BLOB);
+            }
+            if self.route == Route::SavingLibrary {
+                self.route = Route::Reader;
+            }
+        }
+    }
     fn show(&self, context: &mut Context) {
-        context.set_screen(self.screen().with_own_back(self.route != Route::Library));
+        context.set_screen(
+            self.screen(context)
+                .with_own_back(self.route != Route::Library),
+        );
     }
 
-    fn screen(&self) -> Screen {
+    fn screen(&self, context: &Context) -> Screen {
         match self.route {
-            Route::Library => self.library_screen(),
+            Route::Library => self.library_screen(context),
             Route::Catalog => self.catalog_screen(),
             Route::Search => self.search_screen(),
             Route::Detail => self.detail_screen(),
             Route::Download => self.download_screen(),
-            Route::Reader => self.reader_screen(),
+            Route::Reader => self.reader_screen(context),
+            Route::SavingLibrary => self.saving_library_screen(),
+            Route::Import
+                if self.import.as_ref().is_some_and(Import::is_available)
+                    && self
+                        .library
+                        .as_ref()
+                        .is_some_and(|library| library.status() != DraftStatus::Saved) =>
+            {
+                self.saving_library_screen()
+            }
+            Route::Import => self.import.as_ref().map_or_else(
+                || {
+                    ScreenBuilder::new("panels-import-loading")
+                        .top_bar("Add comic")
+                        .activity("Checking the file from your computer…", None)
+                        .build()
+                },
+                Import::screen,
+            ),
         }
     }
 
@@ -148,26 +215,76 @@ impl Panels {
         screen
     }
 
-    fn library_screen(&self) -> Screen {
-        let mut screen = self.with_notice(
-            ScreenBuilder::new("panels-library")
+    fn shelf_notice(&self) -> Option<&str> {
+        self.library
+            .as_ref()
+            .and_then(|library| match library.status() {
+                DraftStatus::Failed(error) => Some(error),
+                _ => None,
+            })
+            .or(self.notice.as_deref())
+    }
+    fn library_pages(&self, context: &Context) -> Vec<Vec<usize>> {
+        let summaries = self
+            .library_entries()
+            .iter()
+            .map(|comic| {
+                format!(
+                    "{} pages · {}",
+                    comic.pages,
+                    if comic.rtl {
+                        "right to left"
+                    } else {
+                        "left to right"
+                    }
+                )
+            })
+            .collect::<Vec<_>>();
+        let rows = self
+            .library_entries()
+            .iter()
+            .zip(&summaries)
+            .map(|(comic, summary)| (comic.title.as_str(), summary.as_str(), ""))
+            .collect::<Vec<_>>();
+        context.paginate_rows_below_section(
+            &rows,
+            true,
+            kobo_sdk::Position::AtTheFoot,
+            self.shelf_notice(),
+        )
+    }
+    fn library_screen(&self, context: &Context) -> Screen {
+        if let Some(error) = &self.library_error {
+            return ScreenBuilder::new("panels-library-error")
                 .top_bar("Panels")
-                .top_bar_action("browse-komga", "Browse"),
-        );
+                .heading("Your comic list could not be opened")
+                .text(error)
+                .bottom_action("retry-library", "Try again")
+                .build();
+        }
+        let mut screen = ScreenBuilder::new("panels-library").top_bar("Panels");
+        if let Some(notice) = self.shelf_notice() {
+            screen = screen.banner(BannerLevel::Attention, notice);
+        }
         if !self.loaded {
-            screen = screen.secondary("Opening your shelf…");
-        } else if self.library.is_empty() {
+            return screen.activity("Opening your shelf", None).build();
+        }
+        if self.library_entries().is_empty() {
             screen = screen.splash(
                 Some(Glyph::Reader),
                 "Your shelf is empty",
                 "Browse your home library or add a comic from your computer.",
             );
         } else {
+            let pages = self.library_pages(context);
+            let page = self.library_page.min(pages.len().saturating_sub(1));
+            let visible = pages.get(page).map(Vec::as_slice).unwrap_or_default();
             screen = screen
                 .section("On this reader")
-                .rows(self.library.iter().enumerate().map(|(index, comic)| {
+                .rows(visible.iter().map(|&index| {
+                    let comic = &self.library_entries()[index];
                     (
-                        format!("kept-{index}"),
+                        format!("kept-{}", comic.key),
                         comic.title.clone(),
                         format!(
                             "{} pages · {}",
@@ -180,16 +297,34 @@ impl Panels {
                         ),
                         Glyph::Book,
                     )
-                }));
+                }))
+                .page_turns("shelf-previous", "shelf-next")
+                .page_position(
+                    u16::try_from(page + 1).unwrap_or(u16::MAX),
+                    u16::try_from(pages.len().max(1)).unwrap_or(u16::MAX),
+                );
         }
         if self
             .progress
             .values()
             .any(|draft| matches!(draft.status(), DraftStatus::Failed(_)))
+            || self
+                .library
+                .as_ref()
+                .is_some_and(|library| matches!(library.status(), DraftStatus::Failed(_)))
         {
-            screen = screen.button("retry-reading-save", "Retry saving positions");
+            screen
+                .action_bar([
+                    ("load-sideload", "Add comic"),
+                    ("browse-komga", "Browse"),
+                    ("retry-all-saves", "Retry"),
+                ])
+                .build()
+        } else {
+            screen
+                .action_bar([("load-sideload", "Add comic"), ("browse-komga", "Browse")])
+                .build()
         }
-        screen.button("load-sideload", "Open added comic").build()
     }
 
     fn catalog_screen(&self) -> Screen {
@@ -327,10 +462,21 @@ impl Panels {
         screen.build()
     }
 
-    fn reader_screen(&self) -> Screen {
+    fn saving_library_screen(&self) -> Screen {
+        let screen = ScreenBuilder::new("panels-saving-library").top_bar("Add comic");
+        match self.library.as_ref().map(Library::status) {
+            Some(DraftStatus::Failed(error)) => screen
+                .text(error)
+                .bottom_action("retry-library", "Retry saving")
+                .build(),
+            _ => screen.activity("Adding comic to your shelf", None).build(),
+        }
+    }
+
+    fn reader_screen(&self, context: &Context) -> Screen {
         self.view
             .as_ref()
-            .map_or_else(|| self.library_screen(), ComicView::screen)
+            .map_or_else(|| self.library_screen(context), ComicView::screen)
     }
 
     fn fetch_catalog(&mut self, context: &mut Context, url: String) {
@@ -380,22 +526,11 @@ impl Panels {
         }
     }
 
-    fn load_sideload(&mut self, context: &mut Context) {
-        let kept = self
-            .library
-            .iter()
-            .find(|entry| entry.key == SIDELOAD)
-            .cloned()
-            .unwrap_or(Kept {
-                key: SIDELOAD.into(),
-                title: "Added comic".into(),
-                pages: 0,
-                rtl: false,
-            });
-        self.open_kept(context, &kept);
-    }
-
     fn begin_download(&mut self, context: &mut Context) {
+        if self.library.is_none() || self.completed_cleanup.is_some() {
+            self.notice = Some("Save the comic list before starting another download.".into());
+            return;
+        }
         let Some(publication) = self.selected.as_ref() else {
             return;
         };
@@ -495,15 +630,17 @@ impl Panels {
             pages: comic.pages.len(),
             rtl: self.rtl,
         };
-        self.library.retain(|item| item.key != kept.key);
-        self.library.insert(0, kept.clone());
-        context.store().save(LIBRARY, encode_library(&self.library));
-        context.store().save(PARTIAL_META, Vec::new());
-        context.shelf().remove(PARTIAL_BLOB);
-        self.open_bytes(context, download.received, kept, None);
+        let key = kept.key.clone();
+        if self.open_bytes(context, download.received, kept, None) {
+            self.completed_cleanup = Some(key);
+            self.finish_library(context);
+        }
     }
 
     fn open_kept(&mut self, context: &mut Context, kept: &Kept) {
+        if self.library.is_none() || self.pending_open.is_some() || self.shelf_load.is_some() {
+            return;
+        }
         if self.progress.len() >= 64 && !self.progress.contains_key(&progress_key(&kept.key)) {
             self.notice =
                 Some("Save the pending reading positions before opening another comic.".into());
@@ -529,13 +666,13 @@ impl Panels {
         bytes: Vec<u8>,
         mut kept: Kept,
         memory: Option<&[u8]>,
-    ) {
+    ) -> bool {
         let mut view = match ComicView::open(context, bytes, &kept.title) {
             Ok(view) => view,
             Err(error) => {
                 self.notice = Some(error.to_string());
                 self.route = Route::Library;
-                return;
+                return false;
             }
         };
         if self
@@ -562,14 +699,18 @@ impl Panels {
             view.restore(context, memory);
         }
         kept.rtl = view.reader().memory().right_to_left;
-        self.library.retain(|entry| entry.key != kept.key);
-        self.library.insert(0, kept.clone());
-        context.store().save(LIBRARY, encode_library(&self.library));
+        if !self.remember(context, kept.clone()) {
+            self.route = Route::Library;
+            return false;
+        }
         self.opened = Some(kept);
+        self.library_page = 0;
         self.view = Some(view);
-        self.route = Route::Reader;
+        self.route = Route::SavingLibrary;
         self.notice = None;
+        self.finish_library(context);
         self.sync_progress_status();
+        true
     }
 
     fn save_reading_state(&mut self, context: &mut Context) {
@@ -780,10 +921,44 @@ impl KoboApp for Panels {
         }
     }
 
+    fn on_load(&mut self, context: &mut Context, key: &str, result: StoreResult) {
+        if matches!(&result, StoreResult::Loaded { key: loaded, .. } if loaded == key) {
+            self.on_store(context, result);
+            return;
+        }
+        if key == LIBRARY {
+            self.loaded = true;
+            self.library_error = Some(
+                "The comic list could not be read. Try again when storage is available.".into(),
+            );
+        } else if key == PARTIAL_META {
+            self.notice =
+                Some("The paused download could not be checked. Try opening Panels again.".into());
+        } else if self.pending_open.as_ref().is_some_and(|kept| {
+            key == progress_key(&kept.key) || legacy_progress_key(&kept.key).as_deref() == Some(key)
+        }) {
+            self.pending_open = None;
+            self.notice = Some(
+                "The saved reading position could not be read. Try opening this comic again."
+                    .into(),
+            );
+        }
+        self.show(context);
+    }
+
     fn on_store(&mut self, context: &mut Context, result: StoreResult) {
         if let StoreResult::Loaded { key, value } = result {
             if key == LIBRARY {
-                self.library = value.as_deref().map(decode_library).unwrap_or_default();
+                if self.library.is_none() {
+                    match Library::restore(value.as_deref()) {
+                        Ok(mut library) => {
+                            library.pump(context);
+                            self.library = Some(library);
+                            self.library_error = None;
+                        }
+                        Err(error) => self.library_error = Some(error.to_string()),
+                    }
+                }
                 self.loaded = true;
             } else if key == PARTIAL_META {
                 if let Some(pending) = value.as_deref().and_then(decode_pending) {
@@ -793,11 +968,26 @@ impl KoboApp for Panels {
                     download.start(context);
                     self.partial_load = Some(download);
                 }
-            } else if self
-                .pending_open
-                .as_ref()
-                .is_some_and(|kept| key == progress_key(&kept.key))
-            {
+            } else if self.pending_open.as_ref().is_some_and(|kept| {
+                key == progress_key(&kept.key)
+                    || legacy_progress_key(&kept.key).as_deref() == Some(key.as_str())
+            }) {
+                if value.is_none()
+                    && self
+                        .pending_open
+                        .as_ref()
+                        .is_some_and(|kept| key == progress_key(&kept.key))
+                {
+                    if let Some(legacy) = self
+                        .pending_open
+                        .as_ref()
+                        .and_then(|kept| legacy_progress_key(&kept.key))
+                    {
+                        context.store().load(legacy);
+                        self.show(context);
+                        return;
+                    }
+                }
                 self.pending_memory = value;
                 self.start_shelf_load(context);
             }
@@ -806,6 +996,29 @@ impl KoboApp for Panels {
     }
 
     fn on_shelf(&mut self, context: &mut Context, name: &str, result: StoreResult) {
+        if self
+            .local_load
+            .as_ref()
+            .is_some_and(|load| load.name() == name)
+        {
+            self.advance_local_load(context, &result);
+            self.show(context);
+            return;
+        }
+        if self
+            .import
+            .as_ref()
+            .is_some_and(|import| import.receipt().digest == name)
+        {
+            let import = self.import.as_mut().expect("matching import");
+            if import.stage() == ImportStage::Cancelled {
+                self.import = None;
+            } else {
+                import.on_shelf(context, name, &result);
+            }
+            self.show(context);
+            return;
+        }
         if self
             .upload
             .as_ref()
@@ -830,6 +1043,35 @@ impl KoboApp for Panels {
 
     fn on_save(&mut self, context: &mut Context, key: &str, result: StoreResult) {
         if self
+            .import
+            .as_ref()
+            .is_some_and(|import| import.receipt().digest == key)
+        {
+            let import = self.import.as_mut().expect("matching import");
+            if import.stage() == ImportStage::Cancelled {
+                self.import = None;
+            } else {
+                import.on_save(key, &result);
+                if import.is_available() {
+                    if let Some(entry) = self.import_entry.clone() {
+                        if !self.remember(context, entry) {
+                            self.import = None;
+                            self.route = Route::Library;
+                        }
+                    }
+                }
+            }
+            self.show(context);
+            return;
+        }
+        if key == LIBRARY {
+            if let Some(library) = &mut self.library {
+                library.saved(context, &result);
+            }
+            self.finish_library(context);
+            self.sync_progress_status();
+        }
+        if self
             .progress_active
             .as_ref()
             .is_some_and(|(active, _)| active == key)
@@ -841,6 +1083,27 @@ impl KoboApp for Panels {
 
     fn on_background(&mut self, context: &mut Context) {
         self.save_reading_state(context);
+        if let Some(library) = &mut self.library {
+            library.pump(context);
+        }
+    }
+
+    fn can_suspend(&self) -> bool {
+        self.library
+            .as_ref()
+            .is_some_and(|library| library.status() == DraftStatus::Saved)
+            && self
+                .progress
+                .values()
+                .all(|draft| draft.status() == DraftStatus::Saved)
+            && self.upload.is_none()
+            && self.import.as_ref().is_none_or(|import| {
+                import.failure().is_none()
+                    && matches!(
+                        import.stage(),
+                        ImportStage::Ready | ImportStage::Preview | ImportStage::Cancelled
+                    )
+            })
     }
 
     #[allow(
@@ -848,6 +1111,41 @@ impl KoboApp for Panels {
         reason = "one exhaustive catalog and reader action dispatcher"
     )]
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
+        if self.route == Route::Import {
+            if action == ActionId::BACK
+                || action == action_id("import-cancel")
+                || action == action_id("import-replace")
+            {
+                self.cancel_import();
+            } else if action == action_id("retry-library") {
+                if let Some(library) = &mut self.library {
+                    library.retry(context);
+                }
+            } else if let Some(import) = &mut self.import {
+                if action == action_id("import-confirm") || action == action_id("import-retry") {
+                    import.begin(context);
+                } else if action == action_id("import-open")
+                    && import.is_available()
+                    && self
+                        .library
+                        .as_ref()
+                        .is_some_and(|library| library.status() == DraftStatus::Saved)
+                {
+                    let kept = Kept {
+                        key: import.receipt().digest.clone(),
+                        title: import.receipt().title.clone(),
+                        pages: 0,
+                        rtl: false,
+                    };
+                    self.import = None;
+                    self.import_entry = None;
+                    self.route = Route::Library;
+                    self.open_kept(context, &kept);
+                }
+            }
+            self.show(context);
+            return;
+        }
         if self.route == Route::Reader {
             if let Some(view) = &mut self.view {
                 match view.act(context, action) {
@@ -883,11 +1181,21 @@ impl KoboApp for Panels {
             self.show(context);
             return;
         }
-        if action == action_id("retry-reading-save") {
+        if action == action_id("shelf-previous") {
+            self.library_page = self.library_page.saturating_sub(1);
+        } else if action == action_id("shelf-next") {
+            self.library_page =
+                (self.library_page + 1).min(self.library_pages(context).len().saturating_sub(1));
+        } else if action == action_id("retry-all-saves") {
+            self.retry_progress(context);
+            if let Some(library) = &mut self.library {
+                library.retry(context);
+            }
+        } else if action == action_id("retry-reading-save") {
             self.retry_progress(context);
         } else if action == ActionId::BACK {
             match self.route {
-                Route::Reader | Route::Download => {
+                Route::Reader | Route::Download | Route::SavingLibrary => {
                     self.save_reading_state(context);
                     self.route = Route::Library;
                 }
@@ -900,7 +1208,13 @@ impl KoboApp for Panels {
                         self.route = Route::Library;
                     }
                 }
-                Route::Library => {}
+                Route::Library | Route::Import => {}
+            }
+        } else if action == action_id("retry-library") {
+            if let Some(library) = &mut self.library {
+                library.retry(context);
+            } else {
+                context.store().load(LIBRARY);
             }
         } else if action == action_id("load-sideload") {
             self.load_sideload(context);
@@ -920,10 +1234,8 @@ impl KoboApp for Panels {
             self.rtl = !self.rtl;
             if let Some(opened) = &mut self.opened {
                 opened.rtl = self.rtl;
-                if let Some(kept) = self.library.iter_mut().find(|kept| kept.key == opened.key) {
-                    kept.rtl = self.rtl;
-                }
-                context.store().save(LIBRARY, encode_library(&self.library));
+                let kept = opened.clone();
+                self.remember(context, kept);
             }
         } else if action == action_id("next") {
             self.turn(context, true);
@@ -938,10 +1250,10 @@ impl KoboApp for Panels {
             self.fetch_next_chunk(context);
         } else if action == action_id("cancel-download") {
             self.cancel_download(context, true);
-        } else if let Some(index) =
-            (0..self.library.len()).find(|index| action == action_id(&format!("kept-{index}")))
-        {
-            let kept = self.library[index].clone();
+        } else if let Some(index) = (0..self.library_entries().len()).find(|index| {
+            action == action_id(&format!("kept-{}", self.library_entries()[*index].key))
+        }) {
+            let kept = self.library_entries()[index].clone();
             self.open_kept(context, &kept);
         } else if self.route == Route::Catalog {
             if action == action_id("catalog-next") || action == action_id("catalog-previous") {
@@ -1034,37 +1346,12 @@ fn shelf_key(identity: &str) -> String {
 }
 
 fn progress_key(key: &str) -> String {
-    format!("place-{key}")
+    kobo_net::sha256::hex_digest(format!("cobalt.panels.position.v1\0{key}").as_bytes())
 }
 
-fn encode_library(library: &[Kept]) -> Vec<u8> {
-    let mut output = String::new();
-    for kept in library {
-        let _ = writeln!(
-            output,
-            "{}\t{}\t{}\t{}",
-            clean_field(&kept.key),
-            clean_field(&kept.title),
-            kept.pages,
-            u8::from(kept.rtl)
-        );
-    }
-    output.into_bytes()
-}
-
-fn decode_library(bytes: &[u8]) -> Vec<Kept> {
-    String::from_utf8_lossy(bytes)
-        .lines()
-        .filter_map(|line| {
-            let mut fields = line.split('\t');
-            Some(Kept {
-                key: fields.next()?.to_owned(),
-                title: fields.next()?.to_owned(),
-                pages: fields.next()?.parse().ok()?,
-                rtl: fields.next()? == "1",
-            })
-        })
-        .collect()
+fn legacy_progress_key(key: &str) -> Option<String> {
+    let legacy = format!("place-{key}");
+    kobo_sdk::is_valid_key(&legacy).then_some(legacy)
 }
 
 fn encode_pending(pending: &Pending) -> Vec<u8> {
@@ -1101,136 +1388,4 @@ fn main() -> ExitCode {
 }
 
 #[cfg(test)]
-mod tests {
-
-    #[test]
-    fn record_save_refusals_do_not_fail_an_unrelated_comic_transfer() {
-        use kobo_sdk::{Context, KoboApp, ShelfUpload, StoreError, StoreResult};
-        let mut app = super::Panels {
-            upload: Some((
-                ShelfUpload::new("pending.cbz", b"archive".to_vec()),
-                super::Saving::Complete,
-            )),
-            ..super::Panels::default()
-        };
-        let mut context = Context::default();
-        app.on_save(
-            &mut context,
-            "library",
-            StoreResult::Denied(StoreError::TooFull),
-        );
-        assert!(app.upload.is_some());
-        app.on_shelf(
-            &mut context,
-            "another.cbz",
-            StoreResult::Denied(StoreError::TooFull),
-        );
-        assert!(app.upload.is_some());
-        app.on_shelf(
-            &mut context,
-            "pending.cbz",
-            StoreResult::Denied(StoreError::TooFull),
-        );
-        assert!(app.upload.is_none());
-        assert!(app.paused);
-    }
-
-    #[test]
-    fn failed_position_save_keeps_latest_page_and_retry_acknowledges_that_revision() {
-        use kobo_sdk::{AppRunner, Context, KoboApp, StoreError, StoreResult};
-        struct Harness(super::Panels);
-        impl KoboApp for Harness {
-            fn on_start(&mut self, context: &mut Context) {
-                self.0.open_bytes(
-                    context,
-                    include_bytes!("../../../docs/quality/fixtures/original-pages.cbz").to_vec(),
-                    super::Kept {
-                        key: "fixture.cbz".into(),
-                        title: "Rain".into(),
-                        pages: 4,
-                        rtl: false,
-                    },
-                    None,
-                );
-            }
-            fn on_action(&mut self, context: &mut Context, action: kobo_sdk::ActionId) {
-                self.0.on_action(context, action);
-            }
-            fn on_store(&mut self, context: &mut Context, result: StoreResult) {
-                self.0.on_store(context, result);
-            }
-            fn on_save(&mut self, context: &mut Context, key: &str, result: StoreResult) {
-                self.0.on_save(context, key, result);
-            }
-        }
-        let mut runner = AppRunner::new(Harness(super::Panels::default()));
-        runner.start(); // Library save is still outstanding.
-        runner.action(action_id("comic-next"));
-        runner.action(action_id("comic-next")); // Coalesced while page 2 is being saved.
-        let key = super::progress_key("fixture.cbz");
-        runner.store_result(StoreResult::Denied(StoreError::TooFull)); // Library, not position.
-        assert!(runner.app_mut().0.progress_active.is_some());
-        runner.store_result(StoreResult::Denied(StoreError::TooFull)); // Actual position save.
-        let app = &runner.app_mut().0;
-        assert_eq!(app.view.as_ref().unwrap().reader().memory().page, 2);
-        assert!(matches!(
-            app.progress[&key].status(),
-            super::DraftStatus::Failed(_)
-        ));
-        runner.action(action_id("comic-save-retry"));
-        let app = &runner.app_mut().0;
-        let latest = kobo_comic::reader::Memory::restore(
-            Some(app.progress[&key].bytes()),
-            app.view.as_ref().unwrap().reader().comic(),
-        )
-        .unwrap();
-        assert_eq!(latest.page, 2);
-        runner.store_result(StoreResult::Saved { key: key.clone() });
-        assert_eq!(
-            runner.app_mut().0.progress[&key].status(),
-            super::DraftStatus::Saved
-        );
-    }
-    use super::{
-        decode_library, decode_pending, encode_library, encode_pending, shelf_key, Kept, Panels,
-        Pending,
-    };
-    use kobo_sdk::action_id;
-    use kobo_ui::{Chrome, CLARA_BW_METRICS};
-
-    #[test]
-    fn library_and_pending_transfer_round_trip() {
-        let kept = vec![Kept {
-            key: "comic.cbz".into(),
-            title: "Volume 1".into(),
-            pages: 192,
-            rtl: true,
-        }];
-        assert_eq!(decode_library(&encode_library(&kept)), kept);
-        let pending = Pending {
-            key: "comic.cbz".into(),
-            title: "Volume 1".into(),
-            url: "https://library/one.cbz".into(),
-        };
-        assert_eq!(decode_pending(&encode_pending(&pending)), Some(pending));
-    }
-
-    #[test]
-    fn shelf_keys_are_stable_and_do_not_expose_server_paths() {
-        assert_eq!(shelf_key("book-1"), shelf_key("book-1"));
-        assert_ne!(shelf_key("book-1"), shelf_key("book-2"));
-        assert!(!shelf_key("https://private/library").contains("private"));
-    }
-
-    #[test]
-    fn primary_library_controls_fit_the_actual_panel() {
-        let app = Panels::default();
-        let screen = app.library_screen();
-        let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::default());
-        assert!(layout.rect_of_action(action_id("load-sideload")).is_some());
-        assert!(screen
-            .diagnostics(&CLARA_BW_METRICS, &Chrome::default())
-            .issues
-            .is_empty());
-    }
-}
+mod tests;

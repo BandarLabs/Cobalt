@@ -909,11 +909,13 @@
   },
   {
     "id": "COMIC-18",
-    "pr": 1,
+    "pr": 2,
     "group": "CBZ/CBR architecture and shared reader",
     "task": "Route local comics through the same import preview and receipt as other documents",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Panels uses the shared import preview, content-addressed verified copy and receipt. Availability waits for receipt and library acknowledgements. Nineteen app tests and the extra-large Clara BW simulator import/restart/save-failure journey pass; see validation.md and evidence/panels-import."
+    ]
   },
   {
     "id": "COMIC-19",

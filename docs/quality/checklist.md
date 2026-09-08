@@ -16,7 +16,7 @@ A checked task requires implementation plus recorded validation. Physical measur
 
 ## Status
 
-494 tracked tasks: 87 completed, 1 deferred by the owner, 406 open. Implementation in progress. Evidence is recorded per task in `tasks.json` and in [the validation log](validation.md).
+494 tracked tasks: 88 completed, 1 deferred by the owner, 405 open. Implementation in progress. Evidence is recorded per task in `tasks.json` and in [the validation log](validation.md).
 
 ## PR 1 · Simulator fidelity (SIM-1–10)
 
@@ -120,7 +120,7 @@ A checked task requires implementation plus recorded validation. Physical measur
 - [x] **COMIC-15** Persist page, direction and viewport per book.
 - [x] **COMIC-16** Support RTL and two-page spreads with a reachable single-page fallback.
 - [x] **COMIC-17** Keep page decode lazy and prefetch/cache bounded.
-- [ ] **COMIC-18** Route local comics through the same import preview and receipt as other documents.
+- [x] **COMIC-18** Route local comics through the same import preview and receipt as other documents. App integration is in PR 2.
 - [x] **COMIC-19** Test original CBZ fixtures and hostile/corrupt archives; test clear refusal of CBR.
 - [x] **COMIC-20** Verify Clara-sized comic reading, scaling, navigation and reopen in simulator.
 

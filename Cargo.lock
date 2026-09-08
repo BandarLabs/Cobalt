@@ -1255,12 +1255,13 @@ dependencies = [
 
 [[package]]
 name = "kobo-panels"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "kobo-bookview",
  "kobo-comic",
  "kobo-image",
  "kobo-json",
+ "kobo-net",
  "kobo-opds",
  "kobo-sdk",
  "kobo-state",
