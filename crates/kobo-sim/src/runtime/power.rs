@@ -9,6 +9,7 @@ pub(crate) enum Input {
     Sleep(SleepReason),
     Wake(WakeReason),
     Usb(bool),
+    Button(bool),
 }
 impl Input {
     pub fn parse(command: &str) -> Option<Self> {
@@ -20,6 +21,8 @@ impl Input {
             "wake cover" => Self::Wake(WakeReason::Cover),
             "wake touch" => Self::Wake(WakeReason::Touch),
             "wake scheduled" => Self::Wake(WakeReason::Scheduled),
+            "button down" => Self::Button(true),
+            "button up" => Self::Button(false),
             "usb attach" => Self::Usb(true),
             "usb detach" => Self::Usb(false),
             _ => return None,
@@ -30,6 +33,7 @@ impl Input {
 #[derive(Default)]
 pub(super) struct Controller {
     power: Power,
+    button: kobod::power::Button,
     frontlight: Option<u8>,
     usb: bool,
     refusal: Option<String>,
@@ -156,7 +160,16 @@ impl Controller {
         now: u64,
         conditions: Conditions,
     ) -> io::Result<()> {
+        if let Input::Button(pressed) = request {
+            let request = match self.button.event(pressed, !self.awake()) {
+                Some(kobod::power::ButtonAction::Wake) => Input::Wake(WakeReason::PowerButton),
+                Some(kobod::power::ButtonAction::Sleep) => Input::Sleep(SleepReason::PowerButton),
+                None => return Ok(()),
+            };
+            return self.request(apps, request, now, conditions);
+        }
         let effect = match request {
+            Input::Button(_) => return Ok(()),
             Input::Sleep(reason) => {
                 if apps.iter().any(|app| {
                     app.session

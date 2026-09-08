@@ -117,11 +117,23 @@ def main():
                 post('power', 'usb attach')
                 wait_for(lambda s: s['state'] == 'awake' and s['lastWake'] == 'Some(Usb)')
                 drive('wait-idle', 'shot usb-wake')
+                post('power', 'usb detach')
+                drive('wait-idle')
+                post('power', 'button down')
+                post('power', 'button down')
+                post('power', 'button up')
+                asleep = wait_for(lambda s: s['state'] == 'suspended')
+                post('power', 'button down')
+                awake = wait_for(lambda s: s['state'] == 'awake')
+                post('power', 'button down')
+                post('power', 'button up')
+                drive('wait-idle', 'shot button-wake')
+                assert get('power')['state'] == 'awake', 'Wake release started another sleep attempt'
                 result = dict(status='passed', hardware_validation=False, source_head=revision,
                               source_dirty=True, fixture_sha256=hashlib.sha256(fixture.read_bytes()).hexdigest(),
                               checks=['failed save blocks sleep', 'chained durable save acknowledgements',
                                       'task cancellation exactly once', 'duplicate scheduled wake ignored',
-                                      'frontlight restored', 'panel completion timeout', 'USB blocks entry and wakes'])
+                                      'frontlight restored', 'panel completion timeout', 'USB blocks entry and wakes', 'duplicate power-button edges and wake release'])
                 (args.output / 'result.json').write_text(json.dumps(result, indent=2) + '\n')
             finally:
                 try:

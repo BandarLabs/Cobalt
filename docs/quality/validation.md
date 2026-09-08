@@ -385,3 +385,32 @@ owner changes, missing legacy records and failed/corrupt backups. Strict CLI
 Clippy passed with all targets/features. Logs: `/tmp/cobalt-owner-settings-tests.log`
 and `/tmp/cobalt-owner-settings-clippy.log`. HW-12 still awaits native power
 integration and the planned physical validation.
+
+
+### Native save barrier and power-button edges (2026-09-08)
+
+Native power-button release and idle expiry now enter the shared generation-scoped
+power coordinator. Hosted task admission pauses, SDK save barriers run, and reader
+handback waits for all app acknowledgements, drained workers and the panel fence.
+Save refusal, touch, cover changes and hosted-set changes cancel preparation.
+The native path explicitly selects reader handback; no kernel suspend backend is
+enabled before physical profile/firmware validation. The existing guardian,
+frontlight restoration, reader restart and watchdog recovery remain the owners of
+teardown. Native USB/scheduled-wake/kernel integration remains unfinished.
+
+App repaints no longer renew the owner-activity idle timer. An open terminal and
+charging block automatic preparation. A failed attempt waits for a later idle
+period instead of spinning. Physical power-button edge handling is shared with
+runtime simulation: duplicate presses/releases and releasing a wake press cannot
+start a second attempt. The native input decoder exposes read-only quiescence and
+marks it unsafe if its reader thread ends.
+
+Validation: 163 HAL tests, 25 runtime-library tests and 151 runtime-binary tests
+passed. Strict HAL/runtime/simulator Clippy and the device-write ARMv7 musl runtime
+check passed. The extended multi-app simulator journey passed save failure,
+chained saves, cancellation, scheduled wake, panel deadlines, USB wake, light
+restoration and duplicate button edges. Its evidence explicitly says
+hardware_validation=false. Logs: `/tmp/cobalt-native-power-final-tests.log`,
+`/tmp/cobalt-native-power-final-clippy.log`, `/tmp/cobalt-native-power-arm.log`.
+Evidence: `evidence/native-power/`. Remaining HW tasks are not marked complete
+from these partial native integrations.
