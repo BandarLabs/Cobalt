@@ -1671,7 +1671,7 @@ pub struct WifiNetwork {
     pub connected: bool,
 }
 
-/// Failures from an available radio backend.
+/// Bounded failures from device services, storage and app transactions.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
 pub enum DeviceError {
@@ -1691,7 +1691,7 @@ impl DeviceError {
         match self {
             Self::NotFound => "the device or network was not found",
             Self::Authentication => "authentication failed",
-            Self::TimedOut => "the radio operation timed out",
+            Self::TimedOut => "the request timed out",
             Self::Unreachable => "the device or network is unreachable",
             // Deliberately says nothing about addresses or credentials. This
             // variant is the general "what arrived was not usable" answer and
@@ -1702,7 +1702,7 @@ impl DeviceError {
             // to nothing to go on. What actually failed is traced at the site
             // that knows.
             Self::InvalidInput => "the data received was not usable",
-            Self::Backend => "the system radio service failed",
+            Self::Backend => "the reader could not complete the request",
             Self::Integrity => "the download did not match its published digest",
         }
     }

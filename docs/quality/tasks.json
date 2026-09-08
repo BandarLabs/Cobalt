@@ -85,7 +85,8 @@
     "status": "todo",
     "evidence": [
       "Network scenario faults now use production task admission, request/header/credential gates and result delivery. Capacity refusal matches runtime and duplicate IDs do not receive duplicate outcomes. 116 policy + 65 simulator tests pass; app-install transaction parity remains owned by SIM-17.",
-      "Storage policy now requires file/parent flush acknowledgements and preserves validation before injected disk-full faults; 124 policy + 66 simulator tests and Panels recovery journey pass. Suspend barrier and app-install parity remain open."
+      "Storage policy now requires file/parent flush acknowledgements and preserves validation before injected disk-full faults; 124 policy + 66 simulator tests and Panels recovery journey pass. Suspend barrier and app-install parity remain open.",
+      "Signed-local app-store fixtures now use runtime verification and transaction errors, including validation before offline/disk-full injection. Production Store copy no longer calls a filesystem failure a radio failure or claims rollback after an uncertain write. Remaining lifecycle/launcher parity is still open."
     ]
   },
   {
@@ -161,8 +162,10 @@
     "pr": 1,
     "group": "Simulator fidelity (SIM-1–10)",
     "task": "Exercise signed install, update and remove against local fixture packages",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Explicit private signed-local Store mode calls kobod catalog verification and install/update/remove transactions with fixture-only trust and pathless bounded local transport. Four transaction/security tests, 70 simulator, 16 runtime library, 150 runtime binary, 18 Store and 92 protocol tests pass. Real Store SDK IPC journey verifies install, failed update, retry, process restart, removal/data retention and reinstall. Protocol 14 publishing floor is Cobalt 0.3.12; 64 publishing-policy tests pass. Physical execution and full-runtime launches remain separate."
+    ]
   },
   {
     "id": "SIM-18",
@@ -518,7 +521,9 @@
     "group": "Shared SDK and design contracts",
     "task": "Keep copy concrete and remove unexplained implementation language from primary flows",
     "status": "todo",
-    "evidence": []
+    "evidence": [
+      "Store install/error text now names the operation and recovery step; unknown device backend/timeouts no longer falsely name radio operations. Store refreshes installed metadata after an uncertain write. Broader app and companion copy adoption remains open."
+    ]
   },
   {
     "id": "SDK-24",

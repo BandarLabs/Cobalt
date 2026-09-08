@@ -5,9 +5,9 @@
 //! it never receives a package URL or chooses an installation path.
 
 use kobo_sdk::{
-    action_id, ActionId, AppInfo, AppLinkState, Context, DenyReason, DeviceRequest, DeviceResult,
-    Glyph, Heartbeat, KoboApp, PictureHandle, Position, RemoteInstallOutcome, RowLead, Screen,
-    ScreenBuilder, TaskId, TaskOutcome, TilePicture,
+    action_id, ActionId, AppInfo, AppLinkState, Context, DenyReason, DeviceError, DeviceRequest,
+    DeviceResult, Glyph, Heartbeat, KoboApp, PictureHandle, Position, RemoteInstallOutcome,
+    RowLead, Screen, ScreenBuilder, TaskId, TaskOutcome, TilePicture,
 };
 use qrcodegen::{QrCode, QrCodeEcc};
 use std::process::ExitCode;
@@ -386,7 +386,7 @@ impl Store {
             }
             screen.action_bar_marked(actions)
         } else {
-            screen.bottom_action_marked(install_action(id), "Install over Wi-Fi", Glyph::Download)
+            screen.bottom_action_marked(install_action(id), "Install", Glyph::Download)
         };
         screen.build()
     }
@@ -402,7 +402,7 @@ impl Store {
             .splash(
                 Some(Glyph::Download),
                 format!("{action} {title}"),
-                "Keep Cobalt open. The verified app transaction is completed before the installed copy changes.",
+                "Keep Cobalt open until this finishes.",
             )
             .build()
     }
@@ -605,8 +605,11 @@ impl KoboApp for Store {
                 DeviceRequest::InstallApp { .. } | DeviceRequest::UninstallApp { .. },
                 DeviceResult::Failed(error),
             ) => {
-                self.notice = Some(format!("Nothing changed: {}.", error.describe()));
+                self.notice = Some(app_failure(error).to_owned());
                 self.view = View::Catalog;
+                // A write may have reached disk before its final flush failed.
+                // Re-read verified installed metadata instead of promising rollback.
+                context.applications().cached_catalog();
             }
             (_, DeviceResult::Denied(reason)) => {
                 self.link_request_pending = false;
@@ -720,6 +723,18 @@ fn denied(reason: DenyReason) -> &'static str {
         DenyReason::Unsupported => "This Cobalt build does not include app-store support.",
         DenyReason::Busy => "Another operation is still in progress.",
         DenyReason::PolicyRejected => "The runtime policy refused this operation.",
+    }
+}
+
+fn app_failure(error: DeviceError) -> &'static str {
+    match error {
+        DeviceError::NotFound => "This app is no longer available. Refresh the app list.",
+        DeviceError::Authentication => "The download was refused. Refresh the app list and try again.",
+        DeviceError::TimedOut => "The download took too long. Check Wi-Fi and try again.",
+        DeviceError::Unreachable => "Couldn't reach the download. Check Wi-Fi and try again.",
+        DeviceError::InvalidInput => "This app needs a compatible Cobalt version. Refresh the app list and check for a Cobalt update.",
+        DeviceError::Backend => "Couldn't finish saving the change. Check free space and the installed version before trying again.",
+        DeviceError::Integrity => "The downloaded app could not be verified. Refresh the app list and try again.",
     }
 }
 
@@ -960,6 +975,35 @@ mod tests {
             runner.app().notice.as_deref(),
             Some("sudoku app updated successfully.")
         );
+    }
+
+    #[test]
+    fn uncertain_write_refreshes_verified_state_without_claiming_rollback() {
+        let mut runner = AppRunner::new(Store::default());
+        runner.start();
+        runner.device_result(DeviceResult::Apps {
+            entries: vec![app("sudoku", Some("1.0.0"))],
+        });
+        runner.device_result(DeviceResult::AppLink(AppLinkState::Unpaired));
+        runner.device_result(DeviceResult::Apps {
+            entries: vec![app("sudoku", Some("1.0.0"))],
+        });
+        runner.action(action_id(&app_action("sudoku")));
+        runner.action(action_id(&install_action("sudoku")));
+        let commands = runner.device_result(DeviceResult::Failed(DeviceError::Backend));
+        assert!(commands
+            .iter()
+            .any(|command| matches!(command, Command::Device(DeviceRequest::ReadAppCatalog))));
+        let notice = runner.app().notice.clone();
+        assert!(notice.as_deref().unwrap().contains("installed version"));
+        runner.device_result(DeviceResult::Apps {
+            entries: vec![app("sudoku", Some("1.1.0"))],
+        });
+        assert_eq!(
+            runner.app().entries[0].installed_version.as_deref(),
+            Some("1.1.0")
+        );
+        assert_eq!(runner.app().notice, notice);
     }
 
     #[test]

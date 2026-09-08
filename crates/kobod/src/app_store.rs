@@ -199,9 +199,22 @@ pub fn refresh(root: &Path, channel: UpdateChannel) -> Result<Vec<AppInfo>, Devi
 /// absent, malformed, or cannot be read.
 pub fn catalog(root: &Path, channel: UpdateChannel) -> Result<Vec<AppInfo>, DeviceError> {
     let key = public_key()?;
-    match read_channel_catalog(root, channel, &key) {
-        Ok(catalog) => catalog_info(root, &catalog, &key),
-        Err(DeviceError::NotFound) => local_catalog_info(root, &key),
+    catalog_using(root, channel, &key)
+}
+
+/// Reads a verified catalog with an explicit host-fixture trust key.
+/// Device callers use [`catalog`] and its built-in release key.
+///
+/// # Errors
+/// Returns a bounded error for an invalid cache or installation.
+pub fn catalog_using(
+    root: &Path,
+    channel: UpdateChannel,
+    key: &Ed25519PublicKey,
+) -> Result<Vec<AppInfo>, DeviceError> {
+    match read_channel_catalog(root, channel, key) {
+        Ok(catalog) => catalog_info(root, &catalog, key),
+        Err(DeviceError::NotFound) => local_catalog_info(root, key),
         Err(error) => Err(error),
     }
 }
@@ -557,12 +570,36 @@ fn refresh_channel_with(
     root: &Path,
     channel: UpdateChannel,
     key: &Ed25519PublicKey,
+    fetch: impl FnMut(&str, u32) -> Result<Vec<u8>, DeviceError>,
+) -> Result<Vec<AppInfo>, DeviceError> {
+    refresh_using_fault(root, channel, key, fetch, None)
+}
+
+/// A host-injected write failure, applied only after normal verification.
+/// Real filesystem failures continue to use the same bounded backend error.
+#[derive(Clone, Copy, Debug)]
+pub enum AppWriteFault {
+    NoRoom,
+}
+
+/// The normal refresh transaction with an explicit host-fixture write fault.
+///
+/// # Errors
+/// As [`refresh_using`]; a write fault preserves the previous verified cache.
+pub fn refresh_using_fault(
+    root: &Path,
+    channel: UpdateChannel,
+    key: &Ed25519PublicKey,
     mut fetch: impl FnMut(&str, u32) -> Result<Vec<u8>, DeviceError>,
+    fault: Option<AppWriteFault>,
 ) -> Result<Vec<AppInfo>, DeviceError> {
     let source = catalog_source(channel);
     let json = fetch(source.url, CATALOG_LIMIT)?;
     let signature = fetch(source.signature_url, SIGNATURE_LIMIT)?;
     let catalog = verify_catalog(&json, &signature, key)?;
+    if fault.is_some() {
+        return Err(DeviceError::Backend);
+    }
     write_channel_catalog_cache(root, channel, &json, &signature)?;
     catalog_info(root, &catalog, key)
 }
@@ -599,7 +636,23 @@ fn install_channel_with(
     id: &str,
     channel: UpdateChannel,
     key: &Ed25519PublicKey,
+    fetch: impl FnMut(&str, u32) -> Result<Vec<u8>, DeviceError>,
+) -> Result<(), DeviceError> {
+    install_using_fault(root, id, channel, key, fetch, None)
+}
+
+/// The normal install transaction with an explicit host-fixture write fault.
+///
+/// # Errors
+/// As [`install_using`]. Verification precedes injection; an injected fault
+/// never activates the candidate or removes the current installation.
+pub fn install_using_fault(
+    root: &Path,
+    id: &str,
+    channel: UpdateChannel,
+    key: &Ed25519PublicKey,
     mut fetch: impl FnMut(&str, u32) -> Result<Vec<u8>, DeviceError>,
+    fault: Option<AppWriteFault>,
 ) -> Result<(), DeviceError> {
     if !kobo_protocol::valid_app_id(id) || kobo_app_store::is_public_reserved_app_id(id) {
         return Err(DeviceError::InvalidInput);
@@ -638,6 +691,9 @@ fn install_channel_with(
     let bundle = parse_public_bundle(&package, key).map_err(|_| DeviceError::Integrity)?;
     if bundle.manifest() != entry.manifest() {
         return Err(DeviceError::Integrity);
+    }
+    if fault.is_some() {
+        return Err(DeviceError::Backend);
     }
     stage_and_swap(root, bundle.manifest(), bundle.signature(), bundle.binary())
 }

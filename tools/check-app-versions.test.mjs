@@ -27,7 +27,7 @@ import {
   releaseDependencyIds,
   storeImpactOfChangedPaths
 } from "./check-app-versions.mjs";
-import { collectRegistry, deriveMinimumCobalt } from "./app-registry.mjs";
+import { collectRegistry, currentProtocolVersion, deriveMinimumCobalt } from "./app-registry.mjs";
 import {
   registeredStorePackages,
   storeCatalogChanges,
@@ -721,11 +721,14 @@ test("only exact reviewed compatible blobs are excluded from app release inputs"
   );
 });
 
-test("reviewed compatible-change entries name the exact current files", () => {
+test("active protocol compatible-change entries name the exact current files", () => {
   const manifest = JSON.parse(
     readFileSync("tools/app-release-compatible-changes.json", "utf8")
   );
   for (const change of manifest.changes) {
+    // Historical exemptions cannot affect a new protocol's release selection.
+    // Keep their exact historical blobs rather than re-blessing changed SDK code.
+    if (change.protocol_version !== currentProtocolVersion()) continue;
     for (const file of change.files) {
       const current = execFileSync("git", ["hash-object", file.path], {
         encoding: "utf8"

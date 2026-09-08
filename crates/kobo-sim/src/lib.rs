@@ -15,6 +15,7 @@ use std::thread;
 // Panel policy belongs to the runtime, but the simulator compiles the same
 // source so region and waveform decisions cannot drift.
 mod activity;
+mod app_store;
 mod capture;
 mod clock;
 mod hardware;
@@ -593,6 +594,7 @@ impl AppServer {
     pub fn bind(address: &str, socket_path: impl AsRef<Path>) -> io::Result<Self> {
         validate_configuration()?;
         let time = clock::Time::configured()?;
+        let apps = SimulatedApps::configured()?;
         install_typeface();
         let socket_path = socket_path.as_ref().to_path_buf();
         validate_socket_parent(&socket_path)?;
@@ -621,7 +623,7 @@ impl AppServer {
         Ok(Self {
             http,
             app,
-            apps: Arc::new(Mutex::new(SimulatedApps::default())),
+            apps: Arc::new(Mutex::new(apps)),
             socket_path,
             socket_identity: (metadata.dev(), metadata.ino()),
             manifest: None,
@@ -1095,6 +1097,31 @@ impl AppState {
 #[derive(Debug)]
 struct SimulatedApps {
     catalog: Vec<kobo_protocol::AppInfo>,
+    signed: Option<app_store::SignedStore>,
+}
+
+impl SimulatedApps {
+    fn configured() -> io::Result<Self> {
+        let signed = std::env::var_os("KOBO_SIM_APP_STORE")
+            .map(|path| app_store::SignedStore::open(Path::new(&path)))
+            .transpose()?;
+        Ok(Self {
+            signed,
+            ..Self::default()
+        })
+    }
+
+    fn metadata(&self) -> kobo_json::Value {
+        self.signed.as_ref().map_or_else(
+            || {
+                kobo_json::ObjectBuilder::new()
+                    .set("mode", "catalog-preview")
+                    .set("signedTransactions", false)
+                    .build()
+            },
+            app_store::SignedStore::metadata,
+        )
+    }
 }
 
 impl Default for SimulatedApps {
@@ -1148,7 +1175,10 @@ impl Default for SimulatedApps {
                 true,
             ),
         ]);
-        Self { catalog }
+        Self {
+            catalog,
+            signed: None,
+        }
     }
 }
 
@@ -1218,6 +1248,12 @@ impl AppState {
         let base = simulation_json(&self.panel, self.scenario, self.lifecycle, self.last_touch);
         let mut value = kobo_json::parse(&base).expect("simulator JSON");
         if let kobo_json::Value::Object(fields) = &mut value {
+            fields.push((
+                "appStore".into(),
+                self.apps
+                    .lock()
+                    .map_or(kobo_json::Value::Null, |apps| apps.metadata()),
+            ));
             fields.push(("clock".into(), self.time.json(self.clock_snapshot)));
             fields.push(("input".into(), self.input.json()));
             fields.push((
@@ -2805,6 +2841,9 @@ fn simulated_app_request(
     let mut apps = apps
         .lock()
         .map_err(|_| io::Error::other("simulated apps lock poisoned"))?;
+    if let Some(signed) = &apps.signed {
+        return Ok(Some(signed.request(request, scenario)));
+    }
     let result = match request {
         DeviceRequest::ListInstalledApps => DeviceResult::Apps {
             entries: apps
@@ -3882,7 +3921,7 @@ mod tests {
         online.shutdown();
     }
 
-    fn private_temp_dir() -> PathBuf {
+    pub(super) fn private_temp_dir() -> PathBuf {
         let root = std::env::temp_dir().join(format!(
             "ks-{}-{}",
             std::process::id(),

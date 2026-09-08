@@ -73,17 +73,20 @@ pub struct Control {
 }
 
 impl Control {
-    /// Whether this node carries `needle` in any of its lines.
+    /// Whether the visible text of this node carries `needle`, across wraps.
     ///
     /// Case-insensitive and by substring, because a label is routinely
     /// shortened to fit -- "Return to Kobo reader" becomes "Return to Kobo…"
     /// on a narrow panel, and a script that had to know which panel it was
     /// running on would be a script nobody kept up to date.
     fn says(&self, needle: &str) -> bool {
-        let needle = needle.to_lowercase();
-        self.lines
-            .iter()
-            .any(|line| line.to_lowercase().contains(&needle))
+        let normalize = |text: &str| {
+            text.split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+                .to_lowercase()
+        };
+        normalize(&self.lines.join(" ")).contains(&normalize(needle))
     }
 
     /// Whether one of this node's lines is exactly `needle`.
@@ -1446,6 +1449,23 @@ mod tests {
         ] {
             assert!(super::parse_dimensions(metadata.as_bytes()).is_err());
         }
+    }
+
+    #[test]
+    fn text_assertions_survive_wrapping_but_do_not_invent_clipped_words() {
+        let text = super::Control {
+            kind: "Banner".into(),
+            centre: (50, 100),
+            action: None,
+            lines: vec![
+                "Couldn't finish. Check".into(),
+                "free space and try…".into(),
+            ],
+        };
+        assert!(text.says("check free space"));
+        assert!(text.says("CHECK\nfree  space"));
+        assert!(!text.says("try again"));
+        assert!(!text.says("finish Check"));
     }
 
     #[test]
