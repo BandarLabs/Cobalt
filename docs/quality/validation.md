@@ -562,3 +562,50 @@ residue is described as a model awaiting physical calibration. API names and CLI
 lease behavior were checked against source; local image paths and diff whitespace
 were checked. No code or physical-reader behavior changed in this documentation
 update. Beta was fetched again and remains 7f1a543.
+
+## Panels download recovery and public screenshots
+
+PANELS-07 is complete with fixture-based validation. Recovery now saves a
+versioned size/SHA-256 checkpoint only after its bounded shelf upload succeeds.
+Two alternating blobs keep the previous checkpoint intact across an interrupted
+metadata save. An initial failed metadata save prevents fetching. Retry writes
+pending storage before requesting more bytes. Restart verifies the exact saved
+blob and compares its prefix against the server before appending. Changed server
+content, corrupt/newer/legacy records and missing bytes stay explicit recovery
+states; none becomes a silently empty download. A complete checkpoint can be
+imported offline through verified copy, receipt and library acknowledgements.
+Content-derived copies preserve older comics at the same URL and reuse identical
+copies. Removal drains outstanding callbacks, acknowledges clearing metadata,
+then removes only owned recovery blobs; cleanup failures remain retryable.
+Suspension pauses fetching and retains pending checkpoints until storage settles.
+
+Validation on the catalog worktree:
+
+- 36 Panels tests pass, including nine SDK/policy filesystem recovery journeys,
+  bounded transfer/checkpoint cases, and recovery controls at every portrait text
+  size on Clara BW and 758 × 1024 panels. Original fixtures replace network
+  responses; this is not a live-server interoperability test.
+- Strict all-target Clippy and ARMv7 musl compilation pass with Rust 1.85.1.
+- Published-catalog version gate passes for Panels 0.1.2.
+- Actual simulator recovery at extra-large Clara BW size passes after the final
+  duplicate-copy cleanup fix. It checks completed offline import, full-storage
+  failure/retry, receipts, removal of temporary files and forced-restart reading.
+  The capture asserts zero fetch/post effects and read-only screenshot sampling.
+  Evidence: [recovery result](evidence/panels-recovery/result.json).
+- The full actual SDK comic journey also passes with server/account restart,
+  USB guide, sample import, storage retry, reading positions, zoom/pan, RTL and
+  spreads. That run predates only the final identical-copy cleanup guard, covered
+  by the subsequent recovery tests and simulator run.
+  Evidence: [journey result](evidence/panels-docs/result.json).
+
+The public app screenshot, canonical app screenshots, app README, generated app
+page and SDK comic example now show actual current interface captures. Each
+image links to its source/binary/profile/font/scale provenance. These captures
+use original artwork and ideal simulator frames, not calibrated physical e-ink
+appearance. Public SDK/CLI documentation also now explains verified exports,
+server-bound accounts, durable state and timed session leases in PR 1.
+
+Limits remain explicit: there is no HTTP version-token API, so resuming re-reads
+the saved prefix; no personal Komga service or physical reader was used. Shelf
+thumbnails/progress (PANELS-04), other catalog tasks and companion work remain
+open. Combined checklist: 494 tasks, 102 complete, 391 open, CBR deferred.

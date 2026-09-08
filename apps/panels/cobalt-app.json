@@ -5,7 +5,7 @@
   "summary": "Read comics added from your computer or Komga library.",
   "page_description": "Enjoy your comics on Kobo with clear page controls and support for Komga libraries.",
   "version": "0.1.2",
-  "release_notes": "Preview verified CBZ imports, try an original sample comic, and connect a Komga account on your reader. Requires Cobalt 0.3.12.",
+  "release_notes": "Try an original sample, import verified CBZ copies, connect Komga on your reader, and recover interrupted downloads. Requires Cobalt 0.3.12.",
   "glyph": "reader",
   "capabilities": [
     "network"
@@ -17,6 +17,9 @@
       },
       {
         "text": "To use Komga, choose Browse and enter your HTTPS server address. Add your username and password in Account details, then check the connection."
+      },
+      {
+        "text": "Open Download on your shelf to retry a paused transfer. A completed download can be added to the shelf offline; saved comics remain available."
       }
     ]
   }

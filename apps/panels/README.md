@@ -49,11 +49,50 @@ Browsing paginates each server response at the active interface size, including
 its navigation and next/previous links. Search filters the current response while
 preserving each original title action. Back restores the previous local page and
 search; cancelled or late requests cannot replace that restored view. Catalog
-history is bounded to 16 entries. Cover art and bounded CBZ downloads remain
-available. Interrupted-download validation and shelf progress summaries remain
-open quality tasks. Recovery data
-is retained until a completed comic's library save succeeds; this does not yet
-cover every interrupted-download case.
+history is bounded to 16 entries. Cover art and CBZ downloads up to 32 MiB are
+supported. Shelf thumbnails and reading-progress summaries remain in progress.
+
+## Continue an interrupted download
+
+Open **Download** from the shelf to continue or remove a paused download.
+Panels checks its saved bytes before using them. When continuing, it first
+compares the saved part with your server, then downloads the remaining pages.
+If the server's comic has changed, remove the paused download and start again.
+Your previously saved comics stay on the shelf.
+
+Once a complete download is saved, **Add to shelf** works offline. The same
+verified copy, receipt and comic-list saves used for USB imports must finish
+before **Available on this reader** appears. A failed save offers Retry; it
+keeps the recovery copy. Repeating a download of an unchanged comic reuses its
+verified copy. A different file at the same server URL gets a separate copy.
+
+Downloads keep one acknowledged checkpoint while writing the next. Restarting
+uses the last acknowledged checkpoint, which may be behind the last progress
+shown before interruption. Removal waits for outstanding storage replies and
+removes only the download's recovery files. An unreadable, older-format or
+newer-format recovery record is preserved until you explicitly remove it;
+older paused downloads must be downloaded again.
+
+Resuming checks the existing prefix again because the current network API does
+not expose a server version token. This uses additional network data. Archive
+checks still apply before import. The automated checks use original fixture
+bytes and real SDK/storage paths; live Komga transfer and physical-reader
+validation remain part of acceptance.
+
+## Screenshots
+
+These are actual Clara BW simulator captures at the largest interface size,
+using Cobalt's original sample comic. They show ideal rendered output, not
+measured e-ink appearance. Capture provenance is in [screenshots](screenshots/README.md).
+
+| Shelf | Reader |
+| --- | --- |
+| ![The original sample comic available on the reader](screenshots/library.png) | ![The first page of A small garden](screenshots/reader.png) |
+
+| USB guide | Download recovery |
+| --- | --- |
+| ![Folder step of the USB import guide](screenshots/import-guide.png) | ![Completed download can be added to the shelf offline](screenshots/download-recovery.png) |
+
 
 ```sh
 cargo test -p kobo-panels

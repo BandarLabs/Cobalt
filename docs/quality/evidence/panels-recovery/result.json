@@ -1,0 +1,10 @@
+{
+  "status": "passed",
+  "profile": "clara-bw-391",
+  "scale": "extra-large",
+  "download_recovery": true,
+  "original_fixture": true,
+  "fetched": 0,
+  "posted": 0,
+  "completed_sha256": "f2b5107fc0ad07d00b73921e3ff4a4640d19521af04145d48f73dc76c3a3a548"
+}

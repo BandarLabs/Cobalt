@@ -45,6 +45,7 @@ def main():
     parser.add_argument('--reader-tools', action='store_true', help='Exercise shared controls, RTL, spreads and process restart')
     parser.add_argument('--server-setup', action='store_true', help='Check address save recovery and private account entry without contacting a server')
     parser.add_argument('--onboarding', action='store_true', help='Exercise USB help and the bundled sample, including restart')
+    parser.add_argument('--download-recovery', action='store_true', help='Recover a completed original CBZ checkpoint offline, including storage failure')
     parser.add_argument('--cbr', action='store_true', help='Check explicit CBR refusal')
     parser.add_argument('--colour', action='store_true', help='Inspect original RGB artwork on color and grayscale profiles')
     args = parser.parse_args()
@@ -65,6 +66,15 @@ def main():
         fixture = b'Rar!\x1a\x07\x01\x00' if args.cbr else comic_bytes(args.colour)
         (storage/'volume.cbz').write_bytes(fixture)
         comic_key = hashlib.sha256(fixture).hexdigest()
+        if args.download_recovery:
+            completed = (ROOT/'apps/panels/assets/a-small-garden.cbz').read_bytes()
+            completed_key = hashlib.sha256(completed).hexdigest()
+            (storage/'partial-a.cbz').write_bytes(completed)
+            state = Path(private)/'cobalt-sim-state/panels'
+            state.mkdir(parents=True)
+            (state/'partial').write_text(json.dumps(dict(schema='panels.download', version=1, payload=dict(
+                key='garden.cbz', title='A small garden', url='https://example.com/garden.cbz',
+                slot='0', bytes=str(len(completed)), digest=completed_key, complete=True))))
         log_path = args.output/'simulator.log'
         with log_path.open('w') as log:
             try:
@@ -139,6 +149,36 @@ def main():
                     assert not errors, f'{label}: {errors}'
                     return '\n'.join(' '.join(node.get('lines', [])) for node in layout['nodes'])
 
+                if args.download_recovery:
+                    drive('wait-for-id retry')
+                    wait_for('Download complete')
+                    capture('40-completed-download')
+                    drive('scenario storage-full')
+                    drive('tap-id retry')
+                    drive('wait-for-id import-retry')
+                    capture('41-download-save-failed')
+                    assert (state/'partial').read_bytes(), 'Failed copy erased the completed checkpoint'
+                    drive('scenario normal')
+                    drive('tap-id import-retry')
+                    wait_for('Available on this reader')
+                    capture('42-download-receipt')
+                    assert (storage/completed_key).read_bytes() == completed
+                    assert not (state/'partial').read_bytes(), 'Acknowledged import left an active checkpoint'
+                    assert not (storage/'partial-a.cbz').exists()
+                    drive('tap Back')
+                    drive('wait-for-id kept-' + completed_key)
+                    capture('43-recovered-library')
+                    os.killpg(process.pid, signal.SIGKILL)
+                    process.wait(timeout=5)
+                    address = start()
+                    drive('wait-for-id kept-' + completed_key)
+                    drive('tap-id kept-' + completed_key)
+                    wait_for('Page 1 of 4')
+                    capture('44-recovered-after-restart')
+                    (args.output/'result.json').write_text(json.dumps(dict(status='passed', profile=args.profile,
+                        scale=args.scale, download_recovery=True, original_fixture=True,
+                        fetched=0, posted=0, completed_sha256=completed_key), indent=2)+'\n')
+                    return
                 wait_for('Add comic')
                 drive('wait-for-id load-sideload')
                 drive('wait-idle')

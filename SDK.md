@@ -248,9 +248,9 @@ pub trait KoboApp {
 }
 ```
 
-Only the first two are required. Every callback is handed a `&mut Context`,
-which is the only way to affect the outside world; a method that does not take
-one cannot.
+Only the first two are required. Event callbacks receive a `&mut Context` to
+request effects. `can_suspend` only reports whether required state is durable;
+it cannot start work.
 
 `fn main` is `kobo_sdk::run("name", app)`, which reads the socket path from
 `KOBO_SOCKET`. Use `run_on` to name a socket yourself.
@@ -1099,6 +1099,10 @@ acknowledged draft, forward actions to `act`, reflow when metrics change, and
 `close` to release picture resources. Restore a position only against its comic.
 See [Panels](apps/panels/README.md) for a complete app integration. CBR/RAR decoding
 is deferred; no RAR codec or library is included.
+
+<img src="apps/panels/screenshots/reader.png" width="320" alt="The shared ComicView rendering the first page of the original A small garden sample in Panels">
+
+*Shared comic reader in the Clara BW simulator; [capture provenance](apps/panels/screenshots/README.md).*
 
 ---
 

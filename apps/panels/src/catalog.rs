@@ -3,7 +3,7 @@ use super::{Context, Glyph, Panels, Screen, ScreenBuilder};
 
 type Row = (String, String, String, Glyph);
 
-fn preview(text: &str, limit: usize) -> String {
+pub(super) fn preview(text: &str, limit: usize) -> String {
     let mut chars = text.chars();
     let mut short: String = chars.by_ref().take(limit).collect();
     if chars.next().is_some() {

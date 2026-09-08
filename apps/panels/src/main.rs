@@ -2,6 +2,7 @@
 
 mod archive;
 mod catalog;
+mod downloads;
 mod komga;
 mod library;
 mod server;
@@ -91,6 +92,7 @@ struct Panels {
     transfer: Option<transfer::Download>,
     pending: Option<Pending>,
     upload: Option<(ShelfUpload, Saving)>,
+    recovery: downloads::Recovery,
     shelf_load: Option<ShelfDownload>,
     local_load: Option<ShelfDownload>,
     import: Option<Import>,
@@ -131,6 +133,7 @@ impl Default for Panels {
             transfer: None,
             pending: None,
             upload: None,
+            recovery: downloads::Recovery::default(),
             shelf_load: None,
             local_load: None,
             import: None,
@@ -171,10 +174,12 @@ impl Panels {
                 .completed_cleanup
                 .as_ref()
                 .is_some_and(|key| self.library_entries().iter().any(|comic| &comic.key == key))
+                && self.import.as_ref().is_some_and(Import::is_available)
             {
                 self.completed_cleanup = None;
-                context.store().save(PARTIAL_META, Vec::new());
-                context.shelf().remove(PARTIAL_BLOB);
+                self.recovery.discard_requested = true;
+                self.paused = true;
+                self.drain_removal(context);
             }
             if self.route == Route::SavingLibrary {
                 self.route = Route::Reader;
@@ -334,6 +339,14 @@ impl Panels {
                     ("retry-all-saves", "Retry"),
                 ])
                 .build()
+        } else if self.pending.is_some() || self.recovery_busy() || !self.recovery.loaded {
+            screen
+                .action_bar([
+                    ("load-sideload", "Add comic"),
+                    ("browse-komga", "Browse"),
+                    ("show-download", "Download"),
+                ])
+                .build()
         } else {
             screen
                 .action_bar([("load-sideload", "Add comic"), ("browse-komga", "Browse")])
@@ -390,17 +403,45 @@ impl Panels {
             .transfer
             .as_ref()
             .map_or(0, |download| download.received.len() as u64);
-        let mut screen = self.with_notice(
-            ScreenBuilder::new("panels-download")
-                .top_bar("Download")
-                .heading(title)
-                .transfer("Saving for offline reading", received, None)
-                .owns_back(true),
-        );
-        if self.paused || self.notice.is_some() {
-            screen = screen.buttons([("retry", "Retry"), ("cancel-download", "Remove")]);
+        let mut screen = ScreenBuilder::new("panels-download")
+            .top_bar("Download")
+            .text(catalog::preview(title, 60))
+            .owns_back(true);
+        if let Some(notice) = &self.notice {
+            screen = screen.text(notice);
         } else {
-            screen = screen.button("pause-download", "Pause");
+            screen = screen.transfer(
+                if self
+                    .transfer
+                    .as_ref()
+                    .is_some_and(transfer::Download::checking)
+                {
+                    "Checking saved pages against your server"
+                } else {
+                    "Saving for offline reading"
+                },
+                received,
+                None,
+            );
+        }
+        if self.paused || self.notice.is_some() {
+            screen = screen.action_bar([
+                (
+                    "retry",
+                    if self
+                        .transfer
+                        .as_ref()
+                        .is_some_and(|download| download.complete)
+                    {
+                        "Add to shelf"
+                    } else {
+                        "Retry"
+                    },
+                ),
+                ("cancel-download", "Remove"),
+            ]);
+        } else {
+            screen = screen.bottom_action("pause-download", "Pause");
         }
         screen.build()
     }
@@ -470,117 +511,6 @@ impl Panels {
                 picture.height(),
                 picture.grey().to_vec(),
             );
-        }
-    }
-
-    fn begin_download(&mut self, context: &mut Context) {
-        if self.library.is_none() || self.completed_cleanup.is_some() {
-            self.notice = Some("Save the comic list before starting another download.".into());
-            return;
-        }
-        let Some(publication) = self.selected.as_ref() else {
-            return;
-        };
-        let Some(url) = komga::cbz(publication) else {
-            self.notice = Some("This volume has no downloadable comic file.".to_owned());
-            return;
-        };
-        let key = shelf_key(publication.identifier.as_deref().unwrap_or(&url));
-        let pending = Pending {
-            key,
-            title: publication.title.clone(),
-            url,
-        };
-        context.store().save(PARTIAL_META, encode_pending(&pending));
-        self.transfer = Some(transfer::Download::new(pending.url.clone(), Vec::new()));
-        self.pending = Some(pending);
-        self.paused = false;
-        self.notice = None;
-        self.route = Route::Download;
-        self.fetch_next_chunk(context);
-    }
-
-    fn fetch_next_chunk(&mut self, context: &mut Context) {
-        if self.paused || self.task.is_some() || self.upload.is_some() {
-            return;
-        }
-        let Some(download) = &self.transfer else {
-            return;
-        };
-        self.task = context
-            .spawn(Task::Fetch {
-                url: download.url.clone(),
-                offset: download.offset(),
-                max_bytes: u32::try_from(transfer::CHUNK).expect("transfer chunk fits u32"),
-                credential: Some(Credential::basic("komga")),
-                headers: Vec::new(),
-            })
-            .map(|task| (task, Awaiting::Comic));
-    }
-
-    fn save_transfer(&mut self, context: &mut Context, complete: bool) {
-        let Some(download) = &self.transfer else {
-            return;
-        };
-        let name = if complete {
-            self.pending
-                .as_ref()
-                .map_or(PARTIAL_BLOB, |pending| pending.key.as_str())
-        } else {
-            PARTIAL_BLOB
-        };
-        let mut upload = ShelfUpload::new(name, download.received.clone());
-        upload.start(context);
-        self.upload = Some((
-            upload,
-            if complete {
-                Saving::Complete
-            } else {
-                Saving::Partial
-            },
-        ));
-    }
-
-    fn cancel_download(&mut self, context: &mut Context, remove: bool) {
-        if let Some((task, _)) = self.task.take() {
-            context.cancel(task);
-        }
-        self.paused = true;
-        if remove {
-            context.shelf().remove(PARTIAL_BLOB);
-            context.store().save(PARTIAL_META, Vec::new());
-            self.transfer = None;
-            self.pending = None;
-            self.upload = None;
-            self.route = Route::Library;
-            self.notice = None;
-        }
-    }
-
-    fn finish_download(&mut self, context: &mut Context) {
-        let (Some(pending), Some(download)) = (self.pending.take(), self.transfer.take()) else {
-            return;
-        };
-        let comic = match archive::inspect(&download.received) {
-            Ok(comic) => comic,
-            Err(error) => {
-                self.notice = Some(error.to_string());
-                self.pending = Some(pending);
-                self.transfer = Some(download);
-                self.paused = true;
-                return;
-            }
-        };
-        let kept = Kept {
-            key: pending.key,
-            title: pending.title,
-            pages: comic.pages.len(),
-            rtl: self.rtl,
-        };
-        let key = kept.key.clone();
-        if self.open_bytes(context, download.received, kept, None) {
-            self.completed_cleanup = Some(key);
-            self.finish_library(context);
         }
     }
 
@@ -757,32 +687,6 @@ impl Panels {
         })
     }
 
-    fn advance_upload(&mut self, context: &mut Context, result: &StoreResult) -> bool {
-        let Some((upload, saving)) = &mut self.upload else {
-            return false;
-        };
-        match upload.advance(context, result) {
-            ShelfProgress::Done => {
-                let saving = *saving;
-                self.upload = None;
-                match saving {
-                    Saving::Partial => self.fetch_next_chunk(context),
-                    Saving::Complete => self.finish_download(context),
-                }
-                true
-            }
-            ShelfProgress::Failed(_) => {
-                self.upload = None;
-                self.paused = true;
-                self.notice =
-                    Some("The download could not be saved. Free space, then retry.".to_owned());
-                true
-            }
-            ShelfProgress::Moving { .. } => true,
-            ShelfProgress::Elsewhere => false,
-        }
-    }
-
     fn advance_shelf_load(&mut self, context: &mut Context, result: &StoreResult) -> bool {
         let Some(download) = &mut self.shelf_load else {
             return false;
@@ -806,42 +710,13 @@ impl Panels {
             ShelfProgress::Elsewhere => false,
         }
     }
-
-    fn advance_partial_load(&mut self, context: &mut Context, result: &StoreResult) -> bool {
-        let Some(download) = &mut self.partial_load else {
-            return false;
-        };
-        match download.advance(context, result) {
-            ShelfProgress::Done => {
-                let bytes = self
-                    .partial_load
-                    .take()
-                    .expect("active partial load")
-                    .take();
-                if let Some(pending) = &self.pending {
-                    self.transfer = Some(transfer::Download::new(pending.url.clone(), bytes));
-                    self.route = Route::Download;
-                    self.paused = true;
-                    self.notice = Some("A paused download is ready to continue.".to_owned());
-                }
-                true
-            }
-            ShelfProgress::Failed(_) => {
-                self.partial_load = None;
-                self.pending = None;
-                context.store().save(PARTIAL_META, Vec::new());
-                true
-            }
-            ShelfProgress::Moving { .. } => true,
-            ShelfProgress::Elsewhere => false,
-        }
-    }
 }
 
 impl KoboApp for Panels {
     fn on_start(&mut self, context: &mut Context) {
         context.device().read_identity();
         context.store().load(LIBRARY);
+        self.recovery.metadata_loading = true;
         context.store().load(PARTIAL_META);
         context.store().load(server::KEY);
         self.show(context);
@@ -894,8 +769,13 @@ impl KoboApp for Panels {
                 "The comic list could not be read. Try again when storage is available.".into(),
             );
         } else if key == PARTIAL_META {
-            self.notice =
-                Some("The paused download could not be checked. Try opening Panels again.".into());
+            self.recovery.metadata_loading = false;
+            self.recovery.loaded = false;
+            self.route = Route::Download;
+            self.paused = true;
+            self.notice = Some(
+                "The paused download could not be checked. Retry when storage is available.".into(),
+            );
         } else if self.pending_open.as_ref().is_some_and(|kept| {
             key == progress_key(&kept.key) || legacy_progress_key(&kept.key).as_deref() == Some(key)
         }) {
@@ -923,12 +803,11 @@ impl KoboApp for Panels {
                 }
                 self.loaded = true;
             } else if key == PARTIAL_META {
-                if let Some(pending) = value.as_deref().and_then(decode_pending) {
-                    self.pending = Some(pending);
-                    let mut download =
-                        ShelfDownload::new(PARTIAL_BLOB).at_most(transfer::MAX_COMIC);
-                    download.start(context);
-                    self.partial_load = Some(download);
+                if self.recovery.discard_requested {
+                    self.recovery.metadata_loading = false;
+                    self.drain_removal(context);
+                } else {
+                    self.restore_download(context, value.as_deref());
                 }
             } else if self.pending_open.as_ref().is_some_and(|kept| {
                 key == progress_key(&kept.key)
@@ -958,6 +837,10 @@ impl KoboApp for Panels {
     }
 
     fn on_shelf(&mut self, context: &mut Context, name: &str, result: StoreResult) {
+        if self.removed_blob(name, &result) {
+            self.show(context);
+            return;
+        }
         if self
             .local_load
             .as_ref()
@@ -1004,6 +887,11 @@ impl KoboApp for Panels {
     }
 
     fn on_save(&mut self, context: &mut Context, key: &str, result: StoreResult) {
+        if key == PARTIAL_META {
+            self.saved_metadata(context, &result);
+            self.show(context);
+            return;
+        }
         if key == server::KEY {
             self.server.saved(context, &result);
             self.show(context);
@@ -1021,7 +909,9 @@ impl KoboApp for Panels {
                 import.on_save(key, &result);
                 if import.is_available() {
                     if let Some(entry) = self.import_entry.clone() {
-                        if !self.remember(context, entry) {
+                        if self.remember(context, entry) {
+                            self.finish_library(context);
+                        } else {
                             self.import = None;
                             self.route = Route::Library;
                         }
@@ -1056,6 +946,11 @@ impl KoboApp for Panels {
         }
     }
 
+    fn on_suspend(&mut self, context: &mut Context) {
+        self.cancel_download(context, false);
+        self.on_background(context);
+    }
+
     fn can_suspend(&self) -> bool {
         self.library
             .as_ref()
@@ -1065,7 +960,7 @@ impl KoboApp for Panels {
                 .values()
                 .all(|draft| draft.status() == DraftStatus::Saved)
             && self.server.can_suspend()
-            && self.upload.is_none()
+            && !self.recovery_busy()
             && self.import.as_ref().is_none_or(|import| {
                 import.failure().is_none()
                     && matches!(
@@ -1189,7 +1084,11 @@ impl KoboApp for Panels {
             self.retry_progress(context);
         } else if action == ActionId::BACK {
             match self.route {
-                Route::Reader | Route::Download | Route::SavingLibrary => {
+                Route::Download => {
+                    self.cancel_download(context, false);
+                    self.route = Route::Library;
+                }
+                Route::Reader | Route::SavingLibrary => {
                     self.save_reading_state(context);
                     self.route = Route::Library;
                 }
@@ -1219,7 +1118,10 @@ impl KoboApp for Panels {
             self.load_sample();
         } else if action == action_id("load-sideload") {
             self.load_sideload(context);
+        } else if action == action_id("show-download") {
+            self.route = Route::Download;
         } else if action == action_id("browse-komga") {
+            self.cancel_download(context, false);
             self.history.clear();
             self.query.clear();
             self.route = Route::Server;
@@ -1245,9 +1147,7 @@ impl KoboApp for Panels {
             self.cancel_download(context, false);
             self.notice = Some("Download paused.".to_owned());
         } else if action == action_id("retry") {
-            self.paused = false;
-            self.notice = None;
-            self.fetch_next_chunk(context);
+            self.retry_download(context);
         } else if action == action_id("cancel-download") {
             self.cancel_download(context, true);
         } else if let Some(index) = (0..self.library_entries().len()).find(|index| {
@@ -1327,12 +1227,13 @@ impl KoboApp for Panels {
                     .as_mut()
                     .expect("comic task has transfer")
                     .append(&chunk);
-                if let Ok(done) = result {
-                    self.save_transfer(context, done);
-                } else {
-                    self.paused = true;
-                    self.notice =
-                        Some("This comic is too large to keep on this reader.".to_owned());
+                match result {
+                    Ok(transfer::Step::Checked) => self.fetch_next_chunk(context),
+                    Ok(step) => self.save_transfer(context, step == transfer::Step::Complete),
+                    Err(error) => {
+                        self.paused = true;
+                        self.notice = Some(error.into());
+                    }
                 }
             }
             (_, TaskOutcome::Failed(kobo_sdk::TaskError::NoCredential)) => {
@@ -1348,10 +1249,6 @@ impl KoboApp for Panels {
         }
         self.show(context);
     }
-}
-
-fn clean_field(value: &str) -> String {
-    value.replace(['\t', '\n', '\r'], " ")
 }
 
 fn shelf_key(identity: &str) -> String {
@@ -1372,29 +1269,6 @@ fn legacy_progress_key(key: &str) -> Option<String> {
     kobo_sdk::is_valid_key(&legacy).then_some(legacy)
 }
 
-fn encode_pending(pending: &Pending) -> Vec<u8> {
-    format!(
-        "{}\t{}\t{}",
-        clean_field(&pending.key),
-        clean_field(&pending.title),
-        clean_field(&pending.url)
-    )
-    .into_bytes()
-}
-
-fn decode_pending(bytes: &[u8]) -> Option<Pending> {
-    let text = std::str::from_utf8(bytes).ok()?;
-    if text.is_empty() {
-        return None;
-    }
-    let mut fields = text.split('\t');
-    Some(Pending {
-        key: fields.next()?.to_owned(),
-        title: fields.next()?.to_owned(),
-        url: fields.next()?.to_owned(),
-    })
-}
-
 fn main() -> ExitCode {
     match kobo_sdk::run("panels", Panels::default()) {
         Ok(()) => ExitCode::SUCCESS,
@@ -1407,3 +1281,6 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod recovery_tests;

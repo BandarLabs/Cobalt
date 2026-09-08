@@ -59,7 +59,7 @@ const screenshots = {
   musicstand: ["musicstand.png", "Music Stand showing a marked half-page score view for Bach's Cello Suite No. 1."],
   needles: ["needles.png", "Needles pattern screen with row and repeat counters and a large +1 row button."],
   nonograms: ["nonograms.png", "Nonogram puzzle on a Kobo showing numbered cells, row clues, and guided marking mode."],
-  panels: ["panels.png", "Panels library with controls to open an added comic or browse Komga."],
+  panels: ["panels.png", "Panels library in the Clara BW simulator with the original A small garden comic saved for offline reading."],
   paperterm: ["paperterm.png", "Paperterm pairing screen with computer address field and on-screen keyboard on a Kobo Clara BW."],
   parlor: ["parlor.png", "Reversi opening board showing four legal moves and touch controls."],
   parser: ["parser.png", "Parser's book-like transcript after taking a brass lamp and entering the garden."],

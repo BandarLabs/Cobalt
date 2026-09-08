@@ -2292,8 +2292,11 @@
     "pr": 2,
     "group": "Panels",
     "task": "Verify interrupted download and offline resume",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Versioned alternating checkpoints bind saved bytes to size/SHA-256; restart rechecks the saved prefix against the server before continuation. Real SDK/policy filesystem tests cover crash between blob and manifest, failed writes/receipt/index/cleanup, changed content, corrupt records, cancellation and identical/different downloads.",
+      "Actual extra-large Clara BW simulator completes a saved original CBZ offline, retries full storage, verifies receipt/index, removes recovery files and reopens after forced restart with zero fetch/post effects. docs/quality/evidence/panels-recovery/result.json; live server and physical reader acceptance remain pending."
+    ]
   },
   {
     "id": "PAPER-01",

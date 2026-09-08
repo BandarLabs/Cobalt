@@ -124,59 +124,6 @@ fn record_save_refusals_do_not_fail_an_unrelated_comic_transfer() {
 }
 
 #[test]
-fn completed_download_keeps_recovery_data_until_the_library_save_is_acknowledged() {
-    use kobo_sdk::{Command, Context, KoboApp, StoreError, StoreRequest, StoreResult};
-    let mut app = super::Panels {
-        library: Some(super::Library::restore(None).unwrap()),
-        loaded: true,
-        pending: Some(super::Pending {
-            key: "fixture.cbz".into(),
-            title: "Rain".into(),
-            url: "https://example.com/fixture.cbz".into(),
-        }),
-        transfer: Some(super::transfer::Download::new(
-            "https://example.com/fixture.cbz".into(),
-            include_bytes!("../../../docs/quality/fixtures/original-pages.cbz").to_vec(),
-        )),
-        ..super::Panels::default()
-    };
-    let mut context = Context::default();
-    let clears_recovery = |commands: Vec<Command>| {
-        commands.iter().any(|command| matches!(command, Command::Store(StoreRequest::Save { key, .. }) if key == super::PARTIAL_META) || matches!(command, Command::Store(StoreRequest::ShelfRemove { name }) if name == super::PARTIAL_BLOB))
-    };
-    app.finish_download(&mut context);
-    assert_eq!(app.route, super::Route::SavingLibrary);
-    assert!(!clears_recovery(context.take_commands()));
-    app.on_save(
-        &mut context,
-        super::LIBRARY,
-        StoreResult::Denied(StoreError::TooFull),
-    );
-    assert!(!clears_recovery(context.take_commands()));
-    assert!(!app.can_suspend());
-    app.on_action(&mut context, action_id("retry-library"));
-    assert!(!clears_recovery(context.take_commands()));
-    app.on_save(
-        &mut context,
-        super::LIBRARY,
-        StoreResult::Saved {
-            key: super::LIBRARY.into(),
-        },
-    );
-    assert!(clears_recovery(context.take_commands()));
-    assert_eq!(app.route, super::Route::Reader);
-    assert_eq!(app.library_entries().len(), 1);
-    app.on_save(
-        &mut context,
-        super::LIBRARY,
-        StoreResult::Saved {
-            key: super::LIBRARY.into(),
-        },
-    );
-    assert!(!clears_recovery(context.take_commands()));
-}
-
-#[test]
 fn failed_and_corrupt_library_loads_do_not_become_empty_libraries_or_write_replacements() {
     use kobo_sdk::{Command, Context, KoboApp, StoreError, StoreResult};
     for result in [
@@ -257,7 +204,7 @@ fn failed_position_save_keeps_latest_page_and_retry_acknowledges_that_revision()
         super::DraftStatus::Saved
     );
 }
-use super::{decode_pending, encode_pending, shelf_key, Kept, Panels, Pending};
+use super::{shelf_key, Kept, Panels, Pending};
 use kobo_sdk::action_id;
 use kobo_ui::{Chrome, CLARA_BW_METRICS};
 
@@ -277,7 +224,11 @@ fn library_and_pending_transfer_round_trip() {
         title: "Volume 1".into(),
         url: "https://library/one.cbz".into(),
     };
-    assert_eq!(decode_pending(&encode_pending(&pending)), Some(pending));
+    let checkpoint = super::transfer::Checkpoint::new(pending, 0, &[], false);
+    assert_eq!(
+        super::transfer::Checkpoint::restore(&checkpoint.encode().unwrap()).unwrap(),
+        checkpoint
+    );
 }
 
 #[test]
@@ -659,4 +610,32 @@ fn catalog_back_restores_the_selected_local_page_and_query() {
     assert_eq!(app.catalog_page, 4);
     assert_eq!(app.query, "Garden");
     assert_eq!(app.catalog.as_ref().unwrap().publications.len(), 128);
+}
+
+#[test]
+fn download_recovery_controls_fit_every_portrait_text_size() {
+    for (width, height, pixels_per_inch) in [(1072, 1448, 300), (758, 1024, 212)] {
+        for text_scale in kobo_ui::TextScale::STEPS {
+            let metrics = kobo_ui::DisplayMetrics {
+                width,
+                height,
+                pixels_per_inch,
+                text_scale,
+            };
+            for notice in [
+                "This paused download could not be opened. Retry, or remove it and download the comic again.",
+                "The comic on your server has changed. Remove this download and start again.",
+                "Download complete. Add it to your shelf, even while offline.",
+            ] {
+                let app = Panels {
+                    pending: Some(Pending { key: "comic.cbz".into(), title: "The lantern beside the old station and its garden ".repeat(5), url: "https://example.com/comic.cbz".into() }),
+                    notice: Some(notice.into()), paused: true, ..Panels::default()
+                };
+                let diagnostics = app.download_screen().diagnostics(&metrics, &Chrome::measuring(true));
+                assert!(diagnostics.issues.is_empty(), "{metrics:?}: {:?}", diagnostics.issues);
+                assert!(diagnostics.layout.rect_of_action(action_id("retry")).is_some());
+                assert!(diagnostics.layout.rect_of_action(action_id("cancel-download")).is_some());
+            }
+        }
+    }
 }

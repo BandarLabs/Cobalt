@@ -1264,6 +1264,7 @@ dependencies = [
  "kobo-json",
  "kobo-net",
  "kobo-opds",
+ "kobo-policy",
  "kobo-sdk",
  "kobo-state",
  "kobo-ui",
