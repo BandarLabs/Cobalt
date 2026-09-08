@@ -5,11 +5,22 @@ use kobo_protocol::{Message, Task, TaskId, TaskOutcome};
 use std::collections::BTreeMap;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum Kind {
+pub(super) enum Kind {
     Fetch,
     Post,
     File,
     Sleep,
+}
+
+impl From<&Task> for Kind {
+    fn from(work: &Task) -> Self {
+        match work {
+            Task::Fetch { .. } => Self::Fetch,
+            Task::Post { .. } => Self::Post,
+            Task::ReadFile { .. } => Self::File,
+            Task::Sleep { .. } => Self::Sleep,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -44,14 +55,19 @@ impl Default for Activity {
     }
 }
 impl Activity {
-    pub fn started(&mut self, id: TaskId, work: &Task) {
-        let (kind, index) = match work {
-            Task::Fetch { .. } => (Kind::Fetch, 0),
-            Task::Post { .. } => (Kind::Post, 1),
-            Task::ReadFile { .. } => (Kind::File, 2),
-            Task::Sleep { .. } => (Kind::Sleep, 3),
+    pub fn attempted(&mut self, work: impl Into<Kind>) {
+        let index = match work.into() {
+            Kind::Fetch => 0,
+            Kind::Post => 1,
+            Kind::File => 2,
+            Kind::Sleep => 3,
         };
         self.effects[index] = self.effects[index].saturating_add(1);
+        self.revision = self.revision.saturating_add(1);
+    }
+    pub fn started(&mut self, id: TaskId, work: impl Into<Kind>) {
+        let kind = work.into();
+        self.attempted(kind);
         // The runtime bounds concurrent tasks. Refuse to grow metadata even if
         // a malformed client keeps issuing requests with new identities.
         if self.active.len() < 64 && !self.active.contains_key(&id) {

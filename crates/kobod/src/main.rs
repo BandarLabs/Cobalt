@@ -1,6 +1,6 @@
 use kobo_policy::{DeviceServices, TaskRunner};
 
-use kobo_protocol::{Frame, LogLevel, Message, TaskError, TaskOutcome};
+use kobo_protocol::{Frame, LogLevel, Message};
 use kobo_ui::{display_metrics_from_env, Screen, Surface};
 use std::env;
 use std::error::Error;
@@ -899,17 +899,16 @@ fn serve_application(
                     .submit(task, work);
                 if let Err(reason) = submitted {
                     println!("task {} refused: {reason:?}", task.0);
-                    write_shared(
-                        &writer,
-                        &Frame {
-                            version: frame.version,
-                            request_id: frame.request_id,
-                            message: Message::TaskOutcome {
-                                task,
-                                outcome: TaskOutcome::Failed(TaskError::Denied),
+                    if let Some(outcome) = reason.outcome() {
+                        write_shared(
+                            &writer,
+                            &Frame {
+                                version: frame.version,
+                                request_id: frame.request_id,
+                                message: Message::TaskOutcome { task, outcome },
                             },
-                        },
-                    )?;
+                        )?;
+                    }
                 }
             }
             Message::StoreRequest(request) => {

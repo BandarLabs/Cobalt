@@ -43,7 +43,7 @@ use kobo_hal::supervisor::Suspended;
 use kobo_hal::touch::TouchEvent;
 use kobo_hal::{Rect, RefreshIntent, RefreshPlan, RegionSnapshot};
 use kobo_policy::{Backends, Capability, Declared, DeviceServices, PowerPolicy, TaskRunner};
-use kobo_protocol::{Frame, Lifecycle, Message, TaskError, TaskOutcome};
+use kobo_protocol::{Frame, Lifecycle, Message, TaskOutcome};
 use kobo_ui::{
     ActionId, CellStyle, Chrome, FontHandle, Layout, LayoutKind, PictureCache, Screen, Surface,
 };
@@ -2517,14 +2517,16 @@ fn host_applications(
                         }
                         Message::Spawn { task, work } => {
                             println!("task {} started for {}", task.0, apps[index].name);
-                            if apps[index].tasks.submit(task, work).is_err() {
+                            if let Some(outcome) = apps[index]
+                                .tasks
+                                .submit(task, work)
+                                .err()
+                                .and_then(kobo_policy::tasks::RejectReason::outcome)
+                            {
                                 reply(
                                     &mut apps[index],
                                     frame.request_id,
-                                    Message::TaskOutcome {
-                                        task,
-                                        outcome: TaskOutcome::Failed(TaskError::Denied),
-                                    },
+                                    Message::TaskOutcome { task, outcome },
                                 )?;
                             }
                         }

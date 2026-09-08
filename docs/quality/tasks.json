@@ -83,7 +83,9 @@
     "group": "Simulator fidelity (SIM-1\u201310)",
     "task": "Return production-equivalent failure reasons",
     "status": "todo",
-    "evidence": []
+    "evidence": [
+      "Network scenario faults now use production task admission, request/header/credential gates and result delivery. Capacity refusal matches runtime and duplicate IDs do not receive duplicate outcomes. 116 policy + 65 simulator tests pass; app-install transaction parity remains owned by SIM-17."
+    ]
   },
   {
     "id": "SIM-10",

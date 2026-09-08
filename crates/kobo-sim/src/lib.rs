@@ -2664,42 +2664,9 @@ fn read_app_messages(
                 )?;
             }
             Message::Spawn { task, work } => {
-                writer
-                    .activity
-                    .lock()
-                    .map_err(|_| io::Error::other("simulator activity lock poisoned"))?
-                    .started(task, &work);
-                if let Some(error) =
-                    simulated_task_error(current_scenario(state), &work, declared, &backends)
-                {
-                    note(
-                        state,
-                        &format!("task {} injected failure: {error:?}", task.0),
-                    )?;
-                    write_shared(
-                        writer,
-                        &Frame {
-                            version: kobo_protocol::VERSION,
-                            request_id,
-                            message: Message::TaskOutcome {
-                                task,
-                                outcome: kobo_protocol::TaskOutcome::Failed(error),
-                            },
-                        },
-                    )?;
-                    continue;
-                }
-                let rejected = tasks
-                    .lock()
-                    .map_err(|_| io::Error::other("simulator task lock poisoned"))?
-                    .submit(task, work)
-                    .err();
-                if let Some(reason) = rejected {
-                    let mut state = state
-                        .lock()
-                        .map_err(|_| io::Error::other("app state lock poisoned"))?;
-                    state.record(format!("task {} refused: {reason:?}", task.0));
-                }
+                let fault =
+                    simulated_task_error(current_scenario(state), &work, declared, &backends);
+                submit_simulated_task(tasks, writer, state, task, work, fault)?;
             }
             Message::StoreRequest(request) => {
                 if scenario_refuses_store(current_scenario(state), &request) {
@@ -2741,6 +2708,48 @@ fn read_app_messages(
         }
         deliver_task_outcomes(tasks, writer, state)?;
     }
+}
+
+/// Hold runner admission through activity registration and immediate reply so
+/// the drain worker cannot deliver a completion before its metadata exists.
+fn submit_simulated_task(
+    tasks: &Arc<Mutex<TaskRunner>>,
+    writer: &Arc<AppWriter>,
+    state: &Arc<Mutex<AppState>>,
+    task: kobo_protocol::TaskId,
+    work: kobo_protocol::Task,
+    fault: Option<kobo_protocol::TaskError>,
+) -> io::Result<()> {
+    let mut tasks = tasks
+        .lock()
+        .map_err(|_| io::Error::other("simulator task lock poisoned"))?;
+    let kind = activity::Kind::from(&work);
+    let admitted = tasks.submit_with_fault(task, work, fault);
+    {
+        let mut activity = writer
+            .activity
+            .lock()
+            .map_err(|_| io::Error::other("simulator activity lock poisoned"))?;
+        if admitted == Err(kobo_policy::RejectReason::DuplicateId) {
+            activity.attempted(kind);
+        } else {
+            activity.started(task, kind);
+        }
+    }
+    if let Err(reason) = admitted {
+        note(state, &format!("task {} refused: {reason:?}", task.0))?;
+        if let Some(outcome) = reason.outcome() {
+            write_shared(
+                writer,
+                &Frame {
+                    version: kobo_protocol::VERSION,
+                    request_id: 0,
+                    message: Message::TaskOutcome { task, outcome },
+                },
+            )?;
+        }
+    }
+    Ok(())
 }
 
 fn scenario_refuses_store(scenario: Scenario, request: &kobo_protocol::StoreRequest) -> bool {
@@ -3519,6 +3528,103 @@ mod tests {
             ),
             DeviceResult::Failed(DeviceError::TimedOut)
         );
+    }
+
+    #[test]
+    fn injected_failures_and_capacity_use_runner_delivery_without_duplicate_callbacks() {
+        use kobo_protocol::{Task, TaskError, TaskId, TaskOutcome};
+        let (mut peer, socket) = UnixStream::pair().unwrap();
+        peer.set_read_timeout(Some(Duration::from_millis(250)))
+            .unwrap();
+        let writer = AppWriter::spawn_for(socket, kobo_protocol::VERSION);
+        let state = Arc::new(Mutex::new(AppState::default()));
+        let clock = Arc::new(
+            kobo_policy::clock::ManualClock::new(kobo_policy::clock::Snapshot {
+                unix_millis: 0,
+                monotonic_millis: 0,
+                utc_offset_minutes: 0,
+            })
+            .unwrap(),
+        );
+        let tasks = Arc::new(Mutex::new(
+            TaskRunner::simulated(private_temp_dir()).with_manual_clock(clock),
+        ));
+        writer.activity.lock().unwrap().callback_complete();
+        for id in 1..=4 {
+            submit_simulated_task(
+                &tasks,
+                &writer,
+                &state,
+                TaskId(id),
+                Task::Sleep { seconds: 300 },
+                None,
+            )
+            .unwrap();
+        }
+        let fetch = Task::Fetch {
+            url: "https://fixture.invalid".into(),
+            offset: 0,
+            max_bytes: 32,
+            credential: None,
+            headers: vec![],
+        };
+        submit_simulated_task(
+            &tasks,
+            &writer,
+            &state,
+            TaskId(1),
+            fetch.clone(),
+            Some(TaskError::Offline),
+        )
+        .unwrap();
+        submit_simulated_task(
+            &tasks,
+            &writer,
+            &state,
+            TaskId(5),
+            fetch,
+            Some(TaskError::Offline),
+        )
+        .unwrap();
+        assert!(matches!(
+            read_protocol_frame(&mut peer).unwrap().message,
+            Message::TaskOutcome {
+                task: TaskId(5),
+                outcome: TaskOutcome::Failed(TaskError::Denied),
+            }
+        ));
+        let activity = writer.activity.lock().unwrap().json();
+        assert!(activity.contains("\"sleepingTasks\":4"));
+        assert!(activity.contains("\"connected\":true"));
+        assert!(activity.contains("\"activeWork\":0"));
+        writer.activity.lock().unwrap().callback_complete();
+        tasks.lock().unwrap().cancel_all();
+        deliver_task_outcomes(&tasks, &writer, &state).unwrap();
+        let mut ids = std::collections::BTreeSet::new();
+        for _ in 0..4 {
+            match read_protocol_frame(&mut peer).unwrap().message {
+                Message::TaskOutcome {
+                    task,
+                    outcome: TaskOutcome::Cancelled,
+                } => {
+                    assert!(ids.insert(task.0));
+                }
+                other => panic!("unexpected outcome: {other:?}"),
+            }
+            writer.activity.lock().unwrap().callback_complete();
+        }
+        assert_eq!(ids, [1, 2, 3, 4].into());
+        assert!(
+            read_protocol_frame(&mut peer).is_err(),
+            "no duplicate completion for task 1"
+        );
+        assert!(writer
+            .activity
+            .lock()
+            .unwrap()
+            .json()
+            .contains("\"idle\":true"));
+        writer.close();
     }
 
     #[test]

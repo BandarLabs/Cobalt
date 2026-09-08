@@ -110,3 +110,10 @@ Use `board::Board` for bounded mark edits, with immutable puzzle givens in `Fiel
 Keep `board_history_controls(&board)` in the same layout slot. Its Undo, Redo and Clear buttons retain their positions and use semantic disabled state. Dispatch the `board::UNDO`, `REDO` and `CLEAR` names to the model; follow Undo/Redo's selected square when the larger-board viewport is implemented. Ask before resetting a played puzzle, then keep that reset undoable.
 
 Save changed marks through acknowledged durable state. `restore` rejects changed givens and never invents history; the app must first validate puzzle identity, version and game-specific mark meanings. The model is in memory and does not claim to save anything. It retains at most 64 moves and 8,192 cell changes across Undo and Redo for a board up to 64 × 64. Oldest moves are evicted when either bound is reached; app copy must not promise unlimited history. Clue gutters, the larger-board viewport and catalog adoption remain separate work.
+
+
+## Task failure ordering
+
+Network scenario failures enter `TaskRunner::submit_with_fault` through normal admission. Missing credentials hide the secret store for that request; they never bypass destination authorization. Transport faults occur after header/credential checks, so an invalid request still reports its real earlier refusal. Stream close performs local cleanup while offline. Network faults leave local reads and timers usable.
+
+Both runtime hosts and the simulator use the same admission outcome: a full task budget returns the existing `Denied` wire result; reusing an active task ID produces no extra completion for it. Apps should use the SDK task allocator and keep at most four tasks in flight. Queued refusals hold their ID until drained. The simulator counts duplicate attempts without replacing active-task metadata or pretending the connection ended.

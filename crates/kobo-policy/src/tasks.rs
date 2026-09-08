@@ -46,6 +46,19 @@ pub enum RejectReason {
     DuplicateId,
 }
 
+impl RejectReason {
+    /// A duplicate is the existing task, not another completion for that ID.
+    /// Capacity refusal uses the established wire error until a future
+    /// protocol can expose a distinct busy result.
+    #[must_use]
+    pub const fn outcome(self) -> Option<TaskOutcome> {
+        match self {
+            Self::AtCapacity => Some(TaskOutcome::Failed(TaskError::Denied)),
+            Self::DuplicateId => None,
+        }
+    }
+}
+
 /// One finished task, ready to be reported to the application.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Finished {
@@ -472,6 +485,25 @@ impl TaskRunner {
     ///
     /// Returns the reason when the task could not be admitted at all.
     pub fn submit(&mut self, task: TaskId, work: Task) -> Result<(), RejectReason> {
+        self.submit_with_fault(task, work, None)
+    }
+
+    /// Host-only failure injection through normal admission, request validation,
+    /// credential authorization and result delivery. It cannot grant access or
+    /// fabricate successful data. Local reads and sleeps ignore network faults.
+    /// `NoCredential` models an unavailable secret store; other errors replace
+    /// transport only after the request passes its ordinary gates. `Denied`
+    /// withdraws the network grant before credential lookup. Stream close
+    /// remains local cleanup and works while offline.
+    ///
+    /// # Errors
+    /// Returns duplicate-ID or capacity refusal exactly as `submit` does.
+    pub fn submit_with_fault(
+        &mut self,
+        task: TaskId,
+        work: Task,
+        fault: Option<TaskError>,
+    ) -> Result<(), RejectReason> {
         if self.running.contains_key(&task) {
             return Err(RejectReason::DuplicateId);
         }
@@ -484,14 +516,8 @@ impl TaskRunner {
             Task::ReadFile { .. } | Task::Sleep { .. } => None,
         };
         if let Some(capability) = required {
-            if !self.grants(capability) {
-                let _ = self.sender.send(Finished {
-                    task,
-                    outcome: TaskOutcome::Failed(TaskError::Denied),
-                });
-                if let Some(wake) = &self.wake {
-                    wake();
-                }
+            if !self.grants(capability) || fault == Some(TaskError::Denied) {
+                self.finish_without_worker(task, TaskOutcome::Failed(TaskError::Denied));
                 return Ok(());
             }
         }
@@ -540,8 +566,13 @@ impl TaskRunner {
                         fetch: fetch.as_deref(),
                         post: post.as_deref(),
                         line_streams: line_streams.as_deref(),
-                        secrets: secrets.as_ref(),
+                        secrets: if fault == Some(TaskError::NoCredential) {
+                            None
+                        } else {
+                            secrets.as_ref()
+                        },
                         credentials: credentials.as_deref(),
+                        network_failure: fault.filter(|error| *error != TaskError::NoCredential),
                     },
                     &flag,
                     stream_owner.as_ref(),
@@ -569,6 +600,24 @@ impl TaskRunner {
             },
         );
         Ok(())
+    }
+
+    fn finish_without_worker(&mut self, task: TaskId, outcome: TaskOutcome) {
+        // Keep the ID and capacity slot until the queued result is drained,
+        // just like a worker that has already completed.
+        self.running.insert(
+            task,
+            Running {
+                cancel: Arc::new(AtomicBool::new(false)),
+                handle: None,
+                stream: None,
+                manual_deadline: None,
+            },
+        );
+        let _ = self.sender.send(Finished { task, outcome });
+        if let Some(wake) = &self.wake {
+            wake();
+        }
     }
 
     /// Asks a task to stop.
@@ -698,6 +747,7 @@ struct Backends<'a> {
     line_streams: Option<&'a LineStreams>,
     secrets: Option<&'a SecretStore>,
     credentials: Option<&'a CredentialAuthorizer>,
+    network_failure: Option<TaskError>,
 }
 
 /// Reads a named secret.
@@ -929,6 +979,10 @@ fn run_fetch(
                 return TaskOutcome::Failed(error);
             }
         };
+        if let Some(error) = backends.network_failure {
+            streams.close_owned(url, owner);
+            return TaskOutcome::Failed(error);
+        }
         return match streams.request_owned(
             owner,
             action,
@@ -963,6 +1017,9 @@ fn run_fetch(
         Ok(credential) => credential,
         Err(error) => return TaskOutcome::Failed(error),
     };
+    if let Some(error) = backends.network_failure {
+        return TaskOutcome::Failed(error);
+    }
     match fetch(
         url,
         offset,
@@ -1019,6 +1076,9 @@ fn run_post(
         Ok(credential) => credential,
         Err(error) => return TaskOutcome::Failed(error),
     };
+    if let Some(error) = backends.network_failure {
+        return TaskOutcome::Failed(error);
+    }
     match post(
         url,
         body.as_bytes(),
@@ -1113,6 +1173,174 @@ mod tests {
             }
         }
         finished
+    }
+
+    fn fault_fetch() -> Task {
+        Task::Fetch {
+            url: "https://fixture.invalid/items".into(),
+            offset: 0,
+            max_bytes: 128,
+            credential: Some(Credential::bearer("fixture")),
+            headers: Vec::new(),
+        }
+    }
+    fn fault_runner(name: &str) -> TaskRunner {
+        let root = temp_root(name);
+        std::fs::write(root.join("fixture"), "original-test-secret").unwrap();
+        TaskRunner::simulated(&root)
+            .with_secrets(&root)
+            .with_capabilities([Capability::Network])
+            .with_fetch(Arc::new(|_, _, _, _, _, _, _| {
+                panic!("fault reached real transport")
+            }))
+            .with_post(Arc::new(|_, _, _, _, _, _, _, _| {
+                panic!("fault reached real transport")
+            }))
+            .with_line_streams(Arc::new(LineStreams::default()))
+            .with_credential_policy(Arc::new(|_, _, _, _, _| true))
+    }
+
+    #[test]
+    fn fault_injection_keeps_admission_and_pending_refusal_ownership() {
+        let mut runner = TaskRunner::simulated(temp_root("fault-admission"));
+        for id in 1..=4 {
+            runner.submit(TaskId(id), fault_fetch()).unwrap();
+        }
+        assert_eq!(runner.in_flight(), 4, "queued refusals still own their IDs");
+        assert_eq!(
+            runner.submit_with_fault(TaskId(1), fault_fetch(), Some(TaskError::Offline)),
+            Err(RejectReason::DuplicateId)
+        );
+        assert_eq!(
+            runner.submit_with_fault(TaskId(5), fault_fetch(), Some(TaskError::Offline)),
+            Err(RejectReason::AtCapacity)
+        );
+        let results = runner.drain();
+        assert_eq!(results.len(), 4);
+        assert!(results
+            .iter()
+            .all(|item| item.outcome == TaskOutcome::Failed(TaskError::Denied)));
+        assert!(runner.drain().is_empty());
+        assert_eq!(runner.in_flight(), 0);
+        assert_eq!(RejectReason::DuplicateId.outcome(), None);
+        assert_eq!(
+            RejectReason::AtCapacity.outcome(),
+            Some(TaskOutcome::Failed(TaskError::Denied))
+        );
+    }
+
+    #[test]
+    fn network_faults_preserve_real_header_and_credential_gates() {
+        let mut runner = fault_runner("fault-gates");
+        let mut invalid = fault_fetch();
+        if let Task::Fetch { headers, .. } = &mut invalid {
+            headers.push(Header::new("Authorization", "forbidden"));
+        }
+        runner
+            .submit_with_fault(TaskId(1), invalid, Some(TaskError::Offline))
+            .unwrap();
+        assert_eq!(
+            collect(&mut runner, 1)[0].outcome,
+            TaskOutcome::Failed(TaskError::Denied)
+        );
+        runner = runner.with_credential_policy(Arc::new(|_, _, _, _, _| false));
+        runner
+            .submit_with_fault(TaskId(2), fault_fetch(), Some(TaskError::NoCredential))
+            .unwrap();
+        assert_eq!(
+            collect(&mut runner, 1)[0].outcome,
+            TaskOutcome::Failed(TaskError::Denied)
+        );
+        runner = runner.with_credential_policy(Arc::new(|_, _, _, _, _| true));
+        for (id, fault) in [
+            (3, TaskError::NoCredential),
+            (4, TaskError::Offline),
+            (5, TaskError::TimedOut),
+            (6, TaskError::Unreachable),
+        ] {
+            runner
+                .submit_with_fault(TaskId(id), fault_fetch(), Some(fault))
+                .unwrap();
+            assert_eq!(
+                collect(&mut runner, 1)[0].outcome,
+                TaskOutcome::Failed(fault)
+            );
+        }
+    }
+
+    #[test]
+    fn credentialed_post_and_stream_open_use_the_same_fault_pipeline() {
+        let mut runner = fault_runner("fault-post-stream");
+        let post = Task::Post {
+            url: "https://fixture.invalid/items".into(),
+            body: "{}".into(),
+            content_type: "application/json".into(),
+            max_bytes: 64,
+            credential: Some(Credential::bearer("fixture")),
+            headers: Vec::new(),
+        };
+        for (id, fault) in [(1, TaskError::NoCredential), (2, TaskError::TimedOut)] {
+            runner
+                .submit_with_fault(TaskId(id), post.clone(), Some(fault))
+                .unwrap();
+            assert_eq!(
+                collect(&mut runner, 1)[0].outcome,
+                TaskOutcome::Failed(fault)
+            );
+        }
+        let mut stream = fault_fetch();
+        if let Task::Fetch { headers, .. } = &mut stream {
+            headers.push(Header::new("X-Cobalt-Line-Stream", "open"));
+        }
+        runner
+            .submit_with_fault(TaskId(3), stream.clone(), Some(TaskError::Offline))
+            .unwrap();
+        assert_eq!(
+            collect(&mut runner, 1)[0].outcome,
+            TaskOutcome::Failed(TaskError::Offline)
+        );
+        if let Task::Fetch { headers, .. } = &mut stream {
+            *headers = vec![Header::new("X-Cobalt-Line-Stream", "close")];
+        }
+        runner
+            .submit_with_fault(TaskId(4), stream, Some(TaskError::Offline))
+            .unwrap();
+        assert_eq!(
+            collect(&mut runner, 1)[0].outcome,
+            TaskOutcome::Completed(Vec::new()),
+            "local stream cleanup must work offline"
+        );
+    }
+
+    #[test]
+    fn network_faults_do_not_block_local_file_or_timer_work() {
+        let root = temp_root("fault-local");
+        std::fs::write(root.join("note"), "original sample").unwrap();
+        let mut runner = TaskRunner::simulated(root);
+        runner
+            .submit_with_fault(
+                TaskId(1),
+                Task::ReadFile {
+                    path: "note".into(),
+                },
+                Some(TaskError::Offline),
+            )
+            .unwrap();
+        assert_eq!(
+            collect(&mut runner, 1)[0].outcome,
+            TaskOutcome::Completed(b"original sample".to_vec())
+        );
+        runner
+            .submit_with_fault(
+                TaskId(2),
+                Task::Sleep { seconds: 0 },
+                Some(TaskError::TimedOut),
+            )
+            .unwrap();
+        assert_eq!(
+            collect(&mut runner, 1)[0].outcome,
+            TaskOutcome::Completed(Vec::new())
+        );
     }
 
     #[test]

@@ -209,3 +209,13 @@ Sleep/wake, interrupted work, guardian recovery and setting/frontlight restorati
 - SDK Clippy with `-D warnings` and Rust 1.85.1 ARMv7 musl compilation passed.
 
 The board model bounds dimensions to 64 × 64 and history to 64 moves/8,192 cell changes. It does not persist by itself. Larger-board viewport, clue surface and game-specific catalog adoption remain open.
+
+
+## Failure injection through production task policy
+
+- **116 policy and 65 simulator tests passed**. Injected offline/timeout/missing-secret failures retain header and credential authority checks, task capacity/ID ownership, normal callback delivery and local file/timer work. Stream close remains local cleanup even while offline.
+- Runtime suites passed: **149 binary + 16 library tests**. Device and host runtime now share capacity/duplicate refusal semantics with the simulator. Duplicate requests do not manufacture another completion for a live ID; queued immediate refusals retain ownership until drained.
+- Strict Clippy for policy, simulator and runtime with `device-write` passed. ARMv7 musl Rust 1.85.1 runtime compilation passed (two subsequently removed unused imports were reported in that compile).
+- Full extra-large [Panels simulator journey](evidence/simulator/task-fault-reader-result.json) passed, including raw input, held/failed panel refreshes, task cancellation, failed position saves, retry and forced process exit/reopen.
+
+SIM-09 retains its open status while the remaining full-runtime/app-install failure paths are completed. Injecting a transport fault does not fabricate valid credentials or replace earlier validation errors. No task protocol variant or dependency was added.
