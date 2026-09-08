@@ -45,10 +45,13 @@ def main():
     parser.add_argument('--reader-tools', action='store_true', help='Exercise shared controls, RTL, spreads and process restart')
     parser.add_argument('--server-setup', action='store_true', help='Check address save recovery and private account entry without contacting a server')
     parser.add_argument('--onboarding', action='store_true', help='Exercise USB help and the bundled sample, including restart')
+    parser.add_argument('--shelf-previews', action='store_true', help='Check saved shelf progress and cover-cache eviction with the original sample; requires --onboarding')
     parser.add_argument('--download-recovery', action='store_true', help='Recover a completed original CBZ checkpoint offline, including storage failure')
     parser.add_argument('--cbr', action='store_true', help='Check explicit CBR refusal')
     parser.add_argument('--colour', action='store_true', help='Inspect original RGB artwork on color and grayscale profiles')
     args = parser.parse_args()
+    if args.shelf_previews and not args.onboarding:
+        parser.error('--shelf-previews requires --onboarding')
     args.output.mkdir(parents=True, exist_ok=True)
     target = Path(os.environ.get('CARGO_TARGET_DIR', str(ROOT / 'target'))).resolve()
     binary = target / 'debug/kobo'
@@ -262,11 +265,31 @@ def main():
                     address = start()
                     wait_for('Add comic')
                     sample_key = hashlib.sha256((ROOT/'apps/panels/assets/a-small-garden.cbz').read_bytes()).hexdigest()
+                    if args.shelf_previews:
+                        wait_for('Saved page 2 of 4')
+                        capture('37-shelf-position-restored')
+                        leads = [node['kind'] for node in json.loads(get('layout'))['nodes'] if node['kind'].startswith('RowLead(')]
+                        assert any('Picture' in lead and '4294967295' not in lead for lead in leads), 'Saved cover did not load'
+                        os.killpg(process.pid, signal.SIGKILL)
+                        process.wait(timeout=5)
+                        state = Path(private)/'cobalt-sim-state/panels'
+                        cache_name = 'cache.t-' + hashlib.sha256(('panels.cover.v1\0'+sample_key).encode()).hexdigest()[:56]
+                        (state/cache_name).unlink()
+                        address = start()
+                        wait_for('Saved page 2 of 4')
+                        capture('38-shelf-cover-evicted')
+                        leads = [node['kind'] for node in json.loads(get('layout'))['nodes'] if node['kind'].startswith('RowLead(')]
+                        assert any('4294967295' in lead for lead in leads), 'Missing cover did not use fallback'
                     drive('tap-id kept-' + sample_key)
                     wait_for('Page 2 of 4')
                     capture('36-sample-reopened')
                     drive('tap Back')
                     wait_for('Add comic')
+                    if args.shelf_previews:
+                        wait_for('Saved page 2 of 4')
+                        capture('39-shelf-cover-regenerated')
+                        leads = [node['kind'] for node in json.loads(get('layout'))['nodes'] if node['kind'].startswith('RowLead(')]
+                        assert any('Picture' in lead and '4294967295' not in lead for lead in leads), 'Opening did not rebuild the cover'
                     (storage/'volume.cbz').write_bytes(fixture)
                 drive('expect-state /clock#/mode "manual"')
                 drive('clock advance 60000')
@@ -444,7 +467,7 @@ def main():
                     wait_for('Add comic')
                     assert 'On this reader' in capture('05-library-return') or 'Add comic' in get('layout').decode(), 'Back did not return to library'
                 (args.output/'result.json').write_text(json.dumps(dict(status='passed', profile=args.profile,
-                    scale=args.scale, cbr=args.cbr, colour=args.colour, reader_tools=args.reader_tools, server_setup=args.server_setup, onboarding=args.onboarding, original_fixture=True), indent=2)+'\n')
+                    scale=args.scale, cbr=args.cbr, colour=args.colour, reader_tools=args.reader_tools, server_setup=args.server_setup, onboarding=args.onboarding, shelf_previews=args.shelf_previews, original_fixture=True), indent=2)+'\n')
             finally:
                 if process is not None and process.poll() is None:
                     os.killpg(process.pid, signal.SIGTERM)

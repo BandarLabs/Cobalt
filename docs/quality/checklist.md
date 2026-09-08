@@ -18,7 +18,7 @@ A checked task requires implementation plus recorded validation. Physical measur
 
 The PR 1 implementation checklist is complete; CBR is deferred and COMIC-18 belongs to catalog integration in PR 2. This does not certify hardware accuracy: native sleep hands ownership back to the stock reader, and no generic kernel suspend, RTC wake or automatic cover-sleep backend is enabled. Physical acceptance remains scheduled after all three PRs.
 
-494 tracked tasks: 102 completed, 1 deferred by the owner, 391 open. Implementation in progress. Evidence is recorded per task in `tasks.json` and in [the validation log](validation.md).
+494 tracked tasks: 103 completed, 1 deferred by the owner, 390 open. Implementation in progress. Evidence is recorded per task in `tasks.json` and in [the validation log](validation.md).
 
 ## PR 1 · Simulator fidelity (SIM-1–10)
 
@@ -371,7 +371,7 @@ The PR 1 implementation checklist is complete; CBR is deferred and COMIC-18 belo
 - [x] **PANELS-01** Use shared comic archive/reader components.
 - [x] **PANELS-02** Guide server or local-comic import.
 - [x] **PANELS-03** Provide original sample comic pages.
-- [ ] **PANELS-04** Show thumbnails and reading progress.
+- [x] **PANELS-04** Show thumbnails and reading progress.
 - [x] **PANELS-05** Expose page zoom, fit and spread controls.
 - [x] **PANELS-06** Verify RTL reading.
 - [x] **PANELS-07** Verify interrupted download and offline resume.

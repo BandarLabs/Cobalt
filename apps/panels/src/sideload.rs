@@ -47,6 +47,7 @@ impl Panels {
         let preview = archive::inspect(&bytes)
             .map_err(|error| error.to_string())
             .and_then(|comic| {
+                let thumbnail = super::previews::from_comic(&bytes, &comic);
                 let import = Import::new(
                     comic.metadata.title.as_deref().unwrap_or("Added comic"),
                     Format::Cbz,
@@ -58,10 +59,11 @@ impl Panels {
                     pages: comic.pages.len(),
                     rtl: comic.metadata.right_to_left.unwrap_or(false),
                 };
-                Ok((import, entry))
+                Ok((import, entry, thumbnail))
             });
         match preview {
-            Ok((import, entry)) => {
+            Ok((import, entry, thumbnail)) => {
+                self.previews.staged = thumbnail.map(|bytes| (entry.key.clone(), bytes));
                 self.import = Some(import);
                 self.import_entry = Some(entry);
             }
@@ -104,6 +106,7 @@ impl Panels {
             }
         }
         self.import_entry = None;
+        self.previews.staged = None;
         // Drain an outstanding read before allowing another import of the same file.
         self.route = Route::Library;
     }

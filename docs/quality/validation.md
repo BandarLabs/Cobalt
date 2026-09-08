@@ -609,3 +609,37 @@ Limits remain explicit: there is no HTTP version-token API, so resuming re-reads
 the saved prefix; no personal Komga service or physical reader was used. Shelf
 thumbnails/progress (PANELS-04), other catalog tasks and companion work remain
 open. Combined checklist: 494 tasks, 102 complete, 391 open, CBR deferred.
+
+## Panels covers and saved shelf positions
+
+PANELS-04 is complete. The shelf now shows bounded cover thumbnails and the last
+acknowledged page. Positions are read through the shared comic parser, with
+missing state distinct from damaged/newer records. A per-write snapshot prevents
+an earlier save acknowledgement from displaying a newer unsaved page. The final
+page is still a page, not an assertion that the owner finished reading.
+
+Covers are generated on import/open and kept in the SDK's evictable namespace.
+Only visible cached covers and small position records load on the shelf; there
+is no sweep decoding every archive. Invalid or evicted covers fall back to a book
+icon in the same column. Covers are at most 160 × 240 grayscale pixels, with 32
+live display handles; leaving a shelf page releases its pictures. Opening a comic
+regenerates a missing cover. Existing uncached books get covers when opened.
+
+The new shared cover-row clamping/pagination helpers reserve the renderer's wider
+picture column. Two-line shelf titles, cover/fallback geometry, summaries and
+notices are checked together, including long RTL rows on small panels.
+
+Validation: 41 Panels tests, strict all-target Clippy and ARMv7 musl compilation
+pass. Shared runs pass 20 comic, 17 bookview, 151 SDK and 265 UI tests; the existing
+two ignored UI tests and two ignored SDK doc examples remain unchanged. The real
+SDK simulator journey at extra-large Clara BW scale passes sample import,
+acknowledged progress after forced restart, cache eviction without position loss,
+cover regeneration, reader controls, save failure/retry, RTL and spreads. Every
+capture checks diagnostics, provenance and zero network effects. The current
+public app image, app README/screenshots and public SDK page now show the actual
+updated shelf. Evidence: [simulator result](evidence/panels-previews/result.json).
+Physical Clara BW acceptance still follows all three PRs.
+
+All seven Panels checklist items are now complete at the fixture/simulator level.
+The broader catalog and companion work remain open: 494 total tasks, 103 complete,
+390 open, and CBR deferred. PR 2 has 11 complete and 257 open items.

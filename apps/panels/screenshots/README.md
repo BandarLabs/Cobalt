@@ -6,7 +6,7 @@ captures. No live Komga service or account appears in them.
 
 | Image | Source capture and provenance |
 | --- | --- |
-| library.png | [Recovered library](../../../docs/quality/evidence/panels-recovery/43-recovered-library.capture.json) |
+| library.png | [Cover and saved position restored](../../../docs/quality/evidence/panels-previews/37-shelf-position-restored.capture.json) |
 | reader.png | [Reader after forced restart](../../../docs/quality/evidence/panels-recovery/44-recovered-after-restart.capture.json) |
 | download-recovery.png | [Complete offline checkpoint](../../../docs/quality/evidence/panels-recovery/40-completed-download.capture.json) |
 | import-guide.png | [USB folder step](../../../docs/quality/evidence/panels-docs/31-import-guide-folder.capture.json) |
@@ -19,5 +19,5 @@ Reproduce with the built CLI and the same `CARGO_TARGET_DIR`:
 
 ```sh
 python3 scripts/quality/check-comics-sim.py --output /tmp/panels-recovery --scale extra-large --download-recovery
-python3 scripts/quality/check-comics-sim.py --output /tmp/panels-docs --scale extra-large --server-setup --onboarding --reader-tools
+python3 scripts/quality/check-comics-sim.py --output /tmp/panels-docs --scale extra-large --server-setup --onboarding --reader-tools --shelf-previews
 ```

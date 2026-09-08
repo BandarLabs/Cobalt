@@ -5,7 +5,7 @@
   "summary": "Read comics added from your computer or Komga library.",
   "page_description": "Enjoy your comics on Kobo with clear page controls and support for Komga libraries.",
   "version": "0.1.2",
-  "release_notes": "Try an original sample, import verified CBZ copies, connect Komga on your reader, and recover interrupted downloads. Requires Cobalt 0.3.12.",
+  "release_notes": "See comic covers and saved reading progress, import verified CBZ copies, connect Komga on your reader, and recover interrupted downloads. Requires Cobalt 0.3.12.",
   "glyph": "reader",
   "capabilities": [
     "network"

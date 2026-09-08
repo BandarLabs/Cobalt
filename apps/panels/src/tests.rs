@@ -175,10 +175,11 @@ fn failed_position_save_keeps_latest_page_and_retry_acknowledges_that_revision()
         }
     }
     let mut runner = AppRunner::new(Harness(super::Panels::default()));
-    runner.start();
-    runner.store_result(StoreResult::Saved {
-        key: super::LIBRARY.into(),
-    });
+    for command in runner.start() {
+        if let kobo_sdk::Command::Store(kobo_sdk::StoreRequest::Save { key, .. }) = command {
+            runner.store_result(StoreResult::Saved { key });
+        }
+    }
     runner.action(action_id("comic-next"));
     runner.action(action_id("comic-next")); // Coalesced while page 2 is being saved.
     let key = super::progress_key("fixture.cbz");
@@ -327,7 +328,7 @@ fn a_full_comic_shelf_keeps_every_title_and_action_reachable() {
                 pixels_per_inch,
                 text_scale,
             };
-            let context = AppRunner::with_metrics(Panels::default(), metrics).context();
+            let mut context = AppRunner::with_metrics(Panels::default(), metrics).context();
             let mut library = super::Library::restore(None).unwrap();
             for index in 0..super::library::MAX_BOOKS {
                 library
@@ -335,7 +336,7 @@ fn a_full_comic_shelf_keeps_every_title_and_action_reachable() {
                         key: format!("book-{index}"),
                         title: format!("The lantern beside the old station · Volume {index}"),
                         pages: 128,
-                        rtl: false,
+                        rtl: index % 2 == 1,
                     })
                     .unwrap();
             }
@@ -347,6 +348,16 @@ fn a_full_comic_shelf_keeps_every_title_and_action_reachable() {
                 ),
                 ..Panels::default()
             };
+            let bytes = include_bytes!("../assets/a-small-garden.cbz");
+            let cover =
+                super::previews::from_comic(bytes, &kobo_comic::inspect(bytes).unwrap()).unwrap();
+            let comics = app.library_entries().to_vec();
+            for comic in [&comics[0], comics.last().unwrap()] {
+                app.previews.staged = Some((comic.key.clone(), cover.clone()));
+                app.previews.publish(&mut context, &comic.key);
+                app.previews
+                    .saved_position(&super::progress_key(&comic.key), b"2", &comics);
+            }
             let pages = app.library_pages(&context);
             assert_eq!(
                 pages.iter().flatten().copied().collect::<Vec<_>>(),
@@ -638,4 +649,42 @@ fn download_recovery_controls_fit_every_portrait_text_size() {
             }
         }
     }
+}
+
+#[test]
+fn shelf_summary_reports_the_acknowledged_page_while_a_newer_page_is_pending() {
+    use kobo_sdk::{Context, KoboApp, StoreResult};
+    let kept = Kept {
+        key: "fixture.cbz".into(),
+        title: "Garden".into(),
+        pages: 3,
+        rtl: false,
+    };
+    let mut app = Panels {
+        library: Some(super::Library::restore(None).unwrap()),
+        loaded: true,
+        ..Panels::default()
+    };
+    let mut context = Context::default();
+    app.open_bytes(
+        &mut context,
+        include_bytes!("../../../docs/quality/fixtures/original-pages.cbz").to_vec(),
+        kept.clone(),
+        None,
+    );
+    app.on_save(
+        &mut context,
+        super::LIBRARY,
+        StoreResult::Saved {
+            key: super::LIBRARY.into(),
+        },
+    );
+    app.on_action(&mut context, action_id("comic-next"));
+    app.on_action(&mut context, action_id("comic-next"));
+    let key = super::progress_key(&kept.key);
+    app.on_save(&mut context, &key, StoreResult::Saved { key: key.clone() });
+    assert_eq!(app.previews.summary(&kept), "Saved page 2 of 3");
+    assert_eq!(app.progress[&key].status(), super::DraftStatus::Saving);
+    app.on_save(&mut context, &key, StoreResult::Saved { key: key.clone() });
+    assert_eq!(app.previews.summary(&kept), "Saved page 3 of 3");
 }

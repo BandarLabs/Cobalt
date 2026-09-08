@@ -368,6 +368,7 @@ impl Panels {
         let result = archive::inspect(&download.received)
             .map_err(|error| error.to_string())
             .and_then(|comic| {
+                let thumbnail = super::previews::from_comic(&download.received, &comic);
                 let import = Import::new(&pending.title, Format::Cbz, download.received.clone())?;
                 let kept = Kept {
                     key: import.receipt().digest.clone(),
@@ -375,10 +376,11 @@ impl Panels {
                     pages: comic.pages.len(),
                     rtl: comic.metadata.right_to_left.unwrap_or(self.rtl),
                 };
-                Ok((import, kept))
+                Ok((import, kept, thumbnail))
             });
         match result {
-            Ok((mut import, kept)) => {
+            Ok((mut import, kept, thumbnail)) => {
+                self.previews.staged = thumbnail.map(|bytes| (kept.key.clone(), bytes));
                 self.completed_cleanup = Some(kept.key.clone());
                 self.import_entry = Some(kept);
                 // Download was the owner's confirmation. Reuse the verified copy and receipt flow.

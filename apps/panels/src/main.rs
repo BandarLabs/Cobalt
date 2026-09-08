@@ -5,6 +5,7 @@ mod catalog;
 mod downloads;
 mod komga;
 mod library;
+mod previews;
 mod server;
 mod sideload;
 use library::{Kept, Library};
@@ -102,6 +103,8 @@ struct Panels {
     paused: bool,
     progress: BTreeMap<String, Draft>,
     progress_active: Option<(String, u64)>,
+    progress_snapshot: Option<Vec<u8>>,
+    previews: previews::Previews,
 }
 
 impl Default for Panels {
@@ -143,6 +146,8 @@ impl Default for Panels {
             paused: false,
             progress: BTreeMap::new(),
             progress_active: None,
+            progress_snapshot: None,
+            previews: previews::Previews::default(),
         }
     }
 }
@@ -186,7 +191,18 @@ impl Panels {
             }
         }
     }
-    fn show(&self, context: &mut Context) {
+    fn show(&mut self, context: &mut Context) {
+        if self.route == Route::Library && self.loaded && self.pending_open.is_none() {
+            let pages = self.library_pages(context);
+            let page = self.library_page.min(pages.len().saturating_sub(1));
+            let visible = pages
+                .get(page)
+                .into_iter()
+                .flatten()
+                .map(|&index| self.library_entries()[index].clone())
+                .collect::<Vec<_>>();
+            self.previews.prepare(context, &visible);
+        }
         context.set_screen(
             self.screen(context)
                 .with_own_back(self.route != Route::Library),
@@ -245,25 +261,19 @@ impl Panels {
         let summaries = self
             .library_entries()
             .iter()
-            .map(|comic| {
-                format!(
-                    "{} pages · {}",
-                    comic.pages,
-                    if comic.rtl {
-                        "right to left"
-                    } else {
-                        "left to right"
-                    }
-                )
-            })
+            .map(|comic| self.previews.summary(comic))
             .collect::<Vec<_>>();
-        let rows = self
+        let titles = self
             .library_entries()
             .iter()
-            .zip(&summaries)
-            .map(|(comic, summary)| (comic.title.as_str(), summary.as_str(), ""))
+            .map(|comic| context.clamped_cover_row(&comic.title, 2, true))
             .collect::<Vec<_>>();
-        context.paginate_rows_below_section(
+        let rows = titles
+            .iter()
+            .zip(&summaries)
+            .map(|(title, summary)| (title.as_str(), summary.as_str(), ""))
+            .collect::<Vec<_>>();
+        context.paginate_cover_rows_below_section(
             &rows,
             true,
             kobo_sdk::Position::AtTheFoot,
@@ -304,17 +314,9 @@ impl Panels {
                     let comic = &self.library_entries()[index];
                     (
                         format!("kept-{}", comic.key),
-                        comic.title.clone(),
-                        format!(
-                            "{} pages · {}",
-                            comic.pages,
-                            if comic.rtl {
-                                "right to left"
-                            } else {
-                                "left to right"
-                            }
-                        ),
-                        Glyph::Book,
+                        context.clamped_cover_row(&comic.title, 2, true),
+                        self.previews.summary(comic),
+                        self.previews.lead(&comic.key),
                     )
                 }))
                 .page_turns("shelf-previous", "shelf-next")
@@ -525,7 +527,9 @@ impl Panels {
         }
         self.pending_open = Some(kept.clone());
         self.notice = Some("Opening comic.".to_owned());
-        context.store().load(progress_key(&kept.key));
+        if !self.previews.claim_position_read(&kept.key) {
+            context.store().load(progress_key(&kept.key));
+        }
     }
 
     fn start_shelf_load(&mut self, context: &mut Context) {
@@ -580,6 +584,11 @@ impl Panels {
             self.route = Route::Library;
             return false;
         }
+        if let Ok(picture) = view.cover_preview() {
+            self.previews.staged =
+                previews::encode(&picture).map(|bytes| (kept.key.clone(), bytes));
+            self.previews.publish(context, &kept.key);
+        }
         self.opened = Some(kept);
         self.library_page = 0;
         self.view = Some(view);
@@ -615,6 +624,7 @@ impl Panels {
             for (key, draft) in &mut self.progress {
                 if let Some(write) = draft.begin() {
                     self.progress_active = Some((key.clone(), write.revision));
+                    self.progress_snapshot = Some(write.bytes.clone());
                     context.store().save(key, write.bytes);
                     break;
                 }
@@ -651,6 +661,12 @@ impl Panels {
         };
         if let Some(draft) = self.progress.get_mut(key) {
             draft.finish(*revision, outcome.clone());
+        }
+        if let Some(bytes) = self.progress_snapshot.take() {
+            if outcome.is_ok() {
+                let comics = self.library_entries().to_vec();
+                self.previews.saved_position(key, &bytes, &comics);
+            }
         }
         self.progress_active = None;
         let current = self.opened.as_ref().map(|opened| progress_key(&opened.key));
@@ -754,6 +770,10 @@ impl KoboApp for Panels {
     }
 
     fn on_load(&mut self, context: &mut Context, key: &str, result: StoreResult) {
+        if self.previews.loaded(context, key, &result) {
+            self.show(context);
+            return;
+        }
         if key == server::KEY {
             self.server.load(&result);
             self.show(context);
@@ -908,6 +928,7 @@ impl KoboApp for Panels {
             } else {
                 import.on_save(key, &result);
                 if import.is_available() {
+                    self.previews.publish(context, key);
                     if let Some(entry) = self.import_entry.clone() {
                         if self.remember(context, entry) {
                             self.finish_library(context);

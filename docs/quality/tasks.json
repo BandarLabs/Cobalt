@@ -2264,8 +2264,11 @@
     "pr": 2,
     "group": "Panels",
     "task": "Show thumbnails and reading progress",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Bounded evictable cover previews and shared validated saved-position summaries; only visible small records are loaded. Pending save revisions retain their own summary snapshot; missing/corrupt state stays distinct. Cover-aware measurement keeps titles and rows reachable across scales.",
+      "Actual extra-large Clara BW simulator restores cover and saved page 2 after process restart, preserves progress through explicit cover-cache eviction, and regenerates the cover on opening. 41 Panels tests, strict Clippy and ARMv7 check pass; docs/quality/evidence/panels-previews/result.json."
+    ]
   },
   {
     "id": "PANELS-05",

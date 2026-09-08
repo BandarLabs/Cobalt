@@ -50,7 +50,23 @@ its navigation and next/previous links. Search filters the current response whil
 preserving each original title action. Back restores the previous local page and
 search; cancelled or late requests cannot replace that restored view. Catalog
 history is bounded to 16 entries. Cover art and CBZ downloads up to 32 MiB are
-supported. Shelf thumbnails and reading-progress summaries remain in progress.
+supported.
+
+## Your shelf
+
+Each comic shows a cover preview and its acknowledged reading position, such as
+**Saved page 2 of 4**. Seeing the final page does not label the comic finished.
+An absent position says **Not started**; unreadable or newer state says
+**Position unavailable**. Failed reading saves keep the last acknowledged page
+in the shelf summary while retaining the unsaved position for retry.
+
+Covers are generated when a comic is imported or opened. They are small,
+evictable cached images, separate from your comic files and reading positions.
+The shelf reads only visible covers and small position records; opening it does
+not read every CBZ. If a cover is missing or its cache cannot be read, a book
+icon keeps the same space. Reopening the comic rebuilds its cover. Cached covers
+are bounded to 160 × 240 pixels, with at most 32 held for display. Long shelf
+titles use two measured lines; opening a comic retains its full title.
 
 ## Continue an interrupted download
 
