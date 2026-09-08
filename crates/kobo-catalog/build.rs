@@ -17,10 +17,14 @@ fn main() {
     let mut source = String::from("const SOURCES: &[&str] = &[\n");
     for path in paths {
         println!("cargo:rerun-if-changed={}", path.display());
+        let relative = path
+            .strip_prefix(&root)
+            .expect("manifest path under repo root")
+            .to_str()
+            .expect("UTF-8 manifest path");
         writeln!(
             source,
-            "include_str!({:?}),",
-            path.to_str().expect("UTF-8 manifest path")
+            "include_str!(concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/../../\", {relative:?})),"
         )
         .expect("write source");
     }
