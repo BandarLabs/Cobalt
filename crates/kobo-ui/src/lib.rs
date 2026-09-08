@@ -7974,11 +7974,12 @@ fn layout_node(
             } else {
                 (x, width, tight)
             };
-            let block_extra = if *square && columns == 9 && cells.len() >= 81 {
-                gutter
-            } else {
-                0
-            };
+            let block_extra =
+                if *square && columns == 9 && cells.len() >= 27 && cells.len() % 27 == 0 {
+                    gutter
+                } else {
+                    0
+                };
             let mut cell_width = (width - gutter * (columns - 1) - block_extra * 2) / columns;
             if *square && !legacy_typography() && !backgammon_board && !cells.is_empty() {
                 let rows = i32::try_from(
