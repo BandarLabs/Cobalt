@@ -317,3 +317,9 @@ This checkpoint completes BACK-06, GRIM-01 and GRIM-02 as foundation integration
 ## Correlated record-load failures
 
 `KoboApp::on_load` receives the requested record key even when storage refuses a load without returning a key on the wire. Existing apps retain their `on_store` behavior by default. A failed library load can retry while another record and a list request remain outstanding without consuming either answer. Rust 1.85.1 SDK tests: **143 passed**, two existing doc examples ignored; strict SDK Clippy and formatting pass. Panels adopts this callback in the catalog work so a failed library read cannot appear as an empty shelf.
+
+## Repeated imports preserve existing files
+
+The shared import flow checks the content-addressed shelf before writing. A complete, verified identical file is reused, including when the owner cancels or the receipt save fails. Only a missing file or a completely read, mismatching partial copy starts a transfer; storage refusals and invalid read responses do not become permission to overwrite. Retrying an interrupted write repeats this check. Post-write verification still rejects corruption, and reopening a missing receipt target remains unavailable. The upload buffer is released before post-write readback.
+
+Rust 1.85.1 SDK tests: **145 passed**, two existing doc examples ignored. Tests use the actual policy shelf with a multi-chunk original and cover duplicate cancellation, receipt failure, read-only probe refusal, partial repair, corruption and missing-file reopening. Strict SDK Clippy passes. No dependency or wire-format change.

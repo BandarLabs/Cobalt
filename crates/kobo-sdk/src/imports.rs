@@ -115,6 +115,7 @@ impl Receipt {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Stage {
     Preview,
+    CheckingExisting,
     Writing,
     Verifying,
     SavingReceipt,
@@ -208,11 +209,9 @@ impl Import {
         self.failure = None;
         self.progress = 0;
         match self.stage {
-            Stage::Preview | Stage::Writing => {
-                self.stage = Stage::Writing;
-                if let Some(upload) = &mut self.upload {
-                    upload.start(context);
-                }
+            Stage::Preview | Stage::CheckingExisting | Stage::Writing => {
+                self.start_verification(context);
+                self.stage = Stage::CheckingExisting;
             }
             Stage::Verifying => self.start_verification(context),
             Stage::SavingReceipt => self.save_receipt(context),
@@ -234,6 +233,14 @@ impl Import {
         download.start(context);
         self.download = Some(download);
     }
+    fn start_copy(&mut self, context: &mut Context) {
+        self.download = None;
+        self.progress = 0;
+        self.stage = Stage::Writing;
+        if let Some(upload) = &mut self.upload {
+            upload.start(context);
+        }
+    }
     fn save_receipt(&mut self, context: &mut Context) {
         self.stage = Stage::SavingReceipt;
         match self.receipt.encode() {
@@ -252,7 +259,7 @@ impl Import {
                 .upload
                 .as_mut()
                 .map(|transfer| transfer.advance(context, result)),
-            Stage::Verifying => self
+            Stage::CheckingExisting | Stage::Verifying => self
                 .download
                 .as_mut()
                 .map(|transfer| transfer.advance(context, result)),
@@ -261,6 +268,13 @@ impl Import {
         match progress {
             None | Some(ShelfProgress::Elsewhere) => return false,
             Some(ShelfProgress::Moving { done, .. }) => self.progress = done,
+            Some(ShelfProgress::Failed(crate::StoreError::Missing))
+                if self.stage == Stage::CheckingExisting
+                    && self.progress == 0
+                    && matches!(result, StoreResult::Denied(crate::StoreError::Missing)) =>
+            {
+                self.start_copy(context);
+            }
             Some(ShelfProgress::Failed(error)) => {
                 self.failure = Some(if self.stage == Stage::Writing {
                     Failure::storing(error).advice.into()
@@ -281,15 +295,24 @@ impl Import {
                 if download.bytes().len() != self.receipt.bytes
                     || kobo_net::sha256::hex_digest(download.bytes()) != self.receipt.digest
                 {
-                    self.retryable = false;
-                    self.failure = Some(
-                        "The copied file does not match the original. Import the original again."
-                            .into(),
-                    );
-                } else if self.previously_saved {
-                    self.stage = Stage::Ready;
+                    if self.stage == Stage::CheckingExisting {
+                        // Repair an incomplete earlier copy using the validated original.
+                        // A complete identical file is never opened for writing.
+                        self.start_copy(context);
+                    } else {
+                        self.retryable = false;
+                        self.failure = Some(
+                            "The copied file does not match the original. Import the original again."
+                                .into(),
+                        );
+                    }
                 } else {
-                    self.save_receipt(context);
+                    self.upload = None;
+                    if self.previously_saved {
+                        self.stage = Stage::Ready;
+                    } else {
+                        self.save_receipt(context);
+                    }
                 }
             }
         }
@@ -347,10 +370,12 @@ impl Import {
             Stage::Preview => screen
                 .text("Keep a copy on this reader for offline use.")
                 .bottom_action("import-confirm", "Add to library"),
-            Stage::Writing | Stage::Verifying => screen
+            Stage::CheckingExisting | Stage::Writing | Stage::Verifying => screen
                 .transfer(
                     if self.stage == Stage::Writing {
                         "Copying file"
+                    } else if self.stage == Stage::CheckingExisting {
+                        "Checking this reader"
                     } else {
                         "Checking copied file"
                     },
@@ -492,6 +517,11 @@ mod tests {
         import.on_shelf(
             &mut context,
             &name,
+            &StoreResult::Denied(StoreError::Missing),
+        );
+        import.on_shelf(
+            &mut context,
+            &name,
             &StoreResult::ShelfWritten {
                 name: name.clone(),
                 size: 3,
@@ -517,6 +547,147 @@ mod tests {
         assert!(Receipt::restore(Some(b"broken")).is_err());
     }
     #[test]
+    fn duplicate_import_cancel_and_receipt_failure_preserve_the_complete_file() {
+        let root =
+            std::env::temp_dir().join(format!("cobalt-import-duplicate-{}", std::process::id()));
+        std::fs::create_dir(&root).unwrap();
+        let shelf = kobo_policy::shelf::Shelf::new(root.join("shelf"));
+        let bytes = vec![42; crate::MAX_SHELF_CHUNK + 17];
+        let mut context = Context::default();
+        let mut first = Import::new("First copy", Format::Text, bytes.clone()).unwrap();
+        first.begin(&mut context);
+        for _ in 0..20 {
+            for command in context.take_commands() {
+                let Command::Store(request) = command else {
+                    unreachable!()
+                };
+                let result = shelf.handle(&request).unwrap_or_else(|| match &request {
+                    StoreRequest::Save { key, .. } => StoreResult::Saved { key: key.clone() },
+                    _ => unreachable!(),
+                });
+                answer(&mut first, &mut context, &request, &result);
+            }
+            if first.is_available() {
+                break;
+            }
+        }
+        assert!(first.is_available());
+        for cancel in [true, false] {
+            let mut duplicate = Import::new("Same file", Format::Text, bytes.clone()).unwrap();
+            duplicate.begin(&mut context);
+            for _ in 0..10 {
+                for command in context.take_commands() {
+                    let Command::Store(request) = command else {
+                        unreachable!()
+                    };
+                    assert!(!matches!(request, StoreRequest::ShelfWrite { .. }));
+                    let result = shelf
+                        .handle(&request)
+                        .unwrap_or(StoreResult::Denied(StoreError::NoRoom));
+                    if cancel {
+                        duplicate.cancel();
+                    }
+                    answer(&mut duplicate, &mut context, &request, &result);
+                }
+                if context.commands.is_empty() {
+                    break;
+                }
+            }
+            assert!(!duplicate.is_available());
+            if !cancel {
+                assert_eq!(duplicate.stage(), Stage::SavingReceipt);
+                assert!(duplicate.failure().is_some());
+            }
+            let mut check = Import::verify_existing(&mut context, first.receipt.clone());
+            for _ in 0..10 {
+                for command in context.take_commands() {
+                    let Command::Store(request) = command else {
+                        unreachable!()
+                    };
+                    answer(
+                        &mut check,
+                        &mut context,
+                        &request,
+                        &shelf.handle(&request).unwrap(),
+                    );
+                }
+                if check.is_available() {
+                    break;
+                }
+            }
+            assert!(
+                check.is_available(),
+                "duplicate must preserve the complete original"
+            );
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn failed_probe_is_read_only_and_partial_copy_can_be_repaired() {
+        let mut context = Context::default();
+        let mut import = Import::new("A walk home", Format::Text, b"original".to_vec()).unwrap();
+        let name = import.receipt.digest.clone();
+        import.begin(&mut context);
+        assert!(matches!(
+            context.take_commands().as_slice(),
+            [Command::Store(StoreRequest::ShelfRead { .. })]
+        ));
+        import.on_shelf(
+            &mut context,
+            &name,
+            &StoreResult::Denied(StoreError::NoRoom),
+        );
+        assert!(import.failure().is_some());
+        assert!(context.take_commands().is_empty());
+        assert!(import.begin(&mut context));
+        assert!(matches!(
+            context.take_commands().as_slice(),
+            [Command::Store(StoreRequest::ShelfRead { .. })]
+        ));
+        import.on_shelf(
+            &mut context,
+            &name,
+            &StoreResult::ShelfRead {
+                name: name.clone(),
+                offset: 0,
+                bytes: b"ori".to_vec(),
+                size: 3,
+            },
+        );
+        assert!(
+            matches!(context.take_commands().as_slice(), [Command::Store(StoreRequest::ShelfWrite { bytes, .. })] if bytes == b"original")
+        );
+        assert_eq!(import.stage(), Stage::Writing);
+        import.on_shelf(
+            &mut context,
+            &name,
+            &StoreResult::ShelfWritten {
+                name: name.clone(),
+                size: 8,
+            },
+        );
+        assert!(matches!(
+            context.take_commands().as_slice(),
+            [Command::Store(StoreRequest::ShelfRead { .. })]
+        ));
+        import.on_shelf(
+            &mut context,
+            &name,
+            &StoreResult::ShelfRead {
+                name: name.clone(),
+                offset: 0,
+                bytes: b"original".to_vec(),
+                size: 8,
+            },
+        );
+        assert_eq!(import.stage(), Stage::SavingReceipt);
+        assert!(!import.is_available());
+        import.on_save(&name, &StoreResult::Saved { key: name.clone() });
+        assert!(import.is_available());
+    }
+
+    #[test]
     fn import_preview_progress_and_failure_fit_supported_screens() {
         for profile in kobo_profile::SUPPORTED_PROFILES {
             for scale in [
@@ -536,6 +707,7 @@ mod tests {
                     Import::new("A walk home", Format::Cbz, b"original fixture".to_vec()).unwrap();
                 for stage in [
                     Stage::Preview,
+                    Stage::CheckingExisting,
                     Stage::Writing,
                     Stage::Verifying,
                     Stage::SavingReceipt,
