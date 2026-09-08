@@ -6,6 +6,8 @@ Validation: 266 UI tests pass (two existing ignores). The added regression cover
 
 Nine-column board windows containing complete three-row bands also retain the extra 3×3 separation. This allows overlapping six-row landscape views without changing absolute action IDs or reducing touch targets.
 
-At the smallest legal square, one- or two-character board marks can step down the interface scale if even caption size would clip. Rendering and diagnostics use the same bounded choice. Long labels and ordinary keys do not receive this fallback.
+At the smallest legal square, up to three-character board marks can step down the interface scale if even caption size would clip. Rendering and diagnostics use the same bounded choice. Long labels and ordinary keys do not receive this fallback.
 
 The SDK also provides `grid_with_selection` for keypad toggles. A selected key adds an ink outline without expanding its text label. Its rendering regression verifies changed pixels stay inside the selected key and its hit rectangle remains stable.
+
+`Context::paginate_oriented(text, nav_bar, orientation)` measures interface prose for an app-requested orientation, retaining status and page-control space. Pair it with `Context::set_orientation` and `metrics().oriented(orientation)` for the rest of the view.
