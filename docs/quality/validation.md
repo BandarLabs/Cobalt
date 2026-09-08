@@ -803,3 +803,33 @@ are updated. No external source code or new dependencies were added. Physical
 Clara BW readability, latency and refresh acceptance remain scheduled after
 all three PRs. Paperterm onboarding, preview and connection/recovery polish
 remain open; this does not complete PR 2 or the companion PR.
+
+
+## Paperterm input recovery · 9 September 2026
+
+Paperterm 0.1.4 accepts a key request only after the host returns an explicit
+`accepted: true`. A timeout or malformed reply cannot prove whether the input
+arrived, so the app discards unsent keys and pauses until **Resume typing**.
+The queue is bounded at 256 bytes, with each host request still capped at 64;
+overflow also pauses rather than silently dropping part of a command and
+continuing. Read-only mode cannot send keys. Reconnecting while input is pending
+retains the pause, and successful screen polling cannot clear it. Recovery
+messages participate in the measured grid; resuming restores the keyboard's
+grid. The keyboard toggle is hidden while input is paused.
+
+Screen deltas are validated before any retained rows change. Row counts and
+indices are bounded at 64, oversized text is rejected, and stale sequences
+cannot replace newer output. Malformed deltas trigger reconnect instead of
+allocating from an unchecked remote row index.
+
+All **31 app tests pass**, including a stalled queue, uncertain/rejected
+acknowledgements, explicit resume, read-only enforcement, malformed delta
+preservation and recovery layout at all nine text sizes. Strict all-target
+Clippy and Rust 1.85.1 ARMv7 musl checking pass. The [actual live result](evidence/paperterm/input-recovery/result.json)
+passes 15 checks, adding a simulator-injected input timeout, no failed-key replay
+and explicit resume before successful reader/laptop input. The
+[paused screen](evidence/paperterm/input-recovery/02a-input-paused.png) and its
+metadata/layout are retained. Relevant app docs and screenshots are updated.
+PAPER-04 has partial evidence; full onboarding, preview, mode visibility and
+connection polish remain open. The overall checklist stays at 124 done,
+370 open and one deferred CBR task.

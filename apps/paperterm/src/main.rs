@@ -18,9 +18,14 @@ const MAX_KEY_BYTES: usize = 64;
 const PAIRING: &str = "pairing";
 const REPAIR: &str = "repair";
 const TOGGLE_KEYBOARD: &str = "toggle-keyboard";
-const OFF_AIR: &str = "off the air";
-const PAIRING_REFUSED: &str = "Pairing was refused — run kobo stream init.";
-const INPUT_REFUSED: &str = "Input was not accepted by your computer.";
+const OFF_AIR: &str = "Connection lost. Reconnecting.";
+const PAIRING_REFUSED: &str = "Pairing failed. Check the computer address and pairing code.";
+const INPUT_REFUSED: &str =
+    "Your computer refused the input. Check the terminal before continuing.";
+const INPUT_UNCERTAIN: &str = "Input may have reached your computer. Queued keys were discarded. Check the terminal before continuing.";
+const INPUT_BUSY: &str = "Typing paused because your computer is not keeping up. Queued keys were discarded. Check the terminal before continuing.";
+const MAX_QUEUED_KEY_BYTES: usize = 256;
+const RESUME_INPUT: &str = "resume-input";
 const KB_SHIFT: &str = "kb.shift";
 const KB_LAYER: &str = "kb.layer";
 const KB_SPACE: &str = "kb.space";
@@ -94,6 +99,7 @@ struct Paperterm {
     send_session: Option<u64>,
     send_queue: VecDeque<Vec<u8>>,
     keys: TerminalKeys,
+    input_notice: Option<String>,
     failure: Option<String>,
 }
 
@@ -130,6 +136,7 @@ impl Default for Paperterm {
             send_session: None,
             send_queue: VecDeque::new(),
             keys: TerminalKeys::new(),
+            input_notice: None,
             failure: None,
         }
     }
@@ -173,7 +180,10 @@ impl Paperterm {
                     "Paperterm"
                 })
                 .top_bar_action(REPAIR, "Pairing");
-                if self.view == View::Watching && self.input == Input::Full {
+                if self.view == View::Watching
+                    && self.input == Input::Full
+                    && self.input_notice.is_none()
+                {
                     screen = screen.top_bar_action(
                         TOGGLE_KEYBOARD,
                         if self.keyboard_open {
@@ -187,9 +197,20 @@ impl Paperterm {
                 if let Some(failure) = &self.failure {
                     screen = screen.banner(BannerLevel::Attention, failure.clone());
                 }
+                if let Some(notice) = &self.input_notice {
+                    screen = screen.banner(BannerLevel::Attention, notice);
+                    screen = if self.view == View::Watching
+                        && self.session.is_some()
+                        && self.failure.is_none()
+                    {
+                        screen.button(RESUME_INPUT, "Resume typing")
+                    } else {
+                        screen.disabled_button(RESUME_INPUT, "Resume typing")
+                    };
+                }
                 if self.view == View::Ended {
-                    screen = screen.secondary("The host held the final terminal screen.");
-                } else {
+                    screen = screen.secondary("The session has ended. The last screen stays here.");
+                } else if self.input_notice.is_none() {
                     screen = match self.input {
                         Input::Controls => screen.fill().grid(
                             CONTROL_COLUMNS,
@@ -208,9 +229,15 @@ impl Paperterm {
     }
 
     fn grid(&self, context: &Context) -> (u16, u16) {
-        Self::grid_for(
-            self.input,
-            self.keyboard_open,
+        if self.input_notice.is_none() && self.failure.is_none() {
+            return Self::grid_for(
+                self.input,
+                self.keyboard_open,
+                &context.metrics().oriented(Orientation::Portrait),
+            );
+        }
+        kobo_sdk::terminal_grid_for(
+            &self.screen(),
             &context.metrics().oriented(Orientation::Portrait),
         )
     }
@@ -360,7 +387,15 @@ impl Paperterm {
             .save(PAIRING, format!("{}\n{}", self.address, self.code));
     }
     fn send(&mut self, context: &mut Context, bytes: &[u8]) {
-        if self.session.is_none() {
+        if self.session.is_none() || self.input_notice.is_some() || self.input == Input::None {
+            return;
+        }
+        if self.input == Input::Controls && !CONTROL_KEYS.iter().any(|(_, _, key)| *key == bytes) {
+            return;
+        }
+        if self.send_queue.iter().map(Vec::len).sum::<usize>() + bytes.len() > MAX_QUEUED_KEY_BYTES
+        {
+            self.pause_input(context, INPUT_BUSY);
             return;
         }
         if bytes.is_empty() || bytes.len() > MAX_KEY_BYTES {
@@ -375,7 +410,7 @@ impl Paperterm {
     fn flush_send(&mut self, context: &mut Context) {
         let Some(session) = self.session else { return };
         let Some(lease) = self.lease else { return };
-        if self.send.is_some() || self.send_queue.is_empty() {
+        if self.send.is_some() || self.send_queue.is_empty() || self.input_notice.is_some() {
             return;
         }
         let mut actions = Vec::new();
@@ -479,6 +514,9 @@ impl Paperterm {
         true
     }
     fn parse_screen(&mut self, bytes: &[u8]) -> Option<bool> {
+        if bytes.len() > MAX_REPLY_BYTES as usize {
+            return None;
+        }
         let Ok(value) = kobo_json::parse(std::str::from_utf8(bytes).unwrap_or("")) else {
             return None;
         };
@@ -487,6 +525,19 @@ impl Paperterm {
             .and_then(kobo_json::Value::as_i64)
             .and_then(|value| u64::try_from(value).ok())?;
         let rows = value.get("rows").and_then(kobo_json::Value::as_array)?;
+        // Validate the whole delta before changing retained output. In particular,
+        // a tiny reply with a huge row index must never cause a huge allocation.
+        if sequence < self.sequence
+            || rows.len() > 64
+            || rows.iter().any(|row| {
+                let y = row.get("y").and_then(kobo_json::Value::as_i64);
+                let cells = row.get("cells").and_then(kobo_json::Value::as_str);
+                !y.is_some_and(|y| (0..64).contains(&y))
+                    || cells.is_none_or(|cells| cells.chars().count() > 640)
+            })
+        {
+            return None;
+        }
         let mut changed = false;
         for row in rows {
             let (Some(y), Some(cells)) = (
@@ -536,6 +587,9 @@ impl Paperterm {
         Some(changed)
     }
     fn disconnect(&mut self, context: &mut Context, message: &str) {
+        if self.send.is_some() || !self.send_queue.is_empty() {
+            self.input_notice = Some(INPUT_UNCERTAIN.to_owned());
+        }
         self.clear_send(context);
         self.session = None;
         self.lease = None;
@@ -625,6 +679,12 @@ impl Paperterm {
                     if repaint {
                         self.show(context);
                     }
+                } else {
+                    self.disconnect(
+                        context,
+                        "The computer sent an unreadable screen. Reconnecting.",
+                    );
+                    return;
                 }
                 if self.view != View::Ended {
                     self.poll(context);
@@ -657,11 +717,33 @@ impl Paperterm {
         if !current {
             return;
         }
-        if matches!(outcome, TaskOutcome::Completed(_)) {
+        let accepted = match outcome {
+            TaskOutcome::Completed(bytes) => std::str::from_utf8(bytes)
+                .ok()
+                .and_then(|text| kobo_json::parse(text).ok())
+                .and_then(|value| value.get("accepted").and_then(kobo_json::Value::as_bool)),
+            _ => None,
+        };
+        if accepted == Some(true) {
             self.flush_send(context);
-        } else if self.set_failure(INPUT_REFUSED) {
-            self.show(context);
+        } else {
+            self.pause_input(
+                context,
+                if accepted == Some(false) {
+                    INPUT_REFUSED
+                } else {
+                    INPUT_UNCERTAIN
+                },
+            );
         }
+    }
+    fn pause_input(&mut self, context: &mut Context, message: &str) {
+        self.clear_send(context);
+        self.input_notice = Some(message.to_owned());
+        if self.session.is_some() && self.lease.is_some() {
+            self.renegotiate(context);
+        }
+        self.show(context);
     }
 }
 
@@ -761,6 +843,14 @@ impl KoboApp for Paperterm {
         if matches!(self.view, View::Address | View::Code) && self.typed(context, action) {
             return;
         }
+        if action == action_id(RESUME_INPUT) && self.input_notice.is_some() {
+            if self.view == View::Watching && self.session.is_some() && self.failure.is_none() {
+                self.input_notice = None;
+                self.renegotiate(context);
+                self.show(context);
+            }
+            return;
+        }
         if action == action_id(REPAIR) {
             self.pairing_generation = self.pairing_generation.saturating_add(1);
             self.grid_generation = 0;
@@ -778,6 +868,7 @@ impl KoboApp for Paperterm {
                 context.cancel(task);
             }
             self.clear_send(context);
+            self.input_notice = None;
             self.hello_grid = None;
             self.keyboard = Keyboard::with_text(&self.address);
             self.keyboard_open = false;
@@ -1275,9 +1366,17 @@ mod tests {
         let first = app.send.expect("first key post");
         assert_eq!(app.send_queue.len(), 21);
 
-        app.on_task(&mut context, first, TaskOutcome::Completed(Vec::new()));
+        app.on_task(
+            &mut context,
+            first,
+            TaskOutcome::Completed(br#"{"accepted":true}"#.to_vec()),
+        );
         let second = app.send.expect("whole-action queued batch");
-        app.on_task(&mut context, second, TaskOutcome::Completed(Vec::new()));
+        app.on_task(
+            &mut context,
+            second,
+            TaskOutcome::Completed(br#"{"accepted":true}"#.to_vec()),
+        );
 
         let payloads = posted_key_payloads(&context);
         assert_eq!(
@@ -1307,9 +1406,17 @@ mod tests {
         for action in [b"\x1b[A".as_slice(), "界".as_bytes(), b"\r".as_slice()] {
             app.send(&mut context, action);
         }
-        app.on_task(&mut context, first, TaskOutcome::Completed(Vec::new()));
+        app.on_task(
+            &mut context,
+            first,
+            TaskOutcome::Completed(br#"{"accepted":true}"#.to_vec()),
+        );
         let second = app.send.expect("mixed action batch");
-        app.on_task(&mut context, second, TaskOutcome::Completed(Vec::new()));
+        app.on_task(
+            &mut context,
+            second,
+            TaskOutcome::Completed(br#"{"accepted":true}"#.to_vec()),
+        );
         assert_eq!(
             posted_key_payloads(&context),
             vec![base64(b"x"), base64(b"\x1b[A\xe7\x95\x8c\r")]
@@ -1317,7 +1424,44 @@ mod tests {
     }
 
     #[test]
-    fn failed_key_post_is_visible_and_keeps_later_keys_queued() {
+    fn uncertain_key_post_discards_queue_and_requires_explicit_resume() {
+        for outcome in [
+            TaskOutcome::Failed(kobo_sdk::TaskError::Unreachable),
+            TaskOutcome::Completed(Vec::new()),
+            TaskOutcome::Completed(br#"{"accepted":false}"#.to_vec()),
+        ] {
+            let mut app = Paperterm {
+                view: View::Watching,
+                input: Input::Full,
+                session: Some(41),
+                lease: Some(1),
+                ..Paperterm::default()
+            };
+            let mut context = Context::default();
+            app.send(&mut context, b"a");
+            let first = app.send.unwrap();
+            app.send(&mut context, b"b");
+            app.on_task(&mut context, first, outcome);
+            assert!(app.input_notice.is_some());
+            assert!(app.send_queue.is_empty());
+            app.send(&mut context, b"c");
+            assert!(app.send.is_none());
+            assert_eq!(posted_key_payloads(&context), vec![base64(b"a")]);
+            app.clear_failure();
+            assert!(
+                app.input_notice.is_some(),
+                "successful polling must not resume input"
+            );
+            app.on_action(&mut context, action_id(RESUME_INPUT));
+            app.send(&mut context, b"d");
+            assert_eq!(
+                posted_key_payloads(&context),
+                vec![base64(b"a"), base64(b"d")]
+            );
+        }
+    }
+    #[test]
+    fn stalled_input_is_bounded_and_read_only_sessions_cannot_send() {
         let mut app = Paperterm {
             view: View::Watching,
             input: Input::Full,
@@ -1326,22 +1470,62 @@ mod tests {
             ..Paperterm::default()
         };
         let mut context = Context::default();
-        app.send(&mut context, b"a");
-        let first = app.send.expect("active key post");
-        app.send(&mut context, b"b");
-        app.on_task(
-            &mut context,
-            first,
-            TaskOutcome::Failed(kobo_sdk::TaskError::Unreachable),
-        );
-        assert_eq!(app.failure.as_deref(), Some(INPUT_REFUSED));
-        assert_eq!(app.send_queue, VecDeque::from([b"b".to_vec()]));
-
-        app.send(&mut context, b"c");
-        assert!(app.send.is_some());
-        assert_eq!(posted_key_payloads(&context).last(), Some(&base64(b"bc")));
+        for _ in 0..300 {
+            app.send(&mut context, b"x");
+        }
+        assert_eq!(app.input_notice.as_deref(), Some(INPUT_BUSY));
+        assert!(app.send_queue.is_empty());
+        assert_eq!(posted_key_payloads(&context).len(), 1);
+        app.input_notice = None;
+        app.input = Input::None;
+        app.send(&mut context, b"x");
+        assert_eq!(posted_key_payloads(&context).len(), 1);
     }
-
+    #[test]
+    fn input_recovery_keeps_the_resume_action_visible_at_every_text_size() {
+        for text_scale in kobo_ui::TextScale::STEPS {
+            let metrics = DisplayMetrics {
+                text_scale,
+                ..CLARA_BW_METRICS
+            };
+            let _runner = kobo_sdk::AppRunner::with_metrics(Paperterm::default(), metrics);
+            let app = Paperterm {
+                view: View::Watching,
+                input: Input::Full,
+                keyboard_open: true,
+                session: Some(41),
+                lease: Some(1),
+                rows: vec!["terminal".into(); 64],
+                input_notice: Some(INPUT_UNCERTAIN.into()),
+                ..Paperterm::default()
+            };
+            let screen = app.screen();
+            let chrome = Chrome::measuring(true);
+            assert!(
+                screen.diagnostics(&metrics, &chrome).issues.is_empty(),
+                "{text_scale:?}"
+            );
+            let layout = screen.layout_with(&metrics, &chrome);
+            assert!(layout.rect_of_action(action_id(RESUME_INPUT)).is_some());
+            assert!(layout.rect_of_action(action_id("kb.r0c0")).is_none());
+        }
+    }
+    #[test]
+    fn malformed_terminal_delta_cannot_allocate_or_partially_replace_rows() {
+        let mut app = Paperterm {
+            rows: vec!["retained".into()],
+            ..Paperterm::default()
+        };
+        for bytes in [
+            br#"{"seq":1,"rows":[{"y":0,"cells":"changed"},{"y":999999999,"cells":"x"}]}"#
+                .as_slice(),
+            br#"{"seq":1,"rows":[{"y":-1,"cells":"x"}]}"#.as_slice(),
+        ] {
+            assert_eq!(app.parse_screen(bytes), None);
+            assert_eq!(app.rows, ["retained"]);
+            assert_eq!(app.sequence, 0);
+        }
+    }
     #[test]
     fn session_change_cancels_active_send_and_discards_queued_old_input() {
         let mut app = Paperterm {
@@ -1367,7 +1551,11 @@ mod tests {
         assert!(app.send_queue.is_empty());
         assert!(context.commands().contains(&Command::Cancel(old_send)));
 
-        app.on_task(&mut context, old_send, TaskOutcome::Completed(Vec::new()));
+        app.on_task(
+            &mut context,
+            old_send,
+            TaskOutcome::Completed(br#"{"accepted":true}"#.to_vec()),
+        );
         assert!(app.send.is_none());
         app.send(&mut context, b"new");
         let latest_body = context
@@ -1446,7 +1634,11 @@ mod tests {
             1
         );
         let nap = app.nap.expect("retry sleep");
-        app.on_task(&mut context, nap, TaskOutcome::Completed(Vec::new()));
+        app.on_task(
+            &mut context,
+            nap,
+            TaskOutcome::Completed(br#"{"accepted":true}"#.to_vec()),
+        );
         assert!(context.commands().iter().any(
             |command| matches!(command, Command::Spawn { work: Task::Fetch { url, .. }, .. } if url.contains("/lease?"))
         ));
@@ -1480,7 +1672,11 @@ mod tests {
         assert_eq!(app.failure.as_deref(), Some(OFF_AIR));
 
         let nap = app.nap.expect("retry sleep");
-        app.on_task(&mut context, nap, TaskOutcome::Completed(Vec::new()));
+        app.on_task(
+            &mut context,
+            nap,
+            TaskOutcome::Completed(br#"{"accepted":true}"#.to_vec()),
+        );
         let lease_task = app.lease_task.expect("reconnect lease");
         app.on_task(
             &mut context,
@@ -1498,6 +1694,15 @@ mod tests {
         assert_eq!(app.session, Some(5));
         assert_eq!(app.sequence, 0);
         assert_eq!(app.failure, None);
+        // Removing the reconnect banner returns its space to the terminal.
+        let resize = app.hello.expect("grid restored after reconnect banner");
+        // Runtime callbacks get a fresh context with completed work released.
+        let mut context = Context::default();
+        app.on_task(
+            &mut context,
+            resize,
+            TaskOutcome::Completed(br#"{"session":5,"input":"full"}"#.to_vec()),
+        );
         assert!(app.poll.is_some());
     }
 
@@ -1545,7 +1750,11 @@ mod tests {
             TaskId(9),
             TaskOutcome::Completed(br#"{"session":99,"input":"full"}"#.to_vec()),
         );
-        app.on_task(&mut context, TaskId(11), TaskOutcome::Completed(Vec::new()));
+        app.on_task(
+            &mut context,
+            TaskId(11),
+            TaskOutcome::Completed(br#"{"accepted":true}"#.to_vec()),
+        );
         assert_eq!(app.lease_task, Some(lease_task));
         assert_eq!(app.session, None);
         assert_eq!(app.address, "new-host:9332");

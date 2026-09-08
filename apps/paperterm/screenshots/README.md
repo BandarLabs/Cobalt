@@ -8,3 +8,6 @@
 These are actual SDK simulator captures, not mockups. Matching provenance,
 layouts and the normal/large/Elipsa results live under
 `docs/quality/evidence/paperterm`. Physical Clara BW acceptance is still pending.
+
+`input-paused.png` is the actual Extra-large recovery screen after an injected
+key-request timeout. Evidence is in `docs/quality/evidence/paperterm/input-recovery`.

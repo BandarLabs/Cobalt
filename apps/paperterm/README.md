@@ -22,7 +22,7 @@ text settings reduce the column count instead of compressing the glyphs. Other
 readers negotiate their own measured grid; 80 columns is not forced.
 
 The app sends this grid in `/hello`,
-and holds the last received rows behind an `off the air` banner when the host
+and holds the last received rows behind a `Connection lost. Reconnecting.` banner when the host
 cannot be reached. The banner paints once on the offline transition; unchanged
 retries do not repaint, and the first successful response clears it once.
 Read-only sessions show no terminal input. Controls mode
@@ -57,3 +57,16 @@ The screenshots and live test use an original local Python fixture, a real
 host PTY and private trusted TLS credentials. They verify both input directions,
 resizing, wide output, Ctrl-C and restoring the laptop terminal settings.
 Physical readability and refresh behavior await Clara BW hardware acceptance.
+
+
+If a key request times out, Paperterm cannot know whether the computer received
+it. It discards queued keystrokes and pauses input. Check the terminal, then
+choose **Resume typing**; successful background polling never resumes typing
+for you. The same pause applies if the computer falls behind and the bounded
+queue fills. Read-only sessions cannot send input.
+
+<img width="300" src="screenshots/input-paused.png" alt="Paperterm retaining terminal output and asking the user to check it before resuming typing">
+
+Malformed screen deltas leave the last output intact and trigger reconnect.
+The live simulator route includes an injected input timeout, explicit resume
+and successful typing in both directions afterward.

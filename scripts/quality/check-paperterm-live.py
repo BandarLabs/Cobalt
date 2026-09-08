@@ -134,6 +134,13 @@ print("DONE", flush=True)
                 capture('01-connected-terminal')
                 drive('tap-id toggle-keyboard', 'wait-for SIZE')
                 capture('02-keyboard-and-resize')
+                # Fail a real SDK key request before it reaches the fixture.
+                drive('scenario network-timeout', 'type x', 'wait-for Queued keys were discarded')
+                capture('02a-input-paused')
+                assert 'x' not in drain_host().split('READY>', 1)[-1], 'Failed key reached fixture'
+                drive('scenario normal', 'wait-for-id resume-input')
+                drive('tap-id resume-input', 'wait-for-id kb.r0c0')
+                capture('02b-input-resumed')
                 drive('type reader', 'tap enter', 'wait-for FROM READER: reader')
                 capture('03-reader-to-host')
                 assert 'FROM READER: reader' in drain_host(), 'Reader input did not reach the host PTY'
@@ -161,7 +168,7 @@ print("DONE", flush=True)
                               source_head=subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip(),
                               source_dirty=bool(subprocess.check_output(['git', 'status', '--porcelain'], cwd=ROOT)),
                               basis='real-host-pty-and-sdk-simulator-over-trusted-tls', pairing='private seeded fixture',
-                              checks=['portrait captures', 'measured grid on keyboard toggle', 'prompt without newline', 'laptop raw mode', 'trusted TLS', 'reader input to host',
+                              checks=['failed input pauses without replay', 'explicit input resume', 'portrait captures', 'measured grid on keyboard toggle', 'prompt without newline', 'laptop raw mode', 'trusted TLS', 'reader input to host',
                                       'laptop input before Enter', 'same-session output', 'PTY grid negotiation', 'wide output',
                                       'reader Ctrl-C', 'retained final screen', 'laptop terminal restoration'])
                 (args.output/'result.json').write_text(json.dumps(result, indent=2)+'\n')
