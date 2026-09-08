@@ -4521,9 +4521,9 @@ fn describe_unmenu(removed: menu::Removed) -> String {
 
 /// Puts a reader back to how it shipped.
 fn undo_setup(reader: &setup::Mounted, eject: bool) -> Result<(), String> {
+    let settings = setup::revert_settings(&reader.volume)?;
     let removal = setup::remove_payload(&reader.volume)?;
     let ssh = setup::disable_ssh(&reader.volume)?;
-    let settings = setup::revert_settings(&reader.volume)?;
     let unmenued = menu::remove(&reader.volume)?;
     let ejected = ejected_or_explained(&reader.volume, eject);
 
@@ -4543,7 +4543,7 @@ fn undo_setup(reader: &setup::Mounted, eject: bool) -> Result<(), String> {
         if settings.is_empty() {
             "no settings to restore".to_owned()
         } else {
-            format!("settings removed: {}", settings.join(", "))
+            format!("settings restored: {}", settings.join(", "))
         },
         describe_unmenu(unmenued),
         if ejected {

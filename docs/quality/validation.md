@@ -367,3 +367,21 @@ and kobod with all targets/features. ARMv7 musl kobod check passed with the 118
 existing platform warnings. No hardware commands were run. Logs:
 `/tmp/cobalt-bound-account-tests.log`, `/tmp/cobalt-bound-account-clippy.log`,
 `/tmp/cobalt-bound-account-arm.log`.
+
+
+### Restore original USB setup preferences (2026-09-08)
+
+USB setup now durably records the owner's original Wi-Fi and sleep values before
+changing the reader configuration. Repeated setup preserves the first record.
+Undo restores only values that still match Cobalt's applied setting, retaining
+later owner edits and unrelated preferences. Undo runs restoration before payload
+removal. Older installations without a record keep their current settings; the
+original values cannot be recovered by guessing. Corrupt/future records and
+failed record writes refuse changes. Both records and configuration updates use
+file flush, atomic replacement and directory flush.
+
+All 55 setup tests passed, including original-value restoration, repeated setup,
+owner changes, missing legacy records and failed/corrupt backups. Strict CLI
+Clippy passed with all targets/features. Logs: `/tmp/cobalt-owner-settings-tests.log`
+and `/tmp/cobalt-owner-settings-clippy.log`. HW-12 still awaits native power
+integration and the planned physical validation.

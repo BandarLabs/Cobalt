@@ -33,6 +33,9 @@
 //! is one button held down, in exchange for never handing the boot script an
 //! archive. It is the right trade.
 
+#[path = "setup_settings.rs"]
+mod settings_record;
+
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
 use std::fs;
@@ -91,8 +94,8 @@ pub const SETTINGS: &str = ".kobo/Kobo/Kobo eReader.conf";
 /// strings beside the `PowerSettings` type information in `libnickel`, then
 /// confirmed on hardware: the reader reported it as supported, and a device
 /// that had been suspending for ninety-three per cent of its life stayed awake
-/// for thirty-eight unattended minutes afterwards. `kobo setup --undo` removes
-/// both, and the reader's own Energy saving screen overrides them at any time.
+/// for thirty-eight unattended minutes afterwards. `kobo setup --undo` restores
+/// their original values when a setup record is available, and the reader's own Energy saving screen overrides them at any time.
 pub const SETTINGS_APPLIED: &[(&str, &str, &str)] = &[
     ("DeveloperSettings", "ForceWifiOn", "true"),
     ("PowerOptions", "AutoSleepMinutes", "90"),
@@ -438,7 +441,7 @@ fn push_into_section(out: &mut Vec<String>, assignment: String) {
 ///
 /// When the settings file cannot be read or written.
 pub fn apply_settings(volume: &Path) -> Result<Vec<String>, String> {
-    edit_settings(volume, SETTINGS_APPLIED.iter().copied(), true)
+    settings_record::edit(volume, true)
 }
 
 /// Copies this machine's trust roots onto the reader, returning their names.
@@ -523,50 +526,13 @@ fn valid_roots(source: &Path) -> Vec<(String, String)> {
     roots
 }
 
-/// Removes [`SETTINGS_APPLIED`] again.
+/// Restores original values for [`SETTINGS_APPLIED`], preserving later owner changes.
 ///
 /// # Errors
 ///
 /// When the settings file cannot be read or written.
 pub fn revert_settings(volume: &Path) -> Result<Vec<String>, String> {
-    edit_settings(volume, SETTINGS_APPLIED.iter().copied(), false)
-}
-
-fn edit_settings<'a>(
-    volume: &Path,
-    settings: impl Iterator<Item = (&'a str, &'a str, &'a str)>,
-    set: bool,
-) -> Result<Vec<String>, String> {
-    let path = volume.join(SETTINGS);
-    let original = match fs::read_to_string(&path) {
-        Ok(text) => text,
-        // A reader that has never finished its own setup has no settings file.
-        // Creating one is fine; nickel merges what it finds.
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
-        Err(error) => return Err(format!("read {}: {error}", path.display())),
-    };
-
-    let mut text = original.clone();
-    let mut changed = Vec::new();
-    for (section, key, value) in settings {
-        let edited = if set {
-            set_setting(&text, section, key, value)
-        } else {
-            clear_setting(&text, section, key)
-        };
-        if edited != text {
-            changed.push(format!("{section}/{key}"));
-            text = edited;
-        }
-    }
-
-    if text != original {
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).map_err(|error| format!("{}: {error}", parent.display()))?;
-        }
-        fs::write(&path, &text).map_err(|error| format!("write {}: {error}", path.display()))?;
-    }
-    Ok(changed)
+    settings_record::edit(volume, false)
 }
 
 /// Copies Cobalt into `.adds/cobalt` on a mounted reader.
