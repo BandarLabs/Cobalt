@@ -12795,17 +12795,32 @@ const fn is_tappable(kind: LayoutKind) -> bool {
     )
 }
 
+// Board marks fit the square; enlarging interface text must not clip a digit.
+// The renderer and diagnostics share this choice. Ordinary key labels retain
+// their body size, so an undersized application control still reports a fault.
+fn board_label_size(node: &LayoutNode) -> FontSize {
+    let short = node
+        .text_lines
+        .first()
+        .is_some_and(|text| text.chars().count() <= 2);
+    [FontSize::Heading, FontSize::Body, FontSize::Caption]
+        .into_iter()
+        .filter(|size| short || *size != FontSize::Heading)
+        .find(|size| {
+            size.line_height() * i32::try_from(node.text_lines.len()).unwrap_or(i32::MAX)
+                <= node.rect.height
+                && node
+                    .text_lines
+                    .iter()
+                    .all(|line| measure_text(line, *size).0 <= node.rect.width)
+        })
+        .unwrap_or(FontSize::Caption)
+}
+
 fn layout_text_style(node: &LayoutNode) -> Option<(FontSize, Face)> {
     let size = match node.kind {
         LayoutKind::Heading(level) => FontSize::for_heading_level(level),
-        LayoutKind::CellLabel(true)
-            if node
-                .text_lines
-                .first()
-                .is_some_and(|text| text.chars().count() <= 2) =>
-        {
-            FontSize::Heading
-        }
+        LayoutKind::CellLabel(true) => board_label_size(node),
         LayoutKind::TopBarTitle => BAR_TITLE,
         LayoutKind::OverlayTitle => FontSize::Title,
         LayoutKind::BoardClue
@@ -13817,13 +13832,8 @@ fn render_all_with_selected_font(
                 // rectangle: a board cell and a keyboard key can be the same
                 // shape, and only the board's mark is meant to be the size of
                 // the whole cell.
-                let size = if board
-                    && node
-                        .text_lines
-                        .first()
-                        .is_some_and(|label| label.chars().count() <= 2)
-                {
-                    FontSize::Heading
+                let size = if board {
+                    board_label_size(&node)
                 } else {
                     FontSize::Body
                 };
@@ -15993,6 +16003,44 @@ mod tests {
 
     /// The rule the test above guards against still has to fire for what it
     /// was written for: a short mark on an actual board.
+    #[test]
+    fn board_labels_use_the_largest_semantic_size_that_fits_the_square() {
+        for scale in TextScale::STEPS {
+            for ppi in [212, 300] {
+                let metrics = DisplayMetrics {
+                    pixels_per_inch: ppi,
+                    text_scale: scale,
+                    ..CLARA_BW_METRICS
+                };
+                let _environment =
+                    environment::TextEnvironment::enter(&Screen::new(1, vec![]), &metrics);
+                {
+                    for label in ["1", "9", "4\u{0332}", "□", "·"] {
+                        let edge = metrics.touch_target_minimum();
+                        let node = LayoutNode {
+                            id: NodeId(1),
+                            rect: Rect {
+                                x: 0,
+                                y: 0,
+                                width: edge,
+                                height: edge,
+                            },
+                            kind: LayoutKind::CellLabel(true),
+                            text_lines: vec![label.into()],
+                        };
+                        let size = board_label_size(&node);
+                        assert!(
+                            measure_text(label, size).0 <= edge,
+                            "{scale:?} {ppi} {label}"
+                        );
+                        assert!(size.line_height() <= edge);
+                        assert_eq!(layout_text_style(&node).unwrap().0, size);
+                    }
+                }
+            }
+        }
+    }
+
     #[test]
     fn a_mark_on_a_board_still_grows_to_heading_size() {
         let screen = Screen::new(
