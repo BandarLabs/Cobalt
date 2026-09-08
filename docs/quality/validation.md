@@ -219,3 +219,14 @@ The board model bounds dimensions to 64 × 64 and history to 64 moves/8,192 cell
 - Full extra-large [Panels simulator journey](evidence/simulator/task-fault-reader-result.json) passed, including raw input, held/failed panel refreshes, task cancellation, failed position saves, retry and forced process exit/reopen.
 
 SIM-09 retains its open status while the remaining full-runtime/app-install failure paths are completed. Injecting a transport fault does not fabricate valid credentials or replace earlier validation errors. No task protocol variant or dependency was added.
+
+
+## Physical refresh observations and retained completion ownership
+
+The display HAL records `cobalt.refresh-observation` v1 for actual submit/wait calls: per-session sequence/monotonic time, marker, backend, requested/applied intent, region/full flag, submitted and driver-returned waveform, operation duration and failure errno. Completion records link to the submitted marker. Failed submits do not invent translation or completion. Failed waits retain pending ownership for recovery; the synchronous refresh path now retains that ownership too.
+
+- **158 HAL tests passed** with `device-write`. New cases cover bounded observation retention, read-only snapshots, failed submit against `/dev/null`, failed waits/retry ordering and no duplicate completion. Existing backend/intent mappings, conservative color flags/downgrade, profile/firmware gates and grayscale/inversion behavior remain covered.
+- **202 synthetic test log records** parsed as JSON across two independently correlated sessions. This validates the serialization and session boundaries, not any physical latency.
+- HAL/runtime Clippy with `-D warnings` and Rust 1.85.1 ARMv7 musl runtime compilation passed.
+
+`KOBO_FRAME_TIMING=1` enables JSON on stderr before runtime launch. Timing smoke rows also include markers, and runtime frame lines identify backend, requested/applied intents and translated waveform. The ring retains 128 observations and explicitly counts dropped records. No new waveform, inversion flag, color coefficient or device support was enabled. Completion ioctl success is distinct from measured visible ink settling; Clara BW measurements remain pending.

@@ -580,24 +580,30 @@
     "pr": 1,
     "group": "Platform requirements from read-only hardware research",
     "task": "Preserve backend-specific refresh intents and waveform capability checks",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Preserved Cobalt intent-to-backend mappings and exact profile/write gates; hardware observations retain requested/applied intent and driver-translated waveform separately. Existing all-profile smoke mapping and conservative waveform tests pass in the 158-test HAL suite."
+    ]
   },
   {
     "id": "HW-07",
     "pr": 1,
     "group": "Platform requirements from read-only hardware research",
     "task": "Record real refresh submission/completion markers and timing",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Added bounded versioned submit/completion/failure observations with actual kernel markers, session correlation and per-operation duration. Failed waits retain ownership; host failure/retry and JSON tests pass, strict Clippy and ARM compile pass. Physical measurement remains pending."
+    ]
   },
   {
     "id": "HW-08",
     "pr": 1,
     "group": "Platform requirements from read-only hardware research",
     "task": "Preserve conservative color/inversion behavior until calibrated",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Retained existing color capability/bitfield checks, grayscale downgrade and conservative controller flags; no inversion/color calibration enabled. 158 HAL tests pass, including color downgrade and waveform flags. Physical color calibration remains explicitly unverified."
+    ]
   },
   {
     "id": "HW-09",

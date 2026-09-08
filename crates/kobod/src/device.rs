@@ -3908,10 +3908,15 @@ impl Painter {
         // line; start.sh already captures stderr.
         if frame_timing_wanted() {
             eprintln!(
-                "frame {}x{} wf={} convert={}ms write={}ms submit={}us fence={}ms completed={} pending={}",
+                "frame {}x{} marker={} backend={:?} requested={:?} applied={:?} wf={} translated={} convert={}ms write={}ms submit={}us fence={}ms completed={} pending={}",
                 region.width,
                 region.height,
+                timing.request.marker,
+                timing.request.backend,
+                timing.request.requested.intent,
+                timing.request.applied.intent,
                 timing.submitted_waveform,
+                timing.translated_waveform,
                 converted.as_millis(),
                 written.saturating_sub(converted).as_millis(),
                 timing.submit.as_micros(),

@@ -16,7 +16,7 @@ A checked task requires implementation plus recorded validation. Physical measur
 
 ## Status
 
-494 tracked tasks: 76 completed, 1 deferred by the owner, 417 open. Implementation in progress. Evidence is recorded per task in `tasks.json` and in [the validation log](validation.md).
+494 tracked tasks: 79 completed, 1 deferred by the owner, 414 open. Implementation in progress. Evidence is recorded per task in `tasks.json` and in [the validation log](validation.md).
 
 ## PR 1 · Simulator fidelity (SIM-1–10)
 
@@ -85,9 +85,9 @@ A checked task requires implementation plus recorded validation. Physical measur
 - [x] **HW-03** Load observation fixtures into the simulator without importing third-party device tables.
 - [x] **HW-04** Keep digitizer mapping separate from display pose.
 - [x] **HW-05** Handle lost input and resynchronization explicitly.
-- [ ] **HW-06** Preserve backend-specific refresh intents and waveform capability checks.
-- [ ] **HW-07** Record real refresh submission/completion markers and timing.
-- [ ] **HW-08** Preserve conservative color/inversion behavior until calibrated.
+- [x] **HW-06** Preserve backend-specific refresh intents and waveform capability checks.
+- [x] **HW-07** Record real refresh submission/completion markers and timing.
+- [x] **HW-08** Preserve conservative color/inversion behavior until calibrated.
 - [ ] **HW-09** Implement platform power state machine with explicit ownership.
 - [ ] **HW-10** Handle power button, cover, charging and wake reasons through shared state.
 - [ ] **HW-11** Flush durable work and pause/cancel tasks before suspend.
