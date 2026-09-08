@@ -1496,9 +1496,11 @@ dependencies = [
 
 [[package]]
 name = "kobo-sudoku"
-version = "0.3.12"
+version = "1.0.11"
 dependencies = [
+ "kobo-json",
  "kobo-sdk",
+ "kobo-state",
  "kobo-ui",
 ]
 

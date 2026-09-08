@@ -71,7 +71,7 @@ const screenshots = {
   settings: ["settings.png", "Battery status and hardware information in Cobalt Settings"],
   sidekick: ["sidekick.png", "Sidekick multi-agent board showing distinct coding-agent sessions and pending approvals."],
   store: ["store.png", "The Cobalt App Store listing installed and available apps"],
-  sudoku: ["sudoku.png", "A Sudoku game designed for the Kobo touch screen"],
+  sudoku: ["sudoku.png", "An original Sudoku puzzle with pencil notes, selected keys and a highlighted row and column"],
   syncthing: ["syncthing.png", "Sync folders showing receive-only vault, frame, books, and send-only out."],
   terminal: ["terminal.png", "A shell and touch keyboard on a Kobo"],
   tictactoe: ["tictactoe.png", "A completed game of tic-tac-toe on a Kobo"],

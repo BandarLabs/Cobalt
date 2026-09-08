@@ -1223,7 +1223,9 @@
     "group": "Crossword",
     "task": "Keep clue and entry together",
     "status": "todo",
-    "evidence": []
+    "evidence": [
+      "Extra-large simulator route cannot find the letter key after its coordinate-based cell tap (drive.kobo line 9). Needs investigation alongside clue/entry layout; not counted complete. See evidence/board-regression."
+    ]
   },
   {
     "id": "CROSS-03",
@@ -1987,7 +1989,9 @@
     "group": "Logic Pack",
     "task": "Render appropriate line, bridge and cross-sum boards with attached clues",
     "status": "todo",
-    "evidence": []
+    "evidence": [
+      "Extra-large simulator refuses the Minesweeper screen: node 4 text does not fit its rectangle. Other games still need their planned review. See evidence/board-regression."
+    ]
   },
   {
     "id": "LOGIC-05",
@@ -2187,7 +2191,9 @@
     "group": "Nonograms",
     "task": "Attach clues to matching rows and columns",
     "status": "todo",
-    "evidence": []
+    "evidence": [
+      "Extra-large simulator refuses Harbor dawn after selection: node 9 text does not fit its rectangle. See evidence/board-regression."
+    ]
   },
   {
     "id": "NONO-02",
@@ -2722,56 +2728,77 @@
     "pr": 2,
     "group": "Sudoku (APP-7)",
     "task": "Persist exact game state after each move",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Versioned 48 KiB record retains answers, notes, selection, orientation, checking and 64 undo steps. Exact-ack/retry tests and the actual SDK simulator preserve durable data through a failed write and restore the latest successful retry after forced restart. Corrupt/future records remain untouched.",
+      "See docs/quality/validation.md and evidence/sudoku/result.json."
+    ]
   },
   {
     "id": "SUDOKU-02",
     "pr": 2,
     "group": "Sudoku (APP-7)",
     "task": "Provide varied valid puzzles with difficulty",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "36 original puzzles, 12 per technique-graded difficulty. Generator checks uniqueness and classifies naked/hidden-single requirements; an independent Rust solver verifies every puzzle and solution. All 36 classifications were rechecked. New difficulty cycles through the selected group with explicit replacement notice.",
+      "See docs/quality/validation.md and evidence/sudoku/result.json."
+    ]
   },
   {
     "id": "SUDOKU-03",
     "pr": 2,
     "group": "Sudoku (APP-7)",
     "task": "Add pencil marks",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Pencil mode toggles all nine candidates; selected keys show ink outlines and noted squares have a dot. Notes are separate from answers, persisted and undoable. Actual simulator adds 2/9, restarts with the exact state and removes a note through Undo.",
+      "See docs/quality/validation.md and evidence/sudoku/result.json."
+    ]
   },
   {
     "id": "SUDOKU-04",
     "pr": 2,
     "group": "Sudoku (APP-7)",
     "task": "Add undo",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Bounded 64-step position history survives reopening. Entries, notes, erase, reveal and confirmed restart undo atomically; givens stay immutable. Unit and real SDK restart journeys pass.",
+      "See docs/quality/validation.md and evidence/sudoku/result.json."
+    ]
   },
   {
     "id": "SUDOKU-05",
     "pr": 2,
     "group": "Sudoku (APP-7)",
     "task": "Render stronger 3x3 boundaries and row/column selection",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Extra 3x3 spacing, light row/column cross and a bracketed target. All nine interface sizes fit at 1072x1448/300 ppi and 758x1024/212 ppi in both orientations. Explicit landscape uses overlapping six-row views with absolute cell IDs; simulator reaches row 9 and restores its selection/orientation after restart.",
+      "See docs/quality/validation.md and evidence/sudoku/result.json."
+    ]
   },
   {
     "id": "SUDOKU-06",
     "pr": 2,
     "group": "Sudoku (APP-7)",
     "task": "Make assisted checking optional",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Checking defaults off; wrong entries are retained. Explicit checking flags the selected wrong answer without replacing it. Reveal asks first. Optional checking, save status and warning layouts pass unit/SDK and simulator checks.",
+      "See docs/quality/validation.md and evidence/sudoku/result.json."
+    ]
   },
   {
     "id": "SUDOKU-07",
     "pr": 2,
     "group": "Sudoku (APP-7)",
     "task": "Show a clear completion state",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Only the verified complete solution shows Puzzle complete. Save acknowledgement remains separate; completion survives forced restart and Undo reopens the last square. Full original-puzzle simulator completion passes.",
+      "See docs/quality/validation.md and evidence/sudoku/result.json."
+    ]
   },
   {
     "id": "SYNCAPP-01",

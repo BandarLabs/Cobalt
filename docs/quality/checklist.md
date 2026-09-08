@@ -18,7 +18,7 @@ A checked task requires implementation plus recorded validation. Physical measur
 
 The PR 1 implementation checklist is complete; CBR is deferred and COMIC-18 belongs to catalog integration in PR 2. This does not certify hardware accuracy: native sleep hands ownership back to the stock reader, and no generic kernel suspend, RTC wake or automatic cover-sleep backend is enabled. Physical acceptance remains scheduled after all three PRs.
 
-494 tracked tasks: 103 completed, 1 deferred by the owner, 390 open. Implementation in progress. Evidence is recorded per task in `tasks.json` and in [the validation log](validation.md).
+494 tracked tasks: 110 completed, 1 deferred by the owner, 383 open. Implementation in progress. Evidence is recorded per task in `tasks.json` and in [the validation log](validation.md).
 
 ## PR 1 · Simulator fidelity (SIM-1–10)
 
@@ -457,13 +457,13 @@ The PR 1 implementation checklist is complete; CBR is deferred and COMIC-18 belo
 
 ## PR 2 · Sudoku (APP-7)
 
-- [ ] **SUDOKU-01** Persist exact game state after each move.
-- [ ] **SUDOKU-02** Provide varied valid puzzles with difficulty.
-- [ ] **SUDOKU-03** Add pencil marks.
-- [ ] **SUDOKU-04** Add undo.
-- [ ] **SUDOKU-05** Render stronger 3x3 boundaries and row/column selection.
-- [ ] **SUDOKU-06** Make assisted checking optional.
-- [ ] **SUDOKU-07** Show a clear completion state.
+- [x] **SUDOKU-01** Persist exact game state after each move.
+- [x] **SUDOKU-02** Provide varied valid puzzles with difficulty.
+- [x] **SUDOKU-03** Add pencil marks.
+- [x] **SUDOKU-04** Add undo.
+- [x] **SUDOKU-05** Render stronger 3x3 boundaries and row/column selection.
+- [x] **SUDOKU-06** Make assisted checking optional.
+- [x] **SUDOKU-07** Show a clear completion state.
 
 ## PR 2 · Sync app
 

@@ -1,0 +1,239 @@
+{
+  "paints": 11,
+  "nodes": [
+    {
+      "kind": "StatusBand",
+      "x": 0,
+      "y": 0,
+      "width": 1072,
+      "height": 59,
+      "centre": {
+        "x": 536,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusClock",
+      "x": 47,
+      "y": 0,
+      "width": 112,
+      "height": 59,
+      "centre": {
+        "x": 103,
+        "y": 29
+      },
+      "action": null,
+      "lines": [
+        "07:01"
+      ]
+    },
+    {
+      "kind": "StatusBattery(Some(Percent(72)), false)",
+      "x": 955,
+      "y": 12,
+      "width": 70,
+      "height": 35,
+      "centre": {
+        "x": 990,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusSignal(Strong)",
+      "x": 896,
+      "y": 12,
+      "width": 35,
+      "height": 35,
+      "centre": {
+        "x": 913,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusBluetooth",
+      "x": 837,
+      "y": 12,
+      "width": 35,
+      "height": 35,
+      "centre": {
+        "x": 854,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "TopBar",
+      "x": 0,
+      "y": 59,
+      "width": 1072,
+      "height": 100,
+      "centre": {
+        "x": 536,
+        "y": 109
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Back",
+      "x": 47,
+      "y": 59,
+      "width": 100,
+      "height": 100,
+      "centre": {
+        "x": 97,
+        "y": 109
+      },
+      "action": 4294967295,
+      "lines": []
+    },
+    {
+      "kind": "TopBarTitle",
+      "x": 171,
+      "y": 77,
+      "width": 854,
+      "height": 64,
+      "centre": {
+        "x": 598,
+        "y": 109
+      },
+      "action": null,
+      "lines": [
+        "Sudoku"
+      ]
+    },
+    {
+      "kind": "Divider",
+      "x": 0,
+      "y": 159,
+      "width": 1072,
+      "height": 4,
+      "centre": {
+        "x": 536,
+        "y": 161
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Text",
+      "x": 47,
+      "y": 175,
+      "width": 978,
+      "height": 320,
+      "centre": {
+        "x": 536,
+        "y": 335
+      },
+      "action": null,
+      "lines": [
+        "Use 1\u20139 once in each row, column and 3\u00d73",
+        "box. The shaded cross follows your",
+        "selection; a bracketed number or small",
+        "square marks your target. Given numbers",
+        "cannot change."
+      ]
+    },
+    {
+      "kind": "Text",
+      "x": 47,
+      "y": 507,
+      "width": 978,
+      "height": 320,
+      "centre": {
+        "x": 536,
+        "y": 667
+      },
+      "action": null,
+      "lines": [
+        "Tap Notes, then numbers to add or remove",
+        "notes. A dot marks a square with notes; its",
+        "selected numbers have outlined keys. Tap",
+        "Digits to enter answers. Erase a filled",
+        "square before adding notes."
+      ]
+    },
+    {
+      "kind": "Text",
+      "x": 47,
+      "y": 839,
+      "width": 978,
+      "height": 320,
+      "centre": {
+        "x": 536,
+        "y": 999
+      },
+      "action": null,
+      "lines": [
+        "More offers erase, checking and reveal.",
+        "Checking starts off. Turn it on to flag a",
+        "wrong selected answer without rejecting",
+        "your entry. Revealing a square asks first",
+        "and counts as a hint."
+      ]
+    },
+    {
+      "kind": "NavBar",
+      "x": 0,
+      "y": 1306,
+      "width": 1072,
+      "height": 142,
+      "centre": {
+        "x": 536,
+        "y": 1377
+      },
+      "action": 3440364824,
+      "lines": []
+    },
+    {
+      "kind": "Divider",
+      "x": 0,
+      "y": 1306,
+      "width": 1072,
+      "height": 4,
+      "centre": {
+        "x": 536,
+        "y": 1308
+      },
+      "action": 3440364824,
+      "lines": []
+    },
+    {
+      "kind": "NavDestination(ActionId(4118453880), None)",
+      "x": 0,
+      "y": 1306,
+      "width": 536,
+      "height": 142,
+      "centre": {
+        "x": 268,
+        "y": 1377
+      },
+      "action": 4118453880,
+      "lines": [
+        "Previous"
+      ]
+    },
+    {
+      "kind": "NavDestination(ActionId(3440364824), None)",
+      "x": 536,
+      "y": 1306,
+      "width": 536,
+      "height": 142,
+      "centre": {
+        "x": 804,
+        "y": 1377
+      },
+      "action": 3440364824,
+      "lines": [
+        "Next"
+      ]
+    }
+  ]
+}

@@ -643,3 +643,27 @@ Physical Clara BW acceptance still follows all three PRs.
 All seven Panels checklist items are now complete at the fixture/simulator level.
 The broader catalog and companion work remain open: 494 total tasks, 103 complete,
 390 open, and CBR deferred. PR 2 has 11 complete and 257 open items.
+
+## Sudoku: original puzzles, saved games and complete play
+
+All seven Sudoku tasks are implemented on the catalog branch. The quality checklist now contains **110 done, 383 open and one owner-deferred CBR task**. PR 2 has **18 done and 250 open**; the companion group still has 133 open. This does not complete the wider catalog program.
+
+Sudoku 1.0.11 replaces the single digit-shifted puzzle with 36 original puzzles, 12 per measured difficulty. The reproducible generator uses a unique-solution check, then classifies whether solving needs single candidates, single locations in units, or techniques beyond those two. A separately written Rust solver checks uniqueness and all rows, columns and boxes of every bundled solution. The Python classifier was also rerun against all 36 committed puzzles. No external puzzle corpus or reference-project source was used.
+
+One bounded record preserves answers, pencil notes, selected square, orientation, checking preference, hint count and up to 64 undo steps. A Draft acknowledges only its released revision, holds newer edits through a failure and requires explicit retry. Invalid/future saves stay untouched. Checking is opt-in and never rejects an answer; reveals and restarts ask first and are undoable. A completed solution and its save status remain distinct.
+
+The shared SDK/UI changes add selected keypad outlines, fitted short board marks, 3×3 spacing in six-row views and orientation-aware help pagination. Sudoku exposes rotation through View. Portrait keeps all 81 squares; landscape uses overlapping rows 1–6 and 4–9 with stable action IDs and retained focus.
+
+Validation:
+
+- **10 Sudoku tests pass**, including whole-pack uniqueness, immutable clues, persistent bounded undo, exact acknowledgement, failed-save retry, invalid records, completion/reopen and confirmation cancellation.
+- Layout checks cover all **nine interface sizes** at **1072×1448 / 300 ppi** and **758×1024 / 212 ppi**, each in portrait and landscape. They include both landscape windows, the longest puzzle titles, all nine pencil notes, checking warnings, completion, save failure, confirmation screens and every help page. Unreadable-save screens are also checked in their startup portrait orientation.
+- **152 SDK and 267 UI tests pass**, with two existing UI ignores. The keypad rendering test verifies selection changes only pixels inside its unchanged hit rectangle. Strict all-target SDK/UI and Sudoku Clippy pass.
+- ARMv7 musl compilation and the published-catalog version gate pass. Beta was fetched again and remains `7f1a543`.
+- The actual **Clara BW SDK simulator journey at extra-large text** passes note toggles, exact forced-restart restoration, persistent undo, storage-full preservation, explicit retry, unassisted wrong entries, optional checking, reveal confirmation, full puzzle completion, completion restart, new difficulty, portrait help, both landscape views, landscape restart and landscape help. It also runs the updated committed `apps/sudoku/drive.kobo` route. All captures assert zero fetch/post effects.
+
+See [the simulator result](evidence/sudoku/result.json), [pencil notes](evidence/sudoku/02-pencil-notes.png), [save recovery](evidence/sudoku/05-save-recovery.png), [completion after restart](evidence/sudoku/10-completion-restored.png) and [landscape restoration](evidence/sudoku/16-landscape-restored.png). Captures include actual source/binary/font/profile provenance and accurately record dirty source during implementation. The app README, public app page, SDK page and canonical screenshots are updated. Physical Clara BW acceptance remains scheduled after all three PRs; these checks do not certify panel behavior on hardware.
+
+### Follow-up board-app scale sweep
+
+The shared board changes prompted a targeted simulator sweep. Crossword, Logic Pack and Nonograms pass their existing routes at default text size. At extra-large size, Crossword fails to find a letter key after a coordinate-based tap, and Logic Pack and Nonograms encounter renderer text-fit refusals. Parlor and Tic-tac-toe pass at extra-large size. These unresolved issues are recorded against CROSS-02, LOGIC-04 and NONO-01, without marking additional tasks done or attributing the failures to a particular commit. See [results and failure captures](evidence/board-regression/README.md). PR 2 remains a draft.
