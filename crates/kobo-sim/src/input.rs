@@ -117,6 +117,7 @@ impl Replay {
             millis,
         )
     }
+    pub fn is_quiescent(&self) -> bool { self.decoder.is_quiescent() }
     pub fn json(&self) -> kobo_json::Value {
         kobo_json::ObjectBuilder::new()
             .set("source", "synthetic evdev replay")

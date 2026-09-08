@@ -2559,6 +2559,10 @@ fn host_applications(
                         | Message::TextHold { .. }
                         | Message::TaskOutcome { .. }
                         | Message::Lifecycle(_)
+                        | Message::PrepareSuspend { .. }
+                        | Message::SuspendReady { .. }
+                        | Message::Resume { .. }
+                        | Message::ScheduledWake { .. }
                         | Message::DeviceResult(_)
                         | Message::StoreResult(_)
                         | Message::CoverChanged { .. }

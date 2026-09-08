@@ -8,6 +8,7 @@
 pub mod collections;
 #[cfg(test)]
 mod callback_scale_tests;
+mod suspend;
 
 pub use kobo_protocol::{
     is_valid_key, AppInfo, AppLinkState, AudioPlaybackState, AudioSource, BatteryDetail,
@@ -470,6 +471,7 @@ pub enum Command {
     SetScreen(Screen),
     /// Requests a logical viewport direction for this app session.
     SetOrientation(Orientation),
+    SuspendReady { generation: u64, ready: bool },
     Log {
         level: LogLevel,
         message: String,
@@ -2304,7 +2306,12 @@ pub trait KoboApp {
 
     fn on_resume(&mut self, _context: &mut Context) {}
 
-    fn on_suspend(&mut self, _context: &mut Context) {}
+    /// Save work before sleep. The SDK waits for the resulting acknowledgements.
+    fn on_suspend(&mut self, context: &mut Context) { self.on_background(context); }
+
+    /// Return false while edits cannot be safely left on durable storage.
+    /// Override this for app-owned drafts or unresolved save failures.
+    fn can_suspend(&self) -> bool { true }
 
     fn on_scheduled_wake(&mut self, _context: &mut Context) {}
 
@@ -2447,6 +2454,9 @@ pub struct AppRunner<A> {
     /// to the background -- because after that the runtime is showing somebody
     /// else's screen and skipping the resend would leave it there.
     displayed: Option<Screen>,
+    suspend_barrier: Option<suspend::Barrier>,
+    suspend_generation: u64,
+    scheduled_occurrence: u64,
 }
 
 #[derive(Debug)]
@@ -2479,6 +2489,9 @@ impl<A: KoboApp> AppRunner<A> {
             napping: BTreeMap::new(),
             attempts: BTreeMap::new(),
             displayed: None,
+            suspend_barrier: None,
+            suspend_generation: 0,
+            scheduled_occurrence: 0,
         }
     }
 
@@ -2597,7 +2610,7 @@ impl<A: KoboApp> AppRunner<A> {
         // A nap between two attempts finishing is not news for the
         // application, which never learned there was one.
         if let Some((waiting_on, work)) = self.napping.remove(&task) {
-            if matches!(outcome, TaskOutcome::Cancelled) {
+            if matches!(outcome, TaskOutcome::Cancelled) || self.suspend_barrier.is_some() {
                 self.settled = true;
                 return self.dispatch(|app, context| {
                     app.on_task(context, waiting_on, TaskOutcome::Cancelled);
@@ -2674,6 +2687,9 @@ impl<A: KoboApp> AppRunner<A> {
 
     /// Delivers one store answer.
     pub fn store_result(&mut self, result: StoreResult) -> Vec<Command> {
+        if matches!(result, StoreResult::Denied(_)) {
+            if let Some(barrier) = &mut self.suspend_barrier { barrier.failed = true; }
+        }
         let target = self
             .pending_stores
             .pop_front()
@@ -2809,6 +2825,7 @@ impl<A: KoboApp> AppRunner<A> {
                 },
             );
         }
+        self.append_suspend_reply(&mut commands);
         commands
     }
 }
@@ -2827,6 +2844,9 @@ pub enum ClientEvent {
     },
     Store(StoreResult),
     Lifecycle(Lifecycle),
+    PrepareSuspend(u64),
+    Resume(u64, kobo_protocol::WakeReason),
+    ScheduledWake(u64),
     Shell(ShellEvent),
     /// A magnet arrived at, or left, the hall sensor. Unsolicited.
     CoverChanged(bool),
@@ -2990,6 +3010,7 @@ impl Client {
             let message = match command {
                 Command::SetScreen(screen) => Message::SetScreen(screen),
                 Command::SetOrientation(orientation) => Message::SetOrientation(orientation),
+                Command::SuspendReady { generation, ready } => Message::SuspendReady { generation, ready },
                 Command::Log { level, message } => Message::Log { level, message },
                 Command::Device(request) => Message::DeviceRequest(request),
                 Command::Spawn { task, work } => Message::Spawn { task, work },
@@ -3051,6 +3072,9 @@ impl Client {
             Message::TaskOutcome { task, outcome } => Ok(ClientEvent::Task { task, outcome }),
             Message::StoreResult(result) => Ok(ClientEvent::Store(result)),
             Message::Lifecycle(state) => Ok(ClientEvent::Lifecycle(state)),
+            Message::PrepareSuspend { generation } => Ok(ClientEvent::PrepareSuspend(generation)),
+            Message::Resume { generation, reason } => Ok(ClientEvent::Resume(generation, reason)),
+            Message::ScheduledWake { occurrence } => Ok(ClientEvent::ScheduledWake(occurrence)),
             Message::ShellEvent(event) => Ok(ClientEvent::Shell(event)),
             Message::CoverChanged { magnet_present } => {
                 Ok(ClientEvent::CoverChanged(magnet_present))
@@ -4677,6 +4701,9 @@ pub fn run_on<A: KoboApp>(name: &str, app: A, socket: &Path) -> Result<(), Clien
                 ClientEvent::Store(result) => {
                     client.send_commands(runner.store_result(result))?;
                 }
+                ClientEvent::ScheduledWake(occurrence) => { client.send_commands(runner.deliver_scheduled_wake(occurrence))?; }
+                ClientEvent::PrepareSuspend(generation) => { client.send_commands(runner.prepare_suspend(generation))?; }
+                ClientEvent::Resume(generation, reason) => { client.send_commands(runner.resume_from_suspend(generation, reason))?; }
                 ClientEvent::Lifecycle(state) => {
                     client.send_commands(runner.lifecycle(state))?;
                 }
@@ -4704,6 +4731,9 @@ pub fn run_on<A: KoboApp>(name: &str, app: A, socket: &Path) -> Result<(), Clien
             ClientEvent::Task { task, outcome } => runner.task_outcome(task, outcome),
             ClientEvent::Store(result) => runner.store_result(result),
             ClientEvent::Lifecycle(state) => runner.lifecycle(state),
+            ClientEvent::ScheduledWake(occurrence) => runner.deliver_scheduled_wake(occurrence),
+            ClientEvent::PrepareSuspend(generation) => runner.prepare_suspend(generation),
+            ClientEvent::Resume(generation, reason) => runner.resume_from_suspend(generation, reason),
             ClientEvent::Shell(event) => runner.shell_event(event),
             ClientEvent::CoverChanged(present) => runner.cover_changed(present),
             ClientEvent::PageTurn(forward) => runner.page_turn(forward),

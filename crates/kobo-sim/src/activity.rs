@@ -97,6 +97,9 @@ impl Activity {
                 | Message::TaskOutcome { .. }
                 | Message::StoreResult(_)
                 | Message::Lifecycle(_)
+                | Message::PrepareSuspend { .. }
+                | Message::Resume { .. }
+                | Message::ScheduledWake { .. }
                 | Message::ShellEvent(_)
                 | Message::CoverChanged { .. }
                 | Message::PageTurn { .. }

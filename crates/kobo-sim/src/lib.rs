@@ -765,6 +765,7 @@ impl AppServer {
         let reader = stream.try_clone()?;
         let mut initial = AppState::with_apps(Arc::clone(&self.apps));
         initial.runtime_navigation = self.runtime_navigation;
+        initial.protocol = hello.version;
         if self.runtime_navigation {
             initial.lifecycle = Lifecycle::Background;
         }
@@ -1083,6 +1084,15 @@ struct AppState {
     back_offer: kobod::navigation::BackOffer,
     hosted: Vec<String>,
     process_id: Option<u32>,
+    protocol: u8,
+    power_request: Option<runtime::power::Input>,
+    power_state: kobod::power::State,
+    power_generation: u64,
+    power_status: kobo_json::Value,
+    suspend_reply: Option<(u64, bool)>,
+    wake_until: u64,
+    scheduled_wake: Option<u64>,
+    terminal_open: bool,
 }
 
 impl Default for AppState {
@@ -1127,6 +1137,15 @@ impl AppState {
             back_offer: kobod::navigation::BackOffer::default(),
             hosted: Vec::new(),
             process_id: None,
+            protocol: kobo_protocol::VERSION,
+            power_request: None,
+            power_state: kobod::power::State::Awake,
+            power_generation: 0,
+            power_status: kobo_json::Value::Null,
+            suspend_reply: None,
+            wake_until: 0,
+            scheduled_wake: None,
+            terminal_open: false,
         }
     }
 }
@@ -1321,6 +1340,7 @@ impl AppState {
             ));
             fields.push(("clock".into(), self.time.json(self.clock_snapshot)));
             fields.push(("input".into(), self.input.json()));
+            fields.push(("power".into(), self.power_status.clone()));
             fields.push((
                 "hardware".into(),
                 hardware::json(self.effective_hardware(), self.orientation),
@@ -1434,7 +1454,8 @@ impl AppState {
     }
 
     fn commit_frame(&mut self) {
-        if self.runtime_navigation && self.lifecycle == Lifecycle::Background {
+        if self.power_state == kobod::power::State::Suspended
+            || (self.runtime_navigation && self.lifecycle == Lifecycle::Background) {
             return;
         }
         let mut surface = Surface::new(PROFILE.width as usize, PROFILE.height as usize);
@@ -1915,6 +1936,20 @@ impl AppSession {
                     Err(error) => {
                         write_response(&mut stream, 400, "text/plain", error.to_string().as_bytes())
                     }
+                }
+            }
+            ("GET", "/power") => {
+                let state = self.state.lock().map_err(|_| io::Error::other("app state unavailable"))?;
+                write_response(&mut stream, 200, "application/json", state.power_status.to_json().as_bytes())
+            }
+            ("POST", "/power") => {
+                let mut state = self.state.lock().map_err(|_| io::Error::other("app state unavailable"))?;
+                match runtime::power::Input::parse(std::str::from_utf8(&request.body).unwrap_or("")) {
+                    Some(input) if state.runtime_navigation && state.power_request.is_none() => {
+                        state.power_request = Some(input);
+                        write_response(&mut stream, 200, "text/plain", b"power request queued")
+                    }
+                    _ => write_response(&mut stream, 400, "text/plain", b"power controls need runtime mode, a valid command and an empty request slot"),
                 }
             }
             ("GET", "/panel") => {
@@ -2733,6 +2768,7 @@ fn read_app_messages(
                     .map_err(|_| io::Error::other("app state lock poisoned"))?;
                 if state.runtime_navigation {
                     if state.lifecycle == Lifecycle::Foreground
+                        && state.power_state == kobod::power::State::Awake
                         && valid_app_name(&name)
                         && state.navigation.len() < 8
                     {
@@ -2776,6 +2812,16 @@ fn read_app_messages(
                             .map_err(|_| io::Error::other("app state lock poisoned"))?;
                         state.observe_hardware();
                         let mut result = state.services.handle(request.clone());
+                        if matches!(result, kobo_protocol::DeviceResult::Done | kobo_protocol::DeviceResult::Granted { .. }) {
+                            let now = state.time.now()?.monotonic_millis;
+                            match &request {
+                                kobo_protocol::DeviceRequest::KeepAwake { .. } => state.wake_until = now.saturating_add(u64::try_from(state.services.wake_hold().unwrap_or_default().as_millis()).unwrap_or(u64::MAX)),
+                                kobo_protocol::DeviceRequest::AllowSleep => state.wake_until = 0,
+                                kobo_protocol::DeviceRequest::ScheduleWake { .. } => state.scheduled_wake = Some(now.saturating_add(u64::try_from(state.services.scheduled_wake().unwrap_or_default().as_millis()).unwrap_or(u64::MAX))),
+                                kobo_protocol::DeviceRequest::CancelWake => state.scheduled_wake = None,
+                                _ => {},
+                            }
+                        }
                         if let kobo_protocol::DeviceResult::Identity(identity) = &mut result {
                             identity.profile_id = format!("SIMULATOR:{}", PROFILE.id);
                             identity.model = format!("Simulated {}", PROFILE.model);
@@ -2807,11 +2853,25 @@ fn read_app_messages(
                     simulated_task_error(current_scenario(state), &work, declared, &backends);
                 submit_simulated_task(tasks, writer, state, task, work, fault)?;
             }
+            Message::SuspendReady { generation, ready } => {
+                let mut state = state.lock().map_err(|_| io::Error::other("app state unavailable"))?;
+                if state.power_state == kobod::power::State::Preparing && generation == state.power_generation && state.suspend_reply.is_none() {
+                    state.suspend_reply = Some((generation, ready));
+                }
+            }
             Message::StoreRequest(request) => {
                 answer_store(writer, request_id, &store, &shelf, &request, state)?;
             }
             Message::ShellRequest(request) => {
-                answer_shell(writer, request_id, &shells, request)?;
+                let paused = state.lock().map_err(|_| io::Error::other("app state unavailable"))?.power_state != kobod::power::State::Awake;
+                if paused {
+                    write_shared(writer, &Frame { version: kobo_protocol::VERSION, request_id,
+                        message: Message::ShellEvent(kobo_protocol::ShellEvent::Refused(kobo_protocol::ShellError::Unavailable)) })?;
+                } else {
+                    answer_shell(writer, request_id, &shells, request)?;
+                }
+                let open = shells.lock().map_err(|_| io::Error::other("shell unavailable"))?.is_open();
+                state.lock().map_err(|_| io::Error::other("app state unavailable"))?.terminal_open = open;
             }
             Message::Cancel { task } => tasks
                 .lock()

@@ -626,7 +626,9 @@
     "group": "Platform requirements from read-only hardware research",
     "task": "Implement platform power state machine with explicit ownership",
     "status": "todo",
-    "evidence": []
+    "evidence": [
+      "Partial: shared generation-scoped power coordinator, protocol-14 SDK save barrier and TaskRunner pause are implemented; multi-app host simulation passes real SDK save failure, chained save/receipt, cancellation, duplicate scheduled wake, panel deadline, light restore and USB wake checks. Device kernel/ownership integration remains open; evidence/power/result.json explicitly marks hardware_validation false."
+    ]
   },
   {
     "id": "HW-10",
@@ -643,7 +645,8 @@
     "task": "Flush durable work and pause/cancel tasks before suspend",
     "status": "todo",
     "evidence": [
-      "Storage policy now requires file/parent flush acknowledgements and preserves validation before injected disk-full faults; 124 policy + 66 simulator tests and Panels recovery journey pass. Suspend barrier and app-install parity remain open."
+      "Storage policy now requires file/parent flush acknowledgements and preserves validation before injected disk-full faults; 124 policy + 66 simulator tests and Panels recovery journey pass. Suspend barrier and app-install parity remain open.",
+      "Partial: shared generation-scoped power coordinator, protocol-14 SDK save barrier and TaskRunner pause are implemented; multi-app host simulation passes real SDK save failure, chained save/receipt, cancellation, duplicate scheduled wake, panel deadline, light restore and USB wake checks. Device kernel/ownership integration remains open; evidence/power/result.json explicitly marks hardware_validation false."
     ]
   },
   {
@@ -662,7 +665,9 @@
     "group": "Platform requirements from read-only hardware research",
     "task": "Test wake-during-suspend, cover bounce and repeated wake",
     "status": "todo",
-    "evidence": []
+    "evidence": [
+      "Partial: shared generation-scoped power coordinator, protocol-14 SDK save barrier and TaskRunner pause are implemented; multi-app host simulation passes real SDK save failure, chained save/receipt, cancellation, duplicate scheduled wake, panel deadline, light restore and USB wake checks. Device kernel/ownership integration remains open; evidence/power/result.json explicitly marks hardware_validation false."
+    ]
   },
   {
     "id": "HW-14",
@@ -670,7 +675,9 @@
     "group": "Platform requirements from read-only hardware research",
     "task": "Test scheduled wake, USB attach/detach and reconnect",
     "status": "todo",
-    "evidence": []
+    "evidence": [
+      "Partial: shared generation-scoped power coordinator, protocol-14 SDK save barrier and TaskRunner pause are implemented; multi-app host simulation passes real SDK save failure, chained save/receipt, cancellation, duplicate scheduled wake, panel deadline, light restore and USB wake checks. Device kernel/ownership integration remains open; evidence/power/result.json explicitly marks hardware_validation false."
+    ]
   },
   {
     "id": "HW-15",
@@ -678,7 +685,9 @@
     "group": "Platform requirements from read-only hardware research",
     "task": "Avoid duplicate task resumption or indefinite unintended wake",
     "status": "todo",
-    "evidence": []
+    "evidence": [
+      "Partial: shared generation-scoped power coordinator, protocol-14 SDK save barrier and TaskRunner pause are implemented; multi-app host simulation passes real SDK save failure, chained save/receipt, cancellation, duplicate scheduled wake, panel deadline, light restore and USB wake checks. Device kernel/ownership integration remains open; evidence/power/result.json explicitly marks hardware_validation false."
+    ]
   },
   {
     "id": "HW-16",

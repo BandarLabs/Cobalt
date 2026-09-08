@@ -1,5 +1,6 @@
 //! Host-process runtime simulation with real launcher/apps and shared policy.
 //! Device sandboxing, kernel suspend and physical hardware remain uncalibrated.
+pub(super) mod power;
 use crate::{AppServer, AppSession, CaptureSource, Message};
 use kobo_protocol::Lifecycle;
 use kobod::navigation::{self, BackRoute};
@@ -42,6 +43,10 @@ impl AppSession {
             return Ok(true);
         }
         if state.lifecycle == Lifecycle::Background {
+            return Ok(false);
+        }
+        if state.power_state != kobod::power::State::Awake {
+            state.power_request = Some(power::Input::Wake(kobod::power::WakeReason::Touch));
             return Ok(false);
         }
         let is_back =
@@ -230,6 +235,7 @@ pub fn run(
     let mut apps = vec![start(&server, socket, "launcher", home_program, 1)?];
     let mut front = switch(&mut apps, 0, 1)?;
     let mut next_id = 2_u64;
+    let mut power = power::Controller::default();
     println!("Kobo runtime simulator: http://{}", server.local_addr()?);
     loop {
         let hosted = apps.iter().map(|app| app.name.clone()).collect::<Vec<_>>();
@@ -245,50 +251,54 @@ pub fn run(
             return Err(io::Error::other("foreground app lost"));
         };
         server.try_serve_one(&apps[index].session)?;
-        if let Some(name) = apps[index].session.next_launch()? {
-            let available = {
-                let catalog = server
-                    .apps
-                    .lock()
-                    .map_err(|_| io::Error::other("catalog unavailable"))?;
-                catalog
-                    .catalog
-                    .iter()
-                    .find(|entry| entry.id == name)
-                    .is_none_or(kobo_protocol::AppInfo::is_installed)
-            };
-            let launched = if !available {
-                Err(io::Error::other(format!(
-                    "{name} is not installed in this simulation"
-                )))
-            } else if let Some(id) = apps.iter().find(|app| app.name == name).map(|app| app.id) {
-                Ok(id)
-            } else if let Some(program) = programs.get(&name) {
-                let id = next_id;
-                next_id = next_id
-                    .checked_add(1)
-                    .ok_or_else(|| io::Error::other("session identities exhausted"))?;
-                make_room(&mut apps, front)
-                    .and_then(|()| start(&server, socket, &name, program, id))
-                    .map(|app| {
-                        apps.push(app);
-                        id
-                    })
-            } else {
-                Err(io::Error::other(format!(
-                    "{name} is not included in this simulation"
-                )))
-            };
-            match launched {
-                Ok(wanted) => front = switch(&mut apps, front, wanted)?,
-                Err(error) => {
-                    eprintln!("Could not open {name}: {error}");
-                    if let Some(app) = apps.iter().find(|app| app.id == front) {
-                        app.session
-                            .state
-                            .lock()
-                            .map_err(|_| io::Error::other("app state unavailable"))?
-                            .record(format!("Could not open {name}: {error}"));
+        power.step(&mut apps, front)?;
+        if power.awake() {
+            if let Some(name) = apps[index].session.next_launch()? {
+                let available = {
+                    let catalog = server
+                        .apps
+                        .lock()
+                        .map_err(|_| io::Error::other("catalog unavailable"))?;
+                    catalog
+                        .catalog
+                        .iter()
+                        .find(|entry| entry.id == name)
+                        .is_none_or(kobo_protocol::AppInfo::is_installed)
+                };
+                let launched = if !available {
+                    Err(io::Error::other(format!(
+                        "{name} is not installed in this simulation"
+                    )))
+                } else if let Some(id) = apps.iter().find(|app| app.name == name).map(|app| app.id)
+                {
+                    Ok(id)
+                } else if let Some(program) = programs.get(&name) {
+                    let id = next_id;
+                    next_id = next_id
+                        .checked_add(1)
+                        .ok_or_else(|| io::Error::other("session identities exhausted"))?;
+                    make_room(&mut apps, front)
+                        .and_then(|()| start(&server, socket, &name, program, id))
+                        .map(|app| {
+                            apps.push(app);
+                            id
+                        })
+                } else {
+                    Err(io::Error::other(format!(
+                        "{name} is not included in this simulation"
+                    )))
+                };
+                match launched {
+                    Ok(wanted) => front = switch(&mut apps, front, wanted)?,
+                    Err(error) => {
+                        eprintln!("Could not open {name}: {error}");
+                        if let Some(app) = apps.iter().find(|app| app.id == front) {
+                            app.session
+                                .state
+                                .lock()
+                                .map_err(|_| io::Error::other("app state unavailable"))?
+                                .record(format!("Could not open {name}: {error}"));
+                        }
                     }
                 }
             }
@@ -301,6 +311,9 @@ pub fn run(
         }
         if gone.contains(&1) {
             return Ok(());
+        }
+        if !gone.is_empty() {
+            power.cancel(&mut apps)?;
         }
         if gone.contains(&front) {
             front = switch(&mut apps, front, 1)?;

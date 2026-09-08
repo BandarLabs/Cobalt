@@ -332,6 +332,7 @@ pub struct TaskRunner {
     /// discover work it could have been told about.
     wake: Option<Arc<Wake>>,
     manual_clock: Option<Arc<crate::clock::ManualClock>>,
+    paused: bool,
 }
 
 impl std::fmt::Debug for TaskRunner {
@@ -374,6 +375,7 @@ impl TaskRunner {
             credentials: None,
             wake: None,
             manual_clock: None,
+            paused: false,
         }
     }
 
@@ -522,6 +524,11 @@ impl TaskRunner {
             }
         }
 
+        if self.paused {
+            self.finish_without_worker(task, TaskOutcome::Cancelled);
+            return Ok(());
+        }
+
         if let (Some(clock), Task::Sleep { seconds }) = (&self.manual_clock, &work) {
             use crate::clock::Clock;
             let now = clock.now().map_err(|_| RejectReason::AtCapacity)?;
@@ -642,6 +649,23 @@ impl TaskRunner {
         for task in tasks {
             self.cancel(task);
         }
+    }
+
+    /// Stop current work and refuse new work until explicitly resumed.
+    /// Cancelled work keeps its normal single result; resume never replays it.
+    pub fn pause(&mut self) {
+        if !std::mem::replace(&mut self.paused, true) {
+            self.cancel_all();
+        }
+    }
+
+    pub fn resume(&mut self) {
+        self.paused = false;
+    }
+
+    #[must_use]
+    pub fn is_quiescent(&self) -> bool {
+        self.paused && self.running.is_empty()
     }
 
     /// Collects any tasks that have finished, without blocking.
@@ -1341,6 +1365,33 @@ mod tests {
             collect(&mut runner, 1)[0].outcome,
             TaskOutcome::Completed(Vec::new())
         );
+    }
+
+    #[test]
+    fn paused_runner_cancels_once_and_resume_does_not_replay_work() {
+        let clock = Arc::new(crate::clock::ManualClock::new(crate::clock::Snapshot {
+            unix_millis: 0, monotonic_millis: 0, utc_offset_minutes: 0,
+        }).unwrap());
+        let mut runner = TaskRunner::simulated(".").with_manual_clock(clock);
+        assert!(!runner.is_quiescent());
+        runner.submit(TaskId(1), Task::Sleep { seconds: 300 }).unwrap();
+        runner.pause();
+        runner.pause();
+        assert!(!runner.is_quiescent());
+        let outcomes = runner.drain();
+        assert_eq!(outcomes.len(), 1);
+        assert_eq!(outcomes[0].outcome, TaskOutcome::Cancelled);
+        assert!(runner.is_quiescent());
+        runner.submit(TaskId(2), Task::Sleep { seconds: 300 }).unwrap();
+        assert!(!runner.is_quiescent());
+        assert_eq!(runner.submit(TaskId(2), Task::Sleep { seconds: 0 }), Err(RejectReason::DuplicateId));
+        assert_eq!(runner.drain()[0].outcome, TaskOutcome::Cancelled);
+        runner.resume();
+        runner.resume();
+        assert_eq!(runner.in_flight(), 0);
+        assert!(runner.drain().is_empty());
+        runner.submit(TaskId(3), Task::Sleep { seconds: 0 }).unwrap();
+        assert_eq!(runner.drain()[0].outcome, TaskOutcome::Completed(Vec::new()));
     }
 
     #[test]

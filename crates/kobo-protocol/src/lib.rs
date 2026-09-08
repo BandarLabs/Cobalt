@@ -57,6 +57,7 @@ pub const MAGIC: [u8; 4] = *b"KOBO";
 /// a version-12 reader so already installed Folio applications keep working.
 /// Version 14 adds the bounded board viewport on a new node tag. Versions
 /// 11, 12 and 13 remain readable; board nodes require version 14.
+/// Version 14 also adds generation-scoped suspend barriers on new message tags.
 ///
 /// A colour picture travels the same way: a grey picture still uses the tags it
 /// always did, byte for byte, and a colour one uses tags of its own that an
@@ -657,6 +658,14 @@ pub enum Message {
     StoreRequest(StoreRequest),
     /// Sent by the runtime when an application gains or loses the panel.
     Lifecycle(Lifecycle),
+    /// Request a generation-scoped save and task barrier before suspend.
+    PrepareSuspend { generation: u64 },
+    /// SDK acknowledgement after callbacks, durable replies and tasks settle.
+    SuspendReady { generation: u64, ready: bool },
+    /// End this barrier, after resume or an aborted suspend attempt.
+    Resume { generation: u64, reason: WakeReason },
+    /// A due scheduled wake, delivered only to the application that requested it.
+    ScheduledWake { occurrence: u64 },
     /// The runtime's answer to exactly one store request.
     StoreResult(StoreResult),
     /// An application driving a terminal the runtime owns.
@@ -881,6 +890,19 @@ pub enum Lifecycle {
     /// Something else owns the panel. Keep working, but nothing drawn now will
     /// be seen until this comes back, so this is the moment to save.
     Background,
+}
+
+/// Why a suspend barrier ended. An abort is a wake event without kernel sleep.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+pub enum WakeReason { Cancelled = 0, PowerButton = 1, Cover = 2, Touch = 3, Scheduled = 4, Usb = 5, Charging = 6, Backend = 7 }
+impl WakeReason {
+    #[must_use]
+    pub const fn from_wire(value: u8) -> Option<Self> {
+        match value { 0 => Some(Self::Cancelled), 1 => Some(Self::PowerButton), 2 => Some(Self::Cover),
+            3 => Some(Self::Touch), 4 => Some(Self::Scheduled), 5 => Some(Self::Usb), 6 => Some(Self::Charging),
+            7 => Some(Self::Backend), _ => None }
+    }
 }
 
 /// The runtime's answer to exactly one [`StoreRequest`].
@@ -1964,6 +1986,13 @@ pub fn encode(frame: &Frame) -> Result<Vec<u8>, ProtocolError> {
             payload.extend_from_slice(bytes);
         }
         Message::DropFont { handle } => push_u32(&mut payload, handle.0),
+        Message::PrepareSuspend { generation } => push_u64(&mut payload, *generation),
+        Message::ScheduledWake { occurrence } => push_u64(&mut payload, *occurrence),
+        Message::Resume { generation, reason } => { push_u64(&mut payload, *generation); payload.push(*reason as u8); },
+        Message::SuspendReady { generation, ready } => {
+            push_u64(&mut payload, *generation);
+            payload.push(u8::from(*ready));
+        }
         Message::Lifecycle(state) => payload.push(match state {
             Lifecycle::Foreground => 0,
             Lifecycle::Background => 1,
@@ -2499,6 +2528,10 @@ fn encoded_message_layout(message: &Message, version: u8) -> Result<(u8, usize),
         Message::StoreRequest(request) => Ok((13, store_request_len(request)?)),
         Message::StoreResult(result) => Ok((14, store_result_len(result)?)),
         Message::Lifecycle(_) => Ok((15, 1)),
+        Message::PrepareSuspend { generation } => suspend_layout(37, 8, *generation, version),
+        Message::SuspendReady { generation, .. } => suspend_layout(38, 9, *generation, version),
+        Message::Resume { generation, .. } => suspend_layout(39, 9, *generation, version),
+        Message::ScheduledWake { occurrence } => suspend_layout(40, 8, *occurrence, version),
         Message::ShellRequest(request) => Ok((16, shell_request_len(request)?)),
         Message::ShellEvent(event) => Ok((17, shell_event_len(event)?)),
         Message::PutPicture {
@@ -2541,6 +2574,13 @@ fn encoded_message_layout(message: &Message, version: u8) -> Result<(u8, usize),
         }
         Message::DropFont { .. } => Ok((25, 4)),
     }
+}
+
+fn suspend_layout(tag: u8, bytes: usize, generation: u64, version: u8) -> Result<(u8, usize), ProtocolError> {
+    if version < VERSION || generation == 0 {
+        return Err(ProtocolError::InvalidValue("protocol 14 suspend generation"));
+    }
+    Ok((tag, bytes))
 }
 
 fn task_outcome_len(outcome: &TaskOutcome) -> Result<usize, ProtocolError> {
@@ -4713,6 +4753,16 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, ProtocolError> {
         25 => Message::DropFont {
             handle: FontHandle(reader.u32()?),
         },
+        tag @ (37..=40) if version >= VERSION => {
+            let generation = reader.u64()?;
+            if generation == 0 { return Err(ProtocolError::InvalidValue("suspend generation")); }
+            match tag {
+                37 => Message::PrepareSuspend { generation },
+                38 => Message::SuspendReady { generation, ready: read_boolean(&mut reader, "suspend ready")? },
+                40 => Message::ScheduledWake { occurrence: generation },
+                _ => Message::Resume { generation, reason: WakeReason::from_wire(reader.u8()?).ok_or(ProtocolError::InvalidValue("wake reason"))? },
+            }
+        }
         value => return Err(ProtocolError::UnknownMessageType(value)),
     };
     if !reader.is_finished() {
@@ -10148,3 +10198,6 @@ mod picture_tests {
         assert_eq!(back, work);
     }
 }
+
+#[cfg(test)]
+mod suspend_tests;
