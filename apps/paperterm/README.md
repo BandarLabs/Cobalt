@@ -11,11 +11,17 @@ Start the host once with `kobo stream init`, install its root with
 `kobo trust set stream --device READER_IP`, then run:
 
 ```sh
-kobo stream --controls -- claude
+kobo stream --interactive -- /bin/sh
 ```
 
-Paperterm requires Cobalt 0.3.5's protocol-12 orientation API. It requests
-landscape once when the session starts, sends its measured landscape grid in `/hello`,
+Paperterm uses portrait on every supported reader. The shared terminal uses
+a smaller monospace size than interface labels, scaled by the panel's physical
+resolution and the owner's text setting. On Clara BW at Default, the measured
+grid is **75 columns × 49 rows**, or **75 × 27** with the keyboard open. Larger
+text settings reduce the column count instead of compressing the glyphs. Other
+readers negotiate their own measured grid; 80 columns is not forced.
+
+The app sends this grid in `/hello`,
 and holds the last received rows behind an `off the air` banner when the host
 cannot be reached. The banner paints once on the offline transition; unchanged
 retries do not repaint, and the first successful response clears it once.
@@ -23,7 +29,7 @@ Read-only sessions show no terminal input. Controls mode
 offers only arrows, Enter, Esc, y, n, and Ctrl-C; full mode also exposes the
 terminal keyboard. Full sessions start with the keyboard hidden so the terminal
 uses the whole content area. **Keyboard** in the top bar opens a compact
-four-row landscape keyboard; **Close keys** hides it without replacing the
+four-row keyboard; **Close keys** hides it without replacing the
 session, rows, or cursor. Each change renegotiates the terminal grid in place.
 After the host reports its input mode, Paperterm repeats `/hello` only when the
 measured controls require a different grid. The host accepts at most 64 input
@@ -37,3 +43,17 @@ width-preserving marks, while VT box drawing, alternate-screen transitions,
 and cursor-only changes retain their terminal structure. The responsive
 terminal layout clips excess rows before layout, so controls and every enabled
 keyboard key remain visible.
+
+
+The laptop and reader share the same session: either can type while the other
+watches the output. Use `--controls` for the limited navigation keys or omit
+both input flags for a read-only reader. The computer must remain awake and
+reachable. Closing the keyboard keeps the session and gives its space back to
+the terminal.
+
+<img width="300" src="screenshots/terminal.png" alt="Portrait Paperterm sharing a real laptop terminal, with the reader keyboard open">
+
+The screenshots and live test use an original local Python fixture, a real
+host PTY and private trusted TLS credentials. They verify both input directions,
+resizing, wide output, Ctrl-C and restoring the laptop terminal settings.
+Physical readability and refresh behavior await Clara BW hardware acceptance.

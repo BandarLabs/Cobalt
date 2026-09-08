@@ -1142,6 +1142,13 @@ wraps its lines exactly where the reader sees them wrap; an application that
 did its own arithmetic about bars and keyboards would be wrong the first time
 either changed.
 
+Terminal text uses `FontSize::Terminal`, a 1.8 mm monospace em before the owner's
+text scale. Interface labels retain their normal sizes. The same font metrics
+control layout, cursor cells, painting and the negotiated PTY grid. Width is
+measured from the actual content area, not fixed at 80 columns: Clara BW portrait
+at Default currently fits 75. Larger text reduces the grid; a keyboard changes
+the available rows. See [Paperterm's actual portrait capture](apps/paperterm/screenshots/terminal.png).
+
 `terminal_keys` sends a byte the instant a key is tapped rather than collecting
 a word, because `Ctrl-C` has to arrive while the program is still running.
 `Ctrl` is plain arithmetic: it clears the two high bits,

@@ -30,3 +30,25 @@ behavior.
 
 The runner requires Python 3.9 or newer, Node.js, and the repository's Rust
 toolchain. `CARGO_TARGET_DIR` is supported for sharing an existing build cache.
+
+
+## Live Paperterm session
+
+After building `kobo-cli`, run:
+
+```sh
+python3 scripts/quality/check-paperterm-live.py --scale default --output /tmp/paperterm-live
+```
+
+This launches the actual SDK app and a real host PTY with an original synthetic
+command. It types from the laptop and reader into the same session, checks
+wide output, keyboard resizing, Ctrl-C and laptop terminal restoration, and
+captures the portrait UI. It seeds pairing in a temporary store; this does not
+validate manual onboarding. Use `--profile` and `--scale` for other displays.
+
+The fixture sets `KOBO_STREAM_CONFIG_DIR` and `KOBO_SIM_TRUST_DIR` to private
+temporary directories. The latter replaces the simulator's default owner-root
+directory (`~/.config/kobo/trust`); ordinary certificate verification remains
+active. No owner identity or trust roots are changed. Live long polls remain
+outstanding by design, so this route waits for visible content instead of
+waiting for all tasks to become idle. See the [portrait session](../apps/paperterm/screenshots/terminal.png).

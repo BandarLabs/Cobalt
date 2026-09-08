@@ -60,7 +60,7 @@ const screenshots = {
   needles: ["needles.png", "Needles pattern screen with row and repeat counters and a large +1 row button."],
   nonograms: ["nonograms.png", "Actual Nonograms simulator capture showing a selected square and its matching row and column clues."],
   panels: ["panels.png", "Panels library in the Clara BW simulator showing the original A small garden cover and saved page 2 of 4."],
-  paperterm: ["paperterm.png", "Paperterm pairing screen with computer address field and on-screen keyboard on a Kobo Clara BW."],
+  paperterm: ["paperterm.png", "Paperterm sharing a real laptop terminal in portrait, with its keyboard open on a Clara BW simulator."],
   parlor: ["parlor.png", "Reversi opening board showing four legal moves and touch controls."],
   parser: ["parser.png", "Parser's book-like transcript after taking a brass lamp and entering the garden."],
   post: ["post.png", "Post inbox showing completed Hermes letters, newest first."],

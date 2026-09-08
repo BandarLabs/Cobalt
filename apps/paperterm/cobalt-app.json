@@ -3,12 +3,12 @@
   "display_name": "Paperterm",
   "short_label": "Paperterm",
   "summary": "Pair with a computer to mirror a terminal session on e-ink.",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "glyph": "terminal",
   "capabilities": [
     "network"
   ],
-  "release_notes": "Update shared controls and page layout for Cobalt 0.3.12.",
+  "release_notes": "Use portrait with denser terminal text and a measured grid for each reader.",
   "setup": {
     "steps": [
       {

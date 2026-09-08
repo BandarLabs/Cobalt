@@ -2380,9 +2380,10 @@
     "pr": 2,
     "group": "Paperterm",
     "task": "Validate wide rows, cursor and keyboard input",
-    "status": "todo",
+    "status": "done",
     "evidence": [
-      "Owner priority after Crossword: prove a live two-way laptop terminal session with output streamed to the reader and reader input delivered back to the same host PTY; simulator first, Clara BW acceptance after all three PRs."
+      "Owner priority after Crossword: prove a live two-way laptop terminal session with output streamed to the reader and reader input delivered back to the same host PTY; simulator first, Clara BW acceptance after all three PRs.",
+      "scripts/quality/check-paperterm-live.py: real laptop TTY and host PTY shared with the SDK simulator over private trusted TLS; both input directions, raw input before Enter, wide rows, Ctrl-C, retained final screen and TTY restoration pass on Clara BW Default/Extra-large and Elipsa Default. See docs/quality/evidence/paperterm and validation.md."
     ]
   },
   {
@@ -2390,8 +2391,10 @@
     "pr": 2,
     "group": "Paperterm",
     "task": "Validate orientation on supported profiles",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Portrait requested before the first screen; measured host-valid grids with shipped fonts across all eight supported profiles and nine text scales. Actual portrait capture assertions pass for Clara BW Default/Extra-large and Elipsa Default. Hardware acceptance remains scheduled after all three PRs."
+    ]
   },
   {
     "id": "PARLOR-01",

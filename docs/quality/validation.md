@@ -757,3 +757,49 @@ See the [numbered grid](evidence/crossword/02-numbered-grid.png),
 [preserved unreadable record](evidence/crossword/15-unreadable-preserved.png).
 The app and SDK guides, public app page and screenshots are updated. Physical
 Clara BW acceptance remains after all three PRs.
+
+
+## Paperterm portrait and a real shared laptop terminal · 9 September 2026
+
+PAPER-05 and PAPER-06 are complete for local/simulator validation. Paperterm
+0.1.3 requests portrait before its first screen. Terminal text now has a
+separate 1.8 mm monospace em, while interface labels keep their normal sizes.
+The owner's text scale still applies. Rendering, cursor cells and PTY sizing
+share the same metrics; no 80-column promise overrides the measured width.
+
+| Actual simulator profile | Text setting | Keyboard hidden | Keyboard open |
+| --- | --- | --- | --- |
+| Clara BW 391 | Default | 75 × 49 | 75 × 27 |
+| Clara BW 391 | Extra-large | 54 × 35 | 54 × 19 |
+| Elipsa 2E 389 | Default | 133 × 64 | 133 × 64 |
+
+The Elipsa reaches the existing 64-row bound in both states. App tests use the
+shipped fonts across all eight supported profiles and nine text settings,
+checking host-valid grids and stable columns when the keyboard opens.
+
+The live fixture connects the actual SDK app to a real host PTY over private,
+verified TLS. A second PTY represents the laptop terminal. Thirteen checks
+pass in each of the [Clara Default](evidence/paperterm/clara-default/result.json),
+[Clara Extra-large](evidence/paperterm/clara-large/result.json) and
+[Elipsa Default](evidence/paperterm/elipsa-default/result.json) runs. They cover
+portrait captures, negotiated grids, a prompt without a newline, laptop raw
+mode, reader input, laptop input before Enter, shared output, wide rows,
+reader Ctrl-C, the retained final screen and restored laptop terminal settings.
+Each capture includes its source/binary/font/profile metadata and layout.
+
+This exposed and fixed a host bug: `stty -g` was receiving null stdin, so raw
+mode never started. It now inherits the laptop TTY. Output flushes without
+waiting for a newline, and bounded draining yields the PTY lock to input.
+The fixture's config/trust overrides keep the owner's identity untouched;
+certificate verification remains active. Pairing is seeded for this live test,
+so it does not claim manual onboarding is complete. The fresh-app committed
+[pairing route](evidence/paperterm/pairing-route.json) also passes.
+
+Validation passes 28 Paperterm, 20 stream and 268 UI tests (two existing UI
+ignores), strict all-target Clippy for the changed app/UI/stream/simulator,
+Rust 1.85.1 ARMv7 musl checking, formatting and the published-catalog version
+gate. App, SDK, simulator and host guides, public app page and actual screenshots
+are updated. No external source code or new dependencies were added. Physical
+Clara BW readability, latency and refresh acceptance remain scheduled after
+all three PRs. Paperterm onboarding, preview and connection/recovery polish
+remain open; this does not complete PR 2 or the companion PR.

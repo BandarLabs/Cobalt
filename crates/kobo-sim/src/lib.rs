@@ -3236,14 +3236,19 @@ fn simulated_tasks(name: &str, declared: &kobo_policy::Declared) -> TaskRunner {
     // configuration refuses additions after it is first used.
     static TRUST: std::sync::Once = std::sync::Once::new();
     TRUST.call_once(|| {
-        let directory = std::env::var_os("HOME").map_or_else(
-            || std::path::PathBuf::from(".kobo-trust"),
-            |home| {
-                std::path::PathBuf::from(home)
-                    .join(".config")
-                    .join("kobo")
-                    .join("trust")
+        let directory = std::env::var_os("KOBO_SIM_TRUST_DIR").map_or_else(
+            || {
+                std::env::var_os("HOME").map_or_else(
+                    || std::path::PathBuf::from(".kobo-trust"),
+                    |home| {
+                        std::path::PathBuf::from(home)
+                            .join(".config")
+                            .join("kobo")
+                            .join("trust")
+                    },
+                )
             },
+            std::path::PathBuf::from,
         );
         let _ = kobo_net::trust_owner_roots_from_dir(&directory);
     });

@@ -1471,8 +1471,8 @@ pub const MAX_TERMINAL_ROWS: usize = 64;
 
 /// The most characters one terminal row may carry.
 ///
-/// 53 columns fit across this panel; 160 is the widest terminal anyone
-/// conventionally uses, and anything past the grid is dropped, never wrapped.
+/// The measured font and physical panel width determine the visible columns.
+/// This upper bound limits each row; anything past the grid is clipped, never wrapped.
 pub const MAX_TERMINAL_COLUMNS: usize = 160;
 
 /// The character grid that fits in a region of the given pixel size.
@@ -1530,7 +1530,7 @@ fn terminal_cell_at(row: &str, column: usize) -> (char, usize) {
 /// Terminal text is set at the smallest size, because a terminal's value is in
 /// how much of it can be seen at once and a shell's output is read in glances
 /// rather than at length.
-const TERMINAL_SIZE: FontSize = FontSize::Caption;
+const TERMINAL_SIZE: FontSize = FontSize::Terminal;
 
 /// The physical characteristics of a panel the UI is being laid out for.
 ///
@@ -9215,6 +9215,8 @@ pub fn terminal_grid_for(screen: &Screen, metrics: &DisplayMetrics) -> (u16, u16
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FontSize {
+    /// Dense monospace terminal text; interface labels retain their usual sizes.
+    Terminal,
     Caption,
     Body,
     Title,
@@ -9257,6 +9259,7 @@ impl FontSize {
     #[must_use]
     pub const fn tenth_mm(self) -> i32 {
         match self {
+            Self::Terminal => 18,
             Self::Caption => 24,
             Self::Body => 31,
             Self::Title => 42,
@@ -9285,7 +9288,7 @@ impl FontSize {
     #[must_use]
     pub const fn scale(self) -> i32 {
         match self {
-            Self::Caption => 2,
+            Self::Terminal | Self::Caption => 2,
             Self::Body => 3,
             Self::Title => 4,
             Self::Heading => 5,
@@ -9342,7 +9345,7 @@ impl FontSize {
 
     const fn unscaled_fallback_line_height(self) -> i32 {
         match self {
-            Self::Caption => 18,
+            Self::Terminal | Self::Caption => 18,
             Self::Body => 27,
             Self::Title => 36,
             Self::Heading => 45,

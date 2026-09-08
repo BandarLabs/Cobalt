@@ -211,7 +211,7 @@ impl Paperterm {
         Self::grid_for(
             self.input,
             self.keyboard_open,
-            &context.metrics().oriented(Orientation::Landscape),
+            &context.metrics().oriented(Orientation::Portrait),
         )
     }
     fn grid_for(input: Input, keyboard_open: bool, metrics: &DisplayMetrics) -> (u16, u16) {
@@ -731,7 +731,7 @@ fn paperterm_terminal_keys(screen: ScreenBuilder, keys: &TerminalKeys) -> Screen
 
 impl KoboApp for Paperterm {
     fn on_start(&mut self, context: &mut Context) {
-        context.set_orientation(Orientation::Landscape);
+        context.set_orientation(Orientation::Portrait);
         context.store().load(PAIRING);
         self.show(context);
     }
@@ -1021,27 +1021,39 @@ mod tests {
     #[test]
     fn every_profile_negotiates_host_valid_hidden_controls_and_keyboard_grids() {
         for profile in kobo_profile::SUPPORTED_PROFILES {
-            let portrait = DisplayMetrics {
-                width: i32::try_from(profile.width).expect("profile width"),
-                height: i32::try_from(profile.height).expect("profile height"),
-                pixels_per_inch: i32::from(profile.pixels_per_inch),
-                text_scale: kobo_ui::TextScale::Default,
-            };
-            let metrics = portrait.oriented(Orientation::Landscape);
-            let hidden = Paperterm::grid_for(Input::Full, false, &metrics);
-            let controls = Paperterm::grid_for(Input::Controls, false, &metrics);
-            let open = Paperterm::grid_for(Input::Full, true, &metrics);
-            for (state, grid) in [
-                ("initial", Paperterm::grid_for(Input::None, false, &metrics)),
-                ("hidden", hidden),
-                ("controls", controls),
-                ("open", open),
-            ] {
-                assert_host_valid(grid, &format!("{} {state}", profile.id));
+            for text_scale in kobo_ui::TextScale::STEPS {
+                let metrics = DisplayMetrics {
+                    width: i32::try_from(profile.width).expect("profile width"),
+                    height: i32::try_from(profile.height).expect("profile height"),
+                    pixels_per_inch: i32::from(profile.pixels_per_inch),
+                    text_scale,
+                }
+                .oriented(Orientation::Portrait);
+                // Use the shipped fonts, not bitmap fallback geometry.
+                let _runner = kobo_sdk::AppRunner::with_metrics(Paperterm::default(), metrics);
+                let hidden = Paperterm::grid_for(Input::Full, false, &metrics);
+                let controls = Paperterm::grid_for(Input::Controls, false, &metrics);
+                let open = Paperterm::grid_for(Input::Full, true, &metrics);
+                for (state, grid) in [
+                    ("initial", Paperterm::grid_for(Input::None, false, &metrics)),
+                    ("hidden", hidden),
+                    ("controls", controls),
+                    ("open", open),
+                ] {
+                    assert_host_valid(grid, &format!("{} {text_scale:?} {state}", profile.id));
+                }
+                assert_eq!(hidden.0, open.0, "{} columns", profile.id);
+                // Large panels may reach the 64-row protocol bound in either state.
+                assert!(hidden.1 >= open.1, "{} keyboard rows", profile.id);
+                assert!(hidden.1 >= controls.1, "{} control rows", profile.id);
+                if profile.id == "clara-bw-391" && text_scale == kobo_ui::TextScale::Default {
+                    assert!(
+                        (70..=80).contains(&hidden.0),
+                        "portrait terminal density: {hidden:?}"
+                    );
+                    assert!(hidden.1 > open.1);
+                }
             }
-            assert_eq!(hidden.0, open.0, "{} columns", profile.id);
-            assert!(hidden.1 > open.1, "{} keyboard rows", profile.id);
-            assert!(hidden.1 > controls.1, "{} control rows", profile.id);
         }
     }
     #[test]
@@ -1734,13 +1746,13 @@ mod tests {
     }
 
     #[test]
-    fn paperterm_requests_landscape_before_its_first_screen() {
+    fn paperterm_requests_portrait_before_its_first_screen() {
         let mut app = Paperterm::default();
         let mut context = Context::default();
         app.on_start(&mut context);
         assert_eq!(
             context.commands().first(),
-            Some(&Command::SetOrientation(Orientation::Landscape))
+            Some(&Command::SetOrientation(Orientation::Portrait))
         );
     }
 
