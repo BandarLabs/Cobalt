@@ -289,6 +289,16 @@ impl TextEntry {
     /// claims the cancel action too, because a keyboard covering the panel is
     /// modal whether or not the author thought of it that way.
     pub fn handle(&mut self, action: ActionId) -> Option<Typing> {
+        self.handle_text(action, true)
+    }
+
+    /// Handle private values without trimming meaningful password whitespace.
+    /// Empty input cancels; a nonempty value is returned exactly as entered.
+    pub fn handle_verbatim(&mut self, action: ActionId) -> Option<Typing> {
+        self.handle_text(action, false)
+    }
+
+    fn handle_text(&mut self, action: ActionId, trim: bool) -> Option<Typing> {
         if !self.open {
             if self.opens_on == Some(action) {
                 self.open();
@@ -307,10 +317,11 @@ impl TextEntry {
                 self.open = false;
                 // Whitespace only is nothing. Returning it would make every
                 // caller check, and half of them would forget.
-                if text.trim().is_empty() {
+                let text = if trim { text.trim().to_string() } else { text };
+                if text.is_empty() {
                     Some(Typing::Cancelled)
                 } else {
-                    Some(Typing::Submitted(text.trim().to_string()))
+                    Some(Typing::Submitted(text))
                 }
             }
         }
@@ -355,9 +366,9 @@ impl ScreenBuilder {
                 cells.push((
                     SHIFT.to_string(),
                     if keyboard.is_shifted() {
-                        "SHIFT".to_string()
+                        "Shift on".to_string()
                     } else {
-                        "shift".to_string()
+                        "Shift".to_string()
                     },
                 ));
             }
@@ -370,10 +381,21 @@ impl ScreenBuilder {
                 cells.push((key_name(index, column), label));
             }
             if index == 2 {
-                cells.push((BACKSPACE.to_string(), "back".to_string()));
+                cells.push((BACKSPACE.to_string(), "Delete character".to_string()));
             }
             let columns = u8::try_from(cells.len()).unwrap_or(u8::MAX);
             screen = screen.grid(columns, false, cells);
+            if index == 2 {
+                if let Some(kobo_ui::Node::Grid { cells, .. }) = screen.nodes.last_mut() {
+                    if let Some(cell) = cells.first_mut() {
+                        cell.glyph = Some(kobo_ui::Glyph::Shift);
+                        cell.selected = keyboard.is_shifted();
+                    }
+                    if let Some(cell) = cells.last_mut() {
+                        cell.glyph = Some(kobo_ui::Glyph::Backspace);
+                    }
+                }
+            }
         }
         screen.grid(
             3,
