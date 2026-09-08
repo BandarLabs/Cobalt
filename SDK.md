@@ -232,11 +232,16 @@ pub trait KoboApp {
 
     fn on_resume(&mut self, context: &mut Context) {}
     fn on_suspend(&mut self, context: &mut Context) {}
+    fn can_suspend(&self) -> bool { true }
     fn on_scheduled_wake(&mut self, context: &mut Context) {}
     fn on_exit(&mut self, context: &mut Context) {}
     fn on_device_result(&mut self, cx: &mut Context, request: DeviceRequest, result: DeviceResult) {}
     fn on_task(&mut self, context: &mut Context, task: TaskId, outcome: TaskOutcome) {}
     fn on_store(&mut self, context: &mut Context, result: StoreResult) {}
+    // These default to forwarding the result to on_store. Override to route failures by key.
+    fn on_load(&mut self, context: &mut Context, key: &str, result: StoreResult) {}
+    fn on_save(&mut self, context: &mut Context, key: &str, result: StoreResult) {}
+    fn on_shelf(&mut self, context: &mut Context, name: &str, result: StoreResult) {}
     fn on_shell_event(&mut self, context: &mut Context, event: ShellEvent) {}
     fn on_background(&mut self, context: &mut Context) {}
     fn on_foreground(&mut self, context: &mut Context) {}
@@ -977,6 +982,17 @@ only credential names authorized for the calling app, and the app cannot read
 the stored value back. The setup prompt also shows the CLI alternative and
 instructs the owner to restart the app after using it.
 
+For an owner-hosted service, bind the account to its HTTPS server with
+`CredentialSetup::bind_server` or `context.secrets().set_server(name, server,
+value)`. Protocol 14 checks the origin, port and base path before attaching an
+account to a request. The app must be authorized for that named account;
+Panels uses `komga`. Changing servers requires entering the account for the new
+address. Use `ProviderSetup::with_server_accounts` for separate username and
+password steps; keep the setup object until the matching save reply arrives.
+A save acknowledgement confirms storage, not a successful connection. Validate
+the provider response before showing Connected. See
+[Panels' server flow](apps/panels/src/server.rs).
+
 ### Owner trust roots
 
 Every request is HTTPS, verified against the public roots every browser
@@ -1042,6 +1058,48 @@ are atomic, so the worst a power loss can cost is the change that was in
 flight. The application names a key and never a path: where the bytes live, and
 that they cannot be another application's bytes, is the runtime's problem.
 
+### Durable edits and verified copies
+
+Use `kobo_state::draft::Draft` to retain the latest edit through pending or failed
+writes. A failed acknowledgement must leave a Retry action and the unsaved data.
+`kobo_state::record::Schema` bounds and versions stored records; preserve corrupt
+or newer records rather than interpreting them as empty. `kobo_state::outbox`
+provides a durable queue for deferred work; enqueueing is not remote delivery.
+
+For files, use `kobo_sdk::imports::Import`: show its preview, begin on the owner's
+confirmation, and forward shelf/save results until copy verification and receipt
+storage complete. Use `kobo_sdk::exports::Export` for text, Markdown, PNG or JPEG
+copies up to 32 MiB. Preparing an export makes an acknowledged offer on the
+reader. The computer receives it with:
+
+```sh
+kobo export --app APP --device reader.local --out "$HOME/Downloads"
+# A running simulator, using the same TMPDIR:
+kobo export --app APP --sim --out "$HOME/Downloads"
+```
+
+Replace `APP` with an app that has prepared an export. Receiving uses the existing
+SSH connection and verifies the complete file before publishing a local copy. It
+keeps the reader's original and never replaces a different local file. A failed
+transfer can be retried. See the [export integration guide](docs/quality/sdk-export-and-copy.md)
+and [working SDK example](crates/kobo-sim/examples/export.rs) for callback routing,
+retry and save-barrier handling.
+
+<img src="docs/quality/evidence/exports/text-ready.png" width="320" alt="SDK export fixture showing Garden notes ready for its computer after acknowledged storage">
+
+*Actual Clara BW simulator capture of the SDK export fixture; this is not a
+physical-device transfer or a claim that every app already offers export.*
+
+### Shared comic reading
+
+`kobo_comic` inspects bounded CBZ archives and decodes PNG/JPEG pages.
+`kobo_bookview::comic::ComicView` provides fit, zoom, pan, thumbnails, page jump,
+rotation, spreads and right-to-left reading. Persist `memory()` through an
+acknowledged draft, forward actions to `act`, reflow when metrics change, and
+`close` to release picture resources. Restore a position only against its comic.
+See [Panels](apps/panels/README.md) for a complete app integration. CBR/RAR decoding
+is deferred; no RAR codec or library is included.
+
 ---
 
 ## 8. A terminal
@@ -1104,6 +1162,15 @@ fn on_foreground(&mut self, context: &mut Context) {
 Drawing while backgrounded is not an error, it is just traffic for no picture.
 A long-running job should keep its state and rebuild the screen once on the way
 back, instead of sending one per chunk of progress.
+
+During power preparation, `on_suspend` must enqueue durable state writes;
+`can_suspend` must remain false while required writes or retries are unresolved.
+The SDK drains storage acknowledgements, including chained writes, before
+accepting preparation. Native preparation requires protocol 14 from every
+hosted app. Current device behavior returns to the stock reader after the save
+barrier and panel fence. Native kernel suspend, RTC wake and automatic cover
+sleep remain disabled pending hardware validation; simulator scenarios do not
+establish those hardware capabilities.
 
 ---
 
@@ -1449,8 +1516,8 @@ one simulator at a time, with no reader anywhere near it.
 
 **Pass `--ideal` when you are reading the screenshots rather than the
 refreshes.** A screenshot is taken from the simulated panel, and the simulated
-panel keeps the e-ink residue of what it drew last, exactly as the device
-does. That is what you want when the question is whether a screen refreshes
+panel models residue from previous refreshes. Its timing and ghosting are
+approximations that still need comparison with physical reader captures. That is what you want when the question is whether a screen refreshes
 cleanly, and exactly what you do not want when the question is whether it
 *reads* well: two screens overlaid are hard for a person to judge and worse
 for a model. `--ideal` takes the frame without the residue. `kobo shot`

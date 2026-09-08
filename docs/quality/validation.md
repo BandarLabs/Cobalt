@@ -492,3 +492,15 @@ save request; the simulator uses the same fixed protocol floor. This check is
 covered by the native Unix-socket fixture. A fresh catalog sweep at `3b0dc79`
 passes **43/43 apps** (36 committed interaction routes, seven launch-only checks),
 excluding Zotero Reader. This sweep predates only the native barrier-version guard.
+
+## Public documentation follow-through
+
+README, SDK.md and the public SDK page now document the export receiver, verified
+copy lifecycle, acknowledged drafts, server-bound accounts and shared CBZ reader.
+The public SDK page uses the actual committed export fixture screenshot with its
+simulator limitation stated. Device session instructions now explain the timed
+two-minute wake-lock lease, renewal and stock-reader suspend limitation. Simulator
+residue is described as a model awaiting physical calibration. API names and CLI
+lease behavior were checked against source; local image paths and diff whitespace
+were checked. No code or physical-reader behavior changed in this documentation
+update. Beta was fetched again and remains 7f1a543.
