@@ -175,10 +175,9 @@ impl Controller {
             Input::Button(_) => return Ok(()),
             Input::Sleep(reason) => {
                 if apps.iter().any(|app| {
-                    app.session
-                        .state
-                        .lock()
-                        .map_or(true, |state| state.protocol < kobo_protocol::VERSION)
+                    app.session.state.lock().map_or(true, |state| {
+                        state.protocol < kobod::power::MIN_APP_PROTOCOL
+                    })
                 }) {
                     self.refusal =
                         Some("An app needs updating before it can acknowledge sleep".into());

@@ -1060,6 +1060,7 @@ struct Hosted {
     /// applications are removed from the middle when they end.
     id: u64,
     name: String,
+    protocol: u8,
     path: PathBuf,
     /// Root-owned filesystem visible to this application on the device.
     jail: Option<PathBuf>,
@@ -1486,8 +1487,9 @@ fn host_applications(
             }
             let idle_at = last_activity + limits.idle;
             if now >= idle_at && power.state() == kobod::power::State::Awake {
-                match power.begin(
-                    &apps.iter().map(|app| app.id).collect::<Vec<_>>(),
+                match begin_power(
+                    &mut power,
+                    &apps,
                     navigation_millis,
                     kobod::power::SleepReason::Idle,
                     power_conditions(&apps, touch, kobo_hal::power_source::read()),
@@ -1675,8 +1677,9 @@ fn host_applications(
                                     }
                                 }
                                 Some(kobod::power::ButtonAction::Sleep) => {
-                                    match power.begin(
-                                        &apps.iter().map(|app| app.id).collect::<Vec<_>>(),
+                                    match begin_power(
+                                        &mut power,
+                                        &apps,
                                         navigation_millis,
                                         kobod::power::SleepReason::PowerButton,
                                         power_conditions(
@@ -2742,6 +2745,27 @@ fn apply_power_effect(apps: &mut [Hosted], effect: kobod::power::Effect) -> Resu
     Ok(false)
 }
 
+fn begin_power(
+    power: &mut kobod::power::Power,
+    apps: &[Hosted],
+    now: u64,
+    reason: kobod::power::SleepReason,
+    conditions: kobod::power::Conditions,
+) -> Result<kobod::power::Effect, kobod::power::Refusal> {
+    if apps
+        .iter()
+        .any(|app| app.protocol < kobod::power::MIN_APP_PROTOCOL)
+    {
+        return Err(kobod::power::Refusal::UnsupportedApp);
+    }
+    power.begin(
+        &apps.iter().map(|app| app.id).collect::<Vec<_>>(),
+        now,
+        reason,
+        conditions,
+    )
+}
+
 fn power_conditions(
     apps: &[Hosted],
     touch: &TouchSink,
@@ -3247,6 +3271,7 @@ fn start_application(
     };
     apps.push(Hosted {
         id,
+        protocol: version,
         // Named explicitly, and only here. A shell on this device is root on a
         // writable root filesystem, so it is the one capability that is never
         // granted by the same blanket line as the rest; when manifests arrive
@@ -4451,6 +4476,7 @@ mod tests {
         let child = std::process::Command::new("/usr/bin/true").spawn().unwrap();
         let mut apps = vec![Hosted {
             id: 1,
+            protocol: kobo_protocol::VERSION,
             name: "fixture".into(),
             path: root.join("fixture"),
             jail: None,
@@ -4469,6 +4495,32 @@ mod tests {
             painted: 0,
             used: std::time::Instant::now(),
         }];
+        let mut power = kobod::power::Power::default();
+        apps[0].protocol = kobod::power::MIN_APP_PROTOCOL - 1;
+        assert_eq!(
+            super::begin_power(
+                &mut power,
+                &apps,
+                0,
+                kobod::power::SleepReason::Owner,
+                kobod::power::Conditions {
+                    charging: false,
+                    usb_attached: false,
+                    keep_awake_until: 0,
+                    terminal_open: false,
+                    input_quiet: true,
+                    panel_idle: true,
+                    tasks_idle: true
+                }
+            ),
+            Err(kobod::power::Refusal::UnsupportedApp)
+        );
+        assert_eq!(power.state(), kobod::power::State::Awake);
+        assert!(
+            !apps[0].tasks.is_quiescent(),
+            "an old app must not have its task admission paused"
+        );
+        apps[0].protocol = kobo_protocol::VERSION;
         assert!(!super::apply_power_effect(&mut apps, Effect::Prepare { generation: 4 }).unwrap());
         assert!(apps[0].tasks.is_quiescent());
         assert_eq!(
