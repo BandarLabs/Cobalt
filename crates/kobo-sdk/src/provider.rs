@@ -45,6 +45,7 @@ pub struct ProviderSetup {
     advice: Option<String>,
     needs_wifi: bool,
     sample: bool,
+    samples: Option<crate::samples::Collection>,
 }
 
 impl std::fmt::Debug for ProviderSetup {
@@ -91,7 +92,23 @@ impl ProviderSetup {
             advice: None,
             needs_wifi: false,
             sample,
+            samples: None,
         })
+    }
+
+    /// Offer an original offline collection through the existing sample action.
+    /// The app opens a separate sample session on `Event::Sample`; no provider
+    /// response, credentials or durable owner data are synthesized here.
+    #[must_use]
+    pub fn with_samples(mut self, collection: crate::samples::Collection) -> Self {
+        self.sample = true;
+        self.samples = Some(collection);
+        self
+    }
+
+    #[must_use]
+    pub const fn samples(&self) -> Option<crate::samples::Collection> {
+        self.samples
     }
 
     /// Select the provider's supported header convention without exposing its
@@ -409,6 +426,22 @@ mod tests {
                 .with_authentication(crate::SecretHeader::Named("bad\r\nheader".into()))
                 .is_err()
         );
+    }
+
+    #[test]
+    fn sample_choice_exposes_original_data_without_contacting_or_verifying_an_account() {
+        let mut setup = ProviderSetup::new("Notes", "notes", "/api/account", false)
+            .unwrap()
+            .with_samples(crate::samples::Collection::Notes);
+        let mut context = Context::default();
+        assert_eq!(
+            setup.on_action(&mut context, action_id(SAMPLE)),
+            Some(Event::Sample)
+        );
+        assert_eq!(setup.samples().unwrap().items().len(), 12);
+        assert!(context.commands().is_empty());
+        assert_eq!(setup.connection, Connection::Unchecked);
+        assert!(setup.address.is_empty());
     }
 
     #[test]

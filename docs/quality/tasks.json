@@ -416,8 +416,10 @@
     "pr": 1,
     "group": "Shared SDK and design contracts",
     "task": "Add original sample collections to reusable setup flows",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Three original, explicitly sample-tagged offline collections (12 notes, 8 short readings, 12 cards) attach to ProviderSetup. Choosing a sample performs no network/store work and does not verify an account. 126 SDK tests pass; app-specific sample adoption remains tracked in PR 2."
+    ]
   },
   {
     "id": "SDK-14",
@@ -458,8 +460,10 @@
     "pr": 1,
     "group": "Shared SDK and design contracts",
     "task": "Provide stable inline loading, offline, stale and result surfaces",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Shared inline feedback states retain one measured caption slot across supported profiles, orientations and three text sizes. Regression tests require unchanged content/control coordinates; Draft conversion preserves unsaved/saving/failed distinctions and retained bytes."
+    ]
   },
   {
     "id": "SDK-19",
@@ -474,8 +478,10 @@
     "pr": 1,
     "group": "Shared SDK and design contracts",
     "task": "Add metric-aware validation beyond builder collection limits",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "ScreenBuilder::build_checked_with uses caller metrics/chrome and shared UI diagnostics, refusing omitted collections or error-severity layout issues. Tests reject overflowing screens that pass collection-only validation and accept reachable screens on all profiles/sizes/orientations."
+    ]
   },
   {
     "id": "SDK-21",
@@ -510,8 +516,10 @@
     "pr": 1,
     "group": "Shared SDK and design contracts",
     "task": "Separate UI/SDK responsibilities into maintainable modules without duplicating contracts",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Screen construction moved from the SDK root into builder.rs without changing its public types or duplicating UI geometry. Separate feedback, validation, samples, provider and import modules compose shared UI/runtime contracts. 126 SDK tests, Clippy, strict rustdoc and text-disabled compilation pass; ARMv7 Rust 1.85.1 compile passes."
+    ]
   },
   {
     "id": "HW-01",

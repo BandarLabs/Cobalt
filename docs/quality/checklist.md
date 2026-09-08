@@ -16,7 +16,7 @@ A checked task requires implementation plus recorded validation. Physical measur
 
 ## Status
 
-494 tracked tasks: 67 completed, 1 deferred by the owner, 426 open. Implementation in progress. Evidence is recorded per task in `tasks.json` and in [the validation log](validation.md).
+494 tracked tasks: 71 completed, 1 deferred by the owner, 422 open. Implementation in progress. Evidence is recorded per task in `tasks.json` and in [the validation log](validation.md).
 
 ## PR 1 · Simulator fidelity (SIM-1–10)
 
@@ -65,18 +65,18 @@ A checked task requires implementation plus recorded validation. Physical measur
 - [x] **SDK-10** Provide save acknowledgement and retry/export for unsaved edits.
 - [x] **SDK-11** Provide import receipts, progress and verified availability.
 - [x] **SDK-12** Provide expected-empty, corrupt and unsupported library states.
-- [ ] **SDK-13** Add original sample collections to reusable setup flows.
+- [x] **SDK-13** Add original sample collections to reusable setup flows.
 - [ ] **SDK-14** Extend shared board surface with clue gutters, selection and distinct marks.
 - [ ] **SDK-15** Support larger boards with accessible paging/pan/zoom.
 - [ ] **SDK-16** Provide board undo/control conventions.
 - [x] **SDK-17** Provide injectable calendar date, monotonic time and test entropy.
-- [ ] **SDK-18** Provide stable inline loading, offline, stale and result surfaces.
+- [x] **SDK-18** Provide stable inline loading, offline, stale and result surfaces.
 - [ ] **SDK-19** Provide owner-initiated text/image export and paired handoff.
-- [ ] **SDK-20** Add metric-aware validation beyond builder collection limits.
+- [x] **SDK-20** Add metric-aware validation beyond builder collection limits.
 - [x] **SDK-21** Keep physical hit targets, margins and semantic type tokens authoritative.
 - [x] **SDK-22** Document primary/secondary button hierarchy and stable action placement.
 - [ ] **SDK-23** Keep copy concrete and remove unexplained implementation language from primary flows.
-- [ ] **SDK-24** Separate UI/SDK responsibilities into maintainable modules without duplicating contracts.
+- [x] **SDK-24** Separate UI/SDK responsibilities into maintainable modules without duplicating contracts.
 
 ## PR 1 · Platform requirements from read-only hardware research
 
