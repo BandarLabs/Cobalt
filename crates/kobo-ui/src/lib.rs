@@ -5272,6 +5272,10 @@ pub enum Glyph {
     MorrisPoint,
     /// A legal destination on a Nine Men's Morris board.
     MorrisLegalPoint,
+    /// Remove the character before the typing position.
+    Backspace,
+    /// Capitalize the next typed letter.
+    Shift,
 }
 
 impl Glyph {
@@ -5282,7 +5286,7 @@ impl Glyph {
     /// the set was twenty-one: `Light` and `Close` were authored, shipped, and
     /// covered by none of the tests that walk every glyph. A glyph nobody
     /// rasterises in a test is a blank space beside a label on the panel.
-    pub const ALL: [Self; 66] = [
+    pub const ALL: [Self; 68] = [
         Self::App,
         Self::Book,
         Self::Note,
@@ -5349,6 +5353,8 @@ impl Glyph {
         Self::WhiteDraughtsMan,
         Self::MorrisPoint,
         Self::MorrisLegalPoint,
+        Self::Backspace,
+        Self::Shift,
     ];
 }
 

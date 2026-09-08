@@ -117,6 +117,12 @@ impl ProviderSetup {
     /// # Errors
     /// Refuses malformed header names before the connection request is built.
     pub fn with_authentication(mut self, header: crate::SecretHeader) -> Result<Self, String> {
+        let credentials = CredentialSetup::new(&self.credential.secret, &self.service);
+        self.credentials = if header == crate::SecretHeader::Basic {
+            credentials.with_basic()
+        } else {
+            credentials
+        };
         self.credential.header = header;
         if !self.credential.is_well_formed() {
             return Err("Invalid account header configuration.".into());
