@@ -1,7 +1,9 @@
 //! Four small, deterministic pencil puzzles that work fully offline.
 
 use kobo_sdk::{action_id, ActionId, Context, KoboApp, Screen, ScreenBuilder, StoreResult};
+use kobo_state::draft::{Draft, Status};
 use std::process::ExitCode;
+mod saved;
 
 const STATE: &str = "logicpack-state-v1";
 const SLITHER_TARGET: u16 = 0b1011_0111_0011;
@@ -22,6 +24,7 @@ enum View {
     #[default]
     Puzzle,
     Help,
+    Restart,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -64,7 +67,12 @@ struct Game {
     flagging: bool,
     first_reveal: bool,
     outcome: Outcome,
-    edited: bool,
+    loaded: bool,
+    load_error: Option<String>,
+    draft: Draft,
+    active: Option<u64>,
+    games: [saved::Run; 4],
+    undo: Vec<Vec<u8>>,
 }
 
 impl Default for Game {
@@ -78,13 +86,59 @@ impl Default for Game {
             flagging: false,
             first_reveal: true,
             outcome: Outcome::Playing,
-            edited: false,
+            loaded: false,
+            load_error: None,
+            draft: Draft::restored(Vec::new(), saved::LIMIT).expect("empty draft"),
+            active: None,
+            games: std::array::from_fn(|_| saved::Run::default()),
+            undo: Vec::new(),
         }
     }
 }
 
 impl Game {
+    fn retain(&mut self) {
+        if self.kind != Kind::Home {
+            self.games[usize::from(self.kind.stored() - 1)] = saved::Run {
+                position: self.encode(),
+                undo: self.undo.clone(),
+            };
+        }
+    }
     fn select(&mut self, kind: Kind) {
+        self.retain();
+        self.fresh(kind);
+        if kind != Kind::Home {
+            let run = self.games[usize::from(kind.stored() - 1)].clone();
+            if !run.position.is_empty() {
+                assert!(self.restore(&run.position), "validated run");
+                self.undo = run.undo;
+            }
+        }
+    }
+    fn remember(&mut self, before: Vec<u8>) {
+        if self.encode() != before {
+            if self.undo.len() == saved::HISTORY {
+                self.undo.remove(0);
+            }
+            self.undo.push(before);
+        }
+    }
+    fn save(&mut self, context: &mut Context) {
+        self.retain();
+        self.draft
+            .replace(saved::encode(&self.games, self.kind))
+            .expect("bounded games");
+        self.pump(context);
+    }
+    fn pump(&mut self, context: &mut Context) {
+        if let Some(write) = self.draft.begin() {
+            self.active = Some(write.revision);
+            context.store().save(STATE, write.bytes);
+        }
+    }
+    fn fresh(&mut self, kind: Kind) {
+        self.undo.clear();
         self.kind = kind;
         self.cells = [0; 16];
         self.mines = INITIAL_MINES;
@@ -102,14 +156,43 @@ impl Game {
     }
 
     fn screen(&self) -> Screen {
+        if !self.loaded {
+            let b = ScreenBuilder::new("logicpack-opening").top_bar("Logic Pack");
+            return if let Some(error) = &self.load_error {
+                b.heading("Cannot open progress")
+                    .text(error)
+                    .text("Your saved puzzles have been kept.")
+                    .bottom_action("retry-load", "Retry")
+                    .build()
+            } else {
+                b.text("Opening puzzles…").build()
+            };
+        }
+        if matches!(self.draft.status(), Status::Failed(_)) {
+            return ScreenBuilder::new("logicpack-save-failed")
+                .top_bar("Logic Pack")
+                .heading("Progress not saved")
+                .text("Your latest moves are still here. Keep Logic Pack open and retry saving.")
+                .bottom_action("retry-save", "Retry save")
+                .build();
+        }
+        if self.view == View::Restart {
+            return ScreenBuilder::new("logicpack-restart")
+                .top_bar("Restart puzzle")
+                .owns_back(true)
+                .heading("Clear this puzzle?")
+                .text("The other games will keep their progress. You can undo this restart.")
+                .button("confirm-restart", "Restart")
+                .button("cancel-restart", "Keep playing")
+                .build();
+        }
         if self.view == View::Help {
             return self.help_screen();
         }
         match self.kind {
             Kind::Home => ScreenBuilder::new("logicpack")
                 .top_bar("Logic Pack")
-                .heading("Four pencil puzzles")
-                .secondary(&self.notice)
+                .top_bar_action("how-to-play", "Help")
                 .rows([
                     ("slither", "Slitherlink", "One loop", kobo_sdk::Glyph::Grid),
                     ("hashi", "Hashi", "Connect islands", kobo_sdk::Glyph::Grid),
@@ -121,7 +204,6 @@ impl Game {
                         kobo_sdk::Glyph::Grid,
                     ),
                 ])
-                .button("how-to-play", "How to play")
                 .build(),
             Kind::Slither => self.slither_screen(),
             Kind::Hashi => self.hashi_screen(),
@@ -184,18 +266,38 @@ impl Game {
             .build()
     }
 
-    fn controls(screen: ScreenBuilder) -> Screen {
-        screen
-            .grid(
-                3,
+    fn controls(&self, screen: ScreenBuilder) -> Screen {
+        let mut b = screen.secondary(match self.draft.status() {
+            Status::Saved => "Saved",
+            Status::Saving | Status::Unsaved => "Saving…",
+            Status::Failed(_) => "Not saved",
+        });
+        if self.outcome != Outcome::Playing {
+            b = b.grid(2, false, [("back", "Puzzles")]);
+        } else if self.kind == Kind::Mines {
+            b = b.grid(
+                2,
                 false,
                 [
+                    (
+                        "mine-mode",
+                        if self.flagging {
+                            "Mode: Flag"
+                        } else {
+                            "Mode: Reveal"
+                        },
+                    ),
                     ("check", "Check"),
-                    ("how-to-play", "How to play"),
-                    ("back", "Puzzles"),
                 ],
-            )
-            .build()
+            );
+        } else {
+            b = b.grid(2, false, [("check", "Check"), ("back", "Puzzles")]);
+        }
+        let mut actions = vec![("restart", "Restart")];
+        if !self.undo.is_empty() {
+            actions.insert(0, ("undo", "Undo"));
+        }
+        b.grid(2, false, actions).build()
     }
 
     fn slither_screen(&self) -> Screen {
@@ -232,9 +334,11 @@ impl Game {
                 (format!("fixed-{place}"), "·".to_owned(), None)
             }
         });
-        Self::controls(
+        self.controls(
             ScreenBuilder::new("logicpack-slither")
                 .top_bar("Slitherlink")
+                .owns_back(true)
+                .top_bar_action("how-to-play", "Help")
                 .secondary(&self.notice)
                 .board(5, cells),
         )
@@ -253,9 +357,11 @@ impl Game {
             };
             (name, label, None)
         });
-        Self::controls(
+        self.controls(
             ScreenBuilder::new("logicpack-hashi")
                 .top_bar("Hashi")
+                .owns_back(true)
+                .top_bar_action("how-to-play", "Help")
                 .secondary(&self.notice)
                 .board(5, cells),
         )
@@ -282,9 +388,11 @@ impl Game {
             };
             (name, label, None)
         });
-        Self::controls(
+        self.controls(
             ScreenBuilder::new("logicpack-kakuro")
                 .top_bar("Kakuro")
+                .owns_back(true)
+                .top_bar_action("how-to-play", "Help")
                 .secondary(&self.notice)
                 .board(3, cells),
         )
@@ -292,29 +400,26 @@ impl Game {
 
     fn mines_screen(&self) -> Screen {
         let cells = (0..16).map(|cell| {
-            let label = match self.cells[cell] {
-                1 => adjacent_mines(self.mines, cell).to_string(),
-                2 => "⚑".to_owned(),
-                3 => "✹".to_owned(),
-                _ => "?".to_owned(),
+            let label = if self.outcome == Outcome::Solved && has_mine(self.mines, cell) {
+                "⚑".to_owned()
+            } else {
+                match self.cells[cell] {
+                    1 => digit_label(adjacent_mines(self.mines, cell)),
+                    2 => "⚑".to_owned(),
+                    3 => "✹".to_owned(),
+                    _ => "?".to_owned(),
+                }
             };
             (format!("mine-{cell}"), label, None)
         });
-        ScreenBuilder::new("logicpack-mines")
-            .top_bar("Minesweeper")
-            .secondary(&self.notice)
-            .board(4, cells)
-            .grid(
-                4,
-                false,
-                [
-                    ("mine-mode", if self.flagging { "Flag" } else { "Reveal" }),
-                    ("check", "Check"),
-                    ("how-to-play", "How to play"),
-                    ("back", "Puzzles"),
-                ],
-            )
-            .build()
+        self.controls(
+            ScreenBuilder::new("logicpack-mines")
+                .top_bar("Minesweeper")
+                .owns_back(true)
+                .top_bar_action("how-to-play", "Help")
+                .secondary(&self.notice)
+                .board(4, cells),
+        )
     }
 
     fn tap(&mut self, action: ActionId) -> bool {
@@ -372,7 +477,7 @@ impl Game {
         if has_mine(self.mines, cell) {
             self.cells[cell] = 3;
             self.outcome = Outcome::Lost;
-            self.notice = "Mine opened. Tap Puzzles to try a fresh field.".into();
+            self.notice = "Mine opened. Undo the last move or restart.".into();
             return true;
         }
         self.reveal(cell);
@@ -406,7 +511,20 @@ impl Game {
         if self.kind == Kind::Mines && self.outcome != Outcome::Playing {
             return;
         }
-        self.outcome = if match self.kind {
+        self.outcome = if self.is_complete() {
+            Outcome::Solved
+        } else {
+            Outcome::Playing
+        };
+        self.notice = if self.outcome == Outcome::Solved {
+            "Solved.".into()
+        } else {
+            "Not solved yet. Recheck your marks.".into()
+        };
+    }
+
+    fn is_complete(&self) -> bool {
+        match self.kind {
             Kind::Slither => {
                 let mask = self.cells[..12]
                     .iter()
@@ -420,16 +538,7 @@ impl Game {
             Kind::Kakuro => self.cells[..3] == KAKURO_SOLUTION,
             Kind::Mines => (0..16).all(|cell| has_mine(self.mines, cell) || self.cells[cell] == 1),
             Kind::Home => false,
-        } {
-            Outcome::Solved
-        } else {
-            Outcome::Playing
-        };
-        self.notice = if self.outcome == Outcome::Solved {
-            "Solved.".into()
-        } else {
-            "Not solved yet. Recheck your marks.".into()
-        };
+        }
     }
 
     fn encode(&self) -> Vec<u8> {
@@ -490,18 +599,63 @@ impl Game {
         let Some(flags) = flags else {
             return false;
         };
-        self.kind = kind;
-        self.cells = cells;
-        self.mines = mines;
-        self.flagging = flags[0];
-        self.first_reveal = flags[1];
-        self.outcome = match (flags[2], flags[3]) {
+        let outcome = match (flags[2], flags[3]) {
             (false, false) => Outcome::Playing,
             (true, false) => Outcome::Lost,
             (false, true) => Outcome::Solved,
             (true, true) => return false,
         };
-        self.notice = "Saved puzzle restored.".into();
+        let used = match kind {
+            Kind::Home => 0,
+            Kind::Slither => 12,
+            Kind::Hashi => 4,
+            Kind::Kakuro => 3,
+            Kind::Mines => 16,
+        };
+        let maximum = match kind {
+            Kind::Kakuro => 9,
+            Kind::Mines => 3,
+            _ => 2,
+        };
+        if cells[..used].iter().any(|c| *c > maximum) || cells[used..].iter().any(|c| *c != 0) {
+            return false;
+        }
+        if kind != Kind::Mines
+            && (outcome == Outcome::Lost || flags[0] || !flags[1] || mines != INITIAL_MINES)
+        {
+            return false;
+        }
+        if kind == Kind::Mines
+            && (cells
+                .iter()
+                .enumerate()
+                .any(|(i, c)| (*c == 1 && has_mine(mines, i)) || (*c == 3 && !has_mine(mines, i)))
+                || (flags[1] && cells.iter().any(|c| *c == 1 || *c == 3))
+                || (outcome == Outcome::Lost) != cells.contains(&3))
+        {
+            return false;
+        }
+        let candidate = Self {
+            kind,
+            cells,
+            mines,
+            ..Self::default()
+        };
+        if outcome == Outcome::Solved && !candidate.is_complete() {
+            return false;
+        }
+        self.kind = kind;
+        self.cells = cells;
+        self.mines = mines;
+        self.flagging = flags[0];
+        self.first_reveal = flags[1];
+        self.outcome = outcome;
+        self.notice = match outcome {
+            Outcome::Solved => "Solved.",
+            Outcome::Lost => "Mine opened. Undo the last move or restart.",
+            Outcome::Playing => "Continue your puzzle.",
+        }
+        .into();
         true
     }
 }
@@ -551,26 +705,108 @@ fn adjacent_mines(mines: u16, cell: usize) -> u8 {
 
 impl KoboApp for Game {
     fn on_start(&mut self, context: &mut Context) {
+        context.set_orientation(kobo_sdk::Orientation::Portrait);
         context.store().load(STATE);
         context.set_screen(self.screen());
     }
 
-    fn on_store(&mut self, context: &mut Context, result: StoreResult) {
-        if let StoreResult::Loaded { key, value } = result {
-            if key == STATE && !self.edited {
-                if let Some(bytes) = value {
-                    if !self.restore(&bytes) {
-                        self.notice = "Saved puzzle was damaged and was ignored.".into();
-                    }
-                }
-                context.set_screen(self.screen());
-            }
+    fn on_load(&mut self, context: &mut Context, key: &str, result: StoreResult) {
+        if key != STATE || self.loaded {
+            return;
         }
+        match result {
+            StoreResult::Loaded {
+                value: Some(bytes), ..
+            } => match saved::decode(&bytes) {
+                Some((games, kind)) => {
+                    self.games = games;
+                    self.fresh(Kind::Home);
+                    self.select(kind);
+                    self.draft = Draft::restored(bytes, saved::LIMIT).expect("validated bytes");
+                    self.loaded = true;
+                    self.load_error = None;
+                }
+                None => self.load_error = Some("This saved record could not be read.".into()),
+            },
+            StoreResult::Loaded { value: None, .. } => {
+                self.loaded = true;
+                self.load_error = None;
+            }
+            _ => self.load_error = Some("Storage could not be read.".into()),
+        }
+        context.set_screen(self.screen());
+    }
+    fn on_save(&mut self, context: &mut Context, key: &str, result: StoreResult) {
+        if key != STATE {
+            return;
+        }
+        if let Some(revision) = self.active.take() {
+            self.draft.finish(
+                revision,
+                if matches!(result, StoreResult::Saved { .. }) {
+                    Ok(())
+                } else {
+                    Err("Storage could not be written.".into())
+                },
+            );
+            self.pump(context);
+            context.set_screen(self.screen());
+        }
+    }
+    fn can_suspend(&self) -> bool {
+        !self.loaded || matches!(self.draft.status(), Status::Saved)
+    }
+    fn on_background(&mut self, context: &mut Context) {
+        self.pump(context);
     }
 
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
+        if !self.loaded {
+            if action == action_id("retry-load") && self.load_error.take().is_some() {
+                context.store().load(STATE);
+                context.set_screen(self.screen());
+            }
+            return;
+        }
+        if matches!(self.draft.status(), Status::Failed(_)) {
+            if action == action_id("retry-save") {
+                self.draft.retry();
+                self.pump(context);
+                context.set_screen(self.screen());
+            }
+            return;
+        }
+        let before = self.encode();
+        let previous_kind = self.kind;
         let mut changed = true;
         let mut save = false;
+        if self.view == View::Restart {
+            if action == action_id("confirm-restart") {
+                let history = std::mem::take(&mut self.undo);
+                self.fresh(self.kind);
+                self.undo = history;
+                self.remember(before);
+                self.save(context);
+            } else if action != action_id("cancel-restart") && action != ActionId::BACK {
+                return;
+            }
+            self.view = View::Puzzle;
+            context.set_screen(self.screen());
+            return;
+        }
+        if action == action_id("undo") && self.kind != Kind::Home {
+            if let Some(position) = self.undo.pop() {
+                assert!(self.restore(&position));
+                self.save(context);
+            }
+            context.set_screen(self.screen());
+            return;
+        }
+        if action == action_id("restart") && self.kind != Kind::Home {
+            self.view = View::Restart;
+            context.set_screen(self.screen());
+            return;
+        }
         if self.view == View::Help {
             if action == action_id("close-help") || action == ActionId::BACK {
                 self.view = View::Puzzle;
@@ -585,6 +821,7 @@ impl KoboApp for Game {
                 action if action == action_id("mines") => self.select(Kind::Mines),
                 action if action == action_id("how-to-play") => self.view = View::Help,
                 action if action == action_id("back") || action == ActionId::BACK => {
+                    self.retain();
                     self.kind = Kind::Home;
                     self.notice = "Choose a puzzle.".into();
                 }
@@ -604,13 +841,20 @@ impl KoboApp for Game {
                 }
                 _ => {
                     changed = self.tap(action);
+                    if changed && self.kind != Kind::Mines {
+                        self.outcome = Outcome::Playing;
+                        self.notice = "Keep going. Check when you are ready.".into();
+                    }
                     save = changed;
                 }
             }
         }
         if save {
-            self.edited = true;
-            context.store().save(STATE, self.encode());
+            self.remember(before);
+            self.save(context);
+        }
+        if !save && self.kind != previous_kind {
+            self.save(context);
         }
         if changed {
             context.set_screen(self.screen());
@@ -635,7 +879,10 @@ mod tests {
 
     #[test]
     fn all_four_puzzles_have_real_winning_positions() {
-        let mut game = Game::default();
+        let mut game = Game {
+            loaded: true,
+            ..Game::default()
+        };
         game.select(Kind::Slither);
         for edge in 0..12 {
             game.cells[edge] = u8::from(SLITHER_TARGET & (1 << edge) != 0);
@@ -656,7 +903,10 @@ mod tests {
 
     #[test]
     fn minesweeper_reseats_the_first_mine_and_can_lose_later() {
-        let mut game = Game::default();
+        let mut game = Game {
+            loaded: true,
+            ..Game::default()
+        };
         game.select(Kind::Mines);
         assert!(has_mine(game.mines, 5));
         assert!(game.tap_mine(5));
@@ -671,7 +921,10 @@ mod tests {
 
     #[test]
     fn progress_round_trips_and_malformed_state_is_refused() {
-        let mut game = Game::default();
+        let mut game = Game {
+            loaded: true,
+            ..Game::default()
+        };
         game.select(Kind::Hashi);
         game.cells[1] = 2;
         let mut restored = Game::default();
@@ -690,7 +943,10 @@ mod tests {
             Kind::Kakuro,
             Kind::Mines,
         ] {
-            let mut game = Game::default();
+            let mut game = Game {
+                loaded: true,
+                ..Game::default()
+            };
             game.select(kind);
             assert!(game
                 .screen()
@@ -717,7 +973,10 @@ mod regression_tests {
     use super::*;
     #[test]
     fn checking_a_lost_field_preserves_the_loss_after_restore() {
-        let mut game = Game::default();
+        let mut game = Game {
+            loaded: true,
+            ..Game::default()
+        };
         game.select(Kind::Mines);
         assert!(game.tap_mine(0));
         assert!(game.tap_mine(5));
@@ -729,7 +988,7 @@ mod regression_tests {
         restored.check();
         assert_eq!(restored.outcome, Outcome::Lost);
         assert!(!restored.tap_mine(1));
-        restored.select(Kind::Mines);
+        restored.fresh(Kind::Mines);
         assert!(restored.tap_mine(1));
     }
 }
@@ -749,6 +1008,7 @@ mod help_layout_tests {
         .map(|kind| {
             let game = Game {
                 kind,
+                loaded: true,
                 ..Game::default()
             };
             game.help_screen()
@@ -775,6 +1035,206 @@ mod help_layout_tests {
                         .layout_with(&metrics, &chrome)
                         .rect_of_action(action_id("close-help"))
                         .is_some());
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod durable_tests {
+    use super::*;
+    fn ready() -> Game {
+        Game {
+            loaded: true,
+            ..Game::default()
+        }
+    }
+    fn act(g: &mut Game, name: &str) {
+        g.on_action(&mut Context::default(), action_id(name));
+    }
+    #[test]
+    fn switching_games_and_reopening_keeps_progress_and_undo() {
+        let mut game = ready();
+        act(&mut game, "hashi");
+        act(&mut game, "route-0");
+        act(&mut game, "back");
+        act(&mut game, "kakuro");
+        act(&mut game, "kakuro-1");
+        let bytes = saved::encode(&game.games, game.kind);
+        let mut reopened = Game::default();
+        reopened.on_load(
+            &mut Context::default(),
+            STATE,
+            StoreResult::Loaded {
+                key: STATE.into(),
+                value: Some(bytes),
+            },
+        );
+        assert_eq!(reopened.kind, Kind::Kakuro);
+        assert_eq!(reopened.cells[1], 1);
+        act(&mut reopened, "back");
+        act(&mut reopened, "hashi");
+        assert_eq!(reopened.cells[0], 1);
+        act(&mut reopened, "undo");
+        assert_eq!(reopened.cells[0], 0);
+        act(&mut reopened, "back");
+        act(&mut reopened, "kakuro");
+        assert_eq!(reopened.cells[1], 1);
+    }
+    #[test]
+    fn restart_requires_confirmation_and_is_one_undo_step() {
+        let mut g = ready();
+        act(&mut g, "hashi");
+        act(&mut g, "route-0");
+        act(&mut g, "route-1");
+        let before = g.encode();
+        act(&mut g, "restart");
+        act(&mut g, "cancel-restart");
+        assert_eq!(g.encode(), before);
+        act(&mut g, "restart");
+        act(&mut g, "confirm-restart");
+        assert_eq!(g.cells, [0; 16]);
+        act(&mut g, "undo");
+        assert_eq!(g.encode(), before);
+        act(&mut g, "undo");
+        assert_eq!(g.cells[1], 0);
+    }
+    #[test]
+    fn old_write_acknowledgement_cannot_mark_newer_moves_saved() {
+        let mut g = ready();
+        act(&mut g, "hashi");
+        let old = g.active.unwrap();
+        act(&mut g, "route-0");
+        let bytes = g.draft.bytes().to_vec();
+        g.on_save(
+            &mut Context::default(),
+            STATE,
+            StoreResult::Saved { key: STATE.into() },
+        );
+        assert!(g.active.unwrap() > old);
+        assert_eq!(g.draft.status(), Status::Saving);
+        g.on_save(
+            &mut Context::default(),
+            STATE,
+            StoreResult::Denied(kobo_sdk::StoreError::Unwritable),
+        );
+        assert!(matches!(g.draft.status(), Status::Failed(_)));
+        assert_eq!(g.draft.bytes(), bytes);
+        g.on_background(&mut Context::default());
+        assert!(g.active.is_none());
+        act(&mut g, "retry-save");
+        assert_eq!(g.draft.status(), Status::Saving);
+        g.on_save(
+            &mut Context::default(),
+            STATE,
+            StoreResult::Saved { key: STATE.into() },
+        );
+        assert_eq!(g.draft.status(), Status::Saved);
+    }
+    #[test]
+    fn loss_and_flood_reveal_can_be_undone_together_with_mine_positions() {
+        let mut g = ready();
+        act(&mut g, "mines");
+        let initial = g.encode();
+        act(&mut g, "mine-5");
+        assert!(!has_mine(g.mines, 5));
+        act(&mut g, "undo");
+        assert_eq!(g.encode(), initial);
+        act(&mut g, "mine-0");
+        let safe = g.encode();
+        act(&mut g, "mine-5");
+        assert_eq!(g.outcome, Outcome::Lost);
+        act(&mut g, "undo");
+        assert_eq!(g.encode(), safe);
+    }
+    #[test]
+    fn invalid_and_future_records_are_preserved_without_partial_restore() {
+        let mut g = ready();
+        g.select(Kind::Hashi);
+        g.cells[0] = 1;
+        let before = g.encode();
+        let bad = String::from_utf8(before.clone())
+            .unwrap()
+            .replace("|0|0", "|1|1");
+        assert_ne!(bad.as_bytes(), before);
+        assert!(!g.restore(bad.as_bytes()));
+        assert_eq!(g.encode(), before);
+        for bytes in [
+            b"bad".to_vec(),
+            vec![b'x'; saved::LIMIT + 1],
+            b"1|9,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0|33824|0|1|0|0".to_vec(),
+        ] {
+            assert!(saved::decode(&bytes).is_none());
+            let mut unopened = Game::default();
+            unopened.on_load(
+                &mut Context::default(),
+                STATE,
+                StoreResult::Loaded {
+                    key: STATE.into(),
+                    value: Some(bytes),
+                },
+            );
+            assert!(!unopened.loaded);
+            assert!(unopened.load_error.is_some());
+            act(&mut unopened, "hashi");
+            assert_eq!(unopened.kind, Kind::Home);
+            assert!(unopened.active.is_none());
+        }
+        g.retain();
+        let bytes = saved::encode(&g.games, g.kind);
+        let future = String::from_utf8(bytes)
+            .unwrap()
+            .replace("\"version\":1", "\"version\":99");
+        assert!(saved::decode(future.as_bytes()).is_none());
+    }
+    #[test]
+    fn legacy_record_migrates_and_bounded_history_round_trips() {
+        let mut g = ready();
+        g.select(Kind::Kakuro);
+        g.cells[0] = 3;
+        let (games, kind) = saved::decode(&g.encode()).unwrap();
+        assert_eq!(kind, Kind::Kakuro);
+        assert_eq!(games[2].position, g.encode());
+        for _ in 0..100 {
+            act(&mut g, "kakuro-1");
+        }
+        assert_eq!(g.undo.len(), saved::HISTORY);
+        let bytes = saved::encode(&g.games, g.kind);
+        assert!(bytes.len() <= saved::LIMIT);
+        assert_eq!(saved::decode(&bytes).unwrap().0, g.games);
+    }
+    #[test]
+    fn actual_fonts_keep_puzzle_controls_visible_at_every_text_size() {
+        for (width, height, ppi) in [(1072, 1448, 300), (758, 1024, 212)] {
+            for text_scale in kobo_ui::TextScale::STEPS {
+                let metrics = kobo_sdk::DisplayMetrics {
+                    width,
+                    height,
+                    pixels_per_inch: ppi,
+                    text_scale,
+                };
+                let _runner = kobo_sdk::AppRunner::with_metrics(Game::default(), metrics);
+                for kind in [
+                    Kind::Home,
+                    Kind::Slither,
+                    Kind::Hashi,
+                    Kind::Kakuro,
+                    Kind::Mines,
+                ] {
+                    let mut g = ready();
+                    g.select(kind);
+                    for view in [View::Puzzle, View::Help, View::Restart] {
+                        g.view = view;
+                        let chrome =
+                            kobo_ui::Chrome::measuring(view != View::Puzzle || kind != Kind::Home);
+                        let diagnostics = g.screen().diagnostics(&metrics, &chrome);
+                        assert!(
+                            diagnostics.issues.is_empty(),
+                            "{kind:?} {view:?} {metrics:?}: {:?}",
+                            diagnostics.issues
+                        );
+                    }
                 }
             }
         }

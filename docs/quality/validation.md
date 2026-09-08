@@ -915,3 +915,40 @@ All six Paperterm checklist tasks are now complete for local/simulator validatio
 The program totals **128 done, 366 open and one deferred CBR task**; PR 2 has
 **36/269 complete**. Physical Clara BW acceptance remains scheduled after all
 three PRs, and all 133 companion tasks remain open.
+
+## Logic Pack progress and undo — 9 September 2026
+
+Logic Pack 0.1.3 keeps separate progress for its four current games. Switching
+games no longer resets them. Each game retains up to 32 undo snapshots,
+including mine relocation, flood reveals, flags, checks and completion.
+Restart asks first, preserves the other games and can itself be undone.
+Completed fields show appropriate actions; Minesweeper uses blank zero-neighbour
+squares and flags the remaining mines on completion.
+
+The bounded 24 KiB versioned record verifies each original puzzle identity,
+position and undo history before restoring anything. Legacy single-game records
+remain unchanged until the next edit. Invalid and future records stay untouched.
+The shared draft state releases one write at a time, acknowledges the exact
+snapshot and offers explicit retry after failure without discarding newer moves.
+The app prevents suspension with unsaved edits. It opens in portrait and uses
+two-column controls with Help in the top bar.
+
+**13 app tests pass**, including shipped-font layouts at all nine text scales
+on Clara BW and 758 × 1024 displays. Strict all-target Clippy, Rust 1.85.1 ARMv7
+musl checking and the published-catalog version gate pass. The
+[actual Extra-large simulator route](evidence/logicpack/progress-recovery/result.json)
+passes **16 checks**: independent progress, forced restart, persistent undo,
+full-store preservation/retry, confirmed restart/undo, all four completions and
+reopenings, first-mine relocation/loss undo, help, the committed drive route,
+legacy migration and future-record preservation. Every capture checks zero
+fetch/post effects and records binary/source/font provenance. Captures were
+made from the working tree based on 87ea6ce. App and simulator docs, release
+notes, public page and actual screenshots are updated.
+
+LOGIC-02, LOGIC-03 and LOGIC-05 are complete for the current four games.
+LOGIC-01 remains open for a varied validated collection with difficulty guides;
+LOGIC-04 remains open for proper line, bridge and cross-sum board rendering.
+The Minesweeper control overflow is resolved, but generic board cells are not
+claimed as the finished design. Physical Clara BW acceptance remains pending.
+The program totals **131 done, 363 open and one deferred CBR task**; PR 2 has
+**39/269 complete**. All 133 companion tasks remain open.

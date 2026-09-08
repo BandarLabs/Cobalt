@@ -1980,16 +1980,20 @@
     "pr": 2,
     "group": "Logic Pack",
     "task": "Persist progress",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Separate bounded progress records for all four current games; exact acknowledged saves with failure retry, future/corrupt record preservation and legacy migration. Actual forced restarts retain moves and undo; see evidence/logicpack/progress-recovery and validation.md."
+    ]
   },
   {
     "id": "LOGIC-03",
     "pr": 2,
     "group": "Logic Pack",
     "task": "Provide undo and contextual controls",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "32 persistent undo steps per game include checks, flags, first-mine relocation and flood reveals. Restart requires confirmation and is undoable. Two-column controls and top-bar Help fit shipped fonts at all nine scales on Clara BW and 758x1024; completed fields hide input modes. Actual restart/undo and storage-recovery routes pass."
+    ]
   },
   {
     "id": "LOGIC-04",
@@ -1998,7 +2002,7 @@
     "task": "Render appropriate line, bridge and cross-sum boards with attached clues",
     "status": "todo",
     "evidence": [
-      "Extra-large simulator refuses the Minesweeper screen: node 4 text does not fit its rectangle. Other games still need their planned review. See evidence/board-regression."
+      "The Extra-large Minesweeper control overflow is fixed and actual captures pass. Appropriate connected line, bridge and cross-sum rendering remains open; current compact boards still use generic grid cells. See evidence/logicpack/progress-recovery."
     ]
   },
   {
@@ -2006,8 +2010,10 @@
     "pr": 2,
     "group": "Logic Pack",
     "task": "Test completion and reopen for each game",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "The actual SDK simulator completes Hashi, Kakuro, Slitherlink and Minesweeper, kills and reopens each, checks exact saved state and revisits all four completed games. The 16-check route also exercises help, undo, legacy migration and the committed drive route. Expand fixtures alongside the pending larger puzzle collection."
+    ]
   },
   {
     "id": "MAGNET-01",

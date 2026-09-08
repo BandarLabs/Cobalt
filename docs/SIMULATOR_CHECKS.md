@@ -70,3 +70,21 @@ explicitly retrying the save. Network recovery must not silently retry saving.
 Use `--pair-on-reader --load-failure --temporary-pairing` instead to verify a
 connection that leaves the original pairing path untouched throughout the run.
 Each storage route includes the full two-way session and captures recovery UI.
+
+## Logic Pack progress and recovery
+
+After building `kobo-cli`, run:
+
+```sh
+python3 scripts/quality/check-logicpack-sim.py --output /tmp/logicpack-check
+```
+
+The actual SDK app completes and forcibly reopens each of the four current
+games, switches between independent progress records, undoes moves after
+reopening, retries a full-store failure, and confirms and undoes a restart.
+It also checks first-mine relocation and loss undo, the committed drive route,
+legacy migration and preservation of future-version records. The default is
+Clara BW at Extra-large; `--profile` and `--scale` select another supported
+profile or text size. Captures include layout and source/font provenance and
+assert zero fetch/post effects. This route does not validate a future expanded
+puzzle collection or the still-planned line and bridge rendering components.
