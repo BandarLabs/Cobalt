@@ -2664,7 +2664,9 @@ fn scenario_task_error(
 ) -> Option<kobo_protocol::TaskError> {
     let network = matches!(
         task,
-        kobo_protocol::Task::Fetch { .. } | kobo_protocol::Task::Post { .. }
+        kobo_protocol::Task::Fetch { .. }
+            | kobo_protocol::Task::Post { .. }
+            | kobo_protocol::Task::Update { .. }
     );
     match scenario {
         Scenario::Offline if network => Some(kobo_protocol::TaskError::Offline),
@@ -2674,6 +2676,9 @@ fn scenario_task_error(
             if matches!(
                 task,
                 kobo_protocol::Task::Post {
+                    credential: Some(_),
+                    ..
+                } | kobo_protocol::Task::Update {
                     credential: Some(_),
                     ..
                 } | kobo_protocol::Task::Fetch {
@@ -2697,7 +2702,9 @@ fn simulated_task_error(
 ) -> Option<kobo_protocol::TaskError> {
     if matches!(
         task,
-        kobo_protocol::Task::Fetch { .. } | kobo_protocol::Task::Post { .. }
+        kobo_protocol::Task::Fetch { .. }
+            | kobo_protocol::Task::Post { .. }
+            | kobo_protocol::Task::Update { .. }
     ) {
         if !declared.holds(kobo_policy::Capability::Network) {
             return Some(kobo_protocol::TaskError::Denied);
@@ -3266,6 +3273,7 @@ fn simulated_tasks(name: &str, declared: &kobo_policy::Declared) -> TaskRunner {
     runner
         .with_fetch(Arc::new(kobo_net::fetch_from_controlled))
         .with_post(Arc::new(kobo_net::post_controlled))
+        .with_updates(Arc::new(kobo_net::write_controlled))
         .with_line_streams(Arc::new(kobo_net::LineStreams::default()))
         .with_credential_policy(Arc::new(
             move |credential, url, usage, body, content_type, server| {
@@ -4290,6 +4298,35 @@ mod tests {
         assert!(payload.contains("\"dirtyPixelsSinceClean\":0"));
     }
 
+    #[test]
+    fn update_tasks_participate_in_all_network_fault_scenarios() {
+        for method in [
+            kobo_protocol::UpdateMethod::Put,
+            kobo_protocol::UpdateMethod::Patch,
+        ] {
+            let task = kobo_protocol::Task::Update {
+                method,
+                url: "https://example.invalid/entry/7".into(),
+                body: "{}".into(),
+                content_type: "application/json".into(),
+                credential: Some(kobo_protocol::Credential::bearer("account")),
+                headers: Vec::new(),
+                max_bytes: 32,
+            };
+            for (scenario, error) in [
+                (Scenario::Offline, kobo_protocol::TaskError::Offline),
+                (Scenario::HostDown, kobo_protocol::TaskError::Unreachable),
+                (Scenario::PermissionDenied, kobo_protocol::TaskError::Denied),
+                (
+                    Scenario::MissingSecret,
+                    kobo_protocol::TaskError::NoCredential,
+                ),
+                (Scenario::NetworkTimeout, kobo_protocol::TaskError::TimedOut),
+            ] {
+                assert_eq!(scenario_task_error(scenario, &task), Some(error));
+            }
+        }
+    }
     #[test]
     fn scenarios_inject_only_the_failures_they_name() {
         let fetch = kobo_protocol::Task::Fetch {

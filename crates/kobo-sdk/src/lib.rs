@@ -20,10 +20,10 @@ pub use kobo_protocol::{
     DeviceRequest, DeviceResult, DictionaryEntry, Frame, Header, LibraryEntry, Lifecycle, LogLevel,
     Message, RemoteInstallOutcome, SecretHeader, ShellError, ShellEvent, ShellRequest, StoreError,
     StoreRequest, StoreResult, StreamError, Task, TaskError, TaskId, TaskOutcome, UpdateChannel,
-    WifiNetwork, CACHE_PREFIX, MAX_CACHE_KEYS, MAX_FONT_BYTES, MAX_HEADERS, MAX_HEADER_NAME,
-    MAX_HEADER_VALUE, MAX_INLINE_PICTURE_BYTES, MAX_LOOKUP_WORD_BYTES, MAX_PICTURE_BYTES,
-    MAX_PICTURE_CHUNK_BYTES, MAX_RADIO_DEVICES, MAX_RADIO_NAME, MAX_SHELF_CHUNK, MAX_SHELL_CHUNK,
-    MAX_STORE_KEYS, MAX_STORE_VALUE, MAX_TASK_BYTES, MAX_URL_LEN,
+    UpdateMethod, WifiNetwork, CACHE_PREFIX, MAX_CACHE_KEYS, MAX_FONT_BYTES, MAX_HEADERS,
+    MAX_HEADER_NAME, MAX_HEADER_VALUE, MAX_INLINE_PICTURE_BYTES, MAX_LOOKUP_WORD_BYTES,
+    MAX_PICTURE_BYTES, MAX_PICTURE_CHUNK_BYTES, MAX_RADIO_DEVICES, MAX_RADIO_NAME, MAX_SHELF_CHUNK,
+    MAX_SHELL_CHUNK, MAX_STORE_KEYS, MAX_STORE_VALUE, MAX_TASK_BYTES, MAX_URL_LEN,
 };
 pub use kobo_ui::QuoteRole;
 pub use kobo_ui::{
@@ -1303,7 +1303,12 @@ impl Context {
     /// Only [`TaskError::worth_retrying`] failures are tried again, and only
     /// once. A refused permission or a body too large is not going to change,
     /// and a reader watching a spinner is owed an answer rather than a loop.
+    /// `Task::Update` is always sent once, even through this helper: a lost
+    /// reply can follow an applied change. Reconcile state before retrying it.
     pub fn spawn_retrying(&mut self, work: Task) -> Option<TaskId> {
+        if matches!(work, Task::Update { .. }) {
+            return self.spawn(work);
+        }
         let task = self.spawn(work.clone())?;
         self.retrying.push((task, work));
         Some(task)
@@ -4500,6 +4505,41 @@ mod task_tests {
             .collect()
     }
 
+    #[test]
+    fn update_failure_is_reported_without_an_invisible_retry() {
+        struct Updater {
+            method: UpdateMethod,
+            outcomes: Vec<TaskOutcome>,
+        }
+        impl KoboApp for Updater {
+            fn on_start(&mut self, context: &mut Context) {
+                context.spawn_retrying(Task::Update {
+                    method: self.method,
+                    url: "https://example.invalid/entry/7".into(),
+                    body: "{}".into(),
+                    content_type: "application/json".into(),
+                    credential: None,
+                    headers: Vec::new(),
+                    max_bytes: 1024,
+                });
+            }
+            fn on_action(&mut self, _: &mut Context, _: ActionId) {}
+            fn on_task(&mut self, _: &mut Context, _: TaskId, outcome: TaskOutcome) {
+                self.outcomes.push(outcome);
+            }
+        }
+        for method in [UpdateMethod::Put, UpdateMethod::Patch] {
+            let mut runner = AppRunner::new(Updater {
+                method,
+                outcomes: Vec::new(),
+            });
+            let first = spawned_work(&runner.start());
+            assert_eq!(first.len(), 1);
+            let outcome = TaskOutcome::Failed(TaskError::Unreachable);
+            assert!(spawned_work(&runner.task_outcome(first[0].0, outcome.clone())).is_empty());
+            assert_eq!(runner.app().outcomes, vec![outcome]);
+        }
+    }
     #[test]
     fn a_retryable_failure_naps_and_tries_again_without_telling_the_application() {
         // The radio powers down when idle. The first request after a while

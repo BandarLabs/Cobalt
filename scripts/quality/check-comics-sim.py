@@ -125,7 +125,8 @@ def main():
                 def capture(label):
                     # Await application responses, then check frame reads themselves do not mutate history.
                     drive('wait-idle')
-                    drive('expect-state /activity#/effects/post 0')
+                    for method in ('post', 'put', 'patch'):
+                        drive(f'expect-state /activity#/effects/{method} 0')
                     drive('expect-state /activity#/effects/fetch 0')
                     before = json.loads(get('simulation'))
                     for _ in range(8):

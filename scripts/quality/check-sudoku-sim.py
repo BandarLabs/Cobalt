@@ -66,7 +66,7 @@ def main():
                         return response.read()
 
                 def capture(name):
-                    drive('wait-idle', 'expect-state /activity#/effects/fetch 0', 'expect-state /activity#/effects/post 0', 'shot '+name)
+                    drive('wait-idle', 'expect-state /activity#/effects/fetch 0', 'expect-state /activity#/effects/post 0', 'expect-state /activity#/effects/put 0', 'expect-state /activity#/effects/patch 0', 'shot '+name)
                     diagnostics = json.loads(get('diagnostics'))
                     assert not [issue for issue in diagnostics['issues'] if issue['severity']=='error'], diagnostics
                     layout = json.loads(get('layout'))

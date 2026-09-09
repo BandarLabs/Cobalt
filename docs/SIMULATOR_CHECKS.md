@@ -110,3 +110,18 @@ The final stage enters a Basic account on the reader and verifies authenticated
 catalog, author-section and EPUB requests through the runtime's server binding.
 Captures include actual layouts and source/binary/font provenance. No owner
 server, credentials or device storage is used.
+
+## Explicit HTTP updates
+
+The simulator handles `Task::Update` through the same policy and transport as
+Kobo. Offline, host-down, permission-denied, missing-secret and timeout scenarios
+apply to PUT/PATCH as they do to other network tasks. Activity JSON reports
+separate `effects.put` and `effects.patch` counters; `effects.post` remains POST
+only. All update tasks participate in active-work and callback/idle accounting.
+Counters never contain URLs, account names or bodies. Include all four network
+counters (`fetch`, `post`, `put`, `patch`) when asserting that a journey is offline.
+
+Rebuild `kobo-cli` after SDK, protocol, policy or simulator changes before running
+app fixtures. Protocol 14 task tag 4 requires a matching beta runtime. A server
+receiving a request is not proof that the app received its acknowledgement; test
+lost responses and reconciliation before calling a sync feature complete.

@@ -830,6 +830,8 @@ let task = context.spawn(Task::Fetch {
     url: "https://gutendex.com/books?search=austen".into(),
     offset: 0,
     max_bytes: 64 * 1024,
+    credential: None,
+    headers: Vec::new(),
 });
 ```
 
@@ -848,14 +850,30 @@ fn on_task(&mut self, context: &mut Context, task: TaskId, outcome: TaskOutcome)
 }
 ```
 
-The four kinds of work:
+The task kinds:
 
-- **`Fetch { url, offset, max_bytes }`**. HTTPS only. `offset` reads a long
+- **`Fetch { url, offset, max_bytes, credential, headers }`**. HTTPS only. `offset` reads a long
   document in pieces; a range is sent for every piece including the first.
-- **`Post { url, body, content_type, secret, max_bytes }`**. `secret` is the
-  *name* of a credential the runtime holds. Never its value.
+- **`Post { url, body, content_type, credential, headers, max_bytes }`**.
+  `credential` names an account held by the runtime; it never contains its value.
+- **`Update { method, url, body, content_type, credential, headers, max_bytes }`**.
+  `method` is `UpdateMethod::Put` or `UpdateMethod::Patch`. Each method requires
+  its own credential grant. A POST grant does not authorize either one.
 - **`ReadFile { path }`**. Confined to the application's own directory.
 - **`Sleep { seconds }`**. Waits without holding a wake lock.
+
+`Task::Update` uses beta protocol 14 task tag 4; existing task tags are
+unchanged. Rebuild the app, runtime and simulator together. Historical protocol
+versions reject update tasks. The built-in provider policies currently grant
+no authenticated PUT/PATCH routes; an app-specific policy review must add them
+before an account can be used for updates.
+
+Updates are sent once, including through `spawn_retrying`. The transport refuses
+redirects and retained-stream controls for updates. A timeout or lost connection
+may follow a change that the server already applied: retain the pending action,
+read back server state and reconcile before retrying. Do not blindly repeat
+operations that toggle state. `cancel` stops waiting; it cannot undo a request
+already accepted by a server.
 
 Show that something is happening. `activity(label, None)` plus `skeleton(n)`
 puts a placeholder where the content will land, which reads far better on a
@@ -917,7 +935,7 @@ the runtime dies of.
 ### Credentials
 
 ```rust
-Task::Post { secret: Some("openai".into()), .. }
+Task::Post { credential: Some(Credential::bearer("openai")), .. }
 ```
 
 ```rust

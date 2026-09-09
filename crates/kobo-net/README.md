@@ -20,9 +20,11 @@ retrying a mutation. PUT/PATCH refuse retained-request mode before network I/O.
 
 The runtime must authorize the exact method, URL, body and credential before
 calling this API. A POST credential grant does not authorize PUT or PATCH.
-At this stage, `Task` exposes only Fetch and Post; the lower transport API alone
-does not make PUT/PATCH available to applications. Protocol, policy and runtime
-integration must precede app adoption.
+The SDK exposes `Task::Update` with `UpdateMethod::Put` or `Patch`. Both the
+simulator and native runtime dispatch it through a separate update backend.
+Existing provider credential policies refuse updates until an app-specific
+method/body/destination grant is reviewed. The SDK retry helper never silently
+replays an update after an uncertain failure.
 
 ## Validation
 

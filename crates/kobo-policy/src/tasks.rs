@@ -6,10 +6,10 @@
 //! every unit of work is registered, counted, cancellable, and reports back
 //! exactly once.
 
-use kobo_net::{LineStreamAction, LineStreamOwner, LineStreams, RequestOptions};
+use kobo_net::{LineStreamAction, LineStreamOwner, LineStreams, RequestOptions, WriteMethod};
 use kobo_protocol::{
-    Credential, CredentialUse, SecretHeader, Task, TaskError, TaskId, TaskOutcome, MAX_TASK_BYTES,
-    MAX_TASK_BYTES_U32,
+    Credential, CredentialUse, SecretHeader, Task, TaskError, TaskId, TaskOutcome, UpdateMethod,
+    MAX_TASK_BYTES, MAX_TASK_BYTES_U32,
 };
 use std::collections::HashMap;
 use std::io::Read;
@@ -112,6 +112,21 @@ pub type Fetcher = dyn Fn(
 /// the application asked for, already checked against the ones the runtime
 /// owns.
 pub type Poster = dyn Fn(
+        &str,
+        &[u8],
+        &str,
+        Option<(&str, &str)>,
+        &[(&str, &str)],
+        u32,
+        RequestOptions,
+        &AtomicBool,
+    ) -> Result<Vec<u8>, TaskError>
+    + Send
+    + Sync;
+
+/// Host backend for explicitly selected PUT/PATCH requests.
+pub type Updater = dyn Fn(
+        WriteMethod,
         &str,
         &[u8],
         &str,
@@ -332,6 +347,7 @@ pub struct TaskRunner {
     receiver: Receiver<Finished>,
     fetch: Option<Arc<Fetcher>>,
     post: Option<Arc<Poster>>,
+    updates: Option<Arc<Updater>>,
     line_streams: Option<Arc<LineStreams>>,
     /// Where named secrets are read from, if anywhere.
     secrets: Option<SecretStore>,
@@ -360,6 +376,7 @@ impl std::fmt::Debug for TaskRunner {
             // Deliberately whether, not where and never what. This type ends
             // up in error messages and traces.
             .field("posts", &self.post.is_some())
+            .field("updates", &self.updates.is_some())
             .field("line_streams", &self.line_streams.is_some())
             .field("secrets", &self.secrets.is_some())
             .field("credential_policy", &self.credentials.is_some())
@@ -384,6 +401,7 @@ impl TaskRunner {
             receiver,
             fetch: None,
             post: None,
+            updates: None,
             line_streams: None,
             secrets: None,
             credentials: None,
@@ -419,6 +437,14 @@ impl TaskRunner {
     #[must_use]
     pub fn with_post(mut self, post: Arc<Poster>) -> Self {
         self.post = Some(post);
+        self
+    }
+
+    /// Supplies the backend for PUT/PATCH. POST grants and backends remain
+    /// separate; this alone does not authorize any credential or network use.
+    #[must_use]
+    pub fn with_updates(mut self, updates: Arc<Updater>) -> Self {
+        self.updates = Some(updates);
         self
     }
 
@@ -528,7 +554,9 @@ impl TaskRunner {
         }
 
         let required = match &work {
-            Task::Fetch { .. } | Task::Post { .. } => Some(Capability::Network),
+            Task::Fetch { .. } | Task::Post { .. } | Task::Update { .. } => {
+                Some(Capability::Network)
+            }
             Task::ReadFile { .. } | Task::Sleep { .. } => None,
         };
         if let Some(capability) = required {
@@ -572,6 +600,7 @@ impl TaskRunner {
         let root = self.root.clone();
         let fetch = self.fetch.clone();
         let post = self.post.clone();
+        let updates = self.updates.clone();
         let line_streams = self.line_streams.clone();
         let secrets = self.secrets.clone();
         let credentials = self.credentials.clone();
@@ -586,6 +615,7 @@ impl TaskRunner {
                     Backends {
                         fetch: fetch.as_deref(),
                         post: post.as_deref(),
+                        updates: updates.as_deref(),
                         line_streams: line_streams.as_deref(),
                         secrets: if fault == Some(TaskError::NoCredential) {
                             None
@@ -782,6 +812,7 @@ impl Drop for TaskRunner {
 struct Backends<'a> {
     fetch: Option<&'a Fetcher>,
     post: Option<&'a Poster>,
+    updates: Option<&'a Updater>,
     line_streams: Option<&'a LineStreams>,
     secrets: Option<&'a SecretStore>,
     credentials: Option<&'a CredentialAuthorizer>,
@@ -951,12 +982,35 @@ fn run(
             credential: wanted,
             headers,
             max_bytes,
-        } => run_post(
+        } => run_body(
+            WriteMethod::Post,
             url,
             body,
             content_type,
             *max_bytes,
             wanted.as_ref(),
+            headers,
+            backends,
+            cancel,
+        ),
+        Task::Update {
+            method,
+            url,
+            body,
+            content_type,
+            credential,
+            headers,
+            max_bytes,
+        } => run_body(
+            match method {
+                UpdateMethod::Put => WriteMethod::Put,
+                UpdateMethod::Patch => WriteMethod::Patch,
+            },
+            url,
+            body,
+            content_type,
+            *max_bytes,
+            credential.as_ref(),
             headers,
             backends,
             cancel,
@@ -1109,9 +1163,10 @@ fn run_fetch(
 
 #[allow(
     clippy::too_many_arguments,
-    reason = "the closed Task::Post fields and runtime backends are passed explicitly"
+    reason = "the closed body-task fields and runtime backends are passed explicitly"
 )]
-fn run_post(
+fn run_body(
+    method: WriteMethod,
     url: &str,
     body: &str,
     content_type: &str,
@@ -1121,21 +1176,29 @@ fn run_post(
     backends: Backends<'_>,
     cancel: &AtomicBool,
 ) -> TaskOutcome {
-    let Some(post) = backends.post else {
+    if (method == WriteMethod::Post && backends.post.is_none())
+        || (method != WriteMethod::Post && backends.updates.is_none())
+    {
         return TaskOutcome::Failed(TaskError::Denied);
-    };
+    }
     let prepared = match own_headers(headers) {
         Ok(prepared) => prepared,
         Err(error) => return TaskOutcome::Failed(error),
     };
     let (extra, controls) = (prepared.forwarded, prepared.controls);
-    if controls.stream.is_some() || (controls.wait_until_cancelled && wanted.is_none()) {
+    if controls.stream.is_some()
+        || (controls.wait_until_cancelled && (wanted.is_none() || method != WriteMethod::Post))
+    {
         return TaskOutcome::Failed(TaskError::Denied);
     }
     let resolved = match resolved_credential(
         wanted,
         url,
-        CredentialUse::Post,
+        match method {
+            WriteMethod::Post => CredentialUse::Post,
+            WriteMethod::Put => CredentialUse::Put,
+            WriteMethod::Patch => CredentialUse::Patch,
+        },
         Some(body),
         Some(content_type),
         backends.credentials,
@@ -1147,21 +1210,41 @@ fn run_post(
     if let Some(error) = backends.network_failure {
         return TaskOutcome::Failed(error);
     }
-    match post(
-        url,
-        body.as_bytes(),
-        content_type,
-        resolved
-            .as_ref()
-            .map(|(name, value)| (name.as_str(), value.as_str())),
-        &extra,
-        max_bytes.min(MAX_TASK_BYTES_U32),
-        RequestOptions {
-            report_rate_limit: controls.report_rate_limit,
-            wait_until_cancelled: controls.wait_until_cancelled,
-        },
-        cancel,
-    ) {
+    let result = if method == WriteMethod::Post {
+        backends.post.expect("checked POST backend")(
+            url,
+            body.as_bytes(),
+            content_type,
+            resolved
+                .as_ref()
+                .map(|(name, value)| (name.as_str(), value.as_str())),
+            &extra,
+            max_bytes.min(MAX_TASK_BYTES_U32),
+            RequestOptions {
+                report_rate_limit: controls.report_rate_limit,
+                wait_until_cancelled: controls.wait_until_cancelled,
+            },
+            cancel,
+        )
+    } else {
+        backends.updates.expect("checked update backend")(
+            method,
+            url,
+            body.as_bytes(),
+            content_type,
+            resolved
+                .as_ref()
+                .map(|(name, value)| (name.as_str(), value.as_str())),
+            &extra,
+            max_bytes.min(MAX_TASK_BYTES_U32),
+            RequestOptions {
+                report_rate_limit: controls.report_rate_limit,
+                wait_until_cancelled: controls.wait_until_cancelled,
+            },
+            cancel,
+        )
+    };
+    match result {
         Ok(bytes) => TaskOutcome::Completed(bytes),
         Err(error) => TaskOutcome::Failed(error),
     }
@@ -2573,5 +2656,163 @@ mod tests {
             base64(b"reader@example.com:"),
             "cmVhZGVyQGV4YW1wbGUuY29tOg=="
         );
+    }
+    fn update_work(method: UpdateMethod) -> Task {
+        Task::Update {
+            method,
+            url: "https://example.invalid/entry/7".into(),
+            body: "{\"read\":true}".into(),
+            content_type: "application/json".into(),
+            credential: Some(Credential::bearer("openai")),
+            headers: Vec::new(),
+            max_bytes: 1024,
+        }
+    }
+
+    #[test]
+    fn updates_require_the_exact_method_and_resolve_secrets_only_for_authorized_sends() {
+        for (method, usage, wire) in [
+            (UpdateMethod::Put, CredentialUse::Put, WriteMethod::Put),
+            (
+                UpdateMethod::Patch,
+                CredentialUse::Patch,
+                WriteMethod::Patch,
+            ),
+        ] {
+            let sent = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let observed = Arc::clone(&sent);
+            let mut runner = TaskRunner::simulated(temp_root(&format!("update-{method:?}")))
+                .with_capabilities([Capability::Network])
+                .with_secrets(secret_dir(&format!("update-{method:?}")))
+                .with_credential_policy(Arc::new(
+                    move |credential, url, actual, body, content_type, _| {
+                        credential == &Credential::bearer("openai")
+                            && url == "https://example.invalid/entry/7"
+                            && actual == usage
+                            && body == Some("{\"read\":true}")
+                            && content_type == Some("application/json")
+                    },
+                ))
+                .with_updates(Arc::new(
+                    move |actual,
+                          url,
+                          body,
+                          content_type,
+                          credential,
+                          headers,
+                          limit,
+                          options,
+                          _| {
+                        assert_eq!(actual, wire);
+                        assert_eq!(url, "https://example.invalid/entry/7");
+                        assert_eq!(body, b"{\"read\":true}");
+                        assert_eq!(content_type, "application/json");
+                        assert_eq!(credential, Some(("Authorization", "Bearer not-a-real-key")));
+                        assert!(headers.is_empty());
+                        assert_eq!(limit, 1024);
+                        assert!(!options.wait_until_cancelled);
+                        observed.fetch_add(1, Ordering::SeqCst);
+                        Ok(Vec::new())
+                    },
+                ));
+            runner.submit(TaskId(1), update_work(method)).unwrap();
+            assert_eq!(
+                collect(&mut runner, 1)[0].outcome,
+                TaskOutcome::Completed(Vec::new())
+            );
+            let other = if method == UpdateMethod::Put {
+                UpdateMethod::Patch
+            } else {
+                UpdateMethod::Put
+            };
+            runner.submit(TaskId(2), update_work(other)).unwrap();
+            assert_eq!(
+                collect(&mut runner, 1)[0].outcome,
+                TaskOutcome::Failed(TaskError::Denied)
+            );
+            assert_eq!(sent.load(Ordering::SeqCst), 1);
+        }
+    }
+
+    #[test]
+    fn update_gates_refuse_missing_capabilities_credentials_and_retained_controls() {
+        for method in [UpdateMethod::Put, UpdateMethod::Patch] {
+            for case in [
+                "capability",
+                "secret",
+                "post-only",
+                "retained",
+                "stream",
+                "header",
+            ] {
+                let mut runner =
+                    TaskRunner::simulated(temp_root(&format!("update-{method:?}-{case}")))
+                        .with_updates(Arc::new(|_, _, _, _, _, _, _, _, _| {
+                            panic!("refused update reached network")
+                        }))
+                        .with_credential_policy(Arc::new(move |_, _, usage, _, _, _| {
+                            case != "post-only" || usage == CredentialUse::Post
+                        }));
+                if case != "capability" {
+                    runner = runner.with_capabilities([Capability::Network]);
+                }
+                if case != "secret" {
+                    runner = runner.with_secrets(secret_dir(&format!("update-{method:?}-{case}")));
+                }
+                let mut work = update_work(method);
+                if let Task::Update { headers, .. } = &mut work {
+                    match case {
+                        "retained" => headers.push(kobo_protocol::Header::new(WAIT_HEADER, "1")),
+                        "stream" => {
+                            headers.push(kobo_protocol::Header::new(LINE_STREAM_HEADER, "open"));
+                        }
+                        "header" => {
+                            headers.push(kobo_protocol::Header::new("Authorization", "injected"));
+                        }
+                        _ => {}
+                    }
+                }
+                runner.submit(TaskId(1), work).unwrap();
+                let expected = if case == "secret" {
+                    TaskError::NoCredential
+                } else {
+                    TaskError::Denied
+                };
+                assert_eq!(
+                    collect(&mut runner, 1)[0].outcome,
+                    TaskOutcome::Failed(expected),
+                    "{case}"
+                );
+            }
+        }
+    }
+    #[test]
+    fn cancelling_an_update_delivers_one_cancelled_outcome() {
+        for method in [UpdateMethod::Put, UpdateMethod::Patch] {
+            let (ready, started) = std::sync::mpsc::channel();
+            let mut runner = TaskRunner::simulated(temp_root(&format!("cancel-update-{method:?}")))
+                .with_capabilities([Capability::Network])
+                .with_updates(Arc::new(move |_, _, _, _, _, _, _, _, cancel| {
+                    ready.send(()).unwrap();
+                    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+                    while !cancel.load(Ordering::SeqCst) && std::time::Instant::now() < deadline {
+                        thread::sleep(Duration::from_millis(1));
+                    }
+                    assert!(cancel.load(Ordering::SeqCst), "update was not cancelled");
+                    Err(TaskError::TimedOut)
+                }));
+            let mut work = update_work(method);
+            if let Task::Update { credential, .. } = &mut work {
+                *credential = None;
+            }
+            runner.submit(TaskId(1), work).unwrap();
+            started.recv_timeout(Duration::from_secs(5)).unwrap();
+            runner.cancel(TaskId(1));
+            let finished = collect(&mut runner, 1);
+            assert_eq!(finished.len(), 1);
+            assert_eq!(finished[0].outcome, TaskOutcome::Cancelled);
+            assert_eq!(runner.in_flight(), 0);
+            assert!(runner.wait(Duration::from_millis(10)).is_none());
+        }
     }
 }
