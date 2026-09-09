@@ -24,7 +24,6 @@
 //! a saved web page, and it cannot get stuck, recurse or allocate a tree.
 
 use std::collections::BTreeMap;
-use std::time::Instant;
 
 use kobo_html::{attribute, decode_entities, element_name, skip_element};
 
@@ -32,16 +31,6 @@ use crate::{
     Block, BlockStyle, Builder, Document, InlineSpan, InlineStyle, RichBlock, TextAlignment,
     MAX_BLOCK_TEXT,
 };
-
-/// How large a displayed formula is drawn, in pixels to the em.
-///
-/// A formula is a picture and is scaled to the space it is given, so this
-/// decides how much detail is there to scale down rather than how big it
-/// looks. Deliberately generous, so that a subscript inside a fraction still
-/// has strokes of its own on a three-hundred-dot panel, and so that detail
-/// thrown away in the scaling is detail the panel never had to draw twice.
-#[cfg(feature = "raster")]
-const FORMULA_EM: f32 = crate::FORMULA_PICTURE_EM_F32;
 
 /// Elements whose contents are instructions rather than words.
 const OPAQUE: [&str; 3] = ["script", "style", "iframe"];
@@ -71,36 +60,32 @@ pub fn parse_with_css(source: &str, external_css: &str) -> Document {
     parse_within(source, external_css, Allowance::whole())
 }
 
-/// What a document may still spend on drawing formulae.
+/// How many formulae a document may still be given pictures for.
 ///
-/// Two limits, because they answer different questions. The count is how many
-/// pictures are worth keeping, and a reader can only ever show a few dozen.
-/// The clock is how long the reader is willing to be unresponsive for, and on
-/// real hardware it is the one that runs out first.
+/// A count and no clock. There used to be a clock too, and it was the one
+/// that mattered: the parser drew each formula as it met it, which is 4.7 ms
+/// apiece on a Clara BW inside a callback the runtime allows 250 ms. Drawing
+/// happens in the picture pipeline now, so nothing here spends time on a
+/// formula beyond noting that there is one, and the only question left is how
+/// many pictures are worth holding.
 #[derive(Clone, Copy)]
 pub struct Allowance {
-    /// How many more formulae may be drawn pictures.
+    /// How many more formulae may be given pictures.
     pub pictures: usize,
-    /// When drawing must stop, whatever the count says.
-    ///
-    /// `None` never stops, which is what a test that wants every formula on a
-    /// machine of any speed asks for.
-    pub until: Option<Instant>,
 }
 
 impl Allowance {
-    /// A whole document's worth, starting now.
+    /// A whole document's worth.
     #[must_use]
-    pub fn whole() -> Self {
+    pub const fn whole() -> Self {
         Self {
             pictures: crate::MAX_FORMULA_PICTURES,
-            until: Instant::now().checked_add(crate::FORMULA_DRAWING_BUDGET),
         }
     }
 
-    /// Whether there is anything left to draw a formula with.
-    fn open(self, drawn: usize) -> bool {
-        drawn < self.pictures && self.until.is_none_or(|until| Instant::now() < until)
+    /// Whether there is room for one more formula.
+    const fn open(self, taken: usize) -> bool {
+        taken < self.pictures
     }
 }
 
@@ -159,6 +144,13 @@ pub fn parse_within(source: &str, external_css: &str, allowance: Allowance) -> D
             let taken = rest.len().saturating_sub(after.len());
             let element = &tail[..(end + 1).saturating_add(taken)];
             let drawn = kobo_html::math::render(element);
+            // Inside an equation row every piece of it is one formula, and
+            // the pieces are set together rather than one at a time.
+            if state.equation.is_some() {
+                state.equation_piece(attribute(inside, "alttext").unwrap_or_default(), &drawn);
+                rest = after;
+                continue;
+            }
             if state.display_formula(inside, &drawn) {
                 rest = after;
                 continue;
@@ -171,7 +163,15 @@ pub fn parse_within(source: &str, external_css: &str, allowance: Allowance) -> D
                 if !state.inline_formula(inside, &drawn) {
                     state.words(&drawn);
                 }
-                state.words(" ");
+                // Except where a mark of punctuation follows, which is set
+                // tight against whatever it ends. `LaTeXML` writes the comma
+                // straight onto the closing tag -- `</math>, we randomly` --
+                // so the space put here was one nothing in the document asked
+                // for: seventy lines of a 163-page paper read "the split
+                // 𝒯⁽ʲ⁾ . We write" and "0.91 , an absolute gain".
+                if !punctuation_follows(after) {
+                    state.words(" ");
+                }
             }
             rest = after;
             continue;
@@ -210,6 +210,99 @@ pub fn parse_within(source: &str, external_css: &str, allowance: Allowance) -> D
     }
     state.words(rest);
     state.finish()
+}
+
+/// Whether a row of groups belongs to the row of column names under it.
+///
+/// A group covers several columns and is written in the first of them, so its
+/// row has fewer cells filled than the row beneath. One cell reaching across
+/// a whole table is a title somebody drew with a row rather than a set of
+/// groups, and keeps a row of its own.
+fn heads_the_row_below(groups: &[String], names: &[String]) -> bool {
+    let filled = |cells: &[String]| cells.iter().filter(|cell| !cell.trim().is_empty()).count();
+    filled(groups) >= 2 && filled(groups) < filled(names)
+}
+
+/// Joins a row of group headings to the row that names the columns under it.
+///
+/// The names win; the groups fill the columns the names left empty, which is
+/// the column a group heading reached down over rather than across. So
+/// `Tokenizer` over a blank, and `Fidelity` over `rFID`, come out as
+/// `Tokenizer` and `rFID`: one heading for each column, which is what
+/// everything reading a table downstream is written for.
+///
+/// The groups are not kept beside the names. `Multimodal Learnability Text`
+/// is a column heading no panel this size can set, and the caption under a
+/// results table says what the groups were.
+fn join_headings(groups: Row, names: Row) -> Row {
+    let mut cells = names.cells;
+    for (column, group) in groups.cells.into_iter().enumerate() {
+        match cells.get_mut(column) {
+            Some(cell) if cell.trim().is_empty() => *cell = group,
+            Some(_) => {}
+            None => cells.push(group),
+        }
+    }
+    Row {
+        cells,
+        header: true,
+        ..Row::default()
+    }
+}
+
+/// Whether a string is a number a paper would label an equation with.
+///
+/// `(1)`, `(2.3)`, `(A.1)`. Deliberately narrow: this is checked because the
+/// text is about to be handed to a typesetter as part of the formula, and the
+/// margin of an equation row is somewhere a document can put anything at all.
+fn is_equation_tag(number: &str) -> bool {
+    let Some(inner) = number
+        .strip_prefix('(')
+        .and_then(|rest| rest.strip_suffix(')'))
+    else {
+        return false;
+    };
+    !inner.is_empty()
+        && inner.len() <= 12
+        && inner
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || character == '.')
+}
+
+/// The classes an element was given, or nothing when it was given none.
+fn class_of(inside: &str) -> &str {
+    attribute(inside, "class").unwrap_or_default()
+}
+
+/// Whether the next thing a reader will see binds to what came before it.
+///
+/// Only ever asked about the space after a formula. Tags are stepped over,
+/// because the mark may sit outside a span the formula was wrapped in, and so
+/// is whitespace: a document that wrote a space in front of its own comma
+/// still meant the comma to be set against the word, and a formula is a word.
+///
+/// Looking past the end of a block can at worst drop a space that was going to
+/// be trimmed off the end of it anyway.
+fn punctuation_follows(after: &str) -> bool {
+    const BINDS: [char; 11] = [
+        ',', '.', ';', ':', '!', '?', ')', ']', '}', '\u{2019}', '\u{201d}',
+    ];
+    let mut rest = after;
+    loop {
+        rest = rest.trim_start();
+        if rest.starts_with('<') {
+            if let Some(after_bracket) = skip_bracketed(rest) {
+                rest = after_bracket;
+                continue;
+            }
+            let Some(end) = rest.find('>') else {
+                return false;
+            };
+            rest = &rest[end + 1..];
+            continue;
+        }
+        return rest.starts_with(BINDS);
+    }
 }
 
 const MAX_CSS_BYTES: usize = 256 * 1024;
@@ -309,14 +402,16 @@ struct State {
     /// Whether the words being collected are the document's title rather than
     /// something to draw.
     titling: bool,
-    /// The formulae drawn so far, keyed by the name their block refers to.
+    /// The LaTeX of each formula met so far, keyed by the name the block or
+    /// run referring to it uses.
     ///
-    /// A displayed formula is a picture, and a picture is carried by name
-    /// rather than by its bytes, so the bytes wait here until the document is
-    /// finished and can be handed over whole.
-    formulae: BTreeMap<String, Vec<u8>>,
-    /// What this file may still spend drawing formulae.
+    /// The source, not a picture: what to draw rather than the drawing, so
+    /// that the parse costs a formula nothing but the note of it.
+    formulae: BTreeMap<String, String>,
+    /// How many more formulae this file may name.
     allowance: Allowance,
+    /// The displayed equation being read, once an equation row has opened one.
+    equation: Option<Equation>,
     /// The table row being read, once `<tr>` has opened one.
     ///
     /// A cell's words are collected by the same machinery as a paragraph's
@@ -324,6 +419,28 @@ struct State {
     /// worked inside prose -- entities, inline tags, links -- works inside a
     /// cell without a second implementation of any of it.
     row: Option<Row>,
+    /// How many further rows each column of the open table is still covered
+    /// for by a cell above it.
+    ///
+    /// A results table heads its first column once and lets it reach down
+    /// over the row that names the rest: `Tokenizer` is written with
+    /// `rowspan="2"`, so the row under it has no cell for that column at all.
+    /// Counted as one cell each, every heading below moved a column left and
+    /// the values came out labelled with their neighbour's name.
+    covered: Vec<usize>,
+    /// A row of group headings held back to be joined to the row that names
+    /// the columns under it.
+    ///
+    /// A results table heads itself twice, `Multimodal Learnability` written
+    /// once over the three columns called `Text`, `I2T` and `T2I`. Both rows
+    /// are headings, and everything downstream -- which row names the
+    /// columns, which rows to skip when the table is too wide to draw as one
+    /// -- is written for tables that head themselves once. They are joined
+    /// here, where the spans that say which row is which have just been read,
+    /// rather than guessed at again from the words further along.
+    held: Option<Row>,
+    /// How many rows of the open table have been pushed.
+    rows_seen: usize,
     /// The footnote body currently being read out of the running text.
     note: Option<OpenNote>,
     /// Footnotes lifted out of the paragraph being built, to be set after it.
@@ -331,6 +448,29 @@ struct State {
     /// A list mark taken out of one block, waiting to lead the next.
     mark: Option<String>,
 }
+
+/// A displayed equation part way through being read out of its table.
+///
+/// An `align` environment sets one equation across several cells -- the left
+/// side in one, the relation and right side in the next -- so the pieces are
+/// gathered here and set as the single formula they are.
+#[derive(Default)]
+struct Equation {
+    /// The LaTeX of each piece, in the order the row sets them.
+    latex: String,
+    /// The line of text the same pieces read as, for a reader whose build
+    /// cannot draw or whose picture has not arrived.
+    drawn: String,
+    /// The number the paper gives the equation, when it numbers one.
+    number: String,
+}
+
+/// How many columns one cell may claim to span.
+///
+/// A paper's widest grouped header covers half a dozen; the bound is here
+/// because the number is written in the document and is otherwise a way to
+/// ask for a row of a million empty cells.
+const MAX_CELL_SPAN: usize = 32;
 
 /// A table row part way through being read.
 #[derive(Default)]
@@ -342,12 +482,24 @@ struct Row {
     /// Whether a cell is open, so that the words collected since belong to it
     /// rather than to the row's stray text.
     open: bool,
+    /// How many columns the open cell covers.
+    ///
+    /// One for almost every cell. A grouped header is the exception and the
+    /// reason this is here: a results table writes `Multimodal Learnability`
+    /// once over the three columns it names, and a row that counted it as one
+    /// cell came out three columns short of every row below it.
+    span: usize,
+    /// How many rows down the open cell reaches.
+    down: usize,
+    /// Whether any cell in this row covered more than its own square.
+    spanned: bool,
 }
 
 impl State {
     fn new(stylesheet: StyleSheet, allowance: Allowance) -> Self {
         Self {
             builder: Builder::new(),
+            equation: None,
             formulae: BTreeMap::new(),
             allowance,
             link: None,
@@ -366,6 +518,9 @@ impl State {
             caption: false,
             titling: false,
             row: None,
+            covered: Vec::new(),
+            held: None,
+            rows_seen: 0,
             note: None,
             notes: Vec::new(),
             mark: None,
@@ -376,6 +531,20 @@ impl State {
     fn words(&mut self, text: &str) {
         if text.is_empty() {
             // Two adjacent tags, which is most of an EPUB.
+            return;
+        }
+        // The only words in an equation row are the number in its margin.
+        // Kept apart from the formula so that "(1)" is not read as part of
+        // the mathematics, and so that it survives being drawn as a picture.
+        if let Some(equation) = &mut self.equation {
+            let decoded = decode_entities(text);
+            let number = decoded.trim();
+            if !number.is_empty() {
+                if !equation.number.is_empty() {
+                    equation.number.push(' ');
+                }
+                equation.number.push_str(number);
+            }
             return;
         }
         // A document with no block-level tags at all is one paragraph as long
@@ -578,11 +747,33 @@ impl State {
             // needed: a cell alone cannot be laid out, because how wide it is
             // depends on every other cell in its column, and a row alone
             // cannot say where one value ends and the next begins.
+            // A numbered equation is a table. `LaTeXML` sets one as a row of
+            // cells -- the left side, the right side, and the number off in
+            // the margin -- and marks every piece of mathematics in it
+            // `display="inline"`, because inside the row it is. Read as the
+            // table it is spelled as, a paper's central equation came out as a
+            // line of text in a bordered box, in the worst of the written
+            // forms: `L_(VQ) =||sg(f)-z||_2^2` with the script capitals as
+            // holes, because those live in a block the reading face does not
+            // cover. It is a displayed equation and is set as one.
+            "table" => {
+                self.end_table();
+                self.flush();
+            }
+            "tr" if class_of(inside).contains("ltx_eqn_row") => {
+                self.end_row();
+                self.flush();
+                self.equation = Some(Equation::default());
+            }
             "tr" => {
                 self.end_row();
                 self.flush();
                 self.row = Some(Row::default());
             }
+            // Inside an equation the cells are the halves of one formula and
+            // the margin it is numbered in, none of which is a column of
+            // anything.
+            "td" | "th" if self.equation.is_some() => {}
             "td" | "th" => {
                 // A cell outside any row is a cell in a table written without
                 // one, which is common enough in hand-written HTML. It opens
@@ -592,9 +783,19 @@ impl State {
                     self.row = Some(Row::default());
                 }
                 self.end_cell();
+                let reach = |spelling| {
+                    attribute(inside, spelling)
+                        .and_then(|value| value.trim().parse::<usize>().ok())
+                        .unwrap_or(1)
+                        .clamp(1, MAX_CELL_SPAN)
+                };
+                let (span, down) = (reach("colspan"), reach("rowspan"));
                 if let Some(row) = &mut self.row {
                     row.open = true;
                     row.header |= name == "th";
+                    row.span = span;
+                    row.down = down;
+                    row.spanned |= span > 1 || down > 1;
                 }
             }
             _ => {
@@ -671,12 +872,17 @@ impl State {
                 self.lists.pop();
             }
             "title" => self.flush(),
+            "td" | "th" if self.equation.is_some() => {}
             "td" | "th" => self.end_cell(),
-            "tr" => self.end_row(),
+            "tr" => {
+                self.end_equation();
+                self.end_row();
+            }
             // A table that ends with a row still open is a table whose last
             // `</tr>` was never written, which is a page, not a corner.
             "table" | "thead" | "tbody" | "tfoot" => {
-                self.end_row();
+                self.end_equation();
+                self.end_table();
                 self.flush();
             }
             _ => {
@@ -722,23 +928,204 @@ impl State {
         }
         let cell = std::mem::take(&mut self.text);
         self.spans.clear();
-        if let Some(row) = &mut self.row {
-            row.open = false;
-            if row.cells.len() < crate::MAX_ROW_CELLS {
-                row.cells.push(cell);
+        let Some(row) = &mut self.row else { return };
+        row.open = false;
+        let (span, down) = (row.span.max(1), row.down.max(1));
+        row.span = 1;
+        row.down = 1;
+        // Past whatever a cell above still reaches over. Those columns are
+        // spoken for, and a cell written into one of them would sit under the
+        // wrong heading for the rest of the table.
+        while self
+            .covered
+            .get(row.cells.len())
+            .is_some_and(|rows| *rows > 0)
+        {
+            if row.cells.len() >= crate::MAX_ROW_CELLS {
+                break;
+            }
+            row.cells.push(String::new());
+        }
+        let at = row.cells.len();
+        if at < crate::MAX_ROW_CELLS {
+            row.cells.push(cell);
+        }
+        // The columns the cell covers besides its own. Kept empty rather than
+        // filled with a copy of the heading: a grouped header is written once
+        // over its columns in print too, and repeating it would put the same
+        // words in three cells of one row.
+        for _ in 1..span {
+            if row.cells.len() >= crate::MAX_ROW_CELLS {
+                break;
+            }
+            row.cells.push(String::new());
+        }
+        // And the rows it reaches down over, so the rows below leave its
+        // columns free. Counted from here because `end_row` takes one off
+        // every column at the end of the row this was written in.
+        if down > 1 {
+            let last = at.saturating_add(span);
+            if self.covered.len() < last {
+                self.covered.resize(last, 0);
+            }
+            for column in at..last {
+                self.covered[column] = down;
             }
         }
+    }
+
+    /// Takes one piece of the equation being read out of its table.
+    ///
+    /// `\displaystyle` is dropped from each piece: `LaTeXML` writes it on
+    /// every cell because each cell is its own `<math>`, and a formula
+    /// assembled from three of them would carry the command three times over.
+    /// The renderer is already told to set a displayed formula as one.
+    fn equation_piece(&mut self, latex: &str, drawn: &str) {
+        let Some(equation) = &mut self.equation else {
+            return;
+        };
+        let piece = decode_entities(latex);
+        let piece = piece.trim().trim_start_matches("\\displaystyle").trim();
+        if !piece.is_empty() {
+            equation.latex.push_str(piece);
+        }
+        let drawn = drawn.trim();
+        if !drawn.is_empty() {
+            if !equation.drawn.is_empty() {
+                equation.drawn.push(' ');
+            }
+            equation.drawn.push_str(drawn);
+        }
+    }
+
+    /// Sets the equation that has been gathered, as a formula on its own line.
+    ///
+    /// The number is set at the end of the formula rather than dropped. A
+    /// paper refers back to its equations by number -- "as shown in (1)" is
+    /// the whole reason the number is printed -- and an equation drawn without
+    /// one leaves that sentence pointing at nothing a reader can find. It
+    /// costs a little width, which a formula already too wide for the column
+    /// pays for by being scaled to fit.
+    fn end_equation(&mut self) {
+        let Some(equation) = self.equation.take() else {
+            return;
+        };
+        let drawn = equation
+            .drawn
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        let mut latex = equation.latex.trim().to_owned();
+        if drawn.is_empty() && latex.is_empty() {
+            return;
+        }
+        // Whatever words were being collected belong to the paragraph in
+        // front of the equation rather than to it.
+        self.flush();
+        let number = equation.number.trim();
+        let alt = if number.is_empty() {
+            drawn
+        } else {
+            format!("{drawn}  {number}")
+        };
+        // Only a plain tag. Anything else is not a number this understands,
+        // and handing the typesetter something it cannot parse would lose the
+        // whole equation to save its label.
+        if !latex.is_empty() && is_equation_tag(number) {
+            latex.push_str("\\qquad");
+            latex.push_str(number);
+        }
+        let name = format!("{}{}", crate::FORMULA_PICTURE_PREFIX, self.formulae.len());
+        // Past the ceiling the equation keeps its block and its written form
+        // and simply never has a picture drawn for it, which is what a formula
+        // with nothing to draw it has always looked like.
+        if self.allowance.open(self.formulae.len()) && !latex.is_empty() {
+            self.formulae.insert(name.clone(), latex);
+        }
+        self.builder.push(Block::Picture {
+            name,
+            alt,
+            illustration: false,
+        });
+    }
+
+    /// Takes one row off every column a cell above is still reaching over.
+    ///
+    /// Called when a row ends, so that a `rowspan="2"` written in one row
+    /// covers exactly the one row under it.
+    fn age_covers(&mut self) {
+        for rows in &mut self.covered {
+            *rows = rows.saturating_sub(1);
+        }
+        while self.covered.last() == Some(&0) {
+            self.covered.pop();
+        }
+    }
+
+    /// Sets a finished row down as a block.
+    fn push_row(&mut self, row: Row) {
+        if row.cells.is_empty() {
+            return;
+        }
+        self.builder.push(Block::Row {
+            header: row.header,
+            cells: row.cells,
+        });
+    }
+
+    /// Sets down a row of groups that never found a row to head.
+    ///
+    /// A table of one row, or one whose second row is data rather than column
+    /// names, keeps the groups as the row they were written as.
+    fn end_table(&mut self) {
+        self.end_row();
+        if let Some(groups) = self.held.take() {
+            self.push_row(groups);
+        }
+        // What one table's cells reached over says nothing about the next
+        // table's columns.
+        self.covered.clear();
+        self.rows_seen = 0;
     }
 
     /// Closes the row being read and pushes it, if there is one worth pushing.
     fn end_row(&mut self) {
         self.end_cell();
-        let Some(row) = self.row.take() else {
+        // No row to end means no row has passed. Both `</tr>` and the `<tr>`
+        // after it come through here, and ageing on the second would take two
+        // rows off a cell that reached over one.
+        let Some(mut row) = self.row.take() else {
             return;
         };
+        // A row whose last columns are all reached into from above ends
+        // before them, so they are filled in here: a row is as wide as the
+        // table rather than as wide as the cells somebody wrote into it.
+        while row.cells.len() < self.covered.len()
+            && row.cells.len() < crate::MAX_ROW_CELLS
+            && self.covered[row.cells.len()] > 0
+        {
+            row.cells.push(String::new());
+        }
+        self.age_covers();
         if row.cells.is_empty() {
             return;
         }
+        // A table's first row, when its cells reach over their neighbours, is
+        // a row of groups rather than of column names. It waits for the row
+        // under it and the two are set down as one.
+        if self.rows_seen == 0 && row.spanned && self.held.is_none() {
+            self.rows_seen += 1;
+            self.held = Some(row);
+            return;
+        }
+        if let Some(groups) = self.held.take() {
+            if heads_the_row_below(&groups.cells, &row.cells) {
+                row = join_headings(groups, row);
+            } else {
+                self.push_row(groups);
+            }
+        }
+        self.rows_seen += 1;
         self.builder.push(Block::Row {
             header: row.header,
             cells: row.cells,
@@ -868,8 +1255,8 @@ impl State {
     /// stay as the line of text [`kobo_html::math::render`] makes of them.
     ///
     /// The description carried beside the picture is that same line of text
-    /// rather than the LaTeX, so a formula that will not draw, or a reader
-    /// that cannot show pictures, still gets mathematics rather than source.
+    /// rather than the LaTeX, so a formula whose picture has not arrived yet,
+    /// or which nothing will draw, still gets mathematics rather than source.
     ///
     /// Returns whether the formula was taken; `false` leaves it to be read as
     /// text by the caller.
@@ -882,14 +1269,11 @@ impl State {
         let Some(latex) = attribute(inside, "alttext") else {
             return false;
         };
-        let Some(png) = draw_formula(&decode_entities(latex)) else {
-            return false;
-        };
         // Whatever words were being collected belong to the paragraph in front
         // of the formula, not to the formula, so they are put down first.
         self.flush();
         let name = format!("{}{}", crate::FORMULA_PICTURE_PREFIX, self.formulae.len());
-        self.formulae.insert(name.clone(), png);
+        self.formulae.insert(name.clone(), decode_entities(latex));
         self.builder.push(Block::Picture {
             name,
             alt: drawn.trim().to_owned(),
@@ -914,14 +1298,11 @@ impl State {
         let Some(latex) = attribute(inside, "alttext") else {
             return false;
         };
-        let Some(png) = draw_formula(&decode_entities(latex)) else {
-            return false;
-        };
         if self.text.len() > MAX_BLOCK_TEXT {
             return false;
         }
         let name = format!("{}{}", crate::FORMULA_PICTURE_PREFIX, self.formulae.len());
-        self.formulae.insert(name.clone(), png);
+        self.formulae.insert(name.clone(), decode_entities(latex));
         // The same two steps [`Self::words`] takes, because the words and the
         // styled runs have to stay the same string: a run that does not match
         // the block text costs the block every emphasis it had. Its own run
@@ -941,9 +1322,9 @@ impl State {
         self.flush();
         let formulae = std::mem::take(&mut self.formulae);
         let mut document = self.builder.finish();
-        // Joined rather than assigned: a book brings its own pictures, and a
-        // formula is one more of them.
-        document.images.extend(formulae);
+        // Joined rather than assigned: a book read a file at a time brings the
+        // formulae of every file before this one.
+        document.formulae.extend(formulae);
         document
     }
 }
@@ -1360,21 +1741,6 @@ fn breaks_a_block(name: &str) -> bool {
     )
 }
 
-/// Draws a formula, when this build was compiled to be able to.
-///
-/// Without the feature there is no rasteriser and no fonts to draw with, and
-/// the caller falls back to reading the formula as a line of text.
-#[cfg(feature = "raster")]
-fn draw_formula(latex: &str) -> Option<Vec<u8>> {
-    kobo_html::math::raster(latex, FORMULA_EM)
-}
-
-#[cfg(not(feature = "raster"))]
-#[allow(clippy::missing_const_for_fn)]
-fn draw_formula(_latex: &str) -> Option<Vec<u8>> {
-    None
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1411,12 +1777,13 @@ mod tests {
         assert_eq!(text, "We take x1 as given.");
     }
 
-    /// A formula set on its own line becomes a picture of itself.
+    /// A formula set on its own line is named as a picture of itself, and the
+    /// source it will be typeset from is kept beside it.
     ///
-    /// Only when this build can draw one. Without the rasteriser there is
-    /// nothing to show, and the formula stays a line of text, which is the
-    /// behaviour every other consumer of this crate still gets.
-    #[cfg(feature = "raster")]
+    /// No rasteriser is involved here and none should be: drawing costs
+    /// milliseconds apiece on the reader and belongs to whatever owns a clock.
+    /// What the parse owes is the name, the source, and the line of text the
+    /// formula reads as until its picture arrives.
     #[test]
     fn a_displayed_formula_is_set_as_a_picture_of_itself() {
         let document = parse(
@@ -1433,10 +1800,17 @@ mod tests {
                 document.blocks
             );
         };
-        let drawn = document.images.get(name).expect("the drawing");
-        assert!(drawn.starts_with(b"\x89PNG"), "not a picture");
+        assert_eq!(
+            document.formulae.get(name).map(String::as_str),
+            Some("\\frac{6\\pi}{11}"),
+            "the source to typeset it from was not kept"
+        );
+        assert!(
+            document.images.is_empty(),
+            "the parse drew a formula it was only asked to name"
+        );
         // The description is the reading of the formula, never the source,
-        // because it is what a reader sees when the drawing will not arrive.
+        // because it is what a reader sees while the drawing has not arrived.
         assert!(
             !alt.contains('\\'),
             "the source became the description: {alt}"
@@ -1445,6 +1819,218 @@ mod tests {
             alt.contains('\u{3c0}'),
             "the description lost the formula: {alt}"
         );
+    }
+
+    /// A results table's headings stay over the columns they name.
+    ///
+    /// A paper heads its results twice: a row of groups over the row that
+    /// names the columns, `Multimodal Learnability` written once across three
+    /// of them, and the first column headed once with a heading that reaches
+    /// down over both rows. Counting every cell as one column put each row a
+    /// different width, and a reader too narrow for the table -- which a Kobo
+    /// always is -- wrote every value against its neighbour's heading:
+    /// `rFID: GigaTok-DINO`, then `Text: 0.51` for the number that is the
+    /// rFID.
+    #[test]
+    fn a_heading_that_spans_keeps_the_columns_under_it_lined_up() {
+        let document = parse(
+            "<table><tbody>\
+             <tr><td rowspan=\"2\">Tokenizer</td><td>Fidelity</td>\
+             <td colspan=\"3\">Multimodal Learnability</td>\
+             <td colspan=\"2\">Performance</td></tr>\
+             <tr><td>rFID</td><td>Text</td><td>I2T</td><td>T2I</td>\
+             <td>GenAI</td><td>VQAv2</td></tr>\
+             <tr><td>GigaTok-DINO</td><td>0.51</td><td>2.949</td><td>1.660</td>\
+             <td>7.437</td><td>0.720</td><td>51.31</td></tr>\
+             </tbody></table>",
+        );
+        let rows: Vec<&Vec<String>> = document
+            .blocks
+            .iter()
+            .filter_map(|block| match block {
+                Block::Row { cells, .. } => Some(cells),
+                _ => None,
+            })
+            .collect();
+        // The two heading rows come out as the one row of column names they
+        // amount to: the names win, and a group fills only the column it
+        // reached down over rather than across.
+        assert_eq!(rows.len(), 2, "the headings were not joined: {rows:?}");
+        assert_eq!(
+            rows[0],
+            &["Tokenizer", "rFID", "Text", "I2T", "T2I", "GenAI", "VQAv2"]
+        );
+        // So every value lines up under the heading that names it.
+        assert_eq!(rows[0].len(), rows[1].len(), "the values are out of step");
+        assert_eq!(rows[1][1], "0.51", "the rFID moved out of its column");
+    }
+
+    /// One cell reaching across a table is a title, not a set of groups, and
+    /// keeps the row it was written as.
+    #[test]
+    fn a_row_that_is_one_cell_wide_is_not_folded_into_the_row_below() {
+        let document = parse(
+            "<table><tbody>\
+             <tr><td colspan=\"3\">Ablations</td></tr>\
+             <tr><td>Model</td><td>Loss</td><td>Score</td></tr>\
+             <tr><td>base</td><td>1.2</td><td>3</td></tr>\
+             </tbody></table>",
+        );
+        let rows: Vec<&Vec<String>> = document
+            .blocks
+            .iter()
+            .filter_map(|block| match block {
+                Block::Row { cells, .. } => Some(cells),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(rows.len(), 3, "the title row was swallowed: {rows:?}");
+        assert_eq!(rows[0], &["Ablations"]);
+        assert_eq!(rows[1], &["Model", "Loss", "Score"]);
+    }
+
+    /// A cell that reaches down covers the rows under it and no more.
+    #[test]
+    fn a_heading_that_reaches_down_stops_where_it_said_it_would() {
+        let document = parse(
+            "<table><tbody>\
+             <tr><td rowspan=\"2\">Group</td><td>a</td></tr>\
+             <tr><td>b</td></tr>\
+             <tr><td>back</td><td>c</td></tr>\
+             </tbody></table>",
+        );
+        let rows: Vec<&Vec<String>> = document
+            .blocks
+            .iter()
+            .filter_map(|block| match block {
+                Block::Row { cells, .. } => Some(cells),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(rows[0], &["Group", "a"]);
+        assert_eq!(rows[1], &["", "b"], "the second row lost its blank column");
+        assert_eq!(
+            rows[2],
+            &["back", "c"],
+            "the third row was still being covered after the reach ended"
+        );
+    }
+
+    /// A numbered equation is a formula, not a table of one.
+    ///
+    /// `LaTeXML` sets a numbered equation as a row of cells -- the left side,
+    /// the relation and right side, the number off in the margin -- and marks
+    /// every piece of it `display="inline"`, because inside the row it is.
+    /// Read as the table it is spelled as, a paper's central equation came out
+    /// as a line of written mathematics in a bordered box: photographed off a
+    /// Clara BW, equation (1) of arXiv:2609.09143 read
+    /// `L_(VQ) =||sg(f)-z||_2^2` with the script capitals drawn as holes.
+    #[test]
+    fn a_numbered_equation_is_set_as_one_formula_rather_than_a_row_of_cells() {
+        let document = parse(
+            "<p>trained with:</p>\
+             <table class=\"ltx_equationgroup ltx_eqn_align ltx_eqn_table\"><tbody>\
+             <tr class=\"ltx_equation ltx_eqn_row ltx_align_baseline\">\
+             <td class=\"ltx_eqn_cell ltx_eqn_center_padleft\"></td>\
+             <td class=\"ltx_td ltx_align_right ltx_eqn_cell\">\
+             <math alttext=\"\\displaystyle\\mathcal{L}_{VQ}\" display=\"inline\">\
+             <msub><mi>\u{2112}</mi><mrow><mi>V</mi><mi>Q</mi></mrow></msub></math></td>\
+             <td class=\"ltx_td ltx_align_left ltx_eqn_cell\">\
+             <math alttext=\"\\displaystyle=\\beta\" display=\"inline\">\
+             <mrow><mo>=</mo><mi>\u{3b2}</mi></mrow></math></td>\
+             <td class=\"ltx_eqn_cell ltx_eqn_eqno ltx_align_right\">\
+             <span class=\"ltx_tag ltx_tag_equation\">(1)</span></td>\
+             </tr></tbody></table><p>where it holds.</p>",
+        );
+
+        let Some(Block::Picture { name, alt, .. }) = document
+            .blocks
+            .iter()
+            .find(|block| matches!(block, Block::Picture { .. }))
+        else {
+            panic!("the equation stayed a table: {:?}", document.blocks);
+        };
+        // Both halves, as one formula, with `\displaystyle` taken off each:
+        // the renderer is already told to set a displayed formula as one, and
+        // three cells would otherwise carry the command three times.
+        assert_eq!(
+            document.formulae.get(name).map(String::as_str),
+            Some("\\mathcal{L}_{VQ}=\\beta\\qquad(1)"),
+            "the equation was not gathered from its cells"
+        );
+        // The number is what a paper's cross-references point at, so it is
+        // kept beside the written form as well as drawn.
+        assert!(alt.contains("(1)"), "the equation lost its number: {alt}");
+        assert!(
+            !document
+                .blocks
+                .iter()
+                .any(|block| matches!(block, Block::Row { .. })),
+            "the equation left a table row behind it: {:?}",
+            document.blocks
+        );
+    }
+
+    /// An equation numbered with something this does not understand keeps its
+    /// mathematics.
+    ///
+    /// The margin of an equation row is somewhere a document may put anything
+    /// at all, and it is about to be handed to a typesetter as part of the
+    /// formula. Losing a whole equation to save its label is the wrong way
+    /// round.
+    #[test]
+    fn an_equation_labelled_with_something_strange_still_draws_its_mathematics() {
+        let document = parse(
+            "<table class=\"ltx_eqn_table\"><tbody>\
+             <tr class=\"ltx_eqn_row\">\
+             <td class=\"ltx_eqn_cell\">\
+             <math alttext=\"x=1\" display=\"inline\"><mi>x</mi></math></td>\
+             <td class=\"ltx_eqn_cell ltx_eqn_eqno\">\\dagger{}</td>\
+             </tr></tbody></table>",
+        );
+        let Some(Block::Picture { name, .. }) = document
+            .blocks
+            .iter()
+            .find(|block| matches!(block, Block::Picture { .. }))
+        else {
+            panic!("the equation was lost: {:?}", document.blocks);
+        };
+        assert_eq!(
+            document.formulae.get(name).map(String::as_str),
+            Some("x=1"),
+            "a label this does not understand was handed to the typesetter"
+        );
+    }
+
+    /// A formula that a comma follows does not leave a space in front of it.
+    ///
+    /// `LaTeXML` writes the mark straight onto the closing tag, so the space
+    /// an equation needs on its right was being put in front of every comma
+    /// and full stop that followed one: seventy of them in a single 163-page
+    /// paper, reading "the split 𝒯⁽ʲ⁾ . We write" and "0.91 , an absolute
+    /// gain". The space is still owed to a word.
+    #[test]
+    fn a_formula_a_mark_of_punctuation_follows_is_set_tight_against_it() {
+        let document = parse(
+            "<p>the split <math alttext=\"T\"><mi>T</mi></math>. We take \
+             <math alttext=\"x\"><mi>x</mi></math>, and <math alttext=\"y\">\
+             <mi>y</mi></math> as given.</p>",
+        );
+        let Block::Paragraph(text) = &document.blocks[0] else {
+            panic!("not a paragraph: {:?}", document.blocks[0]);
+        };
+        assert_eq!(text, "the split T. We take x, and y as given.");
+    }
+
+    /// The mark still counts when a tag stands between it and the formula.
+    #[test]
+    fn punctuation_outside_the_span_a_formula_sits_in_still_counts() {
+        let document =
+            parse("<p>at most <span><math alttext=\"n\"><mi>n</mi></math></span>, we say.</p>");
+        let Block::Paragraph(text) = &document.blocks[0] else {
+            panic!("not a paragraph: {:?}", document.blocks[0]);
+        };
+        assert_eq!(text, "at most n, we say.");
     }
 
     /// A formula inside a sentence stays in the sentence.
@@ -1490,11 +2076,10 @@ mod tests {
         assert!(text.contains('\u{3c0}'), "the fraction was lost: {text}");
     }
 
-    /// A formula inside a sentence is typeset like one on its own line, and
-    /// the words it was written as stay in the paragraph underneath it: they
-    /// are what a search matches and what a reader gets if the picture never
-    /// arrives.
-    #[cfg(feature = "raster")]
+    /// A formula inside a sentence is named for typesetting like one on its
+    /// own line, and the words it was written as stay in the paragraph
+    /// underneath it: they are what a search matches and what a reader gets if
+    /// the picture never arrives.
     #[test]
     fn a_formula_inside_a_sentence_is_drawn_over_the_words_it_was_written_as() {
         let document = parse(
@@ -1515,9 +2100,10 @@ mod tests {
             .expect("a formula run");
         assert_eq!(formula.text.trim(), "K_G");
         let name = formula.formula.as_deref().expect("a picture name");
-        assert!(
-            document.images.contains_key(name),
-            "the picture was never stored: {name}"
+        assert_eq!(
+            document.formulae.get(name).map(String::as_str),
+            Some("K_{G}"),
+            "the source to typeset it from was not kept: {name}"
         );
         // Its own run, so that the picture covers the formula and not the
         // words either side of it.
@@ -1532,14 +2118,13 @@ mod tests {
         );
     }
 
-    /// A paper with more mathematics in it than can ever be shown stops being
-    /// drawn once it passes that point, and reads as words from there on.
+    /// A paper with more mathematics in it than can ever be held stops being
+    /// named once it passes that point, and reads as words from there on.
     ///
-    /// A survey with a thousand formulae in it spent five seconds drawing them
-    /// on a real reader, against a deadline of a quarter of one, and threw
-    /// away all but the few dozen it had room to show. The far end of such a
-    /// paper is set less handsomely now, and the paper opens.
-    #[cfg(feature = "raster")]
+    /// The ceiling is memory rather than time now that nothing here draws:
+    /// pictures for every formula of a very long survey would outlast the room
+    /// the runtime has to hold them. The far end of such a paper is set less
+    /// handsomely, and the paper opens.
     #[test]
     fn a_paper_with_more_formulae_than_can_be_shown_stops_drawing_them() {
         let one = "<p>a <math alttext=\"x\"><semantics><mi>x</mi>\
@@ -1548,9 +2133,9 @@ mod tests {
         let over = crate::MAX_FORMULA_PICTURES + 10;
         let document = parse(&one.repeat(over));
         assert_eq!(
-            document.images.len(),
+            document.formulae.len(),
             crate::MAX_FORMULA_PICTURES,
-            "more pictures were drawn than can ever be shown"
+            "more formulae were named than can ever be held"
         );
         // The ones past the limit are still read: they keep their words, they
         // simply have no picture set over them.
@@ -1568,60 +2153,45 @@ mod tests {
         assert!(text.contains('x'), "the formula was lost entirely: {text}");
     }
 
-    /// A reader too slow to draw a paper's mathematics reads it as words
-    /// rather than making the reader wait.
+    /// Reading a paper's markup costs nothing per formula.
     ///
-    /// The count above is a limit on how many pictures are worth keeping, and
-    /// on a development machine sixty-four of them cost fifty milliseconds
-    /// altogether. On a Clara BW the same sixty-four cost nine seconds, inside
-    /// the one callback that opens the document, because each formula there
-    /// takes about a hundred and forty milliseconds to draw. No count can
-    /// express that, because the right count is a property of the machine.
-    #[cfg(feature = "raster")]
+    /// This is the whole point of keeping the source rather than the picture.
+    /// Drawing used to happen here, inside the one callback that opens a
+    /// document, where the runtime allows 250 ms in total and a formula costs
+    /// 4.7 ms on a Clara BW: a paper of two hundred formulae could not be
+    /// opened without overrunning it several times over, and the limits that
+    /// held it back were really that deadline wearing a count's clothes.
+    ///
+    /// So a paper thick with mathematics must parse in the time a paper
+    /// without any does. The margin is generous because this runs on whatever
+    /// machine happens to be building; what it catches is drawing creeping
+    /// back into the parse, which would be a factor of hundreds, not tens.
     #[test]
-    fn a_reader_that_cannot_draw_a_formula_in_time_reads_it_as_words() {
-        let one = "<p>a <math alttext=\"x\"><semantics><mi>x</mi>\
-                   <annotation encoding=\"application/x-tex\">x</annotation>\
-                   </semantics></math> b</p>";
-        let source = one.repeat(4);
+    fn reading_the_markup_costs_nothing_per_formula() {
+        let plain = "<p>a x b</p>".repeat(200);
+        let mathematical = "<p>a <math alttext=\"\\frac{6\\pi}{11}\"><semantics>\
+                            <mfrac><mrow><mn>6</mn><mi>\u{3c0}</mi></mrow><mn>11</mn></mfrac>\
+                            <annotation encoding=\"application/x-tex\">\\frac{6\\pi}{11}\
+                            </annotation></semantics></math> b</p>"
+            .repeat(200);
 
-        // A clock that has already run out stands for a reader too slow to
-        // draw the first formula, which is the case this exists for.
-        let spent = parse_within(
-            &source,
-            "",
-            Allowance {
-                pictures: crate::MAX_FORMULA_PICTURES,
-                until: Some(Instant::now()),
-            },
+        let started = std::time::Instant::now();
+        let document = parse(&mathematical);
+        let with = started.elapsed();
+        let started = std::time::Instant::now();
+        let _ = parse(&plain);
+        let without = started.elapsed();
+
+        assert_eq!(document.formulae.len(), 200, "the formulae were not named");
+        assert!(
+            document.images.is_empty(),
+            "the parse drew {} formulae",
+            document.images.len()
         );
         assert!(
-            spent.images.is_empty(),
-            "a reader with no time left drew {} formulae anyway",
-            spent.images.len()
-        );
-
-        // And the words are still there, so the paper reads rather than
-        // arriving with holes in it.
-        let Block::Paragraph(text) = &spent.blocks[0] else {
-            panic!("not a paragraph: {:?}", spent.blocks[0]);
-        };
-        assert!(text.contains('x'), "the formula was lost entirely: {text}");
-
-        // A clock with time on it draws them, so the budget is what decided
-        // the difference rather than anything else about the source.
-        let afforded = parse_within(
-            &source,
-            "",
-            Allowance {
-                pictures: crate::MAX_FORMULA_PICTURES,
-                until: None,
-            },
-        );
-        assert_eq!(
-            afforded.images.len(),
-            4,
-            "a reader with time to spare left the mathematics undrawn"
+            with < without.max(core::time::Duration::from_millis(1)) * 50,
+            "two hundred formulae cost {with:?} to read against {without:?} \
+             without them, which is the cost of drawing rather than of reading"
         );
     }
 

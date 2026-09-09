@@ -1438,6 +1438,21 @@ impl Reader {
         let mut at = 0;
         while let Some(piece) = pieces.get(at) {
             at += 1;
+            // A figure, the caption under it and the paragraph after it were
+            // separated by the one gap the layout puts between any two nodes,
+            // so a plate and its three lines of caption ran together into a
+            // single grey slab and none of it read as a thing set into the
+            // page rather than more of the page. The group is given air on
+            // both sides of it; the lines inside keep the gap they had.
+            //
+            // Nothing at the top or bottom of a page: the margin there is
+            // already the separation, and a spacer would spend a line of
+            // reading on saying so twice.
+            if at > 1 {
+                if let Some(space) = self.between(&pieces[at - 2], piece) {
+                    screen = screen.spacer(space);
+                }
+            }
             // Rows are gathered back into the table they were cut out of.
             // Every row of it has to be handed over at once, because the
             // columns can only be lined up by something that can see all of
@@ -1465,6 +1480,17 @@ impl Reader {
                         Some((drawn, true)) => screen.picture(drawn, MAX_PICTURE_MM),
                         Some((drawn, false)) => screen.unframed_picture(drawn, MAX_PICTURE_MM),
                         None if piece.text.is_empty() => screen,
+                        // A figure's description is writing *about* the page
+                        // and is set as such. A displayed formula's is the
+                        // page: it is the mathematics, written out in a line
+                        // instead of typeset, and setting it in the smaller
+                        // grey of a caption would demote a sentence of the
+                        // paper for the length of time its picture takes to
+                        // arrive -- or permanently, on a build that cannot
+                        // draw formulae at all.
+                        None if !self.illustration_at(piece.block) => {
+                            screen.text(piece.text.clone())
+                        }
                         None => screen.secondary(piece.text.clone()),
                     }
                 }
@@ -2142,6 +2168,54 @@ impl Reader {
             .collect()
     }
 
+    /// What kind of thing a piece is, for deciding what stands around it.
+    fn set_of(&self, piece: &Piece) -> Set {
+        match piece.kind {
+            Kind::Caption => Set::Plate,
+            Kind::Picture if self.illustration_at(piece.block) => Set::Plate,
+            Kind::Picture => Set::Formula,
+            _ => Set::Prose,
+        }
+    }
+
+    /// The air owed between two pieces that follow each other on a page.
+    ///
+    /// Only at the seam between a group and what is not in it. A plate asks
+    /// for more than a formula does: it is an illustration, a thing set into
+    /// the text, and the caption belongs to it rather than to the prose. A
+    /// displayed formula asks for less, because it *is* the text -- a
+    /// sentence of the paper, set as mathematics -- and wants to be told apart
+    /// from the paragraph it interrupts rather than lifted out of it.
+    fn between(&self, previous: &Piece, piece: &Piece) -> Option<kobo_ui::Space> {
+        let (before, after) = (self.set_of(previous), self.set_of(piece));
+        if before == after {
+            return None;
+        }
+        if before == Set::Plate || after == Set::Plate {
+            return Some(kobo_ui::Space::Small);
+        }
+        Some(kobo_ui::Space::Tight)
+    }
+
+    /// Whether a block is an illustration rather than a drawn piece of text.
+    ///
+    /// Asked when there is no picture to draw, which is exactly when
+    /// [`Self::picture_for`] cannot answer it.
+    fn illustration_at(&self, block: Locator) -> bool {
+        usize::try_from(block)
+            .ok()
+            .and_then(|at| self.document.blocks.get(at))
+            .is_some_and(|block| {
+                matches!(
+                    block,
+                    Block::Picture {
+                        illustration: true,
+                        ..
+                    }
+                )
+            })
+    }
+
     /// The picture to draw for a block, when one has been handed over, and
     /// whether it is an illustration rather than a drawn piece of the text.
     fn picture_for(&self, block: Locator) -> Option<(kobo_ui::TilePicture, bool)> {
@@ -2157,6 +2231,129 @@ impl Reader {
             .copied()
             .map(|drawn| (drawn, *illustration))
     }
+}
+
+#[cfg(test)]
+mod grouping_tests {
+    use super::{Memory, Reader};
+    use kobo_doc::{Block, Document};
+    use std::collections::BTreeMap;
+
+    fn panel() -> kobo_ui::DisplayMetrics {
+        kobo_ui::CLARA_BW_METRICS
+    }
+
+    /// A figure and its caption are set apart from the reading around them.
+    ///
+    /// Every node on a reading screen used to be separated by the one gap the
+    /// layout puts between any two of them, so a plate, the three lines of
+    /// caption under it and the paragraph after it ran together: the caption
+    /// stood as far from the figure it belongs to as from the body text it
+    /// does not, and a page carrying a figure read as one undifferentiated
+    /// column. The group gets air on both sides of it and keeps the tighter
+    /// gap inside.
+    #[test]
+    fn a_figure_and_its_caption_are_set_apart_from_the_prose_around_them() {
+        let document = Document {
+            blocks: vec![
+                Block::Paragraph("Before the figure.".into()),
+                Block::Picture {
+                    name: "plate.png".into(),
+                    alt: "A plot".into(),
+                    illustration: true,
+                },
+                Block::Caption("Figure 1: a plot.".into()),
+                Block::Paragraph("After the figure.".into()),
+            ],
+            ..Document::default()
+        };
+        let mut reader = Reader::open(document, Memory::default(), &panel());
+        reader.set_pictures(
+            [(
+                "plate.png".to_owned(),
+                kobo_ui::TilePicture::new(kobo_ui::PictureHandle(1), 400, 300),
+            )]
+            .into_iter()
+            .collect::<BTreeMap<_, _>>(),
+            &panel(),
+        );
+
+        let kinds: Vec<&'static str> = reader
+            .screen("A Paper")
+            .nodes
+            .iter()
+            .map(|node| match node {
+                kobo_sdk::Node::Spacer { .. } => "space",
+                kobo_sdk::Node::Picture { .. } => "picture",
+                kobo_sdk::Node::Secondary { .. } => "caption",
+                _ => "prose",
+            })
+            .collect();
+        assert_eq!(
+            kinds,
+            vec!["prose", "space", "picture", "caption", "space", "prose"],
+            "the figure group was not set apart from the prose"
+        );
+    }
+
+    /// A displayed formula is told apart from its paragraph without being
+    /// lifted out of it: it is a sentence of the paper, not an illustration.
+    #[test]
+    fn a_displayed_formula_is_told_apart_from_the_paragraph_it_interrupts() {
+        let document = Document {
+            blocks: vec![
+                Block::Paragraph("We write".into()),
+                Block::Picture {
+                    name: "formula:0".into(),
+                    alt: "V = U V^(j)".into(),
+                    illustration: false,
+                },
+                Block::Paragraph("for the union.".into()),
+            ],
+            ..Document::default()
+        };
+        let mut reader = Reader::open(document, Memory::default(), &panel());
+        reader.set_pictures(
+            [(
+                "formula:0".to_owned(),
+                kobo_ui::TilePicture::new(kobo_ui::PictureHandle(1), 300, 60),
+            )]
+            .into_iter()
+            .collect::<BTreeMap<_, _>>(),
+            &panel(),
+        );
+
+        let spaces: Vec<i32> = reader
+            .screen("A Paper")
+            .nodes
+            .iter()
+            .filter_map(|node| match node {
+                kobo_sdk::Node::Spacer { space, .. } => Some(panel().space(*space)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(spaces.len(), 2, "the formula was not set apart at all");
+        assert!(
+            spaces
+                .iter()
+                .all(|space| *space < panel().space(kobo_ui::Space::Small)),
+            "a formula was given the air an illustration gets: {spaces:?}"
+        );
+    }
+}
+
+/// What a piece of a page is, as far as the space around it is concerned.
+///
+/// Three kinds rather than the dozen [`Kind`] has, because this is only ever
+/// asked in order to find the seam between a figure and the reading around it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Set {
+    /// Prose, headings, quotes, rows: the body of the document.
+    Prose,
+    /// An illustration, or a caption belonging to one.
+    Plate,
+    /// A formula set on a line of its own.
+    Formula,
 }
 
 fn is_outline_font(bytes: &[u8]) -> bool {
