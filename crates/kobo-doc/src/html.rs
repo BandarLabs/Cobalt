@@ -212,6 +212,44 @@ pub fn parse_within(source: &str, external_css: &str, allowance: Allowance) -> D
     state.finish()
 }
 
+/// Whether a row of groups belongs to the row of column names under it.
+///
+/// A group covers several columns and is written in the first of them, so its
+/// row has fewer cells filled than the row beneath. One cell reaching across
+/// a whole table is a title somebody drew with a row rather than a set of
+/// groups, and keeps a row of its own.
+fn heads_the_row_below(groups: &[String], names: &[String]) -> bool {
+    let filled = |cells: &[String]| cells.iter().filter(|cell| !cell.trim().is_empty()).count();
+    filled(groups) >= 2 && filled(groups) < filled(names)
+}
+
+/// Joins a row of group headings to the row that names the columns under it.
+///
+/// The names win; the groups fill the columns the names left empty, which is
+/// the column a group heading reached down over rather than across. So
+/// `Tokenizer` over a blank, and `Fidelity` over `rFID`, come out as
+/// `Tokenizer` and `rFID`: one heading for each column, which is what
+/// everything reading a table downstream is written for.
+///
+/// The groups are not kept beside the names. `Multimodal Learnability Text`
+/// is a column heading no panel this size can set, and the caption under a
+/// results table says what the groups were.
+fn join_headings(groups: Row, names: Row) -> Row {
+    let mut cells = names.cells;
+    for (column, group) in groups.cells.into_iter().enumerate() {
+        match cells.get_mut(column) {
+            Some(cell) if cell.trim().is_empty() => *cell = group,
+            Some(_) => {}
+            None => cells.push(group),
+        }
+    }
+    Row {
+        cells,
+        header: true,
+        ..Row::default()
+    }
+}
+
 /// Whether a string is a number a paper would label an equation with.
 ///
 /// `(1)`, `(2.3)`, `(A.1)`. Deliberately narrow: this is checked because the
@@ -381,6 +419,28 @@ struct State {
     /// worked inside prose -- entities, inline tags, links -- works inside a
     /// cell without a second implementation of any of it.
     row: Option<Row>,
+    /// How many further rows each column of the open table is still covered
+    /// for by a cell above it.
+    ///
+    /// A results table heads its first column once and lets it reach down
+    /// over the row that names the rest: `Tokenizer` is written with
+    /// `rowspan="2"`, so the row under it has no cell for that column at all.
+    /// Counted as one cell each, every heading below moved a column left and
+    /// the values came out labelled with their neighbour's name.
+    covered: Vec<usize>,
+    /// A row of group headings held back to be joined to the row that names
+    /// the columns under it.
+    ///
+    /// A results table heads itself twice, `Multimodal Learnability` written
+    /// once over the three columns called `Text`, `I2T` and `T2I`. Both rows
+    /// are headings, and everything downstream -- which row names the
+    /// columns, which rows to skip when the table is too wide to draw as one
+    /// -- is written for tables that head themselves once. They are joined
+    /// here, where the spans that say which row is which have just been read,
+    /// rather than guessed at again from the words further along.
+    held: Option<Row>,
+    /// How many rows of the open table have been pushed.
+    rows_seen: usize,
     /// The footnote body currently being read out of the running text.
     note: Option<OpenNote>,
     /// Footnotes lifted out of the paragraph being built, to be set after it.
@@ -405,6 +465,13 @@ struct Equation {
     number: String,
 }
 
+/// How many columns one cell may claim to span.
+///
+/// A paper's widest grouped header covers half a dozen; the bound is here
+/// because the number is written in the document and is otherwise a way to
+/// ask for a row of a million empty cells.
+const MAX_CELL_SPAN: usize = 32;
+
 /// A table row part way through being read.
 #[derive(Default)]
 struct Row {
@@ -415,6 +482,17 @@ struct Row {
     /// Whether a cell is open, so that the words collected since belong to it
     /// rather than to the row's stray text.
     open: bool,
+    /// How many columns the open cell covers.
+    ///
+    /// One for almost every cell. A grouped header is the exception and the
+    /// reason this is here: a results table writes `Multimodal Learnability`
+    /// once over the three columns it names, and a row that counted it as one
+    /// cell came out three columns short of every row below it.
+    span: usize,
+    /// How many rows down the open cell reaches.
+    down: usize,
+    /// Whether any cell in this row covered more than its own square.
+    spanned: bool,
 }
 
 impl State {
@@ -440,6 +518,9 @@ impl State {
             caption: false,
             titling: false,
             row: None,
+            covered: Vec::new(),
+            held: None,
+            rows_seen: 0,
             note: None,
             notes: Vec::new(),
             mark: None,
@@ -675,6 +756,10 @@ impl State {
             // forms: `L_(VQ) =||sg(f)-z||_2^2` with the script capitals as
             // holes, because those live in a block the reading face does not
             // cover. It is a displayed equation and is set as one.
+            "table" => {
+                self.end_table();
+                self.flush();
+            }
             "tr" if class_of(inside).contains("ltx_eqn_row") => {
                 self.end_row();
                 self.flush();
@@ -698,9 +783,19 @@ impl State {
                     self.row = Some(Row::default());
                 }
                 self.end_cell();
+                let reach = |spelling| {
+                    attribute(inside, spelling)
+                        .and_then(|value| value.trim().parse::<usize>().ok())
+                        .unwrap_or(1)
+                        .clamp(1, MAX_CELL_SPAN)
+                };
+                let (span, down) = (reach("colspan"), reach("rowspan"));
                 if let Some(row) = &mut self.row {
                     row.open = true;
                     row.header |= name == "th";
+                    row.span = span;
+                    row.down = down;
+                    row.spanned |= span > 1 || down > 1;
                 }
             }
             _ => {
@@ -787,7 +882,7 @@ impl State {
             // `</tr>` was never written, which is a page, not a corner.
             "table" | "thead" | "tbody" | "tfoot" => {
                 self.end_equation();
-                self.end_row();
+                self.end_table();
                 self.flush();
             }
             _ => {
@@ -833,10 +928,48 @@ impl State {
         }
         let cell = std::mem::take(&mut self.text);
         self.spans.clear();
-        if let Some(row) = &mut self.row {
-            row.open = false;
-            if row.cells.len() < crate::MAX_ROW_CELLS {
-                row.cells.push(cell);
+        let Some(row) = &mut self.row else { return };
+        row.open = false;
+        let (span, down) = (row.span.max(1), row.down.max(1));
+        row.span = 1;
+        row.down = 1;
+        // Past whatever a cell above still reaches over. Those columns are
+        // spoken for, and a cell written into one of them would sit under the
+        // wrong heading for the rest of the table.
+        while self
+            .covered
+            .get(row.cells.len())
+            .is_some_and(|rows| *rows > 0)
+        {
+            if row.cells.len() >= crate::MAX_ROW_CELLS {
+                break;
+            }
+            row.cells.push(String::new());
+        }
+        let at = row.cells.len();
+        if at < crate::MAX_ROW_CELLS {
+            row.cells.push(cell);
+        }
+        // The columns the cell covers besides its own. Kept empty rather than
+        // filled with a copy of the heading: a grouped header is written once
+        // over its columns in print too, and repeating it would put the same
+        // words in three cells of one row.
+        for _ in 1..span {
+            if row.cells.len() >= crate::MAX_ROW_CELLS {
+                break;
+            }
+            row.cells.push(String::new());
+        }
+        // And the rows it reaches down over, so the rows below leave its
+        // columns free. Counted from here because `end_row` takes one off
+        // every column at the end of the row this was written in.
+        if down > 1 {
+            let last = at.saturating_add(span);
+            if self.covered.len() < last {
+                self.covered.resize(last, 0);
+            }
+            for column in at..last {
+                self.covered[column] = down;
             }
         }
     }
@@ -916,15 +1049,83 @@ impl State {
         });
     }
 
-    /// Closes the row being read and pushes it, if there is one worth pushing.
-    fn end_row(&mut self) {
-        self.end_cell();
-        let Some(row) = self.row.take() else {
-            return;
-        };
+    /// Takes one row off every column a cell above is still reaching over.
+    ///
+    /// Called when a row ends, so that a `rowspan="2"` written in one row
+    /// covers exactly the one row under it.
+    fn age_covers(&mut self) {
+        for rows in &mut self.covered {
+            *rows = rows.saturating_sub(1);
+        }
+        while self.covered.last() == Some(&0) {
+            self.covered.pop();
+        }
+    }
+
+    /// Sets a finished row down as a block.
+    fn push_row(&mut self, row: Row) {
         if row.cells.is_empty() {
             return;
         }
+        self.builder.push(Block::Row {
+            header: row.header,
+            cells: row.cells,
+        });
+    }
+
+    /// Sets down a row of groups that never found a row to head.
+    ///
+    /// A table of one row, or one whose second row is data rather than column
+    /// names, keeps the groups as the row they were written as.
+    fn end_table(&mut self) {
+        self.end_row();
+        if let Some(groups) = self.held.take() {
+            self.push_row(groups);
+        }
+        // What one table's cells reached over says nothing about the next
+        // table's columns.
+        self.covered.clear();
+        self.rows_seen = 0;
+    }
+
+    /// Closes the row being read and pushes it, if there is one worth pushing.
+    fn end_row(&mut self) {
+        self.end_cell();
+        // No row to end means no row has passed. Both `</tr>` and the `<tr>`
+        // after it come through here, and ageing on the second would take two
+        // rows off a cell that reached over one.
+        let Some(mut row) = self.row.take() else {
+            return;
+        };
+        // A row whose last columns are all reached into from above ends
+        // before them, so they are filled in here: a row is as wide as the
+        // table rather than as wide as the cells somebody wrote into it.
+        while row.cells.len() < self.covered.len()
+            && row.cells.len() < crate::MAX_ROW_CELLS
+            && self.covered[row.cells.len()] > 0
+        {
+            row.cells.push(String::new());
+        }
+        self.age_covers();
+        if row.cells.is_empty() {
+            return;
+        }
+        // A table's first row, when its cells reach over their neighbours, is
+        // a row of groups rather than of column names. It waits for the row
+        // under it and the two are set down as one.
+        if self.rows_seen == 0 && row.spanned && self.held.is_none() {
+            self.rows_seen += 1;
+            self.held = Some(row);
+            return;
+        }
+        if let Some(groups) = self.held.take() {
+            if heads_the_row_below(&groups.cells, &row.cells) {
+                row = join_headings(groups, row);
+            } else {
+                self.push_row(groups);
+            }
+        }
+        self.rows_seen += 1;
         self.builder.push(Block::Row {
             header: row.header,
             cells: row.cells,
@@ -1617,6 +1818,101 @@ mod tests {
         assert!(
             alt.contains('\u{3c0}'),
             "the description lost the formula: {alt}"
+        );
+    }
+
+    /// A results table's headings stay over the columns they name.
+    ///
+    /// A paper heads its results twice: a row of groups over the row that
+    /// names the columns, `Multimodal Learnability` written once across three
+    /// of them, and the first column headed once with a heading that reaches
+    /// down over both rows. Counting every cell as one column put each row a
+    /// different width, and a reader too narrow for the table -- which a Kobo
+    /// always is -- wrote every value against its neighbour's heading:
+    /// `rFID: GigaTok-DINO`, then `Text: 0.51` for the number that is the
+    /// rFID.
+    #[test]
+    fn a_heading_that_spans_keeps_the_columns_under_it_lined_up() {
+        let document = parse(
+            "<table><tbody>\
+             <tr><td rowspan=\"2\">Tokenizer</td><td>Fidelity</td>\
+             <td colspan=\"3\">Multimodal Learnability</td>\
+             <td colspan=\"2\">Performance</td></tr>\
+             <tr><td>rFID</td><td>Text</td><td>I2T</td><td>T2I</td>\
+             <td>GenAI</td><td>VQAv2</td></tr>\
+             <tr><td>GigaTok-DINO</td><td>0.51</td><td>2.949</td><td>1.660</td>\
+             <td>7.437</td><td>0.720</td><td>51.31</td></tr>\
+             </tbody></table>",
+        );
+        let rows: Vec<&Vec<String>> = document
+            .blocks
+            .iter()
+            .filter_map(|block| match block {
+                Block::Row { cells, .. } => Some(cells),
+                _ => None,
+            })
+            .collect();
+        // The two heading rows come out as the one row of column names they
+        // amount to: the names win, and a group fills only the column it
+        // reached down over rather than across.
+        assert_eq!(rows.len(), 2, "the headings were not joined: {rows:?}");
+        assert_eq!(
+            rows[0],
+            &["Tokenizer", "rFID", "Text", "I2T", "T2I", "GenAI", "VQAv2"]
+        );
+        // So every value lines up under the heading that names it.
+        assert_eq!(rows[0].len(), rows[1].len(), "the values are out of step");
+        assert_eq!(rows[1][1], "0.51", "the rFID moved out of its column");
+    }
+
+    /// One cell reaching across a table is a title, not a set of groups, and
+    /// keeps the row it was written as.
+    #[test]
+    fn a_row_that_is_one_cell_wide_is_not_folded_into_the_row_below() {
+        let document = parse(
+            "<table><tbody>\
+             <tr><td colspan=\"3\">Ablations</td></tr>\
+             <tr><td>Model</td><td>Loss</td><td>Score</td></tr>\
+             <tr><td>base</td><td>1.2</td><td>3</td></tr>\
+             </tbody></table>",
+        );
+        let rows: Vec<&Vec<String>> = document
+            .blocks
+            .iter()
+            .filter_map(|block| match block {
+                Block::Row { cells, .. } => Some(cells),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(rows.len(), 3, "the title row was swallowed: {rows:?}");
+        assert_eq!(rows[0], &["Ablations"]);
+        assert_eq!(rows[1], &["Model", "Loss", "Score"]);
+    }
+
+    /// A cell that reaches down covers the rows under it and no more.
+    #[test]
+    fn a_heading_that_reaches_down_stops_where_it_said_it_would() {
+        let document = parse(
+            "<table><tbody>\
+             <tr><td rowspan=\"2\">Group</td><td>a</td></tr>\
+             <tr><td>b</td></tr>\
+             <tr><td>back</td><td>c</td></tr>\
+             </tbody></table>",
+        );
+        let rows: Vec<&Vec<String>> = document
+            .blocks
+            .iter()
+            .filter_map(|block| match block {
+                Block::Row { cells, .. } => Some(cells),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(rows[0], &["Group", "a"]);
+        assert_eq!(rows[1], &["", "b"], "the second row lost its blank column");
+        assert_eq!(
+            rows[2],
+            &["back", "c"],
+            "the third row was still being covered after the reach ended"
         );
     }
 

@@ -8,5 +8,5 @@
   "capabilities": [
     "network"
   ],
-  "release_notes": "Typeset a paper's numbered equations, which were read as tables of symbols, carry its mathematics all the way through, set figures apart from the prose, and close the gap before a formula's comma."
+  "release_notes": "Typeset a paper's numbered equations, line up a results table's columns under the headings that name them, carry the mathematics all the way through instead of stopping early, and close the gap before a comma."
 }
