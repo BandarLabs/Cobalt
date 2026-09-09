@@ -289,6 +289,17 @@
           "compatible_blob": "98f10e3c8c1d8c5b6a80b343963179ff91046f4b"
         }
       ]
+    },
+    {
+      "protocol_version": 14,
+      "reason": "The lockfile changes only local app versions/dependencies for Calibre-Web, Crossword, Logic Pack, Nonograms, Panels, Paperterm and Sudoku, plus the runtime policy dependency on the existing workspace kobo-json parser for Miniflux request validation. Each changed app retains its own source and manifest release check. No external dependency changes. Existing Store binaries remain usable through the runtime legacy protocol support and need not be rebuilt solely for the additive policy dependency.",
+      "files": [
+        {
+          "path": "Cargo.lock",
+          "base_blob": "a1844d9bc424d990e2e22f32093ebcbde8ba5b82",
+          "compatible_blob": "01febf900c8ebdd402d165ca43df8e8cf8f5087c"
+        }
+      ]
     }
   ]
 }

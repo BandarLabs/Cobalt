@@ -141,15 +141,15 @@ pub fn decode(bytes: &[u8]) -> Result<(Vec<Progress>, usize), Error> {
 fn legacy(bytes: &[u8]) -> Result<(Vec<Progress>, usize), Error> {
     let s = std::str::from_utf8(bytes).map_err(|_| Error::Corrupt)?;
     let fields = s.split(';').collect::<Vec<_>>();
-    if fields.len() != 3 {
+    let [letters, selected, direction] = fields.as_slice() else {
         return Err(Error::Corrupt);
-    }
+    };
     let v = ObjectBuilder::new()
-        .set("letters", fields[0])
-        .set("selected", if fields[1] == "-" { "0" } else { fields[1] })
+        .set("letters", *letters)
+        .set("selected", if *selected == "-" { "0" } else { *selected })
         .set(
             "down",
-            match fields[2] {
+            match *direction {
                 "0" => false,
                 "1" => true,
                 _ => return Err(Error::Corrupt),
