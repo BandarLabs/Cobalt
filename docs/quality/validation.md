@@ -952,3 +952,45 @@ The Minesweeper control overflow is resolved, but generic board cells are not
 claimed as the finished design. Physical Clara BW acceptance remains pending.
 The program totals **131 done, 363 open and one deferred CBR task**; PR 2 has
 **39/269 complete**. All 133 companion tasks remain open.
+
+## Logic Pack pencil boards — 9 September 2026
+
+Logic Pack 0.1.4 replaces separate text buttons with shared pencil-board
+geometry. Slitherlink draws continuous lines between dots with fixed interior
+clues; Hashi draws circular numbered islands and single or double bridges;
+Kakuro joins white cells to black diagonal sum cells. Across sums occupy the
+upper-right triangle and down sums the lower-left. Fixed clues and given digits
+carry no action. The original puzzle identities, progress and undo are retained.
+
+The SDK adds `pencil_board` with integer board positions, a physical cell size,
+bounded marks and orthogonal edges. Runtime and simulator share layout, ink,
+number fitting and touch targets. Validation rejects duplicate coordinates,
+edges/actions, reserved actions, invalid numeric values, missing endpoints and
+excessive counts. Layout expansion is also bounded. Protocol-14 beta tag 34
+carries the new node; previous tags and older installed grid encodings remain
+unchanged. Earlier wire versions refuse the new node.
+
+Validation passes **13 app, 152 SDK, 97 protocol and 272 UI tests**, with two
+existing UI test ignores and two SDK documentation ignores. New checks cover
+protocol round-trips/truncation/refusal, fixed clues, physical edge targets,
+continuous strokes, double-bridge ink and dirty clipping. App layouts with
+shipped fonts cover all nine text scales on Clara BW and 758 × 1024. The broader
+SDK run found an old terminal test still expecting caption metrics; its
+assertions now use the dedicated terminal font introduced for portrait Paperterm.
+The corrected focused test and full SDK suite pass.
+
+Strict all-target Clippy and Rust 1.85.1 ARMv7 musl checking of both the app and
+reader runtime pass; the runtime retains its existing platform warnings.
+The [actual Extra-large simulator journey](evidence/logicpack/pencil-boards/result.json)
+passes **17 checks**, retaining all four completions/reopenings, undo, failed-save
+retry and record-preservation checks while verifying the new shared geometry.
+Additional captures show double bridges and excluded loop edges. Every capture
+checks zero network effects and records binary/source/font provenance, from
+the working tree based on 7be7ebe. App, SDK and simulator docs and actual
+screenshots are updated, and the published-catalog version gate passes.
+
+LOGIC-04 is complete for local/simulator validation. LOGIC-01 remains open for
+a varied validated collection with difficulty guides. Physical Clara BW
+acceptance remains pending. The program totals **132 done, 362 open and one
+deferred CBR task**; PR 2 has **40/269 complete**. All 133 companion tasks
+remain open.

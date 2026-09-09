@@ -3,6 +3,7 @@
 use kobo_sdk::{action_id, ActionId, Context, KoboApp, Screen, ScreenBuilder, StoreResult};
 use kobo_state::draft::{Draft, Status};
 use std::process::ExitCode;
+mod boards;
 mod saved;
 
 const STATE: &str = "logicpack-state-v1";
@@ -219,7 +220,7 @@ impl Game {
                 [
                     "Make one closed loop with no branches or crossings.",
                     "A number tells how many of its four edges are in the loop.",
-                    "Tap an edge to cycle blank, line and ×.",
+                    "Tap between two dots to cycle blank, line and ×.",
                 ],
             ),
             Kind::Hashi => (
@@ -233,9 +234,9 @@ impl Game {
             Kind::Kakuro => (
                 "Kakuro",
                 [
-                    "Fill each run so its digits add to the arrow clue.",
+                    "Add each run to its sum: across at top right, down at bottom left.",
                     "Use 1–9; a digit cannot repeat within one run.",
-                    "Tap a white square to cycle its digit.",
+                    "Tap to cycle digits; the 1 is fixed.",
                 ],
             ),
             Kind::Mines => (
@@ -300,102 +301,24 @@ impl Game {
         b.grid(2, false, actions).build()
     }
 
+    fn pencil_screen(&self, title: &str, board: kobo_sdk::PencilBoard) -> Screen {
+        self.controls(
+            ScreenBuilder::new("logicpack-pencil")
+                .top_bar(title)
+                .owns_back(true)
+                .top_bar_action("how-to-play", "Help")
+                .secondary(&self.notice)
+                .pencil_board(board),
+        )
+    }
     fn slither_screen(&self) -> Screen {
-        let cells = (0..25).map(|place| {
-            let row = place / 5;
-            let column = place % 5;
-            if row % 2 == 0 && column % 2 == 1 {
-                let edge = row / 2 * 2 + (column - 1) / 2;
-                (
-                    format!("edge-{edge}"),
-                    match self.cells[edge] {
-                        1 => "━━",
-                        2 => "×",
-                        _ => " ",
-                    }
-                    .to_owned(),
-                    None,
-                )
-            } else if row % 2 == 1 && column % 2 == 0 {
-                let edge = 6 + (row - 1) / 2 * 3 + column / 2;
-                (
-                    format!("edge-{edge}"),
-                    match self.cells[edge] {
-                        1 => "┃",
-                        2 => "×",
-                        _ => " ",
-                    }
-                    .to_owned(),
-                    None,
-                )
-            } else if row % 2 == 1 {
-                (format!("fixed-{place}"), "2".to_owned(), None)
-            } else {
-                (format!("fixed-{place}"), "·".to_owned(), None)
-            }
-        });
-        self.controls(
-            ScreenBuilder::new("logicpack-slither")
-                .top_bar("Slitherlink")
-                .owns_back(true)
-                .top_bar_action("how-to-play", "Help")
-                .secondary(&self.notice)
-                .board(5, cells),
-        )
+        self.pencil_screen("Slitherlink", boards::slither(&self.cells))
     }
-
     fn hashi_screen(&self) -> Screen {
-        let cells = (0..25).map(|place| {
-            let (name, label) = match place {
-                2 | 10 | 14 | 22 => (format!("fixed-{place}"), "1".to_owned()),
-                12 => (format!("fixed-{place}"), "4".to_owned()),
-                7 => ("route-0".to_owned(), bridge_label(self.cells[0], true)),
-                11 => ("route-1".to_owned(), bridge_label(self.cells[1], false)),
-                13 => ("route-2".to_owned(), bridge_label(self.cells[2], false)),
-                17 => ("route-3".to_owned(), bridge_label(self.cells[3], true)),
-                _ => (format!("fixed-{place}"), " ".to_owned()),
-            };
-            (name, label, None)
-        });
-        self.controls(
-            ScreenBuilder::new("logicpack-hashi")
-                .top_bar("Hashi")
-                .owns_back(true)
-                .top_bar_action("how-to-play", "Help")
-                .secondary(&self.notice)
-                .board(5, cells),
-        )
+        self.pencil_screen("Hashi", boards::hashi(&self.cells))
     }
-
     fn kakuro_screen(&self) -> Screen {
-        let labels = [
-            "■".to_owned(),
-            "↓ 3".to_owned(),
-            "↓ 7".to_owned(),
-            "→ 4".to_owned(),
-            "1".to_owned(),
-            digit_label(self.cells[0]),
-            "→ 6".to_owned(),
-            digit_label(self.cells[1]),
-            digit_label(self.cells[2]),
-        ];
-        let cells = labels.into_iter().enumerate().map(|(place, label)| {
-            let name = match place {
-                5 => "kakuro-0".to_owned(),
-                7 => "kakuro-1".to_owned(),
-                8 => "kakuro-2".to_owned(),
-                _ => format!("fixed-{place}"),
-            };
-            (name, label, None)
-        });
-        self.controls(
-            ScreenBuilder::new("logicpack-kakuro")
-                .top_bar("Kakuro")
-                .owns_back(true)
-                .top_bar_action("how-to-play", "Help")
-                .secondary(&self.notice)
-                .board(3, cells),
-        )
+        self.pencil_screen("Kakuro", boards::kakuro(&self.cells))
     }
 
     fn mines_screen(&self) -> Screen {
@@ -666,17 +589,6 @@ fn digit_label(value: u8) -> String {
     } else {
         value.to_string()
     }
-}
-
-fn bridge_label(value: u8, vertical: bool) -> String {
-    match (value, vertical) {
-        (1, true) => "│",
-        (2, true) => "║",
-        (1, false) => "—",
-        (2, false) => "═",
-        _ => " ",
-    }
-    .into()
 }
 
 const fn has_mine(mines: u16, cell: usize) -> bool {

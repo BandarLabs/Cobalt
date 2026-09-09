@@ -12,7 +12,9 @@
 //! A small retained UI tree and grayscale rasterizer for the Kobo display.
 
 mod board;
+mod pencil;
 pub use board::{BoardCell, BoardClue, BoardMark, BoardSurface};
+pub use pencil::{PencilBoard, PencilEdge, PencilMark, PencilMarkKind};
 
 use std::cmp::{max, min};
 use std::collections::BTreeMap;
@@ -4336,6 +4338,10 @@ pub enum Node {
     /// none of them should need a new primitive in the protocol. So the caller
     /// chooses the columns, and whether cells are square or a single row high.
     /// A bounded board viewport with explicit marks and aligned clue gutters.
+    PencilBoard {
+        id: NodeId,
+        board: PencilBoard,
+    },
     Board {
         id: NodeId,
         surface: BoardSurface,
@@ -5395,6 +5401,7 @@ impl Node {
             | Self::PagedList { id, .. }
             | Self::Grid { id, .. }
             | Self::Board { id, .. }
+            | Self::PencilBoard { id, .. }
             | Self::Rows { id, .. }
             | Self::Table { id, .. }
             | Self::TileGrid { id, .. }
@@ -5655,6 +5662,9 @@ pub enum LayoutKind {
     /// Explicit board ink; selection is an outline independent of the mark.
     BoardMark(BoardMark, bool),
     BoardClue,
+    PencilMark(PencilMarkKind, bool),
+    PencilEdge(u8, bool),
+    PencilNumber(bool),
     /// The three nested squares and four connectors behind a Morris board.
     MorrisBoard,
     /// One cell of a table, drawn in the body face.
@@ -6646,6 +6656,7 @@ fn layout_flow_node(
             | Node::Flex { .. }
             | Node::Grid { .. }
             | Node::Board { .. }
+            | Node::PencilBoard { .. }
             | Node::Table { .. }
             | Node::Picture { .. }
             | Node::TileGrid { .. }
@@ -7943,6 +7954,18 @@ fn layout_node(
             });
             y.saturating_add(height)
         }
+        Node::PencilBoard { id, board } => pencil::layout(
+            *id,
+            board,
+            Rect {
+                x,
+                y,
+                width,
+                height: bottom.saturating_sub(y),
+            },
+            metrics,
+            layout,
+        ),
         Node::Board { id, surface } => board::layout(
             *id,
             surface,
@@ -12344,6 +12367,16 @@ fn validate_node(
                 check_text_coverage(id, item, Face::Text, issues);
             }
         }
+        Node::PencilBoard { board, .. } => {
+            if !board.is_valid() {
+                issues.push(LayoutIssue {
+                    severity: DiagnosticSeverity::Error,
+                    node: Some(id),
+                    kind: LayoutIssueKind::InvalidBoard,
+                    rect: None,
+                });
+            }
+        }
         Node::Board { surface, .. } => {
             if !surface.is_valid() {
                 issues.push(LayoutIssue {
@@ -12715,6 +12748,7 @@ fn node_enabled_interaction_count(node: &Node) -> usize {
                 .filter(|cell| !crossword || cell.label != "#")
                 .count()
         }
+        Node::PencilBoard { board, .. } => board.action_count(),
         Node::Board { surface, .. } => {
             surface.cells.len() + surface.row_clues.len() + surface.column_clues.len()
         }
@@ -12790,7 +12824,9 @@ fn validate_layout_nodes(layout: &Layout, metrics: &DisplayMetrics, issues: &mut
         let Some((size, face)) = layout_text_style(node) else {
             continue;
         };
-        let scale = if matches!(node.kind, LayoutKind::CellLabel(true)) {
+        let scale = if matches!(node.kind, LayoutKind::PencilNumber(_)) {
+            pencil::label_style(node).1
+        } else if matches!(node.kind, LayoutKind::CellLabel(true)) {
             board_label_style(node).1
         } else if matches!(node.kind, LayoutKind::CellLabel(false)) {
             key_label_style(node).1
@@ -12942,6 +12978,7 @@ fn layout_text_style(node: &LayoutNode) -> Option<(FontSize, Face)> {
     let size = match node.kind {
         LayoutKind::Heading(level) => FontSize::for_heading_level(level),
         LayoutKind::CellLabel(true) => board_label_size(node),
+        LayoutKind::PencilNumber(_) => pencil::label_style(node).0,
         LayoutKind::CellLabel(false) => key_label_style(node).0,
         LayoutKind::TopBarTitle => BAR_TITLE,
         LayoutKind::BarAction(_) => {
@@ -13959,6 +13996,25 @@ fn render_all_with_selected_font(
                     metrics.tenth_mm(PAD_BORDER_TENTH_MM),
                     clip,
                 );
+            }
+            LayoutKind::PencilNumber(inverted) => {
+                let (size, scale) = pencil::label_style(&node);
+                with_text_scale(scale, || {
+                    draw_centered(
+                        surface,
+                        &node.text_lines,
+                        node.rect,
+                        size,
+                        if inverted { tone::PAPER } else { tone::INK },
+                        clip,
+                    );
+                });
+            }
+            LayoutKind::PencilMark(mark, selected) => {
+                pencil::draw_mark(surface, node.rect, mark, selected, metrics, clip);
+            }
+            LayoutKind::PencilEdge(state, vertical) => {
+                pencil::draw_edge(surface, node.rect, state, vertical, metrics, clip);
             }
             LayoutKind::BoardMark(mark, locked) => {
                 board::draw_mark(surface, node.rect, mark, locked, metrics, clip);

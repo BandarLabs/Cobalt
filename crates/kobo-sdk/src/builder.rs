@@ -1959,6 +1959,16 @@ impl ScreenBuilder {
         self
     }
 
+    /// Physical pencil-puzzle geometry shared by the reader and simulator.
+    /// Actions use stable IDs from `action_id`; fixed clues carry no action.
+    /// Requires the protocol-14 beta runtime's pencil-board node.
+    #[must_use]
+    pub fn pencil_board(mut self, board: kobo_ui::PencilBoard) -> Self {
+        let id = self.next_id();
+        self.nodes.push(Node::PencilBoard { id, board });
+        self
+    }
+
     /// A newspaper-style grid: joined squares, corner numbers and centered letters.
     /// Requires the protocol-14 beta runtime's numbered-board node.
     #[must_use]

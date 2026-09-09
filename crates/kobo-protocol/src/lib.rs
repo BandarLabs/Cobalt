@@ -59,6 +59,7 @@ pub const MAGIC: [u8; 4] = *b"KOBO";
 /// 11, 12 and 13 remain readable; board nodes require version 14.
 /// Version 14 also adds generation-scoped suspend barriers on new message tags.
 /// Its beta numbered-grid tag 33 carries corner clue numbers; tag 15 stays byte-compatible.
+/// Beta tag 34 adds bounded pencil-puzzle marks and orthogonal strokes.
 ///
 /// A colour picture travels the same way: a grey picture still uses the tags it
 /// always did, byte for byte, and a colour one uses tags of its own that an
@@ -69,6 +70,7 @@ pub const SERVER_ACCOUNT_VERSION: u8 = 14;
 /// Version with persistent selected grid cells, retained for installed apps.
 pub const SELECTED_GRID_VERSION: u8 = 13;
 mod board;
+mod pencil;
 
 /// Opt-in simulator callback boundary carried in an ordinary debug log frame.
 /// It does not add a wire tag or authorize any runtime operation.
@@ -4217,6 +4219,7 @@ fn encoded_node_len(
             }
             length
         }
+        Node::PencilBoard { board, .. } => pencil::encoded_len(board, version)?,
         Node::Board { surface, .. } => board::encoded_len(surface, version)?,
         Node::Grid { cells, square, .. } => {
             let numbered = cells.iter().any(|cell| cell.corner.is_some());
@@ -5511,6 +5514,7 @@ fn encode_node(
                 push_string(output, item)?;
             }
         }
+        Node::PencilBoard { id, board } => pencil::push(output, *id, board, version)?,
         Node::Board { id, surface } => board::push(output, *id, surface, version)?,
         Node::Grid {
             id,
@@ -6915,6 +6919,7 @@ fn decode_node(
             Ok(Node::Terminal { id, rows, cursor })
         }
         32 if version >= 14 => board::read(reader, id),
+        34 if version >= 14 => pencil::read(reader, id),
         tag @ (15 | 33) if tag == 15 || version >= 14 => {
             let columns = reader.u8()?;
             if columns == 0 || columns > kobo_ui::MAX_COLUMNS {

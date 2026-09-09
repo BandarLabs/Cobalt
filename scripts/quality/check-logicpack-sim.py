@@ -100,6 +100,9 @@ def main():
                 drive('wait-for-id slither')
                 capture('01-puzzles')
                 drive('tap-id hashi','tap-id route-0','wait-idle')
+                drive('tap-id route-0')
+                capture('01a-double-bridge')
+                drive('tap-id undo')
                 before=saved()
                 restart()
                 assert saved()==before
@@ -115,6 +118,9 @@ def main():
                 drive('tap-id route-2','tap-id route-3','tap-id check','expect Solved.')
                 assert position(1)[-1]=='1'
                 capture('03-hashi-complete')
+                kinds=[node['kind'] for node in json.loads(get('layout'))['nodes']]
+                assert sum(kind.startswith('PencilMark(Island(') for kind in kinds)==5
+                assert sum(kind.startswith('PencilEdge(') for kind in kinds)==4
                 before=saved(); restart(); assert saved()==before
                 drive('tap-id restart')
                 capture('04-restart-confirmation')
@@ -127,12 +133,22 @@ def main():
                     for _ in range(count): drive('tap-id kakuro-'+str(cell))
                 drive('tap-id check','expect Solved.')
                 capture('05-kakuro-complete')
+                kinds=[node['kind'] for node in json.loads(get('layout'))['nodes']]
+                assert sum(kind.startswith('PencilMark(Sum ') for kind in kinds)==4
+                assert sum(kind.startswith('PencilMark(Digit ') for kind in kinds)==4
                 before=saved(); restart(); assert saved()==before
                 drive('tap-id back','tap-id slither')
+                drive('tap-id edge-0','tap-id edge-0')
+                capture('05a-excluded-edge')
+                drive('tap-id undo','tap-id undo')
                 for edge in range(12):
                     if 0b101101110011 & (1<<edge): drive('tap-id edge-'+str(edge))
                 drive('tap-id check','expect Solved.')
                 capture('06-slitherlink-complete')
+                kinds=[node['kind'] for node in json.loads(get('layout'))['nodes']]
+                assert sum(kind.startswith('PencilMark(Dot') for kind in kinds)==9
+                assert sum(kind.startswith('PencilMark(Clue(') for kind in kinds)==4
+                assert sum(kind.startswith('PencilEdge(') for kind in kinds)==12
                 before=saved(); restart(); assert saved()==before
                 drive('tap-id back','tap-id mines','tap-id mine-5','tap-id undo')
                 assert position(3)[2]=='33824' and position(3)[4]=='1'
@@ -172,7 +188,7 @@ def main():
                     checks=['separate game progress','forced restart restoration','persistent undo','full-storage preservation',
                             'explicit save retry','restart confirmation and undo','Hashi completion and reopen',
                             'Kakuro completion and reopen','Slitherlink completion and reopen','Mines completion and reopen',
-                            'first-mine relocation undo','loss undo','all game help screens','legacy migration','future record preservation','committed drive route'])
+                            'first-mine relocation undo','loss undo','all game help screens','legacy migration','future record preservation','committed drive route','shared line bridge and cross-sum geometry'])
                 (args.output/'result.json').write_text(json.dumps(result,indent=2)+'\n')
             finally:
                 if process is not None and process.poll() is None:

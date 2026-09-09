@@ -2,10 +2,10 @@
   "id": "logicpack",
   "display_name": "Logic Pack",
   "short_label": "Logic Pack",
-  "summary": "Play four touch-first pencil puzzles.",
+  "summary": "Play four familiar logic games offline.",
   "page_description": "Four offline logic games with separate saved progress and undo.",
-  "version": "0.1.3",
-  "release_notes": "Keep each game\u2019s progress, undo moves and restart safely, with explicit save recovery.",
+  "version": "0.1.4",
+  "release_notes": "Draw connected loops and bridges, with circular islands and attached diagonal Kakuro clues.",
   "glyph": "grid",
   "capabilities": []
 }

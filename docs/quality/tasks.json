@@ -2000,9 +2000,9 @@
     "pr": 2,
     "group": "Logic Pack",
     "task": "Render appropriate line, bridge and cross-sum boards with attached clues",
-    "status": "todo",
+    "status": "done",
     "evidence": [
-      "The Extra-large Minesweeper control overflow is fixed and actual captures pass. Appropriate connected line, bridge and cross-sum rendering remains open; current compact boards still use generic grid cells. See evidence/logicpack/progress-recovery."
+      "Shared bounded pencil-board SDK/runtime component on protocol-14 beta tag 34. Continuous Slitherlink strokes, circular Hashi islands with single/double bridges, and joined Kakuro cells with attached diagonal sums; fixed clues have no actions. The actual 17-check Extra-large journey verifies geometry, completion, reopen and recovery. App/SDK docs and screenshots are updated; see evidence/logicpack/pencil-boards and validation.md."
     ]
   },
   {

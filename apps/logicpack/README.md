@@ -23,12 +23,20 @@ future-version records are left untouched and offer a read retry. Existing
 single-game saves migrate on the next edit. The bounded record holds all four
 games and their undo history.
 
+Slitherlink uses connected strokes between dots; its clue numbers stay inside
+the loop cells. Hashi draws numbered circles joined by single or double bridges.
+Kakuro joins white cells to black sum cells, with across clues at upper right
+and down clues at lower left. Fixed clues and given digits cannot be edited.
+These drawings use the shared SDK pencil-board component rather than text
+characters arranged as separate buttons.
+
+![Connected Hashi bridges](screenshots/hashi.png)
+![Kakuro with attached sum clues](screenshots/kakuro.png)
+
 The current edition still contains four compact starter boards: a 2 × 2
 Slitherlink, a five-island Hashi, a small Kakuro with one given, and 4 × 4
-Minesweeper. A larger validated collection with difficulty guides and proper
-line, bridge and cross-sum rendering remains on the quality checklist. These
-screenshots document the current implementation, not final acceptance of that
-board design.
+Minesweeper. A larger validated collection with difficulty guides remains on
+the quality checklist.
 
 `python3 scripts/quality/check-logicpack-sim.py --output /tmp/logicpack-check`
 from the repository root drives the actual SDK simulator. It checks all four
