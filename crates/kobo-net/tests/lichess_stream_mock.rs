@@ -8,7 +8,7 @@ use rustls::{ServerConfig, ServerConnection, StreamOwned};
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{mpsc, Arc, Once};
+use std::sync::{mpsc, Arc, Mutex, MutexGuard, Once};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -16,11 +16,21 @@ const CA_CERTIFICATE: &[u8] = include_bytes!("fixtures/localhost-ca.der");
 const CERTIFICATE: &[u8] = include_bytes!("fixtures/localhost-cert.der");
 const PRIVATE_KEY: &[u8] = include_bytes!("fixtures/localhost-key.der");
 
-fn trust_fixture() {
+fn trust_fixture() -> MutexGuard<'static, ()> {
+    // These independent TLS journeys share the production resolver's bounded
+    // queue. Run one journey at a time so fixture fan-out cannot exercise the
+    // unrelated overload refusal instead of the HTTP behavior under test.
+    // Each journey still runs its client and server concurrently; resolver
+    // saturation and cancellation have dedicated unit tests.
+    static JOURNEY: Mutex<()> = Mutex::new(());
     static TRUST: Once = Once::new();
+    let journey = JOURNEY
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     TRUST.call_once(|| {
         trust_owner_root(CA_CERTIFICATE.to_vec()).expect("install local mock root");
     });
+    journey
 }
 
 fn server_config() -> Arc<ServerConfig> {
@@ -207,7 +217,7 @@ fn assert_reopens_after_clean_end(path: &str, first_response: &'static [u8]) {
 
 #[test]
 fn local_https_ndjson_mock_streams_game_start_without_exposing_controls() {
-    trust_fixture();
+    let _fixture = trust_fixture();
     let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind mock");
     let address = listener.local_addr().expect("mock address");
     let config = server_config();
@@ -293,7 +303,7 @@ fn local_https_ndjson_mock_streams_game_start_without_exposing_controls() {
 
 #[test]
 fn credentialed_stream_redirects_are_denied_without_contacting_the_target() {
-    trust_fixture();
+    let _fixture = trust_fixture();
     let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind mock");
     let address = listener.local_addr().expect("mock address");
     let config = server_config();
@@ -326,7 +336,7 @@ fn credentialed_stream_redirects_are_denied_without_contacting_the_target() {
 
 #[test]
 fn long_lived_seek_cancels_promptly_and_is_sent_exactly_once() {
-    trust_fixture();
+    let _fixture = trust_fixture();
     let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind mock");
     let address = listener.local_addr().expect("mock address");
     let config = server_config();
@@ -382,7 +392,7 @@ fn long_lived_seek_cancels_promptly_and_is_sent_exactly_once() {
 
 #[test]
 fn accepted_seek_clean_close_completes_without_a_retryable_failure_or_replay() {
-    trust_fixture();
+    let _fixture = trust_fixture();
     let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind mock");
     let address = listener.local_addr().expect("mock address");
     let config = server_config();
@@ -422,7 +432,7 @@ fn accepted_seek_clean_close_completes_without_a_retryable_failure_or_replay() {
 
 #[test]
 fn clean_event_and_game_stream_endings_are_retryable_and_can_reopen() {
-    trust_fixture();
+    let _fixture = trust_fixture();
     assert_reopens_after_clean_end(
         "/api/stream/event",
         b"HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
@@ -435,7 +445,7 @@ fn clean_event_and_game_stream_endings_are_retryable_and_can_reopen() {
 
 #[test]
 fn terminal_framing_drains_every_buffered_record_before_releasing_the_stream() {
-    trust_fixture();
+    let _fixture = trust_fixture();
     let body = b"{\"sequence\":1}\n{\"sequence\":2}\n";
     let mut content_length = Vec::new();
     write!(
@@ -506,7 +516,7 @@ fn terminal_framing_drains_every_buffered_record_before_releasing_the_stream() {
 
 #[test]
 fn retained_stream_budget_releases_on_error_close_and_shutdown() {
-    trust_fixture();
+    let _fixture = trust_fixture();
     assert_eq!(kobo_net::MAX_RETAINED_STREAMS, 2);
     let streams = LineStreams::default();
 
@@ -556,7 +566,7 @@ fn retained_stream_budget_releases_on_error_close_and_shutdown() {
 
 #[test]
 fn local_https_mock_preserves_auth_and_retry_after_errors() {
-    trust_fixture();
+    let _fixture = trust_fixture();
     for status in [401, 403] {
         let response = if status == 401 {
             &b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n"[..]
@@ -608,7 +618,7 @@ fn local_https_mock_preserves_auth_and_retry_after_errors() {
 
 #[test]
 fn truncated_chunked_stream_is_rejected_instead_of_returned_as_an_event() {
-    trust_fixture();
+    let _fixture = trust_fixture();
     let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind mock");
     let address = listener.local_addr().expect("mock address");
     let config = server_config();
@@ -649,4 +659,140 @@ fn truncated_chunked_stream_is_rejected_instead_of_returned_as_an_event() {
         Err(TaskError::Unreachable)
     );
     server.join().expect("truncated mock");
+}
+
+#[test]
+fn explicit_update_methods_send_the_exact_body_over_tls() {
+    let _fixture = trust_fixture();
+    for (method, verb) in [
+        (kobo_net::WriteMethod::Put, "PUT"),
+        (kobo_net::WriteMethod::Patch, "PATCH"),
+    ] {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind update fixture");
+        let address = listener.local_addr().unwrap();
+        let config = server_config();
+        let body = br#"{"entry_ids":[7],"status":"read"}"#;
+        let server = thread::spawn(move || {
+            let (mut stream, request) = accept(&listener, config);
+            assert!(request.starts_with(format!("{verb} /v1/entries HTTP/1.1\r\n").as_bytes()));
+            assert!(request.ends_with(body));
+            assert!(contains_header(&request, "X-Auth-Token: fixture-token"));
+            assert!(contains_header(&request, "Connection: close"));
+            stream
+                .write_all(
+                    b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                )
+                .unwrap();
+            stream.flush().unwrap();
+            close_tls(&mut stream);
+        });
+        assert_eq!(
+            kobo_net::write_controlled(
+                method,
+                &format!("https://localhost:{}/v1/entries", address.port()),
+                body,
+                "application/json",
+                Some(("X-Auth-Token", "fixture-token")),
+                &[],
+                1024,
+                RequestOptions::default(),
+                &AtomicBool::new(false)
+            ),
+            Ok(Vec::new())
+        );
+        server.join().unwrap();
+    }
+}
+
+#[test]
+fn updates_do_not_replay_after_a_lost_reply_or_follow_redirects() {
+    let _fixture = trust_fixture();
+    for redirect in [false, true] {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let address = listener.local_addr().unwrap();
+        let config = server_config();
+        let requests = Arc::new(AtomicUsize::new(0));
+        let observed = Arc::clone(&requests);
+        let server = thread::spawn(move || {
+            let (mut stream, _) = accept(&listener, config);
+            observed.fetch_add(1, Ordering::SeqCst);
+            if redirect {
+                let reply = format!("HTTP/1.1 307 Temporary Redirect\r\nLocation: https://localhost:{}/other\r\nContent-Length: 0\r\nConnection: close\r\n\r\n", address.port());
+                stream.write_all(reply.as_bytes()).unwrap();
+                stream.flush().unwrap();
+            }
+            close_tls(&mut stream);
+            drop(stream);
+            listener.set_nonblocking(true).unwrap();
+            let deadline = Instant::now() + Duration::from_millis(250);
+            while Instant::now() < deadline {
+                if let Ok((socket, _)) = listener.accept() {
+                    observed.fetch_add(1, Ordering::SeqCst);
+                    drop(socket);
+                }
+                thread::sleep(Duration::from_millis(5));
+            }
+        });
+        let result = kobo_net::write_controlled(
+            kobo_net::WriteMethod::Put,
+            &format!("https://localhost:{}/v1/entries", address.port()),
+            b"{}",
+            "application/json",
+            None,
+            &[],
+            1024,
+            RequestOptions::default(),
+            &AtomicBool::new(false),
+        );
+        assert!(result.is_err());
+        server.join().unwrap();
+        assert_eq!(
+            requests.load(Ordering::SeqCst),
+            1,
+            "an uncertain update was sent again"
+        );
+    }
+}
+
+#[test]
+fn updates_preserve_authentication_rate_limit_and_size_failures() {
+    let _fixture = trust_fixture();
+    for method in [kobo_net::WriteMethod::Put, kobo_net::WriteMethod::Patch] {
+        for (response, expected) in [
+            (
+                b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n".as_slice(),
+                TaskError::Unauthorized,
+            ),
+            (
+                b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n".as_slice(),
+                TaskError::Unauthorized,
+            ),
+            (
+                b"HTTP/1.1 429 Too Many Requests\r\nRetry-After: 23\r\nContent-Length: 0\r\n\r\n"
+                    .as_slice(),
+                TaskError::RateLimited(23),
+            ),
+            (
+                b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\n12345".as_slice(),
+                TaskError::TooLarge,
+            ),
+        ] {
+            let (url, server) = one_response(response);
+            assert_eq!(
+                kobo_net::write_controlled(
+                    method,
+                    &url,
+                    b"{}",
+                    "application/json",
+                    Some(("X-Auth-Token", "fixture-token")),
+                    &[],
+                    4,
+                    RequestOptions::default(),
+                    &AtomicBool::new(false),
+                ),
+                Err(expected),
+            );
+            server.join().expect("update failure fixture");
+        }
+    }
 }

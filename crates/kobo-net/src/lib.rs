@@ -701,6 +701,24 @@ fn redirect_headers<'a>(
 }
 
 /// What is sent, beyond the address.
+/// Explicit methods for requests carrying a body. Callers must authorize the
+/// selected method separately; this type does not confer credential permission.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WriteMethod {
+    Post,
+    Put,
+    Patch,
+}
+impl WriteMethod {
+    const fn verb(self) -> &'static str {
+        match self {
+            Self::Post => "POST",
+            Self::Put => "PUT",
+            Self::Patch => "PATCH",
+        }
+    }
+}
+
 enum Method<'a> {
     Get {
         /// Where to start reading, as a byte offset, or `None` to ask for the
@@ -717,7 +735,8 @@ enum Method<'a> {
         /// in the ordinary idle-connection cache.
         streaming: bool,
     },
-    Post {
+    Body {
+        method: WriteMethod,
         body: &'a [u8],
         content_type: &'a str,
         /// The credential header, already assembled as a name and its value.
@@ -731,7 +750,7 @@ impl Method<'_> {
     fn verb(&self) -> &'static str {
         match self {
             Self::Get { .. } => "GET",
-            Self::Post { .. } => "POST",
+            Self::Body { method, .. } => method.verb(),
         }
     }
 }
@@ -803,6 +822,44 @@ pub fn post_controlled(
     options: RequestOptions,
     cancel: &AtomicBool,
 ) -> Result<Vec<u8>, TaskError> {
+    write_controlled(
+        WriteMethod::Post,
+        url,
+        body,
+        content_type,
+        credential,
+        headers,
+        max_bytes,
+        options,
+        cancel,
+    )
+}
+
+/// Sends one explicitly selected POST, PUT or PATCH request. Neither redirects
+/// nor stale-connection failures replay it. The runtime must apply method-aware
+/// credential authorization before calling this transport boundary.
+///
+/// # Errors
+/// Returns the bounded failures of [`post_controlled`]. Retained requests are
+/// supported only for POST; PUT/PATCH with that option are refused before I/O.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "explicit authorized HTTP transport boundary"
+)]
+pub fn write_controlled(
+    method: WriteMethod,
+    url: &str,
+    body: &[u8],
+    content_type: &str,
+    credential: Option<(&str, &str)>,
+    headers: &[(&str, &str)],
+    max_bytes: u32,
+    options: RequestOptions,
+    cancel: &AtomicBool,
+) -> Result<Vec<u8>, TaskError> {
+    if method != WriteMethod::Post && options.wait_until_cancelled {
+        return Err(TaskError::Denied);
+    }
     // Header grammar is checked by the same maintained types used for URI
     // syntax. This is the last gate before the socket, and both names and
     // values may ultimately originate outside the runtime.
@@ -837,7 +894,8 @@ pub fn post_controlled(
     }
     let response = request(
         &address,
-        &Method::Post {
+        &Method::Body {
+            method,
             body,
             content_type,
             credential,
@@ -872,7 +930,8 @@ fn post_until_cancelled(
     options: RequestOptions,
     cancel: &AtomicBool,
 ) -> Result<Vec<u8>, TaskError> {
-    let method = Method::Post {
+    let method = Method::Body {
+        method: WriteMethod::Post,
         body,
         content_type,
         credential,
@@ -1018,15 +1077,15 @@ fn request_head(
             streaming: false,
             ..
         }
-        | Method::Post { .. } => "gzip",
+        | Method::Body { .. } => "gzip",
     };
     // Ordinary POSTs hang up after their answer so they can never be replayed
     // on a stale pooled connection. A retained POST is itself the resource:
     // closing it cancels the server-side seek, so it stays open like a GET.
     let connection = match method {
         Method::Get { .. } => "keep-alive",
-        Method::Post { .. } if retain_post => "keep-alive",
-        Method::Post { .. } => "close",
+        Method::Body { .. } if retain_post => "keep-alive",
+        Method::Body { .. } => "close",
     };
     let mut head = format!(
         "{verb} {path} HTTP/1.1\r\nHost: {host}\r\nConnection: {connection}\r\nAccept-Encoding: {encoding}\r\nUser-Agent: kobo-runtime\r\n"
@@ -1059,11 +1118,12 @@ fn request_head(
                 write!(head, "{name}: {value}\r\n").expect("writing to a String cannot fail");
             }
         }
-        Method::Post {
+        Method::Body {
             body,
             content_type,
             credential,
             headers,
+            ..
         } => {
             if let Some((name, value)) = credential {
                 write!(head, "{name}: {value}\r\n").expect("writing to a String cannot fail");
@@ -1368,7 +1428,7 @@ fn request(
     max_bytes: u32,
     cancel: &AtomicBool,
 ) -> Result<Vec<u8>, TaskError> {
-    // Only a GET is replayed. A POST that failed after leaving this machine
+    // Only a GET is replayed. A body request that failed after leaving this machine
     // may have been acted on by the far end, and asking a model to answer
     // twice or a daemon to run a command twice is a worse failure than the one
     // being recovered from.
@@ -1663,7 +1723,7 @@ fn exchange(
             WriteFailure::Cancelled | WriteFailure::TimedOut => Failed::Real(TaskError::TimedOut),
         },
     )?;
-    if let Method::Post { body, .. } = method {
+    if let Method::Body { body, .. } = method {
         let body_deadline = Instant::now() + RESPONSE_TIMEOUT;
         write_all_cancellable(&mut tls, body, body_deadline, &cancelled).map_err(|error| {
             match error {
@@ -1831,6 +1891,55 @@ fn stays_open(response: &[u8]) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use super::WriteMethod;
+    #[test]
+    fn body_methods_use_the_selected_verb_and_never_request_connection_reuse() {
+        let address = super::parse("https://library.test/v1/entries").unwrap();
+        for (method, verb) in [
+            (WriteMethod::Post, "POST"),
+            (WriteMethod::Put, "PUT"),
+            (WriteMethod::Patch, "PATCH"),
+        ] {
+            let body = "{\"title\":\"Café\"}".as_bytes();
+            let wire = super::head(
+                &address,
+                &super::Method::Body {
+                    method,
+                    body,
+                    content_type: "application/json",
+                    credential: Some(("X-Auth-Token", "fixture-token")),
+                    headers: &[],
+                },
+                1024,
+            );
+            assert!(wire.starts_with(&format!("{verb} /v1/entries HTTP/1.1\r\n")));
+            assert!(wire.contains("Connection: close\r\n"));
+            assert!(wire.contains(&format!("Content-Length: {}\r\n", body.len())));
+            assert!(wire.contains("X-Auth-Token: fixture-token\r\n"));
+        }
+    }
+    #[test]
+    fn retained_updates_are_refused_before_connecting() {
+        let cancel = std::sync::atomic::AtomicBool::new(false);
+        for method in [WriteMethod::Put, WriteMethod::Patch] {
+            let result = super::write_controlled(
+                method,
+                "not-a-url",
+                b"{}",
+                "application/json",
+                None,
+                &[],
+                1024,
+                super::RequestOptions {
+                    wait_until_cancelled: true,
+                    ..super::RequestOptions::default()
+                },
+                &cancel,
+            );
+            assert_eq!(result, Err(super::TaskError::Denied));
+        }
+    }
+
     /// A ceiling for tests that are about framing rather than size. Large
     /// enough that nothing in this module ever reaches it.
     const CEILING: u32 = 64 * 1024;
@@ -2225,7 +2334,8 @@ mod tests {
         .contains("Connection: keep-alive"));
         assert!(head(
             &address,
-            &Method::Post {
+            &Method::Body {
+                method: WriteMethod::Post,
                 body: b"{}",
                 content_type: "application/json",
                 credential: None,
@@ -2616,7 +2726,8 @@ mod tests {
 
         let posted = head(
             &address,
-            &Method::Post {
+            &Method::Body {
+                method: WriteMethod::Post,
                 body: b"{}",
                 content_type: "application/json",
                 credential: None,
@@ -2818,7 +2929,8 @@ mod tests {
         let address = parse("https://api.anthropic.com/v1/messages").expect("a URL");
         let post_head = head(
             &address,
-            &Method::Post {
+            &Method::Body {
+                method: WriteMethod::Post,
                 body: b"{}",
                 content_type: "application/json",
                 credential: Some(("x-api-key", "not-a-real-key")),
@@ -2862,7 +2974,8 @@ mod tests {
         let address = parse("https://openrouter.ai/api/v1/chat").expect("a URL");
         let head = head(
             &address,
-            &Method::Post {
+            &Method::Body {
+                method: WriteMethod::Post,
                 body: b"{}",
                 content_type: "application/json",
                 credential: Some(("Authorization", "Bearer sk-or-secret")),
