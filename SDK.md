@@ -864,9 +864,10 @@ The task kinds:
 
 `Task::Update` uses beta protocol 14 task tag 4; existing task tags are
 unchanged. Rebuild the app, runtime and simulator together. Historical protocol
-versions reject update tasks. The built-in provider policies currently grant
-no authenticated PUT/PATCH routes; an app-specific policy review must add them
-before an account can be used for updates.
+versions reject update tasks. The reviewed Miniflux token policy permits bounded
+entry PUTs only within the saved server scope. Other provider grants remain
+method-specific; adding a new provider requires reviewing its destinations and
+body fields before an account can be used for updates.
 
 Updates are sent once, including through `spawn_retrying`. The transport refuses
 redirects and retained-stream controls for updates. A timeout or lost connection

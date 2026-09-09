@@ -200,7 +200,15 @@ fn resolved_credential(
         let app = secrets
             .and_then(|store| store.app.as_deref())
             .ok_or(TaskError::Denied)?;
-        if !crate::credentials::servers::allowed(app, wanted, server, url, usage) {
+        if !crate::credentials::allowed_request_with_server(
+            app,
+            wanted,
+            url,
+            usage,
+            body,
+            content_type,
+            Some(server),
+        ) {
             return Err(TaskError::Denied);
         }
     }
@@ -2814,5 +2822,71 @@ mod tests {
             assert_eq!(runner.in_flight(), 0);
             assert!(runner.wait(Duration::from_millis(10)).is_none());
         }
+    }
+    #[test]
+    fn miniflux_update_uses_the_atomically_bound_token_and_cannot_move_servers() {
+        let root = temp_root("miniflux-bound-update");
+        crate::credentials::servers::install(
+            &root,
+            "rss-miniflux",
+            "miniflux",
+            "https://flux.example/reader",
+            "fixture-token",
+        )
+        .unwrap();
+        let sent = Arc::new(AtomicUsize::new(0));
+        let observed = Arc::clone(&sent);
+        let mut runner = TaskRunner::simulated(temp_root("miniflux-update-root"))
+            .with_capabilities([Capability::Network])
+            .with_app_secrets(&root, "rss-miniflux")
+            // Even an over-broad host callback cannot bypass the saved account policy.
+            .with_credential_policy(Arc::new(|_, _, _, _, _, _| true))
+            .with_updates(Arc::new(
+                move |method, url, body, _, credential, _, _, _, _| {
+                    assert_eq!(method, WriteMethod::Put);
+                    assert_eq!(url, "https://flux.example/reader/v1/entries");
+                    assert_eq!(body, br#"{"entry_ids":[7],"status":"read"}"#);
+                    assert_eq!(credential, Some(("X-Auth-Token", "fixture-token")));
+                    observed.fetch_add(1, Ordering::SeqCst);
+                    Ok(Vec::new())
+                },
+            ));
+        for (id, url, body, expected) in [
+            (
+                1,
+                "https://flux.example/reader/v1/entries",
+                r#"{"entry_ids":[7],"status":"read"}"#,
+                TaskOutcome::Completed(Vec::new()),
+            ),
+            (
+                2,
+                "https://other.example/reader/v1/entries",
+                r#"{"entry_ids":[7],"status":"read"}"#,
+                TaskOutcome::Failed(TaskError::Denied),
+            ),
+            (
+                3,
+                "https://flux.example/reader/v1/entries",
+                r#"{"entry_ids":[7],"status":"read","title":"overwrite"}"#,
+                TaskOutcome::Failed(TaskError::Denied),
+            ),
+        ] {
+            runner
+                .submit(
+                    TaskId(id),
+                    Task::Update {
+                        method: UpdateMethod::Put,
+                        url: url.into(),
+                        body: body.into(),
+                        content_type: "application/json".into(),
+                        credential: Some(Credential::in_header("miniflux", "X-Auth-Token")),
+                        headers: Vec::new(),
+                        max_bytes: 1024,
+                    },
+                )
+                .unwrap();
+            assert_eq!(collect(&mut runner, 1)[0].outcome, expected);
+        }
+        assert_eq!(sent.load(Ordering::SeqCst), 1);
     }
 }

@@ -6,7 +6,9 @@ const MAGIC: &str = "cobalt-server-account-v1";
 
 #[must_use]
 pub fn may_set(app: &str, name: &str) -> bool {
-    (app == "panels" && name == "komga") || (app == "calibre-web" && name == "calibre")
+    (app == "panels" && name == "komga")
+        || (app == "calibre-web" && name == "calibre")
+        || (app == "rss-miniflux" && name == "miniflux")
 }
 
 pub(crate) fn path(root: &Path, app: &str, name: &str) -> Option<PathBuf> {
@@ -55,8 +57,9 @@ pub fn contains(server: &str, url: &str) -> bool {
                 .is_some_and(|tail| tail.starts_with('/')))
 }
 
-/// The reviewed provider policy; a saved server cannot grant another method,
-/// credential name, header convention or application's account.
+/// Reviewed read-only Basic providers. Token providers with writes use the
+/// body-aware `allowed_request_with_server` boundary in the parent module;
+/// this narrower helper must never grant them Basic access by association.
 #[must_use]
 pub fn allowed(
     app: &str,
@@ -65,8 +68,10 @@ pub fn allowed(
     url: &str,
     usage: CredentialUse,
 ) -> bool {
-    may_set(app, &credential.secret)
-        && credential.header == SecretHeader::Basic
+    matches!(
+        (app, credential.secret.as_str()),
+        ("panels", "komga") | ("calibre-web", "calibre")
+    ) && credential.header == SecretHeader::Basic
         && usage == CredentialUse::Fetch
         && contains(server, url)
 }

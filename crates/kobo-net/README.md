@@ -22,8 +22,9 @@ The runtime must authorize the exact method, URL, body and credential before
 calling this API. A POST credential grant does not authorize PUT or PATCH.
 The SDK exposes `Task::Update` with `UpdateMethod::Put` or `Patch`. Both the
 simulator and native runtime dispatch it through a separate update backend.
-Existing provider credential policies refuse updates until an app-specific
-method/body/destination grant is reviewed. The SDK retry helper never silently
+Provider credentials require a reviewed method/body/destination grant. Miniflux
+permits bounded entry PUTs through its server-bound token policy; other existing
+provider grants do not inherit that permission. The SDK retry helper never silently
 replays an update after an uncertain failure.
 
 ## Validation

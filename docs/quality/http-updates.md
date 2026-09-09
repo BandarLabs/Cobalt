@@ -10,9 +10,11 @@ simulator must be rebuilt together. The native and simulated hosts dispatch
 updates through the same policy runner and HTTPS transport.
 
 Credential policy receives the exact method, destination, body and content type.
-Existing provider grants explicitly refuse PUT/PATCH. Server-bound read-only
-accounts also remain read-only. Miniflux and Read Later still need their reviewed
-provider rules and app integration; this work does not complete their sync tasks.
+Existing provider grants do not inherit PUT/PATCH permission. Server-bound
+read-only accounts remain read-only. The subsequent [Miniflux policy](miniflux-account-policy.md)
+adds narrowly scoped entry updates and feed creation to its bound token. Miniflux
+app integration and Read Later provider rules remain in progress; these platform
+changes do not complete their sync tasks.
 
 The transport sends an update once without redirects or stale-connection replay.
 `spawn_retrying` also sends update tasks once. A lost reply can follow an applied

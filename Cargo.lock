@@ -1315,6 +1315,7 @@ version = "0.3.12"
 dependencies = [
  "kobo-abi",
  "kobo-dict",
+ "kobo-json",
  "kobo-net",
  "kobo-protocol",
  "rusqlite",

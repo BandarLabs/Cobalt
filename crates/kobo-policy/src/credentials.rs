@@ -11,6 +11,8 @@ use std::fs;
 use std::io::Write;
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 
+#[path = "miniflux_credentials.rs"]
+mod miniflux;
 #[path = "credential_servers.rs"]
 pub mod servers;
 use std::path::{Path, PathBuf};
@@ -243,7 +245,13 @@ pub fn allowed_request_with_server(
 ) -> bool {
     server.map_or_else(
         || allowed_request(app, credential, url, usage, body, content_type),
-        |server| servers::allowed(app, credential, server, url, usage),
+        |server| {
+            if app == "rss-miniflux" {
+                miniflux::allowed(credential, server, url, usage, body, content_type)
+            } else {
+                servers::allowed(app, credential, server, url, usage)
+            }
+        },
     )
 }
 
@@ -516,8 +524,7 @@ fn store_app_credential_allowed(
                     CredentialUse::Fetch => {
                         clean_path(&path).ends_with("/v1/entries") && path.contains("status=unread")
                     }
-                    CredentialUse::Post => clean_path(&path).ends_with("/v1/entries"),
-                    CredentialUse::Put | CredentialUse::Patch => false,
+                    CredentialUse::Post | CredentialUse::Put | CredentialUse::Patch => false,
                 })
         }
         _ => return None,
@@ -1157,11 +1164,6 @@ mod update_method_tests {
                 "audiobook",
                 Credential::bearer("openai"),
                 "https://api.openai.com/v1/responses",
-            ),
-            (
-                "rss-miniflux",
-                Credential::in_header("miniflux", "X-Auth-Token"),
-                "https://flux.example/v1/entries",
             ),
             (
                 "readlater",
