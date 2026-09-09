@@ -1,0 +1,11 @@
+{
+  "source": "kobod::device::launch_surface",
+  "geometry": [
+    1072,
+    1448
+  ],
+  "kind": "host render of device splash, not a physical capture",
+  "colour": false,
+  "no_font_loading": true,
+  "hardware_latency_verified": false
+}
