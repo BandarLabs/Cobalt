@@ -3,7 +3,7 @@
   "display_name": "Audiobook Studio",
   "short_label": "Audiobooks",
   "summary": "Turn a topic into an original narrated audiobook and listen on your Kobo.",
-  "version": "1.0.8",
+  "version": "1.0.9",
   "glyph": "headphones",
   "capabilities": [
     "network",
@@ -11,5 +11,5 @@
     "bluetooth-audio",
     "bluetooth-control"
   ],
-  "release_notes": "Update shared controls and page layout for Cobalt 0.3.12."
+  "release_notes": "Set figures and their captions apart from the prose around them, and typeset a document's mathematics all the way through instead of stopping after the first few dozen formulae."
 }

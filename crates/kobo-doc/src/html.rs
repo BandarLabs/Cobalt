@@ -24,7 +24,6 @@
 //! a saved web page, and it cannot get stuck, recurse or allocate a tree.
 
 use std::collections::BTreeMap;
-use std::time::Instant;
 
 use kobo_html::{attribute, decode_entities, element_name, skip_element};
 
@@ -32,16 +31,6 @@ use crate::{
     Block, BlockStyle, Builder, Document, InlineSpan, InlineStyle, RichBlock, TextAlignment,
     MAX_BLOCK_TEXT,
 };
-
-/// How large a displayed formula is drawn, in pixels to the em.
-///
-/// A formula is a picture and is scaled to the space it is given, so this
-/// decides how much detail is there to scale down rather than how big it
-/// looks. Deliberately generous, so that a subscript inside a fraction still
-/// has strokes of its own on a three-hundred-dot panel, and so that detail
-/// thrown away in the scaling is detail the panel never had to draw twice.
-#[cfg(feature = "raster")]
-const FORMULA_EM: f32 = crate::FORMULA_PICTURE_EM_F32;
 
 /// Elements whose contents are instructions rather than words.
 const OPAQUE: [&str; 3] = ["script", "style", "iframe"];
@@ -71,36 +60,32 @@ pub fn parse_with_css(source: &str, external_css: &str) -> Document {
     parse_within(source, external_css, Allowance::whole())
 }
 
-/// What a document may still spend on drawing formulae.
+/// How many formulae a document may still be given pictures for.
 ///
-/// Two limits, because they answer different questions. The count is how many
-/// pictures are worth keeping, and a reader can only ever show a few dozen.
-/// The clock is how long the reader is willing to be unresponsive for, and on
-/// real hardware it is the one that runs out first.
+/// A count and no clock. There used to be a clock too, and it was the one
+/// that mattered: the parser drew each formula as it met it, which is 4.7 ms
+/// apiece on a Clara BW inside a callback the runtime allows 250 ms. Drawing
+/// happens in the picture pipeline now, so nothing here spends time on a
+/// formula beyond noting that there is one, and the only question left is how
+/// many pictures are worth holding.
 #[derive(Clone, Copy)]
 pub struct Allowance {
-    /// How many more formulae may be drawn pictures.
+    /// How many more formulae may be given pictures.
     pub pictures: usize,
-    /// When drawing must stop, whatever the count says.
-    ///
-    /// `None` never stops, which is what a test that wants every formula on a
-    /// machine of any speed asks for.
-    pub until: Option<Instant>,
 }
 
 impl Allowance {
-    /// A whole document's worth, starting now.
+    /// A whole document's worth.
     #[must_use]
-    pub fn whole() -> Self {
+    pub const fn whole() -> Self {
         Self {
             pictures: crate::MAX_FORMULA_PICTURES,
-            until: Instant::now().checked_add(crate::FORMULA_DRAWING_BUDGET),
         }
     }
 
-    /// Whether there is anything left to draw a formula with.
-    fn open(self, drawn: usize) -> bool {
-        drawn < self.pictures && self.until.is_none_or(|until| Instant::now() < until)
+    /// Whether there is room for one more formula.
+    const fn open(self, taken: usize) -> bool {
+        taken < self.pictures
     }
 }
 
@@ -171,7 +156,15 @@ pub fn parse_within(source: &str, external_css: &str, allowance: Allowance) -> D
                 if !state.inline_formula(inside, &drawn) {
                     state.words(&drawn);
                 }
-                state.words(" ");
+                // Except where a mark of punctuation follows, which is set
+                // tight against whatever it ends. `LaTeXML` writes the comma
+                // straight onto the closing tag -- `</math>, we randomly` --
+                // so the space put here was one nothing in the document asked
+                // for: seventy lines of a 163-page paper read "the split
+                // 𝒯⁽ʲ⁾ . We write" and "0.91 , an absolute gain".
+                if !punctuation_follows(after) {
+                    state.words(" ");
+                }
             }
             rest = after;
             continue;
@@ -210,6 +203,37 @@ pub fn parse_within(source: &str, external_css: &str, allowance: Allowance) -> D
     }
     state.words(rest);
     state.finish()
+}
+
+/// Whether the next thing a reader will see binds to what came before it.
+///
+/// Only ever asked about the space after a formula. Tags are stepped over,
+/// because the mark may sit outside a span the formula was wrapped in, and so
+/// is whitespace: a document that wrote a space in front of its own comma
+/// still meant the comma to be set against the word, and a formula is a word.
+///
+/// Looking past the end of a block can at worst drop a space that was going to
+/// be trimmed off the end of it anyway.
+fn punctuation_follows(after: &str) -> bool {
+    const BINDS: [char; 11] = [
+        ',', '.', ';', ':', '!', '?', ')', ']', '}', '\u{2019}', '\u{201d}',
+    ];
+    let mut rest = after;
+    loop {
+        rest = rest.trim_start();
+        if rest.starts_with('<') {
+            if let Some(after_bracket) = skip_bracketed(rest) {
+                rest = after_bracket;
+                continue;
+            }
+            let Some(end) = rest.find('>') else {
+                return false;
+            };
+            rest = &rest[end + 1..];
+            continue;
+        }
+        return rest.starts_with(BINDS);
+    }
 }
 
 const MAX_CSS_BYTES: usize = 256 * 1024;
@@ -309,13 +333,13 @@ struct State {
     /// Whether the words being collected are the document's title rather than
     /// something to draw.
     titling: bool,
-    /// The formulae drawn so far, keyed by the name their block refers to.
+    /// The LaTeX of each formula met so far, keyed by the name the block or
+    /// run referring to it uses.
     ///
-    /// A displayed formula is a picture, and a picture is carried by name
-    /// rather than by its bytes, so the bytes wait here until the document is
-    /// finished and can be handed over whole.
-    formulae: BTreeMap<String, Vec<u8>>,
-    /// What this file may still spend drawing formulae.
+    /// The source, not a picture: what to draw rather than the drawing, so
+    /// that the parse costs a formula nothing but the note of it.
+    formulae: BTreeMap<String, String>,
+    /// How many more formulae this file may name.
     allowance: Allowance,
     /// The table row being read, once `<tr>` has opened one.
     ///
@@ -868,8 +892,8 @@ impl State {
     /// stay as the line of text [`kobo_html::math::render`] makes of them.
     ///
     /// The description carried beside the picture is that same line of text
-    /// rather than the LaTeX, so a formula that will not draw, or a reader
-    /// that cannot show pictures, still gets mathematics rather than source.
+    /// rather than the LaTeX, so a formula whose picture has not arrived yet,
+    /// or which nothing will draw, still gets mathematics rather than source.
     ///
     /// Returns whether the formula was taken; `false` leaves it to be read as
     /// text by the caller.
@@ -882,14 +906,11 @@ impl State {
         let Some(latex) = attribute(inside, "alttext") else {
             return false;
         };
-        let Some(png) = draw_formula(&decode_entities(latex)) else {
-            return false;
-        };
         // Whatever words were being collected belong to the paragraph in front
         // of the formula, not to the formula, so they are put down first.
         self.flush();
         let name = format!("{}{}", crate::FORMULA_PICTURE_PREFIX, self.formulae.len());
-        self.formulae.insert(name.clone(), png);
+        self.formulae.insert(name.clone(), decode_entities(latex));
         self.builder.push(Block::Picture {
             name,
             alt: drawn.trim().to_owned(),
@@ -914,14 +935,11 @@ impl State {
         let Some(latex) = attribute(inside, "alttext") else {
             return false;
         };
-        let Some(png) = draw_formula(&decode_entities(latex)) else {
-            return false;
-        };
         if self.text.len() > MAX_BLOCK_TEXT {
             return false;
         }
         let name = format!("{}{}", crate::FORMULA_PICTURE_PREFIX, self.formulae.len());
-        self.formulae.insert(name.clone(), png);
+        self.formulae.insert(name.clone(), decode_entities(latex));
         // The same two steps [`Self::words`] takes, because the words and the
         // styled runs have to stay the same string: a run that does not match
         // the block text costs the block every emphasis it had. Its own run
@@ -941,9 +959,9 @@ impl State {
         self.flush();
         let formulae = std::mem::take(&mut self.formulae);
         let mut document = self.builder.finish();
-        // Joined rather than assigned: a book brings its own pictures, and a
-        // formula is one more of them.
-        document.images.extend(formulae);
+        // Joined rather than assigned: a book read a file at a time brings the
+        // formulae of every file before this one.
+        document.formulae.extend(formulae);
         document
     }
 }
@@ -1360,21 +1378,6 @@ fn breaks_a_block(name: &str) -> bool {
     )
 }
 
-/// Draws a formula, when this build was compiled to be able to.
-///
-/// Without the feature there is no rasteriser and no fonts to draw with, and
-/// the caller falls back to reading the formula as a line of text.
-#[cfg(feature = "raster")]
-fn draw_formula(latex: &str) -> Option<Vec<u8>> {
-    kobo_html::math::raster(latex, FORMULA_EM)
-}
-
-#[cfg(not(feature = "raster"))]
-#[allow(clippy::missing_const_for_fn)]
-fn draw_formula(_latex: &str) -> Option<Vec<u8>> {
-    None
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1411,12 +1414,13 @@ mod tests {
         assert_eq!(text, "We take x1 as given.");
     }
 
-    /// A formula set on its own line becomes a picture of itself.
+    /// A formula set on its own line is named as a picture of itself, and the
+    /// source it will be typeset from is kept beside it.
     ///
-    /// Only when this build can draw one. Without the rasteriser there is
-    /// nothing to show, and the formula stays a line of text, which is the
-    /// behaviour every other consumer of this crate still gets.
-    #[cfg(feature = "raster")]
+    /// No rasteriser is involved here and none should be: drawing costs
+    /// milliseconds apiece on the reader and belongs to whatever owns a clock.
+    /// What the parse owes is the name, the source, and the line of text the
+    /// formula reads as until its picture arrives.
     #[test]
     fn a_displayed_formula_is_set_as_a_picture_of_itself() {
         let document = parse(
@@ -1433,10 +1437,17 @@ mod tests {
                 document.blocks
             );
         };
-        let drawn = document.images.get(name).expect("the drawing");
-        assert!(drawn.starts_with(b"\x89PNG"), "not a picture");
+        assert_eq!(
+            document.formulae.get(name).map(String::as_str),
+            Some("\\frac{6\\pi}{11}"),
+            "the source to typeset it from was not kept"
+        );
+        assert!(
+            document.images.is_empty(),
+            "the parse drew a formula it was only asked to name"
+        );
         // The description is the reading of the formula, never the source,
-        // because it is what a reader sees when the drawing will not arrive.
+        // because it is what a reader sees while the drawing has not arrived.
         assert!(
             !alt.contains('\\'),
             "the source became the description: {alt}"
@@ -1445,6 +1456,37 @@ mod tests {
             alt.contains('\u{3c0}'),
             "the description lost the formula: {alt}"
         );
+    }
+
+    /// A formula that a comma follows does not leave a space in front of it.
+    ///
+    /// `LaTeXML` writes the mark straight onto the closing tag, so the space
+    /// an equation needs on its right was being put in front of every comma
+    /// and full stop that followed one: seventy of them in a single 163-page
+    /// paper, reading "the split 𝒯⁽ʲ⁾ . We write" and "0.91 , an absolute
+    /// gain". The space is still owed to a word.
+    #[test]
+    fn a_formula_a_mark_of_punctuation_follows_is_set_tight_against_it() {
+        let document = parse(
+            "<p>the split <math alttext=\"T\"><mi>T</mi></math>. We take \
+             <math alttext=\"x\"><mi>x</mi></math>, and <math alttext=\"y\">\
+             <mi>y</mi></math> as given.</p>",
+        );
+        let Block::Paragraph(text) = &document.blocks[0] else {
+            panic!("not a paragraph: {:?}", document.blocks[0]);
+        };
+        assert_eq!(text, "the split T. We take x, and y as given.");
+    }
+
+    /// The mark still counts when a tag stands between it and the formula.
+    #[test]
+    fn punctuation_outside_the_span_a_formula_sits_in_still_counts() {
+        let document =
+            parse("<p>at most <span><math alttext=\"n\"><mi>n</mi></math></span>, we say.</p>");
+        let Block::Paragraph(text) = &document.blocks[0] else {
+            panic!("not a paragraph: {:?}", document.blocks[0]);
+        };
+        assert_eq!(text, "at most n, we say.");
     }
 
     /// A formula inside a sentence stays in the sentence.
@@ -1490,11 +1532,10 @@ mod tests {
         assert!(text.contains('\u{3c0}'), "the fraction was lost: {text}");
     }
 
-    /// A formula inside a sentence is typeset like one on its own line, and
-    /// the words it was written as stay in the paragraph underneath it: they
-    /// are what a search matches and what a reader gets if the picture never
-    /// arrives.
-    #[cfg(feature = "raster")]
+    /// A formula inside a sentence is named for typesetting like one on its
+    /// own line, and the words it was written as stay in the paragraph
+    /// underneath it: they are what a search matches and what a reader gets if
+    /// the picture never arrives.
     #[test]
     fn a_formula_inside_a_sentence_is_drawn_over_the_words_it_was_written_as() {
         let document = parse(
@@ -1515,9 +1556,10 @@ mod tests {
             .expect("a formula run");
         assert_eq!(formula.text.trim(), "K_G");
         let name = formula.formula.as_deref().expect("a picture name");
-        assert!(
-            document.images.contains_key(name),
-            "the picture was never stored: {name}"
+        assert_eq!(
+            document.formulae.get(name).map(String::as_str),
+            Some("K_{G}"),
+            "the source to typeset it from was not kept: {name}"
         );
         // Its own run, so that the picture covers the formula and not the
         // words either side of it.
@@ -1532,14 +1574,13 @@ mod tests {
         );
     }
 
-    /// A paper with more mathematics in it than can ever be shown stops being
-    /// drawn once it passes that point, and reads as words from there on.
+    /// A paper with more mathematics in it than can ever be held stops being
+    /// named once it passes that point, and reads as words from there on.
     ///
-    /// A survey with a thousand formulae in it spent five seconds drawing them
-    /// on a real reader, against a deadline of a quarter of one, and threw
-    /// away all but the few dozen it had room to show. The far end of such a
-    /// paper is set less handsomely now, and the paper opens.
-    #[cfg(feature = "raster")]
+    /// The ceiling is memory rather than time now that nothing here draws:
+    /// pictures for every formula of a very long survey would outlast the room
+    /// the runtime has to hold them. The far end of such a paper is set less
+    /// handsomely, and the paper opens.
     #[test]
     fn a_paper_with_more_formulae_than_can_be_shown_stops_drawing_them() {
         let one = "<p>a <math alttext=\"x\"><semantics><mi>x</mi>\
@@ -1548,9 +1589,9 @@ mod tests {
         let over = crate::MAX_FORMULA_PICTURES + 10;
         let document = parse(&one.repeat(over));
         assert_eq!(
-            document.images.len(),
+            document.formulae.len(),
             crate::MAX_FORMULA_PICTURES,
-            "more pictures were drawn than can ever be shown"
+            "more formulae were named than can ever be held"
         );
         // The ones past the limit are still read: they keep their words, they
         // simply have no picture set over them.
@@ -1568,60 +1609,45 @@ mod tests {
         assert!(text.contains('x'), "the formula was lost entirely: {text}");
     }
 
-    /// A reader too slow to draw a paper's mathematics reads it as words
-    /// rather than making the reader wait.
+    /// Reading a paper's markup costs nothing per formula.
     ///
-    /// The count above is a limit on how many pictures are worth keeping, and
-    /// on a development machine sixty-four of them cost fifty milliseconds
-    /// altogether. On a Clara BW the same sixty-four cost nine seconds, inside
-    /// the one callback that opens the document, because each formula there
-    /// takes about a hundred and forty milliseconds to draw. No count can
-    /// express that, because the right count is a property of the machine.
-    #[cfg(feature = "raster")]
+    /// This is the whole point of keeping the source rather than the picture.
+    /// Drawing used to happen here, inside the one callback that opens a
+    /// document, where the runtime allows 250 ms in total and a formula costs
+    /// 4.7 ms on a Clara BW: a paper of two hundred formulae could not be
+    /// opened without overrunning it several times over, and the limits that
+    /// held it back were really that deadline wearing a count's clothes.
+    ///
+    /// So a paper thick with mathematics must parse in the time a paper
+    /// without any does. The margin is generous because this runs on whatever
+    /// machine happens to be building; what it catches is drawing creeping
+    /// back into the parse, which would be a factor of hundreds, not tens.
     #[test]
-    fn a_reader_that_cannot_draw_a_formula_in_time_reads_it_as_words() {
-        let one = "<p>a <math alttext=\"x\"><semantics><mi>x</mi>\
-                   <annotation encoding=\"application/x-tex\">x</annotation>\
-                   </semantics></math> b</p>";
-        let source = one.repeat(4);
+    fn reading_the_markup_costs_nothing_per_formula() {
+        let plain = "<p>a x b</p>".repeat(200);
+        let mathematical = "<p>a <math alttext=\"\\frac{6\\pi}{11}\"><semantics>\
+                            <mfrac><mrow><mn>6</mn><mi>\u{3c0}</mi></mrow><mn>11</mn></mfrac>\
+                            <annotation encoding=\"application/x-tex\">\\frac{6\\pi}{11}\
+                            </annotation></semantics></math> b</p>"
+            .repeat(200);
 
-        // A clock that has already run out stands for a reader too slow to
-        // draw the first formula, which is the case this exists for.
-        let spent = parse_within(
-            &source,
-            "",
-            Allowance {
-                pictures: crate::MAX_FORMULA_PICTURES,
-                until: Some(Instant::now()),
-            },
+        let started = std::time::Instant::now();
+        let document = parse(&mathematical);
+        let with = started.elapsed();
+        let started = std::time::Instant::now();
+        let _ = parse(&plain);
+        let without = started.elapsed();
+
+        assert_eq!(document.formulae.len(), 200, "the formulae were not named");
+        assert!(
+            document.images.is_empty(),
+            "the parse drew {} formulae",
+            document.images.len()
         );
         assert!(
-            spent.images.is_empty(),
-            "a reader with no time left drew {} formulae anyway",
-            spent.images.len()
-        );
-
-        // And the words are still there, so the paper reads rather than
-        // arriving with holes in it.
-        let Block::Paragraph(text) = &spent.blocks[0] else {
-            panic!("not a paragraph: {:?}", spent.blocks[0]);
-        };
-        assert!(text.contains('x'), "the formula was lost entirely: {text}");
-
-        // A clock with time on it draws them, so the budget is what decided
-        // the difference rather than anything else about the source.
-        let afforded = parse_within(
-            &source,
-            "",
-            Allowance {
-                pictures: crate::MAX_FORMULA_PICTURES,
-                until: None,
-            },
-        );
-        assert_eq!(
-            afforded.images.len(),
-            4,
-            "a reader with time to spare left the mathematics undrawn"
+            with < without.max(core::time::Duration::from_millis(1)) * 50,
+            "two hundred formulae cost {with:?} to read against {without:?} \
+             without them, which is the cost of drawing rather than of reading"
         );
     }
 

@@ -3,8 +3,8 @@
   "display_name": "Zotero Reader",
   "short_label": "Zotero",
   "summary": "Browse Zotero collections, read metadata and indexed paper text, and keep papers available offline.",
-  "version": "1.0.4",
-  "release_notes": "Update shared controls and page layout for Cobalt 0.3.12.",
+  "version": "1.0.5",
+  "release_notes": "Set figures and their captions apart from the prose around them, and typeset a document's mathematics all the way through instead of stopping after the first few dozen formulae.",
   "glyph": "book",
   "capabilities": [
     "network",

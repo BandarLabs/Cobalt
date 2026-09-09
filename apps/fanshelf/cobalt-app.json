@@ -4,8 +4,8 @@
   "short_label": "Fanshelf",
   "summary": "Save public AO3 works to a shelf made for offline reading.",
   "page_description": "Add an AO3 work and keep it ready for comfortable reading on your Kobo.",
-  "version": "0.2.1",
-  "release_notes": "Update shared controls and page layout for Cobalt 0.3.12.",
+  "version": "0.2.2",
+  "release_notes": "Set figures and their captions apart from the prose around them, and typeset a document's mathematics all the way through instead of stopping after the first few dozen formulae.",
   "glyph": "book",
   "capabilities": [
     "network"

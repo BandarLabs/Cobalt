@@ -3,11 +3,11 @@
   "display_name": "Gutenbird",
   "short_label": "Gutenbird",
   "summary": "Browse OPDS libraries and read their books on your Kobo.",
-  "version": "1.0.8",
+  "version": "1.0.9",
   "glyph": "book",
   "capabilities": [
     "network",
     "frontlight-control"
   ],
-  "release_notes": "Update shared controls and page layout for Cobalt 0.3.12."
+  "release_notes": "Set figures and their captions apart from the prose around them, and typeset a document's mathematics all the way through instead of stopping after the first few dozen formulae."
 }
