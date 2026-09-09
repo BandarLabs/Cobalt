@@ -869,9 +869,15 @@ dependencies = [
 
 [[package]]
 name = "kobo-calibre-web"
-version = "0.1.0"
+version = "0.1.3"
 dependencies = [
+ "kobo-bookview",
+ "kobo-json",
+ "kobo-net",
+ "kobo-opds",
+ "kobo-read",
  "kobo-sdk",
+ "kobo-state",
  "kobo-ui",
 ]
 

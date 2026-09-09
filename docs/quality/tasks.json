@@ -1126,48 +1126,90 @@
     "pr": 2,
     "group": "calibre-web (APP-1)",
     "task": "Replace ignored response/static categories with real OPDS navigation",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "apps/calibre-web/src/main.rs",
+      "apps/calibre-web/src/reading.rs",
+      "apps/calibre-web/src/settings.rs",
+      "crates/kobo-policy/src/credential_servers.rs",
+      "docs/quality/evidence/calibre-web/result.json",
+      "docs/quality/validation.md"
+    ]
   },
   {
     "id": "CALIBRE-02",
     "pr": 2,
     "group": "calibre-web (APP-1)",
     "task": "Configure and test provider endpoint/authentication",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "apps/calibre-web/src/main.rs",
+      "apps/calibre-web/src/reading.rs",
+      "apps/calibre-web/src/settings.rs",
+      "crates/kobo-policy/src/credential_servers.rs",
+      "docs/quality/evidence/calibre-web/result.json",
+      "docs/quality/validation.md"
+    ]
   },
   {
     "id": "CALIBRE-03",
     "pr": 2,
     "group": "calibre-web (APP-1)",
     "task": "Handle books, authors and shelves through live parsed catalog links",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "apps/calibre-web/src/main.rs",
+      "apps/calibre-web/src/reading.rs",
+      "apps/calibre-web/src/settings.rs",
+      "crates/kobo-policy/src/credential_servers.rs",
+      "docs/quality/evidence/calibre-web/result.json",
+      "docs/quality/validation.md"
+    ]
   },
   {
     "id": "CALIBRE-04",
     "pr": 2,
     "group": "calibre-web (APP-1)",
     "task": "Download and read a fixture book through BookView",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "apps/calibre-web/src/main.rs",
+      "apps/calibre-web/src/reading.rs",
+      "apps/calibre-web/src/settings.rs",
+      "crates/kobo-policy/src/credential_servers.rs",
+      "docs/quality/evidence/calibre-web/result.json",
+      "docs/quality/validation.md"
+    ]
   },
   {
     "id": "CALIBRE-05",
     "pr": 2,
     "group": "calibre-web (APP-1)",
     "task": "Retain downloaded book and progress offline",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "apps/calibre-web/src/main.rs",
+      "apps/calibre-web/src/reading.rs",
+      "apps/calibre-web/src/settings.rs",
+      "crates/kobo-policy/src/credential_servers.rs",
+      "docs/quality/evidence/calibre-web/result.json",
+      "docs/quality/validation.md"
+    ]
   },
   {
     "id": "CALIBRE-06",
     "pr": 2,
     "group": "calibre-web (APP-1)",
     "task": "Distinguish authentication, transport, HTTP and parsing failures",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "apps/calibre-web/src/main.rs",
+      "apps/calibre-web/src/reading.rs",
+      "apps/calibre-web/src/settings.rs",
+      "crates/kobo-policy/src/credential_servers.rs",
+      "docs/quality/evidence/calibre-web/result.json",
+      "docs/quality/validation.md"
+    ]
   },
   {
     "id": "CHAT-01",

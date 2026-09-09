@@ -18,7 +18,7 @@ A checked task requires implementation plus recorded validation. Physical measur
 
 The PR 1 implementation checklist is complete; CBR is deferred and COMIC-18 belongs to catalog integration in PR 2. This does not certify hardware accuracy: native sleep hands ownership back to the stock reader, and no generic kernel suspend, RTC wake or automatic cover-sleep backend is enabled. Physical acceptance remains scheduled after all three PRs.
 
-495 tracked tasks: 133 completed, 1 deferred by the owner, 361 open. Implementation in progress. Evidence is recorded per task in `tasks.json` and in [the validation log](validation.md).
+495 tracked tasks: 139 completed, 1 deferred by the owner, 355 open. Implementation in progress. Evidence is recorded per task in `tasks.json` and in [the validation log](validation.md).
 
 Design direction: use the familiar visual conventions of each app, restrained controls and plain copy. Crossword follows printed crossword typography and grids. Paperterm is the next app priority, including a real two-way laptop terminal session. Paperterm defaults to portrait with a physically scaled, denser terminal font; the measured grid takes precedence over forcing 80 columns.
 
@@ -163,12 +163,12 @@ Design direction: use the familiar visual conventions of each app, restrained co
 
 ## PR 2 · calibre-web (APP-1)
 
-- [ ] **CALIBRE-01** Replace ignored response/static categories with real OPDS navigation.
-- [ ] **CALIBRE-02** Configure and test provider endpoint/authentication.
-- [ ] **CALIBRE-03** Handle books, authors and shelves through live parsed catalog links.
-- [ ] **CALIBRE-04** Download and read a fixture book through BookView.
-- [ ] **CALIBRE-05** Retain downloaded book and progress offline.
-- [ ] **CALIBRE-06** Distinguish authentication, transport, HTTP and parsing failures.
+- [x] **CALIBRE-01** Replace ignored response/static categories with real OPDS navigation.
+- [x] **CALIBRE-02** Configure and test provider endpoint/authentication.
+- [x] **CALIBRE-03** Handle books, authors and shelves through live parsed catalog links.
+- [x] **CALIBRE-04** Download and read a fixture book through BookView.
+- [x] **CALIBRE-05** Retain downloaded book and progress offline.
+- [x] **CALIBRE-06** Distinguish authentication, transport, HTTP and parsing failures.
 
 ## PR 2 · AI Command Center
 

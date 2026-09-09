@@ -91,3 +91,22 @@ assert zero fetch/post effects. The route also checks shared pencil-board nodes
 for connected loops, circular islands and attached diagonal sum clues. The original generator separately verifies unique loop, bridge and cross-sum
 solutions and deterministic reproduction with `make-logicpack-collection.py --check`.
 Mines difficulty describes field size and density; guess-free play is not promised.
+
+
+## calibre-web catalogs, downloads and offline reading
+
+After building `kobo-cli`, run:
+
+```sh
+python3 scripts/quality/check-calibre-sim.py --output /tmp/calibre-check
+```
+
+This starts an original OPDS/EPUB fixture on a private, locally trusted HTTPS
+server and drives the actual app with isolated storage. It follows author and
+shelf links, downloads an EPUB, saves a reading position, kills the app and
+reopens offline. It checks failed position/setup saves, explicit retry, damaged
+file repair, HTTP account refusals, malformed catalogs and unreadable settings.
+The final stage enters a Basic account on the reader and verifies authenticated
+catalog, author-section and EPUB requests through the runtime's server binding.
+Captures include actual layouts and source/binary/font provenance. No owner
+server, credentials or device storage is used.

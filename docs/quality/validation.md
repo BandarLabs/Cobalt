@@ -1032,3 +1032,49 @@ it does not change the generated puzzles. Physical acceptance remains pending.
 
 Program totals: **133 done, 361 open, one deferred CBR task**. PR 2 has
 **41/269 complete**; all 133 companion tasks remain open.
+
+
+## calibre-web catalog, account and offline reading acceptance
+
+calibre-web 0.1.3 replaces the static root categories with parsed OPDS 1.2/2.0
+navigation, book details, catalog paging and parent-page retention. Setup accepts
+an HTTPS OPDS endpoint, checks its response and acknowledges the saved address.
+Unreadable settings remain untouched. Private libraries use the shared username/
+password flow and the existing atomic server-bound account record. The policy
+now explicitly permits calibre-web's `calibre` Basic account for reads within
+its saved HTTPS server scope. Legacy unbound accounts retain their root-only
+policy; owners sign in on the reader to enable private navigation and downloads.
+
+EPUB/text downloads use bounded chunks and acknowledged shelf writes before
+library publication. Shelf filenames satisfy the platform's 64-character limit;
+the complete SHA-256 digest validates every local opening. BookView provides the
+shared reader. A bounded 64-book index retains reading state with serialized,
+exactly acknowledged writes and explicit retry. Damaged files offer replacement
+without prematurely removing the prior index entry. The top-bar Back action
+closes the book after honoring any reader-internal navigation.
+
+The [actual HTTPS simulator journey](evidence/calibre-web/result.json) passes
+**16 checks** on Clara BW at Extra-large. It follows author/shelf links, downloads
+the original EPUB, saves its position, kills the app and reopens offline with no
+network request. It exercises failed reading/setup writes, explicit retries,
+file corruption and repair, HTTP authentication refusal, malformed catalogs and
+unreadable settings with continued offline access. Its final stage enters an
+account through the on-screen keyboard; the server verifies Basic authentication
+on the root, author catalog and EPUB download. The fixture stores no owner data
+and records no authentication headers. Captures include binary/source/font
+provenance from the working tree based on 05a0012. Representative catalog,
+reading and recovery captures were visually reviewed and published in app docs.
+
+The real-storage journey exposed an overlong shelf key and a missing top-bar
+Back handler that the initial mocked tests had missed; both are fixed, covered
+by regressions and included in the final successful journey. All **18 app tests**
+and **131 policy tests** pass, including all-scale setup/catalog/recovery layouts,
+local EPUB position restoration, publication ordering and server-scope refusal.
+Strict all-target Clippy, Rust 1.85.1 ARMv7 musl checking, formatting, diff checks,
+the CLI build and published-catalog version gate pass. App, SDK policy and
+simulator documentation and actual screenshots are updated.
+
+CALIBRE-01 through CALIBRE-06 are complete for implementation/local validation.
+Physical Clara BW acceptance remains pending. Program totals: **139 done,
+355 open, one deferred CBR task**. PR 2 has **47/269 complete**; all 133
+companion tasks remain open.
