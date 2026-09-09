@@ -1,0 +1,264 @@
+name: Cut a beta platform release
+
+# Beta publishes what it is told to publish. `beta-release.yml` runs on every
+# push to the branch, but it only builds when the version in `Cargo.toml` names
+# a tag that does not exist yet, so a fortnight of merged work sits unreleased
+# until somebody remembers to bump it. Nobody is reading beta from a git
+# checkout: an owner reads it from the tagged prerelease, and work that is not
+# tagged has not shipped.
+#
+# So the bump itself is on a clock. This looks once a day, and when beta holds
+# something an owner would actually receive, it writes the version commit that
+# `beta-release.yml` is already waiting for. Everything after that -- waiting on
+# CI, building the device package, signing, tagging, publishing -- is the
+# existing workflow, unchanged.
+#
+# It does not decide anything a person could not: the next version is the last
+# one plus a patch, and a version somebody cut by hand is the one it counts
+# from. Cut 0.4.0 by hand and the next one this writes is 0.4.1.
+
+on:
+  schedule:
+    # Early UTC, so a failure is waiting at the start of the day rather than
+    # in the middle of one.
+    - cron: "0 4 * * *"
+  workflow_dispatch:
+    inputs:
+      report_only:
+        description: Work out what would be released and stop before writing it
+        required: false
+        default: false
+        type: boolean
+
+# Raised only for the step that writes the version commit. Everything before it
+# reads: tags, the workspace version, and this commit's CI.
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  # Shared with nothing. Two of these at once would each read the same last tag
+  # and each write the same next version.
+  group: cobalt-beta-cadence
+  cancel-in-progress: false
+
+jobs:
+  cut:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Refuse to cut a beta release from another branch
+        if: github.ref != 'refs/heads/beta'
+        run: |
+          echo "This workflow cuts the beta channel and only runs on refs/heads/beta." >&2
+          echo "It was started on ${GITHUB_REF}; re-run it with the beta branch selected." >&2
+          exit 1
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: beta
+          fetch-depth: 0
+          # The version commit has to be pushed with a token that is not this
+          # workflow's own, so the checkout is not left holding one that cannot
+          # push and cannot trigger anything.
+          persist-credentials: false
+
+      - name: Work out the version this would be
+        id: version
+        run: |
+          set -o pipefail
+          git fetch --quiet --tags origin
+          # Numerically, not lexically: 0.3.9 sorts after 0.3.10 as text, and a
+          # release train that went backwards would try to retag a version that
+          # is already published and immutable.
+          last="$(
+            git tag --list 'beta-v*' \
+              | sed -n 's/^beta-v\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)$/\1/p' \
+              | sort -t. -k1,1n -k2,2n -k3,3n \
+              | tail -1
+          )"
+          if [ -z "$last" ]; then
+            echo "No beta-v tag to count from; the first release is cut by hand." >&2
+            exit 1
+          fi
+          next="$(
+            printf '%s\n' "$last" \
+              | awk -F. '{ printf "%d.%d.%d\n", $1, $2, $3 + 1 }'
+          )"
+          current="$(sed -n 's/^version = "\([0-9][0-9.]*\)"$/\1/p' Cargo.toml | head -1)"
+          printf '%s\n' "$current" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'
+          {
+            echo "last=$last"
+            echo "next=$next"
+            echo "current=$current"
+          } >> "$GITHUB_OUTPUT"
+          echo "Last released $last; the workspace says $current; the next would be $next."
+
+      - name: Stop if a release is already waiting to be published
+        id: pending
+        env:
+          LAST: ${{ steps.version.outputs.last }}
+          CURRENT: ${{ steps.version.outputs.current }}
+        run: |
+          # The workspace naming a version with no tag is a release that was
+          # written and has not been built yet -- a failed publish, or a bump
+          # merged minutes ago. Writing another on top would skip it, and beta
+          # versions are immutable, so the skipped one could never be cut.
+          newest="$(printf '%s\n%s\n' "$LAST" "$CURRENT" \
+            | sort -t. -k1,1n -k2,2n -k3,3n | tail -1)"
+          if [ "$CURRENT" != "$LAST" ] && [ "$newest" = "$CURRENT" ]; then
+            echo "The workspace is already at $CURRENT with no tag for it." >&2
+            echo "That release has still to be published; leaving it alone." >&2
+            echo "stop=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "stop=false" >> "$GITHUB_OUTPUT"
+
+      - name: Ask whether beta holds anything an owner would receive
+        id: changes
+        if: steps.pending.outputs.stop != 'true'
+        env:
+          LAST: ${{ steps.version.outputs.last }}
+        run: |
+          set -o pipefail
+          # Prose and the workflows themselves reach no device: the site is
+          # published by pages.yml and a runner's configuration is not in the
+          # package an owner installs. A release whose every change was one of
+          # those would ship bytes identical to the last one under a version
+          # that claims to be different.
+          changed="$(git diff --name-only "beta-v${LAST}..HEAD" \
+            | grep -Ev '^docs/' \
+            | grep -Ev '(^|/)[^/]*\.md$' \
+            | grep -Ev '^\.github/' \
+            || true)"
+          if [ -z "$changed" ]; then
+            echo "Nothing since beta-v${LAST} that changes what an owner installs."
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "Changed since beta-v${LAST}:"
+          printf '%s\n' "$changed" | sed 's/^/  /' | head -40
+          count="$(printf '%s\n' "$changed" | wc -l | tr -d ' ')"
+          echo "release=true" >> "$GITHUB_OUTPUT"
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+
+      - name: Require this commit's CI to have passed
+        id: ci
+        if: steps.changes.outputs.release == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -o pipefail
+          # The same authority beta-release.yml consults, asked the same way:
+          # the push run of ci.yml for this exact commit. Not waited on. A
+          # release cut by a clock can afford to come back tomorrow, and a
+          # workflow that sat for an hour holding a runner would be paying for
+          # the privilege of publishing whatever CI was still deciding about.
+          state="$(
+            gh api \
+              "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=$(git rev-parse HEAD)&per_page=100" \
+              --jq '[.workflow_runs[] | select(.event == "push")]
+                    | sort_by(.run_number)
+                    | last
+                    | if . == null then "absent absent"
+                      else "\(.status) \(.conclusion // "pending")" end'
+          )"
+          case "$state" in
+            "completed success")
+              echo "CI passed for $(git rev-parse HEAD)."
+              echo "green=true" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "CI for $(git rev-parse HEAD) is ${state}; not cutting a release today." >&2
+              echo "green=false" >> "$GITHUB_OUTPUT"
+              ;;
+          esac
+
+      # The same toolchain every other workflow pins. `cargo update` writes the
+      # lockfile format that toolchain reads, and a runner's own Rust is
+      # whatever the image happens to ship.
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        if: steps.ci.outputs.green == 'true' && !inputs.report_only
+        with:
+          toolchain: 1.85.1
+
+      - name: Write the version
+        id: bump
+        if: steps.ci.outputs.green == 'true' && !inputs.report_only
+        env:
+          CURRENT: ${{ steps.version.outputs.current }}
+          NEXT: ${{ steps.version.outputs.next }}
+        run: |
+          set -o pipefail
+          # The first version line in the file and no other: it is the
+          # workspace's own, every crate in the tree inherits it, and a
+          # dependency further down pinned at the same number is not ours to
+          # move. The flag is set by the substitution rather than by reading a
+          # line, so it is the first *match* that counts and not the first line.
+          perl -i -pe 'if (!$done && s/^version = "\Q$ENV{CURRENT}\E"$/version = "$ENV{NEXT}"/) { $done = 1 }' Cargo.toml
+          test "$(sed -n 's/^version = "\([0-9][0-9.]*\)"$/\1/p' Cargo.toml | head -1)" = "$NEXT"
+          # The lockfiles carry a copy of every workspace crate's version and
+          # have to be brought along, or the build is not locked to the tree it
+          # was cut from. `--workspace` re-resolves those members and nothing
+          # else; the check below is what proves it.
+          cargo update --workspace
+          (cd crates/kobo-flashcards-import && cargo update --workspace)
+          git diff --name-only
+          # Exactly the three files a version is written in. Anything else here
+          # means `cargo update` moved a dependency, which is a change to what
+          # ships and is not this workflow's to make.
+          test "$(git diff --name-only | sort | tr '\n' ' ')" \
+            = "Cargo.lock Cargo.toml crates/kobo-flashcards-import/Cargo.lock "
+
+      - name: Push it to beta
+        id: push
+        if: steps.bump.outcome == 'success' && !inputs.report_only
+        env:
+          # A push made with this workflow's own token starts nothing: GitHub
+          # will not let a run trigger another run. ci.yml and beta-release.yml
+          # both wait on `push`, so with the built-in token the version commit
+          # would land and nothing would ever build it. A token of its own is
+          # what makes the rest of the train move.
+          RELEASE_TOKEN: ${{ secrets.COBALT_RELEASE_TOKEN }}
+          NEXT: ${{ steps.version.outputs.next }}
+        run: |
+          if [ -z "$RELEASE_TOKEN" ]; then
+            {
+              echo "### Beta $NEXT was not cut"
+              echo
+              echo "The version commit is ready but there is no \`COBALT_RELEASE_TOKEN\`."
+              echo "A push made with the built-in token starts no other workflow, so the"
+              echo "commit would land and nothing would build it."
+              echo
+              echo "Add a token with \`contents: write\` on this repository and this runs."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "No COBALT_RELEASE_TOKEN; leaving beta alone." >&2
+            exit 0
+          fi
+          git config user.name "cobalt-release"
+          git config user.email "cobalt-release@users.noreply.github.com"
+          git commit --quiet --all --message "Release beta platform ${NEXT}"
+          git push "https://x-access-token:${RELEASE_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:beta
+          {
+            echo "### Cut beta $NEXT"
+            echo
+            echo "Pushed to beta; \`beta-release.yml\` builds, signs and tags it."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Say what happened
+        if: always()
+        env:
+          LAST: ${{ steps.version.outputs.last }}
+          NEXT: ${{ steps.version.outputs.next }}
+          RELEASE: ${{ steps.changes.outputs.release }}
+          GREEN: ${{ steps.ci.outputs.green }}
+          STOP: ${{ steps.pending.outputs.stop }}
+        run: |
+          if [ "$STOP" = "true" ]; then
+            echo "Held: a release is already written and waiting to be published."
+          elif [ "$RELEASE" != "true" ]; then
+            echo "Held: nothing since beta-v${LAST} changes what an owner installs."
+          elif [ "$GREEN" != "true" ]; then
+            echo "Held: CI has not passed on beta's head."
+          else
+            echo "Cut beta ${NEXT} from beta-v${LAST}."
+          fi
