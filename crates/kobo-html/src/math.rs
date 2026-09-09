@@ -471,6 +471,9 @@ fn plain(character: char) -> Option<char> {
     // at the end. Anything irregular falls through to the letter tables.
     const DIGITS: u32 = 0x1D7CE;
     let code = character as u32;
+    if (0x2100..=0x214F).contains(&code) {
+        return letterlike(character);
+    }
     if !(0x1D400..=0x1D7FF).contains(&code) {
         return None;
     }
@@ -484,6 +487,48 @@ fn plain(character: char) -> Option<char> {
     } else {
         char::from_u32('a' as u32 + offset - 26)
     }
+}
+
+/// The same, for the letters given code points of their own before the
+/// alphabets above existed.
+///
+/// `\mathcal{L}` is `ℒ`, not the `𝓛` of the run above, and `\mathbb{R}` is
+/// `ℝ`: the letters mathematicians were already using went into Letterlike
+/// Symbols, and the later block was left with holes where they would have
+/// been. The reading face covers that block no better than the other, so a
+/// paper whose loss is called `\mathcal{L}` -- which it says on every second
+/// line -- came out as a row of boxes where it had written a name.
+///
+/// Letters only. The block also holds `№`, `℃` and the ounce sign, none of
+/// which is a letter wearing a style, and those are left as they are.
+fn letterlike(character: char) -> Option<char> {
+    Some(match character {
+        '\u{2102}' | '\u{212D}' => 'C',
+        '\u{2107}' | '\u{2130}' => 'E',
+        '\u{210A}' => 'g',
+        '\u{210B}' | '\u{210C}' | '\u{210D}' => 'H',
+        '\u{210E}' | '\u{210F}' => 'h',
+        '\u{2110}' | '\u{2111}' => 'I',
+        '\u{2112}' => 'L',
+        '\u{2113}' => 'l',
+        '\u{2115}' => 'N',
+        '\u{2118}' | '\u{2119}' => 'P',
+        '\u{211A}' => 'Q',
+        '\u{211B}' | '\u{211C}' | '\u{211D}' => 'R',
+        '\u{2124}' | '\u{2128}' => 'Z',
+        // Canonically the Greek letter, which the reading face does cover.
+        '\u{2126}' => '\u{3a9}',
+        '\u{212C}' => 'B',
+        '\u{212F}' | '\u{2147}' => 'e',
+        '\u{2131}' => 'F',
+        '\u{2133}' => 'M',
+        '\u{2134}' => 'o',
+        '\u{2145}' => 'D',
+        '\u{2146}' => 'd',
+        '\u{2148}' => 'i',
+        '\u{2149}' => 'j',
+        _ => return None,
+    })
 }
 
 #[cfg(test)]
@@ -547,6 +592,30 @@ mod tests {
         assert_eq!(render(markup), "E_y");
         let indicator = "<math><mn>\u{1d7d9}</mn></math>";
         assert_eq!(render(indicator), "1");
+    }
+
+    /// Including the letters that were given code points before that plane
+    /// existed, which is where `LaTeXML` writes the common ones.
+    ///
+    /// `\mathcal{L}` is `\u{2112}`, not the `\u{1d4db}` of the run above, and
+    /// `\mathbb{R}` is `\u{211d}`: Unicode put the letters mathematicians were
+    /// already using into Letterlike Symbols and left holes in the later block
+    /// where they would have been. Folding only the later block meant a paper
+    /// whose loss is called `\mathcal{L}` drew a box on every second line --
+    /// photographed off a Clara BW as `\u{2112}_(VQ)` reading `▯_(VQ)`.
+    #[test]
+    fn the_script_capitals_a_paper_names_its_losses_with_are_folded_too() {
+        let loss = "<math><msub><mi>\u{2112}</mi><mrow><mi>V</mi><mi>Q</mi></mrow></msub></math>";
+        assert_eq!(render(loss), "L_(VQ)");
+        let reals = "<math><msup><mi>\u{211d}</mi><mi>k</mi></msup></math>";
+        assert_eq!(render(reals), "R^k");
+        let script = "<math><mrow><mi>\u{212c}</mi><mi>\u{2130}</mi><mi>\u{2131}</mi>\
+                      <mi>\u{2133}</mi><mi>\u{2113}</mi></mrow></math>";
+        assert_eq!(render(script), "BEFMl");
+        // Not everything in the block is a letter wearing a style, and the
+        // ones that are not are left as the characters they are.
+        let numero = "<math><mtext>\u{2116}</mtext></math>";
+        assert_eq!(render(numero), "\u{2116}");
     }
 
     /// Nothing here may lose characters. A construction this does not know is

@@ -5,7 +5,7 @@
   "summary": "Count rows, browse Ravelry collections, and read your synced patterns offline.",
   "page_description": "A knuckle-sized row counter, Ravelry library browser, and offline pattern reader.",
   "version": "0.1.2",
-  "release_notes": "Set figures and their captions apart from the prose around them, and typeset a document's mathematics all the way through instead of stopping after the first few dozen formulae.",
+  "release_notes": "Typeset numbered equations, set figures and their captions apart from the prose, and carry a document's mathematics all the way through instead of stopping after the first few dozen formulae.",
   "glyph": "bookmark",
   "capabilities": [
     "network",

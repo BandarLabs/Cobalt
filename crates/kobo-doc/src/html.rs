@@ -144,6 +144,13 @@ pub fn parse_within(source: &str, external_css: &str, allowance: Allowance) -> D
             let taken = rest.len().saturating_sub(after.len());
             let element = &tail[..(end + 1).saturating_add(taken)];
             let drawn = kobo_html::math::render(element);
+            // Inside an equation row every piece of it is one formula, and
+            // the pieces are set together rather than one at a time.
+            if state.equation.is_some() {
+                state.equation_piece(attribute(inside, "alttext").unwrap_or_default(), &drawn);
+                rest = after;
+                continue;
+            }
             if state.display_formula(inside, &drawn) {
                 rest = after;
                 continue;
@@ -203,6 +210,30 @@ pub fn parse_within(source: &str, external_css: &str, allowance: Allowance) -> D
     }
     state.words(rest);
     state.finish()
+}
+
+/// Whether a string is a number a paper would label an equation with.
+///
+/// `(1)`, `(2.3)`, `(A.1)`. Deliberately narrow: this is checked because the
+/// text is about to be handed to a typesetter as part of the formula, and the
+/// margin of an equation row is somewhere a document can put anything at all.
+fn is_equation_tag(number: &str) -> bool {
+    let Some(inner) = number
+        .strip_prefix('(')
+        .and_then(|rest| rest.strip_suffix(')'))
+    else {
+        return false;
+    };
+    !inner.is_empty()
+        && inner.len() <= 12
+        && inner
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || character == '.')
+}
+
+/// The classes an element was given, or nothing when it was given none.
+fn class_of(inside: &str) -> &str {
+    attribute(inside, "class").unwrap_or_default()
 }
 
 /// Whether the next thing a reader will see binds to what came before it.
@@ -341,6 +372,8 @@ struct State {
     formulae: BTreeMap<String, String>,
     /// How many more formulae this file may name.
     allowance: Allowance,
+    /// The displayed equation being read, once an equation row has opened one.
+    equation: Option<Equation>,
     /// The table row being read, once `<tr>` has opened one.
     ///
     /// A cell's words are collected by the same machinery as a paragraph's
@@ -354,6 +387,22 @@ struct State {
     notes: Vec<(String, Vec<InlineSpan>)>,
     /// A list mark taken out of one block, waiting to lead the next.
     mark: Option<String>,
+}
+
+/// A displayed equation part way through being read out of its table.
+///
+/// An `align` environment sets one equation across several cells -- the left
+/// side in one, the relation and right side in the next -- so the pieces are
+/// gathered here and set as the single formula they are.
+#[derive(Default)]
+struct Equation {
+    /// The LaTeX of each piece, in the order the row sets them.
+    latex: String,
+    /// The line of text the same pieces read as, for a reader whose build
+    /// cannot draw or whose picture has not arrived.
+    drawn: String,
+    /// The number the paper gives the equation, when it numbers one.
+    number: String,
 }
 
 /// A table row part way through being read.
@@ -372,6 +421,7 @@ impl State {
     fn new(stylesheet: StyleSheet, allowance: Allowance) -> Self {
         Self {
             builder: Builder::new(),
+            equation: None,
             formulae: BTreeMap::new(),
             allowance,
             link: None,
@@ -400,6 +450,20 @@ impl State {
     fn words(&mut self, text: &str) {
         if text.is_empty() {
             // Two adjacent tags, which is most of an EPUB.
+            return;
+        }
+        // The only words in an equation row are the number in its margin.
+        // Kept apart from the formula so that "(1)" is not read as part of
+        // the mathematics, and so that it survives being drawn as a picture.
+        if let Some(equation) = &mut self.equation {
+            let decoded = decode_entities(text);
+            let number = decoded.trim();
+            if !number.is_empty() {
+                if !equation.number.is_empty() {
+                    equation.number.push(' ');
+                }
+                equation.number.push_str(number);
+            }
             return;
         }
         // A document with no block-level tags at all is one paragraph as long
@@ -602,11 +666,29 @@ impl State {
             // needed: a cell alone cannot be laid out, because how wide it is
             // depends on every other cell in its column, and a row alone
             // cannot say where one value ends and the next begins.
+            // A numbered equation is a table. `LaTeXML` sets one as a row of
+            // cells -- the left side, the right side, and the number off in
+            // the margin -- and marks every piece of mathematics in it
+            // `display="inline"`, because inside the row it is. Read as the
+            // table it is spelled as, a paper's central equation came out as a
+            // line of text in a bordered box, in the worst of the written
+            // forms: `L_(VQ) =||sg(f)-z||_2^2` with the script capitals as
+            // holes, because those live in a block the reading face does not
+            // cover. It is a displayed equation and is set as one.
+            "tr" if class_of(inside).contains("ltx_eqn_row") => {
+                self.end_row();
+                self.flush();
+                self.equation = Some(Equation::default());
+            }
             "tr" => {
                 self.end_row();
                 self.flush();
                 self.row = Some(Row::default());
             }
+            // Inside an equation the cells are the halves of one formula and
+            // the margin it is numbered in, none of which is a column of
+            // anything.
+            "td" | "th" if self.equation.is_some() => {}
             "td" | "th" => {
                 // A cell outside any row is a cell in a table written without
                 // one, which is common enough in hand-written HTML. It opens
@@ -695,11 +777,16 @@ impl State {
                 self.lists.pop();
             }
             "title" => self.flush(),
+            "td" | "th" if self.equation.is_some() => {}
             "td" | "th" => self.end_cell(),
-            "tr" => self.end_row(),
+            "tr" => {
+                self.end_equation();
+                self.end_row();
+            }
             // A table that ends with a row still open is a table whose last
             // `</tr>` was never written, which is a page, not a corner.
             "table" | "thead" | "tbody" | "tfoot" => {
+                self.end_equation();
                 self.end_row();
                 self.flush();
             }
@@ -752,6 +839,81 @@ impl State {
                 row.cells.push(cell);
             }
         }
+    }
+
+    /// Takes one piece of the equation being read out of its table.
+    ///
+    /// `\displaystyle` is dropped from each piece: `LaTeXML` writes it on
+    /// every cell because each cell is its own `<math>`, and a formula
+    /// assembled from three of them would carry the command three times over.
+    /// The renderer is already told to set a displayed formula as one.
+    fn equation_piece(&mut self, latex: &str, drawn: &str) {
+        let Some(equation) = &mut self.equation else {
+            return;
+        };
+        let piece = decode_entities(latex);
+        let piece = piece.trim().trim_start_matches("\\displaystyle").trim();
+        if !piece.is_empty() {
+            equation.latex.push_str(piece);
+        }
+        let drawn = drawn.trim();
+        if !drawn.is_empty() {
+            if !equation.drawn.is_empty() {
+                equation.drawn.push(' ');
+            }
+            equation.drawn.push_str(drawn);
+        }
+    }
+
+    /// Sets the equation that has been gathered, as a formula on its own line.
+    ///
+    /// The number is set at the end of the formula rather than dropped. A
+    /// paper refers back to its equations by number -- "as shown in (1)" is
+    /// the whole reason the number is printed -- and an equation drawn without
+    /// one leaves that sentence pointing at nothing a reader can find. It
+    /// costs a little width, which a formula already too wide for the column
+    /// pays for by being scaled to fit.
+    fn end_equation(&mut self) {
+        let Some(equation) = self.equation.take() else {
+            return;
+        };
+        let drawn = equation
+            .drawn
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        let mut latex = equation.latex.trim().to_owned();
+        if drawn.is_empty() && latex.is_empty() {
+            return;
+        }
+        // Whatever words were being collected belong to the paragraph in
+        // front of the equation rather than to it.
+        self.flush();
+        let number = equation.number.trim();
+        let alt = if number.is_empty() {
+            drawn
+        } else {
+            format!("{drawn}  {number}")
+        };
+        // Only a plain tag. Anything else is not a number this understands,
+        // and handing the typesetter something it cannot parse would lose the
+        // whole equation to save its label.
+        if !latex.is_empty() && is_equation_tag(number) {
+            latex.push_str("\\qquad");
+            latex.push_str(number);
+        }
+        let name = format!("{}{}", crate::FORMULA_PICTURE_PREFIX, self.formulae.len());
+        // Past the ceiling the equation keeps its block and its written form
+        // and simply never has a picture drawn for it, which is what a formula
+        // with nothing to draw it has always looked like.
+        if self.allowance.open(self.formulae.len()) && !latex.is_empty() {
+            self.formulae.insert(name.clone(), latex);
+        }
+        self.builder.push(Block::Picture {
+            name,
+            alt,
+            illustration: false,
+        });
     }
 
     /// Closes the row being read and pushes it, if there is one worth pushing.
@@ -1455,6 +1617,92 @@ mod tests {
         assert!(
             alt.contains('\u{3c0}'),
             "the description lost the formula: {alt}"
+        );
+    }
+
+    /// A numbered equation is a formula, not a table of one.
+    ///
+    /// `LaTeXML` sets a numbered equation as a row of cells -- the left side,
+    /// the relation and right side, the number off in the margin -- and marks
+    /// every piece of it `display="inline"`, because inside the row it is.
+    /// Read as the table it is spelled as, a paper's central equation came out
+    /// as a line of written mathematics in a bordered box: photographed off a
+    /// Clara BW, equation (1) of arXiv:2609.09143 read
+    /// `L_(VQ) =||sg(f)-z||_2^2` with the script capitals drawn as holes.
+    #[test]
+    fn a_numbered_equation_is_set_as_one_formula_rather_than_a_row_of_cells() {
+        let document = parse(
+            "<p>trained with:</p>\
+             <table class=\"ltx_equationgroup ltx_eqn_align ltx_eqn_table\"><tbody>\
+             <tr class=\"ltx_equation ltx_eqn_row ltx_align_baseline\">\
+             <td class=\"ltx_eqn_cell ltx_eqn_center_padleft\"></td>\
+             <td class=\"ltx_td ltx_align_right ltx_eqn_cell\">\
+             <math alttext=\"\\displaystyle\\mathcal{L}_{VQ}\" display=\"inline\">\
+             <msub><mi>\u{2112}</mi><mrow><mi>V</mi><mi>Q</mi></mrow></msub></math></td>\
+             <td class=\"ltx_td ltx_align_left ltx_eqn_cell\">\
+             <math alttext=\"\\displaystyle=\\beta\" display=\"inline\">\
+             <mrow><mo>=</mo><mi>\u{3b2}</mi></mrow></math></td>\
+             <td class=\"ltx_eqn_cell ltx_eqn_eqno ltx_align_right\">\
+             <span class=\"ltx_tag ltx_tag_equation\">(1)</span></td>\
+             </tr></tbody></table><p>where it holds.</p>",
+        );
+
+        let Some(Block::Picture { name, alt, .. }) = document
+            .blocks
+            .iter()
+            .find(|block| matches!(block, Block::Picture { .. }))
+        else {
+            panic!("the equation stayed a table: {:?}", document.blocks);
+        };
+        // Both halves, as one formula, with `\displaystyle` taken off each:
+        // the renderer is already told to set a displayed formula as one, and
+        // three cells would otherwise carry the command three times.
+        assert_eq!(
+            document.formulae.get(name).map(String::as_str),
+            Some("\\mathcal{L}_{VQ}=\\beta\\qquad(1)"),
+            "the equation was not gathered from its cells"
+        );
+        // The number is what a paper's cross-references point at, so it is
+        // kept beside the written form as well as drawn.
+        assert!(alt.contains("(1)"), "the equation lost its number: {alt}");
+        assert!(
+            !document
+                .blocks
+                .iter()
+                .any(|block| matches!(block, Block::Row { .. })),
+            "the equation left a table row behind it: {:?}",
+            document.blocks
+        );
+    }
+
+    /// An equation numbered with something this does not understand keeps its
+    /// mathematics.
+    ///
+    /// The margin of an equation row is somewhere a document may put anything
+    /// at all, and it is about to be handed to a typesetter as part of the
+    /// formula. Losing a whole equation to save its label is the wrong way
+    /// round.
+    #[test]
+    fn an_equation_labelled_with_something_strange_still_draws_its_mathematics() {
+        let document = parse(
+            "<table class=\"ltx_eqn_table\"><tbody>\
+             <tr class=\"ltx_eqn_row\">\
+             <td class=\"ltx_eqn_cell\">\
+             <math alttext=\"x=1\" display=\"inline\"><mi>x</mi></math></td>\
+             <td class=\"ltx_eqn_cell ltx_eqn_eqno\">\\dagger{}</td>\
+             </tr></tbody></table>",
+        );
+        let Some(Block::Picture { name, .. }) = document
+            .blocks
+            .iter()
+            .find(|block| matches!(block, Block::Picture { .. }))
+        else {
+            panic!("the equation was lost: {:?}", document.blocks);
+        };
+        assert_eq!(
+            document.formulae.get(name).map(String::as_str),
+            Some("x=1"),
+            "a label this does not understand was handed to the typesetter"
         );
     }
 
