@@ -300,11 +300,17 @@ fn draw_element(name: &str, children: &[Node], out: &mut String) {
         "math" | "semantics" | "mrow" | "mstyle" | "mpadded" | "menclose" => {
             draw_all(children, out);
         }
+        "msub" => script(children, out, "_"),
+        "msup" => script(children, out, "^"),
         // Limits sit under and over their operator in print and after it in
         // a line, which is how they are read aloud either way, so they are set
-        // exactly as a subscript and a superscript are.
-        "msub" | "munder" => script(children, out, "_"),
-        "msup" | "mover" => script(children, out, "^"),
+        // exactly as a subscript and a superscript are -- unless what is set
+        // over the base is an accent, which is a different thing wearing the
+        // same markup. `\hat{x}` is `<mover><mi>x</mi><mo>^</mo></mover>`, and
+        // read as a superscript it came out `x^^`: the marker this writes,
+        // then the mark itself. The mark alone says it.
+        "munder" => accented(children, out, "_"),
+        "mover" => accented(children, out, "^"),
         "msubsup" => {
             let (base, rest) = children
                 .split_first()
@@ -390,6 +396,39 @@ fn script(children: &[Node], out: &mut String, marker: &str) {
     draw(base, out);
     let attached = drawn(rest);
     attach(out, marker, &attached);
+}
+
+/// Sets what stands over or under a base, as an accent when it is one.
+///
+/// A hat and an exponent are the same markup in `MathML` and different things
+/// on the page: `\hat{x}` and `x^{2}` are both a base with something raised
+/// over it, and only the second is being raised. An accent is written as the
+/// mark alone, which is what a reader without the drawn form has to go on.
+fn accented(children: &[Node], out: &mut String, marker: &str) {
+    let Some((base, rest)) = children.split_first() else {
+        return;
+    };
+    let over = drawn(rest);
+    let over = over.trim();
+    draw(base, out);
+    if is_accent(over) {
+        out.push_str(over);
+        return;
+    }
+    attach(out, marker, over);
+}
+
+/// Whether a string is one of the marks a typesetter sets over a letter.
+///
+/// The ones `LaTeXML` writes for `\hat`, `\bar`, `\tilde`, `\dot`, `\ddot`,
+/// `\check`, `\breve`, `\acute`, `\grave` and `\vec`, in both the spacing and
+/// the plain spellings it chooses between.
+fn is_accent(over: &str) -> bool {
+    const MARKS: [&str; 15] = [
+        "^", "\u{2c6}", "\u{af}", "\u{203e}", "~", "\u{2dc}", "\u{2d9}", "\u{a8}", "\u{2c7}",
+        "\u{2d8}", "\u{b4}", "`", "\u{2192}", "\u{20d7}", "\u{2015}",
+    ];
+    MARKS.contains(&over)
 }
 
 /// Writes one `^` or `_` and its argument, grouping when the argument is more
@@ -592,6 +631,29 @@ mod tests {
         assert_eq!(render(markup), "E_y");
         let indicator = "<math><mn>\u{1d7d9}</mn></math>";
         assert_eq!(render(indicator), "1");
+    }
+
+    /// A hat is a hat and not an exponent, though the markup is the same.
+    ///
+    /// `\hat{x}` is `<mover><mi>x</mi><mo>^</mo></mover>`, exactly the shape
+    /// `x^{2}` has, and read as a superscript it wrote the marker and then the
+    /// mark: the reconstruction in arXiv:2609.09143 read `x^^` on a Clara BW.
+    /// A limit under a sum is the same markup again and is still a limit.
+    #[test]
+    fn an_accent_is_written_as_the_mark_rather_than_as_something_raised() {
+        let hat = "<math><mover accent=\"true\"><mi>x</mi><mo>^</mo></mover></math>";
+        assert_eq!(render(hat), "x^");
+        let bar = "<math><mover accent=\"true\"><mi>x</mi><mo>\u{af}</mo></mover></math>";
+        assert_eq!(render(bar), "x\u{af}");
+        let vector = "<math><mover accent=\"true\"><mi>v</mi><mo>\u{2192}</mo></mover></math>";
+        assert_eq!(render(vector), "v\u{2192}");
+        // Still a limit when what is over the base is not a mark.
+        let sum = "<math><munder><mo>\u{2211}</mo><mrow><mi>i</mi><mo>=</mo><mn>1</mn>\
+                   </mrow></munder></math>";
+        assert_eq!(render(sum), "\u{2211}_(i=1)");
+        // And still an exponent when it was written as one.
+        let square = "<math><msup><mi>x</mi><mn>2</mn></msup></math>";
+        assert_eq!(render(square), "x^2");
     }
 
     /// Including the letters that were given code points before that plane
