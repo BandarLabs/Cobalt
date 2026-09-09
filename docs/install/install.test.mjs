@@ -4,8 +4,8 @@ import { readFile } from "node:fs/promises";
 import { createContext, runInContext } from "node:vm";
 import { createHash, webcrypto } from "node:crypto";
 
-const script = await readFile(new URL("../docs/install/install.js", import.meta.url), "utf8");
-const html = await readFile(new URL("../docs/install/index.html", import.meta.url), "utf8");
+const script = await readFile(new URL("./install.js", import.meta.url), "utf8");
+const html = await readFile(new URL("./index.html", import.meta.url), "utf8");
 const payload = new TextEncoder().encode("test release archive");
 const release = {
   version: "0.3.10", archive: "cobalt-KoboRoot.tgz", bytes: payload.length,
