@@ -485,6 +485,7 @@ pub fn present(
     // afterwards that there was nothing to run is the worst possible order.
     // This is the likeliest failure of all: `/tmp` is a tmpfs, so every staged
     // application disappears on a reboot.
+    let launch_started = Instant::now();
     preflight(application)?;
 
     // Owner-installed trust roots, before the first request could build the
@@ -539,18 +540,6 @@ pub fn present(
     .map_err(|error| format!("open display: {error}"))?;
     let profile = display.profile();
     crate::remember_device_profile(profile)?;
-
-    // The display's exact profile is now retained for every later layout and
-    // hit test. Installing a face may fail, but that is not fatal: `kobo-ui`
-    // keeps its built-in bitmap, so the worst case is ugly text rather than a
-    // dead session.
-    let typeface = match kobo_text::install(crate::device_metrics()) {
-        Ok(path) => path.file_name().map_or_else(
-            || path.display().to_string(),
-            |name| name.to_string_lossy().into_owned(),
-        ),
-        Err(error) => format!("none ({error})"),
-    };
 
     let geometry = display.geometry();
     let whole_screen = Rect {
@@ -609,6 +598,30 @@ pub fn present(
         .stop(STOP_GRACE)
         .map_err(|error| format!("stop the reader: {error}"))?;
     wifi_trace.checkpoint(WifiTraceEvent::NickelStopped);
+    trace(&format!(
+        "launch: panel takeover after {} ms",
+        launch_started.elapsed().as_millis()
+    ));
+    if let Err(error) = show_launch_screen(&display, whole_screen) {
+        trace(&format!("launch screen unavailable: {error}"));
+    } else {
+        trace(&format!(
+            "launch: opening screen painted after {} ms",
+            launch_started.elapsed().as_millis()
+        ));
+    }
+    // The display's exact profile is now retained for every later layout and
+    // hit test. Installing a face may fail, but that is not fatal: `kobo-ui`
+    // keeps its built-in bitmap, so the worst case is ugly text rather than a
+    // dead session.
+    let typeface = match kobo_text::install(crate::device_metrics()) {
+        Ok(path) => path.file_name().map_or_else(
+            || path.display().to_string(),
+            |name| name.to_string_lossy().into_owned(),
+        ),
+        Err(error) => format!("none ({error})"),
+    };
+
     wifi_trace.checkpoint(WifiTraceEvent::RecoveryBegin);
 
     // Nickel owns Wi-Fi while it runs, but its supplicant and DHCP client are
@@ -624,6 +637,10 @@ pub fn present(
         }
     }
     let session_network = network.restore_for_session(Duration::from_secs(30));
+    trace(&format!(
+        "launch: network recovery finished after {} ms",
+        launch_started.elapsed().as_millis()
+    ));
     if network.was_online() && kobo_hal::network::is_online(kobo_hal::network::WIRELESS_LINK) {
         wifi_trace.checkpoint(WifiTraceEvent::RecoveryFirstSuccess);
     }
@@ -1018,6 +1035,157 @@ fn describe(limit: Duration) -> String {
         0 => format!("{minutes} minute"),
         rest => format!("{minutes} minute {rest} second"),
     }
+}
+
+const COBALT_BLUE: [u8; 3] = [0x6e, 0x93, 0xd6];
+const LOGO_WIDTH: i32 = 264;
+const LOGO_HEIGHT: i32 = 111;
+
+// Pixel rectangles from assets/cobalt-logo.svg. Keeping the launch copy as
+// geometry avoids parsing or decoding anything on the path whose whole job is
+// to acknowledge the owner's tap quickly.
+const LOGO_BLUE_RECTS: &[(i32, i32, i32, i32)] = &[
+    (16, 16, 9, 3),
+    (22, 19, 3, 3),
+    (16, 22, 9, 3),
+    (16, 25, 3, 3),
+    (16, 28, 9, 3),
+    (28, 16, 9, 3),
+    (34, 19, 3, 3),
+    (34, 22, 3, 3),
+    (34, 25, 3, 3),
+    (34, 28, 3, 3),
+    (24, 39, 24, 8),
+    (16, 47, 8, 8),
+    (48, 47, 8, 8),
+    (16, 55, 8, 8),
+    (16, 63, 8, 8),
+    (16, 71, 8, 8),
+    (16, 79, 8, 8),
+    (48, 79, 8, 8),
+    (24, 87, 24, 8),
+    (72, 55, 16, 8),
+    (64, 63, 8, 8),
+    (88, 63, 8, 8),
+    (64, 71, 8, 8),
+    (88, 71, 8, 8),
+    (64, 79, 8, 8),
+    (88, 79, 8, 8),
+    (72, 87, 16, 8),
+];
+
+const LOGO_WHITE_RECTS: &[(i32, i32, i32, i32)] = &[
+    (128, 39, 8, 8),
+    (128, 47, 8, 8),
+    (128, 55, 24, 8),
+    (128, 63, 8, 8),
+    (152, 63, 8, 8),
+    (128, 71, 8, 8),
+    (152, 71, 8, 8),
+    (128, 79, 8, 8),
+    (152, 79, 8, 8),
+    (128, 87, 24, 8),
+    (168, 55, 24, 8),
+    (192, 63, 8, 8),
+    (168, 71, 32, 8),
+    (168, 79, 8, 8),
+    (192, 79, 8, 8),
+    (168, 87, 32, 8),
+    (208, 39, 8, 8),
+    (208, 47, 8, 8),
+    (208, 55, 8, 8),
+    (208, 63, 8, 8),
+    (208, 71, 8, 8),
+    (208, 79, 8, 8),
+    (208, 87, 8, 8),
+    (232, 39, 8, 8),
+    (232, 47, 8, 8),
+    (224, 55, 24, 8),
+    (232, 63, 8, 8),
+    (232, 71, 8, 8),
+    (232, 79, 8, 8),
+    (232, 87, 16, 8),
+];
+
+fn logo_rect(bounds: kobo_ui::Rect, source: (i32, i32, i32, i32)) -> kobo_ui::Rect {
+    let (x, y, width, height) = source;
+    let left = bounds.x + x * bounds.width / LOGO_WIDTH;
+    let top = bounds.y + y * bounds.height / LOGO_HEIGHT;
+    let right = bounds.x + (x + width) * bounds.width / LOGO_WIDTH;
+    let bottom = bounds.y + (y + height) * bounds.height / LOGO_HEIGHT;
+    kobo_ui::Rect {
+        x: left,
+        y: top,
+        width: (right - left).max(1),
+        height: (bottom - top).max(1),
+    }
+}
+
+fn fill_colour(surface: &mut Surface, rect: kobo_ui::Rect, colour: [u8; 3]) {
+    for y in rect.y..rect.y.saturating_add(rect.height) {
+        for x in rect.x..rect.x.saturating_add(rect.width) {
+            surface.blend_colour(x, y, colour, u8::MAX);
+        }
+    }
+}
+
+fn fill_cobalt_blue(surface: &mut Surface, rect: kobo_ui::Rect, colour_panel: bool) {
+    if colour_panel {
+        fill_colour(surface, rect, COBALT_BLUE);
+    } else {
+        surface.fill_rect(rect, kobo_ui::tone::INK);
+    }
+}
+
+fn draw_cobalt_logo(surface: &mut Surface, bounds: kobo_ui::Rect, colour_panel: bool) {
+    fill_cobalt_blue(surface, bounds, colour_panel);
+    surface.fill_rect(logo_rect(bounds, (0, 0, 112, 111)), kobo_ui::tone::PAPER);
+    for source in LOGO_BLUE_RECTS {
+        fill_cobalt_blue(surface, logo_rect(bounds, *source), colour_panel);
+    }
+    for source in LOGO_WHITE_RECTS {
+        surface.fill_rect(logo_rect(bounds, *source), kobo_ui::tone::PAPER);
+    }
+    // The SVG's four-pixel inset stroke, expressed as fills so scaling stays
+    // crisp at every panel density.
+    for source in [
+        (0, 0, 264, 4),
+        (0, 107, 264, 4),
+        (0, 0, 4, 111),
+        (260, 0, 4, 111),
+    ] {
+        fill_cobalt_blue(surface, logo_rect(bounds, source), colour_panel);
+    }
+}
+
+fn launch_surface(whole_screen: Rect, colour_panel: bool) -> Surface {
+    let mut surface = Surface::new(
+        usize::try_from(whole_screen.width).unwrap_or(0),
+        usize::try_from(whole_screen.height).unwrap_or(0),
+    );
+    surface.pixels.fill(kobo_ui::tone::PAPER);
+    let panel_width = i32::try_from(whole_screen.width).unwrap_or(i32::MAX);
+    let panel_height = i32::try_from(whole_screen.height).unwrap_or(i32::MAX);
+    let width = panel_width.min(panel_height).saturating_mul(3) / 5;
+    let height = width.saturating_mul(LOGO_HEIGHT) / LOGO_WIDTH;
+    draw_cobalt_logo(
+        &mut surface,
+        kobo_ui::Rect {
+            x: (panel_width - width) / 2,
+            y: (panel_height - height) / 2,
+            width,
+            height,
+        },
+        colour_panel,
+    );
+    surface
+}
+
+/// Paints the first Cobalt-owned frame as soon as Nickel releases the panel.
+/// Network recovery and application discovery continue behind this screen.
+fn show_launch_screen(display: &DisplaySession, whole_screen: Rect) -> Result<(), String> {
+    let surface = launch_surface(whole_screen, display.colour().is_some());
+    Painter::new(surface.width, surface.height).paint(display, whole_screen, &surface)
 }
 
 /// Tells the reader a restart is coming, and that it is not a fault.
@@ -4448,6 +4616,97 @@ mod tests {
         include_bytes!("../../kobo-net/tests/fixtures/localhost-key.der");
     const SEEK_BODY: &str = "rated=true&time=10&increment=0&variant=standard&color=random";
     const FORM: &str = "application/x-www-form-urlencoded";
+
+    #[test]
+    fn launch_splash_covers_the_panel_and_centres_the_mark_without_chrome() {
+        for (width, height) in [(600_i32, 800_i32), (1072, 1448), (1440, 1920), (1872, 1404)] {
+            let surface = super::launch_surface(
+                kobo_hal::Rect {
+                    x: 0,
+                    y: 0,
+                    width: u32::try_from(width).unwrap(),
+                    height: u32::try_from(height).unwrap(),
+                },
+                false,
+            );
+            assert_eq!(surface.width, usize::try_from(width).unwrap());
+            assert_eq!(surface.height, usize::try_from(height).unwrap());
+            let mark_width = width.min(height) * 3 / 5;
+            let mark_height = mark_width * super::LOGO_HEIGHT / super::LOGO_WIDTH;
+            for (index, pixel) in surface.pixels.iter().enumerate() {
+                if *pixel == kobo_ui::tone::PAPER {
+                    continue;
+                }
+                let x = i32::try_from(index % surface.width).unwrap();
+                let y = i32::try_from(index / surface.width).unwrap();
+                assert!(x >= (width - mark_width) / 2 && x < (width + mark_width) / 2);
+                assert!(y >= (height - mark_height) / 2 && y < (height + mark_height) / 2);
+            }
+            assert!(surface
+                .pixels
+                .iter()
+                .any(|pixel| *pixel != kobo_ui::tone::PAPER));
+        }
+    }
+
+    #[test]
+    fn launch_logo_keeps_its_blue_and_a_legible_greyscale_plane() {
+        let mut surface = kobo_ui::Surface::new(264, 111);
+        super::draw_cobalt_logo(
+            &mut surface,
+            kobo_ui::Rect {
+                x: 0,
+                y: 0,
+                width: 264,
+                height: 111,
+            },
+            true,
+        );
+        let at = |x: usize, y: usize| y * surface.width + x;
+        assert_eq!(surface.rgb_at(at(120, 10)), Some(super::COBALT_BLUE));
+        assert_eq!(surface.rgb_at(at(8, 8)), Some([255; 3]));
+        assert_eq!(surface.rgb_at(at(17, 17)), Some(super::COBALT_BLUE));
+        assert_eq!(surface.rgb_at(at(129, 40)), Some([255; 3]));
+        assert!(surface.has_colour());
+        assert!(surface.pixels[at(120, 10)] > 0);
+        assert!(surface.pixels[at(120, 10)] < 255);
+
+        let mut greyscale = kobo_ui::Surface::new(264, 111);
+        super::draw_cobalt_logo(
+            &mut greyscale,
+            kobo_ui::Rect {
+                x: 0,
+                y: 0,
+                width: 264,
+                height: 111,
+            },
+            false,
+        );
+        assert!(!greyscale.has_colour());
+        assert_eq!(greyscale.pixels[at(120, 10)], kobo_ui::tone::INK);
+
+        let source = include_str!("../../../assets/cobalt-logo.svg");
+        assert!(source.contains("viewBox=\"0 0 264 111\""));
+        assert!(source.contains("#6E93D6"));
+    }
+
+    #[test]
+    #[ignore = "writes an explicit launch preview for visual review"]
+    fn export_launch_splash_preview() {
+        let path = std::env::var("COBALT_LAUNCH_PREVIEW").expect("preview output path");
+        let surface = super::launch_surface(
+            kobo_hal::Rect {
+                x: 0,
+                y: 0,
+                width: 1072,
+                height: 1448,
+            },
+            false,
+        );
+        let mut bytes = format!("P5\n{} {}\n255\n", surface.width, surface.height).into_bytes();
+        bytes.extend_from_slice(&surface.pixels);
+        std::fs::write(path, bytes).expect("write launch preview");
+    }
 
     fn trust_mock_root() {
         static TRUST: Once = Once::new();
