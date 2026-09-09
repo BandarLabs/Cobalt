@@ -1184,7 +1184,7 @@ dependencies = [
 
 [[package]]
 name = "kobo-logicpack"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "kobo-json",
  "kobo-sdk",

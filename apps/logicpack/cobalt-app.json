@@ -3,9 +3,9 @@
   "display_name": "Logic Pack",
   "short_label": "Logic Pack",
   "summary": "Play four familiar logic games offline.",
-  "page_description": "Four offline logic games with separate saved progress and undo.",
-  "version": "0.1.4",
-  "release_notes": "Draw connected loops and bridges, with circular islands and attached diagonal Kakuro clues.",
+  "page_description": "Twenty original offline puzzles across four logic games, with difficulty guides, separate progress and undo.",
+  "version": "0.1.5",
+  "release_notes": "Choose from 20 original puzzles with difficulty guides, separate progress and direct Kakuro number entry.",
   "glyph": "grid",
   "capabilities": []
 }

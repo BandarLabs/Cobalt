@@ -994,3 +994,41 @@ a varied validated collection with difficulty guides. Physical Clara BW
 acceptance remains pending. The program totals **132 done, 362 open and one
 deferred CBR task**; PR 2 has **40/269 complete**. All 133 companion tasks
 remain open.
+
+
+## Logic Pack original collection and direct digit entry
+
+LOGIC-01 is complete for implementation and local/simulator validation.
+Version 0.1.5 offers 20 original puzzles: five each of Slitherlink, Hashi,
+Kakuro and Minesweeper. The four previous identities remain intact. The picker
+shows each puzzle's title, editorial difficulty and saved progress. The original
+Python generator verifies exactly one rule-valid solution for every loop,
+bridge and cross-sum puzzle; an independent Rust checker validates completed
+boards against the rules. Mines difficulty describes size and density and does
+not promise guess-free play. No reference-project code or puzzle corpus is used.
+
+Kakuro opens a direct digit picker with the selected square's row, column and
+both sums, plus clear and cancel. Board controls use one row; More contains undo,
+checking, confirmed restart and rules. Each puzzle retains 32 persistent undo
+steps. The bounded 128 KiB record migrates both original single-game saves and
+four-game version-1 records, including undo, without writing until an edit.
+Unreadable and future records remain preserved.
+
+The [actual simulator journey](evidence/logicpack/collection/result.json)
+completes and forcibly reopens all 20 puzzles, with exact saved-state comparisons.
+Its 16 check groups include collections, rules/difficulty, direct entry/clear,
+restart/undo, full-store recovery, both migrations, special marks and zero network
+effects. Captures include actual binary/source/font provenance from the working
+tree based on e40dcd4. Representative picker, entry and all four larger boards
+were visually inspected. App and public documentation use actual new captures.
+
+All 16 app tests pass, including independent solution checking, full 20-puzzle
+undo capacity, every collection screen and every Kakuro entry position with
+shipped fonts at all nine text scales on 1072×1448/300 ppi and 758×1024/212 ppi.
+Strict all-target Clippy, Rust 1.85.1 ARMv7 musl checking, formatting, diff checks,
+original generator reproduction and the published-catalog version gate pass.
+The reproduction check was corrected to compare JSON-normalized tuples/lists;
+it does not change the generated puzzles. Physical acceptance remains pending.
+
+Program totals: **133 done, 361 open, one deferred CBR task**. PR 2 has
+**41/269 complete**; all 133 companion tasks remain open.

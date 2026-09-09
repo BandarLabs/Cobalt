@@ -1,6 +1,6 @@
-//! Board geometry for the original compact puzzles.
+//! Board geometry derived from the same collection rules used for checking.
+use crate::collection::{loop_edges, Puzzle, Rules};
 use kobo_sdk::{action_id, PencilBoard, PencilEdge, PencilMark, PencilMarkKind as Ink};
-
 fn mark(column: u8, row: u8, kind: Ink) -> PencilMark {
     PencilMark {
         column,
@@ -10,106 +10,126 @@ fn mark(column: u8, row: u8, kind: Ink) -> PencilMark {
         selected: false,
     }
 }
-pub fn slither(cells: &[u8; 16]) -> PencilBoard {
+fn byte(n: usize) -> u8 {
+    u8::try_from(n).expect("bounded board")
+}
+pub fn pencil(puzzle: &Puzzle, cells: &[u8; 64]) -> PencilBoard {
+    match &puzzle.rules {
+        Rules::Loop { side, clues } => {
+            let mut marks = Vec::new();
+            for row in 0..=(*side) {
+                for column in 0..=(*side) {
+                    marks.push(mark(byte(column * 2), byte(row * 2), Ink::Dot));
+                }
+            }
+            for (i, clue) in clues.iter().enumerate() {
+                if let Some(n) = clue {
+                    marks.push(mark(
+                        byte(i % side * 2 + 1),
+                        byte(i / side * 2 + 1),
+                        Ink::Clue(*n),
+                    ));
+                }
+            }
+            let edges = loop_edges(*side)
+                .iter()
+                .enumerate()
+                .map(|(i, &(a, b))| PencilEdge {
+                    from: (byte(a % (side + 1) * 2), byte(a / (side + 1) * 2)),
+                    to: (byte(b % (side + 1) * 2), byte(b / (side + 1) * 2)),
+                    state: if cells[i] == 2 { 3 } else { cells[i] },
+                    action: Some(action_id(&format!("edge-{i}"))),
+                })
+                .collect();
+            PencilBoard {
+                columns: byte(side * 2 + 1),
+                rows: byte(side * 2 + 1),
+                cell_tenth_mm: if *side == 2 { 100 } else { 80 },
+                marks,
+                edges,
+            }
+        }
+        Rules::Bridges {
+            width,
+            height,
+            islands,
+            routes,
+        } => {
+            let marks = islands
+                .iter()
+                .map(|&(x, y, n)| mark(x, y, Ink::Island(n)))
+                .collect();
+            let edges = routes
+                .iter()
+                .enumerate()
+                .map(|(i, &(a, b))| PencilEdge {
+                    from: (islands[a].0, islands[a].1),
+                    to: (islands[b].0, islands[b].1),
+                    state: cells[i],
+                    action: Some(action_id(&format!("route-{i}"))),
+                })
+                .collect();
+            PencilBoard {
+                columns: *width,
+                rows: *height,
+                cell_tenth_mm: if *width <= 5 && *height <= 5 { 100 } else { 80 },
+                marks,
+                edges,
+            }
+        }
+        Rules::CrossSum { mask, runs, givens } => cross_sum(mask, runs, givens, cells),
+        Rules::Mines { .. } => unreachable!("mine board uses square controls"),
+    }
+}
+
+fn cross_sum(
+    mask: &[String],
+    runs: &[crate::collection::Run],
+    givens: &[u8],
+    cells: &[u8; 64],
+) -> PencilBoard {
     let mut marks = Vec::new();
-    for row in 0..3 {
-        for column in 0..3 {
-            marks.push(mark(column * 2, row * 2, Ink::Dot));
-        }
-    }
-    for row in 0..2 {
-        for column in 0..2 {
-            marks.push(mark(column * 2 + 1, row * 2 + 1, Ink::Clue(2)));
-        }
-    }
-    let mut edges = Vec::new();
-    for row in 0..3 {
-        for column in 0..2 {
-            let index = usize::from(row * 2 + column);
-            edges.push(PencilEdge {
-                from: (column * 2, row * 2),
-                to: (column * 2 + 2, row * 2),
-                state: if cells[index] == 2 { 3 } else { cells[index] },
-                action: Some(action_id(&format!("edge-{index}"))),
-            });
-        }
-    }
-    for row in 0..2 {
-        for column in 0..3 {
-            let index = usize::from(6 + row * 3 + column);
-            edges.push(PencilEdge {
-                from: (column * 2, row * 2),
-                to: (column * 2, row * 2 + 2),
-                state: if cells[index] == 2 { 3 } else { cells[index] },
-                action: Some(action_id(&format!("edge-{index}"))),
-            });
+    let mut white = 0;
+    let mut free = 0;
+    for (row, line) in mask.iter().enumerate() {
+        for (column, square) in line.bytes().enumerate() {
+            let x = byte(column);
+            let y = byte(row);
+            if square == b'.' {
+                let given = givens[white] != 0;
+                let value = if given { givens[white] } else { cells[free] };
+                let mut m = mark(x, y, Ink::Digit { value, given });
+                if !given {
+                    m.action = Some(action_id(&format!("kakuro-{free}")));
+                    free += 1;
+                }
+                white += 1;
+                marks.push(m);
+            } else {
+                let across = runs
+                    .iter()
+                    .find(|r| r.clue == (x, y) && !r.down)
+                    .map_or(0, |r| r.sum);
+                let down = runs
+                    .iter()
+                    .find(|r| r.clue == (x, y) && r.down)
+                    .map_or(0, |r| r.sum);
+                marks.push(mark(
+                    x,
+                    y,
+                    if across == 0 && down == 0 {
+                        Ink::Block
+                    } else {
+                        Ink::Sum { across, down }
+                    },
+                ));
+            }
         }
     }
     PencilBoard {
-        columns: 5,
-        rows: 5,
-        cell_tenth_mm: 100,
-        marks,
-        edges,
-    }
-}
-pub fn hashi(cells: &[u8; 16]) -> PencilBoard {
-    let ends = [(2, 0), (0, 2), (4, 2), (2, 4)];
-    let mut marks = ends
-        .iter()
-        .map(|&(x, y)| mark(x, y, Ink::Island(1)))
-        .collect::<Vec<_>>();
-    marks.push(mark(2, 2, Ink::Island(4)));
-    let edges = ends
-        .into_iter()
-        .enumerate()
-        .map(|(index, from)| PencilEdge {
-            from,
-            to: (2, 2),
-            state: cells[index],
-            action: Some(action_id(&format!("route-{index}"))),
-        })
-        .collect();
-    PencilBoard {
-        columns: 5,
-        rows: 5,
-        cell_tenth_mm: 100,
-        marks,
-        edges,
-    }
-}
-pub fn kakuro(cells: &[u8; 16]) -> PencilBoard {
-    let mut marks = vec![
-        mark(0, 0, Ink::Block),
-        mark(1, 0, Ink::Sum { across: 0, down: 3 }),
-        mark(2, 0, Ink::Sum { across: 0, down: 7 }),
-        mark(0, 1, Ink::Sum { across: 4, down: 0 }),
-        mark(0, 2, Ink::Sum { across: 6, down: 0 }),
-        mark(
-            1,
-            1,
-            Ink::Digit {
-                value: 1,
-                given: true,
-            },
-        ),
-    ];
-    for (index, (column, row)) in [(2, 1), (1, 2), (2, 2)].into_iter().enumerate() {
-        let mut cell = mark(
-            column,
-            row,
-            Ink::Digit {
-                value: cells[index],
-                given: false,
-            },
-        );
-        cell.action = Some(action_id(&format!("kakuro-{index}")));
-        marks.push(cell);
-    }
-    PencilBoard {
-        columns: 3,
-        rows: 3,
-        cell_tenth_mm: 160,
+        columns: byte(mask[0].len()),
+        rows: byte(mask.len()),
+        cell_tenth_mm: if mask.len() <= 3 { 160 } else { 100 },
         marks,
         edges: vec![],
     }

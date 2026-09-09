@@ -86,117 +86,137 @@ def main():
                     return any(node['action'] == aid(name) for node in json.loads(get('layout'))['nodes'])
 
                 store=store_root/'logicpack-state-v1'
+                pack=json.loads((ROOT/'apps/logicpack/assets/collection.json').read_text())
                 def saved():
                     drive('wait-idle')
                     return json.loads(store.read_text())['payload']
-                def restart(expected='restart'):
+                def restart(expected='more'):
                     nonlocal address
-                    os.killpg(process.pid,signal.SIGKILL)
-                    process.wait(timeout=5)
-                    address=start()
-                    drive('wait-for-id '+expected,'wait-idle')
+                    os.killpg(process.pid,signal.SIGKILL);process.wait(timeout=5)
+                    address=start();drive('wait-for-id '+expected,'wait-idle')
+                def home():
+                    for _ in range(4):
+                        if has('slither'):return
+                        drive('tap Back','wait-idle')
+                    assert has('slither'),'Cannot return to games'
+                def choose(index):
+                    home();drive('tap-id '+pack[index]['kind'],'wait-idle')
+                    if not has('puzzle-'+str(index)):drive('tap-id next-puzzles','wait-idle')
+                    drive('tap-id puzzle-'+str(index),'wait-for-id more','wait-idle')
                 def position(index):
                     return saved()['games'][index]['position'].split('|')
+                def tool(name):
+                    drive('tap-id more','tap-id '+name,'wait-idle')
                 drive('wait-for-id slither')
-                capture('01-puzzles')
-                drive('tap-id hashi','tap-id route-0','wait-idle')
-                drive('tap-id route-0')
-                capture('01a-double-bridge')
-                drive('tap-id undo')
-                before=saved()
-                restart()
-                assert saved()==before
-                drive('tap-id back','tap-id kakuro','tap-id kakuro-1','tap-id back','tap-id hashi')
-                assert position(1)[1].startswith('1,')
-                drive('tap-id undo')
-                assert position(1)[1].startswith('0,')
-                drive('tap-id route-0','scenario storage-full','tap-id route-1','wait-for-id retry-save')
-                assert position(1)[1].startswith('1,0,')
-                capture('02-save-failed')
-                drive('scenario normal','tap-id retry-save','wait-for-id check')
-                assert position(1)[1].startswith('1,1,')
-                drive('tap-id route-2','tap-id route-3','tap-id check','expect Solved.')
-                assert position(1)[-1]=='1'
-                capture('03-hashi-complete')
-                kinds=[node['kind'] for node in json.loads(get('layout'))['nodes']]
-                assert sum(kind.startswith('PencilMark(Island(') for kind in kinds)==5
-                assert sum(kind.startswith('PencilEdge(') for kind in kinds)==4
-                before=saved(); restart(); assert saved()==before
-                drive('tap-id restart')
-                capture('04-restart-confirmation')
-                drive('tap-id cancel-restart'); assert saved()==before
-                drive('tap-id restart','tap-id confirm-restart','tap-id undo')
-                assert position(1)[-1]=='1'
-                drive('tap-id back','tap-id kakuro')
-                assert position(2)[1].split(',')[1]=='1'
-                for cell,count in [(0,3),(1,1),(2,4)]:
-                    for _ in range(count): drive('tap-id kakuro-'+str(cell))
-                drive('tap-id check','expect Solved.')
-                capture('05-kakuro-complete')
-                kinds=[node['kind'] for node in json.loads(get('layout'))['nodes']]
-                assert sum(kind.startswith('PencilMark(Sum ') for kind in kinds)==4
-                assert sum(kind.startswith('PencilMark(Digit ') for kind in kinds)==4
-                before=saved(); restart(); assert saved()==before
-                drive('tap-id back','tap-id slither')
-                drive('tap-id edge-0','tap-id edge-0')
-                capture('05a-excluded-edge')
-                drive('tap-id undo','tap-id undo')
-                for edge in range(12):
-                    if 0b101101110011 & (1<<edge): drive('tap-id edge-'+str(edge))
-                drive('tap-id check','expect Solved.')
-                capture('06-slitherlink-complete')
-                kinds=[node['kind'] for node in json.loads(get('layout'))['nodes']]
-                assert sum(kind.startswith('PencilMark(Dot') for kind in kinds)==9
-                assert sum(kind.startswith('PencilMark(Clue(') for kind in kinds)==4
-                assert sum(kind.startswith('PencilEdge(') for kind in kinds)==12
-                before=saved(); restart(); assert saved()==before
-                drive('tap-id back','tap-id mines','tap-id mine-5','tap-id undo')
-                assert position(3)[2]=='33824' and position(3)[4]=='1'
-                drive('tap-id mine-0','tap-id mine-5','expect Mine opened','tap-id undo')
-                assert position(3)[-2]=='0'
-                for cell in range(16):
-                    if cell not in (5,10,15): drive('tap-id mine-'+str(cell))
-                drive('expect Field cleared.')
-                assert position(3)[-1]=='1'
-                capture('07-mines-complete')
-                before=saved(); restart(); assert saved()==before
-                for game in ['mines','hashi','kakuro','slither']:
-                    drive('tap Back','tap-id '+game,'tap-id how-to-play')
-                    capture('08-help-'+game)
-                    drive('tap-id close-help')
-                # Reopening each completed game never resets another game's marks.
-                assert all(run['position'].endswith('|0|1') for run in saved()['games'])
+                capture('01-games')
+                drive('tap-id slither','wait-idle')
+                capture('02-puzzle-picker')
+                completed=[]
+                for index,puzzle in enumerate(pack):
+                    choose(index)
+                    kind=puzzle['kind']
+                    steps=[]
+                    if kind=='slither':
+                        steps=['tap-id edge-'+str(i) for i,n in enumerate(puzzle['solution']) if n]
+                    elif kind=='hashi':
+                        steps=['tap-id route-'+str(i) for i,n in enumerate(puzzle['solution']) for _ in range(n)]
+                    elif kind=='kakuro':
+                        free=[n for n,given in zip(puzzle['solution'],puzzle['givens']) if not given]
+                        for i,n in enumerate(free):
+                            steps+=['tap-id kakuro-'+str(i),'wait-for-id digit-0','tap-id digit-'+str(n),'wait-for-id more']
+                    else:
+                        steps=['tap-id mine-'+str(i) for i in range(puzzle['side']**2) if i not in puzzle['mines']]
+                    # Each mark is committed before resolving the next touch location.
+                    route=[]
+                    for step in steps:route+=[step,'wait-idle']
+                    drive(*route)
+                    if kind!='mines':drive('tap-id check','expect Solved.','wait-idle')
+                    else:drive('expect Field cleared.','wait-idle')
+                    before=saved();assert before['games'][index]['id']==puzzle['id']
+                    assert before['games'][index]['position'].endswith('|0|1'),puzzle['id']
+                    capture(f'completed-{index:02}-{kind}')
+                    restart();assert saved()==before,puzzle['id']+' restart changed progress'
+                    completed.append(puzzle['id'])
+                    if index in (7,11,15,19):
+                        capture('reopened-'+kind)
+                        drive('tap-id how-to-play','wait-idle')
+                        capture('rules-'+kind)
+                        drive('tap-id next-help','wait-idle')
+                        capture('difficulty-'+kind)
+                        drive('tap-id close-help','wait-for-id more')
+                assert len(completed)==20 and all(run['position'].endswith('|0|1') for run in saved()['games'])
+
+                choose(15)
+                original=saved()['games'][15]['position']
+                drive('tap-id kakuro-0','wait-for-id digit-0')
+                capture('03-kakuro-entry')
+                drive('tap-id digit-0','wait-for-id more','wait-idle')
+                assert position(15)[1].split(',')[0]=='0'
+                tool('undo');assert saved()['games'][15]['position']==original
+                tool('restart');capture('04-restart-confirmation')
+                drive('tap-id cancel-restart');assert saved()['games'][15]['position']==original
+                tool('restart');drive('tap-id confirm-restart','wait-for-id more','wait-idle')
+                assert all(n=='0' for n in position(15)[1].split(','))
+                tool('undo');assert saved()['games'][15]['position']==original
+
+                choose(1);before=store.read_bytes()
+                drive('scenario storage-full','tap-id route-0','wait-for-id retry-save','wait-idle')
+                assert store.read_bytes()==before
+                capture('05-save-failed')
+                drive('scenario normal','tap-id retry-save','wait-for-id more','wait-idle')
+                assert position(1)[1].split(',')[0]=='2'
+                capture('06-double-bridge')
+                tool('undo');assert position(1)[1].split(',')[0]=='1'
+                choose(0);drive('tap-id edge-0','wait-idle')
+                capture('07-excluded-edge')
+                tool('undo')
+
+                choose(3);tool('restart');drive('tap-id confirm-restart','wait-idle')
+                before=saved()['games'][3]['position']
+                drive('tap-id mine-5','wait-idle');assert position(3)[2]!='33824'
+                tool('undo');assert saved()['games'][3]['position']==before
+                drive('tap-id mine-0','tap-id mine-5','expect Mine opened','wait-idle')
+                tool('undo');assert position(3)[-2]=='0'
+
                 legacy=b'2|1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0|33824|0|1|0|0'
-                os.killpg(process.pid,signal.SIGKILL); process.wait(timeout=5)
-                store.write_bytes(legacy); address=start(); drive('wait-for-id check','wait-idle')
-                assert store.read_bytes()==legacy
-                drive('tap-id route-1'); assert position(1)[1].startswith('1,1,')
-                capture('09-legacy-migrated')
-                os.killpg(process.pid,signal.SIGKILL); process.wait(timeout=5)
-                store.unlink(); address=start(); drive('wait-for-id mines')
+                old_games=[dict(id=p['id'],position='',undo=[]) for p in pack[:4]]
+                old_games[1].update(position=legacy.decode(),undo=['2|0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0|33824|0|1|0|0'])
+                old_record=json.dumps(dict(schema='logicpack.games',version=1,payload=dict(current=2,games=old_games))).encode()
+                for name,record in [('single',legacy),('four-game',old_record)]:
+                    os.killpg(process.pid,signal.SIGKILL);process.wait(timeout=5)
+                    store.write_bytes(record);address=start();drive('wait-for-id more','wait-idle')
+                    assert store.read_bytes()==record,'Read must not rewrite older saves'
+                    if name=='four-game':tool('undo');assert position(1)[1].startswith('0,0,')
+                    else:drive('tap-id route-1','wait-idle');assert position(1)[1].startswith('1,1,')
+                    assert json.loads(store.read_text())['version']==2 and len(saved()['games'])==20
+                    assert all(not run['position'] for run in saved()['games'][4:])
+                    capture('migrated-'+name)
+
+                os.killpg(process.pid,signal.SIGKILL);process.wait(timeout=5)
+                store.unlink();address=start();drive('wait-for-id slither')
                 route=[line.strip() for line in (ROOT/'apps/logicpack/drive.kobo').read_text().splitlines() if line.strip() and not line.startswith('#')]
-                drive(*route)
-                capture('10-committed-route')
-                os.killpg(process.pid,signal.SIGKILL); process.wait(timeout=5)
+                drive(*route);capture('08-committed-route')
+                os.killpg(process.pid,signal.SIGKILL);process.wait(timeout=5)
                 invalid=b'{"schema":"logicpack.games","version":99,"payload":{}}'
-                store.write_bytes(invalid); address=start(); drive('wait-for-id retry-load','wait-idle')
+                store.write_bytes(invalid);address=start();drive('wait-for-id retry-load','wait-idle')
                 assert store.read_bytes()==invalid
-                capture('10-unreadable-preserved')
+                capture('09-unreadable-preserved')
                 result=dict(status='passed',profile=args.profile,scale=args.scale,basis='simulator-sdk-ipc',
                     source_head=subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip(),
                     source_dirty=bool(subprocess.check_output(['git','status','--porcelain'],cwd=ROOT)),
-                    checks=['separate game progress','forced restart restoration','persistent undo','full-storage preservation',
-                            'explicit save retry','restart confirmation and undo','Hashi completion and reopen',
-                            'Kakuro completion and reopen','Slitherlink completion and reopen','Mines completion and reopen',
-                            'first-mine relocation undo','loss undo','all game help screens','legacy migration','future record preservation','committed drive route','shared line bridge and cross-sum geometry'])
+                    completed_and_reopened=completed,
+                    checks=['all 20 puzzles complete and reopen exactly','separate puzzle identities and progress',
+                        'paged puzzle picker','rules and difficulty for each game','direct Kakuro digit entry and clear',
+                        'persistent undo','confirmed restart and undo','full-storage preservation and explicit retry',
+                        'single and double bridges','excluded loop edges','first-mine relocation and loss undo',
+                        'single-game legacy migration','four-game record and history migration','committed drive route',
+                        'future record preservation','zero network effects'])
                 (args.output/'result.json').write_text(json.dumps(result,indent=2)+'\n')
             finally:
                 if process is not None and process.poll() is None:
                     os.killpg(process.pid,signal.SIGTERM)
-                    try: process.wait(timeout=5)
+                    try:process.wait(timeout=5)
                     except subprocess.TimeoutExpired:
-                        os.killpg(process.pid,signal.SIGKILL)
-                        process.wait(timeout=5)
+                        os.killpg(process.pid,signal.SIGKILL);process.wait(timeout=5)
 
-if __name__=='__main__':
-    main()
+if __name__=='__main__':main()

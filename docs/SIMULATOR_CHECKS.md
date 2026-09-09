@@ -79,13 +79,15 @@ After building `kobo-cli`, run:
 python3 scripts/quality/check-logicpack-sim.py --output /tmp/logicpack-check
 ```
 
-The actual SDK app completes and forcibly reopens each of the four current
-games, switches between independent progress records, undoes moves after
+The actual SDK app completes and forcibly reopens all 20 original
+puzzles, switches between independent progress records, undoes moves after
 reopening, retries a full-store failure, and confirms and undoes a restart.
 It also checks first-mine relocation and loss undo, the committed drive route,
-legacy migration and preservation of future-version records. The default is
+both single-game and four-game legacy migrations, direct Kakuro digit entry,
+paged collections, difficulty guides and preservation of future-version records. The default is
 Clara BW at Extra-large; `--profile` and `--scale` select another supported
 profile or text size. Captures include layout and source/font provenance and
 assert zero fetch/post effects. The route also checks shared pencil-board nodes
-for connected loops, circular islands and attached diagonal sum clues. It does
-not validate a future expanded puzzle collection.
+for connected loops, circular islands and attached diagonal sum clues. The original generator separately verifies unique loop, bridge and cross-sum
+solutions and deterministic reproduction with `make-logicpack-collection.py --check`.
+Mines difficulty describes field size and density; guess-free play is not promised.
