@@ -39,6 +39,9 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
+      - name: Test the browser installer before publishing
+        run: node --test docs/install/*.test.mjs
+
       # Everything the site serves today, unchanged. This job replaces the
       # branch publication that used to do it, so anything missed here stops
       # being reachable -- install.sh included, which is the one file the
@@ -48,6 +51,7 @@ jobs:
           set -eu
           mkdir -p _site
           cp -R docs/. _site/
+          rm -f _site/install/*.test.mjs
           test -f _site/install.sh
           test -f _site/index.html
 
@@ -175,54 +179,68 @@ jobs:
       # against the one that matters, and a device list that is quietly wrong
       # tells somebody their working reader is untested. Anything this cannot
       # read stops the build instead of publishing a gap.
+      # The reviewed devices, taken from the profiles the runtime enforces rather
+      # than from a list kept beside the page. A copy would go stale against the
+      # one that matters, and a device list that is quietly wrong tells somebody
+      # their working reader is untested. Anything this cannot read stops the
+      # build rather than publishing a gap.
+      #
+      # Written to a file through a quoted heredoc rather than passed to node -e.
+      # The script matches Rust string literals, so it contains single quotes,
+      # and one of those inside a shell's single-quoted argument ends the
+      # argument: the first attempt failed with a syntax error from bash that
+      # had nothing to do with the profiles.
       - name: Take the reviewed device profiles
         run: |
           set -eu
-          node --input-type=module -e '
-            import { readFileSync } from "node:fs";
-            const src = readFileSync("crates/kobo-profile/src/lib.rs", "utf8");
+          mkdir -p _site/install
+          cat > device-profiles.mjs <<'PROFILES'
+          import { readFileSync } from "node:fs";
+          const src = readFileSync("crates/kobo-profile/src/lib.rs", "utf8");
 
-            function block(name) {
-              const m = src.match(new RegExp(`(?:pub )?(?:static|const) ${name}\\s*:\\s*DeviceProfile\\s*=\\s*DeviceProfile\\s*\\{([\\s\\S]*?)\\n\\};`));
-              if (!m) throw new Error(`no profile named ${name}`);
-              return m[1];
-            }
-            function read(name, seen = new Set()) {
-              if (seen.has(name)) throw new Error(`profile ${name} inherits from itself`);
-              seen.add(name);
-              const body = block(name);
-              // `..BASE` copies every field not written here, so the base must be read
-              // first and then written over. Missing this is what produced a profile with
-              // no model and no serial prefix.
-              const base = body.match(/\.\.\s*([A-Z0-9_]+)\s*$/m);
-              const value = base ? { ...read(base[1], seen) } : {};
-              const one = (field, re) => { const m = body.match(new RegExp(`\\b${field}:\\s*${re}`)); return m ? m[1] : undefined; };
-              const id = one("id", '"([^"]*)"'); if (id !== undefined) value.id = id;
-              const model = one("model", '"([^"]*)"'); if (model !== undefined) value.model = model;
-              const prefix = one("serial_prefix", '"([^"]*)"'); if (prefix !== undefined) value.serial_prefix = prefix;
-              const ready = one("write_ready", "(true|false)"); if (ready !== undefined) value.write_ready = ready === "true";
-              const fw = body.match(/\bfirmware_versions:\s*&\[([\s\S]*?)\]/);
-              if (fw) value.firmware = (fw[1].match(/"[^"]*"/g) || []).map(s => s.slice(1, -1));
-              return value;
-            }
+          function block(name) {
+            const m = src.match(new RegExp(`(?:pub )?(?:static|const) ${name}\\s*:\\s*DeviceProfile\\s*=\\s*DeviceProfile\\s*\\{([\\s\\S]*?)\\n\\};`));
+            if (!m) throw new Error(`no profile named ${name}`);
+            return m[1];
+          }
+          function read(name, seen = new Set()) {
+            if (seen.has(name)) throw new Error(`profile ${name} inherits from itself`);
+            seen.add(name);
+            const body = block(name);
+            // `..BASE` copies every field not written here, so the base must be read
+            // first and then written over. Missing this is what produced a profile with
+            // no model and no serial prefix.
+            const base = body.match(/\.\.\s*([A-Z0-9_]+)\s*$/m);
+            const value = base ? { ...read(base[1], seen) } : {};
+            const one = (field, re) => { const m = body.match(new RegExp(`\\b${field}:\\s*${re}`)); return m ? m[1] : undefined; };
+            const id = one("id", '"([^"]*)"'); if (id !== undefined) value.id = id;
+            const model = one("model", '"([^"]*)"'); if (model !== undefined) value.model = model;
+            const prefix = one("serial_prefix", '"([^"]*)"'); if (prefix !== undefined) value.serial_prefix = prefix;
+            const ready = one("write_ready", "(true|false)"); if (ready !== undefined) value.write_ready = ready === "true";
+            const fw = body.match(/\bfirmware_versions:\s*&\[([\s\S]*?)\]/);
+            if (fw) value.firmware = (fw[1].match(/"[^"]*"/g) || []).map(s => s.slice(1, -1));
+            return value;
+          }
 
-            const listed = src.match(/pub const SUPPORTED_PROFILES[^=]*=\s*&\[([\s\S]*?)\]/)[1]
-              .split(",").map(s => s.trim().replace(/^&/, "")).filter(Boolean);
-            const profiles = listed.map(n => read(n));
+          const listed = src.match(/pub const SUPPORTED_PROFILES[^=]*=\s*&\[([\s\S]*?)\]/)[1]
+            .split(",").map(s => s.trim().replace(/^&/, "")).filter(Boolean);
+          const profiles = listed.map(n => read(n));
 
-            // A matrix that is quietly incomplete is worse than no matrix: it would tell
-            // somebody their working reader is untested. Anything unreadable stops the build.
-            const faults = [];
-            for (const [i, p] of profiles.entries()) {
-              for (const field of ["id", "model", "serial_prefix", "write_ready"]) {
-                if (p[field] === undefined || p[field] === null) faults.push(`${listed[i]}: no ${field}`);
-              }
-              if (!p.firmware || p.firmware.length === 0) faults.push(`${listed[i]}: no firmware versions`);
+          // A matrix that is quietly incomplete is worse than no matrix: it would tell
+          // somebody their working reader is untested. Anything unreadable stops the build.
+          const faults = [];
+          for (const [i, p] of profiles.entries()) {
+            for (const field of ["id", "model", "serial_prefix", "write_ready"]) {
+              if (p[field] === undefined || p[field] === null) faults.push(`${listed[i]}: no ${field}`);
             }
-            if (faults.length > 0) { console.error("could not read the device profiles:\n  " + faults.join("\n  ")); process.exit(1); }
-            console.log(JSON.stringify(profiles.map(p => ({ model: p.model, code: p.serial_prefix, firmware: p.firmware, ready: p.write_ready }))));
-          ' > _site/install/devices.json
-          node -e 'const d=require("./_site/install/devices.json"); console.log(`  ${d.length} reviewed device profiles`)'
+            if (!p.firmware || p.firmware.length === 0) faults.push(`${listed[i]}: no firmware versions`);
+          }
+          if (faults.length > 0) { console.error("could not read the device profiles:\n  " + faults.join("\n  ")); process.exit(1); }
+          console.log(JSON.stringify(profiles.map(p => ({ model: p.model, code: p.serial_prefix, firmware: p.firmware, ready: p.write_ready }))));
+          PROFILES
+          node device-profiles.mjs > _site/install/devices.json
+          rm -f device-profiles.mjs
+          node -e 'const d = require("./_site/install/devices.json"); console.log(`  ${d.length} reviewed device profiles`)'
 
       - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3
         with:

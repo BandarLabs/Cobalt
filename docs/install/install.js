@@ -62,21 +62,95 @@ function done(element) {
 // Said once, at the top, rather than left for the reader to discover when a
 // button does nothing. The directory picker is the part browsers disagree
 // about; everything else here is ordinary.
+function missingCapability() {
+  if (typeof window.showDirectoryPicker !== "function") return "picker";
+  // The write side is a separate interface and is what the install needs. A
+  // browser offering the picker without it would get as far as a chosen reader
+  // and a verified download, and fail at the only step that matters.
+  const file = window.FileSystemFileHandle;
+  if (!file || typeof file.prototype.createWritable !== "function") return "writing";
+  const folder = window.FileSystemDirectoryHandle;
+  if (!folder || typeof folder.prototype.getDirectoryHandle !== "function") return "folders";
+  return null;
+}
+
 function refuseUnsupportedBrowser() {
-  if (typeof window.showDirectoryPicker === "function") return false;
+  const missing = missingCapability();
+  if (!missing) return false;
   const banner = document.querySelector("#unsupported");
+  const detail = missing === "picker"
+    ? "cannot open a drive"
+    : missing === "writing"
+      ? "can open a drive but cannot write to one"
+      : "cannot read the folders on a drive";
   document.querySelector("#unsupported-why").innerHTML =
-    "Writing to a plugged-in drive is something Chrome, Edge and Opera can do, " +
-    "and Firefox and Safari cannot. <strong>Open this page in Chrome</strong> " +
-    "to install straight from the browser. Otherwise the ways below install " +
-    "exactly the same thing.";
+    `This browser ${detail}. Installing this way needs <strong>Chrome, Edge or ` +
+    "Opera on a computer</strong>: Firefox and Safari cannot do it, and neither " +
+    "can any browser on a phone or tablet. The ways below install exactly the " +
+    "same thing and work anywhere.";
   banner.hidden = false;
   pickButton.disabled = true;
+  // The steps are the whole page and none of them can be followed here. Left
+  // as they are they read as the thing to do, and the route that does work sits
+  // underneath them looking like an afterthought.
+  const steps = document.querySelector("#steps");
+  if (steps) steps.setAttribute("aria-disabled", "true");
   // The steps above cannot be followed here, so the ways that can be are
   // opened rather than left folded behind a heading somebody has to think to
   // click.
   document.querySelector("#by-hand").open = true;
   return true;
+}
+
+// These reads are optional metadata: a fresh reader has no Cobalt folders,
+// and an unavailable device list must not prevent choosing a valid Kobo.
+async function readInstalledVersion(handle) {
+  try {
+    const adds = await handle.getDirectoryHandle(MENU_FOLDER);
+    const cobalt = await adds.getDirectoryHandle("cobalt");
+    const file = await (await cobalt.getFileHandle("VERSION")).getFile();
+    return (await file.text()).trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+async function readInstalledApps(handle) {
+  const present = new Set();
+  try {
+    const adds = await handle.getDirectoryHandle(MENU_FOLDER);
+    const cobalt = await adds.getDirectoryHandle("cobalt");
+    const apps = await cobalt.getDirectoryHandle("apps");
+    for await (const [name, entry] of apps.entries()) {
+      // Staged .next and .prev folders are not installed applications.
+      if (entry.kind === "directory" && !name.includes(".")) present.add(name);
+    }
+  } catch { /* nothing installed */ }
+  return present;
+}
+
+async function readReaderIdentity(handle) {
+  try {
+    const system = await handle.getDirectoryHandle(SLOT_FOLDER);
+    const text = await (await (await system.getFileHandle("version")).getFile()).text();
+    // The serial's first four characters identify the model; field three is
+    // the firmware version. Do not send the reader's serial to the server.
+    const fields = text.trim().split(",");
+    const serial = (fields[0] || "").trim();
+    return { model: serial.slice(0, 4), firmware: (fields[2] || "").trim() };
+  } catch {
+    return null;
+  }
+}
+
+async function readTestedDevices() {
+  try {
+    const response = await fetch("devices.json", { cache: "no-store" });
+    if (!response.ok) return [];
+    return await response.json();
+  } catch {
+    return [];
+  }
 }
 
 async function chooseDrive() {
@@ -87,7 +161,14 @@ async function chooseDrive() {
     // Dismissing the picker is a choice, not a fault, and should not be
     // reported as one.
     if (error && error.name === "AbortError") return;
-    pickNote.innerHTML = `<span class="bad">The drive could not be opened: ${escapeText(error.message)}</span>`;
+    // Whatever went wrong here, this browser has just failed at the first step,
+    // so the routes that do not depend on it are opened rather than left folded
+    // away. A button that does nothing and says nothing is the worst of the
+    // outcomes available.
+    pickNote.innerHTML =
+      `<span class="bad">The drive could not be opened: ${escapeText(error.message || error.name || "no reason given")}. ` +
+      "The other ways to install, below, do not need this.</span>";
+    document.querySelector("#by-hand").open = true;
     return;
   }
 
@@ -104,10 +185,15 @@ async function chooseDrive() {
     return;
   }
 
-  if ((await handle.queryPermission({ mode: "readwrite" })) !== "granted" &&
-      (await handle.requestPermission({ mode: "readwrite" })) !== "granted") {
-    pickNote.innerHTML = '<span class="bad">Writing was not allowed, so nothing was installed.</span>';
-    return;
+  if (typeof handle.queryPermission === "function") {
+    const already = await handle.queryPermission({ mode: "readwrite" });
+    const granted = already === "granted" ||
+      (typeof handle.requestPermission === "function" &&
+        (await handle.requestPermission({ mode: "readwrite" })) === "granted");
+    if (!granted) {
+      pickNote.innerHTML = '<span class="bad">Writing was not allowed, so nothing was installed.</span>';
+      return;
+    }
   }
 
   drive = handle;
@@ -424,13 +510,34 @@ async function writeFile(folder, name, bytes) {
   await target.close();
 }
 
+// The by-hand route shows the same archive and the same menu entry the steps
+// above would write, read from the same manifest and the same constant, so the
+// two cannot drift into installing different things.
+async function describeManualRoute() {
+  const entry = document.querySelector("#by-hand-entry");
+  if (entry) entry.textContent = MENU_ENTRY;
+  try {
+    const described = await fetch("manifest.json", { cache: "no-store" });
+    if (!described.ok) return;
+    const facts = await described.json();
+    const link = document.querySelector("#by-hand-archive");
+    if (link) link.setAttribute("href", facts.archive);
+    const size = document.querySelector("#by-hand-size");
+    if (size) {
+      size.textContent =
+        `Cobalt ${facts.version} with NickelMenu ${facts.nickelmenu}, ${(facts.bytes / 1048576).toFixed(1)} MB`;
+    }
+  } catch {
+    // The steps above report a manifest that cannot be read; the link still
+    // points at the archive.
+  }
+}
+
 function escapeText(value) {
   const holder = document.createElement("span");
   holder.textContent = String(value);
   return holder.innerHTML;
 }
-
-describeManualRoute();
 
 if (refuseUnsupportedBrowser()) {
   // The only route left, so it is opened rather than left to be discovered.
@@ -440,3 +547,9 @@ if (refuseUnsupportedBrowser()) {
   fetchButton.addEventListener("click", fetchRelease);
   writeButton.addEventListener("click", writeToReader);
 }
+
+// After the wiring, and its failure is its own. This filled in the by-hand
+// section and was called first; when it referred to something that no longer
+// existed it threw, the wiring below it never ran, and every button on the page
+// did nothing in every browser.
+describeManualRoute();
