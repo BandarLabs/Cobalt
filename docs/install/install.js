@@ -102,6 +102,57 @@ function refuseUnsupportedBrowser() {
   return true;
 }
 
+// These reads are optional metadata: a fresh reader has no Cobalt folders,
+// and an unavailable device list must not prevent choosing a valid Kobo.
+async function readInstalledVersion(handle) {
+  try {
+    const adds = await handle.getDirectoryHandle(MENU_FOLDER);
+    const cobalt = await adds.getDirectoryHandle("cobalt");
+    const file = await (await cobalt.getFileHandle("VERSION")).getFile();
+    return (await file.text()).trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+async function readInstalledApps(handle) {
+  const present = new Set();
+  try {
+    const adds = await handle.getDirectoryHandle(MENU_FOLDER);
+    const cobalt = await adds.getDirectoryHandle("cobalt");
+    const apps = await cobalt.getDirectoryHandle("apps");
+    for await (const [name, entry] of apps.entries()) {
+      // Staged .next and .prev folders are not installed applications.
+      if (entry.kind === "directory" && !name.includes(".")) present.add(name);
+    }
+  } catch { /* nothing installed */ }
+  return present;
+}
+
+async function readReaderIdentity(handle) {
+  try {
+    const system = await handle.getDirectoryHandle(SLOT_FOLDER);
+    const text = await (await (await system.getFileHandle("version")).getFile()).text();
+    // The serial's first four characters identify the model; field three is
+    // the firmware version. Do not send the reader's serial to the server.
+    const fields = text.trim().split(",");
+    const serial = (fields[0] || "").trim();
+    return { model: serial.slice(0, 4), firmware: (fields[2] || "").trim() };
+  } catch {
+    return null;
+  }
+}
+
+async function readTestedDevices() {
+  try {
+    const response = await fetch("devices.json", { cache: "no-store" });
+    if (!response.ok) return [];
+    return await response.json();
+  } catch {
+    return [];
+  }
+}
+
 async function chooseDrive() {
   let handle;
   try {
