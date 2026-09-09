@@ -340,6 +340,12 @@ footer nav { display: flex; gap: 20px; flex-wrap: wrap; }
       </div>
     </section>
 
+    <section id="measured-lists">
+      <h2>Lists with notices and menus</h2>
+      <p>Measure the same content you draw. Use <code>Context::paginate_rows_below_notice(rows, bottom_action_present, notice)</code> when a notice appears above a list. It reserves the notice's measured height at the current interface text size before dividing rows into pages. Pass the same notice text to the screen builder.</p>
+      <p>For rows with an overflow menu, use <code>paginate_rows_with_menu_below_notice</code> and <code>clamped_row_with_menu(text, lines, bottom_action_present)</code>. These helpers account for the menu column when measuring and shortening text. Pass whether the screen has a bottom action so the last row leaves room for it. Feeds uses these helpers for refresh history, unread counts and save-recovery notices.</p>
+    </section>
+
     <section id="services">
       <h2>Runtime services</h2>
       <div class="table-wrap">

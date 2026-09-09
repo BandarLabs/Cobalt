@@ -1,0 +1,249 @@
+{
+  "paints": 3,
+  "nodes": [
+    {
+      "kind": "StatusBand",
+      "x": 0,
+      "y": 0,
+      "width": 1072,
+      "height": 59,
+      "centre": {
+        "x": 536,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusClock",
+      "x": 47,
+      "y": 0,
+      "width": 78,
+      "height": 59,
+      "centre": {
+        "x": 86,
+        "y": 29
+      },
+      "action": null,
+      "lines": [
+        "07:12"
+      ]
+    },
+    {
+      "kind": "StatusBattery(Some(Percent(72)), false)",
+      "x": 955,
+      "y": 12,
+      "width": 70,
+      "height": 35,
+      "centre": {
+        "x": 990,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusSignal(Strong)",
+      "x": 896,
+      "y": 12,
+      "width": 35,
+      "height": 35,
+      "centre": {
+        "x": 913,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusBluetooth",
+      "x": 837,
+      "y": 12,
+      "width": 35,
+      "height": 35,
+      "centre": {
+        "x": 854,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "TopBar",
+      "x": 0,
+      "y": 59,
+      "width": 1072,
+      "height": 100,
+      "centre": {
+        "x": 536,
+        "y": 109
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Back",
+      "x": 47,
+      "y": 59,
+      "width": 100,
+      "height": 100,
+      "centre": {
+        "x": 97,
+        "y": 109
+      },
+      "action": 4294967295,
+      "lines": []
+    },
+    {
+      "kind": "TopBarTitle",
+      "x": 171,
+      "y": 86,
+      "width": 854,
+      "height": 46,
+      "centre": {
+        "x": 598,
+        "y": 109
+      },
+      "action": null,
+      "lines": [
+        "Feeds"
+      ]
+    },
+    {
+      "kind": "Divider",
+      "x": 0,
+      "y": 159,
+      "width": 1072,
+      "height": 4,
+      "centre": {
+        "x": 536,
+        "y": 161
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Row(ActionId(3080110712))",
+      "x": 47,
+      "y": 175,
+      "width": 978,
+      "height": 129,
+      "centre": {
+        "x": 536,
+        "y": 239
+      },
+      "action": 3080110712,
+      "lines": []
+    },
+    {
+      "kind": "RowLead(Icon(Rss))",
+      "x": 47,
+      "y": 200,
+      "width": 44,
+      "height": 44,
+      "centre": {
+        "x": 69,
+        "y": 222
+      },
+      "action": 3080110712,
+      "lines": []
+    },
+    {
+      "kind": "RowTitle",
+      "x": 115,
+      "y": 199,
+      "width": 768,
+      "height": 46,
+      "centre": {
+        "x": 499,
+        "y": 222
+      },
+      "action": 3080110712,
+      "lines": [
+        "The Field Journal"
+      ]
+    },
+    {
+      "kind": "RowSummary",
+      "x": 115,
+      "y": 245,
+      "width": 768,
+      "height": 35,
+      "centre": {
+        "x": 499,
+        "y": 262
+      },
+      "action": 3080110712,
+      "lines": [
+        "Refresh failed \u00b7 0 unread \u00b7 Updated 2026-09-09 08:30 UTC"
+      ]
+    },
+    {
+      "kind": "RowMenu(ActionId(94762738))",
+      "x": 907,
+      "y": 175,
+      "width": 118,
+      "height": 129,
+      "centre": {
+        "x": 966,
+        "y": 239
+      },
+      "action": 94762738,
+      "lines": []
+    },
+    {
+      "kind": "Spacer",
+      "x": 0,
+      "y": 1306,
+      "width": 1072,
+      "height": 142,
+      "centre": {
+        "x": 536,
+        "y": 1377
+      },
+      "action": 993596020,
+      "lines": []
+    },
+    {
+      "kind": "Divider",
+      "x": 0,
+      "y": 1306,
+      "width": 1072,
+      "height": 4,
+      "centre": {
+        "x": 536,
+        "y": 1308
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Button(ActionId(993596020), Enabled, Normal)",
+      "x": 47,
+      "y": 1320,
+      "width": 978,
+      "height": 118,
+      "centre": {
+        "x": 536,
+        "y": 1379
+      },
+      "action": 993596020,
+      "lines": [
+        "Add a feed"
+      ]
+    },
+    {
+      "kind": "InlineGlyph(Plus, false)",
+      "x": 376,
+      "y": 1355,
+      "width": 47,
+      "height": 47,
+      "centre": {
+        "x": 399,
+        "y": 1378
+      },
+      "action": 993596020,
+      "lines": []
+    }
+  ]
+}

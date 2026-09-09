@@ -2695,16 +2695,20 @@
     "pr": 2,
     "group": "Feeds",
     "task": "Distinguish failed discovery from no feed found",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Discovery parser distinguishes failed/malformed responses from valid empty results; retry retains the query. Covered by the 99-test RSS suite and default/170% failure-layout tests."
+    ]
   },
   {
     "id": "FEEDS-02",
     "pr": 2,
     "group": "Feeds",
     "task": "Accept direct feed URLs",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "HTTPS feed addresses are fetched directly without Feedsearch disclosure, with preview before subscription. RSS, Atom and JSON Feed direct-address tests pass in the 99-test RSS suite."
+    ]
   },
   {
     "id": "FEEDS-03",
@@ -2719,22 +2723,26 @@
     "pr": 2,
     "group": "Feeds",
     "task": "Provide working original or public starter feeds",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "BBC Science & Environment and NASA Science starter feeds were fetched successfully on 9 September 2026. Browse requires explicit preview and subscription; default/170% simulator evidence rss-offline captures 20–21 verifies no request on browsing and no subscription on failed preview."
+    ]
   },
   {
     "id": "FEEDS-05",
     "pr": 2,
     "group": "Feeds",
     "task": "Show last refresh, unread counts and per-feed failure",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Durable per-feed refresh timestamps, failure reasons and acknowledged unread summaries are implemented. RSS tests verify save ordering/retry; rss-offline and rss-offline-large evidence verifies offline failure and unread count after restart. rss-image-save and rss-image-save-large verify failed refresh storage, latest-candidate retry and offline restart."
+    ]
   },
   {
     "id": "FEEDS-06",
     "pr": 2,
     "group": "Feeds",
-    "task": "Test RSS, Atom, full-content and summary entries",
+    "task": "Test RSS, Atom, full-content and summary entries with inline images, captions/alt text, e-ink scaling, offline image restoration and missing-image recovery",
     "status": "todo",
     "evidence": []
   },
@@ -2758,7 +2766,7 @@
     "id": "MINI-03",
     "pr": 2,
     "group": "Miniflux (APP-5)",
-    "task": "Parse HTML into the shared document reader",
+    "task": "Parse HTML into the shared document reader with inline images, captions/alt text, e-ink scaling, offline image restoration and missing-image recovery",
     "status": "todo",
     "evidence": []
   },

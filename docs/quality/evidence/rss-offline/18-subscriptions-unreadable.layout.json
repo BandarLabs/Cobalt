@@ -1,0 +1,173 @@
+{
+  "paints": 2,
+  "nodes": [
+    {
+      "kind": "StatusBand",
+      "x": 0,
+      "y": 0,
+      "width": 1072,
+      "height": 59,
+      "centre": {
+        "x": 536,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusClock",
+      "x": 47,
+      "y": 0,
+      "width": 78,
+      "height": 59,
+      "centre": {
+        "x": 86,
+        "y": 29
+      },
+      "action": null,
+      "lines": [
+        "07:12"
+      ]
+    },
+    {
+      "kind": "StatusBattery(Some(Percent(72)), false)",
+      "x": 955,
+      "y": 12,
+      "width": 70,
+      "height": 35,
+      "centre": {
+        "x": 990,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusSignal(Strong)",
+      "x": 896,
+      "y": 12,
+      "width": 35,
+      "height": 35,
+      "centre": {
+        "x": 913,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusBluetooth",
+      "x": 837,
+      "y": 12,
+      "width": 35,
+      "height": 35,
+      "centre": {
+        "x": 854,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "TopBar",
+      "x": 0,
+      "y": 59,
+      "width": 1072,
+      "height": 100,
+      "centre": {
+        "x": 536,
+        "y": 109
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Back",
+      "x": 47,
+      "y": 59,
+      "width": 100,
+      "height": 100,
+      "centre": {
+        "x": 97,
+        "y": 109
+      },
+      "action": 4294967295,
+      "lines": []
+    },
+    {
+      "kind": "TopBarTitle",
+      "x": 171,
+      "y": 86,
+      "width": 854,
+      "height": 46,
+      "centre": {
+        "x": 598,
+        "y": 109
+      },
+      "action": null,
+      "lines": [
+        "Feeds"
+      ]
+    },
+    {
+      "kind": "Divider",
+      "x": 0,
+      "y": 159,
+      "width": 1072,
+      "height": 4,
+      "centre": {
+        "x": 536,
+        "y": 161
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "SplashTitle",
+      "x": 169,
+      "y": 599,
+      "width": 733,
+      "height": 62,
+      "centre": {
+        "x": 535,
+        "y": 630
+      },
+      "action": null,
+      "lines": [
+        "Could not open feeds"
+      ]
+    },
+    {
+      "kind": "SplashText",
+      "x": 169,
+      "y": 708,
+      "width": 733,
+      "height": 138,
+      "centre": {
+        "x": 535,
+        "y": 777
+      },
+      "action": null,
+      "lines": [
+        "Your saved subscriptions could not be",
+        "opened. The saved file has been left",
+        "unchanged."
+      ]
+    },
+    {
+      "kind": "Button(ActionId(4071319851), Enabled, Primary)",
+      "x": 47,
+      "y": 1283,
+      "width": 978,
+      "height": 118,
+      "centre": {
+        "x": 536,
+        "y": 1342
+      },
+      "action": 4071319851,
+      "lines": [
+        "Try again"
+      ]
+    }
+  ]
+}

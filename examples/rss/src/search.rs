@@ -63,21 +63,23 @@ fn encode(value: &str) -> String {
     out
 }
 
-/// Reads the service's answer.
-///
-/// Anything that is not an array of objects with a `url` is no results rather
-/// than an error: the screen already has to say "nothing found", and a reader
-/// cannot act on the difference between a site with no feeds and a service
-/// having a bad afternoon.
-#[must_use]
-pub fn results(bytes: &[u8]) -> Vec<Found> {
-    let text = String::from_utf8_lossy(bytes);
-    let Ok(value) = kobo_json::parse(&text) else {
-        return Vec::new();
-    };
-    let Some(entries) = value.as_array() else {
-        return Vec::new();
-    };
+/// A response that cannot reliably describe the search result.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct InvalidResponse;
+
+/// Reads a complete search response. Only a valid empty array means no feeds.
+pub fn results(bytes: &[u8]) -> Result<Vec<Found>, InvalidResponse> {
+    let text = std::str::from_utf8(bytes).map_err(|_| InvalidResponse)?;
+    let value = kobo_json::parse(text).map_err(|_| InvalidResponse)?;
+    let entries = value.as_array().ok_or(InvalidResponse)?;
+    if entries.iter().any(|entry| {
+        entry
+            .get("url")
+            .and_then(Value::as_str)
+            .is_none_or(|url| url.trim().is_empty())
+    }) {
+        return Err(InvalidResponse);
+    }
     let mut found: Vec<(f64, Found)> = entries
         .iter()
         .filter_map(|entry| {
@@ -114,7 +116,7 @@ pub fn results(bytes: &[u8]) -> Vec<Found> {
     // somebody meant than the order a crawler happened to find things in.
     found.sort_by(|left, right| right.0.total_cmp(&left.0));
     found.truncate(MAX_RESULTS);
-    found.into_iter().map(|(_, entry)| entry).collect()
+    Ok(found.into_iter().map(|(_, entry)| entry).collect())
 }
 
 /// The first of several fields that has anything in it.
@@ -202,7 +204,7 @@ mod tests {
 
     #[test]
     fn results_come_back_best_first() {
-        let found = results(ANSWER.as_bytes());
+        let found = results(ANSWER.as_bytes()).unwrap();
         assert_eq!(found.len(), 2);
         assert_eq!(found[0].url, "https://arstechnica.com/feed/");
         assert_eq!(
@@ -213,40 +215,48 @@ mod tests {
 
     #[test]
     fn a_feed_with_no_title_of_its_own_borrows_the_sites() {
-        let found = results(ANSWER.as_bytes());
+        let found = results(ANSWER.as_bytes()).unwrap();
         assert_eq!(found[0].title, "Ars Technica");
         assert_eq!(found[0].site, "https://arstechnica.com/");
     }
 
     #[test]
     fn a_summary_says_what_the_feed_is_rather_than_repeating_the_site() {
-        let found = results(ANSWER.as_bytes());
+        let found = results(ANSWER.as_bytes()).unwrap();
         assert_eq!(found[0].summary, "Podcast \u{b7} 1 article");
         assert_eq!(found[1].summary, "20 articles");
     }
 
     #[test]
     fn a_feed_that_describes_nothing_still_gets_a_line() {
-        let found = results(br#"[{"url":"https://a.example/rss"}]"#);
+        let found = results(br#"[{"url":"https://a.example/rss"}]"#).unwrap();
         assert_eq!(found[0].summary, "https://a.example/rss");
         assert_eq!(found[0].title, "https://a.example/rss");
     }
 
     #[test]
     fn a_bare_description_is_used_when_there_is_nothing_countable() {
-        let found = results(br#"[{"url":"https://a.example/rss","description":"A weblog."}]"#);
+        let found =
+            results(br#"[{"url":"https://a.example/rss","description":"A weblog."}]"#).unwrap();
         assert_eq!(found[0].summary, "A weblog.");
     }
 
     #[test]
-    fn an_answer_that_is_not_results_is_no_results_rather_than_a_failure() {
-        assert!(results(b"").is_empty());
-        assert!(results(b"not json").is_empty());
-        assert!(results(b"{}").is_empty());
-        assert!(results(b"[]").is_empty());
-        assert!(results(br#"[{"title":"no address"}]"#).is_empty());
-        assert!(results(br#"[{"url":"   "}]"#).is_empty());
-        assert!(results(br#"[null, 3, "text"]"#).is_empty());
+    fn invalid_responses_are_distinct_from_a_successful_empty_search() {
+        assert!(results(b"[]").unwrap().is_empty());
+        for bytes in [
+            b"".as_slice(),
+            b"not json",
+            b"{}",
+            b"[",
+            b"[null]",
+            br#"[{"title":"no address"}]"#,
+            br#"[{"url":"   "}]"#,
+            br#"[{"url":"https://a.example/rss"},null]"#,
+            &[0xff],
+        ] {
+            assert!(results(bytes).is_err(), "{bytes:?}");
+        }
     }
 
     #[test]
@@ -254,7 +264,7 @@ mod tests {
         let entries: Vec<String> = (0..40)
             .map(|index| format!(r#"{{"url":"https://a.example/{index}","score":{index}}}"#))
             .collect();
-        let found = results(format!("[{}]", entries.join(",")).as_bytes());
+        let found = results(format!("[{}]", entries.join(",")).as_bytes()).unwrap();
         assert_eq!(found.len(), MAX_RESULTS);
         assert_eq!(found[0].url, "https://a.example/39");
     }

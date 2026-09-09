@@ -1078,3 +1078,416 @@ CALIBRE-01 through CALIBRE-06 are complete for implementation/local validation.
 Physical Clara BW acceptance remains pending. Program totals: **139 done,
 355 open, one deferred CBR task**. PR 2 has **47/269 complete**; all 133
 companion tasks remain open.
+
+
+## Miniflux article retention work in progress
+
+The current working tree validates Miniflux response shape, bounds, positive
+unique IDs and article fields before replacing the current inbox. HTML bodies,
+source URLs and read/star state are retained for the shared reader. Malformed
+responses preserve the current articles and show an error instead of appearing
+as a successful empty inbox. Five tests and strict Clippy pass. No MINI or LATER
+task is complete yet; disk persistence and actual reading/sync routes remain open.
+
+The [official Miniflux API](https://miniflux.app/docs/api.html#update-entries)
+requires `PUT /v1/entries` for read-state updates. Desired starred state is
+supported there since 2.3.2; the older bookmark endpoint toggles state and cannot
+be blindly retried. The unused test-only POST helper was removed because it
+asserted an incorrect request shape. The current task transport exposes only
+GET/POST, so correct native PUT support and method-aware credential checks are
+needed before connecting the durable mutation queue. Wallabag's mutation method
+must also be verified when Read Later is integrated. Remaining work includes
+acknowledged body/index storage, reader pagination, pending/retry UI, fixture
+servers, updated docs/screenshots and release checks.
+
+
+Miniflux platform follow-up: the [server-bound token policy](miniflux-account-policy.md)
+now supports reviewed reads, explicit entry PUTs and constrained feed creation.
+The runtime applies the saved-account gate before resolving the token. Article
+parsing additionally refuses duplicate top-level/entry fields, malformed status
+and URL types, and IDs outside the parser's exact integer range. App integration,
+acknowledged offline storage and end-to-end sync remain unfinished.
+
+### RSS search and offline reading — in progress
+
+The RSS discovery parser now distinguishes malformed, truncated, incorrectly
+shaped and invalid UTF-8 responses from a successful empty result. The failure
+screen offers retrying the same address or changing it. Refreshing the current
+feed retains its open articles on failure; changing feeds clears those articles
+so one publisher's content cannot appear under another publisher's name.
+These are in-memory recovery improvements, not durable offline storage.
+
+The remaining RSS/Miniflux work must cover direct feed URL preview and adding,
+searchable saved article bodies, reading position after restart, and account-bound
+read/star changes that remain visibly pending until the server acknowledges them.
+Miniflux integration must use the reviewed server-bound credential policy and
+reconcile uncertain writes before repeating them. No RSS or Miniflux checklist
+item is marked complete by these partial changes. Actual simulator screenshots
+and restart/reconnect fixture evidence are still required before release.
+
+RSS snapshot storage is now connected to feed opening and successful refresh.
+A two-slot file scheme keeps the published snapshot intact until the replacement
+file and its store pointer are acknowledged. Opening a saved feed reads its
+local snapshot without starting a fetch; Refresh is explicit. SHA-256 verifies
+reopened bytes. An uncertain pointer acknowledgement prevents additional writes
+until state is reloaded, avoiding accidental overwrite of a possibly published
+slot. Unit tests cover publication ordering, reopening, corruption and uncertain
+commit behavior. Cache cleanup, in-app recovery, reading position, image storage
+and actual process-restart simulator evidence remain unfinished.
+
+Image support is now explicit in FEEDS-06 and MINI-03: inline images,
+captions/alt text, e-ink scaling, offline restoration and missing-image recovery.
+The existing shared BookView has image decoding/rendering and a same-origin
+fetch pipeline; RSS currently converts markup to text and has not yet adopted
+that pipeline or durable image storage. Neither image requirement is complete.
+
+Article parsing now retains publisher HTML alongside plain text: RSS encoded
+content, Atom XHTML (including image attributes and captions), and JSON Feed
+HTML survive parsing. Nested article markup cannot replace entry titles, and
+plain Atom text keeps literal angle brackets. HTML web pages with titles are
+rejected as direct feeds. Shared-reader display and offline image binaries are
+still pending; these parser tests are not image-rendering evidence.
+
+Release follow-up requested on 2026-09-09: publish from beta after current work.
+Remote inspection found beta at c22c9462f6b191999529d683276505079e171cc9,
+already tagged beta-v0.3.12. Requested beta-v0.3.10 already exists at
+cf7eb33b9ca394160646e33398b48045e3774217. Version clarification is pending;
+no existing tag is to be moved. Recheck beta, unused version, CI and release
+artifacts when the work is ready. No release has been dispatched for this request.
+
+HTML RSS articles are now connected to BookView for measured pagination, image
+loading and reading controls. Image task completions are routed to the reader;
+leaving the article closes it and cancels its pending request. App tests verify
+an image fetch with no credential, cancellation and ignored late replies.
+Plain-text entries retain the existing reader for now. Full reading-state
+persistence, durable image binaries and actual simulator visual evidence remain
+open; no image checklist item is closed on the basis of these tests.
+
+BookView now resolves root-relative image paths (such as /images/photo.png)
+against the document's HTTPS host. It does not treat them as filesystem paths.
+Protocol-relative addresses, traversal and off-host requests retain their
+existing restrictions.
+
+Actual RSS simulator evidence now covers six checks using the original Field
+Journal fixture: local feed opening with zero network requests, HTML reading and
+page turns, offline refresh retaining the open articles, reopening after killing
+and restarting the app, unchanged saved feed bytes, and zero POST/PUT/PATCH
+requests. The SDK makes two failed fetch attempts during explicit offline
+refresh. All six captures pass simulator diagnostics and record the actual
+source/binary/font/profile provenance. See `evidence/rss-offline/result.json` and
+`scripts/quality/check-rss-sim.py`. Canonical app screenshots now show this run.
+The fixture deliberately contains no image binaries and does not assert reading
+position persistence. Those requirements remain open, as does hardware testing.
+
+HTML reading state now persists through the acknowledged `reading-v1` store.
+Writes serialize, retaining newer positions while an earlier write is pending;
+failed acknowledgements retain unsaved state for explicit retry. Strict decoding
+preserves unreadable/future records. Limits are 1,000 article versions and
+192 KiB, with visible refusal rather than eviction of bookmarks/annotations.
+Article identity includes the body, so changed content cannot reuse a stale
+locator. Plain-text reading-state migration remains open.
+
+75 RSS tests and strict Clippy pass. The updated actual simulator journey
+verifies page 2 restoration after process restart: all layout fields match the
+pre-restart page except the expected paint counter. Stored progress bytes remain
+unchanged on reopening. Evidence and app screenshots are refreshed under
+`evidence/rss-offline`. Unit tests cover pending-save ordering, retry and corrupt
+records; simulator storage-failure recovery and image persistence remain open.
+
+Plain-text entries now use the same BookView and reading-state persistence as
+HTML; the old separate page model is removed. A regression test verifies literal
+angle brackets remain text, multi-page pagination, saved position and reopening.
+The RSS suite remains at 75 passing tests; strict Clippy passes.
+
+The actual simulator fixture now also exercises storage-full during a page turn:
+the previous progress bytes remain unchanged, the reader displays an unsaved
+warning, and an explicit retry from the article list persists the newer position.
+`07-progress-save-failure` and `08-progress-save-recovered` screenshots and layout
+provenance are included with the updated eight-check result. These checks do not
+claim image-cache or Miniflux completion.
+
+RSS now manages image retrieval itself around BookView: verified local snapshot
+first, then one bounded credential-free network request if no snapshot exists.
+Downloaded bytes must decode before being submitted for two-slot persistence.
+Leaving the article cancels its image request; already-issued store writes can
+finish. Current bounds are 16 images/article, 512 KiB/image and 64 image records
+per running session. Cache cleanup and durable retry for image-save failures are
+not finished and the overall image requirement remains open.
+
+76 RSS tests and strict Clippy pass. The actual simulator fixture now includes
+an original PNG ridge drawing and caption, opened from a seeded verified local
+snapshot with zero fetch effects. The image, caption, article page turns,
+restart position and progress-save recovery pass together. Evidence and the
+canonical reading screenshot are refreshed. This proves rendering/reopening;
+it does not prove network acquisition or image-save recovery.
+
+Image-store retry now retains the candidate bytes on a failed write, reloads
+the published reference, then selects the inactive slot. A unit regression
+models an acknowledgement failure after the new reference was actually committed:
+retry writes the other slot and preserves the published file. Corrupt references
+still block replacement. Image storage can be retried from the article list;
+background write failures remain visible even after leaving the article.
+Live HTTPS acquisition/save-failure simulator coverage is still pending.
+
+BookView image resolution now uses the existing HTTPS URL parser and accepts
+explicit ports while requiring the document's effective port for absolute image
+URLs. This supports self-hosted readers without allowing a document to change
+ports. Root-directory relative URLs and documents with no path also resolve
+correctly. 77 RSS tests, 17 BookView tests and strict Clippy pass.
+
+Live image acquisition/recovery is now exercised by
+`scripts/quality/check-rss-image-save-sim.py` against a private HTTPS server on
+an explicit port. The app downloads one original PNG without Authorization or
+X-Auth-Token headers. Full storage prevents publication; retry persists the exact
+image bytes without another download. After process restart in the offline
+scenario, the saved image renders with zero fetch effects. All captures pass
+diagnostics and preserve source/binary/font/profile provenance. See
+`evidence/rss-image-save/result.json` and its four screenshots.
+
+Save failures now share one notice and fixed-bottom “Retry saving” action. The
+new SDK `paginate_rows_below_notice` reserves the measured banner height and
+bottom action space; a 50-article list regression verifies recovery still fits.
+78 RSS tests and strict RSS/SDK Clippy pass. Cache cleanup, remaining RSS
+features and Miniflux remain open; these results do not close the app checklist.
+
+RSS now searches the open feed's saved article titles, authors and plain text.
+All query words must match, ignoring case; result actions retain original item
+indices. The query survives opening/back navigation, and Clear restores the full
+list. The actual simulator verifies search entry, body matches, no-match feedback
+and clearing with zero fetch effects, alongside the existing restart/save checks.
+Search screenshots and provenance are refreshed in `evidence/rss-offline` and
+the app README. Cross-feed search remains open. 79 RSS tests and strict Clippy
+pass; the new regression verifies selection of an original nonzero article index.
+
+OPML import now reads staged app-shelf files, parses nested outlines and decoded
+attributes, previews new/skipped counts and commits subscriptions only after the
+store acknowledgement. Duplicate/unsupported URLs are counted, HTTP and embedded
+credentials are refused, and oversized/damaged input or excess subscription
+capacity cannot partially import. Bounds are 256 KiB and 2,000 outline elements;
+the existing 40-feed limit is enforced before saving.
+
+82 RSS tests and strict Clippy pass. The actual simulator fixture now stages an
+original OPML file, verifies the preview, forces a failed save with unchanged
+subscription bytes, then retries and verifies exactly one new HTTPS feed. The
+three import captures and updated result are in `evidence/rss-offline`; the app
+README has the current preview screenshot. Computer-side transfer and a fuller
+per-feed preview remain open, so FEEDS-03 is not yet marked complete.
+
+
+### RSS selection and large-text corrections — 9 September 2026
+
+OPML preview now lists each feed’s title and HTTPS address, supports including or
+excluding individual feeds, and permits a selection from a list larger than the
+remaining subscription capacity. Empty or oversized selections cannot write.
+The source indices are preserved through pagination and confirmation. Subscriptions
+still change only after a successful store acknowledgement.
+
+Actual Clara BW simulator journeys pass at default and 170% interface scale,
+including selection toggles, failed subscription save and retry, image-backed
+offline reading, process restart, article search and progress save recovery.
+Evidence is in `evidence/rss-offline` and `evidence/rss-offline-large`.
+The OPML screenshot and app README are updated. Computer-side transfer remains
+open; FEEDS-03 is not complete.
+
+The 170% run exposed shared-reader quote rendering using interface typography
+against reading-face measurements; drawing and validation now use the same
+reading face. It also exposed a clipped refresh skeleton and a reading save
+warning overlapping the footer. Feeds now keeps saved rows visible during
+refresh; loading an empty feed uses the activity label without a fixed skeleton.
+Reader reports reserve their measured banner height before pagination, preserving
+the document location and end-of-book navigation when dismissed.
+
+Validation: 84 RSS tests, 79 reader tests and 273 UI tests pass (two existing UI tests are ignored); strict Rust
+1.85.1 Clippy passes for these three crates. Further RSS work and release gates
+remain open; these changes are local work in progress.
+
+
+### RSS subscription write acknowledgements — 9 September 2026
+
+Replaced overlapping subscription writes with one active write and a coalesced
+latest pending snapshot. An acknowledgement for an earlier write cannot complete
+an OPML import. Save failures keep the current in-memory subscription list and
+expose Retry saving on the shelf; failure state remains visible after navigation.
+Shelf pagination reserves the warning area. Imports remain unpublished until
+the exact candidate snapshot is acknowledged.
+
+86 RSS tests and strict Rust 1.85.1 Clippy pass. Actual default/170% Clara BW
+simulator journeys now include failed unfollow, unchanged disk state, explicit
+retry and restart verification; captures 15–17 and updated result files are in
+both RSS evidence directories. App docs and the new subscription-save screenshot
+are updated. Broader feed management, cache cleanup and companion transfer remain
+open. These RSS changes are still local work in progress.
+
+The earlier focused CI repair, commit 3b0c92d, passed both GitHub runs
+34319399506 (push) and 34319404819 (pull request), including host, device and
+simulator jobs. This validates that committed repair, not the subsequent local
+RSS work.
+
+
+### RSS unreadable subscription recovery — 9 September 2026
+
+Subscription decoding now rejects malformed UTF-8, malformed rows and records
+over the 40-feed limit instead of silently discarding rows and later overwriting
+the original. Valid three-field records and blank titles retain their existing
+behavior. A denied load or unreadable record blocks subscription mutations and
+shows a retry screen. A successful reload restores normal operation.
+
+87 RSS tests and strict Rust 1.85.1 Clippy pass. The simulator fixture seeds a
+damaged file, retries and verifies exact byte preservation, then supplies a
+repaired fixture and verifies reload. Captures 18–19 extend the existing offline
+journey. This does not implement automatic file repair or the companion transfer
+flow; both remain outside the work completed here.
+
+Both default and 170% interface-size simulator journeys pass; their evidence
+directories and the app recovery screenshot are updated.
+
+
+### Public RSS starter feeds — 9 September 2026
+
+Add a feed now offers Browse with BBC Science & Environment and NASA Science.
+Both use the existing direct HTTPS preview and explicit subscribe flow; browsing
+itself spawns no request. Unit coverage verifies each target URL, absence of
+credentials and the separate preview/subscribe steps. Offline simulator coverage
+verifies that a failed preview leaves saved subscriptions unchanged.
+
+Live validation on this date returned HTTP 200 without redirection for both
+publisher URLs: BBC supplied 42 RSS entries in 31,146 bytes; NASA supplied 10 in
+277,699 bytes. No publisher article bodies were added to repository fixtures.
+URLs: https://feeds.bbci.co.uk/news/science_and_environment/rss.xml and
+https://science.nasa.gov/feed/. These are availability observations, not a
+promise about future publisher uptime.
+
+88 RSS tests and strict Rust 1.85.1 Clippy pass. App documentation now explains
+the Browse flow. This remains part of the local RSS work pending the app release
+checks and the remaining RSS functionality.
+
+Default and 170% simulator journeys pass, with captures 20–21 showing the
+starter list and failed offline preview in both RSS evidence directories.
+
+
+### RSS article unread state — 9 September 2026
+
+The article list now displays an unread count and labels unread rows. Read state
+uses the same stable content identity as the saved reading position, avoiding a
+second ledger that could disagree with it. Opening a readable article records
+its initial position immediately. Restoring the acknowledged reading record
+restores read status; revised content has a new identity and is unread. Unknown
+reading status is not presented as a count. This records opening an article,
+not a claim that the reader finished it.
+
+89 RSS tests and strict Rust 1.85.1 Clippy pass. The simulator journey asserts one
+unread article before opening and zero after returning, alongside its existing
+restart and failed-save checks. Per-feed refresh timestamps, durable shelf
+summaries and failure status remain open, so FEEDS-05 is still incomplete.
+
+Default and 170% actual simulator runs pass. Both RSS evidence directories and
+the article-list screenshot now show unread status.
+
+
+### RSS per-feed refresh history — 9 September 2026
+
+Added a bounded acknowledged history record for each feed (40 feeds, 32 KiB).
+Successful parsed refreshes record a UTC timestamp; failures retain the previous
+success and record the reason separately. The shelf shows the timestamp and
+failure marker, while the article list restores the failure detail. Cached
+opening does not advance history. History writes serialize, retry the latest
+state after failure and refuse to overwrite unreadable data. Removing a feed
+prunes its history only after the subscription save is acknowledged. A failed
+subscription load does not prune history.
+
+95 RSS tests and strict Rust 1.85.1 Clippy pass. Added coverage for event ordering
+before initial load, successful-refresh/failure transitions, failed-save retry,
+reopening history, malformed records and pruning only removed feeds. Actual
+simulator journeys at default and 170% seed a known successful timestamp, force
+an offline refresh and verify that the failure persists without changing that
+timestamp. Both RSS evidence directories and the feed-status screenshot are
+updated. Successful live publisher fetching was validated separately in the
+starter-feed work; the timestamp here is an explicitly seeded fixture.
+
+FEEDS-05 still needs the combined shelf unread summary and remaining integration
+review. RSS release checks and the broader app work remain open.
+
+
+### RSS shelf unread summaries — 9 September 2026
+
+Feed history now carries an optional bounded unread/total summary for its saved
+snapshot. Updates use acknowledged reading-record identities rather than pending
+in-memory edits. A reading save failure cannot advance the durable shelf count.
+Legacy refresh-history rows remain readable; malformed/out-of-range counts are
+refused. Removed subscriptions are excluded from subsequent count updates.
+A history load cannot prune records while subscription removal is unacknowledged.
+
+Added SDK helpers for clamping multi-line overflow-menu rows and paginating
+those rows below a measured notice. RSS uses the actual menu column when laying
+out the combined timestamp, unread count and failure summary. SDK.md and the app
+README describe the behavior.
+
+97 RSS tests, 153 SDK tests and strict Rust 1.85.1 Clippy pass. Two existing SDK
+doc tests remain ignored. Default and 170% simulator journeys verify a zero-unread
+shelf summary after process restart. Both evidence directories and feed-status.png
+are updated. The broader RSS release/integration pass is still pending.
+
+### RSS refresh-save recovery and integration — 9 September 2026
+
+The workspace all-target/all-feature test run completed successfully on the
+snapshot before the final RSS retry changes. The final RSS suite passes all 99
+tests; strict Rust 1.85.1 Clippy passes for RSS, SDK, reader, UI and BookView.
+The final RSS ARMv7 musl cross-check, formatting check and whitespace check pass.
+
+A failed feed snapshot now offers Retry saving. Retry rereads the published
+pointer before choosing a slot. A newer refresh replaces the unsaved candidate
+without writing over the previous published copy. The HTTPS simulator fixture
+now exercises two successive refreshes during full storage, recovery without
+another download, and an offline restart that opens the newest article and image.
+All requests are credential-free; no POST, PUT or PATCH is issued.
+
+Both default and 170% text-size runs pass with no error diagnostics. Their seven
+captures and request assertions are in `evidence/rss-image-save/` and
+`evidence/rss-image-save-large/`. Visual inspection caught a duplicated save
+warning; the final captures show one warning and a punctuated unread count.
+The app README and save-articles screenshot document recovery. The public SDK
+guide now describes the measured notice/menu pagination helpers.
+
+FEEDS-01, FEEDS-02, FEEDS-04 and FEEDS-05 are locally implemented and validated.
+FEEDS-03 remains open for the computer-to-reader import path. FEEDS-06 remains
+open for the remaining image-recovery/cache review. RSS release/version checks,
+publication and Miniflux work remain outstanding; these changes are not yet pushed.
+
+### RSS missing and damaged image recovery — 9 September 2026
+
+Cache reads distinguish unavailable content from uncertain writes. Missing,
+oversized or digest-invalid content can be downloaded again after its pointer
+has been read successfully. Replacement writes use the other slot; failed write
+acknowledgements still require rereading the pointer before any retry. Neither
+the damaged file nor its pointer is changed merely by opening an article offline.
+
+The RSS suite passes 100 tests, including missing/corrupt snapshot replacement
+and the existing uncertain-commit cases. Strict Rust 1.85.1 Clippy and the ARMv7
+musl cross-check pass. The HTTPS fixture passes at default and 170% text size,
+with 12 captures in each rss-image-save evidence directory. It removes an image,
+then damages a saved replacement, verifies readable offline fallback, reopens
+online to fetch exactly one credential-free replacement each time, and finally
+restarts offline. Recorded layouts confirm image absence during fallback and
+image presence after repair and restart. Those assertions are also now part of
+the fixture. Default-size fallback and recovery screenshots were visually
+inspected and added to the README.
+
+The changes remain local while RSS integration, cache lifecycle review, OPML
+transfer and Miniflux continue. No additional checklist task is closed here.
+
+### RSS long-session image capacity — 9 September 2026
+
+The 64-record in-memory image limit no longer permanently blocks new images
+after a long session. When full, the manager releases an idle record outside
+the current article. Saved files and pointers remain untouched, so revisiting
+an image checks its local copy again. Active reads/writes, failed saves and
+current-article records cannot be released.
+
+A runner test opens 128 distinct illustrated articles, acknowledges task
+cancellation on leaving each one, then revisits the first image. Every image
+checks its saved copy and can request a missing image. A separate capacity
+test verifies that active and failed writes survive while only idle records
+can be released. All 102 RSS tests, strict Rust 1.85.1 Clippy, formatting and
+the ARMv7 musl cross-check pass. The README documents the memory lifecycle.
+This changes no visible layout; existing recovery screenshots remain relevant.
+Disk cache cleanup and final RSS integration remain open.

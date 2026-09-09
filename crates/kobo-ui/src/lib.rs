@@ -12821,7 +12821,11 @@ fn validate_layout_nodes(layout: &Layout, metrics: &DisplayMetrics, issues: &mut
                 rect: Some(node.rect),
             });
         }
-        let Some((size, face)) = layout_text_style(node) else {
+        let style = match node.kind {
+            LayoutKind::Quote(_, role) => Some((role.size(), layout.prose_face)),
+            _ => layout_text_style(node),
+        };
+        let Some((size, face)) = style else {
             continue;
         };
         let scale = if matches!(node.kind, LayoutKind::PencilNumber(_)) {
@@ -14134,12 +14138,13 @@ fn render_all_with_selected_font(
                 } else {
                     0
                 };
-                draw_lines(
+                draw_lines_in(
                     surface,
                     &node.text_lines,
                     node.rect.x,
                     node.rect.y + top,
                     role.size(),
+                    prose,
                     role.tone(),
                     clip,
                 );
@@ -16043,6 +16048,31 @@ mod tests {
         assert!(cramped, "three columns of 100 do not fit in 290");
     }
     use super::*;
+
+    #[test]
+    fn reading_quotes_validate_in_their_reading_face_and_scale() {
+        let screen = Screen::new(
+            1,
+            vec![Node::Quote {
+                id: NodeId(1),
+                depth: 1,
+                role: QuoteRole::Body,
+                text: "A good walk leaves room to notice small details along the river. ".repeat(3),
+                fold: None,
+            }],
+        )
+        .with_reading(true)
+        .with_text_scale(Some(TextScale::Default));
+        let metrics = DisplayMetrics {
+            text_scale: TextScale::Largest,
+            ..CLARA_BW_METRICS
+        };
+        let _environment = environment::TextEnvironment::enter(&screen, &metrics);
+        let layout = screen.layout_with(&metrics, &Chrome::default());
+        let mut issues = Vec::new();
+        validate_layout_nodes(&layout, &metrics, &mut issues);
+        assert!(issues.is_empty(), "{issues:?}");
+    }
 
     #[test]
     fn publisher_styled_text_keeps_alignment_and_inline_emphasis() {

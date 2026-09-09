@@ -292,12 +292,22 @@
     },
     {
       "protocol_version": 14,
-      "reason": "The lockfile changes only local app versions/dependencies for Calibre-Web, Crossword, Logic Pack, Nonograms, Panels, Paperterm and Sudoku, plus the runtime policy dependency on the existing workspace kobo-json parser for Miniflux request validation. Each changed app retains its own source and manifest release check. No external dependency changes. Existing Store binaries remain usable through the runtime legacy protocol support and need not be rebuilt solely for the additive policy dependency.",
+      "reason": "Reviewed local dependency and additive SDK/renderer changes for the catalog quality work and Feeds 1.0.9. Cargo.lock adds only existing workspace dependencies; no external dependencies change. Notice/menu pagination helpers do not change existing app calls. The UI quote-face correction preserves the protocol-14 wire format and runtime support for existing published binaries. Exact blob pins apply only to these reviewed shared inputs; app source changes and reader-library dependencies retain their release checks.",
       "files": [
         {
           "path": "Cargo.lock",
           "base_blob": "a1844d9bc424d990e2e22f32093ebcbde8ba5b82",
-          "compatible_blob": "01febf900c8ebdd402d165ca43df8e8cf8f5087c"
+          "compatible_blob": "ae7ce86d33cfc7af41270d772f58e5dc5cdde19b"
+        },
+        {
+          "path": "crates/kobo-sdk/src/lib.rs",
+          "base_blob": "20e5b87f38f87f9146be8785c27ab0768af7a2a3",
+          "compatible_blob": "ae0730e9587f141a1d8d671e98d19b079d331d7a"
+        },
+        {
+          "path": "crates/kobo-ui/src/lib.rs",
+          "base_blob": "299ca97328ff32ab23b71ba454c3abe060e522c1",
+          "compatible_blob": "f7d37cb11cf14bcd6632c3e6a2147c674fd59ea2"
         }
       ]
     }

@@ -1729,3 +1729,33 @@ Touch targets are not reduced. `kobo drive` typing first resolves visible SDK
 keyboard actions, preventing an existing crossword letter from stealing a tap.
 It still taps actual screen coordinates, and custom keyboards retain label
 matching when no SDK keyboard is present.
+
+### Root-relative article images
+
+`BookView::open_html` resolves an image path such as `/images/photo.png` against
+the document's HTTPS host, in addition to directory-relative image references.
+This is a network URL, never a shelf or device filesystem path. Call `close`
+when leaving the document to release pictures and cancel outstanding image
+requests. Apps that promise offline images must persist and restore the image
+bytes themselves; opening HTML alone does not provide durable image storage.
+
+Image URL resolution also supports explicit HTTPS ports. Absolute image URLs
+must keep the document's effective port; a page on port 8443 cannot cause an
+image request on 443 or another port. Relative paths retain the document's
+host and port. Credentials embedded in URLs remain refused by the shared
+HTTPS parser.
+
+For lists with a recovery notice, use
+`Context::paginate_rows_below_notice(rows, bottom_action_present, notice)` and
+render the same notice text. It reserves the banner's measured height and the
+fixed bottom action, preventing long lists from clipping rows during failures.
+
+Reader quotes use the reading face and scale for both layout and rendering,
+including when the interface text is larger. `Reader::report` reserves space
+for its warning before repaginating around the saved document location. Clearing
+the warning restores the available reading area.
+
+For rows with overflow menus, `Context::clamped_row_with_menu(text, lines,
+nav_bar)` measures the width left by the menu. Use
+`paginate_rows_with_menu_below_notice(rows, nav_bar, notice)` when the same list
+has a banner; it reserves both the menu column and the measured banner height.

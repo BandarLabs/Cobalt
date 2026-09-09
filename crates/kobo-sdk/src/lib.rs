@@ -755,13 +755,19 @@ impl Context {
     /// a title clamped at the full row width runs under the dots.
     #[must_use]
     pub fn one_line_row_with_menu(&self, text: &str, nav_bar: bool) -> String {
+        self.clamped_row_with_menu(text, 1, nav_bar)
+    }
+
+    /// Clamps a row against the width left by its overflow menu.
+    #[must_use]
+    pub fn clamped_row_with_menu(&self, text: &str, lines: usize, nav_bar: bool) -> String {
         kobo_ui::with_text_scale(self.metrics.text_scale, || {
             let area = self.metrics.prose_area(true, nav_bar);
             kobo_ui::clamp_lines(
                 text,
                 kobo_ui::row_title_width(&self.metrics, area, "", true),
                 kobo_ui::FontSize::Body,
-                1,
+                lines,
             )
         })
     }
@@ -805,6 +811,49 @@ impl Context {
     pub fn paginate_rows(&self, rows: &[(&str, &str)], nav_bar: bool) -> Vec<Vec<usize>> {
         kobo_ui::with_text_scale(self.metrics.text_scale, || {
             kobo_ui::paginate_rows(rows, &self.metrics, self.paged_area(nav_bar))
+        })
+    }
+
+    /// Paginates rows below an attention banner, reserving its measured height.
+    /// Use `nav_bar` when a fixed bottom action is also present.
+    #[must_use]
+    pub fn paginate_rows_below_notice(
+        &self,
+        rows: &[(&str, &str)],
+        nav_bar: bool,
+        notice: Option<&str>,
+    ) -> Vec<Vec<usize>> {
+        kobo_ui::with_text_scale(self.metrics.text_scale, || {
+            let mut area = self.paged_area(nav_bar);
+            if let Some(notice) = notice {
+                area.height = area
+                    .height
+                    .saturating_sub(kobo_ui::banner_height(notice, area.width, &self.metrics))
+                    .saturating_sub(area.gap)
+                    .max(1);
+            }
+            kobo_ui::paginate_rows(rows, &self.metrics, area)
+        })
+    }
+
+    /// Paginates rows with overflow menus beneath a measured notice.
+    #[must_use]
+    pub fn paginate_rows_with_menu_below_notice(
+        &self,
+        rows: &[(&str, &str)],
+        nav_bar: bool,
+        notice: Option<&str>,
+    ) -> Vec<Vec<usize>> {
+        kobo_ui::with_text_scale(self.metrics.text_scale, || {
+            let mut area = self.paged_area(nav_bar);
+            if let Some(notice) = notice {
+                area.height = area
+                    .height
+                    .saturating_sub(kobo_ui::banner_height(notice, area.width, &self.metrics))
+                    .saturating_sub(area.gap)
+                    .max(1);
+            }
+            kobo_ui::paginate_rows_with_menu(rows, &self.metrics, area)
         })
     }
 

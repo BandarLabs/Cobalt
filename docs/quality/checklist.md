@@ -18,7 +18,7 @@ A checked task requires implementation plus recorded validation. Physical measur
 
 The PR 1 implementation checklist is complete; CBR is deferred and COMIC-18 belongs to catalog integration in PR 2. This does not certify hardware accuracy: native sleep hands ownership back to the stock reader, and no generic kernel suspend, RTC wake or automatic cover-sleep backend is enabled. Physical acceptance remains scheduled after all three PRs.
 
-495 tracked tasks: 139 completed, 1 deferred by the owner, 355 open. Implementation in progress. Evidence is recorded per task in `tasks.json` and in [the validation log](validation.md).
+495 tracked tasks: 143 completed, 1 deferred by the owner, 351 open. Implementation in progress. Evidence is recorded per task in `tasks.json` and in [the validation log](validation.md).
 
 Design direction: use the familiar visual conventions of each app, restrained controls and plain copy. Crossword follows printed crossword typography and grids. Paperterm is the next app priority, including a real two-way laptop terminal session. Paperterm defaults to portrait with a physically scaled, denser terminal font; the measured grid takes precedence over forcing 80 columns.
 
@@ -434,18 +434,18 @@ Design direction: use the familiar visual conventions of each app, restrained co
 
 ## PR 2 · Feeds
 
-- [ ] **FEEDS-01** Distinguish failed discovery from no feed found.
-- [ ] **FEEDS-02** Accept direct feed URLs.
+- [x] **FEEDS-01** Distinguish failed discovery from no feed found.
+- [x] **FEEDS-02** Accept direct feed URLs.
 - [ ] **FEEDS-03** Support OPML import.
-- [ ] **FEEDS-04** Provide working original or public starter feeds.
-- [ ] **FEEDS-05** Show last refresh, unread counts and per-feed failure.
-- [ ] **FEEDS-06** Test RSS, Atom, full-content and summary entries.
+- [x] **FEEDS-04** Provide working original or public starter feeds.
+- [x] **FEEDS-05** Show last refresh, unread counts and per-feed failure.
+- [ ] **FEEDS-06** Test RSS, Atom, full-content and summary entries with inline images, captions/alt text, e-ink scaling, offline image restoration and missing-image recovery.
 
 ## PR 2 · Miniflux (APP-5)
 
 - [ ] **MINI-01** Persist full article bodies offline.
 - [ ] **MINI-02** Flush acknowledged read/star/archive mutations correctly.
-- [ ] **MINI-03** Parse HTML into the shared document reader.
+- [ ] **MINI-03** Parse HTML into the shared document reader with inline images, captions/alt text, e-ink scaling, offline image restoration and missing-image recovery.
 - [ ] **MINI-04** Wire tabs, star, full-text and suggested-feed controls.
 - [ ] **MINI-05** Keep pending/retry state visible.
 - [ ] **MINI-06** Test fetch/read/mutate/reconnect/restart against a fixture server.

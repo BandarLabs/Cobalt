@@ -852,6 +852,7 @@ dependencies = [
  "kobo-comic",
  "kobo-doc",
  "kobo-image",
+ "kobo-net",
  "kobo-profile",
  "kobo-read",
  "kobo-sdk",
@@ -1380,8 +1381,13 @@ dependencies = [
 name = "kobo-rss"
 version = "0.3.12"
 dependencies = [
+ "kobo-bookview",
+ "kobo-doc",
  "kobo-html",
+ "kobo-image",
  "kobo-json",
+ "kobo-net",
+ "kobo-read",
  "kobo-sdk",
  "kobo-ui",
  "kobo-xml",
