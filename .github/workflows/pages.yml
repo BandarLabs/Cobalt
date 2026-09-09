@@ -39,6 +39,9 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
+      - name: Test the browser installer before publishing
+        run: node --test docs/install/*.test.mjs
+
       # Everything the site serves today, unchanged. This job replaces the
       # branch publication that used to do it, so anything missed here stops
       # being reachable -- install.sh included, which is the one file the
@@ -48,6 +51,7 @@ jobs:
           set -eu
           mkdir -p _site
           cp -R docs/. _site/
+          rm -f _site/install/*.test.mjs
           test -f _site/install.sh
           test -f _site/index.html
 
