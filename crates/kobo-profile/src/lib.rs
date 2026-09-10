@@ -741,6 +741,14 @@ pub const SUPPORTED_PROFILES: &[&DeviceProfile] = &[
 pub const WRITE_EVIDENCE_PENDING: &str =
     "owner-attended display, touch, exit, and recovery evidence is incomplete";
 
+/// How every firmware-version blocker begins.
+///
+/// Shared so that the message and the rule deciding whether an owner may waive
+/// it are written once. Two copies of this string would let a reworded refusal
+/// silently become unwaivable, and the symptom would be a device that stops
+/// offering the choice rather than anything that looks like a bug.
+pub const FIRMWARE_BLOCKER: &str = "firmware version";
+
 /// Returns the exact supported profile authorized for ordinary device writes.
 ///
 /// A hardware match alone deliberately is not enough. The profile must have
@@ -1163,6 +1171,29 @@ impl DeviceProfile {
         branches
     }
 
+    /// The reasons a write must be refused even after an informed owner has
+    /// accepted the risk.
+    ///
+    /// Two blockers describe something an owner is in a position to decide
+    /// about: that nobody has measured this firmware branch, and that nobody
+    /// has watched this panel take a write. Saying so plainly and letting them
+    /// answer is the whole of the consent path.
+    ///
+    /// Nothing else here is theirs to waive. A device code, serial prefix or
+    /// kernel release that disagrees with the profile means the profile is
+    /// describing different hardware, and an owner accepting that would be
+    /// accepting a mistake rather than a risk.
+    #[must_use]
+    pub fn unwaivable_write_blockers(&self, snapshot: &DeviceSnapshot) -> Vec<String> {
+        self.validate(snapshot)
+            .write_blockers
+            .into_iter()
+            .filter(|blocker| {
+                blocker.as_str() != WRITE_EVIDENCE_PENDING && !blocker.starts_with(FIRMWARE_BLOCKER)
+            })
+            .collect()
+    }
+
     /// Returns the reasons this device may not be written to.
     ///
     /// Hardware geometry alone is not proof of identity, because another device
@@ -1199,7 +1230,7 @@ impl DeviceProfile {
         match identity.firmware_version.as_deref() {
             Some(version) if self.accepts_firmware(version) => {}
             Some(version) => blockers.push(format!(
-                "firmware version: expected a {} build, found {version}",
+                "{FIRMWARE_BLOCKER}: expected a {} build, found {version}",
                 self.firmware_branches().join(" or ")
             )),
             None => blockers.push("firmware version could not be read".to_owned()),
