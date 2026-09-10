@@ -17,6 +17,7 @@ mod connect;
 mod deck;
 mod devsession;
 mod drive;
+mod exports;
 mod flashcards;
 mod frame;
 mod host_release;
@@ -24,6 +25,7 @@ mod menu;
 mod needles;
 mod nonograms;
 mod package;
+mod runtime_dev;
 mod vault;
 // Only the `device-write` build dispatches to this, but its tests decide what
 // gets sent to a reader and are worth running on every build. So it compiles
@@ -298,8 +300,8 @@ const DEVICE_PROBE_INTERVAL: Duration = Duration::from_secs(5);
 const DEVICE_WAIT_MAXIMUM_SECONDS: u64 = 6 * 60 * 60;
 /// How often a held wake lock is re-applied.
 ///
-/// Measured on the device, the lock is cleared somewhere between two and three
-/// minutes after it is taken, so renewal has to be well inside that.
+/// Renew well before the two-minute kernel lease expires, allowing several
+/// missed probes without leaving an indefinite hold after a disconnect.
 const WAKE_LOCK_RENEW_INTERVAL: Duration = Duration::from_secs(30);
 /// Longest a hold may last, so a forgotten session always ends by itself.
 const HOLD_MAXIMUM_MINUTES: u64 = 8 * 60;
@@ -493,6 +495,7 @@ fn run(arguments: &[String]) -> Result<(), String> {
         "frame" => frame::command(&arguments[1..]),
         "vault" => vault::command(&arguments[1..]),
         "sync" => sync::command(&arguments[1..]),
+        "export" => exports::command(&arguments[1..]),
         "needles" => needles::command(&arguments[1..]),
         "nonograms" => nonograms::command(&arguments[1..]),
         "parser" => parser_command(&arguments[1..]),
@@ -1615,6 +1618,9 @@ fn generated_app_source() -> String {
 }
 
 fn dev(arguments: &[String]) -> Result<(), String> {
+    if arguments.first().is_some_and(|arg| arg == "--runtime") {
+        return runtime_dev::run(&arguments[1..]);
+    }
     let (built_in, address) = match arguments {
         [] => (false, "127.0.0.1:8787"),
         [address] if address == "--builtin" => (true, "127.0.0.1:8787"),
@@ -1648,10 +1654,26 @@ fn dev_sdk_app(address: &str) -> Result<(), String> {
     let dev_session = DevSessionGuard::new()?;
     let server = kobo_sim::AppServer::bind(address, &dev_session.socket)
         .map_err(|error| format!("start app simulator: {error}"))?;
+    let server = match fs::File::open("cobalt-app.json") {
+        Ok(file) => {
+            let mut source = String::new();
+            file.take(64 * 1024 + 1)
+                .read_to_string(&mut source)
+                .map_err(|error| format!("read app manifest: {error}"))?;
+            server
+                .with_manifest(&source)
+                .map_err(|error| error.to_string())?
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => server,
+        Err(error) => return Err(format!("read app manifest: {error}")),
+    };
     server
         .set_nonblocking(true)
         .map_err(|error| format!("configure app simulator: {error}"))?;
     let executable = build_dev_app()?;
+    let server = server
+        .with_capture_source(dev_capture_source(&executable)?)
+        .map_err(|error| error.to_string())?;
     let mut app = AppChild::spawn(&executable, &dev_session.socket)?;
     let session = wait_for_app(&server, &mut app)?;
     println!(
@@ -1661,6 +1683,41 @@ fn dev_sdk_app(address: &str) -> Result<(), String> {
             .map_err(|error| format!("read simulator address: {error}"))?
     );
     serve_app(&server, &session, &mut app)
+}
+
+fn dev_capture_source(executable: &Path) -> Result<kobo_sim::CaptureSource, String> {
+    let git = |arguments: &[&str]| {
+        Command::new("git")
+            .args(arguments)
+            .output()
+            .ok()
+            .filter(|output| output.status.success())
+            .and_then(|output| String::from_utf8(output.stdout).ok())
+    };
+    let revision = git(&["rev-parse", "HEAD"]).map(|value| value.trim().to_owned());
+    let dirty = git(&["status", "--porcelain"]).map(|value| !value.is_empty());
+    let mut bytes = Vec::new();
+    fs::File::open(executable)
+        .and_then(|file| file.take(256 * 1024 * 1024 + 1).read_to_end(&mut bytes))
+        .map_err(|error| format!("read app build for capture provenance: {error}"))?;
+    let binary_sha256 =
+        (bytes.len() <= 256 * 1024 * 1024).then(|| kobo_net::sha256::hex_digest(&bytes));
+    let fixture = std::env::var("KOBO_SIM_FIXTURE").ok();
+    let seed = std::env::var("KOBO_SIM_SEED")
+        .ok()
+        .map(|value| {
+            value
+                .parse()
+                .map_err(|_| "KOBO_SIM_SEED must be an unsigned integer")
+        })
+        .transpose()?;
+    Ok(kobo_sim::CaptureSource {
+        revision,
+        dirty,
+        binary_sha256,
+        fixture,
+        seed,
+    })
 }
 
 struct DevSessionGuard {
@@ -1769,6 +1826,7 @@ impl AppChild {
     fn spawn(executable: &Path, socket: &Path) -> Result<Self, String> {
         let child = Command::new(executable)
             .env("KOBO_SOCKET", socket)
+            .env("KOBO_SIM_CALLBACKS", "1")
             .spawn()
             .map_err(|error| format!("launch {}: {error}", executable.display()))?;
         Ok(Self { child: Some(child) })
@@ -1886,18 +1944,44 @@ fn build_device(device: bool) -> Result<(), String> {
 }
 
 fn doctor(arguments: &[String]) -> Result<(), String> {
-    if let Some(position) = arguments
-        .iter()
-        .position(|argument| is_device_flag(argument))
-    {
-        let host = arguments
-            .get(position + 1)
-            .ok_or("usage: kobo doctor --device <host>")?;
+    let (host, json) = parse_doctor(arguments)?;
+    if let Some(host) = host {
+        if json {
+            let artifact = RemoteArtifact {
+                program: RemoteProgram::DoctorJson,
+                ..RemoteArtifact::doctor()
+            };
+            return run_remote_fixed_artifact(host, &artifact);
+        }
         return remote_doctor(host);
     }
     let binary = sibling_binary("kobo-doctor");
     let mut command = Command::new(&binary);
+    if json {
+        command.env("KOBO_DOCTOR_JSON", "1");
+    }
     run_status(&mut command, format!("{}", binary.display()))
+}
+
+fn parse_doctor(arguments: &[String]) -> Result<(Option<&str>, bool), String> {
+    let usage = "usage: kobo doctor [--device HOST] [--json]";
+    let mut host = None;
+    let mut json = false;
+    let mut args = arguments.iter();
+    while let Some(arg) = args.next() {
+        if arg == "--json" && !json {
+            json = true;
+        } else if is_device_flag(arg) && host.is_none() {
+            let value = args.next().ok_or(usage)?;
+            if !valid_device_host(value) {
+                return Err("device host contains unsupported characters".into());
+            }
+            host = Some(value.as_str());
+        } else {
+            return Err(usage.into());
+        }
+    }
+    Ok((host, json))
 }
 
 /// Watches the touch panel read-only so the profile's touch transform can be
@@ -2068,8 +2152,8 @@ fn parse_devices(arguments: &[String]) -> Result<String, String> {
 
 /// Controls how long a connected device stays reachable while developing.
 ///
-/// Every action is reversible and none of them touch a partition, the
-/// bootloader, the kernel, firmware, or any book.
+/// These controls change bounded kernel wake leases or the reader's settings;
+/// they do not rewrite partitions, firmware or books.
 fn dev_session(arguments: &[String]) -> Result<(), String> {
     let (host, action) = parse_dev_session(arguments)?;
     if let DevSessionAction::Hold(minutes) = action {
@@ -2097,6 +2181,9 @@ fn dev_session(arguments: &[String]) -> Result<(), String> {
         .map_err(unreachable_device)?;
     print!("{}", String::from_utf8_lossy(&output.stdout));
     if output.status.success() {
+        if matches!(action, DevSessionAction::KeepAwake(devsession::Switch::On)) {
+            println!("The reader can stay awake for two minutes. Use kobo session --device ADDRESS --hold MINUTES for a longer timed session.");
+        }
         // Advising a restart is only true when something actually changed; the
         // reader already holds the intended value otherwise.
         let changes_a_setting = matches!(
@@ -2128,8 +2215,8 @@ fn dev_session(arguments: &[String]) -> Result<(), String> {
 /// developer wake lock, so testing does not need someone tapping the screen.
 ///
 /// The lock is RAM-only kernel state. It is released when the hold ends, and a
-/// reboot clears it regardless, so this can never leave a device unable to
-/// sleep. A device that disappears mid-hold is waited for rather than treated
+/// two-minute kernel lease also expires if the computer disconnects or exits.
+/// A device that disappears mid-hold is waited for rather than treated
 /// as a failure.
 fn hold_device_awake(host: &str, minutes: u64) {
     let remote = format!("root@{host}");
@@ -2165,8 +2252,7 @@ fn hold_device_awake(host: &str, minutes: u64) {
         }
         thread::sleep(WAKE_LOCK_RENEW_INTERVAL);
     }
-    // Releasing is best effort: an unreachable device clears the lock on its
-    // next reboot anyway, so a failure here cannot leave lasting state.
+    // The last lease expires even if this best-effort release cannot connect.
     let released = run_remote_shell(
         &remote,
         &devsession::wake_lock_script(devsession::Switch::Off),
@@ -2178,7 +2264,10 @@ fn hold_device_awake(host: &str, minutes: u64) {
          {lost_contact} missed probe(s), wake lock released: {released}"
     );
     if !released {
-        println!("the wake lock is RAM only and clears on the next reboot");
+        println!(
+            "The last wake lease expires within {} seconds. No reboot is needed.",
+            devsession::WAKE_LEASE_SECONDS
+        );
     }
 }
 
@@ -2707,6 +2796,7 @@ fn device_build_command(package: &str, features: Option<&str>) -> Result<Command
 #[derive(Clone)]
 enum RemoteProgram {
     Doctor,
+    DoctorJson,
     /// The same read-only doctor binary, additionally watching touch for the
     /// given number of seconds.
     TouchProbe(u64),
@@ -2758,7 +2848,9 @@ impl RemoteArtifact {
             RemoteProgram::Record { seconds, .. } => {
                 Duration::from_secs(*seconds) + TOUCH_PROBE_OVERHEAD
             }
-            RemoteProgram::Doctor | RemoteProgram::Capture => REMOTE_COMMAND_TIMEOUT,
+            RemoteProgram::Doctor | RemoteProgram::DoctorJson | RemoteProgram::Capture => {
+                REMOTE_COMMAND_TIMEOUT
+            }
             // A sequence sleeps on the device for as long as it was asked to,
             // so the host has to outlast the sleeping as well as the transfer.
             #[cfg(feature = "device-write")]
@@ -3030,6 +3122,7 @@ fn remote_fixed_artifact_script(
 ) -> String {
     let execution = match program {
         RemoteProgram::Doctor => "\"$bin\"".to_owned(),
+        RemoteProgram::DoctorJson => "KOBO_DOCTOR_JSON=1 \"$bin\"".to_owned(),
         // Read-only, like the doctor it is: it opens the framebuffer for
         // reading and never grabs, refreshes or writes, so it is safe to point
         // at a device with the stock reader in the foreground.
@@ -3093,6 +3186,7 @@ fn remote_fixed_artifact_script(
     };
     let checksum_error = match program {
         RemoteProgram::Doctor
+        | RemoteProgram::DoctorJson
         | RemoteProgram::TouchProbe(_)
         | RemoteProgram::Capture
         | RemoteProgram::Record { .. } => "uploaded doctor checksum does not match",
@@ -4434,9 +4528,9 @@ fn describe_unmenu(removed: menu::Removed) -> String {
 
 /// Puts a reader back to how it shipped.
 fn undo_setup(reader: &setup::Mounted, eject: bool) -> Result<(), String> {
+    let settings = setup::revert_settings(&reader.volume)?;
     let removal = setup::remove_payload(&reader.volume)?;
     let ssh = setup::disable_ssh(&reader.volume)?;
-    let settings = setup::revert_settings(&reader.volume)?;
     let unmenued = menu::remove(&reader.volume)?;
     let ejected = ejected_or_explained(&reader.volume, eject);
 
@@ -4456,7 +4550,7 @@ fn undo_setup(reader: &setup::Mounted, eject: bool) -> Result<(), String> {
         if settings.is_empty() {
             "no settings to restore".to_owned()
         } else {
-            format!("settings removed: {}", settings.join(", "))
+            format!("settings restored: {}", settings.join(", "))
         },
         describe_unmenu(unmenued),
         if ejected {
@@ -4855,6 +4949,7 @@ fn run_simulation(arguments: &[String]) -> Result<(), String> {
     let app_status = Command::new(workspace_host_binary(package))
         .env("KOBO_SOCKET", &simulation.socket)
         .env("KOBO_SIM_ONESHOT", "1")
+        .env("KOBO_SIM_CALLBACKS", "1")
         .status()
         .map_err(|error| format!("run {package}: {error}"))?;
     let daemon_status = simulation.daemon_wait()?;
@@ -5296,7 +5391,10 @@ fn drive_command(arguments: &[String]) -> Result<(), String> {
     }
     let recorder = record
         .as_ref()
-        .map(|_| drive::Recorder::start(&address, fps, ghosting))
+        .map(|directory| {
+            drive::Recorder::start(&address, fps, ghosting)
+                .map(|recorder| recorder.with_metadata(directory))
+        })
         .transpose()?;
 
     let mut driver = drive::Driver::new(&address, &shots).ideal(ideal);
@@ -5428,17 +5526,27 @@ fn shot_command(arguments: &[String]) -> Result<(), String> {
         }
         index += 1;
     }
+    let mut capture_metadata = None;
     let (width, height, grey) = if let Some(host) = host {
         let transcript = capture_remote_fixed_artifact(&host, &RemoteArtifact::capture())?;
         drive::decode_capture(&transcript)?
     } else {
         let driver = drive::Driver::new(&address, Path::new(".")).ideal(ideal);
-        let (width, height) = drive::SIMULATED_PANEL;
-        (width, height, driver.frame()?)
+        let capture = driver.capture()?;
+        capture_metadata = Some(capture.metadata);
+        (capture.width, capture.height, capture.grey)
     };
     let png = kobo_image::encode_png_grey(width, height, &grey)
         .map_err(|error| format!("encode the panel: {error}"))?;
     fs::write(&output, png).map_err(|error| format!("write {}: {error}", output.display()))?;
+    if let Some(metadata) = capture_metadata {
+        let sidecar = output.with_extension("json");
+        fs::write(
+            &sidecar,
+            serde_json::to_vec_pretty(&metadata).map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| format!("write {}: {error}", sidecar.display()))?;
+    }
     println!("shot {} ({width}x{height})", output.display());
     Ok(())
 }
@@ -5774,9 +5882,12 @@ const SHOT_USAGE: &str =
 const DRIVE_USAGE: &str = "usage: kobo drive [--address host:port] [--shots DIR] [--ideal]\n\
                            \u{20}                 [--record DIR [--fps N] [--ghosting]]\n\
                            \u{20}                 (--script PATH | --step 'tap Search' ...)\n\
-                           steps: tap LABEL | tap-at X,Y | type TEXT | shot NAME | expect TEXT\n\
-                           \u{20}       expect-missing TEXT | wait-for TEXT | clean | dump\n\
-                           \u{20}       lifecycle foreground|background | scenario NAME | wait MS\n\
+                           steps: tap LABEL | tap-id ACTION | tap-at X,Y | type TEXT | shot NAME | expect TEXT\n\
+                           \u{20}       expect-missing TEXT | wait-for TEXT | wait-for-id ACTION | clean | dump\n\
+                           \u{20}       lifecycle foreground|background | scenario NAME | wait MS | wait-idle [MS]\n\
+                           expect-state ENDPOINT#JSON_POINTER JSON_VALUE checks typed state.\n\
+                           tap-id and wait-for-id accept numeric IDs or stable action names.\n\
+                           Transition steps also check for serious layout diagnostics.\n\
                            --record films the panel while the script runs and writes numbered\n\
                            \u{20} PNGs, timings.txt, recording.mp4 and recording.gif into DIR.\n\
                            \u{20} Frames are residue-free unless --ghosting asks for the real\n\
@@ -6373,13 +6484,13 @@ fn print_help() {
          Commands:\n\
            new <name>             Create a Rust application\n\
            dev [--builtin] [address]  Run this SDK app in the browser simulator\n\
-           drive --script PATH    Drive a running simulator and save PNG screenshots\n\
+           dev --runtime [address] [--apps IDs]  Run launcher and selected local apps\n\
            drive --script PATH    Drive a running simulator and save PNG screenshots\n\
            drive --script PATH --record DIR  ... and film it, no hardware needed\n\
            deck set PAD --launch APP|--url URL|--run CMD  Assign a Deck pad on this computer\n\
            deck ls|show [--json]                 List the assigned pads, or print the layout JSON\n\
            deck push (--sim | --device IP | --out PATH)  Publish that layout to the reader or simulator\n\
-           flashcards import FILE --out BUNDLE  Prepare an Anki package for Flashcards\n\
+           flashcards --help                     Prepare, verify, stage, and export card bundles\n\
            frame init (--sim | --device IP)      Create the Frame shelf\n\
            frame push INPUT (--sim | --device IP) [--fit crop|pad] [--delete]\n\
                                              Prepare and atomically push Frame photos\n\
@@ -6389,6 +6500,7 @@ fn print_help() {
            vault push DIR (--device IP | --sim | --out INDEX)  Pack a markdown vault and publish it\n\
            sync setup DIR --folder NAME --device IP  Pair one safe fixed Sync folder\n\
            sync run [--foreground] [--seconds N] Start the private host Syncthing peer\n\
+           export --app APP --device IP --out DIR  Receive a prepared text or image copy\n\
            sync status|stop                      Inspect or stop that dedicated peer\n\
            needles prepare PDF --out FILE       Extract a user-owned PDF for Needles\n\
            needles push FILE --device IP        Transfer a prepared pattern to Needles\n\
@@ -6403,7 +6515,7 @@ fn print_help() {
            present <app> --device IP [--seconds N]  Run one app on the panel\n\
            stop --device IP       Hand the panel back to the reader now\n\
            build [--device]       Build host workspace or ARM safe doctor, disabled kobod, and sample app\n\
-           doctor [--device IP]   Run read-only device diagnostics\n\
+           doctor [--device IP] [--json]   Run read-only device diagnostics\n\
            devices [--subnet A.B.C]  Find every reader on the local network\n\
            app-link status|unpair --device IP  Inspect or revoke browser pairing\n\
            session --device IP    Keep a device awake and on Wi-Fi while developing\n\
@@ -6464,6 +6576,10 @@ mod tests {
         super::stream_command(&["--help".into()]).expect("stream help");
         super::flashcards::command(&["--help".into()]).expect("flashcards help");
         super::deck::command(&["--help".into()]).expect("deck help");
+        super::frame::command(&["--help".into()]).expect("frame help");
+        super::sync::command(&["--help".into()]).expect("sync help");
+        super::needles::command(&["--help".into()]).expect("needles help");
+        super::nonograms::command(&["--help".into()]).expect("nonograms help");
         super::vault::command(&["--help".into()]).expect("vault help");
     }
 
@@ -7460,6 +7576,21 @@ mod tests {
 
     #[test]
     fn remote_doctor_uses_strict_hosts_and_workspace_artifact() {
+        fn arguments(values: &[&str]) -> Vec<String> {
+            values.iter().map(|v| (*v).to_owned()).collect()
+        }
+        assert_eq!(
+            super::parse_doctor(&arguments(&["--json", "--device", "192.0.2.1"])),
+            Ok((Some("192.0.2.1"), true))
+        );
+        for invalid in [
+            vec!["--json", "--json"],
+            vec!["--device"],
+            vec!["--device", "reader;reboot"],
+            vec!["--surprise"],
+        ] {
+            assert!(super::parse_doctor(&arguments(&invalid)).is_err());
+        }
         assert!(valid_device_host("192.0.2.1"));
         assert!(valid_device_host("kobo-reader_1"));
         assert!(!valid_device_host(""));

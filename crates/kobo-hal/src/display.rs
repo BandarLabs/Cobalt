@@ -4,19 +4,32 @@
 //! [`DisplaySession`] proves, at runtime, that:
 //!
 //! 1. the probed hardware geometry matches the profile exactly,
-//! 2. the device code, serial model prefix, firmware version, and kernel
-//!    release match the profile exactly,
+//! 2. the device code, serial model prefix, and kernel release match the
+//!    profile exactly,
 //! 3. the profile's owner-attended evidence is complete, and
 //! 4. the caller supplied the exact owner-attended unlock phrase.
 //!
+//! [`DisplaySession::open_including_untested`] relaxes the third of those, and
+//! the firmware version alongside it, for a reader whose owner has been told
+//! what is unproven about their hardware and has agreed to it. It relaxes
+//! nothing in the first two: geometry, touch and model identity stay exactly as
+//! strict, because those are the checks that catch a profile describing a
+//! different device rather than an untested one.
+//!
 //! The module is compiled only with the non-default `device-write` feature, so
 //! a default build contains no callable display-write code at all.
+
+mod observation;
+pub use observation::{
+    RefreshObservation, RefreshObservations, RefreshPhase, RefreshRequest, RefreshSession,
+    MAX_REFRESH_OBSERVATIONS,
+};
 
 use crate::probe::{probe_device, ProbeError};
 use crate::refresh::{Backend, Rect, RefreshPlan};
 use crate::surface::{self, RegionSnapshot, SurfaceError, SurfaceGeometry};
 use kobo_abi::{hwtcon, mxcfb};
-use kobo_profile::{DeviceProfile, DeviceSnapshot, WRITE_EVIDENCE_PENDING};
+use kobo_profile::{DeviceProfile, DeviceSnapshot, TouchTransform, WRITE_EVIDENCE_PENDING};
 use std::collections::VecDeque;
 use std::fmt;
 use std::fs::{File, OpenOptions};
@@ -186,14 +199,54 @@ struct PanelRefresh {
     marker: u32,
     region: Rect,
     sent_at: Instant,
+    request: RefreshRequest,
 }
 
 #[derive(Debug, Default)]
 struct PanelWork {
     unfinished: VecDeque<PanelRefresh>,
+    observations: observation::History,
 }
 
 impl PanelWork {
+    fn finish_matching(
+        &mut self,
+        selected: impl FnMut(&PanelRefresh) -> bool,
+        mut wait: impl FnMut(u32) -> Result<(), DisplayError>,
+    ) -> Result<RefreshFenceTiming, DisplayError> {
+        let mut timing = RefreshFenceTiming::default();
+        for refresh in self.matching(selected) {
+            let wait_started = Instant::now();
+            let result = wait(refresh.marker);
+            let elapsed = wait_started.elapsed();
+            let since_submission = refresh.sent_at.elapsed();
+            let errno = match &result {
+                Err(DisplayError::Io(error)) => error.raw_os_error(),
+                _ => None,
+            };
+            self.observations.record(
+                refresh.request,
+                if result.is_ok() {
+                    RefreshPhase::Completed
+                } else {
+                    RefreshPhase::CompletionFailed
+                },
+                elapsed,
+                Some(since_submission),
+                errno,
+            );
+            result?;
+            let removed = self.remove(refresh.marker);
+            debug_assert!(removed);
+            timing.oldest = timing
+                .oldest
+                .max(wait_started.saturating_duration_since(refresh.sent_at));
+            timing.wait += elapsed;
+            timing.completed += 1;
+        }
+        Ok(timing)
+    }
+
     fn matching(&self, mut selected: impl FnMut(&PanelRefresh) -> bool) -> Vec<PanelRefresh> {
         self.unfinished
             .iter()
@@ -219,6 +272,47 @@ impl PanelWork {
 enum WritePolicy {
     ReadyOnly,
     AttendedCandidateValidation,
+    /// Every blocker an informed owner is allowed to waive is waived.
+    ///
+    /// The waiving is decided by [`DeviceProfile::unwaivable_write_blockers`]
+    /// rather than here, so that what an owner may agree to is written down
+    /// beside the reasons rather than beside the framebuffer.
+    OwnerAccepted,
+}
+
+pub use kobo_profile::Standing;
+
+/// Picks the profile a device runs under, and says how well known it is.
+///
+/// [`kobo_profile::identify_profile`] falls back to matching on geometry
+/// alone, which is what lets a reader whose firmware moved keep its own
+/// profile. That same fallback would hand an unrecognised device somebody
+/// else's touch mapping the moment it happened to share a resolution, and a
+/// digitiser mounted the other way round is not a difference a geometry check
+/// can see. So a measured profile is only treated as claiming this reader when
+/// the device code and serial prefix agree as well, and everything else gets a
+/// profile derived from its own probe.
+fn resolve_profile(
+    snapshot: &DeviceSnapshot,
+    touch_transform: TouchTransform,
+) -> Result<(&'static DeviceProfile, Standing), DisplayError> {
+    if let Some(profile) = kobo_profile::identify_profile(snapshot) {
+        let identity = &snapshot.identity;
+        let claims_this_reader = identity.device_code == Some(profile.device_code)
+            && identity.serial_prefix.as_deref() == Some(profile.serial_prefix);
+        if claims_this_reader {
+            let standing =
+                if profile.write_ready && profile.write_identity_blockers(snapshot).is_empty() {
+                    Standing::Measured
+                } else {
+                    Standing::UntestedFirmware
+                };
+            return Ok((profile, standing));
+        }
+    }
+    let profile = kobo_profile::provisional::profile_from_probe(snapshot, touch_transform)
+        .map_err(|error| DisplayError::ProfileRejected(vec![error]))?;
+    Ok((profile, Standing::Unmeasured))
 }
 
 impl DisplaySession {
@@ -247,6 +341,36 @@ impl DisplaySession {
         )
     }
 
+    /// Probes the device, resolves a profile even when nobody measured one,
+    /// and reports how well known the result is.
+    ///
+    /// The caller is expected to ask the owner before doing anything with a
+    /// session whose standing is not [`Standing::Measured`]. Opening it first
+    /// is deliberate and unavoidable: the question has to be drawn on the same
+    /// panel it is asking about.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the unlock phrase is wrong, the probe fails, the
+    /// geometry or touch checks disagree with the resolved profile, no profile
+    /// could be derived from the probe, or the framebuffer cannot be opened.
+    pub fn open_including_untested(
+        unlock: Option<&str>,
+        touch_transform: TouchTransform,
+    ) -> Result<(Self, Standing), DisplayError> {
+        if unlock != Some(OWNER_UNLOCK_PHRASE) {
+            return Err(DisplayError::UnlockMissing);
+        }
+        let snapshot = probe_device().map_err(DisplayError::Probe)?;
+        let (profile, standing) = resolve_profile(&snapshot, touch_transform)?;
+        let policy = match standing {
+            Standing::Measured => WritePolicy::ReadyOnly,
+            Standing::UntestedFirmware | Standing::Unmeasured => WritePolicy::OwnerAccepted,
+        };
+        let session = Self::open_verified(profile, snapshot, Path::new("/dev/fb0"), policy)?;
+        Ok((session, standing))
+    }
+
     fn open_for_attended_validation() -> Result<Self, DisplayError> {
         let snapshot = probe_device().map_err(DisplayError::Probe)?;
         let profile = kobo_profile::identify_profile(&snapshot).ok_or_else(|| {
@@ -273,8 +397,12 @@ impl DisplaySession {
             return Err(DisplayError::ProfileRejected(report.mismatches));
         }
         let mut blockers = report.write_blockers;
-        if matches!(policy, WritePolicy::AttendedCandidateValidation) {
-            blockers.retain(|blocker| blocker != WRITE_EVIDENCE_PENDING);
+        match policy {
+            WritePolicy::ReadyOnly => {}
+            WritePolicy::AttendedCandidateValidation => {
+                blockers.retain(|blocker| blocker != WRITE_EVIDENCE_PENDING);
+            }
+            WritePolicy::OwnerAccepted => blockers = profile.unwaivable_write_blockers(&snapshot),
         }
         if !blockers.is_empty() {
             return Err(DisplayError::WriteRejected(blockers));
@@ -446,13 +574,15 @@ impl DisplaySession {
         } else {
             RefreshFenceTiming::default()
         };
-        let issued = self.issue(plan)?;
+        let issued = self.issue(plan, &mut work)?;
         work.unfinished.push_back(PanelRefresh {
             marker: issued.marker,
             region: plan.region,
             sent_at: Instant::now(),
+            request: issued.request,
         });
         Ok(RefreshSubmissionTiming {
+            request: issued.request,
             submitted_waveform: issued.submitted_waveform,
             translated_waveform: issued.translated_waveform,
             submit: issued.submit,
@@ -490,41 +620,91 @@ impl DisplaySession {
         surface::RegionPlacement::new(self.geometry, plan.region)?;
         let mut work = self.lock_panel_work()?;
         self.finish_matching(&mut work, |_| true)?;
-        let issued = self.issue(plan)?;
-        let wait_started = Instant::now();
-        self.wait_for_marker(issued.marker)?;
+        let issued = self.issue(plan, &mut work)?;
+        // Retain the marker until a successful wait, including on this
+        // synchronous path. A failed wait must not forget outstanding work.
+        work.unfinished.push_back(PanelRefresh {
+            marker: issued.marker,
+            region: plan.region,
+            sent_at: Instant::now(),
+            request: issued.request,
+        });
+        let completed =
+            self.finish_matching(&mut work, |refresh| refresh.marker == issued.marker)?;
         Ok(RefreshTiming {
+            request: issued.request,
             submitted_waveform: issued.submitted_waveform,
             translated_waveform: issued.translated_waveform,
             submit: issued.submit,
-            wait: wait_started.elapsed(),
+            wait: completed.wait,
         })
     }
 
-    fn issue(&self, plan: RefreshPlan) -> Result<IssuedRefresh, DisplayError> {
-        let plan = self.for_this_panel(plan);
+    fn issue(
+        &self,
+        requested: RefreshPlan,
+        work: &mut PanelWork,
+    ) -> Result<IssuedRefresh, DisplayError> {
+        let plan = self.for_this_panel(requested);
         let marker = unique_marker()?;
         let submitted_waveform = plan.waveform(self.backend);
-        let (translated_waveform, submit) = match self.backend {
+        let mut request = RefreshRequest {
+            marker,
+            backend: self.backend,
+            requested,
+            applied: plan,
+            translated_waveform: None,
+        };
+        let (translated, submit) = match self.backend {
             Backend::Hwtcon => {
                 let mut update = plan.hwtcon_update_data(marker);
-                let submit_started = Instant::now();
-                hwtcon::send_update(&self.framebuffer, &mut update)?;
-                (update.waveform_mode, submit_started.elapsed())
+                let started = Instant::now();
+                let result = hwtcon::send_update(&self.framebuffer, &mut update);
+                let elapsed = started.elapsed();
+                (result.map(|()| update.waveform_mode), elapsed)
             }
             Backend::Mxcfb => {
                 let mut update = plan.mxcfb_update_data(marker);
-                let submit_started = Instant::now();
-                mxcfb::send_update(&self.framebuffer, &mut update)?;
-                (update.waveform_mode, submit_started.elapsed())
+                let started = Instant::now();
+                let result = mxcfb::send_update(&self.framebuffer, &mut update);
+                let elapsed = started.elapsed();
+                (result.map(|()| update.waveform_mode), elapsed)
             }
         };
-        Ok(IssuedRefresh {
-            marker,
-            submitted_waveform,
-            translated_waveform,
-            submit,
-        })
+        match translated {
+            Ok(translated_waveform) => {
+                request.translated_waveform = Some(translated_waveform);
+                work.observations
+                    .record(request, RefreshPhase::Submitted, submit, None, None);
+                Ok(IssuedRefresh {
+                    marker,
+                    request,
+                    submitted_waveform,
+                    translated_waveform,
+                    submit,
+                })
+            }
+            Err(error) => {
+                work.observations.record(
+                    request,
+                    RefreshPhase::SubmissionFailed,
+                    submit,
+                    None,
+                    error.raw_os_error(),
+                );
+                Err(DisplayError::Io(error))
+            }
+        }
+    }
+
+    /// Read bounded kernel-operation observations without completing pending
+    /// updates. Enable `KOBO_FRAME_TIMING=1` before launch to also capture JSON
+    /// records on stderr. The ring reports omissions and is not a complete log.
+    ///
+    /// # Errors
+    /// Returns an error if the panel-work lock is poisoned.
+    pub fn refresh_observations(&self) -> Result<RefreshObservations, DisplayError> {
+        Ok(self.lock_panel_work()?.observations.snapshot())
     }
 
     fn wait_for_marker(&self, marker: u32) -> Result<(), DisplayError> {
@@ -555,17 +735,7 @@ impl DisplaySession {
         work: &mut PanelWork,
         selected: impl FnMut(&PanelRefresh) -> bool,
     ) -> Result<RefreshFenceTiming, DisplayError> {
-        let mut timing = RefreshFenceTiming::default();
-        for refresh in work.matching(selected) {
-            let wait_started = Instant::now();
-            self.wait_for_marker(refresh.marker)?;
-            let removed = work.remove(refresh.marker);
-            debug_assert!(removed);
-            timing.oldest = timing.oldest.max(refresh.sent_at.elapsed());
-            timing.wait += wait_started.elapsed();
-            timing.completed += 1;
-        }
-        Ok(timing)
+        work.finish_matching(selected, |marker| self.wait_for_marker(marker))
     }
 
     fn lock_panel_work(&self) -> Result<std::sync::MutexGuard<'_, PanelWork>, DisplayError> {
@@ -584,6 +754,7 @@ impl Drop for DisplaySession {
 #[derive(Clone, Copy, Debug)]
 struct IssuedRefresh {
     marker: u32,
+    request: RefreshRequest,
     submitted_waveform: u32,
     translated_waveform: u32,
     submit: Duration,
@@ -604,6 +775,7 @@ pub struct RefreshFenceTiming {
 /// What one non-blocking refresh submission measured.
 #[derive(Clone, Copy, Debug)]
 pub struct RefreshSubmissionTiming {
+    pub request: RefreshRequest,
     pub submitted_waveform: u32,
     pub translated_waveform: u32,
     pub submit: Duration,
@@ -616,6 +788,7 @@ pub struct RefreshSubmissionTiming {
 /// What one instrumented refresh measured.
 #[derive(Clone, Copy, Debug)]
 pub struct RefreshTiming {
+    pub request: RefreshRequest,
     /// The waveform constant submitted with the update.
     pub submitted_waveform: u32,
     /// The waveform the driver copied back after translating the request
@@ -705,7 +878,8 @@ fn smoke_wait_timing(session: &DisplaySession) -> Result<String, DisplayError> {
         crate::refresh::RefreshIntent::QualityContent,
     )?;
 
-    let mut lines = String::from("update  intent   waveform  translated  submit_us  wait_us\n");
+    let mut lines =
+        String::from("update  intent   waveform  translated  submit_us  wait_us  marker\n");
     let mut run = || -> Result<(), DisplayError> {
         let mut update = 0_usize;
         // The stage's own declaration, so that what the invariant test walks
@@ -719,7 +893,7 @@ fn smoke_wait_timing(session: &DisplaySession) -> Result<String, DisplayError> {
                     update += 1;
                     let _ = writeln!(
                         lines,
-                        "{update:>6}  {:<8} {:>8}  {:>10}  {:>9}  {:>7}",
+                        "{update:>6}  {:<8} {:>8}  {:>10}  {:>9}  {:>7}  {}",
                         match intent {
                             crate::refresh::RefreshIntent::QualityContent
                             | crate::refresh::RefreshIntent::ColourContent => "GC16",
@@ -730,6 +904,7 @@ fn smoke_wait_timing(session: &DisplaySession) -> Result<String, DisplayError> {
                         timing.translated_waveform,
                         timing.submit.as_micros(),
                         timing.wait.as_micros(),
+                        timing.request.marker,
                     );
                 }
             }
@@ -892,7 +1067,117 @@ mod tests {
             marker,
             region,
             sent_at: Instant::now(),
+            request: super::RefreshRequest {
+                marker,
+                backend: crate::refresh::Backend::Hwtcon,
+                requested: RefreshPlan {
+                    region,
+                    intent: crate::refresh::RefreshIntent::TextContent,
+                    full: false,
+                },
+                applied: RefreshPlan {
+                    region,
+                    intent: crate::refresh::RefreshIntent::TextContent,
+                    full: false,
+                },
+                translated_waveform: Some(0),
+            },
         }
+    }
+
+    #[test]
+    fn failed_wait_keeps_pending_marker_and_retries_never_repeat_a_completion() {
+        let region = SMOKE_FIXED_REGION;
+        let mut work = PanelWork::default();
+        for marker in 1..=3 {
+            work.unfinished.push_back(pending(marker, region));
+        }
+        assert!(work
+            .finish_matching(
+                |_| true,
+                |marker| {
+                    if marker == 2 {
+                        Err(DisplayError::Io(std::io::Error::from_raw_os_error(5)))
+                    } else {
+                        Ok(())
+                    }
+                }
+            )
+            .is_err());
+        assert_eq!(
+            work.unfinished
+                .iter()
+                .map(|item| item.marker)
+                .collect::<Vec<_>>(),
+            vec![2, 3]
+        );
+        let observed = work.observations.snapshot();
+        assert_eq!(observed.records.len(), 2);
+        assert_eq!(observed.records[0].phase, super::RefreshPhase::Completed);
+        assert_eq!(
+            observed.records[1].phase,
+            super::RefreshPhase::CompletionFailed
+        );
+        assert_eq!(observed.records[1].request.marker, 2);
+        assert_eq!(observed.records[1].errno, Some(5));
+        assert_eq!(work.observations.snapshot().records, observed.records);
+        let recovered = work.finish_matching(|_| true, |_| Ok(())).unwrap();
+        assert_eq!(recovered.completed, 2);
+        assert!(work.unfinished.is_empty());
+        let observed = work.observations.snapshot();
+        assert_eq!(
+            observed
+                .records
+                .iter()
+                .filter(|item| item.phase == super::RefreshPhase::Completed)
+                .map(|item| item.request.marker)
+                .collect::<Vec<_>>(),
+            vec![1, 2, 3]
+        );
+        assert_eq!(
+            work.finish_matching(|_| true, |_| panic!("no pending work"))
+                .unwrap()
+                .completed,
+            0
+        );
+    }
+
+    #[test]
+    fn failed_submit_reports_no_translation_or_completion() {
+        let display = DisplaySession::open_verified(
+            &CLARA_BW_391,
+            matched_snapshot(),
+            Path::new("/dev/null"),
+            WritePolicy::ReadyOnly,
+        )
+        .unwrap();
+        let plan = RefreshPlan::new(
+            SMOKE_FIXED_REGION,
+            crate::refresh::RefreshIntent::ColourContent,
+            false,
+            CLARA_BW_391.width,
+            CLARA_BW_391.height,
+        )
+        .unwrap();
+        assert!(display.refresh_timed(plan).is_err());
+        let observations = display.refresh_observations().unwrap();
+        assert_eq!(observations.records.len(), 1);
+        let failure = observations.records[0];
+        assert_eq!(failure.phase, super::RefreshPhase::SubmissionFailed);
+        assert_eq!(failure.request.translated_waveform, None);
+        assert_eq!(
+            failure.request.requested.intent,
+            crate::refresh::RefreshIntent::ColourContent
+        );
+        assert_eq!(
+            failure.request.applied.intent,
+            crate::refresh::RefreshIntent::QualityContent
+        );
+        assert!(failure.request.marker >= 0x4000_0000);
+        assert_eq!(
+            display.refresh_observations().unwrap().records,
+            observations.records
+        );
     }
 
     #[test]

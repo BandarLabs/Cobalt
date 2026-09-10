@@ -1,0 +1,114 @@
+{
+  "app": "panels",
+  "fonts": [
+    {
+      "role": "interface",
+      "source": "AtkinsonHyperlegible-Regular.ttf"
+    },
+    {
+      "role": "display-title",
+      "source": "AtkinsonHyperlegible-Bold.ttf"
+    },
+    {
+      "role": "display-heading",
+      "source": "AtkinsonHyperlegible-Bold.ttf"
+    },
+    {
+      "role": "display-bold",
+      "source": "AtkinsonHyperlegible-Bold.ttf"
+    },
+    {
+      "role": "reading",
+      "source": "AtkinsonHyperlegible-Regular.ttf"
+    },
+    {
+      "role": "mono",
+      "source": "DejaVuSansMono.ttf"
+    }
+  ],
+  "frame": {
+    "format": "grey8",
+    "sha256": "6c5fe44dd265999e1a79e357d3a9ad05bda6d9ffa72289e15bbbb416e3c79e77",
+    "view": "approximate-panel"
+  },
+  "interfaceScalePercent": 140,
+  "mode": "single-app",
+  "orientation": "portrait",
+  "paints": "10",
+  "publisherFontHandle": null,
+  "readingScalePercent": 100,
+  "runtimeVersion": "0.3.11",
+  "schema": "cobalt.simulator-capture",
+  "simulation": {
+    "backends": [
+      "network",
+      "battery-read",
+      "frontlight-control",
+      "wifi-control",
+      "library",
+      "cover-sensor"
+    ],
+    "lifecycle": "foreground",
+    "observation": null,
+    "panelApproximation": true,
+    "partialsSinceClean": 507572,
+    "profile": {
+      "height": 1448,
+      "id": "clara-bw-391",
+      "model": "Kobo Clara BW",
+      "pixelsPerInch": 300,
+      "rotation": 3,
+      "touch": {
+        "name": "cyttsp5_mt",
+        "xMax": 1447,
+        "xMin": 0,
+        "yMax": 1071,
+        "yMin": 0
+      },
+      "width": 1072
+    },
+    "refreshCount": 10,
+    "scenario": "storage-full",
+    "touch": {
+      "display": {
+        "x": 964,
+        "y": 724
+      },
+      "raw": {
+        "x": 724,
+        "y": 107
+      }
+    },
+    "transition": {
+      "dirty": 507572,
+      "full": false,
+      "refresh": 10,
+      "region": {
+        "height": 48,
+        "width": 328,
+        "x": 280,
+        "y": 120
+      },
+      "regions": [
+        {
+          "region": {
+            "height": 48,
+            "width": 328,
+            "x": 280,
+            "y": 120
+          },
+          "waveform": "GL16"
+        }
+      ],
+      "waveform": "GL16"
+    }
+  },
+  "source": {
+    "binarySha256": "fcd90716fe4c03ee990013aca287105c55d8ba32773ba825203b3e03b6a3c07b",
+    "dirty": true,
+    "fixture": "original-geometric-comic",
+    "requestedSeed": "0",
+    "revision": "430488a117adb4628436dd097b8359a4079eea59"
+  },
+  "version": 1
+}

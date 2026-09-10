@@ -21,6 +21,7 @@ struct Fieldbook {
     view: View,
     selected: usize,
     count: u16,
+    page: usize,
     sightings: Vec<(usize, u16)>,
     synced: bool,
     notice: Option<&'static str>,
@@ -31,6 +32,7 @@ impl Default for Fieldbook {
             view: View::Nearby,
             selected: 0,
             count: 1,
+            page: 0,
             sightings: vec![],
             synced: false,
             notice: None,
@@ -47,7 +49,34 @@ impl Fieldbook {
             View::Detail => "Fieldbook",
         }
     }
-    fn screen(&self) -> Screen {
+    fn log_header(&self) -> ScreenBuilder {
+        let mut screen = ScreenBuilder::new("fieldbook").top_bar("Log sighting");
+        if let Some(notice) = self.notice {
+            screen = screen.banner(kobo_sdk::BannerLevel::Info, notice);
+        }
+        screen.section(format!(
+            "{} · count {}",
+            SPECIES[self.selected].0, self.count
+        ))
+    }
+    fn log_pages(&self, context: &Context) -> Vec<Vec<usize>> {
+        let details = SPECIES
+            .iter()
+            .map(|species| format!("{} · {}", species.2, species.1))
+            .collect::<Vec<_>>();
+        let rows = SPECIES
+            .iter()
+            .zip(&details)
+            .map(|(species, detail)| (species.0, detail.as_str()))
+            .collect::<Vec<_>>();
+        context.paginate_rows_under(
+            &rows,
+            true,
+            kobo_sdk::Position::AtTheFoot,
+            &self.log_header().build(),
+        )
+    }
+    fn screen(&self, context: &Context) -> Screen {
         let mut s = ScreenBuilder::new("fieldbook").top_bar(self.title());
         if let Some(n) = self.notice {
             s = s.banner(kobo_sdk::BannerLevel::Info, n);
@@ -80,20 +109,33 @@ impl Fieldbook {
                     .build()
             }
             View::Log => {
-                let bird = SPECIES[self.selected];
-                s.secondary("Species picker accepts common name, scientific name, or banding code.")
-                    .rows(SPECIES.iter().enumerate().map(|(i, x)| {
-                        (
-                            format!("pick-{i}"),
-                            x.0,
-                            format!("{} · {}", x.2, x.1),
-                            Glyph::Search,
-                        )
-                    }))
-                    .section(format!("Selected: {}  ·  count {}", bird.0, self.count))
-                    .buttons([("less", "− count"), ("more", "+ count")])
-                    .primary_button("tally", "TALLY")
-                    .build()
+                let details = SPECIES
+                    .iter()
+                    .map(|species| format!("{} · {}", species.2, species.1))
+                    .collect::<Vec<_>>();
+                s = self.log_header();
+                let pages = self.log_pages(context);
+                let page = self.page.min(pages.len().saturating_sub(1));
+                let visible = pages.get(page).map(Vec::as_slice).unwrap_or_default();
+                s.rows(visible.iter().map(|&index| {
+                    (
+                        format!("pick-{index}"),
+                        SPECIES[index].0,
+                        details[index].clone(),
+                        if self.selected == index {
+                            Glyph::Check
+                        } else {
+                            Glyph::Search
+                        },
+                    )
+                }))
+                .page_turns("previous-species", "next-species")
+                .page_position(
+                    u16::try_from(page + 1).unwrap_or(u16::MAX),
+                    u16::try_from(pages.len().max(1)).unwrap_or(u16::MAX),
+                )
+                .action_bar([("less", "− count"), ("tally", "TALLY"), ("more", "+ count")])
+                .build()
             }
             View::Life => {
                 if self.sightings.is_empty() {
@@ -147,7 +189,7 @@ impl Fieldbook {
     }
     fn show(&self, c: &mut Context) {
         c.set_screen(
-            self.screen()
+            self.screen(c)
                 .with_own_back(!matches!(self.view, View::Nearby)),
         );
     }
@@ -171,7 +213,11 @@ impl KoboApp for Fieldbook {
     }
     fn on_action(&mut self, c: &mut Context, a: ActionId) {
         self.notice = None;
-        if a == ActionId::BACK || a == action_id("back") || a == action_id("nearby") {
+        if a == action_id("previous-species") {
+            self.page = self.page.saturating_sub(1);
+        } else if a == action_id("next-species") {
+            self.page = (self.page + 1).min(self.log_pages(c).len().saturating_sub(1));
+        } else if a == ActionId::BACK || a == action_id("back") || a == action_id("nearby") {
             self.view = View::Nearby;
         } else if a == action_id("life") {
             self.view = View::Life;
@@ -231,9 +277,60 @@ mod tests {
         assert!(!f.sightings.iter().any(|(b, _)| *b == 1));
     }
     #[test]
+    fn tally_and_every_species_fit_with_a_notice_at_all_text_sizes() {
+        for (width, height, pixels_per_inch) in
+            [(1072, 1448, 300), (1448, 1072, 300), (758, 1024, 212)]
+        {
+            for text_scale in kobo_ui::TextScale::STEPS {
+                let metrics = kobo_ui::DisplayMetrics {
+                    width,
+                    height,
+                    pixels_per_inch,
+                    text_scale,
+                };
+                let context =
+                    kobo_sdk::AppRunner::with_metrics(Fieldbook::default(), metrics).context();
+                let mut app = Fieldbook {
+                    view: View::Log,
+                    notice: Some("Lifer!"),
+                    ..Fieldbook::default()
+                };
+                let pages = app.log_pages(&context);
+                assert_eq!(
+                    pages.iter().flatten().copied().collect::<Vec<_>>(),
+                    (0..SPECIES.len()).collect::<Vec<_>>()
+                );
+                for (page, indices) in pages.iter().enumerate() {
+                    app.page = page;
+                    let diagnostics = app
+                        .screen(&context)
+                        .diagnostics(&metrics, &Chrome::measuring(true));
+                    assert!(
+                        diagnostics.issues.is_empty(),
+                        "{metrics:?}: {:?}",
+                        diagnostics.issues
+                    );
+                    for action in ["less".to_owned(), "more".to_owned(), "tally".to_owned()]
+                        .into_iter()
+                        .chain(indices.iter().map(|index| format!("pick-{index}")))
+                    {
+                        assert!(
+                            diagnostics
+                                .layout
+                                .rect_of_action(action_id(&action))
+                                .is_some(),
+                            "{action}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn nearby_layout_fits() {
         let d = Fieldbook::default()
-            .screen()
+            .screen(&Context::default())
             .diagnostics(&CLARA_BW_METRICS, &Chrome::default());
         assert!(d.issues.is_empty(), "{:?}", d.issues);
     }

@@ -3,7 +3,9 @@ expect Frame
 expect Photographs
 expect-missing Your frame is empty
 expect-missing kobo frame
-wait-for Open
+# "Open" also matches the loading message "Opening this photograph".
+# Next appears alongside the real Open button after the photo has loaded.
+wait-for Next
 clean
 shot shelf
 tap Open

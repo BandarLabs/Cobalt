@@ -4,8 +4,8 @@
   "short_label": "calibre-web",
   "summary": "Browse and read books from your calibre-web library.",
   "page_description": "Connect your calibre-web library and browse its books from your Kobo.",
-  "version": "0.1.1",
-  "release_notes": "Connect your calibre-web library and browse its books from your Kobo.",
+  "version": "0.1.2",
+  "release_notes": "Update shared controls and page layout for Cobalt 0.3.12.",
   "glyph": "book",
   "capabilities": [
     "network"

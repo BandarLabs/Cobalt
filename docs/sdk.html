@@ -310,11 +310,11 @@ footer nav { display: flex; gap: 20px; flex-wrap: wrap; }
             <tr><td><code>on_text_hold</code></td><td>A selectable rich-text word was held, with stable text coordinates.</td></tr>
             <tr><td><code>on_task</code></td><td>An asynchronous fetch, post, file read or sleep completed, failed or was cancelled.</td></tr>
             <tr><td><code>on_device_result</code></td><td>A device, radio, audio, dictionary, update or app-catalog request answered.</td></tr>
-            <tr><td><code>on_store</code></td><td>Private key-value or shelf storage answered.</td></tr>
+            <tr><td><code>on_load</code>, <code>on_save</code>, <code>on_shelf</code></td><td>Storage answered, including failures identified by the requested key or shelf name. Their defaults forward to <code>on_store</code>.</td></tr>
             <tr><td><code>on_shell_event</code></td><td>The runtime-owned terminal opened, produced bytes, closed or was refused.</td></tr>
             <tr><td><code>on_cover_change</code></td><td>The hall sensor's settled magnet state changed while the app was foregrounded.</td></tr>
             <tr><td><code>on_background</code> / <code>on_foreground</code></td><td>The reader left for another app and later returned. Work continues while backgrounded.</td></tr>
-            <tr><td><code>on_suspend</code> / <code>on_resume</code></td><td>The device session suspends and resumes.</td></tr>
+            <tr><td><code>on_suspend</code>, <code>can_suspend</code>, <code>on_resume</code></td><td>Save during power preparation and refuse completion while required writes remain unresolved. Native preparation currently hands back to the stock reader; kernel suspend and RTC wake await hardware validation.</td></tr>
             <tr><td><code>on_scheduled_wake</code></td><td>A capability-gated background wake is delivered.</td></tr>
             <tr><td><code>on_exit</code></td><td>The application session is ending.</td></tr>
           </tbody>
@@ -368,6 +368,17 @@ footer nav { display: flex; gap: 20px; flex-wrap: wrap; }
           </tbody>
         </table>
       </div>
+    </section>
+
+    <section id="durable-content">
+      <h2>Durable content and comic reading</h2>
+      <p>Use <code>kobo_state::draft::Draft</code> for acknowledged edits, <code>record::Schema</code> for bounded versioned records, and <code>outbox</code> for deferred work. Keep failed writes visible and offer a retry. Queued work is not delivered work.</p>
+      <p><code>kobo_sdk::imports::Import</code> verifies a local copy before saving its receipt. <code>exports::Export</code> prepares text, Markdown, PNG or JPEG copies up to 32 MiB for the existing computer connection. Forward shelf and save callbacks; Ready means the reader stored its offer, not that the computer received it.</p>
+      <pre><code>kobo export --app APP --device reader.local --out "$HOME/Downloads"</code></pre>
+      <p>Replace <code>APP</code> with an app that has prepared an export. For a running simulator use <code>--sim</code> and the same <code>TMPDIR</code>. The receiver verifies the file and preserves existing copies. See the <a href="https://github.com/BandarLabs/Cobalt/blob/main/docs/quality/sdk-export-and-copy.md">integration guide</a> for callbacks and recovery.</p>
+      <figure><img src="quality/evidence/exports/text-ready.png" width="320" alt="SDK fixture showing Garden notes ready for its computer after acknowledged storage" loading="lazy"><figcaption>Actual SDK fixture in the Clara BW simulator. Physical transfer validation is pending.</figcaption></figure>
+      <p><code>kobo_comic</code> and <code>kobo_bookview::comic::ComicView</code> share bounded CBZ inspection, page decoding, zoom, pan, thumbnails, page jump, spreads and right-to-left reading. Save reading memory through an acknowledged draft. CBR/RAR support is deferred.</p>
+      <p>Owner-hosted accounts use <code>CredentialSetup::bind_server</code> or <code>secrets().set_server</code> to bind an authorized account to an HTTPS origin, port and base path. <code>ProviderSetup::with_server_accounts</code> supplies separate username and password steps. Changing servers requires account entry for that address.</p>
     </section>
 
     <section id="capabilities">

@@ -70,31 +70,31 @@ impl From<zip::Fault> for Fault {
     }
 }
 
-/// Gives one chapter's drawn formulae names the whole book can tell apart.
+/// Gives one chapter's formulae names the whole book can tell apart.
 ///
-/// A formula's picture is drawn while the chapter is read rather than read out
-/// of the archive, so it names no member and is numbered from one in every
-/// file. Two chapters would otherwise both call their first formula the same
-/// thing, and the second would quietly replace the first.
+/// A formula is named by the chapter that carried it rather than read out of
+/// the archive, so it names no member and is numbered from one in every file.
+/// Two chapters would otherwise both call their first formula the same thing,
+/// and the second would quietly replace the first.
 ///
-/// The pictures are moved into `drawn` and the renaming is answered back, so
+/// The sources are moved into `sources` and the renaming is answered back, so
 /// that the caller can leave these names out of the resolving it does to every
 /// other picture: resolved, a formula would name a member that is not there
 /// and the mathematics would be demoted to its own description.
 fn rename_formulae(
     part: &mut Document,
     chapter: usize,
-    drawn: &mut BTreeMap<String, Vec<u8>>,
+    sources: &mut BTreeMap<String, String>,
 ) -> BTreeMap<String, String> {
     let mut renamed = BTreeMap::new();
-    for (formula, png) in std::mem::take(&mut part.images) {
+    for (formula, latex) in std::mem::take(&mut part.formulae) {
         let book_wide = format!(
             "{}{chapter}-{}",
             crate::FORMULA_PICTURE_PREFIX,
             formula.trim_start_matches(crate::FORMULA_PICTURE_PREFIX)
         );
         renamed.insert(formula, book_wide.clone());
-        drawn.insert(book_wide, png);
+        sources.insert(book_wide, latex);
     }
     for styled in part.rich.values_mut() {
         for span in &mut styled.spans {
@@ -146,12 +146,12 @@ pub fn parse(bytes: &[u8]) -> Result<Document, Fault> {
     let mut starts: Vec<(String, usize)> = Vec::new();
     let mut anchors: BTreeMap<String, usize> = BTreeMap::new();
     let mut links: Vec<crate::Link> = Vec::new();
-    // The formulae drawn while the chapters were read, which are pictures the
-    // book carries without the archive holding a member for any of them.
-    let mut drawn: BTreeMap<String, Vec<u8>> = BTreeMap::new();
-    // One allowance for the whole spine: a clock started afresh on every
-    // chapter is thirty clocks, which is not a limit on how long a book takes
-    // to open.
+    // The formulae met while the chapters were read, which are pictures the
+    // book refers to without the archive holding a member for any of them.
+    let mut formulae: BTreeMap<String, String> = BTreeMap::new();
+    // One allowance for the whole spine: a count applied afresh to every
+    // chapter is thirty counts, which is not a limit on how many pictures a
+    // book asks for.
     let allowance = crate::html::Allowance::whole();
     for id in package.reading_order() {
         if parts >= MAX_PARTS {
@@ -174,8 +174,7 @@ pub fn parse(bytes: &[u8]) -> Result<Document, Fault> {
             &strip_toc(&text_of(&bytes)),
             &publisher_styles.css,
             crate::html::Allowance {
-                pictures: allowance.pictures.saturating_sub(drawn.len()),
-                ..allowance
+                pictures: allowance.pictures.saturating_sub(formulae.len()),
             },
         );
         truncated |= part.truncated;
@@ -198,7 +197,7 @@ pub fn parse(bytes: &[u8]) -> Result<Document, Fault> {
         // book with a broken link should read as.
         let mut part = part;
         let inside = directory_of(&name);
-        let renamed = rename_formulae(&mut part, parts, &mut drawn);
+        let renamed = rename_formulae(&mut part, parts, &mut formulae);
         for block in &mut part.blocks {
             if let Block::Picture { name: source, .. } = block {
                 match renamed.get(source.as_str()) {
@@ -242,11 +241,7 @@ pub fn parse(bytes: &[u8]) -> Result<Document, Fault> {
     builder.set_contents(contents_of(&archive, &package, &base, &starts, &anchors));
     builder.set_anchors(anchors);
     builder.set_links(links);
-    // The archive's own pictures, and then the ones drawn while reading it,
-    // which no archive member corresponds to.
-    let mut images = images_of(&archive, &builder);
-    images.append(&mut drawn);
-    builder.set_images(images);
+    builder.set_images(images_of(&archive, &builder));
     builder.set_fonts(fonts_of(
         &archive,
         &package,
@@ -254,6 +249,9 @@ pub fn parse(bytes: &[u8]) -> Result<Document, Fault> {
         &publisher_styles.font_families,
     ));
     let mut document = builder.finish();
+    // The formulae the chapters referred to, which no archive member
+    // corresponds to and which nothing has drawn yet.
+    document.formulae = formulae;
     document.truncated |= truncated;
     Ok(document)
 }
@@ -1309,15 +1307,15 @@ mod tests {
         );
     }
 
-    /// A formula in a book keeps the picture drawn for it, in every chapter.
+    /// A formula in a book keeps the source it is typeset from, in every
+    /// chapter.
     ///
-    /// A formula's picture is drawn while the chapter is read rather than read
-    /// out of the archive, so it has no member to be resolved against and it
-    /// is numbered from one in each file. Resolving it named a member that was
+    /// A formula is named by the chapter that carried it rather than read out
+    /// of the archive, so it has no member to be resolved against and it is
+    /// numbered from one in each file. Resolving it named a member that was
     /// not there and the mathematics was demoted to its own description, and
     /// keying it by number alone let the second chapter's first formula
     /// overwrite the first chapter's.
-    #[cfg(feature = "raster")]
     #[test]
     fn a_formula_in_a_chapter_keeps_the_picture_drawn_for_it() {
         let chapter = br#"<html><body><p>where <math alttext="x"><semantics><mi>x</mi>
@@ -1367,8 +1365,8 @@ mod tests {
                 "the name stopped saying it was a formula: {name}"
             );
             assert!(
-                document.images.contains_key(name),
-                "the picture was dropped: {name}"
+                document.formulae.contains_key(name),
+                "the source to typeset it from was dropped: {name}"
             );
         }
     }

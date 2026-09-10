@@ -3,10 +3,13 @@
   "display_name": "Zotero Reader",
   "short_label": "Zotero",
   "summary": "Browse Zotero collections, read metadata and indexed paper text, and keep papers available offline.",
-  "version": "1.0.3",
-  "release_notes": "Add guided credential setup and retry failed requests.",
+  "version": "1.0.5",
+  "release_notes": "Line up a table's columns under the headings that name them, typeset numbered equations, set figures apart from the prose, and carry a document's mathematics all the way through instead of stopping early.",
   "glyph": "book",
-  "capabilities": ["network", "frontlight-control"],
+  "capabilities": [
+    "network",
+    "frontlight-control"
+  ],
   "setup": {
     "steps": [
       {

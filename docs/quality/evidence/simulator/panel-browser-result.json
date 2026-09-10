@@ -1,0 +1,108 @@
+{
+  "panel": {
+    "mode": "automatic",
+    "status": "idle",
+    "contentsKnown": true,
+    "visibleFrame": "last confirmed completion with approximate residue",
+    "queued": false,
+    "submitted": "4",
+    "completed": "3",
+    "failures": "1",
+    "submissionMarker": null,
+    "submittedAtMillis": "30777",
+    "finishedAtMillis": "31043",
+    "timing": "host control observations; not hardware calibration"
+  },
+  "simulation": {
+    "profile": {
+      "id": "clara-bw-391",
+      "model": "Kobo Clara BW",
+      "width": 1072,
+      "height": 1448,
+      "pixelsPerInch": 300,
+      "rotation": 3,
+      "touch": {
+        "name": "cyttsp5_mt",
+        "xMin": 0,
+        "xMax": 1447,
+        "yMin": 0,
+        "yMax": 1071
+      }
+    },
+    "scenario": "normal",
+    "lifecycle": "foreground",
+    "transition": {
+      "waveform": "GC16",
+      "full": true,
+      "refresh": 3,
+      "dirty": 0,
+      "regions": [
+        {
+          "waveform": "GC16",
+          "region": {
+            "x": 0,
+            "y": 0,
+            "width": 1072,
+            "height": 1448
+          }
+        }
+      ],
+      "region": {
+        "x": 0,
+        "y": 0,
+        "width": 1072,
+        "height": 1448
+      }
+    },
+    "refreshCount": 3,
+    "dirtyPixelsSinceClean": 0,
+    "touch": null,
+    "panelApproximation": true,
+    "panel": {
+      "mode": "automatic",
+      "status": "idle",
+      "contentsKnown": true,
+      "visibleFrame": "last confirmed completion with approximate residue",
+      "queued": false,
+      "submitted": "4",
+      "completed": "3",
+      "failures": "1",
+      "submissionMarker": null,
+      "submittedAtMillis": "30777",
+      "finishedAtMillis": "31043",
+      "timing": "host control observations; not hardware calibration"
+    },
+    "observation": null,
+    "backends": [
+      "network",
+      "battery-read",
+      "frontlight-control",
+      "wifi-control",
+      "library",
+      "cover-sensor"
+    ],
+    "clock": {
+      "mode": "manual",
+      "unixMillis": "1788850920000",
+      "monotonicMillis": "60000",
+      "utcOffsetMinutes": 0,
+      "date": "2026-09-08"
+    },
+    "hardware": {
+      "batteryPercent": 72,
+      "charging": false,
+      "frontlightPercent": 20,
+      "coverClosed": false,
+      "orientation": "portrait",
+      "frontlightAppearanceCalibrated": false,
+      "orientationControl": "display-composition"
+    }
+  },
+  "diagnostics": {
+    "issues": []
+  },
+  "browser": {
+    "route": "hold, advance time, fail, retry, complete, automatic",
+    "consoleErrors": 0
+  }
+}

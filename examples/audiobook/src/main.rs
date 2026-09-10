@@ -1018,7 +1018,7 @@ mod tests {
             app.fail_with(Failure::of(kobo_sdk::TaskError::NoCredential));
             let (state, advice) = app.trouble.clone().expect("a failure was recorded");
             assert_eq!(state, StandardState::PermissionDenied);
-            assert_eq!(advice, "Finish account setup on your computer.");
+            assert_eq!(advice, "Add account details to connect this service.");
         }
     }
 }

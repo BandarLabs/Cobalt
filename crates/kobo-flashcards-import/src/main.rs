@@ -46,6 +46,10 @@ fn main() -> ExitCode {
 }
 
 fn run(arguments: &[String]) -> Result<(), String> {
+    if matches!(arguments, [flag] if flag == "--help" || flag == "-h") {
+        println!("{}", usage());
+        return Ok(());
+    }
     if arguments == ["--notice"] {
         println!("{NOTICE}");
         return Ok(());
@@ -192,5 +196,11 @@ mod tests {
             .all(|(_, document)| !document.is_empty()));
         assert!(ANKI_SOURCE.contains("9e32ad8849068510a82273889c21b22e1acf0949"));
         assert!(JAPANESE_FONT_SOURCE.contains("165c01b46ea533872e002e0785ff17e44f6d97d8"));
+    }
+
+    #[test]
+    fn help_is_a_successful_companion_command() {
+        assert!(run(&["--help".to_owned()]).is_ok());
+        assert!(run(&["-h".to_owned()]).is_ok());
     }
 }

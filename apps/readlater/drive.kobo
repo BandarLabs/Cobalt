@@ -14,12 +14,7 @@ expect Read Later settings
 tap Back
 expect No saved articles
 tap Sync
-wait-for Borrow Checker
-expect Paper Notes
+wait-for Off the air
+expect No saved articles
 clean
-shot readlater-unread
-tap Borrow Checker
-wait-for Two writers
-expect Archive
-clean
-shot readlater-article
+shot readlater-offline

@@ -4,8 +4,8 @@
   "short_label": "Fanshelf",
   "summary": "Save public AO3 works to a shelf made for offline reading.",
   "page_description": "Add an AO3 work and keep it ready for comfortable reading on your Kobo.",
-  "version": "0.2.0",
-  "release_notes": "Add an AO3 work and keep it ready for comfortable reading on your Kobo.",
+  "version": "0.2.2",
+  "release_notes": "Line up a table's columns under the headings that name them, typeset numbered equations, set figures apart from the prose, and carry a document's mathematics all the way through instead of stopping early.",
   "glyph": "book",
   "capabilities": [
     "network"

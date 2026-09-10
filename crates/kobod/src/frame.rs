@@ -120,6 +120,12 @@ impl FramePlanner {
         }
     }
 
+    /// A failed submission leaves physical contents uncertain. Preserve the
+    /// sequence number but require a whole-panel cleaning update next time.
+    pub fn invalidate(&mut self) {
+        self.started = false;
+    }
+
     /// Plans the next update without changing planner state.
     ///
     /// Returning `None` means the surface is the wrong size or no pixel has
@@ -636,6 +642,20 @@ mod tests {
     // kobo-ui keeps a parallel planner that nothing drives any more, and the
     // colour tests live over there. This is the planner the runtime actually
     // calls, so colour has to be proved here or it is proved nowhere.
+    #[test]
+    fn uncertain_panel_requires_cleaning_without_resetting_sequence() {
+        let (mut planner, frame) = started(32, 32);
+        let before = planner.refreshes();
+        planner.invalidate();
+        let retry = planner
+            .plan(&frame)
+            .expect("even identical desired pixels need cleaning");
+        assert!(retry.full);
+        assert_eq!(retry.refresh, before + 1);
+        assert!(planner.commit(&frame, &retry));
+        assert!(planner.plan(&frame).is_none());
+    }
+
     #[test]
     fn a_colour_region_is_planned_in_colour_and_stays_partial() {
         let (mut planner, mut frame) = started(8, 4);

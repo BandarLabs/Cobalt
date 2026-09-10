@@ -1,1 +1,13 @@
-{"id":"gutenbird","display_name":"Gutenbird","short_label":"Gutenbird","summary":"Browse OPDS libraries and read their books on your Kobo.","version":"1.0.7","glyph":"book","capabilities":["network","frontlight-control"],"release_notes":"Keep Gutenbird compatible with Cobalt's protocol-12 runtime."}
+{
+  "id": "gutenbird",
+  "display_name": "Gutenbird",
+  "short_label": "Gutenbird",
+  "summary": "Browse OPDS libraries and read their books on your Kobo.",
+  "version": "1.0.9",
+  "glyph": "book",
+  "capabilities": [
+    "network",
+    "frontlight-control"
+  ],
+  "release_notes": "Line up a table's columns under the headings that name them, typeset numbered equations, set figures apart from the prose, and carry a document's mathematics all the way through instead of stopping early."
+}

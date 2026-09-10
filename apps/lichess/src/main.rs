@@ -33,7 +33,7 @@ const EVENT_RATE_KEY: &str = "lichess.event-rate.v1";
 const SEEK_RATE_KEY: &str = "lichess.seek-rate.v1";
 const MAX_STORED_PUZZLES: usize = 32;
 const ACCOUNT_RETRY_SECONDS: u32 = 15;
-const HOME_TILE_COUNT: usize = SeekPreset::ALL.len() + 3;
+const HOME_TILE_COUNT: usize = SeekPreset::ALL.len() + 4;
 
 struct HomeTile {
     action: String,
@@ -49,6 +49,7 @@ type BuilderSlot = (SlotWidth, Box<dyn FnOnce(ScreenBuilder) -> ScreenBuilder>);
 enum Route {
     #[default]
     Home,
+    HowTo,
     Puzzles,
     Solve,
     PuzzleResult,
@@ -422,6 +423,7 @@ impl Lichess {
     fn show(&mut self, context: &mut Context) {
         let screen = match self.route {
             Route::Home => self.home(context),
+            Route::HowTo => Self::how_to_screen(),
             Route::Puzzles => self.puzzles_screen(),
             Route::Solve => self.solve_screen(),
             Route::PuzzleResult => self.puzzle_result(),
@@ -537,8 +539,16 @@ impl Lichess {
                 subtitle: "Offline".to_owned(),
                 enabled: true,
             }
+        } else if index == 3 {
+            HomeTile {
+                action: "how-to-play".to_owned(),
+                label: "How to play".to_owned(),
+                glyph: Glyph::Note,
+                subtitle: "Board · controls".to_owned(),
+                enabled: true,
+            }
         } else {
-            let preset = SeekPreset::ALL[index - 3];
+            let preset = SeekPreset::ALL[index - 4];
             HomeTile {
                 action: preset.action().to_owned(),
                 label: preset.label(),
@@ -643,6 +653,18 @@ impl Lichess {
                     ControlState::Disabled
                 },
             )
+            .build()
+    }
+
+    fn how_to_screen() -> Screen {
+        ScreenBuilder::new("lichess-help")
+            .top_bar("How to play")
+            .heading("Chess on Lichess")
+            .text("Tap a piece, then a marked square. Tap the selected piece again to cancel.")
+            .text("Computer starts an offline game. Time tiles seek a live opponent.")
+            .text("Account/Games holds challenges and ongoing boards. Puzzles work offline after download.")
+            .text("During a live game, the clock and board update while this screen is open.")
+            .bottom_action("home", "Play")
             .build()
     }
 
@@ -4008,6 +4030,12 @@ impl KoboApp for Lichess {
         } else if action == action_id("puzzles") {
             self.home_page = 0;
             self.route = Route::Puzzles;
+        } else if action == action_id("how-to-play") {
+            self.home_page = 0;
+            self.route = Route::HowTo;
+        } else if action == action_id("home") {
+            self.home_page = 0;
+            self.route = Route::Home;
         } else if action == action_id("play") {
             self.home_page = 0;
             self.route = Route::Play;
@@ -4745,6 +4773,7 @@ mod tests {
     fn folio_home_pages_every_preset_without_overflow() {
         let expected = std::iter::once(action_id("puzzles"))
             .chain(std::iter::once(action_id("play-computer")))
+            .chain(std::iter::once(action_id("how-to-play")))
             .chain(
                 api::SeekPreset::ALL
                     .into_iter()
@@ -4807,6 +4836,7 @@ mod tests {
                 action if action == action_id("play")
                     || action == action_id("puzzles")
                     || action == action_id("play-computer")
+                    || action == action_id("how-to-play")
             );
             *badge_empty
                 && if utility {
@@ -4906,6 +4936,9 @@ mod tests {
                 } else if action == action_id("play-computer") {
                     assert_eq!(label, "Computer");
                     assert_eq!(subtitle, "Offline");
+                } else if action == action_id("how-to-play") {
+                    assert_eq!(label, "How to play");
+                    assert_eq!(subtitle, "Board · controls");
                 } else {
                     let preset = api::SeekPreset::ALL
                         .into_iter()

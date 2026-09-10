@@ -48,11 +48,15 @@ const APPEAR_TIMEOUT: Duration = Duration::from_secs(10);
 /// Half a second in total. Long enough for a screen that has to be encoded,
 /// sent over a socket, decoded and laid out; short enough that a script full of
 /// deliberately inert taps does not become a script that takes a minute.
+const RESPONSE_LIMIT: u64 = 16 * 1024 * 1024;
 const SETTLE_POLLS: u32 = 25;
 const SETTLE_INTERVAL: std::time::Duration = std::time::Duration::from_millis(20);
 
-pub const SIMULATED_PANEL: (u32, u32) = (1072, 1448);
+#[cfg(test)]
+const SIMULATED_PANEL: (u32, u32) = (1072, 1448);
+#[cfg(test)]
 const FRAME_WIDTH: u32 = SIMULATED_PANEL.0;
+#[cfg(test)]
 const FRAME_HEIGHT: u32 = SIMULATED_PANEL.1;
 
 /// How the device announces a screenshot inside its ordinary report.
@@ -69,24 +73,29 @@ pub struct Control {
 }
 
 impl Control {
-    /// Whether this node carries `needle` in any of its lines.
+    /// Whether the visible text of this node carries `needle`, across wraps.
     ///
     /// Case-insensitive and by substring, because a label is routinely
     /// shortened to fit -- "Return to Kobo reader" becomes "Return to Kobo…"
     /// on a narrow panel, and a script that had to know which panel it was
     /// running on would be a script nobody kept up to date.
     fn says(&self, needle: &str) -> bool {
-        let needle = needle.to_lowercase();
-        self.lines
-            .iter()
-            .any(|line| line.to_lowercase().contains(&needle))
+        let normalize = |text: &str| {
+            text.split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+                .to_lowercase()
+        };
+        normalize(&self.lines.join(" ")).contains(&normalize(needle))
     }
 
     /// Whether one of this node's lines is exactly `needle`.
     fn says_exactly(&self, needle: &str) -> bool {
-        self.lines
-            .iter()
-            .any(|line| line.trim().eq_ignore_ascii_case(needle.trim()))
+        (self.kind == "Back" && needle.trim().eq_ignore_ascii_case("back"))
+            || self
+                .lines
+                .iter()
+                .any(|line| line.trim().eq_ignore_ascii_case(needle.trim()))
     }
 
     /// Whether a finger on the middle of this node would do anything.
@@ -109,6 +118,14 @@ pub struct Driver {
     /// want when the question is whether a screen *reads* well, because two
     /// screens overlaid are unreadable to a person and worse to a model.
     ideal: bool,
+}
+
+#[derive(Debug)]
+pub struct CapturedFrame {
+    pub metadata: serde_json::Value,
+    pub width: u32,
+    pub height: u32,
+    pub grey: Vec<u8>,
 }
 
 impl Driver {
@@ -164,8 +181,17 @@ impl Driver {
     pub fn step(&mut self, line: &str) -> Result<(), String> {
         let (verb, rest) = line.split_once(char::is_whitespace).unwrap_or((line, ""));
         let rest = rest.trim();
-        match verb {
+        let result = match verb {
             "tap" => self.tap(rest),
+            "tap-id" => {
+                let action = parse_action_id(rest)?;
+                let control = self
+                    .layout()?
+                    .into_iter()
+                    .find(|control| control.action == Some(action))
+                    .ok_or_else(|| format!("action {action} is not reachable on this screen"))?;
+                self.touch(control.centre.0, control.centre.1)
+            }
             "tap-at" => {
                 let (x, y) = parse_point(rest)?;
                 self.touch(x, y)
@@ -173,6 +199,12 @@ impl Driver {
             "type" => self.type_text(rest),
             "shot" => self.shot(rest).map(|path| {
                 println!("shot {}", path.display());
+            }),
+            "shot-colour" => self.shot_format(rest, true).map(|path| {
+                println!(
+                    "shot {} (ideal color; panel appearance uncalibrated)",
+                    path.display()
+                );
             }),
             "expect" => self.expect(rest),
             "expect-missing" => {
@@ -182,9 +214,30 @@ impl Driver {
                 Ok(())
             }
             "wait-for" => self.wait_for(rest),
+            "wait-for-id" => self.wait_for_id(parse_action_id(rest)?),
+            "wait-idle" => self.wait_idle(rest),
+            "expect-state" => self.expect_state(rest),
             "clean" => self.clean(),
             "lifecycle" => self.post("/lifecycle", rest),
             "scenario" => self.post("/scenario", rest),
+            "tasks" if rest == "cancel" => {
+                self.post("/tasks", rest)?;
+                self.wait_idle("")
+            }
+            "session" if rest == "disconnect" => self.post("/session", rest),
+            "input" => {
+                self.post("/input", rest)?;
+                self.wait_idle("")
+            }
+            "panel" => self.post("/panel", rest),
+            "device" => {
+                self.post("/device", rest)?;
+                self.wait_idle("")
+            }
+            "clock" => {
+                self.post("/clock", rest)?;
+                self.wait_idle("")
+            }
             "wait" => {
                 let milliseconds: u64 = rest
                     .parse()
@@ -201,7 +254,29 @@ impl Driver {
                 Ok(())
             }
             other => Err(format!("unknown step {other:?}")),
+        };
+        result?;
+        if matches!(
+            verb,
+            "tap"
+                | "tap-id"
+                | "tap-at"
+                | "type"
+                | "wait-for"
+                | "wait-for-id"
+                | "wait-idle"
+                | "wait"
+                | "input"
+                | "tasks"
+                | "panel"
+                | "device"
+                | "clock"
+                | "scenario"
+                | "lifecycle"
+        ) {
+            self.clean()?;
         }
+        Ok(())
     }
 
     /// Taps the control whose label carries `label`.
@@ -292,6 +367,69 @@ impl Driver {
         }
     }
 
+    fn wait_for_id(&self, action: u32) -> Result<(), String> {
+        let deadline = Instant::now() + APPEAR_TIMEOUT;
+        loop {
+            if self
+                .layout()?
+                .iter()
+                .any(|control| control.action == Some(action))
+            {
+                return Ok(());
+            }
+            if Instant::now() >= deadline {
+                return Err(format!("action {action} did not become reachable"));
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+
+    fn wait_idle(&self, requested: &str) -> Result<(), String> {
+        let timeout = if requested.is_empty() {
+            10_000
+        } else {
+            requested
+                .parse::<u64>()
+                .map_err(|_| "wait-idle takes a timeout in milliseconds")?
+        };
+        if timeout == 0 || timeout > 60_000 {
+            return Err("wait-idle timeout must be from 1 to 60000 milliseconds".into());
+        }
+        let deadline = Instant::now() + Duration::from_millis(timeout);
+        loop {
+            let report: serde_json::Value = serde_json::from_slice(&self.get("/activity")?)
+                .map_err(|error| format!("read simulator activity: {error}"))?;
+            if activity_idle(&report)? {
+                return Ok(());
+            }
+            if Instant::now() >= deadline {
+                return Err(format!(
+                    "app did not become idle within {timeout} ms: {report}"
+                ));
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+    }
+
+    fn expect_state(&self, expression: &str) -> Result<(), String> {
+        let (target, expected) = expression
+            .split_once(char::is_whitespace)
+            .ok_or("expect-state takes ENDPOINT#JSON_POINTER followed by a JSON value")?;
+        let (endpoint, pointer) = target
+            .split_once('#')
+            .ok_or("expect-state requires an endpoint and #JSON_POINTER")?;
+        if !matches!(
+            endpoint,
+            "/simulation" | "/activity" | "/layout" | "/clock" | "/device" | "/panel" | "/input"
+        ) || !pointer.starts_with('/')
+        {
+            return Err("expect-state uses /simulation, /activity, /layout, /clock, /device, /panel or /input and a JSON pointer beginning with /".into());
+        }
+        let report: serde_json::Value = serde_json::from_slice(&self.get(endpoint)?)
+            .map_err(|error| format!("read assertion state: {error}"))?;
+        assert_json_pointer(&report, pointer, expected.trim())
+    }
+
     /// Asserts the renderer raised no errors about this screen.
     ///
     /// Warnings are printed and not fatal. An error means something was
@@ -300,26 +438,54 @@ impl Driver {
     /// notices they are missing.
     fn clean(&mut self) -> Result<(), String> {
         let body = self.get("/diagnostics")?;
-        let body = String::from_utf8_lossy(&body).into_owned();
-        let errors = json_objects(&body)
-            .into_iter()
-            .filter(|issue| json_field(issue, "severity").as_deref() == Some("error"))
-            .filter_map(|issue| json_field(&issue, "message"))
-            .collect::<Vec<_>>();
-        if errors.is_empty() {
-            return Ok(());
+        let report: serde_json::Value = serde_json::from_slice(&body)
+            .map_err(|error| format!("read layout diagnostics: {error}"))?;
+        let issues = report
+            .get("issues")
+            .and_then(serde_json::Value::as_array)
+            .ok_or("layout diagnostics contain no issue list")?;
+        let mut errors = Vec::new();
+        for issue in issues {
+            let message = issue
+                .get("message")
+                .and_then(serde_json::Value::as_str)
+                .ok_or("layout diagnostic has no explanation")?;
+            match issue.get("severity").and_then(serde_json::Value::as_str) {
+                Some("warning") => eprintln!("layout warning: {message}"),
+                Some("error") => errors.push(message),
+                _ => return Err("layout diagnostic has an unknown severity".into()),
+            }
         }
-        Err(format!(
-            "the renderer refused this screen: {}",
-            errors.join("; ")
-        ))
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(format!(
+                "the renderer refused this screen: {}",
+                errors.join("; ")
+            ))
+        }
     }
 
     /// Writes the panel out as a PNG and returns where it went.
     fn shot(&mut self, name: &str) -> Result<PathBuf, String> {
-        let frame = self.frame()?;
-        let png = kobo_image::encode_png_grey(FRAME_WIDTH, FRAME_HEIGHT, &frame)
-            .map_err(|error| format!("encode the frame: {error}"))?;
+        self.shot_format(name, false)
+    }
+
+    fn shot_format(&mut self, name: &str, colour: bool) -> Result<PathBuf, String> {
+        let bytes = self.get(if colour {
+            "/colour-capture"
+        } else if self.ideal {
+            "/ideal-capture"
+        } else {
+            "/capture"
+        })?;
+        let (metadata, width, height, pixels) = parse_atomic_capture(&bytes)?;
+        let png = if metadata["frame"]["format"] == "rgb24" {
+            kobo_image::encode_png_rgb(width, height, pixels)
+        } else {
+            kobo_image::encode_png_grey(width, height, pixels)
+        }
+        .map_err(|error| format!("encode the frame: {error}"))?;
         self.taken += 1;
         let name = if name.is_empty() {
             format!("{:03}", self.taken)
@@ -330,7 +496,32 @@ impl Driver {
             .map_err(|error| format!("create {}: {error}", self.shots.display()))?;
         let path = self.shots.join(format!("{name}.png"));
         std::fs::write(&path, png).map_err(|error| format!("write {}: {error}", path.display()))?;
+        let sidecar = path.with_extension("json");
+        std::fs::write(
+            &sidecar,
+            serde_json::to_vec_pretty(&metadata).map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| format!("write {}: {error}", sidecar.display()))?;
         Ok(path)
+    }
+
+    /// Captures one committed frame and its provenance in the same response.
+    pub fn capture(&self) -> Result<CapturedFrame, String> {
+        let bytes = self.get(if self.ideal {
+            "/ideal-capture"
+        } else {
+            "/capture"
+        })?;
+        let (metadata, width, height, grey) = parse_atomic_capture(&bytes)?;
+        if metadata["frame"]["format"] != "grey8" {
+            return Err("expected a grayscale recording frame".into());
+        }
+        Ok(CapturedFrame {
+            metadata,
+            width,
+            height,
+            grey: grey.to_vec(),
+        })
     }
 
     /// The first control saying `label`, if any.
@@ -339,25 +530,6 @@ impl Driver {
             .layout()?
             .into_iter()
             .find(|control| control.says(label)))
-    }
-
-    /// The raw grey bytes of the panel as the simulator has it.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the simulator cannot be reached, or answers with
-    /// a frame that is not the size of the panel -- which would silently come
-    /// out as a picture skewed one pixel further with every row.
-    pub fn frame(&self) -> Result<Vec<u8>, String> {
-        let frame = self.get(if self.ideal { "/ideal-frame" } else { "/frame" })?;
-        let expected = (FRAME_WIDTH as usize) * (FRAME_HEIGHT as usize);
-        if frame.len() != expected {
-            return Err(format!(
-                "the simulator sent {} bytes for a {FRAME_WIDTH}x{FRAME_HEIGHT} panel, not {expected}",
-                frame.len()
-            ));
-        }
-        Ok(frame)
     }
 
     /// Everything the renderer put on the panel.
@@ -384,13 +556,40 @@ impl Driver {
     /// and then reported that the button did nothing, which is a race that
     /// passes four runs in five and looks exactly like a real defect.
     ///
-    /// A tap that draws nothing new is normal and not an error: the runtime
-    /// drops a repaint identical to what is already displayed, and plenty of
-    /// taps are meant to be inert. So this waits for a paint, and gives up
-    /// quietly.
+    /// SDK callback completion is authoritative, including when the callback
+    /// draws an intermediate screen or starts a long transfer. Active network
+    /// work is not awaited here, so the next step can cancel it. Simulators
+    /// without callback markers retain the bounded legacy paint wait.
     fn touch(&self, x: i32, y: i32) -> Result<(), String> {
         let before = self.paints()?;
         self.post("/touch", &format!("x={x}&y={y}"))?;
+        let deadline = Instant::now() + APPEAR_TIMEOUT;
+        loop {
+            let bytes = match self.get("/activity") {
+                Ok(bytes) => bytes,
+                Err(error) if error == "/activity: the simulator answered 404" => break,
+                Err(error) => return Err(error),
+            };
+            let report: serde_json::Value = serde_json::from_slice(&bytes)
+                .map_err(|error| format!("read simulator activity: {error}"))?;
+            if report["connected"] != true {
+                return Err("the app disconnected while handling the tap".into());
+            }
+            if report["callbackMarkers"] != true {
+                break;
+            }
+            let callbacks = report["pendingCallbacks"]
+                .as_u64()
+                .ok_or("simulator has no callback count")?;
+            if callbacks == 0 {
+                return Ok(());
+            }
+            if Instant::now() >= deadline {
+                return Err("the app did not finish handling the tap within 10 seconds".into());
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        // Older simulators and the built-in counter have no SDK markers.
         for _ in 0..SETTLE_POLLS {
             if self.paints()? != before {
                 return Ok(());
@@ -454,9 +653,12 @@ impl Driver {
             .write_all(request.as_bytes())
             .map_err(|error| format!("send {method} {path}: {error}"))?;
         let mut answer = Vec::new();
-        stream
+        Read::take(&mut stream, RESPONSE_LIMIT + 1)
             .read_to_end(&mut answer)
             .map_err(|error| format!("read the answer to {method} {path}: {error}"))?;
+        if answer.len() as u64 > RESPONSE_LIMIT {
+            return Err(format!("the answer to {method} {path} exceeds 16 MiB"));
+        }
         split_response(&answer, path)
     }
 }
@@ -496,9 +698,16 @@ const STOP_POLL: Duration = Duration::from_millis(10);
 struct FrameLog {
     frames: Vec<RecordedFrame>,
     looked: u32,
+    provenance: Vec<serde_json::Value>,
 }
 
 impl FrameLog {
+    fn sample_capture(&mut self, millis: u32, capture: CapturedFrame) {
+        if self.sample(millis, capture.grey) {
+            self.provenance.push(capture.metadata);
+        }
+    }
+
     /// Offers one look at the panel, and says whether it was worth keeping.
     fn sample(&mut self, millis: u32, grey: Vec<u8>) -> bool {
         self.looked += 1;
@@ -535,6 +744,8 @@ impl FrameLog {
 pub struct Recorder {
     /// A second connection to the same simulator, used only for frames.
     sampler: Driver,
+    dimensions: (u32, u32),
+    metadata_directory: Option<PathBuf>,
     started: Instant,
     log: Arc<Mutex<FrameLog>>,
     stop: Arc<AtomicBool>,
@@ -562,8 +773,10 @@ impl Recorder {
             ));
         }
         let sampler = Driver::new(address, Path::new(".")).ideal(!ghosting);
+        let captured = sampler.capture()?;
+        let dimensions = (captured.width, captured.height);
         let mut opening = FrameLog::default();
-        opening.sample(0, sampler.frame()?);
+        opening.sample_capture(0, captured);
 
         let interval = Duration::from_micros(1_000_000 / u64::from(fps));
         let started = Instant::now();
@@ -578,11 +791,11 @@ impl Recorder {
             std::thread::spawn(move || {
                 while !stop.load(Ordering::Relaxed) {
                     let looked_at = Instant::now();
-                    match sampler.frame() {
-                        Ok(grey) => {
+                    match sampler.capture() {
+                        Ok(captured) => {
                             let millis =
                                 u32::try_from(started.elapsed().as_millis()).unwrap_or(u32::MAX);
-                            lock(&log).sample(millis, grey);
+                            lock(&log).sample_capture(millis, captured);
                         }
                         Err(error) => {
                             *lock(&failure) = Some(error);
@@ -604,12 +817,21 @@ impl Recorder {
         };
         Ok(Self {
             sampler,
+            dimensions,
+            metadata_directory: None,
             started,
             log,
             stop,
             failure,
             worker: Some(worker),
         })
+    }
+
+    /// Write provenance for each retained frame beside the recording.
+    #[must_use]
+    pub fn with_metadata(mut self, directory: &Path) -> Self {
+        self.metadata_directory = Some(directory.to_path_buf());
+        self
     }
 
     /// Stops filming and hands back the panel, its size, and every frame kept.
@@ -630,12 +852,12 @@ impl Recorder {
         if let Some(worker) = self.worker.take() {
             let _ = worker.join();
         }
-        let closing = self.sampler.frame();
+        let closing = self.sampler.capture();
         let mut log = lock(&self.log);
         match closing {
-            Ok(grey) => {
+            Ok(captured) => {
                 let millis = u32::try_from(self.started.elapsed().as_millis()).unwrap_or(u32::MAX);
-                log.sample(millis, grey);
+                log.sample_capture(millis, captured);
             }
             Err(error) => *lock(&self.failure) = Some(error),
         }
@@ -645,12 +867,28 @@ impl Recorder {
             }
             eprintln!("warning: the recording stopped early: {error}");
         }
+        if let Some(directory) = &self.metadata_directory {
+            std::fs::create_dir_all(directory)
+                .map_err(|error| format!("create recording metadata directory: {error}"))?;
+            for (index, metadata) in log.provenance.iter().enumerate() {
+                let path = directory.join(format!("frame-{index:04}.json"));
+                std::fs::write(
+                    &path,
+                    serde_json::to_vec_pretty(metadata).map_err(|error| error.to_string())?,
+                )
+                .map_err(|error| format!("write {}: {error}", path.display()))?;
+            }
+        }
         println!(
             "recording: kept {} of {} frames",
             log.frames.len(),
             log.looked
         );
-        Ok((FRAME_WIDTH, FRAME_HEIGHT, std::mem::take(&mut log.frames)))
+        Ok((
+            self.dimensions.0,
+            self.dimensions.1,
+            std::mem::take(&mut log.frames),
+        ))
     }
 }
 
@@ -933,6 +1171,125 @@ fn json_number(object: &str, key: &str) -> Option<i64> {
     digits.parse().ok()
 }
 
+fn parse_atomic_capture(bytes: &[u8]) -> Result<(serde_json::Value, u32, u32, &[u8]), String> {
+    let header: [u8; 4] = bytes
+        .get(..4)
+        .ok_or("capture has no metadata header")?
+        .try_into()
+        .map_err(|_| "capture header is invalid")?;
+    let size = u32::from_le_bytes(header) as usize;
+    if size > 128 * 1024 {
+        return Err("capture metadata exceeds its limit".into());
+    }
+    let metadata: serde_json::Value = serde_json::from_slice(
+        bytes
+            .get(4..4 + size)
+            .ok_or("capture metadata is incomplete")?,
+    )
+    .map_err(|error| format!("read capture metadata: {error}"))?;
+    if metadata["schema"] != "cobalt.simulator-capture"
+        || metadata["version"] != 1
+        || !matches!(
+            metadata["frame"]["format"].as_str(),
+            Some("grey8" | "rgb24")
+        )
+    {
+        return Err("unsupported capture schema or pixel format".into());
+    }
+    let simulation = metadata
+        .get("simulation")
+        .ok_or("capture has no simulation state")?;
+    let (width, height) =
+        parse_dimensions(&serde_json::to_vec(simulation).map_err(|error| error.to_string())?)?;
+    let frame = &bytes[4 + size..];
+    let channels = if metadata["frame"]["format"] == "rgb24" {
+        3
+    } else {
+        1
+    };
+    if frame.len() != width as usize * height as usize * channels {
+        return Err("capture pixels do not match the panel size".into());
+    }
+    if metadata["frame"]["sha256"].as_str() != Some(&kobo_net::sha256::hex_digest(frame)) {
+        return Err("capture pixels do not match their recorded digest".into());
+    }
+    Ok((metadata, width, height, frame))
+}
+
+fn parse_action_id(value: &str) -> Result<u32, String> {
+    if let Ok(number) = value.parse::<u32>() {
+        return Ok(number);
+    }
+    if value.is_empty()
+        || value.len() > 128
+        || !value.as_bytes()[0].is_ascii_lowercase()
+        || !value
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b".-_".contains(&b))
+    {
+        return Err("action ID must be an unsigned number or a stable action name".into());
+    }
+    Ok(kobo_ui::ActionId::from_name(value).0)
+}
+fn activity_idle(report: &serde_json::Value) -> Result<bool, String> {
+    if report.get("connected").and_then(serde_json::Value::as_bool) != Some(true) {
+        return Err("the app disconnected before becoming idle".into());
+    }
+    if report
+        .get("callbackMarkers")
+        .and_then(serde_json::Value::as_bool)
+        != Some(true)
+    {
+        return Ok(false);
+    }
+    let pending = report
+        .get("pendingCallbacks")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or("simulator activity has no callback count")?;
+    let active = report
+        .get("activeWork")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or("simulator activity has no work count")?;
+    Ok(pending == 0 && active == 0)
+}
+fn assert_json_pointer(
+    report: &serde_json::Value,
+    pointer: &str,
+    expected: &str,
+) -> Result<(), String> {
+    let expected: serde_json::Value = serde_json::from_str(expected)
+        .map_err(|error| format!("expected value is not JSON: {error}"))?;
+    let actual = report
+        .pointer(pointer)
+        .ok_or_else(|| format!("state has no value at {pointer}"))?;
+    if actual == &expected {
+        Ok(())
+    } else {
+        Err(format!("{pointer}: expected {expected}, found {actual}"))
+    }
+}
+
+fn parse_dimensions(bytes: &[u8]) -> Result<(u32, u32), String> {
+    let value: serde_json::Value = serde_json::from_slice(bytes)
+        .map_err(|error| format!("read simulator profile: {error}"))?;
+    let profile = value
+        .get("profile")
+        .ok_or("simulator response has no profile")?;
+    let dimension = |name| {
+        profile
+            .get(name)
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|number| u32::try_from(number).ok())
+            .filter(|&number| number > 0)
+            .ok_or_else(|| format!("simulator profile has an invalid {name}"))
+    };
+    let (width, height) = (dimension("width")?, dimension("height")?);
+    if u64::from(width) * u64::from(height) > kobo_image::MAX_PIXELS {
+        return Err("simulator profile exceeds the screenshot pixel limit".into());
+    }
+    Ok((width, height))
+}
+
 fn parse_point(text: &str) -> Result<(i32, i32), String> {
     let (x, y) = text
         .split_once([',', ' '])
@@ -958,6 +1315,198 @@ mod tests {
     use std::path::Path;
 
     const BODY: &str = r#"{"nodes":[{"kind":"Button","x":10,"y":20,"width":30,"height":40,"centre":{"x":25,"y":40},"action":77,"lines":["Search","for a \"book\""]},{"kind":"Divider","x":0,"y":1,"width":2,"height":3,"centre":{"x":1,"y":2},"action":null,"lines":[]}]}"#;
+
+    #[test]
+    fn atomic_capture_rejects_truncation_corruption_and_mismatched_metadata() {
+        let pixels = [0_u8, 64, 128, 255, 0, 255];
+        let metadata = serde_json::json!({"schema":"cobalt.simulator-capture", "version":1, "simulation":{"profile":{"width":2,"height":3}}, "frame":{"format":"grey8", "sha256":kobo_net::sha256::hex_digest(&pixels)}});
+        let encoded = serde_json::to_vec(&metadata).unwrap();
+        let mut capture = u32::try_from(encoded.len()).unwrap().to_le_bytes().to_vec();
+        capture.extend(encoded);
+        capture.extend(pixels);
+        let (restored, width, height, frame) = super::parse_atomic_capture(&capture).unwrap();
+        assert_eq!(restored, metadata);
+        assert_eq!((width, height), (2, 3));
+        assert_eq!(frame, pixels);
+        assert!(super::parse_atomic_capture(&capture[..capture.len() - 1]).is_err());
+        *capture.last_mut().unwrap() ^= 1;
+        assert!(super::parse_atomic_capture(&capture).is_err());
+        assert!(super::parse_atomic_capture(&[255, 255, 255, 255]).is_err());
+    }
+
+    #[test]
+    fn tap_waits_past_intermediate_paint_for_callback_but_not_for_network_work() {
+        use std::io::{Read, Write};
+        let server = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = server.local_addr().unwrap().to_string();
+        server.set_nonblocking(true).unwrap();
+        let worker = std::thread::spawn(move || {
+            let mut callbacks = 0;
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+            loop {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "driver did not await callback completion"
+                );
+                let (mut stream, _) = match server.accept() {
+                    Ok(client) => client,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(std::time::Duration::from_millis(1));
+                        continue;
+                    }
+                    Err(error) => panic!("accept driver: {error}"),
+                };
+                stream
+                    .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+                    .unwrap();
+                let mut bytes = [0_u8; 4096];
+                let size = stream.read(&mut bytes).unwrap();
+                let request = String::from_utf8_lossy(&bytes[..size]);
+                let body = if request.starts_with("GET /layout ") {
+                    "{\"paints\":2,\"nodes\":[]}".to_owned()
+                } else if request.starts_with("POST /touch ") {
+                    String::new()
+                } else {
+                    assert!(request.starts_with("GET /activity "));
+                    callbacks += 1;
+                    serde_json::json!({"connected":true,"callbackMarkers":true,"pendingCallbacks":u8::from(callbacks < 3),"activeWork":1}).to_string()
+                };
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                )
+                .unwrap();
+                if callbacks == 3 {
+                    return callbacks;
+                }
+            }
+        });
+        let driver = Driver::new(&address, Path::new("."));
+        driver.touch(10, 20).unwrap();
+        assert_eq!(worker.join().unwrap(), 3);
+    }
+
+    #[test]
+    fn colour_capture_validates_each_channel_and_png_preserves_them() {
+        let pixels = [200_u8, 10, 30, 20, 240, 100];
+        let metadata = serde_json::json!({"schema":"cobalt.simulator-capture", "version":1, "simulation":{"profile":{"width":2,"height":1}}, "frame":{"format":"rgb24", "sha256":kobo_net::sha256::hex_digest(&pixels)}});
+        let encoded = serde_json::to_vec(&metadata).unwrap();
+        let mut bytes = u32::try_from(encoded.len()).unwrap().to_le_bytes().to_vec();
+        bytes.extend(encoded);
+        bytes.extend(pixels);
+        let (_, width, height, restored) = super::parse_atomic_capture(&bytes).unwrap();
+        assert_eq!(restored, pixels);
+        let png = kobo_image::encode_png_rgb(width, height, restored).unwrap();
+        let decoded = kobo_image::decode_colour(&png).unwrap();
+        assert_eq!(decoded.colour(), Some(pixels.as_slice()));
+        assert!(super::parse_atomic_capture(&bytes[..bytes.len() - 1]).is_err());
+        *bytes.last_mut().unwrap() ^= 1;
+        assert!(super::parse_atomic_capture(&bytes).is_err());
+    }
+
+    #[test]
+    fn semantic_assertions_retain_types_and_require_real_callback_completion() {
+        let report = serde_json::json!({"effects": {"post": 0}, "scenario": "offline"});
+        assert!(super::assert_json_pointer(&report, "/effects/post", "0").is_ok());
+        assert!(super::assert_json_pointer(&report, "/effects/post", "\"0\"").is_err());
+        assert!(super::assert_json_pointer(&report, "/missing", "null").is_err());
+        assert!(super::parse_action_id("comic-next").is_ok());
+        assert!(super::parse_action_id("-1").is_err());
+        assert!(super::parse_action_id("4294967296").is_err());
+        assert!(super::parse_action_id("").is_err());
+        for (callbacks, work, expected) in [(0, 0, true), (1, 0, false), (0, 1, false)] {
+            assert_eq!(
+                super::activity_idle(
+                    &serde_json::json!({"connected":true, "callbackMarkers":true, "pendingCallbacks":callbacks, "activeWork":work})
+                ),
+                Ok(expected)
+            );
+        }
+        assert!(super::activity_idle(&serde_json::json!({"connected":false})).is_err());
+        assert!(!super::activity_idle(
+            &serde_json::json!({"connected":true, "callbackMarkers":false})
+        )
+        .unwrap());
+    }
+
+    #[test]
+    fn capture_dimensions_follow_every_supported_profile_and_reject_bad_metadata() {
+        for profile in kobo_profile::SUPPORTED_PROFILES {
+            let metadata =
+                serde_json::json!({"profile": {"width": profile.width, "height": profile.height}});
+            assert_eq!(
+                super::parse_dimensions(metadata.to_string().as_bytes()).unwrap(),
+                (profile.width, profile.height)
+            );
+        }
+        for metadata in [
+            r#"{"profile":{"width":0,"height":1448}}"#,
+            r#"{"profile":{"width":1072.5,"height":1448}}"#,
+            r#"{"profile":{"width":4294967295,"height":4294967295}}"#,
+            r#"{"width":1072,"height":1448}"#,
+        ] {
+            assert!(super::parse_dimensions(metadata.as_bytes()).is_err());
+        }
+    }
+
+    #[test]
+    fn text_assertions_survive_wrapping_but_do_not_invent_clipped_words() {
+        let text = super::Control {
+            kind: "Banner".into(),
+            centre: (50, 100),
+            action: None,
+            lines: vec![
+                "Couldn't finish. Check".into(),
+                "free space and try…".into(),
+            ],
+        };
+        assert!(text.says("check free space"));
+        assert!(text.says("CHECK\nfree  space"));
+        assert!(!text.says("try again"));
+        assert!(!text.says("finish Check"));
+    }
+
+    #[test]
+    fn back_is_addressable_without_painted_text() {
+        let back = super::Control {
+            kind: "Back".into(),
+            centre: (50, 100),
+            lines: vec![],
+            action: Some(u32::MAX),
+        };
+        assert!(back.says_exactly("Back"));
+        assert!(!back.says_exactly("Next"));
+    }
+
+    #[test]
+    fn a_transition_fails_when_the_renderer_reports_an_unreachable_control() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap().to_string();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+                .unwrap();
+            let mut request = [0; 4096];
+            let length = stream.read(&mut request).unwrap();
+            assert!(String::from_utf8_lossy(&request[..length]).starts_with("GET /diagnostics "));
+            let body = r#"{"issues":[{"severity":"error","message":"Button outside panel"}]}"#;
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .unwrap();
+        });
+        let error = Driver::new(&address, Path::new("."))
+            .step("wait 0")
+            .unwrap_err();
+        assert!(error.contains("Button outside panel"));
+        server.join().unwrap();
+    }
 
     #[test]
     fn the_layout_reader_finds_every_node_and_its_words() {
@@ -1114,7 +1663,11 @@ mod tests {
         let address = server.local_addr().expect("simulator address").to_string();
         std::thread::spawn(move || server.serve());
 
-        let recorder = Recorder::start(&address, 10, false).expect("start recording");
+        let evidence =
+            std::env::temp_dir().join(format!("cobalt-recording-{}", std::process::id()));
+        let recorder = Recorder::start(&address, 10, false)
+            .expect("start recording")
+            .with_metadata(&evidence);
         // Something for it to film: the built-in simulator's button increments
         // a counter and redraws, so the panel really does change under it.
         let mut driver = Driver::new(&address, Path::new("."));
@@ -1124,7 +1677,16 @@ mod tests {
 
         assert_eq!((width, height), (FRAME_WIDTH, FRAME_HEIGHT));
         assert!(!frames.is_empty(), "nothing was filmed");
-        for frame in &frames {
+        for (index, frame) in frames.iter().enumerate() {
+            let metadata: serde_json::Value = serde_json::from_slice(
+                &std::fs::read(evidence.join(format!("frame-{index:04}.json"))).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(
+                metadata["frame"]["sha256"],
+                kobo_net::sha256::hex_digest(&frame.grey)
+            );
+            assert_eq!(metadata["mode"], "counter-demo");
             assert_eq!(
                 frame.grey.len(),
                 (FRAME_WIDTH as usize) * (FRAME_HEIGHT as usize),
@@ -1140,5 +1702,6 @@ mod tests {
             frames.len() >= 2,
             "the counter was tapped and the recording never noticed"
         );
+        std::fs::remove_dir_all(evidence).unwrap();
     }
 }

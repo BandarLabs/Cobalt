@@ -521,6 +521,43 @@ fn add_span(accumulator: &mut [i64], from: i64, to: i64) {
 /// a square box, which is exactly what this rasteriser already draws.
 #[must_use]
 pub fn shapes(glyph: Glyph) -> Vec<Shape> {
+    if glyph == Glyph::Shift {
+        return vec![Shape::Stroke {
+            path: Path::new()
+                .move_to(500, 100)
+                .line_to(100, 500)
+                .line_to(350, 500)
+                .line_to(350, 850)
+                .line_to(650, 850)
+                .line_to(650, 500)
+                .line_to(900, 500)
+                .close(),
+            width: WEIGHT,
+        }];
+    }
+    if glyph == Glyph::Backspace {
+        // Original geometry for the conventional erase key; no font fallback.
+        return vec![
+            Shape::Stroke {
+                path: Path::new()
+                    .move_to(350, 250)
+                    .line_to(850, 250)
+                    .line_to(850, 750)
+                    .line_to(350, 750)
+                    .line_to(100, 500)
+                    .close(),
+                width: WEIGHT,
+            },
+            Shape::Stroke {
+                path: Path::new().move_to(470, 385).line_to(700, 615),
+                width: WEIGHT,
+            },
+            Shape::Stroke {
+                path: Path::new().move_to(700, 385).line_to(470, 615),
+                width: WEIGHT,
+            },
+        ];
+    }
     if let Some(shapes) = game_piece_shapes(glyph) {
         return shapes;
     }

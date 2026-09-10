@@ -11,6 +11,9 @@
 
 //! A small retained UI tree and grayscale rasterizer for the Kobo display.
 
+mod board;
+pub use board::{BoardCell, BoardClue, BoardMark, BoardSurface};
+
 use std::cmp::{max, min};
 use std::collections::BTreeMap;
 use std::sync::{Mutex, OnceLock};
@@ -999,6 +1002,69 @@ mod responsive_profile_tests {
     }
 
     #[test]
+    fn square_boards_keep_their_geometry_and_trailing_controls_at_larger_sizes() {
+        for (name, base) in panels() {
+            for text_scale in [TextScale::Default, TextScale::Large, TextScale::ExtraLarge] {
+                let metrics = DisplayMetrics { text_scale, ..base };
+                let screen = Screen::new(
+                    1,
+                    vec![
+                        Node::Heading {
+                            id: NodeId(1),
+                            text: "O to play".into(),
+                            level: 1,
+                        },
+                        Node::Grid {
+                            id: NodeId(2),
+                            columns: 3,
+                            square: true,
+                            cells: (1..=9).map(|id| Cell::new(ActionId(id), "O")).collect(),
+                        },
+                        Node::Grid {
+                            id: NodeId(3),
+                            columns: 2,
+                            square: false,
+                            cells: vec![
+                                Cell::new(ActionId(10), "Reset game"),
+                                Cell::new(ActionId(11), "How to play"),
+                            ],
+                        },
+                    ],
+                )
+                .with_top_bar(TopBar::new(NodeId(4), "Tic-tac-toe"));
+                let diagnostics = screen.diagnostics(&metrics, &Chrome::measuring(true));
+                assert!(
+                    !diagnostics.has_errors(),
+                    "{name} {text_scale:?}: {:?}",
+                    diagnostics.issues
+                );
+                let cells = diagnostics
+                    .layout
+                    .nodes
+                    .iter()
+                    .filter(|node| {
+                        node.id == NodeId(2) && matches!(node.kind, LayoutKind::Cell(..))
+                    })
+                    .collect::<Vec<_>>();
+                assert_eq!(cells.len(), 9);
+                for cell in &cells {
+                    assert_eq!(cell.rect.width, cell.rect.height);
+                    assert!(cell.rect.width >= metrics.touch_target_minimum());
+                }
+                assert_eq!(cells[0].rect.y, cells[2].rect.y);
+                assert!(cells[3].rect.y > cells[2].rect.y);
+                for action in 1..=11 {
+                    assert!(diagnostics
+                        .layout
+                        .nodes
+                        .iter()
+                        .any(|node| node.kind.acts_on() == Some(ActionId(action))));
+                }
+            }
+        }
+    }
+
+    #[test]
     fn long_document_regions_yield_to_trailing_controls() {
         for (name, metrics) in panels() {
             let screen = Screen::new(
@@ -1926,6 +1992,7 @@ pub const MAX_TONES_PER_SCREEN: usize = 4;
 /// The most verbs an action bar will draw. See [`BarStyle::Actions`].
 pub const MAX_ACTION_BAR_ACTIONS: usize = 3;
 
+mod environment;
 pub mod vector;
 
 /// Grayscale values used by the built-in monochrome design system.
@@ -2036,6 +2103,17 @@ pub struct NodeId(pub u32);
 pub struct ActionId(pub u32);
 
 impl ActionId {
+    /// Stable action identity shared by app builders and simulator tooling.
+    #[must_use]
+    pub fn from_name(name: &str) -> Self {
+        let mut hash = 0x811c_9dc5_u32;
+        for byte in name.bytes() {
+            hash ^= u32::from(byte);
+            hash = hash.wrapping_mul(0x0100_0193);
+        }
+        Self(hash.max(1))
+    }
+
     /// The reserved identifier for going back.
     ///
     /// Back is owned by the runtime's navigation stack rather than by the
@@ -2068,6 +2146,15 @@ pub struct Chrome {
 }
 
 impl Chrome {
+    /// Composes shell decoration for the screen that will be displayed.
+    #[must_use]
+    pub fn for_screen(screen: &Screen, at_home: bool, status: Option<Status>) -> Self {
+        Self {
+            back: !at_home || screen.owns_back,
+            status: if screen.reading { None } else { status },
+        }
+    }
+
     #[must_use]
     pub const fn with_back(back: bool) -> Self {
         Self { back, status: None }
@@ -2869,6 +2956,7 @@ impl Screen {
     /// Lays the screen out for a panel, including runtime-owned decoration.
     #[must_use]
     pub fn layout_with(&self, metrics: &DisplayMetrics, chrome: &Chrome) -> Layout {
+        let _environment = environment::TextEnvironment::enter(self, metrics);
         with_legacy_typography(self.legacy_typography, || {
             with_reading_font(self.reading_font, || {
                 self.layout_with_selected_font(metrics, chrome)
@@ -2974,6 +3062,7 @@ impl Screen {
                     gap,
                 );
                 cursor = max(cursor, content_bottom.saturating_sub(trailing));
+                layout.flow_height = cursor.saturating_sub(content_top).max(0);
                 continue;
             }
             let bottom = flow_node_bottom(
@@ -2999,6 +3088,7 @@ impl Screen {
                     &mut layout,
                 )
             });
+            layout.flow_height = cursor.saturating_sub(content_top).max(0);
             cursor = cursor.saturating_add(gap);
         }
 
@@ -4236,6 +4326,11 @@ pub enum Node {
     /// keyboard, a calculator and a colour picker are all the same shape, and
     /// none of them should need a new primitive in the protocol. So the caller
     /// chooses the columns, and whether cells are square or a single row high.
+    /// A bounded board viewport with explicit marks and aligned clue gutters.
+    Board {
+        id: NodeId,
+        surface: BoardSurface,
+    },
     Grid {
         id: NodeId,
         columns: u8,
@@ -5177,6 +5272,10 @@ pub enum Glyph {
     MorrisPoint,
     /// A legal destination on a Nine Men's Morris board.
     MorrisLegalPoint,
+    /// Remove the character before the typing position.
+    Backspace,
+    /// Capitalize the next typed letter.
+    Shift,
 }
 
 impl Glyph {
@@ -5187,7 +5286,7 @@ impl Glyph {
     /// the set was twenty-one: `Light` and `Close` were authored, shipped, and
     /// covered by none of the tests that walk every glyph. A glyph nobody
     /// rasterises in a test is a blank space beside a label on the panel.
-    pub const ALL: [Self; 66] = [
+    pub const ALL: [Self; 68] = [
         Self::App,
         Self::Book,
         Self::Note,
@@ -5254,6 +5353,8 @@ impl Glyph {
         Self::WhiteDraughtsMan,
         Self::MorrisPoint,
         Self::MorrisLegalPoint,
+        Self::Backspace,
+        Self::Shift,
     ];
 }
 
@@ -5281,6 +5382,7 @@ impl Node {
             | Self::Splash { id, .. }
             | Self::PagedList { id, .. }
             | Self::Grid { id, .. }
+            | Self::Board { id, .. }
             | Self::Rows { id, .. }
             | Self::Table { id, .. }
             | Self::TileGrid { id, .. }
@@ -5538,6 +5640,9 @@ pub enum LayoutKind {
     /// columns for its cells to turn taller than they are wide, so the size
     /// this label draws at cannot be read off its own rectangle.
     CellLabel(bool),
+    /// Explicit board ink; selection is an outline independent of the mark.
+    BoardMark(BoardMark, bool),
+    BoardClue,
     /// The three nested squares and four connectors behind a Morris board.
     MorrisBoard,
     /// One cell of a table, drawn in the body face.
@@ -5675,6 +5780,9 @@ pub struct Layout {
     pub nodes: Vec<LayoutNode>,
     /// The band between the bars, which is what the page-turn zones cover.
     pub content: Rect,
+    /// Height consumed by flow nodes, including their internal spacing but
+    /// excluding the final gap before the next node.
+    pub flow_height: i32,
     /// What paging means here, including when the answer is "nothing, for
     /// now": see [`PagingState`].
     pub page_turns: PagingState,
@@ -5727,6 +5835,7 @@ pub enum LayoutIssueKind {
     },
     EmptyChoice,
     InvalidPictureSource,
+    InvalidBoard,
     /// A bar of destinations with nothing marked as current.
     ///
     /// A warning rather than an error, and deliberately so. `selected: None`
@@ -5835,6 +5944,7 @@ impl std::fmt::Display for LayoutIssue {
             LayoutIssueKind::EmptyChoice => {
                 write!(formatter, "{node}: choice has no tappable answers")
             }
+            LayoutIssueKind::InvalidBoard => formatter.write_str("Board viewport has invalid dimensions, marks or clues."),
             LayoutIssueKind::InvalidPictureSource => {
                 write!(formatter, "{node}: picture source has no area")
             }
@@ -5939,23 +6049,13 @@ impl Layout {
 
     /// How much of the band between the bars is already spoken for.
     ///
-    /// Measured off the placed nodes rather than added up by the caller,
-    /// because the only number that matters is the one the layout engine
-    /// actually arrived at. An application that adds up what it thinks its
-    /// rows cost is guessing at line heights, and being a few pixels short
-    /// here is not a visible bug: the engine drops what does not fit in
-    /// silence.
+    /// Uses the layout cursor rather than the bounds of painted rectangles:
+    /// sections and other components also consume internal spacing after their
+    /// last visible mark. Omitting that spacing gives a following list more
+    /// room than it will actually receive.
     #[must_use]
-    pub fn content_used(&self) -> i32 {
-        self.nodes
-            .iter()
-            .filter(|node| {
-                node.rect.y >= self.content.y
-                    && node.rect.y < self.content.y.saturating_add(self.content.height)
-            })
-            .map(|node| node.rect.y.saturating_add(node.rect.height))
-            .max()
-            .map_or(0, |bottom| bottom.saturating_sub(self.content.y).max(0))
+    pub const fn content_used(&self) -> i32 {
+        self.flow_height
     }
 
     #[must_use]
@@ -6532,6 +6632,7 @@ fn layout_flow_node(
             | Node::Spacer { .. }
             | Node::Flex { .. }
             | Node::Grid { .. }
+            | Node::Board { .. }
             | Node::Table { .. }
             | Node::Picture { .. }
             | Node::TileGrid { .. }
@@ -7829,6 +7930,18 @@ fn layout_node(
             });
             y.saturating_add(height)
         }
+        Node::Board { id, surface } => board::layout(
+            *id,
+            surface,
+            Rect {
+                x,
+                y,
+                width,
+                height: bottom.saturating_sub(y),
+            },
+            metrics,
+            layout,
+        ),
         Node::Grid {
             id,
             columns,
@@ -7844,7 +7957,7 @@ fn layout_node(
             let pad_deck = *square && requested == 5 && cells.len() == 15;
             // A board's column count is the board, so narrowing it to the touch
             // target would deal a different game. Only free-form grids shrink.
-            let columns = if legacy_typography() || backgammon_board || pad_deck {
+            let columns = if legacy_typography() || *square {
                 requested
             } else {
                 let fits = width
@@ -7854,19 +7967,35 @@ fn layout_node(
                     .max(1);
                 requested.min(fits)
             };
-            let (x, width, gutter) = if backgammon_board {
+            let (mut x, mut width, gutter) = if backgammon_board {
                 (0, metrics.width, 0)
             } else if pad_deck {
                 (x, width, metrics.space(Space::Small))
             } else {
                 (x, width, tight)
             };
-            let block_extra = if *square && columns == 9 && cells.len() >= 81 {
-                gutter
-            } else {
-                0
-            };
-            let cell_width = (width - gutter * (columns - 1) - block_extra * 2) / columns;
+            let block_extra =
+                if *square && columns == 9 && cells.len() >= 27 && cells.len() % 27 == 0 {
+                    gutter
+                } else {
+                    0
+                };
+            let mut cell_width = (width - gutter * (columns - 1) - block_extra * 2) / columns;
+            if *square && !legacy_typography() && !backgammon_board && !cells.is_empty() {
+                let rows = i32::try_from(
+                    cells
+                        .len()
+                        .min(MAX_CELLS)
+                        .div_ceil(usize::try_from(columns).unwrap_or(1)),
+                )
+                .unwrap_or(i32::MAX);
+                let vertical_gaps = gutter * (rows - 1) + ((rows - 1) / 3) * block_extra;
+                let fits_height = bottom.saturating_sub(y).saturating_sub(vertical_gaps) / rows;
+                cell_width = cell_width.min(fits_height.max(metrics.touch_target_minimum()));
+                let board_width = cell_width * columns + gutter * (columns - 1) + block_extra * 2;
+                x = x.saturating_add((width - board_width).max(0) / 2);
+                width = board_width;
+            }
             // A square cell is what makes a board read as a board. A grid that
             // is not square is a keyboard, and there one row of touch target
             // is exactly right and anything taller wastes the panel.
@@ -8235,7 +8364,9 @@ fn layout_node(
             max_height_tenths_mm,
             framed,
         } => {
-            let ceiling = metrics.tenth_mm(i32::from(*max_height_tenths_mm));
+            let ceiling = metrics
+                .tenth_mm(i32::from(*max_height_tenths_mm))
+                .min(bottom.saturating_sub(y).max(0));
             let (drawn_width, drawn_height) = fit_within(*source, width, ceiling);
             layout.nodes.push(LayoutNode {
                 id: *id,
@@ -8718,9 +8849,7 @@ fn layout_node(
         Node::Banner { id, level, text } => {
             let padding = metrics.space(Space::Small);
             let lines = wrap_text(text, width - 2 * padding, FontSize::Body);
-            let height = (lines.len() as i32 * FontSize::Body.line_height())
-                .saturating_add(2 * padding)
-                .max(metrics.touch_target_minimum());
+            let height = banner_height_for_lines(lines.len(), metrics);
             layout.nodes.push(LayoutNode {
                 id: *id,
                 rect: Rect {
@@ -10003,6 +10132,12 @@ pub fn row_text_width(metrics: &DisplayMetrics, area: ProseArea) -> i32 {
 }
 
 /// The same, for a list whose lead column is not a mark's.
+/// Text width for rows whose leading column reserves room for cover artwork.
+#[must_use]
+pub fn cover_row_text_width(metrics: &DisplayMetrics, area: ProseArea) -> i32 {
+    row_text_width_beside(metrics, area, metrics.touch_target_default())
+}
+
 fn row_text_width_beside(metrics: &DisplayMetrics, area: ProseArea, lead: i32) -> i32 {
     let padding = metrics.space(Space::Small);
     max(1, area.width - lead - padding * 2)
@@ -10279,6 +10414,33 @@ pub fn section_height(metrics: &DisplayMetrics) -> i32 {
         .saturating_add(metrics.space(Space::Tight))
 }
 
+/// The banner's actual measured height, for paginators reserving an inline
+/// result before their rows. `width` is the content width, including padding.
+#[must_use]
+pub fn banner_height(text: &str, width: i32, metrics: &DisplayMetrics) -> i32 {
+    with_text_scale(metrics.text_scale, || {
+        let width = if legacy_typography() {
+            width
+        } else {
+            width.min(metrics.readable_width())
+        };
+        let lines = wrap_text(
+            text,
+            width - 2 * metrics.space(Space::Small),
+            FontSize::Body,
+        );
+        banner_height_for_lines(lines.len(), metrics)
+    })
+}
+
+fn banner_height_for_lines(lines: usize, metrics: &DisplayMetrics) -> i32 {
+    i32::try_from(lines)
+        .unwrap_or(i32::MAX)
+        .saturating_mul(FontSize::Body.line_height())
+        .saturating_add(2 * metrics.space(Space::Small))
+        .max(metrics.touch_target_minimum())
+}
+
 /// Breaks a list into pages, keeping every section header with its first row.
 ///
 /// `rows` carries an optional section title against each row; the title is
@@ -10407,7 +10569,12 @@ fn flow_node_bottom(
 ) -> i32 {
     let flexible = matches!(
         node,
-        Node::Text { .. } | Node::RichText { .. } | Node::PagedList { .. } | Node::Terminal { .. }
+        Node::Text { .. }
+            | Node::RichText { .. }
+            | Node::PagedList { .. }
+            | Node::Terminal { .. }
+            | Node::Grid { square: true, .. }
+            | Node::Picture { .. }
     );
     let protects_interaction = following.iter().any(node_has_enabled_interaction);
     if matches!(node, Node::Splash { .. }) || (flexible && protects_interaction) {
@@ -10499,6 +10666,16 @@ pub fn paginate_rows_with_trailing(
     area: ProseArea,
 ) -> Vec<Vec<usize>> {
     paginate_rows_measured(rows, metrics, area, false, row_mark_column(metrics))
+}
+
+/// Paginate rows with a cover-sized leading column, including glyph fallbacks.
+#[must_use]
+pub fn paginate_cover_rows(
+    rows: &[(&str, &str, &str)],
+    metrics: &DisplayMetrics,
+    area: ProseArea,
+) -> Vec<Vec<usize>> {
+    paginate_rows_measured(rows, metrics, area, false, metrics.touch_target_default())
 }
 
 /// The same, for a ranked list, whose rows lead with digits rather than a mark.
@@ -11715,6 +11892,7 @@ fn diagnose_screen(
     chrome: &Chrome,
     pictures: Option<&dyn Pictures>,
 ) -> LayoutDiagnostics {
+    let _environment = environment::TextEnvironment::enter(screen, metrics);
     with_reading_font(screen.reading_font, || {
         diagnose_screen_with_selected_font(screen, metrics, chrome, pictures)
     })
@@ -12121,6 +12299,16 @@ fn validate_node(
                 check_text_coverage(id, item, Face::Text, issues);
             }
         }
+        Node::Board { surface, .. } => {
+            if !surface.is_valid() {
+                issues.push(LayoutIssue {
+                    severity: DiagnosticSeverity::Error,
+                    node: Some(id),
+                    kind: LayoutIssueKind::InvalidBoard,
+                    rect: None,
+                });
+            }
+        }
         Node::Grid { cells, .. } => {
             if cells.len() > MAX_CELLS {
                 issues.push(limit_issue(id, "grid cells", cells.len(), MAX_CELLS));
@@ -12318,6 +12506,7 @@ fn validate_content_bounds(
         // A flex draws nothing by design: it moves the cursor and leaves. So
         // does an empty list. Neither is content that layout hid.
         let expects_rect = !matches!(node, Node::Rows { rows, .. } if rows.is_empty())
+            && !matches!(node, Node::Grid { cells, .. } if cells.is_empty())
             && !matches!(node, Node::Flex { .. });
         let completely_hidden = expects_rect
             && (rects.is_empty()
@@ -12474,6 +12663,9 @@ fn node_enabled_interaction_count(node: &Node) -> usize {
         Node::Chips { chips, .. } | Node::Tabs { tabs: chips, .. } => chips.len(),
         Node::Card { .. } | Node::Band { .. } => 0,
         Node::Grid { cells, .. } => cells.len(),
+        Node::Board { surface, .. } => {
+            surface.cells.len() + surface.row_clues.len() + surface.column_clues.len()
+        }
         Node::Rows { rows, .. } => rows
             .iter()
             .map(|row| 1 + usize::from(row.menu.is_some()))
@@ -12546,20 +12738,28 @@ fn validate_layout_nodes(layout: &Layout, metrics: &DisplayMetrics, issues: &mut
         let Some((size, face)) = layout_text_style(node) else {
             continue;
         };
-        let too_wide = node
-            .text_lines
-            .iter()
-            .any(|line| measure_text_in(line, size, face).0 > node.rect.width);
-        // A section keeps its title and its value in `text_lines`, but draws
-        // them beside each other on one line with the hairline between. Counting
-        // them as two lines reported every `section_with_value` on every screen
-        // as text overflowing a rect it fits inside perfectly well.
-        let rows = if matches!(node.kind, LayoutKind::Section) {
-            1
+        let scale = if matches!(node.kind, LayoutKind::CellLabel(true)) {
+            board_label_style(node).1
         } else {
-            i32::try_from(node.text_lines.len()).unwrap_or(i32::MAX)
+            text_scale()
         };
-        let too_tall = rows.saturating_mul(size.line_height_in(face)) > node.rect.height;
+        let (too_wide, too_tall) = with_text_scale(scale, || {
+            let too_wide = node
+                .text_lines
+                .iter()
+                .any(|line| measure_text_in(line, size, face).0 > node.rect.width);
+            // A section keeps its title and its value in `text_lines`, but draws
+            // them beside each other on one line with the hairline between. Counting
+            // them as two lines reported every `section_with_value` on every screen
+            // as text overflowing a rect it fits inside perfectly well.
+            let rows = if matches!(node.kind, LayoutKind::Section) {
+                1
+            } else {
+                i32::try_from(node.text_lines.len()).unwrap_or(i32::MAX)
+            };
+            let too_tall = rows.saturating_mul(size.line_height_in(face)) > node.rect.height;
+            (too_wide, too_tall)
+        });
         if too_wide || too_tall {
             issues.push(LayoutIssue {
                 severity: DiagnosticSeverity::Error,
@@ -12604,20 +12804,64 @@ const fn is_tappable(kind: LayoutKind) -> bool {
     )
 }
 
+// Board marks fit the square; enlarging interface text must not clip a digit.
+// The renderer and diagnostics share this choice. Ordinary key labels retain
+// their body size, so an undersized application control still reports a fault.
+fn board_label_style(node: &LayoutNode) -> (FontSize, TextScale) {
+    let scale = text_scale();
+    let short = node
+        .text_lines
+        .first()
+        .is_some_and(|text| text.chars().count() <= 2);
+    let fits = |size: FontSize| {
+        size.line_height() * i32::try_from(node.text_lines.len()).unwrap_or(i32::MAX)
+            <= node.rect.height
+            && node
+                .text_lines
+                .iter()
+                .all(|line| measure_text(line, size).0 <= node.rect.width)
+    };
+    if let Some(size) = [FontSize::Heading, FontSize::Body, FontSize::Caption]
+        .into_iter()
+        .filter(|size| short || *size != FontSize::Heading)
+        .find(|size| fits(*size))
+    {
+        return (size, scale);
+    }
+    // A digit is a board mark, not prose. At the smallest legal square the
+    // largest caption can still be too tall. Short marks may step down the
+    // scale to fit; long app labels remain errors instead of tiny text.
+    if node
+        .text_lines
+        .first()
+        .is_some_and(|text| text.chars().count() <= 3)
+    {
+        for candidate in TextScale::STEPS
+            .into_iter()
+            .take_while(|candidate| *candidate != scale)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+        {
+            if with_text_scale(candidate, || fits(FontSize::Caption)) {
+                return (FontSize::Caption, candidate);
+            }
+        }
+    }
+    (FontSize::Caption, scale)
+}
+fn board_label_size(node: &LayoutNode) -> FontSize {
+    board_label_style(node).0
+}
+
 fn layout_text_style(node: &LayoutNode) -> Option<(FontSize, Face)> {
     let size = match node.kind {
         LayoutKind::Heading(level) => FontSize::for_heading_level(level),
-        LayoutKind::CellLabel(true)
-            if node
-                .text_lines
-                .first()
-                .is_some_and(|text| text.chars().count() <= 2) =>
-        {
-            FontSize::Heading
-        }
+        LayoutKind::CellLabel(true) => board_label_size(node),
         LayoutKind::TopBarTitle => BAR_TITLE,
         LayoutKind::OverlayTitle => FontSize::Title,
-        LayoutKind::Secondary
+        LayoutKind::BoardClue
+        | LayoutKind::Secondary
         | LayoutKind::Section
         | LayoutKind::TableHeaderCell
         | LayoutKind::FactLabel
@@ -13136,14 +13380,23 @@ fn rotate_landscape(logical: &Surface, physical: &mut Surface, turn: LandscapeTu
     if logical.width != physical.height || logical.height != physical.width {
         return;
     }
+    physical.chroma = logical
+        .chroma
+        .as_ref()
+        .map(|_| vec![255; physical.pixels.len() * 3]);
     for logical_y in 0..logical.height {
         for logical_x in 0..logical.width {
             let (physical_x, physical_y) = match turn {
                 LandscapeTurn::Clockwise => (physical.width - 1 - logical_y, logical_x),
                 LandscapeTurn::CounterClockwise => (logical_y, physical.height - 1 - logical_x),
             };
-            physical.pixels[physical_y * physical.width + physical_x] =
-                logical.pixels[logical_y * logical.width + logical_x];
+            let destination = physical_y * physical.width + physical_x;
+            let source = logical_y * logical.width + logical_x;
+            physical.pixels[destination] = logical.pixels[source];
+            if let (Some(from), Some(to)) = (&logical.chroma, &mut physical.chroma) {
+                to[destination * 3..destination * 3 + 3]
+                    .copy_from_slice(&from[source * 3..source * 3 + 3]);
+            }
         }
     }
 }
@@ -13162,6 +13415,7 @@ pub fn render_all(
     surface: &mut Surface,
     dirty: Option<Rect>,
 ) {
+    let _environment = environment::TextEnvironment::enter(screen, metrics);
     with_legacy_typography(screen.legacy_typography, || {
         with_reading_font(screen.reading_font, || {
             render_all_with_selected_font(screen, metrics, chrome, pictures, surface, dirty);
@@ -13570,13 +13824,25 @@ fn render_all_with_selected_font(
             // always been read, and it takes forty-five outlines off the panel.
             // Nothing at all: the picture is the whole of it.
             LayoutKind::Cell(_, CellStyle::Plain, _) => {}
-            LayoutKind::Cell(_, CellStyle::Key, _) => fill_rounded_clipped(
-                surface,
-                node.rect,
-                metrics.tenth_mm(BUTTON_RADIUS_TENTH_MM),
-                tone::SURFACE,
-                clip,
-            ),
+            LayoutKind::Cell(_, CellStyle::Key, selected) => {
+                fill_rounded_clipped(
+                    surface,
+                    node.rect,
+                    metrics.tenth_mm(BUTTON_RADIUS_TENTH_MM),
+                    tone::SURFACE,
+                    clip,
+                );
+                if selected {
+                    stroke_rounded_clipped(
+                        surface,
+                        node.rect,
+                        metrics.tenth_mm(BUTTON_RADIUS_TENTH_MM),
+                        tone::INK,
+                        metrics.button_border(),
+                        clip,
+                    );
+                }
+            }
             LayoutKind::Cell(_, CellStyle::Pad, _) => {
                 let radius = metrics.tenth_mm(PAD_RADIUS_TENTH_MM);
                 fill_rounded_clipped(surface, node.rect, radius, tone::PAPER, clip);
@@ -13589,6 +13855,17 @@ fn render_all_with_selected_font(
                     clip,
                 );
             }
+            LayoutKind::BoardMark(mark, locked) => {
+                board::draw_mark(surface, node.rect, mark, locked, metrics, clip);
+            }
+            LayoutKind::BoardClue => draw_centered(
+                surface,
+                &node.text_lines,
+                node.rect,
+                FontSize::Caption,
+                tone::INK,
+                clip,
+            ),
             LayoutKind::CellLabel(board) => {
                 // A short label on a board is a mark rather than a word: an X,
                 // an O or a Sudoku digit is the content of the cell and should
@@ -13604,17 +13881,14 @@ fn render_all_with_selected_font(
                 // rectangle: a board cell and a keyboard key can be the same
                 // shape, and only the board's mark is meant to be the size of
                 // the whole cell.
-                let size = if board
-                    && node
-                        .text_lines
-                        .first()
-                        .is_some_and(|label| label.chars().count() <= 2)
-                {
-                    FontSize::Heading
+                let (size, scale) = if board {
+                    board_label_style(&node)
                 } else {
-                    FontSize::Body
+                    (FontSize::Body, text_scale())
                 };
-                draw_centered(surface, &node.text_lines, node.rect, size, tone::INK, clip);
+                with_text_scale(scale, || {
+                    draw_centered(surface, &node.text_lines, node.rect, size, tone::INK, clip);
+                });
             }
             LayoutKind::Divider => fill_clipped(surface, node.rect, tone::RULE, clip),
             LayoutKind::RowRule => fill_clipped(surface, node.rect, tone::RULE_LIGHT, clip),
@@ -15781,6 +16055,67 @@ mod tests {
     /// The rule the test above guards against still has to fire for what it
     /// was written for: a short mark on an actual board.
     #[test]
+    fn short_board_marks_can_fit_below_the_current_caption_scale_without_shrinking_words() {
+        let edge = with_text_scale(TextScale::Default, || FontSize::Caption.line_height());
+        with_text_scale(TextScale::Largest, || {
+            let mut node = LayoutNode {
+                id: NodeId(1),
+                rect: Rect {
+                    x: 0,
+                    y: 0,
+                    width: edge,
+                    height: edge,
+                },
+                kind: LayoutKind::CellLabel(true),
+                text_lines: vec!["8".into()],
+            };
+            let (size, scale) = board_label_style(&node);
+            assert_ne!(scale, TextScale::Largest);
+            assert!(with_text_scale(scale, || size.line_height() <= edge));
+            node.text_lines = vec!["Long label".into()];
+            assert_eq!(board_label_style(&node).1, TextScale::Largest);
+        });
+    }
+
+    #[test]
+    fn board_labels_use_the_largest_semantic_size_that_fits_the_square() {
+        for scale in TextScale::STEPS {
+            for ppi in [212, 300] {
+                let metrics = DisplayMetrics {
+                    pixels_per_inch: ppi,
+                    text_scale: scale,
+                    ..CLARA_BW_METRICS
+                };
+                let _environment =
+                    environment::TextEnvironment::enter(&Screen::new(1, vec![]), &metrics);
+                {
+                    for label in ["1", "9", "4\u{0332}", "□", "·"] {
+                        let edge = metrics.touch_target_minimum();
+                        let node = LayoutNode {
+                            id: NodeId(1),
+                            rect: Rect {
+                                x: 0,
+                                y: 0,
+                                width: edge,
+                                height: edge,
+                            },
+                            kind: LayoutKind::CellLabel(true),
+                            text_lines: vec![label.into()],
+                        };
+                        let size = board_label_size(&node);
+                        assert!(
+                            measure_text(label, size).0 <= edge,
+                            "{scale:?} {ppi} {label}"
+                        );
+                        assert!(size.line_height() <= edge);
+                        assert_eq!(layout_text_style(&node).unwrap().0, size);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn a_mark_on_a_board_still_grows_to_heading_size() {
         let screen = Screen::new(
             1,
@@ -16125,6 +16460,78 @@ mod tests {
         };
         assert!(matches!(picture(true), LayoutKind::FramedPicture(_)));
         assert!(matches!(picture(false), LayoutKind::Picture(_)));
+    }
+
+    #[test]
+    fn large_pictures_fit_remaining_space_without_hiding_controls() {
+        for (width, height, pixels_per_inch) in
+            [(1072, 1448, 300), (1448, 1072, 300), (758, 1024, 212)]
+        {
+            for text_scale in TextScale::STEPS {
+                let metrics = DisplayMetrics {
+                    width,
+                    height,
+                    pixels_per_inch,
+                    text_scale,
+                };
+                let screen = Screen::new(
+                    1,
+                    vec![
+                        Node::Picture {
+                            id: NodeId(1),
+                            handle: PictureHandle(1),
+                            source: (1072, 1448),
+                            max_height_tenths_mm: 5000,
+                            framed: false,
+                        },
+                        Node::Grid {
+                            id: NodeId(2),
+                            columns: 1,
+                            square: false,
+                            cells: vec![Cell::new(ActionId(2), "Open")],
+                        },
+                    ],
+                )
+                .with_top_bar(TopBar::new(NodeId(3), "Photograph"));
+                let diagnostics = screen.diagnostics(&metrics, &Chrome::measuring(true));
+                assert!(
+                    diagnostics.issues.is_empty(),
+                    "{metrics:?}: {:?}",
+                    diagnostics.issues
+                );
+                let picture = diagnostics
+                    .layout
+                    .nodes
+                    .iter()
+                    .find(|node| matches!(node.kind, LayoutKind::Picture(_)))
+                    .expect("picture");
+                assert!(picture.rect.width > 0 && picture.rect.height > 0);
+                assert!(
+                    (i64::from(picture.rect.width) * 1448 - i64::from(picture.rect.height) * 1072)
+                        .abs()
+                        < 3000,
+                    "aspect ratio"
+                );
+                assert!(diagnostics.layout.rect_of_action(ActionId(2)).is_some());
+            }
+        }
+    }
+
+    #[test]
+    fn an_empty_game_grid_is_not_hidden_content() {
+        let screen = Screen::new(
+            1,
+            vec![Node::Grid {
+                id: NodeId(1),
+                columns: 8,
+                square: true,
+                cells: vec![],
+            }],
+        );
+        assert!(screen
+            .diagnostics(&CLARA_BW_METRICS, &Chrome::measuring(true))
+            .issues
+            .is_empty());
     }
 
     #[test]
@@ -21032,14 +21439,14 @@ mod prose_tests {
         );
         assert_eq!(grey.len(), (width * height) as usize);
         assert!(
-            grey.iter().any(|pixel| *pixel == tone::INK),
+            grey.contains(&tone::INK),
             "the first lines left no ink on the page"
         );
         let w = width as usize;
         let h = height as usize;
         let foot = &grey[(h - 24) * w..];
         assert!(
-            foot.iter().any(|pixel| *pixel == tone::INK),
+            foot.contains(&tone::INK),
             "the format chip was not drawn in the trailing foot"
         );
         let with_lines =
@@ -22765,3 +23172,7 @@ mod figure_tests {
         assert_eq!(physical.pixels, vec![4, 1, 5, 2, 6, 3]);
     }
 }
+
+#[cfg(test)]
+#[path = "colour_orientation_tests.rs"]
+mod colour_orientation_tests;

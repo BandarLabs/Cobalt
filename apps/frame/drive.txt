@@ -1,5 +1,6 @@
 expect Photographs
-wait-for Open
+# Wait for the loaded-photo controls, not "Opening this photograph".
+wait-for Next
 clean
 shot shelf
 tap Open

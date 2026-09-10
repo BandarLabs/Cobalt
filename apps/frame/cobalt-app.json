@@ -4,8 +4,8 @@
   "short_label": "Frame",
   "summary": "Show computer-pushed monochrome photos in awake or scheduled slideshow modes.",
   "page_description": "Turn a Kobo into a low-power monochrome photo frame with bounded, owner-pushed albums and awake or scheduled slideshow modes.",
-  "version": "1.0.1",
-  "release_notes": "Turn a Kobo into a low-power monochrome photo frame with bounded, owner-pushed albums and awake or scheduled slideshow modes.",
+  "version": "1.0.2",
+  "release_notes": "Update shared controls and page layout for Cobalt 0.3.12.",
   "glyph": "app",
   "capabilities": [
     "keep-awake",

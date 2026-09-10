@@ -2148,6 +2148,10 @@ mod tests {
 
     #[test]
     fn supporting_screens_fit_without_dense_or_clipped_controls() {
+        // Synchronize pagination and diagnostics on the same installed faces.
+        // Other tests install the production fonts too, and racing that global
+        // setup could paginate with the fallback face and measure with the real one.
+        install_fonts();
         let context = Context::default();
         let notices = build_notice_documents(&context);
         assert_eq!(notices.len(), DEVICE_DISTRIBUTION_DOCUMENTS.len());

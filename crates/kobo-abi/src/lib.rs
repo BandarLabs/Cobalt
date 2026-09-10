@@ -418,6 +418,7 @@ pub mod input {
     pub const KEY_PAGE_193: u16 = 193;
     pub const KEY_PAGE_194: u16 = 194;
     pub const SYN_REPORT: u16 = 0;
+    pub const SYN_DROPPED: u16 = 3;
     pub const BTN_TOUCH: u16 = 330;
 
     #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -486,6 +487,62 @@ pub mod input {
         query_ioctl_bytes(file, eviocgkey(size), &mut bitmap)?;
         let (byte, bit) = (usize::from(code) / 8, usize::from(code) % 8);
         Ok(bitmap.get(byte).is_some_and(|byte| byte & (1 << bit) != 0))
+    }
+
+    /// Current contact state used after an evdev queue overflow.
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    pub struct TouchSnapshot {
+        pub active: bool,
+        pub slot: Option<u8>,
+    }
+
+    /// Read current contacts after the report boundary following `SYN_DROPPED`.
+    /// Prefer `BTN_TOUCH` when declared by the device; otherwise inspect all
+    /// tracking IDs on a bounded protocol-B slot device. Never infer release
+    /// from a missing backend or an unsupported key.
+    ///
+    /// # Errors
+    /// Returns ioctl errors or refuses devices with no bounded contact query.
+    pub fn touch_snapshot(file: &File) -> io::Result<TouchSnapshot> {
+        let slot_info = absolute_axis(file, ABS_MT_SLOT).ok();
+        let slot = slot_info
+            .and_then(|axis| u8::try_from(axis.value).ok())
+            .filter(|&slot| slot < 32);
+        let mut supported = [0_u8; 96];
+        query_ioctl_bytes(file, ior(b'E', 0x21, 96), &mut supported)?;
+        if supported[usize::from(BTN_TOUCH) / 8] & (1 << (BTN_TOUCH % 8)) != 0 {
+            return Ok(TouchSnapshot {
+                active: key_is_pressed(file, BTN_TOUCH)?,
+                slot,
+            });
+        }
+        let axis = slot_info.ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::Unsupported,
+                "touch device has neither BTN_TOUCH nor a slot state query",
+            )
+        })?;
+        if axis.minimum != 0 || !(0..32).contains(&axis.maximum) || slot.is_none() {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "touch slot range cannot be queried safely",
+            ));
+        }
+        let count = usize::try_from(axis.maximum + 1)
+            .map_err(|_| io::Error::other("invalid slot range"))?;
+        let mut bytes = vec![0_u8; (count + 1) * 4];
+        bytes[..4].copy_from_slice(&i32::from(ABS_MT_TRACKING_ID).to_ne_bytes());
+        // A short kernel reply must remain active/unknown, not appear released.
+        for value in bytes[4..].chunks_exact_mut(4) {
+            value.copy_from_slice(&i32::MAX.to_ne_bytes());
+        }
+        let length =
+            u32::try_from(bytes.len()).map_err(|_| io::Error::other("invalid slot query size"))?;
+        query_ioctl_bytes(file, ior(b'E', 0x0a, length), &mut bytes)?;
+        let active = bytes[4..]
+            .chunks_exact(4)
+            .any(|value| i32::from_ne_bytes([value[0], value[1], value[2], value[3]]) >= 0);
+        Ok(TouchSnapshot { active, slot })
     }
 
     /// Queries one evdev absolute-axis descriptor.

@@ -1,0 +1,275 @@
+{
+  "simulation": {
+    "profile": {
+      "id": "clara-bw-391",
+      "model": "Kobo Clara BW",
+      "width": 1072,
+      "height": 1448,
+      "pixelsPerInch": 300,
+      "rotation": 3,
+      "touch": {
+        "name": "cyttsp5_mt",
+        "xMin": 0,
+        "xMax": 1447,
+        "yMin": 0,
+        "yMax": 1071
+      }
+    },
+    "scenario": "normal",
+    "lifecycle": "foreground",
+    "transition": {
+      "waveform": "GL16",
+      "full": false,
+      "refresh": 4,
+      "dirty": 172432,
+      "regions": [
+        {
+          "waveform": "GL16",
+          "region": {
+            "x": 80,
+            "y": 200,
+            "width": 920,
+            "height": 48
+          }
+        }
+      ],
+      "region": {
+        "x": 80,
+        "y": 200,
+        "width": 920,
+        "height": 48
+      }
+    },
+    "refreshCount": 4,
+    "partialsSinceClean": 172432,
+    "touch": {
+      "display": {
+        "x": 536,
+        "y": 1342
+      },
+      "raw": {
+        "x": 1342,
+        "y": 535
+      }
+    },
+    "panelApproximation": true
+  },
+  "layout": {
+    "paints": 4,
+    "nodes": [
+      {
+        "kind": "StatusBand",
+        "x": 0,
+        "y": 0,
+        "width": 1072,
+        "height": 59,
+        "centre": {
+          "x": 536,
+          "y": 29
+        },
+        "action": null,
+        "lines": []
+      },
+      {
+        "kind": "StatusClock",
+        "x": 47,
+        "y": 0,
+        "width": 78,
+        "height": 59,
+        "centre": {
+          "x": 86,
+          "y": 29
+        },
+        "action": null,
+        "lines": [
+          "09:41"
+        ]
+      },
+      {
+        "kind": "StatusBattery(Some(Percent(72)), false)",
+        "x": 955,
+        "y": 12,
+        "width": 70,
+        "height": 35,
+        "centre": {
+          "x": 990,
+          "y": 29
+        },
+        "action": null,
+        "lines": []
+      },
+      {
+        "kind": "StatusSignal(Strong)",
+        "x": 896,
+        "y": 12,
+        "width": 35,
+        "height": 35,
+        "centre": {
+          "x": 913,
+          "y": 29
+        },
+        "action": null,
+        "lines": []
+      },
+      {
+        "kind": "StatusBluetooth",
+        "x": 837,
+        "y": 12,
+        "width": 35,
+        "height": 35,
+        "centre": {
+          "x": 854,
+          "y": 29
+        },
+        "action": null,
+        "lines": []
+      },
+      {
+        "kind": "TopBar",
+        "x": 0,
+        "y": 59,
+        "width": 1072,
+        "height": 100,
+        "centre": {
+          "x": 536,
+          "y": 109
+        },
+        "action": null,
+        "lines": []
+      },
+      {
+        "kind": "Back",
+        "x": 47,
+        "y": 59,
+        "width": 100,
+        "height": 100,
+        "centre": {
+          "x": 97,
+          "y": 109
+        },
+        "action": 4294967295,
+        "lines": []
+      },
+      {
+        "kind": "BarAction(ActionId(180743107))",
+        "x": 861,
+        "y": 59,
+        "width": 164,
+        "height": 100,
+        "centre": {
+          "x": 943,
+          "y": 109
+        },
+        "action": 180743107,
+        "lines": [
+          "Browse"
+        ]
+      },
+      {
+        "kind": "TopBarTitle",
+        "x": 171,
+        "y": 86,
+        "width": 666,
+        "height": 46,
+        "centre": {
+          "x": 504,
+          "y": 109
+        },
+        "action": null,
+        "lines": [
+          "Panels"
+        ]
+      },
+      {
+        "kind": "Divider",
+        "x": 0,
+        "y": 159,
+        "width": 1072,
+        "height": 4,
+        "centre": {
+          "x": 536,
+          "y": 161
+        },
+        "action": null,
+        "lines": []
+      },
+      {
+        "kind": "Banner(Attention)",
+        "x": 47,
+        "y": 175,
+        "width": 978,
+        "height": 94,
+        "centre": {
+          "x": 536,
+          "y": 222
+        },
+        "action": null,
+        "lines": [
+          "CBR is not supported yet. Add a CBZ copy of this comic."
+        ]
+      },
+      {
+        "kind": "SplashGlyph(Reader)",
+        "x": 489,
+        "y": 605,
+        "width": 94,
+        "height": 94,
+        "centre": {
+          "x": 536,
+          "y": 652
+        },
+        "action": null,
+        "lines": []
+      },
+      {
+        "kind": "SplashTitle",
+        "x": 169,
+        "y": 746,
+        "width": 733,
+        "height": 62,
+        "centre": {
+          "x": 535,
+          "y": 777
+        },
+        "action": null,
+        "lines": [
+          "Your shelf is empty"
+        ]
+      },
+      {
+        "kind": "SplashText",
+        "x": 169,
+        "y": 855,
+        "width": 733,
+        "height": 92,
+        "centre": {
+          "x": 535,
+          "y": 901
+        },
+        "action": null,
+        "lines": [
+          "Browse your home library or add a comic",
+          "from your computer."
+        ]
+      },
+      {
+        "kind": "Button(ActionId(1505771103), Enabled, Normal)",
+        "x": 334,
+        "y": 1283,
+        "width": 404,
+        "height": 118,
+        "centre": {
+          "x": 536,
+          "y": 1342
+        },
+        "action": 1505771103,
+        "lines": [
+          "Open added comic"
+        ]
+      }
+    ]
+  },
+  "diagnostics": {
+    "issues": []
+  }
+}

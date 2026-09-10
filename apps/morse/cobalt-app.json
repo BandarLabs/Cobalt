@@ -3,11 +3,11 @@
   "display_name": "Morse",
   "short_label": "Morse",
   "summary": "Type a message and send it in Morse code with the front light.",
-  "version": "1.0.10",
+  "version": "1.0.11",
   "glyph": "light",
   "capabilities": [
     "frontlight-control",
     "keep-awake"
   ],
-  "release_notes": "Rebuild Morse against the picture field renamed for colour. The app behaves exactly as it did."
+  "release_notes": "Update shared controls and page layout for Cobalt 0.3.12."
 }

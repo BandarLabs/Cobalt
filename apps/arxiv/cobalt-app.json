@@ -1,1 +1,12 @@
-{"id":"arxiv","display_name":"arXiv","short_label":"arXiv","summary":"Browse and search arXiv, keep preprints, and read their HTML versions on your Kobo.","version":"1.3.7","glyph":"note","capabilities":["network"],"release_notes":"Keep arXiv compatible with Cobalt's protocol-12 runtime."}
+{
+  "id": "arxiv",
+  "display_name": "arXiv",
+  "short_label": "arXiv",
+  "summary": "Browse and search arXiv, keep preprints, and read their HTML versions on your Kobo.",
+  "version": "1.3.9",
+  "glyph": "note",
+  "capabilities": [
+    "network"
+  ],
+  "release_notes": "Typeset a paper's numbered equations, line up a results table's columns under the headings that name them, carry the mathematics all the way through instead of stopping early, and close the gap before a comma."
+}

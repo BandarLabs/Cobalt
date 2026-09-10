@@ -4,8 +4,8 @@
   "short_label": "Home",
   "summary": "Control saved Home Assistant tiles from a low-power panel.",
   "page_description": "Keep your favorite Home Assistant controls on a simple, low-power panel.",
-  "version": "0.1.0",
-  "release_notes": "Keep your favorite Home Assistant controls on a simple, low-power panel.",
+  "version": "0.1.1",
+  "release_notes": "Update shared controls and page layout for Cobalt 0.3.12.",
   "glyph": "light",
   "capabilities": [
     "network"

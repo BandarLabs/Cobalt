@@ -1,16 +1,19 @@
 //! Offline SRD reference and table companion.
 mod corpus;
+mod filters;
 use corpus::Entry;
+use filters::Filter;
 use kobo_sdk::keyboard::{Keyboard, Pressed};
 use kobo_sdk::{action_id, ActionId, Context, Glyph, KoboApp, Screen, ScreenBuilder, StoreResult};
 use std::process::ExitCode;
 const ATTRIBUTION: &str = "This work includes material taken from the System Reference Document 5.1 and System Reference Document 5.2 by Wizards of the Coast LLC, available under the Creative Commons Attribution 4.0 International License.";
 const STATE: &str = "grimoire-state-v2";
-const PAGE: usize = 6;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum View {
     Home,
     Compendium,
+    Filters,
+    FilterChoice,
     Bookmarks,
     Search,
     Dice,
@@ -50,22 +53,8 @@ enum Tri {
     No,
 }
 impl Tri {
-    fn next(self) -> Self {
-        match self {
-            Self::Any => Self::Yes,
-            Self::Yes => Self::No,
-            Self::No => Self::Any,
-        }
-    }
     fn matches(self, value: bool) -> bool {
         self == Self::Any || (self == Self::Yes) == value
-    }
-    fn label(self) -> &'static str {
-        match self {
-            Self::Any => "any",
-            Self::Yes => "yes",
-            Self::No => "no",
-        }
     }
 }
 #[derive(Clone, Debug)]
@@ -112,6 +101,8 @@ struct Grimoire {
     party: Vec<Member>,
     member: Option<usize>,
     edit: Option<Edit>,
+    filter: Filter,
+    filter_page: usize,
     spell_class: usize,
     spell_level: Option<u8>,
     spell_school: usize,
@@ -143,6 +134,8 @@ impl Default for Grimoire {
             party: vec![],
             member: None,
             edit: None,
+            filter: Filter::Class,
+            filter_page: 0,
             spell_class: 0,
             spell_level: None,
             spell_school: 0,
@@ -163,46 +156,57 @@ fn tag<'a>(entry: &'a Entry, key: &str) -> Option<&'a str> {
     })
 }
 fn options(app: &Grimoire, key: &str) -> Vec<String> {
-    let mut values = vec!["Any".to_owned()];
+    let mut values = std::collections::BTreeSet::new();
     for entry in &app.corpus {
         if entry.edition == app.edition && entry.kind == app.kind.key() {
             if let Some(value) = tag(entry, key) {
-                if !value.is_empty() && !values.iter().any(|known| known == value) {
-                    values.push(value.to_owned());
+                for item in value
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|item| !item.is_empty())
+                {
+                    values.insert(item.to_owned());
                 }
             }
         }
     }
-    values.sort();
-    values
+    std::iter::once("Any".to_owned()).chain(values).collect()
 }
+
 impl Grimoire {
     fn show(&self, context: &mut Context) {
-        context.set_screen(self.screen().with_own_back(self.view != View::Home));
+        context.set_screen(self.screen(context).with_own_back(self.view != View::Home));
     }
+    #[cfg(test)]
     fn spell_match(&self, e: &Entry) -> bool {
         let classes = options(self, "class");
         let schools = options(self, "school");
+        self.spell_match_values(
+            e,
+            classes.get(self.spell_class).map(String::as_str),
+            schools.get(self.spell_school).map(String::as_str),
+        )
+    }
+    fn spell_match_values(&self, e: &Entry, class: Option<&str>, school: Option<&str>) -> bool {
         (self.spell_class == 0
-            || tag(e, "class").is_some_and(|v| {
-                v.split(',')
-                    .map(str::trim)
-                    .any(|c| c == classes[self.spell_class])
-            }))
+            || tag(e, "class")
+                .is_some_and(|v| v.split(',').map(str::trim).any(|c| Some(c) == class)))
             && self
                 .spell_level
                 .is_none_or(|level| tag(e, "level") == Some(&level.to_string()))
-            && (self.spell_school == 0
-                || tag(e, "school") == Some(schools[self.spell_school].as_str()))
+            && (self.spell_school == 0 || school.is_some() && tag(e, "school") == school)
             && self.ritual.matches(tag(e, "ritual") == Some("1"))
             && self
                 .concentration
                 .matches(tag(e, "concentration") == Some("1"))
     }
+    #[cfg(test)]
     fn monster_match(&self, e: &Entry) -> bool {
         let kinds = options(self, "type");
-        let type_ok =
-            self.monster_type == 0 || tag(e, "type") == Some(kinds[self.monster_type].as_str());
+        self.monster_match_value(e, kinds.get(self.monster_type).map(String::as_str))
+    }
+    fn monster_match_value(&self, e: &Entry, kind: Option<&str>) -> bool {
+        let type_ok = self.monster_type == 0 || kind.is_some() && tag(e, "type") == kind;
         let cr = tag(e, "cr")
             .and_then(|x| x.parse::<f32>().ok())
             .unwrap_or(-1.);
@@ -218,6 +222,12 @@ impl Grimoire {
     }
     fn entries(&self) -> Vec<(usize, &Entry)> {
         let query = self.query.to_lowercase();
+        let classes = options(self, "class");
+        let schools = options(self, "school");
+        let types = options(self, "type");
+        let class = classes.get(self.spell_class).map(String::as_str);
+        let school = schools.get(self.spell_school).map(String::as_str);
+        let kind = types.get(self.monster_type).map(String::as_str);
         self.corpus
             .iter()
             .enumerate()
@@ -226,8 +236,8 @@ impl Grimoire {
                     && (e.kind == self.kind.key()
                         || (self.kind == Kind::Rule && e.kind == "condition"))
                     && (query.is_empty() || e.name.to_lowercase().starts_with(&query))
-                    && (self.kind != Kind::Spell || self.spell_match(e))
-                    && (self.kind != Kind::Monster || self.monster_match(e))
+                    && (self.kind != Kind::Spell || self.spell_match_values(e, class, school))
+                    && (self.kind != Kind::Monster || self.monster_match_value(e, kind))
             })
             .collect()
     }
@@ -235,6 +245,8 @@ impl Grimoire {
         match self.view {
             View::Home => "Grimoire",
             View::Compendium => self.kind.title(),
+            View::Filters => "Filters",
+            View::FilterChoice => self.filter.title(),
             View::Bookmarks => "Bookmarks",
             View::Search => "Search",
             View::Dice => "Dice",
@@ -246,58 +258,38 @@ impl Grimoire {
             View::About => "About",
         }
     }
-    fn screen(&self) -> Screen {
+    fn screen(&self, context: &Context) -> Screen {
         let s = ScreenBuilder::new("grimoire").top_bar(self.title());
-        match self.view{View::Home=>s.top_bar_action("about","About").tiles([("spells","Spells",Glyph::Book),("monsters","Monsters",Glyph::Search),("rules","Rules & conditions",Glyph::Book),("dice","Dice",Glyph::Circle),("initiative","Initiative",Glyph::Chart),("party","Party",Glyph::Person)]).build(),View::Compendium=>self.compendium(s),View::Bookmarks=>self.bookmarks(s),View::Search=>s.secondary(format!("Prefix search: {}",self.keyboard.text())).keyboard(&self.keyboard,"Search").build(),View::Dice=>self.dice(s),View::Initiative=>self.initiative(s),View::Party=>self.party(s),View::Member=>self.member(s),View::Edit=>self.edit(s),View::Detail=>self.detail(s),View::About=>s.text(format!("Grimoire is an unofficial offline reference. It requests no capabilities.\n\n{ATTRIBUTION}\n\nNo third-party OGL-only material or artwork is included.")).bottom_action("back","Back").build()}
+        match self.view{View::Home=>s.top_bar_action("about","About").tiles([("spells","Spells",Glyph::Book),("monsters","Monsters",Glyph::Search),("rules","Rules & conditions",Glyph::Book),("dice","Dice",Glyph::Circle),("initiative","Initiative",Glyph::Chart),("party","Party",Glyph::Person)]).build(),View::Compendium=>self.compendium(s, context),View::Filters|View::FilterChoice=>self.filter_screen(context),View::Bookmarks=>self.bookmarks(s),View::Search=>s.secondary(format!("Prefix search: {}",self.keyboard.text())).keyboard(&self.keyboard,"Search").build(),View::Dice=>self.dice(s),View::Initiative=>self.initiative(s),View::Party=>self.party(s),View::Member=>self.member(s),View::Edit=>self.edit(s),View::Detail=>self.detail(s),View::About=>s.text(format!("Grimoire is an unofficial offline reference. It requests no capabilities.\n\n{ATTRIBUTION}\n\nNo third-party OGL-only material or artwork is included.")).bottom_action("back","Back").build()}
     }
-    fn compendium(&self, mut s: ScreenBuilder) -> Screen {
-        s = s.tabs(
+    fn compendium_controls(&self, s: ScreenBuilder) -> ScreenBuilder {
+        let s = s.tabs(
             usize::from(self.edition != 2014),
             [("edition-2014", "2014"), ("edition-2024", "2024")],
         );
-        if self.kind == Kind::Spell {
-            let classes = options(self, "class");
-            let schools = options(self, "school");
-            s = s
-                .buttons([
-                    (
-                        "spell-class",
-                        format!("Class: {}", classes[self.spell_class]),
-                    ),
-                    (
-                        "spell-level",
-                        format!(
-                            "Level: {}",
-                            self.spell_level
-                                .map_or_else(|| "any".into(), |n| n.to_string())
-                        ),
-                    ),
-                    (
-                        "spell-school",
-                        format!("School: {}", schools[self.spell_school]),
-                    ),
-                ])
-                .buttons([
-                    ("ritual", format!("Ritual: {}", self.ritual.label())),
-                    (
-                        "concentration",
-                        format!("Concentration: {}", self.concentration.label()),
-                    ),
-                    ("clear", "Clear filters".to_owned()),
-                ]);
-        } else if self.kind == Kind::Monster {
-            let types = options(self, "type");
-            let ranges = ["any", "0", "1/8–1", "2–4", "5–10", "11+"];
-            s = s.buttons([
-                ("monster-cr", format!("CR: {}", ranges[self.cr])),
-                (
-                    "monster-type",
-                    format!("Type: {}", types[self.monster_type]),
-                ),
-                ("clear", "Clear filters".to_owned()),
-            ]);
+        if self.kind == Kind::Rule {
+            s.action_bar([("search", "Search"), ("bookmarks", "Bookmarks")])
+        } else {
+            s.action_bar([
+                ("filters", "Filters"),
+                ("search", "Search"),
+                ("bookmarks", "Bookmarks"),
+            ])
         }
-        s = s.buttons([("search", "Search"), ("bookmarks", "Bookmarks")]);
+    }
+    fn compendium_pages(&self, context: &Context) -> Vec<Vec<usize>> {
+        let entries = self.entries();
+        let rows = entries
+            .iter()
+            .map(|(_, entry)| (entry.name.as_str(), entry.subtitle.as_str()))
+            .collect::<Vec<_>>();
+        let prefix = self
+            .compendium_controls(ScreenBuilder::new("grimoire").top_bar(self.title()))
+            .build();
+        context.paginate_rows_under(&rows, true, kobo_sdk::Position::AtTheFoot, &prefix)
+    }
+    fn compendium(&self, s: ScreenBuilder, context: &Context) -> Screen {
+        let s = self.compendium_controls(s);
         let entries = self.entries();
         if entries.is_empty() {
             return s
@@ -308,24 +300,22 @@ impl Grimoire {
                 )
                 .build();
         }
-        s.rows(
-            entries
-                .iter()
-                .skip(self.page * PAGE)
-                .take(PAGE)
-                .map(|(i, e)| {
-                    (
-                        format!("entry-{i}"),
-                        e.name.clone(),
-                        e.subtitle.clone(),
-                        Glyph::Book,
-                    )
-                }),
-        )
+        let pages = self.compendium_pages(context);
+        let page = self.page.min(pages.len().saturating_sub(1));
+        let visible = pages.get(page).map(Vec::as_slice).unwrap_or_default();
+        s.rows(visible.iter().map(|&index| {
+            let (i, e) = entries[index];
+            (
+                format!("entry-{i}"),
+                e.name.clone(),
+                e.subtitle.clone(),
+                Glyph::Book,
+            )
+        }))
         .page_turns("previous", "next")
         .page_position(
-            u16::try_from(self.page + 1).unwrap_or(u16::MAX),
-            u16::try_from(entries.len().div_ceil(PAGE)).unwrap_or(u16::MAX),
+            u16::try_from(page + 1).unwrap_or(u16::MAX),
+            u16::try_from(pages.len().max(1)).unwrap_or(u16::MAX),
         )
         .build()
     }
@@ -725,6 +715,10 @@ impl KoboApp for Grimoire {
     }
     #[allow(clippy::too_many_lines)]
     fn on_action(&mut self, c: &mut Context, a: ActionId) {
+        if self.filter_action(c, a) {
+            self.show(c);
+            return;
+        }
         if self.view == View::Search || self.view == View::Edit {
             if let Some(p) = self.keyboard.press(a) {
                 if p == Pressed::Submitted {
@@ -765,6 +759,7 @@ impl KoboApp for Grimoire {
         .find(|(n, _)| a == action_id(n))
         {
             self.kind = *view;
+            self.clear_filters();
             self.view = View::Compendium;
         } else if a == action_id("dice") {
             self.view = View::Dice;
@@ -780,7 +775,7 @@ impl KoboApp for Grimoire {
             } else {
                 2024
             };
-            self.page = 0;
+            self.clear_filters();
             self.save(c);
         } else if a == action_id("search") {
             self.keyboard = Keyboard::with_text(&self.query);
@@ -797,43 +792,8 @@ impl KoboApp for Grimoire {
                 }
                 self.save(c);
             } else {
-                self.page =
-                    (self.page + 1).min(self.entries().len().div_ceil(PAGE).saturating_sub(1));
+                self.page = (self.page + 1).min(self.compendium_pages(c).len().saturating_sub(1));
             }
-        } else if a == action_id("spell-class") {
-            self.spell_class = (self.spell_class + 1) % options(self, "class").len();
-            self.page = 0;
-        } else if a == action_id("spell-level") {
-            self.spell_level = match self.spell_level {
-                None => Some(0),
-                Some(9) => None,
-                Some(n) => Some(n + 1),
-            };
-            self.page = 0;
-        } else if a == action_id("spell-school") {
-            self.spell_school = (self.spell_school + 1) % options(self, "school").len();
-            self.page = 0;
-        } else if a == action_id("ritual") {
-            self.ritual = self.ritual.next();
-            self.page = 0;
-        } else if a == action_id("concentration") {
-            self.concentration = self.concentration.next();
-            self.page = 0;
-        } else if a == action_id("monster-cr") {
-            self.cr = (self.cr + 1) % 6;
-            self.page = 0;
-        } else if a == action_id("monster-type") {
-            self.monster_type = (self.monster_type + 1) % options(self, "type").len();
-            self.page = 0;
-        } else if a == action_id("clear") {
-            self.spell_class = 0;
-            self.spell_level = None;
-            self.spell_school = 0;
-            self.ritual = Tri::Any;
-            self.concentration = Tri::Any;
-            self.cr = 0;
-            self.monster_type = 0;
-            self.page = 0;
         } else if a == action_id("roll") {
             let n = u16::try_from(self.history.len()).unwrap_or(0);
             self.roll = ((n.wrapping_mul(11).wrapping_add(7)) % 20) + 1;
@@ -1101,13 +1061,54 @@ mod tests {
         for view in [View::Initiative, View::Party, View::Member] {
             app.view = view;
             app.member = Some(0);
-            let screen = app.screen();
+            let screen = app.screen(&Context::default());
             assert!(screen
                 .diagnostics(&CLARA_BW_METRICS, &Chrome::default())
                 .issues
                 .is_empty());
         }
     }
+    #[test]
+    fn compendium_pages_fit_below_filters_without_losing_entries() {
+        for (width, height, pixels_per_inch) in
+            [(1072, 1448, 300), (1448, 1072, 300), (758, 1024, 212)]
+        {
+            for text_scale in kobo_ui::TextScale::STEPS {
+                let metrics = kobo_ui::DisplayMetrics {
+                    width,
+                    height,
+                    pixels_per_inch,
+                    text_scale,
+                };
+                let context =
+                    kobo_sdk::AppRunner::with_metrics(Grimoire::default(), metrics).context();
+                for kind in [Kind::Spell, Kind::Monster, Kind::Rule] {
+                    let mut app = Grimoire {
+                        view: View::Compendium,
+                        kind,
+                        ..Grimoire::default()
+                    };
+                    let pages = app.compendium_pages(&context);
+                    assert_eq!(
+                        pages.iter().flatten().copied().collect::<Vec<_>>(),
+                        (0..app.entries().len()).collect::<Vec<_>>()
+                    );
+                    for page in [0, pages.len().saturating_sub(1)] {
+                        app.page = page;
+                        let diagnostics = app
+                            .screen(&context)
+                            .diagnostics(&metrics, &Chrome::measuring(true));
+                        assert!(
+                            diagnostics.issues.is_empty(),
+                            "{metrics:?}, {kind:?}: {:?}",
+                            diagnostics.issues
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     #[test]
     fn licenses_and_zero_capability_claim_are_present() {
         assert!(include_str!("../README.md").contains(ATTRIBUTION));

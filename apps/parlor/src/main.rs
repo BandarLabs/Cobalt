@@ -63,6 +63,7 @@ enum Mode {
 enum View {
     Menu,
     Setup(Title),
+    HowTo(Title),
     Board,
     Record,
 }
@@ -218,6 +219,7 @@ impl Parlor {
         let screen = match self.view {
             View::Menu => self.menu_screen(),
             View::Setup(title) => self.setup_screen(title),
+            View::HowTo(title) => self.how_to_screen(title),
             View::Board => self.board_screen(),
             View::Record => self.record_screen(),
         };
@@ -299,7 +301,40 @@ impl Parlor {
         }
         screen
             .primary_button("start", "Start game")
-            .button("back", "Games")
+            .buttons([("how-to-play", "How to play"), ("back", "Games")])
+            .build()
+    }
+
+    fn how_to_screen(&self, title: Title) -> Screen {
+        let rules = match title {
+            Title::Reversi => [
+                "Place a disc so it brackets one or more opposing discs.",
+                "Bracketed discs flip to your side in every direction.",
+                "When no moves remain, the player with more discs wins.",
+            ],
+            Title::Draughts => [
+                "Move diagonally into an empty square; captures are mandatory.",
+                "Jump over an opposing piece to capture it, continuing when another jump is open.",
+                "Reach the far side to crown a king. Take every opposing piece to win.",
+            ],
+            Title::Morris => [
+                "Place pieces on open points. Three in a line makes a mill.",
+                "After placing, slide along a line; with three pieces you may fly anywhere.",
+                "A mill lets you remove one opposing piece. Reduce them to two to win.",
+            ],
+            Title::Kalah => [
+                "Choose one of your six pits and sow its stones counter-clockwise.",
+                "End in your store to play again. End in an empty pit to capture opposite stones.",
+                "When one side is empty, most stones in the stores wins.",
+            ],
+        };
+        ScreenBuilder::new("parlor-help")
+            .top_bar("How to play")
+            .heading(title.name())
+            .text(rules[0])
+            .text(rules[1])
+            .text(rules[2])
+            .bottom_action("close-help", "Set up game")
             .build()
     }
 
@@ -871,6 +906,14 @@ impl Parlor {
             if let View::Setup(title) = self.view {
                 self.start(title);
             }
+        } else if action == action_id("how-to-play") {
+            if let View::Setup(title) = self.view {
+                self.view = View::HowTo(title);
+            }
+        } else if action == action_id("close-help") {
+            if let View::HowTo(title) = self.view {
+                self.view = View::Setup(title);
+            }
         } else if action == action_id("undo") {
             self.undo();
         } else if action == action_id("record") {
@@ -887,7 +930,10 @@ impl Parlor {
                 }
             }
         } else if action == action_id("back") || action == ActionId::BACK {
-            self.view = View::Menu;
+            self.view = match self.view {
+                View::HowTo(title) => View::Setup(title),
+                _ => View::Menu,
+            };
         } else if let Some(at) = (0..100).find(|at| action == action_id(&cell_name(*at))) {
             self.tap_cell(at);
         }

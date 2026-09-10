@@ -1,4 +1,10 @@
 expect Nonograms
+tap How to play
+expect Use the clues to fill the picture
+wait 250
+clean
+shot nonograms-help
+tap Play
 tap Harbor dawn
 expect Harbor dawn · free mode
 tap Free

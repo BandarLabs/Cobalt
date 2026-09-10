@@ -1,1 +1,15 @@
-{"id":"audiobook","display_name":"Audiobook Studio","short_label":"Audiobooks","summary":"Turn a topic into an original narrated audiobook and listen on your Kobo.","version":"1.0.7","glyph":"headphones","capabilities":["network","audio","bluetooth-audio","bluetooth-control"],"release_notes":"Keep Audiobook Studio compatible with Cobalt's protocol-12 runtime."}
+{
+  "id": "audiobook",
+  "display_name": "Audiobook Studio",
+  "short_label": "Audiobooks",
+  "summary": "Turn a topic into an original narrated audiobook and listen on your Kobo.",
+  "version": "1.0.9",
+  "glyph": "headphones",
+  "capabilities": [
+    "network",
+    "audio",
+    "bluetooth-audio",
+    "bluetooth-control"
+  ],
+  "release_notes": "Line up a table's columns under the headings that name them, typeset numbered equations, set figures apart from the prose, and carry a document's mathematics all the way through instead of stopping early."
+}

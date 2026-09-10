@@ -2,6 +2,9 @@
 
 use std::fmt;
 
+pub mod observation;
+pub mod provisional;
+
 /// Which panel-controller interface the device's framebuffer speaks.
 ///
 /// Declared on the profile rather than inferred from `framebuffer_id`, so
@@ -507,7 +510,7 @@ pub const ELIPSA_2E_389: DeviceProfile = DeviceProfile {
     },
     touch_transform: TouchTransform::TransposeMirrorY,
     reference_rotation: 1,
-    verified_rotations: &[1],
+    verified_rotations: &[1, 3],
     geometry_rule: GeometryRule::Fixed,
     touch_name: "Elan Touchscreen",
     touch_x_min: 0,
@@ -737,6 +740,52 @@ pub const SUPPORTED_PROFILES: &[&DeviceProfile] = &[
 
 pub const WRITE_EVIDENCE_PENDING: &str =
     "owner-attended display, touch, exit, and recovery evidence is incomplete";
+
+/// How well known the hardware a session resolved is.
+///
+/// The distinction lives here rather than beside the framebuffer because it is
+/// a statement about the profile table: whether this reader is in it, and
+/// whether the firmware it is running was measured. What is done about that is
+/// somebody else's decision, and the two callers who make it disagree, so this
+/// deliberately carries no policy of its own.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Standing {
+    /// A measured profile claims this model, on a firmware branch it covers.
+    Measured,
+    /// A measured profile claims this model, but not this firmware branch.
+    UntestedFirmware,
+    /// No profile claims this reader, so one was derived from its own probe.
+    Unmeasured,
+}
+
+/// The firmware generation Cobalt can be started on.
+///
+/// NickelMenu is the only way into Cobalt from the reader's own menus, and it
+/// hooks Nickel by resolving mangled C++ symbols out of `libnickel` and
+/// rewriting a GOT entry behind one of them. That is a 4.x arrangement. It does
+/// not hold on the 5.x firmware, so a 5.x reader could be installed onto and
+/// then have no way to start what was installed.
+///
+/// This is why the generation is checked apart from the branch. An untested
+/// branch is a risk an owner can weigh, and [`Standing::UntestedFirmware`]
+/// lets them. A reader that cannot launch Cobalt at all is not a risk, it is a
+/// dead end, and consenting to it would only mean agreeing to a device that
+/// does nothing.
+pub const SUPPORTED_FIRMWARE_GENERATION: u32 = 4;
+
+/// How the blocker for an unlaunchable firmware generation begins.
+///
+/// Deliberately not [`FIRMWARE_BLOCKER`]. That prefix marks the blockers an
+/// informed owner may waive, and this one must outlive any consent.
+pub const FIRMWARE_GENERATION_BLOCKER: &str = "firmware generation";
+
+/// How every firmware-version blocker begins.
+///
+/// Shared so that the message and the rule deciding whether an owner may waive
+/// it are written once. Two copies of this string would let a reworded refusal
+/// silently become unwaivable, and the symptom would be a device that stops
+/// offering the choice rather than anything that looks like a bug.
+pub const FIRMWARE_BLOCKER: &str = "firmware version";
 
 /// Returns the exact supported profile authorized for ordinary device writes.
 ///
@@ -1126,13 +1175,77 @@ impl DeviceProfile {
         }
     }
 
+    /// Whether this profile covers `observed`, which it does for any build on a
+    /// release branch the profile has actually been measured on.
+    ///
+    /// The exact builds in [`DeviceProfile::firmware_versions`] remain the
+    /// record of what was put on a physical device, and the branch is derived
+    /// from them rather than stored beside them. Two lists cannot drift apart
+    /// that way, and nobody can widen the gate without also claiming a device
+    /// was tested.
+    #[must_use]
+    pub fn accepts_firmware(&self, observed: &str) -> bool {
+        let Some(observed) = firmware_branch(observed) else {
+            return false;
+        };
+        self.firmware_branches().contains(&observed)
+    }
+
+    /// The release branches this profile has been measured on.
+    ///
+    /// Only used to say what would have been accepted, so a refusal names a
+    /// branch an owner can compare against rather than a build number that
+    /// tells them nothing.
+    #[must_use]
+    pub fn firmware_branches(&self) -> Vec<&'static str> {
+        let mut branches = self
+            .firmware_versions
+            .iter()
+            .copied()
+            .filter_map(firmware_branch)
+            .collect::<Vec<_>>();
+        branches.sort_unstable();
+        branches.dedup();
+        branches
+    }
+
+    /// The reasons a write must be refused even after an informed owner has
+    /// accepted the risk.
+    ///
+    /// Two blockers describe something an owner is in a position to decide
+    /// about: that nobody has measured this firmware branch, and that nobody
+    /// has watched this panel take a write. Saying so plainly and letting them
+    /// answer is the whole of the consent path.
+    ///
+    /// Nothing else here is theirs to waive. A device code, serial prefix or
+    /// kernel release that disagrees with the profile means the profile is
+    /// describing different hardware, and an owner accepting that would be
+    /// accepting a mistake rather than a risk.
+    #[must_use]
+    pub fn unwaivable_write_blockers(&self, snapshot: &DeviceSnapshot) -> Vec<String> {
+        self.validate(snapshot)
+            .write_blockers
+            .into_iter()
+            .filter(|blocker| {
+                blocker.as_str() != WRITE_EVIDENCE_PENDING && !blocker.starts_with(FIRMWARE_BLOCKER)
+            })
+            .collect()
+    }
+
     /// Returns the reasons this device may not be written to.
     ///
     /// Hardware geometry alone is not proof of identity, because another device
     /// could report a compatible framebuffer. Any write path additionally
-    /// requires the exact device code, firmware version, kernel release, and
-    /// serial model prefix this profile was measured against. An empty result
-    /// means every identity field matched exactly.
+    /// requires the exact device code, kernel release, and serial model prefix
+    /// this profile was measured against, and a firmware version on a branch it
+    /// was measured on.
+    ///
+    /// Firmware is the one field here that moves under an owner who changed
+    /// nothing about their device. Kobo updates readers on its own schedule, so
+    /// pinning the build number took the platform away from everybody on a
+    /// model each time a wave shipped, until somebody holding that hardware
+    /// re-tested it. The kernel release is the field that actually tracks the
+    /// driver stack a profile was measured against, and it stays exact.
     #[must_use]
     pub fn write_identity_blockers(&self, snapshot: &DeviceSnapshot) -> Vec<String> {
         let mut blockers = Vec::new();
@@ -1152,12 +1265,21 @@ impl DeviceProfile {
             self.serial_prefix,
             identity.serial_prefix.as_deref(),
         );
-        compare_identity_one_of(
-            &mut blockers,
-            "firmware version",
-            self.firmware_versions,
-            identity.firmware_version.as_deref(),
-        );
+        match identity.firmware_version.as_deref() {
+            // Checked before the branch, and separately from it, because a
+            // reader NickelMenu cannot hook has nothing to weigh: it would be
+            // installed onto and then never able to start.
+            Some(version) if !launchable_generation(version) => blockers.push(format!(
+                "{FIRMWARE_GENERATION_BLOCKER}: expected {SUPPORTED_FIRMWARE_GENERATION}.x, \
+                 found {version}, which NickelMenu cannot hook"
+            )),
+            Some(version) if self.accepts_firmware(version) => {}
+            Some(version) => blockers.push(format!(
+                "{FIRMWARE_BLOCKER}: expected a {} build, found {version}",
+                self.firmware_branches().join(" or ")
+            )),
+            None => blockers.push("firmware version could not be read".to_owned()),
+        }
         compare_identity(
             &mut blockers,
             "kernel release",
@@ -1670,23 +1792,39 @@ where
     }
 }
 
-fn compare_identity_one_of(
-    blockers: &mut Vec<String>,
-    name: &str,
-    expected: &[&str],
-    actual: Option<&str>,
-) {
-    match actual {
-        Some(value) if expected.contains(&value) => {}
-        Some(value) => {
-            let wanted = match expected {
-                [only] => (*only).to_owned(),
-                choices => format!("one of {}", choices.join(", ")),
-            };
-            blockers.push(format!("{name}: expected {wanted}, found {value}"));
-        }
-        None => blockers.push(format!("{name} could not be read")),
+/// Whether a firmware version is one NickelMenu can start Cobalt from.
+///
+/// A version that names no branch is refused here too. Nothing can be said
+/// about a generation that could not be read, and guessing that an unreadable
+/// version is a launchable one is the guess that ends with a reader carrying
+/// an installation it cannot run.
+#[must_use]
+pub fn launchable_generation(version: &str) -> bool {
+    firmware_branch(version)
+        .and_then(|branch| branch.split('.').next())
+        .and_then(|major| major.parse::<u32>().ok())
+        .is_some_and(|major| major == SUPPORTED_FIRMWARE_GENERATION)
+}
+
+/// The release branch a firmware version belongs to, as `major.minor`.
+///
+/// Kobo's third component is a build number shared across a whole release
+/// wave rather than anything about one model: 23697 shipped as 4.38.23697 on
+/// the Clara HD, Elipsa 2E and Libra 2, and as 4.45.23697 on the Clara BW and
+/// Clara Colour. The first two components are what follow a model's own driver
+/// stack, so they are the largest unit a single measurement can honestly be
+/// carried across.
+///
+/// A string that is not two components followed by a build belongs to no
+/// branch and is matched by nothing, which is the direction that fails safe.
+#[must_use]
+pub fn firmware_branch(version: &str) -> Option<&str> {
+    let (major, rest) = version.split_once('.')?;
+    let (minor, build) = rest.split_once('.')?;
+    if major.is_empty() || minor.is_empty() || build.is_empty() {
+        return None;
     }
+    Some(&version[..major.len() + 1 + minor.len()])
 }
 
 fn compare_identity(blockers: &mut Vec<String>, name: &str, expected: &str, actual: Option<&str>) {
@@ -2265,6 +2403,107 @@ mod tests {
         assert_eq!(CLARA_BW_POSE.display_to_touch(0, 1448), None);
     }
 
+    /// N605 doctor fields measured on firmware 4.38.23697. Keep the fixture
+    /// independent of the profile so changes to its gate cannot change the
+    /// evidence the test supplies at the same time.
+    fn measured_elipsa(rotation: u32) -> DeviceSnapshot {
+        let channel = Bitfield {
+            offset: 0,
+            length: 0,
+            msb_right: 0,
+        };
+        DeviceSnapshot {
+            compatible: vec!["mediatek,mt8110".into(), "mediatek,mt8512".into()],
+            model: Some("MediaTek MT8110 board".into()),
+            framebuffer: Some(FramebufferSnapshot {
+                id: "hwtcon".into(),
+                width: 1404,
+                height: 1872,
+                virtual_width: 1404,
+                virtual_height: 1872,
+                x_offset: 0,
+                y_offset: 0,
+                bits_per_pixel: 32,
+                grayscale: 0,
+                stride: 5616,
+                memory_length: 10_543_104,
+                kind: 0,
+                visual: 2,
+                rotation,
+                red: channel,
+                green: channel,
+                blue: channel,
+                alpha: channel,
+            }),
+            touch: Some(TouchSnapshot {
+                path: "/dev/input/event2".into(),
+                name: "Elan Touchscreen".into(),
+                x_min: 0,
+                x_max: 1872,
+                y_min: 0,
+                y_max: 1404,
+            }),
+            identity: IdentitySnapshot {
+                serial_prefix: Some("N605".into()),
+                firmware_version: Some("4.38.23697".into()),
+                kernel_release: Some("4.9.77".into()),
+                device_code: Some(389),
+            },
+        }
+    }
+
+    #[test]
+    fn elipsa_both_portrait_poses_pass_the_write_gate_and_map_touch() {
+        for (rotation, mapping, sample) in [
+            (
+                1,
+                TouchMapping {
+                    swap_axes: true,
+                    mirror_x: false,
+                    mirror_y: true,
+                },
+                (30, 34),
+            ),
+            // The measured rotation-1 sample (30, 34), reflected through
+            // the panel centre: (1403 - 30, 1871 - 34).
+            (
+                3,
+                TouchMapping {
+                    swap_axes: true,
+                    mirror_x: true,
+                    mirror_y: false,
+                },
+                (1373, 1837),
+            ),
+        ] {
+            let snapshot = measured_elipsa(rotation);
+            let profile = write_ready_profile(&snapshot).expect("portrait is write-ready");
+            assert_eq!(profile.id, "elipsa-2e-389");
+            let pose = PanelPose::resolve(profile, snapshot.framebuffer.as_ref().unwrap())
+                .expect("verified portrait resolves");
+            assert_eq!(pose.touch_mapping(), mapping);
+            assert_eq!(pose.touch_to_display(1838, 30), Some(sample));
+            for display in [(0, 0), (1403, 0), (0, 1871), (1403, 1871), (702, 936)] {
+                let raw = pose.display_to_touch(display.0, display.1).unwrap();
+                assert_eq!(pose.touch_to_display(raw.0, raw.1), Some(display));
+            }
+        }
+    }
+
+    #[test]
+    fn elipsa_portrait_support_does_not_relax_landscape_or_identity() {
+        for rotation in [0, 2] {
+            let snapshot = measured_elipsa(rotation);
+            assert!(write_ready_profile(&snapshot).is_err());
+            assert!(
+                PanelPose::resolve(&ELIPSA_2E_389, snapshot.framebuffer.as_ref().unwrap()).is_err()
+            );
+        }
+        let mut snapshot = measured_elipsa(3);
+        snapshot.identity.firmware_version = Some("unverified".into());
+        assert!(write_ready_profile(&snapshot).is_err());
+    }
+
     #[test]
     fn elipsa_touch_edges_stay_inside_the_panel_and_display_points_round_trip() {
         for raw in [(0, 0), (0, 1404), (1872, 0), (1872, 1404)] {
@@ -2756,6 +2995,105 @@ mod tests {
         assert!(!CLARA_COLOUR_393
             .write_identity_blockers(&clara_bw)
             .is_empty());
+    }
+
+    fn clara_bw_on_firmware(version: &str) -> DeviceSnapshot {
+        let mut identity = clara_bw_identity();
+        identity.firmware_version = Some(version.into());
+        clara_panel_snapshot(identity)
+    }
+
+    #[test]
+    fn a_later_build_on_a_measured_branch_is_accepted() {
+        // The case that took Cobalt off owners' devices without warning: Kobo
+        // moved the Clara BW from 4.45.23697 to 4.45.23792 on its own
+        // schedule, and nothing this profile describes changed underneath it.
+        assert!(CLARA_BW_391
+            .write_identity_blockers(&clara_bw_on_firmware("4.45.23792"))
+            .is_empty());
+    }
+
+    #[test]
+    fn a_branch_the_profile_was_never_measured_on_is_refused() {
+        let blockers = CLARA_BW_391.write_identity_blockers(&clara_bw_on_firmware("4.46.23836"));
+        assert!(
+            blockers.iter().any(|blocker| blocker.contains("4.45")),
+            "a refusal has to name the branch that would have been taken: {blockers:?}"
+        );
+    }
+
+    #[test]
+    fn a_shared_build_number_does_not_carry_a_measurement_between_branches() {
+        // 23697 shipped as 4.38.23697 on three models and as 4.45.23697 on
+        // two others, so the build number alone says nothing about which
+        // driver stack is underneath it.
+        assert!(!CLARA_BW_391
+            .write_identity_blockers(&clara_bw_on_firmware("4.38.23697"))
+            .is_empty());
+    }
+
+    #[test]
+    fn a_firmware_version_that_names_no_branch_is_refused() {
+        for version in ["", "4", "4.45", "4.45.", "unknown"] {
+            assert!(
+                !CLARA_BW_391
+                    .write_identity_blockers(&clara_bw_on_firmware(version))
+                    .is_empty(),
+                "{version:?} names no branch and must not be accepted"
+            );
+        }
+    }
+
+    #[test]
+    fn a_firmware_generation_nickelmenu_cannot_hook_is_refused_past_any_consent() {
+        // NickelMenu is the only way into Cobalt from the reader's own menus
+        // and it does not hook the 5.x firmware. A reader there is not
+        // untested hardware an owner can decide about, it is hardware with no
+        // way to start what would be installed on it, so this blocker has to
+        // survive the consent path that waives the other two.
+        let snapshot = clara_bw_on_firmware("5.0.24000");
+        let blockers = CLARA_BW_391.unwaivable_write_blockers(&snapshot);
+        assert!(
+            !blockers.is_empty(),
+            "a 5.x reader must not be waivable: {blockers:?}"
+        );
+    }
+
+    #[test]
+    fn a_derived_profile_does_not_excuse_its_own_unsupported_generation() {
+        // The provisional profile takes its firmware from the device, so the
+        // branch check can never fail on it. Without a separate generation
+        // check an unrecognised reader on 5.x would raise nothing at all.
+        let mut snapshot = clara_bw_on_firmware("5.0.24000");
+        snapshot.identity.serial_prefix = Some("N999".into());
+        snapshot.identity.device_code = Some(999);
+        let profile = crate::provisional::profile_from_probe(&snapshot, TouchTransform::Direct)
+            .expect("derivable");
+        assert!(
+            !profile.unwaivable_write_blockers(&snapshot).is_empty(),
+            "a derived 5.x profile must still refuse"
+        );
+    }
+
+    #[test]
+    fn one_profile_claims_a_model_and_branch_so_installation_never_has_to_guess() {
+        // Matching a branch rather than a build widens what each profile
+        // answers to, and the installation path refuses outright when two of
+        // them claim one device. This is the invariant that keeps that
+        // refusal unreachable.
+        let mut claimed: Vec<(&str, &str)> = Vec::new();
+        for profile in SUPPORTED_PROFILES {
+            for branch in profile.firmware_branches() {
+                let claim = (profile.serial_prefix, branch);
+                assert!(
+                    !claimed.contains(&claim),
+                    "{} shares {} on branch {branch} with an earlier profile",
+                    profile.id,
+                    profile.serial_prefix
+                );
+                claimed.push(claim);
+            }
+        }
     }
 
     #[test]

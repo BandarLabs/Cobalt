@@ -1,0 +1,4164 @@
+[
+  {
+    "id": "SIM-01",
+    "pr": 1,
+    "group": "Simulator fidelity (SIM-1\u201310)",
+    "task": "Apply interface and reading scales consistently to rendering",
+    "status": "done",
+    "evidence": [
+      "258 UI tests pass, including explicit-metrics render/layout scale regression; default and extra-large comic simulator journeys pass."
+    ]
+  },
+  {
+    "id": "SIM-02",
+    "pr": 1,
+    "group": "Simulator fidelity (SIM-1\u201310)",
+    "task": "Apply the same scale context to measurement, diagnostics and hit testing",
+    "status": "done",
+    "evidence": [
+      "Scoped environment applied in layout, render and diagnostics; simulator uses the same chrome and metrics for hit testing.",
+      "SDK callback measurements now use and restore explicit interface/reading scale. Actual catalog rows with result banners fit both tested profiles at three sizes; shared square grids preserve geometry and trailing controls across supported profiles and poses."
+    ]
+  },
+  {
+    "id": "SIM-03",
+    "pr": 1,
+    "group": "Simulator fidelity (SIM-1\u201310)",
+    "task": "Restore ambient scales after rendering to prevent cross-request leakage",
+    "status": "done",
+    "evidence": [
+      "Nested scale environment restores both scales after an unwind; guard cannot cross threads."
+    ]
+  },
+  {
+    "id": "SIM-04",
+    "pr": 1,
+    "group": "Simulator fidelity (SIM-1\u201310)",
+    "task": "Share runtime Back/chrome composition with browser simulation",
+    "status": "done",
+    "evidence": [
+      "Chrome::for_screen shared by device runtime, one-shot runtime and SDK simulator; comic Back returns to its library."
+    ]
+  },
+  {
+    "id": "SIM-05",
+    "pr": 1,
+    "group": "Simulator fidelity (SIM-1\u201310)",
+    "task": "Route shell Back and app-owned Back consistently",
+    "status": "done",
+    "evidence": [
+      "Shared runtime Back ownership/deadline and protected-launcher eviction policy; real launcher, Todo, Store, Magnet and Tic-tac-toe host processes pass the extra-large Clara BW journey, retained/evicted/killed app recovery and shared panel-history checks. See evidence/runtime/result.json. Kernel sandbox/suspend remain device-only; signed transaction fixtures remain separately exercised in single-app mode."
+    ]
+  },
+  {
+    "id": "SIM-06",
+    "pr": 1,
+    "group": "Simulator fidelity (SIM-1\u201310)",
+    "task": "Use declared app capabilities instead of granting every capability",
+    "status": "done",
+    "evidence": [
+      "Local publishing manifest is bounded and identity-checked; declared capabilities feed task, shell and service policy. Unknown apps have no grants. 50 simulator tests and CLI/simulator Clippy pass."
+    ]
+  },
+  {
+    "id": "SIM-07",
+    "pr": 1,
+    "group": "Simulator fidelity (SIM-1\u201310)",
+    "task": "Respect device-supported service backends in simulation",
+    "status": "done",
+    "evidence": [
+      "Simulator service and network policies honor explicit or observation-derived backends; missing backends are not grants. 51 simulator tests pass."
+    ]
+  },
+  {
+    "id": "SIM-08",
+    "pr": 1,
+    "group": "Simulator fidelity (SIM-1\u201310)",
+    "task": "Inject missing credentials for all credentialed network tasks",
+    "status": "done",
+    "evidence": [
+      "Credentialed GET and POST produce NoCredential in missing-secret scenario; regression test passes."
+    ]
+  },
+  {
+    "id": "SIM-09",
+    "pr": 1,
+    "group": "Simulator fidelity (SIM-1\u201310)",
+    "task": "Return production-equivalent failure reasons",
+    "status": "done",
+    "evidence": [
+      "Network scenario faults now use production task admission, request/header/credential gates and result delivery. Capacity refusal matches runtime and duplicate IDs do not receive duplicate outcomes. 116 policy + 65 simulator tests pass; app-install transaction parity remains owned by SIM-17.",
+      "Storage policy now requires file/parent flush acknowledgements and preserves validation before injected disk-full faults; 124 policy + 66 simulator tests and Panels recovery journey pass. Suspend barrier and app-install parity remain open.",
+      "Signed-local app-store fixtures now use runtime verification and transaction errors, including validation before offline/disk-full injection. Production Store copy no longer calls a filesystem failure a radio failure or claims rollback after an uncertain write. Remaining lifecycle/launcher parity is still open.",
+      "Shared native/simulator permission and input validation precedes network/storage faults. Real store IPC and account-install parity tests cover denied, invalid, missing, offline, timeout and storage failure without success or mutation; 130 policy and 73 simulator tests pass."
+    ]
+  },
+  {
+    "id": "SIM-10",
+    "pr": 1,
+    "group": "Simulator fidelity (SIM-1\u201310)",
+    "task": "Cover streaming requests with offline and timeout injection",
+    "status": "done",
+    "evidence": [
+      "Stream open/next use Fetch/Post headers; offline/timeout injection regression passes. Existing behavior confirmed."
+    ]
+  },
+  {
+    "id": "SIM-11",
+    "pr": 1,
+    "group": "Simulator fidelity (SIM-1\u201310)",
+    "task": "Cover shelf/chunked writes with storage-full injection",
+    "status": "done",
+    "evidence": [
+      "StorageFull covers Save and ShelfWrite while retaining reads/removal; regression passes."
+    ]
+  },
+  {
+    "id": "SIM-12",
+    "pr": 1,
+    "group": "Simulator fidelity (SIM-1\u201310)",
+    "task": "Commit panel transitions when screens arrive rather than when screenshots are requested",
+    "status": "done",
+    "evidence": [
+      "AppState commits SetScreen and orientation updates; every unseen screen contributes to refresh history."
+    ]
+  },
+  {
+    "id": "SIM-13",
+    "pr": 1,
+    "group": "Simulator fidelity (SIM-1\u201310)",
+    "task": "Make screenshot endpoints read-only",
+    "status": "done",
+    "evidence": [
+      "Both screenshot endpoints are read-only; repeated reads checked by unit tests and three driven comic journeys."
+    ]
+  },
+  {
+    "id": "SIM-14",
+    "pr": 1,
+    "group": "Simulator fidelity (SIM-1\u201310)",
+    "task": "Record bounded screen, input and refresh event histories",
+    "status": "done",
+    "evidence": [
+      "Bounded 64-record history, 4096 characters per record; screen/action/refresh/scenario/lifecycle events recorded and tested."
+    ]
+  },
+  {
+    "id": "SIM-15",
+    "pr": 1,
+    "group": "Simulator fidelity (SIM-1\u201310)",
+    "task": "Generate simulator Store fixtures from the catalog registry",
+    "status": "done",
+    "evidence": [
+      "kobo-catalog validates and includes 44 publishing manifests; Store install/update/remove regression uses current metadata."
+    ]
+  },
+  {
+    "id": "SIM-16",
+    "pr": 1,
+    "group": "Simulator fidelity (SIM-1\u201310)",
+    "task": "Exercise actual launcher/app transitions in full-runtime mode",
+    "status": "done",
+    "evidence": [
+      "Shared runtime Back ownership/deadline and protected-launcher eviction policy; real launcher, Todo, Store, Magnet and Tic-tac-toe host processes pass the extra-large Clara BW journey, retained/evicted/killed app recovery and shared panel-history checks. See evidence/runtime/result.json. Kernel sandbox/suspend remain device-only; signed transaction fixtures remain separately exercised in single-app mode."
+    ]
+  },
+  {
+    "id": "SIM-17",
+    "pr": 1,
+    "group": "Simulator fidelity (SIM-1\u201310)",
+    "task": "Exercise signed install, update and remove against local fixture packages",
+    "status": "done",
+    "evidence": [
+      "Explicit private signed-local Store mode calls kobod catalog verification and install/update/remove transactions with fixture-only trust and pathless bounded local transport. Four transaction/security tests, 70 simulator, 16 runtime library, 150 runtime binary, 18 Store and 92 protocol tests pass. Real Store SDK IPC journey verifies install, failed update, retry, process restart, removal/data retention and reinstall. Protocol 14 publishing floor is Cobalt 0.3.12; 64 publishing-policy tests pass. Physical execution and full-runtime launches remain separate."
+    ]
+  },
+  {
+    "id": "SIM-18",
+    "pr": 1,
+    "group": "Simulator fidelity (SIM-1\u201310)",
+    "task": "Add deterministic virtual clock controls",
+    "status": "done",
+    "evidence": [
+      "Manual clock drives the same bounded task runner sleep outcomes; explicit wall corrections preserve monotonic deadlines. Driver clock advance/set plus semantic clock assertions pass the full extra-large comic route. Transport timeouts remain real."
+    ]
+  },
+  {
+    "id": "SIM-19",
+    "pr": 1,
+    "group": "Simulator fidelity (SIM-1\u201310)",
+    "task": "Replay raw touch down, move, up, hold and page-button events through the HAL",
+    "status": "done",
+    "evidence": [
+      "Synthetic evdev touch and GPIO replay use Cobalt HAL decoders and the same HoldTracker as device runtime. Bounded batches, explicit lost-input resynchronization, foreground delivery and page press/release mapping are verified. Ordinary SDK simulator taps now pass through the HAL decoder. 61 simulator, 154 HAL, 149 runtime and 16 runtime-library tests pass; full extra-large comic route and ARMv7 Rust 1.85.1 runtime check pass."
+    ]
+  },
+  {
+    "id": "SIM-20",
+    "pr": 1,
+    "group": "Simulator fidelity (SIM-1\u201310)",
+    "task": "Model panel submission, busy state, completion and failure",
+    "status": "done",
+    "evidence": [
+      "Bounded pending/latest panel frames, explicit submission/completion/failure controls and host timestamps. Reads never complete a refresh. Failed and busy output rejects touch; retry cleans the whole panel. 58 simulator tests, 149 runtime tests and 16 runtime-library tests pass; full extra-large comic failure/recovery route and browser recovery pass; ARMv7 Rust 1.85.1 runtime check passes."
+    ]
+  },
+  {
+    "id": "SIM-21",
+    "pr": 1,
+    "group": "Simulator fidelity (SIM-1\u201310)",
+    "task": "Expose battery, charging, frontlight, cover and orientation controls",
+    "status": "done",
+    "evidence": [
+      "Browser and driver controls set battery, charging, frontlight, cover and display orientation. App service reads match observations; foreground cover edges use the real SDK message. 56 simulator tests pass, full extra-large comic route passes, browser actions verified against service state and narrow viewport has no horizontal overflow. Illumination and app reflow limits are explicit."
+    ]
+  },
+  {
+    "id": "SIM-22",
+    "pr": 1,
+    "group": "Simulator fidelity (SIM-1\u201310)",
+    "task": "Inject app kill, lifecycle change and transfer interruption",
+    "status": "done",
+    "evidence": [
+      "Disconnect closes the socket, joins task/terminal output pumps and shuts down active tasks before reporting cleanup complete. Cancel-all delivers normal exactly-once outcomes. 63 simulator and 112 policy tests pass; extra-large Panels route covers background input suppression and SIGKILL of its isolated fixture process group followed by saved-position restoration. Physical crash/handback checks remain scheduled after all three PRs."
+    ]
+  },
+  {
+    "id": "SIM-23",
+    "pr": 1,
+    "group": "Simulator fidelity (SIM-1\u201310)",
+    "task": "Keep ideal and approximate panel output distinct",
+    "status": "done",
+    "evidence": [
+      "Ideal and approximate endpoints remain distinct; metadata labels the approximation; screenshot reads preserve both."
+    ]
+  },
+  {
+    "id": "SIM-24",
+    "pr": 1,
+    "group": "Simulator fidelity (SIM-1\u201310)",
+    "task": "Add color output and label uncalibrated appearance clearly",
+    "status": "done",
+    "evidence": [
+      "Opt-in ideal RGB capture and browser inspection on color profiles, explicitly uncalibrated; grayscale profiles return luminance. Original RGB comic journeys pass on Libra Colour and Clara BW. Fixed RGB loss in shared landscape rendering, comic decode/spreads and SDK picture delivery; color enabled only after host identity. Browser color/cancellation controls and portrait/landscape captures verified."
+    ]
+  },
+  {
+    "id": "SIM-25",
+    "pr": 1,
+    "group": "Simulator fidelity (SIM-1\u201310)",
+    "task": "Reject invalid profile and scale arguments",
+    "status": "done",
+    "evidence": [
+      "Startup rejects unknown profile and text scale; pure parser tests cover every supported profile."
+    ]
+  },
+  {
+    "id": "SIM-26",
+    "pr": 1,
+    "group": "Simulator fidelity (SIM-1\u201310)",
+    "task": "Stamp captures with source, app, mode, profile, pose, fonts, scales, fixture and seed",
+    "status": "done",
+    "evidence": [
+      "Atomic capture envelope binds pixels to app binary SHA-256, revision/dirty state, mode, profile, pose, installed font sources, scales, fixture and requested seed. PNG and recording sidecars are verified by frame digest. Full extra-large comic simulator route passed."
+    ]
+  },
+  {
+    "id": "SIM-27",
+    "pr": 1,
+    "group": "Simulator fidelity (SIM-1\u201310)",
+    "task": "Assert serious diagnostics at every drive transition",
+    "status": "done",
+    "evidence": [
+      "Drive transition commands automatically query serious diagnostics and reject malformed reports; mocked unreachable-button regression and actual Clara/Libra comic flows pass."
+    ]
+  },
+  {
+    "id": "SIM-28",
+    "pr": 1,
+    "group": "Simulator fidelity (SIM-1\u201310)",
+    "task": "Add semantic state/network-effect assertions to drive",
+    "status": "done",
+    "evidence": [
+      "Driver expect-state uses typed JSON pointers for simulation, layout and activity assertions. Bounded privacy-preserving counters track submitted network requests and outcomes. Actual comic flow asserts zero fetch/post attempts; 16 driver and 53 simulator tests pass."
+    ]
+  },
+  {
+    "id": "SIM-29",
+    "pr": 1,
+    "group": "Simulator fidelity (SIM-1\u201310)",
+    "task": "Use stable control IDs and bounded wait-for-idle in routes",
+    "status": "done",
+    "evidence": [
+      "Stable action-name hashing is shared by UI, SDK and CLI; tap-id/wait-for-id accept names or numbers. wait-idle uses explicit SDK callback completion plus outstanding work, with a bounded timeout. The extra-large comic route passes with named controls and no fixed capture delay."
+    ]
+  },
+  {
+    "id": "SIM-30",
+    "pr": 1,
+    "group": "Simulator fidelity (SIM-1\u201310)",
+    "task": "Keep refresh results invariant under screenshot sampling cadence",
+    "status": "done",
+    "evidence": [
+      "Unseen transitions are committed and 8 repeated pairs of frame reads preserve complete simulation metadata in actual SDK sessions."
+    ]
+  },
+  {
+    "id": "SDK-01",
+    "pr": 1,
+    "group": "Shared SDK and design contracts",
+    "task": "Provide measured pagination for plain text, Markdown and HTML",
+    "status": "done",
+    "evidence": [
+      "Existing BookView opens text/Markdown/HTML with shared measured pagination; 15 BookView and 79 Reader tests pass. Integration guidance documents app adoption."
+    ]
+  },
+  {
+    "id": "SDK-02",
+    "pr": 1,
+    "group": "Shared SDK and design contracts",
+    "task": "Provide bounded paged collections with stable selection and return position",
+    "status": "done",
+    "evidence": [
+      "New bounded PagedCollection preserves stable selection, page anchors and return position; 4 regression tests include reordering, larger-text reflow, deletion and invalid updates."
+    ]
+  },
+  {
+    "id": "SDK-03",
+    "pr": 1,
+    "group": "Shared SDK and design contracts",
+    "task": "Preserve reading anchors across scale and orientation changes",
+    "status": "done",
+    "evidence": [
+      "BookView::reflow preserves memory and visible anchor through portrait/landscape changes for text, Markdown and HTML; existing reader size/annotation tests pass."
+    ]
+  },
+  {
+    "id": "SDK-04",
+    "pr": 1,
+    "group": "Shared SDK and design contracts",
+    "task": "Compose provider setup from existing credential and URL controls",
+    "status": "done",
+    "evidence": [
+      "ProviderSetup composes existing text and runtime-held credential entry, validates HTTPS base addresses, and supports bearer/Basic/named headers. Provider setup layouts pass all profiles and three text sizes."
+    ]
+  },
+  {
+    "id": "SDK-05",
+    "pr": 1,
+    "group": "Shared SDK and design contracts",
+    "task": "Provide reusable connection test and production error mapping",
+    "status": "done",
+    "evidence": [
+      "Bounded provider probe separates HTTP completion from app-validated connection, rejects stale/cancelled results and maps account/offline/timeout failures to reachable recovery. 5 provider tests pass within 118 SDK tests."
+    ]
+  },
+  {
+    "id": "SDK-06",
+    "pr": 1,
+    "group": "Shared SDK and design contracts",
+    "task": "Provide durable content records and migrations",
+    "status": "done",
+    "evidence": [
+      "Bounded versioned Schema supports explicit incremental migrations without changing source bytes, rejects duplicate keys/future schemas and identifies migrated-but-unsaved state. 3 record tests pass; acknowledged Draft remains the persistence boundary."
+    ]
+  },
+  {
+    "id": "SDK-07",
+    "pr": 1,
+    "group": "Shared SDK and design contracts",
+    "task": "Provide bounded article/asset cache and pruning",
+    "status": "done",
+    "evidence": [
+      "Existing cache namespace is capped at 64 keys and 256 KiB per value, prunes oldest-written cache keys independently of durable state, and retains positions. Policy cache isolation/eviction tests pass within 108 policy tests; larger retained content uses the bounded shelf."
+    ]
+  },
+  {
+    "id": "SDK-08",
+    "pr": 1,
+    "group": "Shared SDK and design contracts",
+    "task": "Provide persistent mutation outbox with deduplication and acknowledgement",
+    "status": "done",
+    "evidence": [
+      "kobo-state Outbox provides bounded versioned save-before-send snapshots, pending-key coalescing, one immutable request in flight and matching acknowledgements; actual-store reopen test passes."
+    ]
+  },
+  {
+    "id": "SDK-09",
+    "pr": 1,
+    "group": "Shared SDK and design contracts",
+    "task": "Expose retry and conflict states without false success",
+    "status": "done",
+    "evidence": [
+      "Persisted retry and conflict states pause outbox delivery until explicit retry/reconciliation; failed local writes cannot release remote work; tests cover restart and stale responses."
+    ]
+  },
+  {
+    "id": "SDK-10",
+    "pr": 1,
+    "group": "Shared SDK and design contracts",
+    "task": "Provide save acknowledgement and retry/export for unsaved edits",
+    "status": "done",
+    "evidence": [
+      "kobo-state Draft retains latest edits across failed/stale store responses, serializes writes and exposes retry/export bytes without false saved status; 3 draft regressions pass."
+    ]
+  },
+  {
+    "id": "SDK-11",
+    "pr": 1,
+    "group": "Shared SDK and design contracts",
+    "task": "Provide import receipts, progress and verified availability",
+    "status": "done",
+    "evidence": [
+      "Shared Import provides preview, progress, read-back SHA-256 identity checks and a versioned receipt that must be acknowledged before availability. Real shelf/store integration verifies failed receipt retry without reupload and missing-file detection after reopen."
+    ]
+  },
+  {
+    "id": "SDK-12",
+    "pr": 1,
+    "group": "Shared SDK and design contracts",
+    "task": "Provide expected-empty, corrupt and unsupported library states",
+    "status": "done",
+    "evidence": [
+      "Record decoding distinguishes expected absence, corruption and unsupported versions; store now distinguishes missing files from read errors/oversized records and refuses failed removals. Import receipt restore and actual-file verification preserve separate absent, damaged and unavailable outcomes."
+    ]
+  },
+  {
+    "id": "SDK-13",
+    "pr": 1,
+    "group": "Shared SDK and design contracts",
+    "task": "Add original sample collections to reusable setup flows",
+    "status": "done",
+    "evidence": [
+      "Three original, explicitly sample-tagged offline collections (12 notes, 8 short readings, 12 cards) attach to ProviderSetup. Choosing a sample performs no network/store work and does not verify an account. 126 SDK tests pass; app-specific sample adoption remains tracked in PR 2."
+    ]
+  },
+  {
+    "id": "SDK-14",
+    "pr": 1,
+    "group": "Shared SDK and design contracts",
+    "task": "Extend shared board surface with clue gutters, selection and distinct marks",
+    "status": "done",
+    "evidence": [
+      "Bounded native board viewport with aligned clue gutters, explicit grayscale marks and selection; SDK pan/resize/reveal and full clue inspection. All-profile size/orientation and 4096-cell reachability tests pass; original SDK IPC simulator journey passes. Catalog adoption remains in PR 2."
+    ]
+  },
+  {
+    "id": "SDK-15",
+    "pr": 1,
+    "group": "Shared SDK and design contracts",
+    "task": "Support larger boards with accessible paging/pan/zoom",
+    "status": "done",
+    "evidence": [
+      "Bounded native board viewport with aligned clue gutters, explicit grayscale marks and selection; SDK pan/resize/reveal and full clue inspection. All-profile size/orientation and 4096-cell reachability tests pass; original SDK IPC simulator journey passes. Catalog adoption remains in PR 2."
+    ]
+  },
+  {
+    "id": "SDK-16",
+    "pr": 1,
+    "group": "Shared SDK and design contracts",
+    "task": "Provide board undo/control conventions",
+    "status": "done",
+    "evidence": [
+      "Shared bounded board transactions/Undo/Redo/Clear preserve givens, reject partial invalid moves, retain redo after no-op/refusal, and keep control geometry stable across profiles/scales/poses. 134 SDK tests pass; strict Clippy and ARM Rust 1.85.1 compile pass. Catalog adoption remains PR 2."
+    ]
+  },
+  {
+    "id": "SDK-17",
+    "pr": 1,
+    "group": "Shared SDK and design contracts",
+    "task": "Provide injectable calendar date, monotonic time and test entropy",
+    "status": "done",
+    "evidence": [
+      "Shared injectable Clock, SystemClock and ManualClock provide calendar date, explicit UTC offset and monotonic snapshots. SystemEntropy fails explicitly; FixtureEntropy supplies reproducible seeded game choices with unbiased bounded sampling. 111 policy and 120 SDK tests pass; ARMv7 Rust 1.85.1 SDK check passes."
+    ]
+  },
+  {
+    "id": "SDK-18",
+    "pr": 1,
+    "group": "Shared SDK and design contracts",
+    "task": "Provide stable inline loading, offline, stale and result surfaces",
+    "status": "done",
+    "evidence": [
+      "Shared inline feedback states retain one measured caption slot across supported profiles, orientations and three text sizes. Regression tests require unchanged content/control coordinates; Draft conversion preserves unsaved/saving/failed distinctions and retained bytes."
+    ]
+  },
+  {
+    "id": "SDK-19",
+    "pr": 1,
+    "group": "Shared SDK and design contracts",
+    "task": "Provide owner-initiated text/image export and paired handoff",
+    "status": "done",
+    "evidence": [
+      "Shared Export supports owner-confirmed text/Markdown/PNG/JPEG copies, verified shelf bytes and an acknowledged bounded offer. kobo export receives the exact digest-named file through existing SSH pairing or simulator storage, verifies bytes, flushes locally and never replaces a conflicting file. Text/image simulator-to-CLI journeys pass full-storage retry, duplicate receiving and corruption preservation; physical SSH transfer remains in the combined Clara BW acceptance run. See sdk-export-and-copy.md and evidence/exports/result.json."
+    ]
+  },
+  {
+    "id": "SDK-20",
+    "pr": 1,
+    "group": "Shared SDK and design contracts",
+    "task": "Add metric-aware validation beyond builder collection limits",
+    "status": "done",
+    "evidence": [
+      "ScreenBuilder::build_checked_with uses caller metrics/chrome and shared UI diagnostics, refusing omitted collections or error-severity layout issues. Tests reject overflowing screens that pass collection-only validation and accept reachable screens on all profiles/sizes/orientations."
+    ]
+  },
+  {
+    "id": "SDK-21",
+    "pr": 1,
+    "group": "Shared SDK and design contracts",
+    "task": "Keep physical hit targets, margins and semantic type tokens authoritative",
+    "status": "done",
+    "evidence": [
+      "Shared physical DisplayMetrics/spacing/hit-target/type tokens retained; scoped typography enforces metrics at render/layout/diagnostics. Contract documented."
+    ]
+  },
+  {
+    "id": "SDK-22",
+    "pr": 1,
+    "group": "Shared SDK and design contracts",
+    "task": "Document primary/secondary button hierarchy and stable action placement",
+    "status": "done",
+    "evidence": [
+      "docs/quality/shared-ui-contracts.md documents primary/secondary hierarchy, stable action placement and reserved trailing controls."
+    ]
+  },
+  {
+    "id": "SDK-23",
+    "pr": 1,
+    "group": "Shared SDK and design contracts",
+    "task": "Keep copy concrete and remove unexplained implementation language from primary flows",
+    "status": "done",
+    "evidence": [
+      "Store install/error text now names the operation and recovery step; unknown device backend/timeouts no longer falsely name radio operations. Store refreshes installed metadata after an uncertain write. Broader app and companion copy adoption remains open.",
+      "Shared account and request/storage failure copy names a recovery action without requiring computer-only account entry, guessing an outage or blaming network speed. A missing requested item is not a successful empty library. Export UI bounds display titles and shows format/size; sdk-export-and-copy.md records the shared copy contract. Workspace tests and Clippy pass after updating three compatibility assertions; app-specific copy adoption remains tracked in PRs 2 and 3."
+    ]
+  },
+  {
+    "id": "SDK-24",
+    "pr": 1,
+    "group": "Shared SDK and design contracts",
+    "task": "Separate UI/SDK responsibilities into maintainable modules without duplicating contracts",
+    "status": "done",
+    "evidence": [
+      "Screen construction moved from the SDK root into builder.rs without changing its public types or duplicating UI geometry. Separate feedback, validation, samples, provider and import modules compose shared UI/runtime contracts. 126 SDK tests, Clippy, strict rustdoc and text-disabled compilation pass; ARMv7 Rust 1.85.1 compile passes."
+    ]
+  },
+  {
+    "id": "HW-01",
+    "pr": 1,
+    "group": "Platform requirements from read-only hardware research",
+    "task": "Export versioned observations from Cobalt device probes",
+    "status": "done",
+    "evidence": [
+      "Read-only doctor --json exports bounded cobalt.hardware-observation version 1; doctor and profile tests pass, including ARMv7 MSRV compilation."
+    ]
+  },
+  {
+    "id": "HW-02",
+    "pr": 1,
+    "group": "Platform requirements from read-only hardware research",
+    "task": "Record measured, inferred and unverified profile fields separately",
+    "status": "done",
+    "evidence": [
+      "Observation schema separates observed facts, inferred Cobalt profile mapping, origin and unverified calibration; synthetic fixture labels survive round-trip."
+    ]
+  },
+  {
+    "id": "HW-03",
+    "pr": 1,
+    "group": "Platform requirements from read-only hardware research",
+    "task": "Load observation fixtures into the simulator without importing third-party device tables",
+    "status": "done",
+    "evidence": [
+      "KOBO_SIM_OBSERVATION loads bounded observations, rejects profile/geometry mismatches and derives pose and available backends. Observation-driven comic journey passes."
+    ]
+  },
+  {
+    "id": "HW-04",
+    "pr": 1,
+    "group": "Platform requirements from read-only hardware research",
+    "task": "Keep digitizer mapping separate from display pose",
+    "status": "done",
+    "evidence": [
+      "Observation loading resolves display pose independently of the profile digitizer transform; invalid poses and geometry are refused. Existing PanelPose and mapping tests remain passing."
+    ]
+  },
+  {
+    "id": "HW-05",
+    "pr": 1,
+    "group": "Platform requirements from read-only hardware research",
+    "task": "Handle lost input and resynchronization explicitly",
+    "status": "done",
+    "evidence": [
+      "HAL cancellation/resynchronization and quiescence regressions pass (153 HAL, 148 runtime tests); Rust 1.85.1 ARMv7 device-write check and Clippy pass. Physical validation awaits the combined Clara BW run."
+    ]
+  },
+  {
+    "id": "HW-06",
+    "pr": 1,
+    "group": "Platform requirements from read-only hardware research",
+    "task": "Preserve backend-specific refresh intents and waveform capability checks",
+    "status": "done",
+    "evidence": [
+      "Preserved Cobalt intent-to-backend mappings and exact profile/write gates; hardware observations retain requested/applied intent and driver-translated waveform separately. Existing all-profile smoke mapping and conservative waveform tests pass in the 158-test HAL suite."
+    ]
+  },
+  {
+    "id": "HW-07",
+    "pr": 1,
+    "group": "Platform requirements from read-only hardware research",
+    "task": "Record real refresh submission/completion markers and timing",
+    "status": "done",
+    "evidence": [
+      "Added bounded versioned submit/completion/failure observations with actual kernel markers, session correlation and per-operation duration. Failed waits retain ownership; host failure/retry and JSON tests pass, strict Clippy and ARM compile pass. Physical measurement remains pending."
+    ]
+  },
+  {
+    "id": "HW-08",
+    "pr": 1,
+    "group": "Platform requirements from read-only hardware research",
+    "task": "Preserve conservative color/inversion behavior until calibrated",
+    "status": "done",
+    "evidence": [
+      "Retained existing color capability/bitfield checks, grayscale downgrade and conservative controller flags; no inversion/color calibration enabled. 158 HAL tests pass, including color downgrade and waveform flags. Physical color calibration remains explicitly unverified."
+    ]
+  },
+  {
+    "id": "HW-09",
+    "pr": 1,
+    "group": "Platform requirements from read-only hardware research",
+    "task": "Implement platform power state machine with explicit ownership",
+    "status": "done",
+    "evidence": [
+      "Partial: shared generation-scoped power coordinator, protocol-14 SDK save barrier and TaskRunner pause are implemented; multi-app host simulation passes real SDK save failure, chained save/receipt, cancellation, duplicate scheduled wake, panel deadline, light restore and USB wake checks. Device kernel/ownership integration remains open; evidence/power/result.json explicitly marks hardware_validation false.",
+      "Shared generation-scoped power ownership is integrated with native idle/power-button handback and the multi-app simulator. Native entry returns work and power ownership to the stock reader; kernel suspend remains unavailable pending physical profile validation."
+    ]
+  },
+  {
+    "id": "HW-10",
+    "pr": 1,
+    "group": "Platform requirements from read-only hardware research",
+    "task": "Handle power button, cover, charging and wake reasons through shared state",
+    "status": "done",
+    "evidence": [
+      "Native power-button edge handling, cover-change cancellation and read-only external/USB power observations route through the shared coordinator with explicit wake reasons. Raw cover input does not guess a sleep-cover policy. Actual SDK fixtures cover these transitions; automatic hardware cover sleep remains unenabled."
+    ]
+  },
+  {
+    "id": "HW-11",
+    "pr": 1,
+    "group": "Platform requirements from read-only hardware research",
+    "task": "Flush durable work and pause/cancel tasks before suspend",
+    "status": "done",
+    "evidence": [
+      "Storage policy now requires file/parent flush acknowledgements and preserves validation before injected disk-full faults; 124 policy + 66 simulator tests and Panels recovery journey pass. Suspend barrier and app-install parity remain open.",
+      "Partial: shared generation-scoped power coordinator, protocol-14 SDK save barrier and TaskRunner pause are implemented; multi-app host simulation passes real SDK save failure, chained save/receipt, cancellation, duplicate scheduled wake, panel deadline, light restore and USB wake checks. Device kernel/ownership integration remains open; evidence/power/result.json explicitly marks hardware_validation false.",
+      "Native host pauses all task runners before PrepareSuspend, waits for matching app save acknowledgements, drains cancellation and fences display completion before reader handback. Save refusal/deadline resumes the exact attempt. Real SDK fixture verifies chained durable saves and cancellation once."
+    ]
+  },
+  {
+    "id": "HW-12",
+    "pr": 1,
+    "group": "Platform requirements from read-only hardware research",
+    "task": "Restore frontlight and owner settings after exit or crash",
+    "status": "done",
+    "evidence": [
+      "Exact raw brightness/warmth restoration, private bounded crash record and reader-restart recovery implemented. 18 light/recovery, 10 guardian and 150 runtime binary tests pass; strict Clippy and ARMv7 musl check pass. Failed restoration retains its record; owner-setting and suspend integration remain open. No hardware run performed.",
+      "Runtime and independent guardian restore captured raw brightness/warmth using a flushed private record. USB setup journals original owner preferences before writing and undo restores only still-owned values. Crash/retry/owner-change tests pass; physical restoration is an acceptance gate."
+    ]
+  },
+  {
+    "id": "HW-13",
+    "pr": 1,
+    "group": "Platform requirements from read-only hardware research",
+    "task": "Test wake-during-suspend, cover bounce and repeated wake",
+    "status": "done",
+    "evidence": [
+      "Partial: shared generation-scoped power coordinator, protocol-14 SDK save barrier and TaskRunner pause are implemented; multi-app host simulation passes real SDK save failure, chained save/receipt, cancellation, duplicate scheduled wake, panel deadline, light restore and USB wake checks. Device kernel/ownership integration remains open; evidence/power/result.json explicitly marks hardware_validation false.",
+      "Deterministic real-SDK simulator journey passes held-panel wake during preparation, cover bounce, duplicate wake and duplicate power-button/release cases. Shared coordinator tests invalidate stale generations and entry effects. Physical timing remains uncalibrated."
+    ]
+  },
+  {
+    "id": "HW-14",
+    "pr": 1,
+    "group": "Platform requirements from read-only hardware research",
+    "task": "Test scheduled wake, USB attach/detach and reconnect",
+    "status": "done",
+    "evidence": [
+      "Partial: shared generation-scoped power coordinator, protocol-14 SDK save barrier and TaskRunner pause are implemented; multi-app host simulation passes real SDK save failure, chained save/receipt, cancellation, duplicate scheduled wake, panel deadline, light restore and USB wake checks. Device kernel/ownership integration remains open; evidence/power/result.json explicitly marks hardware_validation false.",
+      "Real SDK simulator checks scheduled occurrence delivery once, USB attach refusal, wake, detach and repeated reconnect. Native power-supply fixture covers attach/detach/unknown observations. No native RTC backend is advertised or invoked; hardware wake/reconnect validation follows all three PRs."
+    ]
+  },
+  {
+    "id": "HW-15",
+    "pr": 1,
+    "group": "Platform requirements from read-only hardware research",
+    "task": "Avoid duplicate task resumption or indefinite unintended wake",
+    "status": "done",
+    "evidence": [
+      "Partial: shared generation-scoped power coordinator, protocol-14 SDK save barrier and TaskRunner pause are implemented; multi-app host simulation passes real SDK save failure, chained save/receipt, cancellation, duplicate scheduled wake, panel deadline, light restore and USB wake checks. Device kernel/ownership integration remains open; evidence/power/result.json explicitly marks hardware_validation false.",
+      "TaskRunner pause/resume and generation tests prevent duplicate delivery. App drawing cannot renew native inactivity. Preparation has a five-second deadline; CLI wake acquisitions now have a two-minute kernel lease renewed every thirty seconds, including held locks. Shell fixture proves timed writes; device expiry remains to be measured."
+    ]
+  },
+  {
+    "id": "HW-16",
+    "pr": 1,
+    "group": "Platform requirements from read-only hardware research",
+    "task": "Keep watchdog and reader handback guarantees intact",
+    "status": "done",
+    "evidence": [
+      "Power handback uses existing teardown, guardian, frontlight, reader and watchdog owners. No kernel sleep is enabled that could strand a watchdog/radio owner. Native Unix-socket effect tests and existing crash/recovery tests pass; ARM device-write build passes."
+    ]
+  },
+  {
+    "id": "HW-17",
+    "pr": 1,
+    "group": "Platform requirements from read-only hardware research",
+    "task": "Create firmware/profile compatibility and recovery evidence format",
+    "status": "done",
+    "evidence": [
+      "Versioned private run evidence retains firmware/profile observations, source dirty state, CLI/transcript/screen digests, step outcomes and unresolved physical assessment. Host plan verified; no hardware measurements claimed."
+    ]
+  },
+  {
+    "id": "HW-18",
+    "pr": 1,
+    "group": "Platform requirements from read-only hardware research",
+    "task": "Prepare Clara BW automation for physical corner/touch/refresh checks",
+    "status": "done",
+    "evidence": [
+      "Clara BW harness prepares gated display smoke and five named physical touch points; seven host tests include rejection of synthetic/wrong identity before panel operations. Physical execution deferred until all three PRs are ready."
+    ]
+  },
+  {
+    "id": "HW-19",
+    "pr": 1,
+    "group": "Platform requirements from read-only hardware research",
+    "task": "Prepare Clara BW sleep/wake, forced-exit and setting-restoration checks",
+    "status": "done",
+    "evidence": [
+      "Combined sleep/wake and forced-exit protocol uses existing guardian/handback facilities. Harness checks owner settings/light, suspend count, boot identity and uptime; Wi-Fi return alone is never accepted. Physical execution remains pending."
+    ]
+  },
+  {
+    "id": "HW-20",
+    "pr": 1,
+    "group": "Platform requirements from read-only hardware research",
+    "task": "Prepare latency, ghosting, resume and power calibration protocol",
+    "status": "done",
+    "evidence": [
+      "Documented matched-baseline physical latency, residue, resume and power protocol distinguishes host/driver/camera evidence and records uncertainty; no simulator calibration applied."
+    ]
+  },
+  {
+    "id": "COMIC-01",
+    "pr": 1,
+    "group": "CBZ/CBR architecture and shared reader",
+    "task": "Document shared reader versus separate-app decision",
+    "status": "done",
+    "evidence": [
+      "docs/quality/comic-reader-decision.md: shared archive/reader contract, keep Panels, no duplicate comic app."
+    ]
+  },
+  {
+    "id": "COMIC-02",
+    "pr": 1,
+    "group": "CBZ/CBR architecture and shared reader",
+    "task": "Evaluate Rust ZIP/RAR libraries, MSRV, maintenance, resource bounds and full licenses",
+    "status": "done",
+    "evidence": [
+      "Pinned ZIP 4.6.1 with MIT/Apache normal dependency closure; Rust 1.85.1 host tests and ARM check pass; RAR options assessed and deferred. Full audit database error recorded."
+    ]
+  },
+  {
+    "id": "COMIC-03",
+    "pr": 1,
+    "group": "CBZ/CBR architecture and shared reader",
+    "task": "Use dependencies without copying third-party source into Cobalt",
+    "status": "done",
+    "evidence": [
+      "Cargo dependency only; no upstream decoder code or archive fixtures copied. Required ZIP notice added to distribution notices."
+    ]
+  },
+  {
+    "id": "COMIC-04",
+    "pr": 1,
+    "group": "CBZ/CBR architecture and shared reader",
+    "task": "Move comic archive metadata and natural page ordering into shared code",
+    "status": "done",
+    "evidence": [
+      "kobo-comic owns archive/page metadata and numeric ordering; Panels uses the shared crate."
+    ]
+  },
+  {
+    "id": "COMIC-05",
+    "pr": 1,
+    "group": "CBZ/CBR architecture and shared reader",
+    "task": "Support CBZ using bounded archive reads and validated images",
+    "status": "done",
+    "evidence": [
+      "Stored/DEFLATE CBZ, CRC-checked lazy PNG/JPEG decode; original fixture passes host, MSRV and simulator tests."
+    ]
+  },
+  {
+    "id": "COMIC-06",
+    "pr": 1,
+    "group": "CBZ/CBR architecture and shared reader",
+    "task": "Support CBR through a permissively licensed bounded decoder/import path",
+    "status": "deferred",
+    "evidence": [
+      "Owner explicitly permits deferring CBR for license safety; no RAR decoder will be added in this program."
+    ]
+  },
+  {
+    "id": "COMIC-07",
+    "pr": 1,
+    "group": "CBZ/CBR architecture and shared reader",
+    "task": "Identify format by content and report extension mismatch helpfully",
+    "status": "done",
+    "evidence": [
+      "Shared inspect_named identifies content independently of extension and returns CBZ naming guidance. RAR bytes behind .cbz refuse with recovery guidance in simulator."
+    ]
+  },
+  {
+    "id": "COMIC-08",
+    "pr": 1,
+    "group": "CBZ/CBR architecture and shared reader",
+    "task": "Reject corrupt, encrypted or unsupported archives with a specific recovery action",
+    "status": "done",
+    "evidence": [
+      "Corrupt/encrypted/unsupported archive errors include recovery actions and reach Panels UI; explicit CBR refusal driven in simulator."
+    ]
+  },
+  {
+    "id": "COMIC-09",
+    "pr": 1,
+    "group": "CBZ/CBR architecture and shared reader",
+    "task": "Bound entries, archive bytes, expanded bytes, image pixels and decode resources",
+    "status": "done",
+    "evidence": [
+      "Admission bounds archive, directory, entries, expanded totals and each image; existing image pixel limit remains enforced."
+    ]
+  },
+  {
+    "id": "COMIC-10",
+    "pr": 1,
+    "group": "CBZ/CBR architecture and shared reader",
+    "task": "Reject traversal, duplicate names, symlinks and unsafe extraction targets",
+    "status": "done",
+    "evidence": [
+      "Rejects unsafe paths, duplicate names before ZIP indexing, symlinks and special entries. Never extracts. Hostile fixture tests pass."
+    ]
+  },
+  {
+    "id": "COMIC-11",
+    "pr": 1,
+    "group": "CBZ/CBR architecture and shared reader",
+    "task": "Handle numeric filenames, nested folders and non-page metadata",
+    "status": "done",
+    "evidence": [
+      "Natural nested/numeric ordering and hidden/non-image filtering verified with original fixtures."
+    ]
+  },
+  {
+    "id": "COMIC-12",
+    "pr": 1,
+    "group": "CBZ/CBR architecture and shared reader",
+    "task": "Preserve title, page order, reading direction and cover metadata",
+    "status": "done",
+    "evidence": [
+      "Bounded ComicInfo metadata preserves title, series, number, RTL and cover without changing natural page order. Malformed optional metadata leaves readable pages available; 17 core tests pass."
+    ]
+  },
+  {
+    "id": "COMIC-13",
+    "pr": 1,
+    "group": "CBZ/CBR architecture and shared reader",
+    "task": "Provide shared comic page fit, width, zoom and pan controls",
+    "status": "done",
+    "evidence": [
+      "Shared ComicView exposes fit page, fit width, 100\u2013400% zoom and normalized pan. Cropping happens before enlargement. All profile/scale/orientation layout and reachable-action checks pass."
+    ]
+  },
+  {
+    "id": "COMIC-14",
+    "pr": 1,
+    "group": "CBZ/CBR architecture and shared reader",
+    "task": "Provide page jump, thumbnails and stable Back/return position",
+    "status": "done",
+    "evidence": [
+      "Shared page keypad, lazy two-page thumbnail browser and app-owned Back retain position. Default and extra-large simulator journeys pass."
+    ]
+  },
+  {
+    "id": "COMIC-15",
+    "pr": 1,
+    "group": "CBZ/CBR architecture and shared reader",
+    "task": "Persist page, direction and viewport per book",
+    "status": "done",
+    "evidence": [
+      "Versioned per-book filename anchors, direction, spread preference and viewport persist. Legacy decimal positions migrate. Failed saves retain latest edits with correlated acknowledgements and explicit retry; real storage-full/retry/restart flow passes."
+    ]
+  },
+  {
+    "id": "COMIC-16",
+    "pr": 1,
+    "group": "CBZ/CBR architecture and shared reader",
+    "task": "Support RTL and two-page spreads with a reachable single-page fallback",
+    "status": "done",
+    "evidence": [
+      "RTL side zones and landscape spreads are driven in simulator, with reachable single-page toggle. Cover-isolation regression covers both sides of an explicitly selected cover."
+    ]
+  },
+  {
+    "id": "COMIC-17",
+    "pr": 1,
+    "group": "CBZ/CBR architecture and shared reader",
+    "task": "Keep page decode lazy and prefetch/cache bounded",
+    "status": "done",
+    "evidence": [
+      "Two-page LRU cache and visible-page-only decode; thumbnails are bounded. Invalid later-page regression proves earlier reading is available; no unbounded prefetch."
+    ]
+  },
+  {
+    "id": "COMIC-18",
+    "pr": 2,
+    "group": "CBZ/CBR architecture and shared reader",
+    "task": "Route local comics through the same import preview and receipt as other documents",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "COMIC-19",
+    "pr": 1,
+    "group": "CBZ/CBR architecture and shared reader",
+    "task": "Test original CBZ fixtures and hostile/corrupt archives; test clear refusal of CBR",
+    "status": "done",
+    "evidence": [
+      "9 tests cover original ZIP fixtures, corrupt CRC, all truncated prefixes, unsafe paths, duplicates, links, encryption, size limits and CBR refusal."
+    ]
+  },
+  {
+    "id": "COMIC-20",
+    "pr": 1,
+    "group": "CBZ/CBR architecture and shared reader",
+    "task": "Verify Clara-sized comic reading, scaling, navigation and reopen in simulator",
+    "status": "done",
+    "evidence": [
+      "Clara BW default and extra-large shared-reader journeys validate controls, scaling, navigation and process restart. Extra-large journey additionally injects storage-full and verifies successful retry."
+    ]
+  },
+  {
+    "id": "ARXIV-01",
+    "pr": 2,
+    "group": "arXiv",
+    "task": "Separate title, authors and metadata visually",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "ARXIV-02",
+    "pr": 2,
+    "group": "arXiv",
+    "task": "Add saved searches and followed subjects",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "ARXIV-03",
+    "pr": 2,
+    "group": "arXiv",
+    "task": "Show downloading, available offline and reading progress",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "ARXIV-04",
+    "pr": 2,
+    "group": "arXiv",
+    "task": "Validate long HTML, formulas, figures and tables",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "ARXIV-05",
+    "pr": 2,
+    "group": "arXiv",
+    "task": "Retain saved reading through reopen and failed figure fetch",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "AUDIO-01",
+    "pr": 2,
+    "group": "Audiobook Studio",
+    "task": "Preflight required provider configuration",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "AUDIO-02",
+    "pr": 2,
+    "group": "Audiobook Studio",
+    "task": "Show truthful generation stages and cancellation",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "AUDIO-03",
+    "pr": 2,
+    "group": "Audiobook Studio",
+    "task": "Checkpoint partial generation and support explicit retry",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "AUDIO-04",
+    "pr": 2,
+    "group": "Audiobook Studio",
+    "task": "Provide a free original playable sample",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "AUDIO-05",
+    "pr": 2,
+    "group": "Audiobook Studio",
+    "task": "Unify library and now-playing controls",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "AUDIO-06",
+    "pr": 2,
+    "group": "Audiobook Studio",
+    "task": "Map missing-secret and partial failures to useful recovery",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "BACK-01",
+    "pr": 2,
+    "group": "Backgammon",
+    "task": "Clarify active player and legal source/destination on board",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "BACK-02",
+    "pr": 2,
+    "group": "Backgammon",
+    "task": "Make dice and doubling cube legible",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "BACK-03",
+    "pr": 2,
+    "group": "Backgammon",
+    "task": "Separate match setup from moves",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "BACK-04",
+    "pr": 2,
+    "group": "Backgammon",
+    "task": "Show concise turn history",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "BACK-05",
+    "pr": 2,
+    "group": "Backgammon",
+    "task": "Use real entropy with explicit deterministic fixture seeds",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "BACK-06",
+    "pr": 2,
+    "group": "Backgammon",
+    "task": "Resolve opening layout diagnostic",
+    "status": "done",
+    "evidence": [
+      "The UI now treats an empty move grid as intentionally empty. The actual Backgammon opening simulator route passes with strict diagnostics; nonempty offscreen controls are still diagnosed."
+    ]
+  },
+  {
+    "id": "BRIEF-01",
+    "pr": 2,
+    "group": "Daily Brief",
+    "task": "Show fetched time and source",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "BRIEF-02",
+    "pr": 2,
+    "group": "Daily Brief",
+    "task": "Keep cached headlines with offline/retry state",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "BRIEF-03",
+    "pr": 2,
+    "group": "Daily Brief",
+    "task": "Allow source selection",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "BRIEF-04",
+    "pr": 2,
+    "group": "Daily Brief",
+    "task": "Open and save stories through the shared reader",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "CALIBRE-01",
+    "pr": 2,
+    "group": "calibre-web (APP-1)",
+    "task": "Replace ignored response/static categories with real OPDS navigation",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "CALIBRE-02",
+    "pr": 2,
+    "group": "calibre-web (APP-1)",
+    "task": "Configure and test provider endpoint/authentication",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "CALIBRE-03",
+    "pr": 2,
+    "group": "calibre-web (APP-1)",
+    "task": "Handle books, authors and shelves through live parsed catalog links",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "CALIBRE-04",
+    "pr": 2,
+    "group": "calibre-web (APP-1)",
+    "task": "Download and read a fixture book through BookView",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "CALIBRE-05",
+    "pr": 2,
+    "group": "calibre-web (APP-1)",
+    "task": "Retain downloaded book and progress offline",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "CALIBRE-06",
+    "pr": 2,
+    "group": "calibre-web (APP-1)",
+    "task": "Distinguish authentication, transport, HTTP and parsing failures",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "CHAT-01",
+    "pr": 2,
+    "group": "AI Command Center",
+    "task": "Guide provider setup and explain provider/model choice",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "CHAT-02",
+    "pr": 2,
+    "group": "AI Command Center",
+    "task": "Persist and manage conversations",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "CHAT-03",
+    "pr": 2,
+    "group": "AI Command Center",
+    "task": "Export conversations",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "CHAT-04",
+    "pr": 2,
+    "group": "AI Command Center",
+    "task": "Support explicit retry and cancel",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "CHAT-05",
+    "pr": 2,
+    "group": "AI Command Center",
+    "task": "Paginate long replies and test provider-specific failures with fixtures",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "CROSS-01",
+    "pr": 2,
+    "group": "Crossword",
+    "task": "Render numbered cells and active word distinctly",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "CROSS-02",
+    "pr": 2,
+    "group": "Crossword",
+    "task": "Keep clue and entry together",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "CROSS-03",
+    "pr": 2,
+    "group": "Crossword",
+    "task": "Add puzzle corpus/import and difficulty",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "CROSS-04",
+    "pr": 2,
+    "group": "Crossword",
+    "task": "Add check/reveal choices",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "CROSS-05",
+    "pr": 2,
+    "group": "Crossword",
+    "task": "Persist completion and statistics",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "DECK-01",
+    "pr": 2,
+    "group": "Deck app",
+    "task": "Reduce visual weight of unused pads",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "DECK-02",
+    "pr": 2,
+    "group": "Deck app",
+    "task": "Show layout title and connection state",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "DECK-03",
+    "pr": 2,
+    "group": "Deck app",
+    "task": "Show per-action busy state and last result",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "DECK-04",
+    "pr": 2,
+    "group": "Deck app",
+    "task": "Provide useful original preset layouts",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "DECK-05",
+    "pr": 2,
+    "group": "Deck app",
+    "task": "Preserve explicit confirmation for chosen commands",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "DECK-06",
+    "pr": 2,
+    "group": "Deck app",
+    "task": "Unify visible pad count with companion configuration",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "FANS-01",
+    "pr": 2,
+    "group": "Fanshelf",
+    "task": "Show download and reading progress consistently",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "FANS-02",
+    "pr": 2,
+    "group": "Fanshelf",
+    "task": "Improve fandom/filter organization",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "FANS-03",
+    "pr": 2,
+    "group": "Fanshelf",
+    "task": "Provide bulk shelf management",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "FANS-04",
+    "pr": 2,
+    "group": "Fanshelf",
+    "task": "Distinguish WIP, unread updates and manual update state",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "FANS-05",
+    "pr": 2,
+    "group": "Fanshelf",
+    "task": "Explain locked or unavailable work",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "FANS-06",
+    "pr": 2,
+    "group": "Fanshelf",
+    "task": "Validate EPUB reading with synthetic owned content",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "FIELD-01",
+    "pr": 2,
+    "group": "Fieldbook (APP-3)",
+    "task": "Label starter data truthfully",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "FIELD-02",
+    "pr": 2,
+    "group": "Fieldbook (APP-3)",
+    "task": "Import actual field/species packs and search them",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "FIELD-03",
+    "pr": 2,
+    "group": "Fieldbook (APP-3)",
+    "task": "Record outing, location, date and time with sightings",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "FIELD-04",
+    "pr": 2,
+    "group": "Fieldbook (APP-3)",
+    "task": "Edit, delete and undo sightings",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "FIELD-05",
+    "pr": 2,
+    "group": "Fieldbook (APP-3)",
+    "task": "Show per-outing totals",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "FIELD-06",
+    "pr": 2,
+    "group": "Fieldbook (APP-3)",
+    "task": "Produce a real downloadable checklist",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "FIELD-07",
+    "pr": 2,
+    "group": "Fieldbook (APP-3)",
+    "task": "Report save/sync failure instead of fictitious success",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "FIELD-08",
+    "pr": 2,
+    "group": "Fieldbook (APP-3)",
+    "task": "Keep local logging independent of service availability",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "CARDS-01",
+    "pr": 2,
+    "group": "Flashcards app",
+    "task": "Replace expected missing collection error with first-use setup",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "CARDS-02",
+    "pr": 2,
+    "group": "Flashcards app",
+    "task": "Include an original ready-to-review sample",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "CARDS-03",
+    "pr": 2,
+    "group": "Flashcards app",
+    "task": "Show import status and guided companion handoff",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "CARDS-04",
+    "pr": 2,
+    "group": "Flashcards app",
+    "task": "Explain local grading and review-log reconciliation accurately",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "CARDS-05",
+    "pr": 2,
+    "group": "Flashcards app",
+    "task": "Test reveal, grade and restart with imported fixtures",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "CARDS-06",
+    "pr": 2,
+    "group": "Flashcards app",
+    "task": "Test Japanese, media and long cards",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "FRAME-01",
+    "pr": 2,
+    "group": "Frame app",
+    "task": "Expose slideshow mode, interval and ordering controls",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "FRAME-02",
+    "pr": 2,
+    "group": "Frame app",
+    "task": "Show album, date and count clearly",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "FRAME-03",
+    "pr": 2,
+    "group": "Frame app",
+    "task": "Provide an original multi-photo demo",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "FRAME-04",
+    "pr": 2,
+    "group": "Frame app",
+    "task": "Show verified transfer status",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "FRAME-05",
+    "pr": 2,
+    "group": "Frame app",
+    "task": "Integrate shared fit/crop behavior",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "FRAME-06",
+    "pr": 2,
+    "group": "Frame app",
+    "task": "Prepare sleep ownership and energy validation",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "GALLERY-01",
+    "pr": 2,
+    "group": "Components reference",
+    "task": "Document every control and loading/disabled/error variant",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "GALLERY-02",
+    "pr": 2,
+    "group": "Components reference",
+    "task": "Exercise supported scales, profiles and long labels",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "GALLERY-03",
+    "pr": 2,
+    "group": "Components reference",
+    "task": "Label intentional developer diagnostics",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "GALLERY-04",
+    "pr": 2,
+    "group": "Components reference",
+    "task": "Replace version-like section labels with meaningful categories",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "GALLERY-05",
+    "pr": 2,
+    "group": "Components reference",
+    "task": "Include complete task-flow examples",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "GRIM-01",
+    "pr": 2,
+    "group": "Grimoire (APP-9)",
+    "task": "Page spell results using remaining height after filters",
+    "status": "done",
+    "evidence": [
+      "Compendium pages use the context scale and measured remaining height. Spell, monster and rule results preserve all entry indices across three geometries and every text scale; the actual filtered-results simulator route passes."
+    ]
+  },
+  {
+    "id": "GRIM-02",
+    "pr": 2,
+    "group": "Grimoire (APP-9)",
+    "task": "Replace cycling filters with labeled selection",
+    "status": "done",
+    "evidence": [
+      "Separate filter and named-choice screens replace cycling controls. Tests cover every choice/page at all text scales, exact Wizard selection, Back and Clear. Any remains first and multi-class tags produce individual class choices; the simulator selects Wizard and Abjuration."
+    ]
+  },
+  {
+    "id": "GRIM-03",
+    "pr": 2,
+    "group": "Grimoire (APP-9)",
+    "task": "Paginate long stat blocks",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "GRIM-04",
+    "pr": 2,
+    "group": "Grimoire (APP-9)",
+    "task": "Improve combat/initiative controls",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "GRIM-05",
+    "pr": 2,
+    "group": "Grimoire (APP-9)",
+    "task": "Explain unavailable source categories",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "GRIM-06",
+    "pr": 2,
+    "group": "Grimoire (APP-9)",
+    "task": "Test realistic six-person party and initiative persistence",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "GUTEN-01",
+    "pr": 2,
+    "group": "Gutenbird",
+    "task": "Remove catalog boilerplate from summaries",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "GUTEN-02",
+    "pr": 2,
+    "group": "Gutenbird",
+    "task": "Clarify edition and language choices",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "GUTEN-03",
+    "pr": 2,
+    "group": "Gutenbird",
+    "task": "Improve cover fallbacks",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "GUTEN-04",
+    "pr": 2,
+    "group": "Gutenbird",
+    "task": "Persist shelf reading progress",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "GUTEN-05",
+    "pr": 2,
+    "group": "Gutenbird",
+    "task": "Reuse shared provider setup",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "GUTEN-06",
+    "pr": 2,
+    "group": "Gutenbird",
+    "task": "Verify fixture download, reading and offline reopen",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "HABIT-01",
+    "pr": 2,
+    "group": "Habits",
+    "task": "Make Add habit prominent on empty Today",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "HABIT-02",
+    "pr": 2,
+    "group": "Habits",
+    "task": "Clarify check and skip hierarchy",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "HABIT-03",
+    "pr": 2,
+    "group": "Habits",
+    "task": "Provide easy habit editing",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "HABIT-04",
+    "pr": 2,
+    "group": "Habits",
+    "task": "Explain missed and skipped day rules",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "HABIT-05",
+    "pr": 2,
+    "group": "Habits",
+    "task": "Add useful weekly summary",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "HABIT-06",
+    "pr": 2,
+    "group": "Habits",
+    "task": "Provide owner export and backup",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "HN-01",
+    "pr": 2,
+    "group": "Hacker News",
+    "task": "Reduce duplicate title and metadata noise",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "HN-02",
+    "pr": 2,
+    "group": "Hacker News",
+    "task": "Clarify saved and read states",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "HN-03",
+    "pr": 2,
+    "group": "Hacker News",
+    "task": "Preserve list position after reading",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "HN-04",
+    "pr": 2,
+    "group": "Hacker News",
+    "task": "Test deep comments and collapse/expand",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "HN-05",
+    "pr": 2,
+    "group": "Hacker News",
+    "task": "Handle unavailable links and long titles",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "HN-06",
+    "pr": 2,
+    "group": "Hacker News",
+    "task": "Keep story and discussion navigation distinct",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "HOME-01",
+    "pr": 2,
+    "group": "Home Panel",
+    "task": "Guide server discovery and connection setup",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "HOME-02",
+    "pr": 2,
+    "group": "Home Panel",
+    "task": "Show online/stale/last-updated states",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "HOME-03",
+    "pr": 2,
+    "group": "Home Panel",
+    "task": "Acknowledge each tile action and failure",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "HOME-04",
+    "pr": 2,
+    "group": "Home Panel",
+    "task": "Provide compact tile editing",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "HOME-05",
+    "pr": 2,
+    "group": "Home Panel",
+    "task": "Add usable climate controls",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "HOME-06",
+    "pr": 2,
+    "group": "Home Panel",
+    "task": "Provide an optional wall-panel mode",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "HOME-07",
+    "pr": 2,
+    "group": "Home Panel",
+    "task": "Validate against local service fixtures",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "INK-01",
+    "pr": 2,
+    "group": "Inkling",
+    "task": "Expand audited answer and guess vocabulary",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "INK-02",
+    "pr": 2,
+    "group": "Inkling",
+    "task": "Show uppercase letters with redundant state patterns",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "INK-03",
+    "pr": 2,
+    "group": "Inkling",
+    "task": "Keep keyboard knowledge visible",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "INK-04",
+    "pr": 2,
+    "group": "Inkling",
+    "task": "Use real date instead of technical identifiers",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "INK-05",
+    "pr": 2,
+    "group": "Inkling",
+    "task": "Add result export and distribution statistics",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "INK-06",
+    "pr": 2,
+    "group": "Inkling",
+    "task": "Provide archive play",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "INK-07",
+    "pr": 2,
+    "group": "Inkling",
+    "task": "Verify daily persistence and deterministic fixtures",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "KITCHEN-01",
+    "pr": 2,
+    "group": "Kitchen Card (APP-2)",
+    "task": "Configure Mealie endpoint and credentials",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "KITCHEN-02",
+    "pr": 2,
+    "group": "Kitchen Card (APP-2)",
+    "task": "Parse real recipe list and detail responses",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "KITCHEN-03",
+    "pr": 2,
+    "group": "Kitchen Card (APP-2)",
+    "task": "Preserve ingredient quantities and cooking steps",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "KITCHEN-04",
+    "pr": 2,
+    "group": "Kitchen Card (APP-2)",
+    "task": "Persist imported recipes through restart",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "KITCHEN-05",
+    "pr": 2,
+    "group": "Kitchen Card (APP-2)",
+    "task": "Handle save and connection failures honestly",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "KITCHEN-06",
+    "pr": 2,
+    "group": "Kitchen Card (APP-2)",
+    "task": "Add ingredient check-off",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "KITCHEN-07",
+    "pr": 2,
+    "group": "Kitchen Card (APP-2)",
+    "task": "Add recipe scaling with readable fractions",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "KITCHEN-08",
+    "pr": 2,
+    "group": "Kitchen Card (APP-2)",
+    "task": "Add cooking timers and Finished state",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "LICHESS-01",
+    "pr": 2,
+    "group": "Lichess",
+    "task": "Polish pairing and reconnection guidance",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "LICHESS-02",
+    "pr": 2,
+    "group": "Lichess",
+    "task": "Show active side, clock and connection status clearly",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "LICHESS-03",
+    "pr": 2,
+    "group": "Lichess",
+    "task": "Keep legal moves and selected squares legible",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "LICHESS-04",
+    "pr": 2,
+    "group": "Lichess",
+    "task": "Validate move acknowledgement, stale connection and reconnect",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "LICHESS-05",
+    "pr": 2,
+    "group": "Lichess",
+    "task": "Test complete fixture match and retained session state",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "LOGIC-01",
+    "pr": 2,
+    "group": "Logic Pack",
+    "task": "Add varied validated puzzles and difficulty",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "LOGIC-02",
+    "pr": 2,
+    "group": "Logic Pack",
+    "task": "Persist progress",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "LOGIC-03",
+    "pr": 2,
+    "group": "Logic Pack",
+    "task": "Provide undo and contextual controls",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "LOGIC-04",
+    "pr": 2,
+    "group": "Logic Pack",
+    "task": "Render appropriate line, bridge and cross-sum boards with attached clues",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "LOGIC-05",
+    "pr": 2,
+    "group": "Logic Pack",
+    "task": "Test completion and reopen for each game",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "MAGNET-01",
+    "pr": 2,
+    "group": "Magnet",
+    "task": "Show annotated sensor-location guidance",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "MAGNET-02",
+    "pr": 2,
+    "group": "Magnet",
+    "task": "Distinguish unsupported sensor from no magnet",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "MAGNET-03",
+    "pr": 2,
+    "group": "Magnet",
+    "task": "Provide resettable observation count",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "MAGNET-04",
+    "pr": 2,
+    "group": "Magnet",
+    "task": "Test controlled hall-sensor events",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "MORSE-01",
+    "pr": 2,
+    "group": "Morse",
+    "task": "Expose speed, duration and repeat clearly",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "MORSE-02",
+    "pr": 2,
+    "group": "Morse",
+    "task": "Keep Stop reachable",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "MORSE-03",
+    "pr": 2,
+    "group": "Morse",
+    "task": "Explain unsupported characters",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "MORSE-04",
+    "pr": 2,
+    "group": "Morse",
+    "task": "Restore previous light setting",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "MORSE-05",
+    "pr": 2,
+    "group": "Morse",
+    "task": "Add visible learning mode and letter reference",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "MORSE-06",
+    "pr": 2,
+    "group": "Morse",
+    "task": "Prepare hardware timing checks",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "MUSIC-01",
+    "pr": 2,
+    "group": "Music Stand (APP-4)",
+    "task": "Replace text placeholders with actual score pages",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "MUSIC-02",
+    "pr": 2,
+    "group": "Music Stand (APP-4)",
+    "task": "Render overlapping half-page crops correctly",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "MUSIC-03",
+    "pr": 2,
+    "group": "Music Stand (APP-4)",
+    "task": "Create and edit setlists and rehearsal order",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "MUSIC-04",
+    "pr": 2,
+    "group": "Music Stand (APP-4)",
+    "task": "Persist per-score page, crop and marks",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "MUSIC-05",
+    "pr": 2,
+    "group": "Music Stand (APP-4)",
+    "task": "Provide usable zoom and full-screen controls",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "MUSIC-06",
+    "pr": 2,
+    "group": "Music Stand (APP-4)",
+    "task": "Support reachable physical/page-button turns",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "MUSIC-07",
+    "pr": 2,
+    "group": "Music Stand (APP-4)",
+    "task": "Read host-prepared scores and report import failures",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "NEEDLES-01",
+    "pr": 2,
+    "group": "Needles",
+    "task": "Provide projects and named sections",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "NEEDLES-02",
+    "pr": 2,
+    "group": "Needles",
+    "task": "Emphasize current row count",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "NEEDLES-03",
+    "pr": 2,
+    "group": "Needles",
+    "task": "Keep Undo adjacent to increment",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "NEEDLES-04",
+    "pr": 2,
+    "group": "Needles",
+    "task": "Show pattern location and repeat progress",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "NEEDLES-05",
+    "pr": 2,
+    "group": "Needles",
+    "task": "Read actual imported pattern sections",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "NEEDLES-06",
+    "pr": 2,
+    "group": "Needles",
+    "task": "Support charts through shared image/document reading",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "NONO-01",
+    "pr": 2,
+    "group": "Nonograms",
+    "task": "Attach clues to matching rows and columns",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "NONO-02",
+    "pr": 2,
+    "group": "Nonograms",
+    "task": "Show selected line and marks distinctly",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "NONO-03",
+    "pr": 2,
+    "group": "Nonograms",
+    "task": "Provide undo",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "NONO-04",
+    "pr": 2,
+    "group": "Nonograms",
+    "task": "Make supported larger grids navigable",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "NONO-05",
+    "pr": 2,
+    "group": "Nonograms",
+    "task": "Distinguish unsupported sizes before play",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "NONO-06",
+    "pr": 2,
+    "group": "Nonograms",
+    "task": "Validate imported puzzle solvability and difficulty",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "PANELS-01",
+    "pr": 2,
+    "group": "Panels",
+    "task": "Use shared comic archive/reader components",
+    "status": "done",
+    "evidence": [
+      "Panels uses shared kobo-comic and ComicView in kobo-bookview; app owns library and acknowledged persistence. 8 Panels tests pass."
+    ]
+  },
+  {
+    "id": "PANELS-02",
+    "pr": 2,
+    "group": "Panels",
+    "task": "Guide server or local-comic import",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "PANELS-03",
+    "pr": 2,
+    "group": "Panels",
+    "task": "Provide original sample comic pages",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "PANELS-04",
+    "pr": 2,
+    "group": "Panels",
+    "task": "Show thumbnails and reading progress",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "PANELS-05",
+    "pr": 2,
+    "group": "Panels",
+    "task": "Expose page zoom, fit and spread controls",
+    "status": "done",
+    "evidence": [
+      "Panels exposes shared fit, zoom, pan and spread controls, verified by actual simulator taps at default and extra-large text sizes."
+    ]
+  },
+  {
+    "id": "PANELS-06",
+    "pr": 2,
+    "group": "Panels",
+    "task": "Verify RTL reading",
+    "status": "done",
+    "evidence": [
+      "Actual simulator taps verify RTL page zones, landscape spread order and restored reading direction after process restart."
+    ]
+  },
+  {
+    "id": "PANELS-07",
+    "pr": 2,
+    "group": "Panels",
+    "task": "Verify interrupted download and offline resume",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "PAPER-01",
+    "pr": 2,
+    "group": "Paperterm",
+    "task": "Guide host setup and pairing",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "PAPER-02",
+    "pr": 2,
+    "group": "Paperterm",
+    "task": "Provide sample/read-only preview",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "PAPER-03",
+    "pr": 2,
+    "group": "Paperterm",
+    "task": "Keep session mode and connection visible",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "PAPER-04",
+    "pr": 2,
+    "group": "Paperterm",
+    "task": "Explain reconnect and retain a usable keyboard toggle",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "PAPER-05",
+    "pr": 2,
+    "group": "Paperterm",
+    "task": "Validate wide rows, cursor and keyboard input",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "PAPER-06",
+    "pr": 2,
+    "group": "Paperterm",
+    "task": "Validate orientation on supported profiles",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "PARLOR-01",
+    "pr": 2,
+    "group": "Parlor",
+    "task": "Distinguish boards and pieces",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "PARLOR-02",
+    "pr": 2,
+    "group": "Parlor",
+    "task": "Show current player and last move",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "PARLOR-03",
+    "pr": 2,
+    "group": "Parlor",
+    "task": "Improve legal-target contrast",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "PARLOR-04",
+    "pr": 2,
+    "group": "Parlor",
+    "task": "Complete game/resume checks for all four rulesets",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "PARLOR-05",
+    "pr": 2,
+    "group": "Parlor",
+    "task": "Keep unavailable board sizes honest until navigable",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "PARSER-01",
+    "pr": 2,
+    "group": "Parser",
+    "task": "Include an original tutorial story",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "PARSER-02",
+    "pr": 2,
+    "group": "Parser",
+    "task": "Offer useful command suggestions",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "PARSER-03",
+    "pr": 2,
+    "group": "Parser",
+    "task": "Clarify import and save slots",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "PARSER-04",
+    "pr": 2,
+    "group": "Parser",
+    "task": "Complete interpreter conformance fixtures",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "PARSER-05",
+    "pr": 2,
+    "group": "Parser",
+    "task": "Run representative story fixtures",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "PARSER-06",
+    "pr": 2,
+    "group": "Parser",
+    "task": "Paginate long transcript and restore saved play",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "POST-01",
+    "pr": 2,
+    "group": "Post",
+    "task": "Paginate inbox and letters",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "POST-02",
+    "pr": 2,
+    "group": "Post",
+    "task": "Persist interrupted drafts",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "POST-03",
+    "pr": 2,
+    "group": "Post",
+    "task": "Distinguish queued, sending, delivered and rejected",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "POST-04",
+    "pr": 2,
+    "group": "Post",
+    "task": "Explain gateway/companion setup",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "POST-05",
+    "pr": 2,
+    "group": "Post",
+    "task": "Retry with duplicate protection",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "POST-06",
+    "pr": 2,
+    "group": "Post",
+    "task": "Verify delivery/retry against a local mock",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "QUIZ-01",
+    "pr": 2,
+    "group": "Pub Quiz",
+    "task": "Allow player names and count",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "QUIZ-02",
+    "pr": 2,
+    "group": "Pub Quiz",
+    "task": "Provide categories and difficulty",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "QUIZ-03",
+    "pr": 2,
+    "group": "Pub Quiz",
+    "task": "Show pack source and freshness",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "QUIZ-04",
+    "pr": 2,
+    "group": "Pub Quiz",
+    "task": "Clarify pass-device and answer-reveal screens",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "QUIZ-05",
+    "pr": 2,
+    "group": "Pub Quiz",
+    "task": "Export a scorecard",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "QUIZ-06",
+    "pr": 2,
+    "group": "Pub Quiz",
+    "task": "Test full rounds, repeats and offline refreshed packs",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "LATER-01",
+    "pr": 2,
+    "group": "Read Later (APP-5/6)",
+    "task": "Persist fetched full article bodies",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "LATER-02",
+    "pr": 2,
+    "group": "Read Later (APP-5/6)",
+    "task": "Implement acknowledged durable archive/star/read outbox",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "LATER-03",
+    "pr": 2,
+    "group": "Read Later (APP-5/6)",
+    "task": "Wire all visible tabs and action controls",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "LATER-04",
+    "pr": 2,
+    "group": "Read Later (APP-5/6)",
+    "task": "Paginate and retain reading position",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "LATER-05",
+    "pr": 2,
+    "group": "Read Later (APP-5/6)",
+    "task": "Show pending/retry/offline state",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "LATER-06",
+    "pr": 2,
+    "group": "Read Later (APP-5/6)",
+    "task": "Verify reconnect, server effects and process restart",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "FEEDS-01",
+    "pr": 2,
+    "group": "Feeds",
+    "task": "Distinguish failed discovery from no feed found",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "FEEDS-02",
+    "pr": 2,
+    "group": "Feeds",
+    "task": "Accept direct feed URLs",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "FEEDS-03",
+    "pr": 2,
+    "group": "Feeds",
+    "task": "Support OPML import",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "FEEDS-04",
+    "pr": 2,
+    "group": "Feeds",
+    "task": "Provide working original or public starter feeds",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "FEEDS-05",
+    "pr": 2,
+    "group": "Feeds",
+    "task": "Show last refresh, unread counts and per-feed failure",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "FEEDS-06",
+    "pr": 2,
+    "group": "Feeds",
+    "task": "Test RSS, Atom, full-content and summary entries",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "MINI-01",
+    "pr": 2,
+    "group": "Miniflux (APP-5)",
+    "task": "Persist full article bodies offline",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "MINI-02",
+    "pr": 2,
+    "group": "Miniflux (APP-5)",
+    "task": "Flush acknowledged read/star/archive mutations correctly",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "MINI-03",
+    "pr": 2,
+    "group": "Miniflux (APP-5)",
+    "task": "Parse HTML into the shared document reader",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "MINI-04",
+    "pr": 2,
+    "group": "Miniflux (APP-5)",
+    "task": "Wire tabs, star, full-text and suggested-feed controls",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "MINI-05",
+    "pr": 2,
+    "group": "Miniflux (APP-5)",
+    "task": "Keep pending/retry state visible",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "MINI-06",
+    "pr": 2,
+    "group": "Miniflux (APP-5)",
+    "task": "Test fetch/read/mutate/reconnect/restart against a fixture server",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "SIDE-01",
+    "pr": 2,
+    "group": "Sidekick app",
+    "task": "Guide desktop connection setup",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "SIDE-02",
+    "pr": 2,
+    "group": "Sidekick app",
+    "task": "Show paired host and session identity",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "SIDE-03",
+    "pr": 2,
+    "group": "Sidekick app",
+    "task": "Handle reconnect and stale requests",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "SIDE-04",
+    "pr": 2,
+    "group": "Sidekick app",
+    "task": "Test simultaneous fixture prompts",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "SIDE-05",
+    "pr": 2,
+    "group": "Sidekick app",
+    "task": "Require response acknowledgement before completion",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "SUDOKU-01",
+    "pr": 2,
+    "group": "Sudoku (APP-7)",
+    "task": "Persist exact game state after each move",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "SUDOKU-02",
+    "pr": 2,
+    "group": "Sudoku (APP-7)",
+    "task": "Provide varied valid puzzles with difficulty",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "SUDOKU-03",
+    "pr": 2,
+    "group": "Sudoku (APP-7)",
+    "task": "Add pencil marks",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "SUDOKU-04",
+    "pr": 2,
+    "group": "Sudoku (APP-7)",
+    "task": "Add undo",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "SUDOKU-05",
+    "pr": 2,
+    "group": "Sudoku (APP-7)",
+    "task": "Render stronger 3x3 boundaries and row/column selection",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "SUDOKU-06",
+    "pr": 2,
+    "group": "Sudoku (APP-7)",
+    "task": "Make assisted checking optional",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "SUDOKU-07",
+    "pr": 2,
+    "group": "Sudoku (APP-7)",
+    "task": "Show a clear completion state",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "SYNCAPP-01",
+    "pr": 2,
+    "group": "Sync app",
+    "task": "Guide folder choice through pairing and first verified sync",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "SYNCAPP-02",
+    "pr": 2,
+    "group": "Sync app",
+    "task": "Show last success, bytes remaining and peer availability",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "SYNCAPP-03",
+    "pr": 2,
+    "group": "Sync app",
+    "task": "Show next scheduled window",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "SYNCAPP-04",
+    "pr": 2,
+    "group": "Sync app",
+    "task": "Distinguish raw transfer from app ingestion",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "SYNCAPP-05",
+    "pr": 2,
+    "group": "Sync app",
+    "task": "Integrate Vault and Frame import/index publication",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "SYNCAPP-06",
+    "pr": 2,
+    "group": "Sync app",
+    "task": "Provide pause/resume and conflict/retry states",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "TIC-01",
+    "pr": 2,
+    "group": "Tic-tac-toe",
+    "task": "Add session score and rematch",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "TIC-02",
+    "pr": 2,
+    "group": "Tic-tac-toe",
+    "task": "Clarify turn and win state",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "TIC-03",
+    "pr": 2,
+    "group": "Tic-tac-toe",
+    "task": "Provide optional small solo mode",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "TIC-04",
+    "pr": 2,
+    "group": "Tic-tac-toe",
+    "task": "Keep it as a simple regression fixture",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "TODO-01",
+    "pr": 2,
+    "group": "Todo",
+    "task": "Make Add task prominent in empty state",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "TODO-02",
+    "pr": 2,
+    "group": "Todo",
+    "task": "Edit and reorder tasks",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "TODO-03",
+    "pr": 2,
+    "group": "Todo",
+    "task": "Undo completion",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "TODO-04",
+    "pr": 2,
+    "group": "Todo",
+    "task": "Provide optional dated tasks",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "TODO-05",
+    "pr": 2,
+    "group": "Todo",
+    "task": "Export tasks",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "TODO-06",
+    "pr": 2,
+    "group": "Todo",
+    "task": "Test long text, tags and measured capacity",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "VAULT-01",
+    "pr": 2,
+    "group": "Vault (APP-6)",
+    "task": "Page library rows without clipped actions",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "VAULT-02",
+    "pr": 2,
+    "group": "Vault (APP-6)",
+    "task": "Paginate long notes through final sentence",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "VAULT-03",
+    "pr": 2,
+    "group": "Vault (APP-6)",
+    "task": "Wire tag filtering and deduplicate tags",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "VAULT-04",
+    "pr": 2,
+    "group": "Vault (APP-6)",
+    "task": "Build navigable folder hierarchy",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "VAULT-05",
+    "pr": 2,
+    "group": "Vault (APP-6)",
+    "task": "Replace single packed-index bottleneck with scalable indexed shelf",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "VAULT-06",
+    "pr": 2,
+    "group": "Vault (APP-6)",
+    "task": "Integrate Sync ingestion",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "VAULT-07",
+    "pr": 2,
+    "group": "Vault (APP-6)",
+    "task": "Preserve Back, list and reading positions",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "VERSE-01",
+    "pr": 2,
+    "group": "Verses (APP-8)",
+    "task": "Use real injectable calendar date and advance across midnight",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "VERSE-02",
+    "pr": 2,
+    "group": "Verses (APP-8)",
+    "task": "Provide complete permitted poems or label excerpts explicitly",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "VERSE-03",
+    "pr": 2,
+    "group": "Verses (APP-8)",
+    "task": "Paginate long poems",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "VERSE-04",
+    "pr": 2,
+    "group": "Verses (APP-8)",
+    "task": "Show author and source context",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "VERSE-05",
+    "pr": 2,
+    "group": "Verses (APP-8)",
+    "task": "Make favorites usable",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "VERSE-06",
+    "pr": 2,
+    "group": "Verses (APP-8)",
+    "task": "Export attributed quote cards",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "APPQA-01",
+    "pr": 2,
+    "group": "Catalog-wide release gates",
+    "task": "Use one dominant task action with stable secondary controls",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "APPQA-02",
+    "pr": 2,
+    "group": "Catalog-wide release gates",
+    "task": "Differentiate loading, empty, offline, expired credentials and malformed content",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "APPQA-03",
+    "pr": 2,
+    "group": "Catalog-wide release gates",
+    "task": "Keep cached content usable with honest freshness",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "APPQA-04",
+    "pr": 2,
+    "group": "Catalog-wide release gates",
+    "task": "Show unsaved state before success",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "APPQA-05",
+    "pr": 2,
+    "group": "Catalog-wide release gates",
+    "task": "Audit every visible action for a handler",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "APPQA-06",
+    "pr": 2,
+    "group": "Catalog-wide release gates",
+    "task": "Supply a committed meaningful route for each of the 43 apps",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "APPQA-07",
+    "pr": 2,
+    "group": "Catalog-wide release gates",
+    "task": "Exercise install/sample/own-data/task/offline-reopen for each app",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "APPQA-08",
+    "pr": 2,
+    "group": "Catalog-wide release gates",
+    "task": "Test 0, 1, 20 and 100 items with long Unicode titles",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "APPQA-09",
+    "pr": 2,
+    "group": "Catalog-wide release gates",
+    "task": "Test long bodies, supported fonts and CJK where applicable",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "APPQA-10",
+    "pr": 2,
+    "group": "Catalog-wide release gates",
+    "task": "Test delayed/failed downloads and storage interruption",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "APPQA-11",
+    "pr": 2,
+    "group": "Catalog-wide release gates",
+    "task": "Check every intermediate state under supported profile/scale/orientation",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "APPQA-12",
+    "pr": 2,
+    "group": "Catalog-wide release gates",
+    "task": "Regenerate screenshots only from the shipped build",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "APPQA-13",
+    "pr": 2,
+    "group": "Catalog-wide release gates",
+    "task": "Keep Zotero Reader outside this catalog review",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "CLI-01",
+    "pr": 3,
+    "group": "Main CLI and companion operation engine",
+    "task": "Provide guided interactive entry point for bare kobo",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "CLI-02",
+    "pr": 3,
+    "group": "Main CLI and companion operation engine",
+    "task": "Keep plain compact help for noninteractive use",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "CLI-03",
+    "pr": 3,
+    "group": "Main CLI and companion operation engine",
+    "task": "Separate owner tasks from developer/release commands",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "CLI-04",
+    "pr": 3,
+    "group": "Main CLI and companion operation engine",
+    "task": "Provide a desktop/local companion surface using the same operations",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "CLI-05",
+    "pr": 3,
+    "group": "Main CLI and companion operation engine",
+    "task": "Name readers by stable identity and owner nickname",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "CLI-06",
+    "pr": 3,
+    "group": "Main CLI and companion operation engine",
+    "task": "Select among multiple USB/Wi-Fi readers without first-device fallback",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "CLI-07",
+    "pr": 3,
+    "group": "Main CLI and companion operation engine",
+    "task": "Remember pairing and reconnect after address changes",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "CLI-08",
+    "pr": 3,
+    "group": "Main CLI and companion operation engine",
+    "task": "Preserve verified USB setup, eject, reboot and reconnect steps",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "CLI-09",
+    "pr": 3,
+    "group": "Main CLI and companion operation engine",
+    "task": "Send and open an original sample for first success",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "CLI-10",
+    "pr": 3,
+    "group": "Main CLI and companion operation engine",
+    "task": "Describe installation changes before approval",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "CLI-11",
+    "pr": 3,
+    "group": "Main CLI and companion operation engine",
+    "task": "Provide one app setup card generated from capabilities",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "CLI-12",
+    "pr": 3,
+    "group": "Main CLI and companion operation engine",
+    "task": "Persist completed setup steps",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "CLI-13",
+    "pr": 3,
+    "group": "Main CLI and companion operation engine",
+    "task": "Choose files/folders through picker or explicit CLI path",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "CLI-14",
+    "pr": 3,
+    "group": "Main CLI and companion operation engine",
+    "task": "Detect suitable target apps and resolve ambiguity",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "CLI-15",
+    "pr": 3,
+    "group": "Main CLI and companion operation engine",
+    "task": "Preview content for the selected reader before sending",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "CLI-16",
+    "pr": 3,
+    "group": "Main CLI and companion operation engine",
+    "task": "Report real preparing/sending/checking/ready stages",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "CLI-17",
+    "pr": 3,
+    "group": "Main CLI and companion operation engine",
+    "task": "Persist receipts and resume approved interrupted transfers",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "CLI-18",
+    "pr": 3,
+    "group": "Main CLI and companion operation engine",
+    "task": "Publish atomically and retain prior valid content",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "CLI-19",
+    "pr": 3,
+    "group": "Main CLI and companion operation engine",
+    "task": "Retain selection and preparation on retry",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "CLI-20",
+    "pr": 3,
+    "group": "Main CLI and companion operation engine",
+    "task": "Report useful owner errors with optional technical details",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "CLI-21",
+    "pr": 3,
+    "group": "Main CLI and companion operation engine",
+    "task": "Export diagnostic reports without secrets or content by default",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "CLI-22",
+    "pr": 3,
+    "group": "Main CLI and companion operation engine",
+    "task": "Provide understandable background status, pause and quit",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "CLI-23",
+    "pr": 3,
+    "group": "Main CLI and companion operation engine",
+    "task": "Notify only useful completion or required action",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "CLI-24",
+    "pr": 3,
+    "group": "Main CLI and companion operation engine",
+    "task": "Explain wake/network effects of continuous sync",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "CLI-25",
+    "pr": 3,
+    "group": "Main CLI and companion operation engine",
+    "task": "Use consistent verbs and reader/simulator/output target resolution",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "CLI-26",
+    "pr": 3,
+    "group": "Main CLI and companion operation engine",
+    "task": "Create required storage within validated import",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "CLI-27",
+    "pr": 3,
+    "group": "Main CLI and companion operation engine",
+    "task": "Support offline preparation and bundled local help",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "CLI-28",
+    "pr": 3,
+    "group": "Main CLI and companion operation engine",
+    "task": "Keep prepared, sent and available-offline states distinct",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "CLI-29",
+    "pr": 3,
+    "group": "Main CLI and companion operation engine",
+    "task": "Provide keyboard and screen-reader-friendly forms",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "CLI-30",
+    "pr": 3,
+    "group": "Main CLI and companion operation engine",
+    "task": "Provide numbered plain terminal alternative",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "CLI-31",
+    "pr": 3,
+    "group": "Main CLI and companion operation engine",
+    "task": "Respect narrow widths, resize, NO_COLOR, non-TTY and reduced motion",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "CLI-32",
+    "pr": 3,
+    "group": "Main CLI and companion operation engine",
+    "task": "Keep progress on stderr with versioned JSON on stdout",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "CLI-33",
+    "pr": 3,
+    "group": "Main CLI and companion operation engine",
+    "task": "Use stable exit categories and bounded noninteractive behavior",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "CLI-34",
+    "pr": 3,
+    "group": "Main CLI and companion operation engine",
+    "task": "Keep typed operations shared across UI, CLI and agent callers",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "CLI-35",
+    "pr": 3,
+    "group": "Main CLI and companion operation engine",
+    "task": "Show host/reader/helper compatibility and signed update status",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "CLI-36",
+    "pr": 3,
+    "group": "Main CLI and companion operation engine",
+    "task": "Preserve content, preferences and pairing through updates",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "CLI-37",
+    "pr": 3,
+    "group": "Main CLI and companion operation engine",
+    "task": "Keep arbitrary commands in explicit advanced controls",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "CLI-38",
+    "pr": 3,
+    "group": "Main CLI and companion operation engine",
+    "task": "Avoid required AI/chat, vague slogans and decorative dashboard clutter",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "DECKCLI-01",
+    "pr": 3,
+    "group": "Deck companion",
+    "task": "Preserve real pairing when pushing layouts",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "DECKCLI-02",
+    "pr": 3,
+    "group": "Deck companion",
+    "task": "Separate static simulator preview from executable pairing",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "DECKCLI-03",
+    "pr": 3,
+    "group": "Deck companion",
+    "task": "Unify 15-pad configuration and UI limits",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "DECKCLI-04",
+    "pr": 3,
+    "group": "Deck companion",
+    "task": "Provide app/URL/action picker and grid preview",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "DECKCLI-05",
+    "pr": 3,
+    "group": "Deck companion",
+    "task": "Offer practical original presets",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "DECKCLI-06",
+    "pr": 3,
+    "group": "Deck companion",
+    "task": "Test a harmless action and show its acknowledgement",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "DECKCLI-07",
+    "pr": 3,
+    "group": "Deck companion",
+    "task": "Keep per-action confirmation configurable",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "FLASHCLI-01",
+    "pr": 3,
+    "group": "Flashcards companion",
+    "task": "Replace main CLI refusal stub with the supported helper entry point",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "FLASHCLI-02",
+    "pr": 3,
+    "group": "Flashcards companion",
+    "task": "Make helper install/version status discoverable",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "FLASHCLI-03",
+    "pr": 3,
+    "group": "Flashcards companion",
+    "task": "Distribute verified host helper without requiring a toolchain",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "FLASHCLI-04",
+    "pr": 3,
+    "group": "Flashcards companion",
+    "task": "Keep existing helper license/distribution boundary intact",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "FLASHCLI-05",
+    "pr": 3,
+    "group": "Flashcards companion",
+    "task": "Explain actual supported formats and unsupported features",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "FLASHCLI-06",
+    "pr": 3,
+    "group": "Flashcards companion",
+    "task": "Preview front/back, media and card counts",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "FLASHCLI-07",
+    "pr": 3,
+    "group": "Flashcards companion",
+    "task": "Explain and implement add/merge versus replace",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "FLASHCLI-08",
+    "pr": 3,
+    "group": "Flashcards companion",
+    "task": "Expose verify, stage and review-log export consistently",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "FLASHCLI-09",
+    "pr": 3,
+    "group": "Flashcards companion",
+    "task": "Validate imported content and preserve previous collection on failure",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "FRAMECLI-01",
+    "pr": 3,
+    "group": "Frame companion",
+    "task": "Preview multiple photos and crop/pad choices",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "FRAMECLI-02",
+    "pr": 3,
+    "group": "Frame companion",
+    "task": "Perform bounded downsize with visual quality preview",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "FRAMECLI-03",
+    "pr": 3,
+    "group": "Frame companion",
+    "task": "Show storage estimate and album naming",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "FRAMECLI-04",
+    "pr": 3,
+    "group": "Frame companion",
+    "task": "Deduplicate repeated import clearly",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "FRAMECLI-05",
+    "pr": 3,
+    "group": "Frame companion",
+    "task": "Show concrete deletion/replacement list",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "FRAMECLI-06",
+    "pr": 3,
+    "group": "Frame companion",
+    "task": "Retain recoverable previous album",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "FRAMECLI-07",
+    "pr": 3,
+    "group": "Frame companion",
+    "task": "Verify reader availability before saying photos are ready",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "VAULTCLI-01",
+    "pr": 3,
+    "group": "Vault companion",
+    "task": "Pick folder and preview included/excluded notes",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "VAULTCLI-02",
+    "pr": 3,
+    "group": "Vault companion",
+    "task": "Preview a long note at reader dimensions",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "VAULTCLI-03",
+    "pr": 3,
+    "group": "Vault companion",
+    "task": "Package incrementally with scalable index",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "VAULTCLI-04",
+    "pr": 3,
+    "group": "Vault companion",
+    "task": "Separate transfer acknowledgement from indexing completion",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "VAULTCLI-05",
+    "pr": 3,
+    "group": "Vault companion",
+    "task": "Handle rename without duplicating the whole library",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "VAULTCLI-06",
+    "pr": 3,
+    "group": "Vault companion",
+    "task": "Explain direction and supported reader-edit export honestly",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "VAULTCLI-07",
+    "pr": 3,
+    "group": "Vault companion",
+    "task": "Enable optional ongoing sync after a successful import",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "SYNCCLI-01",
+    "pr": 3,
+    "group": "Sync companion",
+    "task": "Preserve isolated private daemon configuration",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "SYNCCLI-02",
+    "pr": 3,
+    "group": "Sync companion",
+    "task": "Provide explicit test/config root",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "SYNCCLI-03",
+    "pr": 3,
+    "group": "Sync companion",
+    "task": "Provide structured plan, status and diagnostics",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "SYNCCLI-04",
+    "pr": 3,
+    "group": "Sync companion",
+    "task": "Unify raw synced files with actual app ingestion",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "SYNCCLI-05",
+    "pr": 3,
+    "group": "Sync companion",
+    "task": "Expose last successful sync, pause/resume and conflicts",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "SYNCCLI-06",
+    "pr": 3,
+    "group": "Sync companion",
+    "task": "Keep owner originals protected and directions explicit",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "NEEDLECLI-01",
+    "pr": 3,
+    "group": "Needles companion",
+    "task": "Manage required converter instead of demanding manual toolchain setup",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "NEEDLECLI-02",
+    "pr": 3,
+    "group": "Needles companion",
+    "task": "Preview extracted instructions against source",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "NEEDLECLI-03",
+    "pr": 3,
+    "group": "Needles companion",
+    "task": "Flag image-only pages and missing charts",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "NEEDLECLI-04",
+    "pr": 3,
+    "group": "Needles companion",
+    "task": "Choose title and preview section/row parsing",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "NEEDLECLI-05",
+    "pr": 3,
+    "group": "Needles companion",
+    "task": "Use the same prepare/preview/send flow for PDF, Markdown and text",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "NEEDLECLI-06",
+    "pr": 3,
+    "group": "Needles companion",
+    "task": "Support simulator and output-only targets",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "NONOCLI-01",
+    "pr": 3,
+    "group": "Nonograms companion",
+    "task": "Preview resulting puzzle at each supported size",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "NONOCLI-02",
+    "pr": 3,
+    "group": "Nonograms companion",
+    "task": "Validate solvability and difficulty before transfer",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "NONOCLI-03",
+    "pr": 3,
+    "group": "Nonograms companion",
+    "task": "Support named imports and multiple puzzles",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "NONOCLI-04",
+    "pr": 3,
+    "group": "Nonograms companion",
+    "task": "Support simulator and reader targets consistently",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "PARSERCLI-01",
+    "pr": 3,
+    "group": "Parser companion",
+    "task": "Share structural validation with interpreter",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "PARSERCLI-02",
+    "pr": 3,
+    "group": "Parser companion",
+    "task": "Distinguish recognized format from playable validated story",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "PARSERCLI-03",
+    "pr": 3,
+    "group": "Parser companion",
+    "task": "Show title, format and compatibility",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "PARSERCLI-04",
+    "pr": 3,
+    "group": "Parser companion",
+    "task": "Support shelf choice, duplicates and simulator transfer",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "STREAMCLI-01",
+    "pr": 3,
+    "group": "Paperterm companion",
+    "task": "Guide pairing through named reader choice",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "STREAMCLI-02",
+    "pr": 3,
+    "group": "Paperterm companion",
+    "task": "Offer known terminal/task presets and connection test",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "STREAMCLI-03",
+    "pr": 3,
+    "group": "Paperterm companion",
+    "task": "Show stopped, waiting, connected and reconnecting states",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "STREAMCLI-04",
+    "pr": 3,
+    "group": "Paperterm companion",
+    "task": "Provide obvious Stop and computer-awake explanation",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "STREAMCLI-05",
+    "pr": 3,
+    "group": "Paperterm companion",
+    "task": "Keep arbitrary terminal command entry advanced",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "SIDECLI-01",
+    "pr": 3,
+    "group": "Sidekick companion",
+    "task": "Unify helper install/start/status/stop in companion",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "SIDECLI-02",
+    "pr": 3,
+    "group": "Sidekick companion",
+    "task": "Show and select agent integrations before configuration",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "SIDECLI-03",
+    "pr": 3,
+    "group": "Sidekick companion",
+    "task": "Preserve dry-run, printed configuration and backups",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "SIDECLI-04",
+    "pr": 3,
+    "group": "Sidekick companion",
+    "task": "Verify a harmless sample event on the reader",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "SIDECLI-05",
+    "pr": 3,
+    "group": "Sidekick companion",
+    "task": "Return success from help",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "SIDECLI-06",
+    "pr": 3,
+    "group": "Sidekick companion",
+    "task": "Provide self-contained sample mode",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "SERVICECLI-01",
+    "pr": 3,
+    "group": "Provider connections",
+    "task": "Fix secret/trust help exit status",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "SERVICECLI-02",
+    "pr": 3,
+    "group": "Provider connections",
+    "task": "Provide per-app Connect service form",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "SERVICECLI-03",
+    "pr": 3,
+    "group": "Provider connections",
+    "task": "Use discovery and browser authentication where supported",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "SERVICECLI-04",
+    "pr": 3,
+    "group": "Provider connections",
+    "task": "Use labeled masked tokens with direct provider guidance otherwise",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "SERVICECLI-05",
+    "pr": 3,
+    "group": "Provider connections",
+    "task": "Test endpoint and required capabilities",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "SERVICECLI-06",
+    "pr": 3,
+    "group": "Provider connections",
+    "task": "Show account/server identity",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "SERVICECLI-07",
+    "pr": 3,
+    "group": "Provider connections",
+    "task": "Explain certificate errors and explicit trust installation",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "SERVICECLI-08",
+    "pr": 3,
+    "group": "Provider connections",
+    "task": "Avoid secret input in shell history",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "MISSINGCLI-01",
+    "pr": 3,
+    "group": "Missing companion workflows",
+    "task": "Implement scores import/push with real score conversion",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "MISSINGCLI-02",
+    "pr": 3,
+    "group": "Missing companion workflows",
+    "task": "Implement Fieldbook pack import and checklist export",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "MISSINGCLI-03",
+    "pr": 3,
+    "group": "Missing companion workflows",
+    "task": "Provide Panels CBZ import with page/cover preview and clear CBR guidance",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "MISSINGCLI-04",
+    "pr": 3,
+    "group": "Missing companion workflows",
+    "task": "Generate setup instructions and command references from shared capabilities",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "MISSINGCLI-05",
+    "pr": 3,
+    "group": "Missing companion workflows",
+    "task": "Remove obsolete commands and false availability claims",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "OWNERQA-01",
+    "pr": 3,
+    "group": "Owner experience and final validation",
+    "task": "Test photo first-use flow without command typing",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "OWNERQA-02",
+    "pr": 3,
+    "group": "Owner experience and final validation",
+    "task": "Test card preview/import/review-log flow",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "OWNERQA-03",
+    "pr": 3,
+    "group": "Owner experience and final validation",
+    "task": "Test notes import and optional sync flow",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "OWNERQA-04",
+    "pr": 3,
+    "group": "Owner experience and final validation",
+    "task": "Test disconnected reader with retained prepared files",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "OWNERQA-05",
+    "pr": 3,
+    "group": "Owner experience and final validation",
+    "task": "Test multiple-reader selection and identity revalidation",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "OWNERQA-06",
+    "pr": 3,
+    "group": "Owner experience and final validation",
+    "task": "Test partial transfer with truthful acknowledged counts",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "OWNERQA-07",
+    "pr": 3,
+    "group": "Owner experience and final validation",
+    "task": "Test unsupported/oversized/corrupt input recovery",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "OWNERQA-08",
+    "pr": 3,
+    "group": "Owner experience and final validation",
+    "task": "Test rejected/missing token versus host/certificate errors",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "OWNERQA-09",
+    "pr": 3,
+    "group": "Owner experience and final validation",
+    "task": "Test expected empty app sample flow",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "OWNERQA-10",
+    "pr": 3,
+    "group": "Owner experience and final validation",
+    "task": "Test missing/incompatible helper recovery",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "OWNERQA-11",
+    "pr": 3,
+    "group": "Owner experience and final validation",
+    "task": "Prepare 6\u20138-person nontechnical usability protocol including assistive technology",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "OWNERQA-12",
+    "pr": 3,
+    "group": "Owner experience and final validation",
+    "task": "Measure completion, assistance, wrong-target attempts and error comprehension",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "OWNERQA-13",
+    "pr": 3,
+    "group": "Owner experience and final validation",
+    "task": "Record first-success timing separately from firmware reboot",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "OWNERQA-14",
+    "pr": 3,
+    "group": "Owner experience and final validation",
+    "task": "Validate recovery without repeated file selection",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "OWNERQA-15",
+    "pr": 3,
+    "group": "Owner experience and final validation",
+    "task": "Validate understanding of prepared/sent/offline distinctions",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "OWNERQA-16",
+    "pr": 3,
+    "group": "Owner experience and final validation",
+    "task": "Prepare one-week repeated-use follow-up protocol",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "OWNERQA-17",
+    "pr": 3,
+    "group": "Owner experience and final validation",
+    "task": "Run all automated simulator and integration gates",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "OWNERQA-18",
+    "pr": 3,
+    "group": "Owner experience and final validation",
+    "task": "Prepare one combined Clara BW hardware validation script for after all three PRs",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "OWNERQA-19",
+    "pr": 3,
+    "group": "Owner experience and final validation",
+    "task": "Record unperformed physical/user-study checks honestly",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "OWNERQA-20",
+    "pr": 3,
+    "group": "Owner experience and final validation",
+    "task": "Verify licenses and absence of copied local-reference source",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "OWNERQA-21",
+    "pr": 3,
+    "group": "Owner experience and final validation",
+    "task": "Open no more than three logically grouped PRs with tests and remaining validation stated",
+    "status": "todo",
+    "evidence": []
+  }
+]

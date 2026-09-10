@@ -18,7 +18,7 @@
         {
           "path": "crates/kobo-ui/src/lib.rs",
           "base_blob": "0e66ff990c5a1f5f64f960cdf9b776bbff55725e",
-          "compatible_blob": "8ff6e81f674292a875505dcc0783c28bcf4ae0e9"
+          "compatible_blob": "5584e7868c84392af10e3b69399a59e0d7941424"
         }
       ]
     },
@@ -29,7 +29,7 @@
         {
           "path": "Cargo.lock",
           "base_blob": "2abdcc318538b63f16e492beb19b112a1134f105",
-          "compatible_blob": "75e8b27b88d423dd7ea9aa5450c2f9ead8a52ac1"
+          "compatible_blob": "aa0961448d78f0e07d62e283a92969e700b1330c"
         },
         {
           "path": "crates/kobo-abi/src/lib.rs",
@@ -124,7 +124,7 @@
         {
           "path": "crates/kobo-ui/src/lib.rs",
           "base_blob": "0e66ff990c5a1f5f64f960cdf9b776bbff55725e",
-          "compatible_blob": "8ff6e81f674292a875505dcc0783c28bcf4ae0e9"
+          "compatible_blob": "5584e7868c84392af10e3b69399a59e0d7941424"
         },
         {
           "path": "examples/gutenbird/Cargo.toml",
@@ -155,7 +155,7 @@
         {
           "path": "Cargo.lock",
           "base_blob": "2abdcc318538b63f16e492beb19b112a1134f105",
-          "compatible_blob": "75e8b27b88d423dd7ea9aa5450c2f9ead8a52ac1"
+          "compatible_blob": "aa0961448d78f0e07d62e283a92969e700b1330c"
         },
         {
           "path": "crates/kobo-abi/src/lib.rs",
@@ -250,7 +250,7 @@
         {
           "path": "crates/kobo-ui/src/lib.rs",
           "base_blob": "0e66ff990c5a1f5f64f960cdf9b776bbff55725e",
-          "compatible_blob": "8ff6e81f674292a875505dcc0783c28bcf4ae0e9"
+          "compatible_blob": "5584e7868c84392af10e3b69399a59e0d7941424"
         },
         {
           "path": "examples/gutenbird/Cargo.toml",
@@ -276,6 +276,17 @@
           "path": "crates/kobo-image/src/lib.rs",
           "base_blob": "5e49d7d853385130e11ca2bc66b512d02d21c2c9",
           "compatible_blob": "5e49d7d853385130e11ca2bc66b512d02d21c2c9"
+        }
+      ]
+    },
+    {
+      "protocol_version": 13,
+      "reason": "Flashcards only initializes its existing fonts inside the layout test before measuring. The production application is unchanged; this exact test-only source edit needs no Store release.",
+      "files": [
+        {
+          "path": "apps/flashcards/src/main.rs",
+          "base_blob": "a171b891504827f964daaca231997d963279bcf4",
+          "compatible_blob": "98f10e3c8c1d8c5b6a80b343963179ff91046f4b"
         }
       ]
     }

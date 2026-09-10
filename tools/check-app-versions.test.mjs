@@ -27,7 +27,7 @@ import {
   releaseDependencyIds,
   storeImpactOfChangedPaths
 } from "./check-app-versions.mjs";
-import { collectRegistry, deriveMinimumCobalt } from "./app-registry.mjs";
+import { collectRegistry, currentProtocolVersion, deriveMinimumCobalt } from "./app-registry.mjs";
 import {
   registeredStorePackages,
   storeCatalogChanges,
@@ -721,11 +721,14 @@ test("only exact reviewed compatible blobs are excluded from app release inputs"
   );
 });
 
-test("reviewed compatible-change entries name the exact current files", () => {
+test("active protocol compatible-change entries name the exact current files", () => {
   const manifest = JSON.parse(
     readFileSync("tools/app-release-compatible-changes.json", "utf8")
   );
   for (const change of manifest.changes) {
+    // Historical exemptions cannot affect a new protocol's release selection.
+    // Keep their exact historical blobs rather than re-blessing changed SDK code.
+    if (change.protocol_version !== currentProtocolVersion()) continue;
     for (const file of change.files) {
       const current = execFileSync("git", ["hash-object", file.path], {
         encoding: "utf8"
@@ -1141,4 +1144,36 @@ test("the previous complete-set artifact is still excluded from per-app reuse", 
   assert.match(source, /\$1 !~ \/\^verified-app-set-\[0-9\]\+\$\//);
   assert.match(source, /previous_artifact="set"/);
   assert.match(source, /the set has to/);
+});
+
+test("the standalone importer is isolated without changing device workspace inputs", () => {
+  const metadata = manifestPath => JSON.parse(execFileSync("cargo", [
+    "metadata", "--locked", "--no-deps", "--format-version", "1",
+    ...(manifestPath ? ["--manifest-path", manifestPath] : [])
+  ], { encoding: "utf8", maxBuffer: COMMAND_MAX_BUFFER }));
+  const workspace = metadata();
+  assert.ok(!workspace.workspace_members.some(member => member.includes("kobo-flashcards-import")));
+  const importer = metadata("crates/kobo-flashcards-import/Cargo.toml");
+  assert.equal(importer.workspace_members.length, 1);
+  assert.ok(importer.workspace_members[0].includes("kobo-flashcards-import"));
+});
+
+test("the Flashcards test-only exemption refuses a changed production blob", () => {
+  const manifest = JSON.parse(readFileSync("tools/app-release-compatible-changes.json", "utf8"));
+  const file = manifest.changes.flatMap(change => change.files)
+    .find(entry => entry.path === "apps/flashcards/src/main.rs");
+  assert.ok(file);
+  assert.deepEqual(compatibleChangePaths(manifest, 13, [file.path], () => file.base_blob, () => file.compatible_blob), new Set([file.path]));
+  assert.deepEqual(compatibleChangePaths(manifest, 13, [file.path], () => file.base_blob, () => "f".repeat(40)), new Set());
+});
+
+test("both catalog gates share package-root exclusions without hiding nested source", () => {
+  const packages = new Map([["kobo-frame", "apps/frame"]]);
+  const registered = ["kobo-frame"];
+  const hostOnly = ["apps/frame/drive.kobo", "apps/frame/drive/scenes.txt", "apps/frame/README.md"];
+  assert.equal(storeImpactOfChangedPaths(hostOnly, packages, registered).catalogQuiet, true);
+  const source = ["apps/frame/src/drive.txt", "apps/frame/src/notes.md", "apps/drive.kobo", "apps/drive/src/main.rs"];
+  const expected = [...source].sort();
+  assert.deepEqual(storeImpactOfChangedPaths([...hostOnly, ...source], packages, registered).storeChanges, expected);
+  assert.deepEqual(storeCatalogChanges([...hostOnly, ...source], storeWatchDirectories(packages, registered)), expected);
 });

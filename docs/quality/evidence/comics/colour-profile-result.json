@@ -1,0 +1,9 @@
+{
+  "status": "passed",
+  "profile": "libra-colour-390",
+  "scale": "default",
+  "cbr": false,
+  "colour": true,
+  "reader_tools": true,
+  "original_fixture": true
+}

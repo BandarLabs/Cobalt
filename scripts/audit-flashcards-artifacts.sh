@@ -288,9 +288,13 @@ mkdir -p "$audit_tools"
 (
   cd "$repo"
   TMPDIR="$target_root/build-tmp" \
+  CARGO_TARGET_DIR="$audit_tools" \
+    "$CARGO" build --quiet --locked --release -p kobo-cli
+  TMPDIR="$target_root/build-tmp" \
   COBALT_SOURCE_COMMIT="$source_commit" \
   CARGO_TARGET_DIR="$audit_tools" \
-    "$CARGO" build --quiet --locked --release -p kobo-cli -p kobo-flashcards-import
+    "$CARGO" build --quiet --locked --release \
+      --manifest-path "$repo/crates/kobo-flashcards-import/Cargo.toml"
 )
 assert_source_unchanged
 trusted_cli="$audit_tools/release/kobo"
@@ -318,7 +322,9 @@ fi
 
 host_tree=$(
   cd "$repo"
-  "$CARGO" tree --locked --offline -p kobo-flashcards-import --edges normal --prefix none
+  "$CARGO" tree --locked --offline \
+    --manifest-path crates/kobo-flashcards-import/Cargo.toml \
+    --edges normal --prefix none
 )
 for package_name in anki anki_i18n anki_io anki_proto; do
   if ! printf '%s\n' "$host_tree" |

@@ -7,6 +7,12 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+kobod = { path = "../kobod" }
+kobo-app-store = { path = "../kobo-app-store" }
+kobo-hal = { path = "../kobo-hal" }
+kobo-abi = { path = "../kobo-abi" }
+kobo-json = { path = "../kobo-json" }
+kobo-catalog = { path = "../kobo-catalog" }
 kobo-net = { path = "../kobo-net" }
 kobo-policy = { path = "../kobo-policy" }
 kobo-profile = { path = "../kobo-profile" }
@@ -17,3 +23,6 @@ kobo-ui = { path = "../kobo-ui" }
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+kobo-sdk = { path = "../kobo-sdk" }

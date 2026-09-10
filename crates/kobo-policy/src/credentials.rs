@@ -9,7 +9,10 @@ use kobo_net::{has_origin, parse};
 use kobo_protocol::{Credential, CredentialUse, SecretHeader};
 use std::fs;
 use std::io::Write;
-use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
+
+#[path = "credential_servers.rs"]
+pub mod servers;
 use std::path::{Path, PathBuf};
 
 /// The directory below the owner secret root reserved for app-entered values.
@@ -28,6 +31,69 @@ pub fn app_secret_path(root: &Path, app: &str, name: &str) -> Option<PathBuf> {
     Some(root.join(APP_SECRET_DIRECTORY).join(app).join(name))
 }
 
+/// Handle credential storage consistently in native and simulated hosts.
+/// A success is returned only after the private write has been flushed.
+pub fn handle_install(
+    root: &Path,
+    app: &str,
+    request: &kobo_protocol::DeviceRequest,
+) -> Option<kobo_protocol::DeviceResult> {
+    use kobo_protocol::{DeviceRequest, DeviceResult};
+    if let Err(error) = validate_install(app, request)? {
+        return Some(error);
+    }
+    let result = match request {
+        DeviceRequest::SetSecret { name, value } => {
+            install_app_secret(root, app, name, value.as_str())
+        }
+        DeviceRequest::SetServerSecret {
+            name,
+            server,
+            value,
+        } => servers::install(root, app, name, server, value.as_str()),
+        _ => return None,
+    };
+    Some(result.map_or_else(DeviceResult::Failed, |()| DeviceResult::Done))
+}
+
+/// Validate an account request before either real storage or an injected fault.
+/// `None` means this request belongs to another device service.
+#[must_use]
+pub fn validate_install(
+    app: &str,
+    request: &kobo_protocol::DeviceRequest,
+) -> Option<Result<(), kobo_protocol::DeviceResult>> {
+    use kobo_protocol::{DenyReason, DeviceError, DeviceRequest, DeviceResult};
+    let (authorized, valid) = match request {
+        DeviceRequest::SetSecret { name, value } => (
+            may_set(app, name),
+            valid_secret_name(name) && valid_value(value.as_str()),
+        ),
+        DeviceRequest::SetServerSecret {
+            name,
+            server,
+            value,
+        } => (
+            servers::may_set(app, name),
+            servers::valid_server(server) && valid_value(value.as_str()),
+        ),
+        _ => return None,
+    };
+    Some(if !authorized {
+        Err(DeviceResult::Denied(DenyReason::NotDeclared))
+    } else if !valid {
+        Err(DeviceResult::Failed(DeviceError::InvalidInput))
+    } else {
+        Ok(())
+    })
+}
+
+fn valid_value(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= kobo_protocol::MAX_APP_SECRET_BYTES
+        && !value.chars().any(char::is_control)
+}
+
 /// Installs an app-entered credential in the verified caller's namespace.
 ///
 /// Global files directly below `root` remain owner-managed CLI credentials.
@@ -44,12 +110,7 @@ pub fn install_app_secret(
     name: &str,
     value: &str,
 ) -> Result<(), kobo_protocol::DeviceError> {
-    if !may_set(app, name)
-        || app_secret_path(root, app, name).is_none()
-        || value.is_empty()
-        || value.len() > kobo_protocol::MAX_APP_SECRET_BYTES
-        || value.chars().any(char::is_control)
-    {
+    if !may_set(app, name) || app_secret_path(root, app, name).is_none() || !valid_value(value) {
         return Err(kobo_protocol::DeviceError::InvalidInput);
     }
     private_directory(root)?;
@@ -58,6 +119,14 @@ pub fn install_app_secret(
     let directory = apps.join(app);
     private_directory(&directory)?;
 
+    write_private_record(&directory, name, value.as_bytes())
+}
+
+fn write_private_record(
+    directory: &Path,
+    name: &str,
+    bytes: &[u8],
+) -> Result<(), kobo_protocol::DeviceError> {
     let temporary = directory.join(format!(".{name}.new"));
     let destination = directory.join(name);
     if temporary.exists() {
@@ -76,10 +145,10 @@ pub fn install_app_secret(
             .mode(0o600)
             .open(&temporary)?;
         file.set_permissions(fs::Permissions::from_mode(0o600))?;
-        file.write_all(value.as_bytes())?;
+        file.write_all(bytes)?;
         file.sync_all()?;
         fs::rename(&temporary, &destination)?;
-        fs::File::open(&directory)?.sync_all()
+        fs::File::open(directory)?.sync_all()
     })();
     if result.is_err() {
         let _ignored = fs::remove_file(&temporary);
@@ -91,12 +160,27 @@ fn private_directory(path: &Path) -> Result<(), kobo_protocol::DeviceError> {
     match fs::symlink_metadata(path) {
         Ok(metadata) if metadata.file_type().is_dir() => {}
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            fs::create_dir(path).map_err(|_| kobo_protocol::DeviceError::Backend)?;
+            fs::DirBuilder::new()
+                .mode(0o700)
+                .create(path)
+                .map_err(|_| kobo_protocol::DeviceError::Backend)?;
         }
         Ok(_) | Err(_) => return Err(kobo_protocol::DeviceError::Backend),
     }
     fs::set_permissions(path, fs::Permissions::from_mode(0o700))
-        .map_err(|_| kobo_protocol::DeviceError::Backend)
+        .map_err(|_| kobo_protocol::DeviceError::Backend)?;
+    fs::File::open(path)
+        .and_then(|directory| directory.sync_all())
+        .map_err(|_| kobo_protocol::DeviceError::Backend)?;
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        fs::File::open(parent)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|_| kobo_protocol::DeviceError::Backend)?;
+    }
+    Ok(())
 }
 
 /// Whether a credential name is exactly one portable path component.
@@ -143,6 +227,24 @@ pub fn may_set(app: &str, name: &str) -> bool {
 #[must_use]
 pub fn allowed(app: &str, credential: &Credential, url: &str, usage: CredentialUse) -> bool {
     allowed_request(app, credential, url, usage, None, None)
+}
+
+/// Apply the reviewed provider policy to an atomically loaded server binding,
+/// or retain the exact existing rules for legacy owner-managed credentials.
+#[must_use]
+pub fn allowed_request_with_server(
+    app: &str,
+    credential: &Credential,
+    url: &str,
+    usage: CredentialUse,
+    body: Option<&str>,
+    content_type: Option<&str>,
+    server: Option<&str>,
+) -> bool {
+    server.map_or_else(
+        || allowed_request(app, credential, url, usage, body, content_type),
+        |server| servers::allowed(app, credential, server, url, usage),
+    )
 }
 
 /// The complete credential decision, including the body shape of writes.
@@ -517,6 +619,39 @@ fn zotero_key(value: &str) -> bool {
 mod tests {
     use super::{allowed, allowed_request, install_app_secret, may_set, AUDIOBOOK_VOICES};
     use kobo_protocol::{Credential, CredentialUse};
+
+    #[test]
+    fn shared_install_handler_acknowledges_only_durable_authorized_writes() {
+        use kobo_protocol::{DenyReason, DeviceRequest, DeviceResult, SecretValue};
+        let root =
+            std::env::temp_dir().join(format!("cobalt-credential-handler-{}", std::process::id()));
+        std::fs::create_dir(&root).unwrap();
+        let request = DeviceRequest::SetSecret {
+            name: "openai".into(),
+            value: SecretValue::new("synthetic-key"),
+        };
+        assert_eq!(
+            super::handle_install(&root, "todo", &request),
+            Some(DeviceResult::Denied(DenyReason::NotDeclared))
+        );
+        assert!(!root.join("apps").exists());
+        assert_eq!(
+            super::handle_install(&root, "chat", &request),
+            Some(DeviceResult::Done)
+        );
+        assert_eq!(
+            std::fs::read(root.join("apps/chat/openai")).unwrap(),
+            b"synthetic-key"
+        );
+        let blocked = root.join("not-a-directory");
+        std::fs::write(&blocked, b"preserved").unwrap();
+        assert!(matches!(
+            super::handle_install(&blocked, "chat", &request),
+            Some(DeviceResult::Failed(_))
+        ));
+        assert_eq!(std::fs::read(&blocked).unwrap(), b"preserved");
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn apps_can_install_only_the_credentials_their_policy_consumes() {

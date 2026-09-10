@@ -1,7 +1,8 @@
 //! Bounded, restartable transfer state. Shelf writes remain atomic.
 
 pub const CHUNK: usize = 256 * 1024;
-pub const MAX_COMIC: usize = 12 * 1024 * 1024;
+pub const MAX_COMIC: usize = kobo_comic::MAX_ARCHIVE_BYTES;
+const _: () = assert!(MAX_COMIC <= kobo_sdk::MAX_SHELF_DOWNLOAD);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Download {

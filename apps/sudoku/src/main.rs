@@ -34,6 +34,7 @@ struct Game {
     hints: u16,
     variant: u8,
     notice: Option<Notice>,
+    help: bool,
 }
 
 impl Default for Game {
@@ -54,6 +55,7 @@ impl Game {
             hints: 0,
             variant,
             notice: None,
+            help: false,
         }
     }
 
@@ -201,6 +203,17 @@ fn digit_name(digit: u8) -> String {
 }
 
 fn screen(game: &Game) -> Screen {
+    if game.help {
+        return ScreenBuilder::new("sudoku-help")
+            .top_bar("How to play")
+            .owns_back(true)
+            .heading("Fill every row, column and box")
+            .text("Use each number 1–9 once in every row.")
+            .text("Do the same in every column and each outlined 3×3 box.")
+            .text("Tap a blank square, then a number. Hint fills one square for you.")
+            .bottom_action("close-help", "Play")
+            .build();
+    }
     let cells = (0..CELLS).map(|cell| (cell_name(cell), game.cell_label(cell), None));
     let digits = (1..=9).map(|digit| (digit_name(digit), digit.to_string()));
     ScreenBuilder::new("sudoku")
@@ -209,12 +222,13 @@ fn screen(game: &Game) -> Screen {
         .board(COLUMNS, cells)
         .grid(COLUMNS, false, digits)
         .grid(
-            3,
+            4,
             false,
             [
                 ("hint", "Hint"),
                 ("reset", "Reset"),
                 ("new-game", "New game"),
+                ("how-to-play", "How to play"),
             ],
         )
         .build()
@@ -226,7 +240,17 @@ impl KoboApp for Game {
     }
 
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
-        let changed = if action == action_id("hint") {
+        let changed = if self.help {
+            if action == action_id("close-help") || action == ActionId::BACK {
+                self.help = false;
+                true
+            } else {
+                false
+            }
+        } else if action == action_id("how-to-play") {
+            self.help = true;
+            true
+        } else if action == action_id("hint") {
             self.hint()
         } else if action == action_id("reset") {
             self.reset();
@@ -401,5 +425,20 @@ mod tests {
             "layout diagnostics: {:?}",
             diagnostics.issues
         );
+    }
+
+    #[test]
+    fn how_to_play_is_short_and_reachable() {
+        let mut game = Game::default();
+        assert!(screen(&game)
+            .layout_with(&CLARA_BW_METRICS, &Chrome::default())
+            .rect_of_action(action_id("how-to-play"))
+            .is_some());
+        game.help = true;
+        let help = screen(&game);
+        assert!(help
+            .diagnostics(&CLARA_BW_METRICS, &Chrome::measuring(true))
+            .issues
+            .is_empty());
     }
 }

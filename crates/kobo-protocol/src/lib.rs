@@ -55,11 +55,24 @@ pub const MAGIC: [u8; 4] = *b"KOBO";
 /// Version 12 adds Folio tile values, card tiles, section links and page rails.
 /// Version 13 adds persistent selected state to grid cells. Its runtime retains
 /// a version-12 reader so already installed Folio applications keep working.
+/// Version 14 adds the bounded board viewport on a new node tag. Versions
+/// 11, 12 and 13 remain readable; board nodes require version 14.
+/// Version 14 also adds generation-scoped suspend barriers on new message tags.
 ///
 /// A colour picture travels the same way: a grey picture still uses the tags it
 /// always did, byte for byte, and a colour one uses tags of its own that an
 /// older runtime refuses rather than misreads.
-pub const VERSION: u8 = 13;
+pub const VERSION: u8 = 14;
+/// Version introducing server-bound account records.
+pub const SERVER_ACCOUNT_VERSION: u8 = 14;
+/// Version with persistent selected grid cells, retained for installed apps.
+pub const SELECTED_GRID_VERSION: u8 = 13;
+mod board;
+
+/// Opt-in simulator callback boundary carried in an ordinary debug log frame.
+/// It does not add a wire tag or authorize any runtime operation.
+pub const SIM_CALLBACK_COMPLETE: &str = "cobalt.sim.callback.complete.v1";
+
 /// Folio's tile, section, and page-rail protocol.
 pub const FOLIO_VERSION: u8 = 12;
 /// The pre-Folio protocol retained during the compatibility window.
@@ -647,6 +660,24 @@ pub enum Message {
     StoreRequest(StoreRequest),
     /// Sent by the runtime when an application gains or loses the panel.
     Lifecycle(Lifecycle),
+    /// Request a generation-scoped save and task barrier before suspend.
+    PrepareSuspend {
+        generation: u64,
+    },
+    /// SDK acknowledgement after callbacks, durable replies and tasks settle.
+    SuspendReady {
+        generation: u64,
+        ready: bool,
+    },
+    /// End this barrier, after resume or an aborted suspend attempt.
+    Resume {
+        generation: u64,
+        reason: WakeReason,
+    },
+    /// A due scheduled wake, delivered only to the application that requested it.
+    ScheduledWake {
+        occurrence: u64,
+    },
     /// The runtime's answer to exactly one store request.
     StoreResult(StoreResult),
     /// An application driving a terminal the runtime owns.
@@ -871,6 +902,36 @@ pub enum Lifecycle {
     /// Something else owns the panel. Keep working, but nothing drawn now will
     /// be seen until this comes back, so this is the moment to save.
     Background,
+}
+
+/// Why a suspend barrier ended. An abort is a wake event without kernel sleep.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+pub enum WakeReason {
+    Cancelled = 0,
+    PowerButton = 1,
+    Cover = 2,
+    Touch = 3,
+    Scheduled = 4,
+    Usb = 5,
+    Charging = 6,
+    Backend = 7,
+}
+impl WakeReason {
+    #[must_use]
+    pub const fn from_wire(value: u8) -> Option<Self> {
+        match value {
+            0 => Some(Self::Cancelled),
+            1 => Some(Self::PowerButton),
+            2 => Some(Self::Cover),
+            3 => Some(Self::Touch),
+            4 => Some(Self::Scheduled),
+            5 => Some(Self::Usb),
+            6 => Some(Self::Charging),
+            7 => Some(Self::Backend),
+            _ => None,
+        }
+    }
 }
 
 /// The runtime's answer to exactly one [`StoreRequest`].
@@ -1180,6 +1241,13 @@ pub enum DeviceRequest {
     /// Applications may submit a value entered by the owner, but cannot read
     /// the stored value back.
     SetSecret { name: String, value: SecretValue },
+    /// Save account details together with their owner-selected HTTPS server.
+    /// The runtime keeps the destination and value in one atomic record.
+    SetServerSecret {
+        name: String,
+        server: String,
+        value: SecretValue,
+    },
     /// List documents already on the card and in the stock reader's library.
     ///
     /// The application never names a path. What comes back is an opaque id
@@ -1661,7 +1729,7 @@ pub struct WifiNetwork {
     pub connected: bool,
 }
 
-/// Failures from an available radio backend.
+/// Bounded failures from device services, storage and app transactions.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
 pub enum DeviceError {
@@ -1681,7 +1749,7 @@ impl DeviceError {
         match self {
             Self::NotFound => "the device or network was not found",
             Self::Authentication => "authentication failed",
-            Self::TimedOut => "the radio operation timed out",
+            Self::TimedOut => "the request timed out",
             Self::Unreachable => "the device or network is unreachable",
             // Deliberately says nothing about addresses or credentials. This
             // variant is the general "what arrived was not usable" answer and
@@ -1692,7 +1760,7 @@ impl DeviceError {
             // to nothing to go on. What actually failed is traced at the site
             // that knows.
             Self::InvalidInput => "the data received was not usable",
-            Self::Backend => "the system radio service failed",
+            Self::Backend => "the reader could not complete the request",
             Self::Integrity => "the download did not match its published digest",
         }
     }
@@ -1851,7 +1919,10 @@ impl From<io::Error> for StreamError {
 /// Returns an error when a message exceeds protocol limits.
 #[allow(clippy::too_many_lines)]
 pub fn encode(frame: &Frame) -> Result<Vec<u8>, ProtocolError> {
-    if !matches!(frame.version, LEGACY_VERSION | FOLIO_VERSION | VERSION) {
+    if !matches!(
+        frame.version,
+        LEGACY_VERSION | FOLIO_VERSION | SELECTED_GRID_VERSION | VERSION
+    ) {
         return Err(ProtocolError::UnsupportedVersion(frame.version));
     }
     let (kind, payload_len) = encoded_message_layout(&frame.message, frame.version)?;
@@ -1951,6 +2022,16 @@ pub fn encode(frame: &Frame) -> Result<Vec<u8>, ProtocolError> {
             payload.extend_from_slice(bytes);
         }
         Message::DropFont { handle } => push_u32(&mut payload, handle.0),
+        Message::PrepareSuspend { generation } => push_u64(&mut payload, *generation),
+        Message::ScheduledWake { occurrence } => push_u64(&mut payload, *occurrence),
+        Message::Resume { generation, reason } => {
+            push_u64(&mut payload, *generation);
+            payload.push(*reason as u8);
+        }
+        Message::SuspendReady { generation, ready } => {
+            push_u64(&mut payload, *generation);
+            payload.push(u8::from(*ready));
+        }
         Message::Lifecycle(state) => payload.push(match state {
             Lifecycle::Foreground => 0,
             Lifecycle::Background => 1,
@@ -2486,6 +2567,10 @@ fn encoded_message_layout(message: &Message, version: u8) -> Result<(u8, usize),
         Message::StoreRequest(request) => Ok((13, store_request_len(request)?)),
         Message::StoreResult(result) => Ok((14, store_result_len(result)?)),
         Message::Lifecycle(_) => Ok((15, 1)),
+        Message::PrepareSuspend { generation } => suspend_layout(37, 8, *generation, version),
+        Message::SuspendReady { generation, .. } => suspend_layout(38, 9, *generation, version),
+        Message::Resume { generation, .. } => suspend_layout(39, 9, *generation, version),
+        Message::ScheduledWake { occurrence } => suspend_layout(40, 8, *occurrence, version),
         Message::ShellRequest(request) => Ok((16, shell_request_len(request)?)),
         Message::ShellEvent(event) => Ok((17, shell_event_len(event)?)),
         Message::PutPicture {
@@ -2528,6 +2613,20 @@ fn encoded_message_layout(message: &Message, version: u8) -> Result<(u8, usize),
         }
         Message::DropFont { .. } => Ok((25, 4)),
     }
+}
+
+fn suspend_layout(
+    tag: u8,
+    bytes: usize,
+    generation: u64,
+    version: u8,
+) -> Result<(u8, usize), ProtocolError> {
+    if version < VERSION || generation == 0 {
+        return Err(ProtocolError::InvalidValue(
+            "protocol 14 suspend generation",
+        ));
+    }
+    Ok((tag, bytes))
 }
 
 fn task_outcome_len(outcome: &TaskOutcome) -> Result<usize, ProtocolError> {
@@ -2729,6 +2828,25 @@ fn encode_device_request(
         DeviceRequest::SetSecret { .. } => {
             return Err(ProtocolError::InvalidValue("application secret"));
         }
+        DeviceRequest::SetServerSecret {
+            name,
+            server,
+            value,
+        } if version >= SERVER_ACCOUNT_VERSION
+            && valid_app_id(name)
+            && valid_secret_server(server)
+            && !value.as_str().is_empty()
+            && value.as_str().len() <= MAX_APP_SECRET_BYTES
+            && !value.as_str().chars().any(char::is_control) =>
+        {
+            output.push(50);
+            push_string(output, name)?;
+            push_string(output, server)?;
+            push_string(output, value.as_str())?;
+        }
+        DeviceRequest::SetServerSecret { .. } => {
+            return Err(ProtocolError::InvalidValue("server account"))
+        }
         DeviceRequest::ListLibrary => output.push(48),
         DeviceRequest::ReadLibrary { id } if valid_library_id(id) => {
             output.push(49);
@@ -2745,6 +2863,16 @@ fn encode_device_request(
 ///
 /// CLI installation remains available for larger machine-generated material.
 pub const MAX_APP_SECRET_BYTES: usize = 512;
+
+/// A bounded server address without embedded account details or query tokens.
+#[must_use]
+pub fn valid_secret_server(server: &str) -> bool {
+    server.starts_with("https://")
+        && server.len() <= 512
+        && !server.contains(['@', '?', '#', '\\'])
+        && !server.chars().any(char::is_whitespace)
+        && !server.chars().any(char::is_control)
+}
 
 /// Sixty-four lowercase hex characters: the only shape a SHA-256 hex digest
 /// has. Checked at both ends of the wire, so a digest that cannot possibly
@@ -3056,6 +3184,24 @@ fn decode_device_request(
             }
             Ok(DeviceRequest::SetSecret {
                 name,
+                value: SecretValue::new(value),
+            })
+        }
+        50 if version >= SERVER_ACCOUNT_VERSION => {
+            let name = reader.string()?;
+            let server = reader.string()?;
+            let value = reader.string()?;
+            if !valid_app_id(&name)
+                || !valid_secret_server(&server)
+                || value.is_empty()
+                || value.len() > MAX_APP_SECRET_BYTES
+                || value.chars().any(char::is_control)
+            {
+                return Err(ProtocolError::InvalidValue("server account"));
+            }
+            Ok(DeviceRequest::SetServerSecret {
+                name,
+                server,
                 value: SecretValue::new(value),
             })
         }
@@ -4070,6 +4216,7 @@ fn encoded_node_len(
             }
             length
         }
+        Node::Board { surface, .. } => board::encoded_len(surface, version)?,
         Node::Grid { cells, .. } => {
             if cells.len() > u8::MAX as usize {
                 return Err(ProtocolError::TooManyNodes);
@@ -4304,7 +4451,10 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, ProtocolError> {
         return Err(ProtocolError::BadMagic);
     }
     let version = bytes[4];
-    if !matches!(version, LEGACY_VERSION | FOLIO_VERSION | VERSION) {
+    if !matches!(
+        version,
+        LEGACY_VERSION | FOLIO_VERSION | SELECTED_GRID_VERSION | VERSION
+    ) {
         return Err(ProtocolError::UnsupportedVersion(bytes[4]));
     }
     let payload_len = u32::from_be_bytes([bytes[6], bytes[7], bytes[8], bytes[9]]) as usize;
@@ -4696,6 +4846,27 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, ProtocolError> {
         25 => Message::DropFont {
             handle: FontHandle(reader.u32()?),
         },
+        tag @ (37..=40) if version >= VERSION => {
+            let generation = reader.u64()?;
+            if generation == 0 {
+                return Err(ProtocolError::InvalidValue("suspend generation"));
+            }
+            match tag {
+                37 => Message::PrepareSuspend { generation },
+                38 => Message::SuspendReady {
+                    generation,
+                    ready: read_boolean(&mut reader, "suspend ready")?,
+                },
+                40 => Message::ScheduledWake {
+                    occurrence: generation,
+                },
+                _ => Message::Resume {
+                    generation,
+                    reason: WakeReason::from_wire(reader.u8()?)
+                        .ok_or(ProtocolError::InvalidValue("wake reason"))?,
+                },
+            }
+        }
         value => return Err(ProtocolError::UnknownMessageType(value)),
     };
     if !reader.is_finished() {
@@ -4733,7 +4904,10 @@ pub fn read_from<R: Read>(reader: &mut R) -> Result<Frame, StreamError> {
     if header[..4] != MAGIC {
         return Err(ProtocolError::BadMagic.into());
     }
-    if !matches!(header[4], LEGACY_VERSION | FOLIO_VERSION | VERSION) {
+    if !matches!(
+        header[4],
+        LEGACY_VERSION | FOLIO_VERSION | SELECTED_GRID_VERSION | VERSION
+    ) {
         return Err(ProtocolError::UnsupportedVersion(header[4]).into());
     }
     let payload_len = u32::from_be_bytes([header[6], header[7], header[8], header[9]]) as usize;
@@ -5323,6 +5497,7 @@ fn encode_node(
                 push_string(output, item)?;
             }
         }
+        Node::Board { id, surface } => board::push(output, *id, surface, version)?,
         Node::Grid {
             id,
             columns,
@@ -5803,6 +5978,8 @@ const fn encode_glyph(glyph: Glyph) -> u8 {
         Glyph::WhiteDraughtsMan => 63,
         Glyph::MorrisPoint => 64,
         Glyph::MorrisLegalPoint => 65,
+        Glyph::Backspace => 66,
+        Glyph::Shift => 67,
     }
 }
 
@@ -5874,6 +6051,8 @@ const fn decode_glyph(tag: u8) -> Option<Glyph> {
         63 => Glyph::WhiteDraughtsMan,
         64 => Glyph::MorrisPoint,
         65 => Glyph::MorrisLegalPoint,
+        66 => Glyph::Backspace,
+        67 => Glyph::Shift,
 
         _ => return None,
     })
@@ -6708,6 +6887,7 @@ fn decode_node(
             };
             Ok(Node::Terminal { id, rows, cursor })
         }
+        32 if version >= 14 => board::read(reader, id),
         15 => {
             let columns = reader.u8()?;
             if columns == 0 || columns > kobo_ui::MAX_COLUMNS {
@@ -7430,6 +7610,48 @@ mod tests {
         };
         let bytes = encode(&read).expect("encode");
         assert_eq!(decode(&bytes).expect("decode"), read);
+    }
+
+    #[test]
+    fn server_accounts_roundtrip_only_with_scope_aware_protocol() {
+        let frame = Frame {
+            version: SERVER_ACCOUNT_VERSION,
+            request_id: 19,
+            message: Message::DeviceRequest(DeviceRequest::SetServerSecret {
+                name: "komga".into(),
+                server: "https://books.example/library".into(),
+                value: SecretValue::new("reader:private-value"),
+            }),
+        };
+        let bytes = encode(&frame).unwrap();
+        assert_eq!(decode(&bytes).unwrap(), frame);
+        assert!(!format!("{:?}", frame.message).contains("private-value"));
+        for version in 11..SERVER_ACCOUNT_VERSION {
+            assert!(encode(&Frame {
+                version,
+                ..frame.clone()
+            })
+            .is_err());
+            let mut legacy = bytes.clone();
+            legacy[4] = version;
+            assert!(decode(&legacy).is_err());
+        }
+        for server in [
+            "http://books.example",
+            "https://reader@books.example",
+            "https://books.example?key=x",
+            "https://books.example/#a",
+        ] {
+            let invalid = Frame {
+                message: Message::DeviceRequest(DeviceRequest::SetServerSecret {
+                    name: "komga".into(),
+                    server: server.into(),
+                    value: SecretValue::new("reader:private-value"),
+                }),
+                ..frame.clone()
+            };
+            assert!(encode(&invalid).is_err(), "{server}");
+        }
     }
 
     #[test]
@@ -10126,3 +10348,6 @@ mod picture_tests {
         assert_eq!(back, work);
     }
 }
+
+#[cfg(test)]
+mod suspend_tests;

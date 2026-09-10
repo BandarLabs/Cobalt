@@ -1,5 +1,11 @@
-# Default date is 2026-09-01; the answer for that date is caper.
+# Simulator recorders pin this day; the answer is caper.
 expect Inkling
+tap How to play
+expect Find the five-letter word
+wait 250
+clean
+shot inkling-help
+tap Play
 tap Enter guess
 type caper
 tap Guess

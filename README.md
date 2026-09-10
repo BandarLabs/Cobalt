@@ -34,17 +34,21 @@ new app can appear in Store without reinstalling or updating Cobalt.
 > code 389)**, **Kobo Clara HD N249 (device code 376)**, **Kobo Libra 2 N418
 > (device code 388)**, **Kobo Clara Colour N367 (device code 393)**, and
 > **Kobo Libra Colour N428 (device code 390)** are
-> fully hardware-tested on the exact firmware and kernel versions in the
-> support matrix. See the
+> fully hardware-tested on the firmware and kernel versions in the
+> support matrix. The 2025 **Kobo Clara BW P365 (device code 395)** hardware
+> refresh is also supported: its measured panel, touch, firmware, and kernel
+> facts match the attended-tested N365 Clara BW.
+>
+> Cobalt runs on other Kobos as well. A device or a firmware branch that is not
+> in the matrix is not refused: Cobalt shows what has not been tested about it
+> and asks whether to continue, once. It is untested rather than unsupported,
+> and the difference is worth reading in the
 > [device support matrix](docs/DEVICES.md#device-support-matrix) before
 > installing.
-> The 2025 **Kobo Clara BW P365 (device code 395)** hardware refresh is also
-> supported: its measured panel, touch, firmware, and kernel facts match the
-> attended-tested N365 Clara BW.
 > It is an independent project and is not affiliated with Rakuten Kobo.
 
 > [!TIP]
-> **Own an unsupported Kobo? Help test its port.** No coding is required.
+> **Own an untested Kobo? Help get it into the matrix.** No coding is required.
 > [Join an existing device thread or create a new one](https://github.com/BandarLabs/Cobalt/issues)
 > with your exact model, firmware, and whether you can run attended tests.
 > Start with read-only checks; run panel tests only against the commit named
@@ -199,6 +203,21 @@ a platform release.
 Sudoku remains Store-only and is intentionally absent from the USB platform
 package, so installing it verifies delivery of an app that was not already on
 the reader.
+
+## Save an app export to your computer
+
+When an app offers **Ready for your computer**, receive its prepared copy using
+Cobalt's existing reader connection:
+
+```sh
+kobo export --app APP --device reader.local --out "$HOME/Downloads"
+```
+
+Replace `APP` with that app's ID. The command checks the complete file before
+saving, preserves the reader's original, and gives conflicting local names a
+numbered suffix. Retry the same command after a connection or storage failure.
+App adoption is still in progress. See the [export guide](docs/quality/sdk-export-and-copy.md)
+for supported formats and simulator use.
 
 ## Build an app
 
