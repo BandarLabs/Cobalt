@@ -1128,13 +1128,54 @@ impl DeviceProfile {
         }
     }
 
+    /// Whether this profile covers `observed`, which it does for any build on a
+    /// release branch the profile has actually been measured on.
+    ///
+    /// The exact builds in [`DeviceProfile::firmware_versions`] remain the
+    /// record of what was put on a physical device, and the branch is derived
+    /// from them rather than stored beside them. Two lists cannot drift apart
+    /// that way, and nobody can widen the gate without also claiming a device
+    /// was tested.
+    #[must_use]
+    pub fn accepts_firmware(&self, observed: &str) -> bool {
+        let Some(observed) = firmware_branch(observed) else {
+            return false;
+        };
+        self.firmware_branches().contains(&observed)
+    }
+
+    /// The release branches this profile has been measured on.
+    ///
+    /// Only used to say what would have been accepted, so a refusal names a
+    /// branch an owner can compare against rather than a build number that
+    /// tells them nothing.
+    #[must_use]
+    pub fn firmware_branches(&self) -> Vec<&'static str> {
+        let mut branches = self
+            .firmware_versions
+            .iter()
+            .copied()
+            .filter_map(firmware_branch)
+            .collect::<Vec<_>>();
+        branches.sort_unstable();
+        branches.dedup();
+        branches
+    }
+
     /// Returns the reasons this device may not be written to.
     ///
     /// Hardware geometry alone is not proof of identity, because another device
     /// could report a compatible framebuffer. Any write path additionally
-    /// requires the exact device code, firmware version, kernel release, and
-    /// serial model prefix this profile was measured against. An empty result
-    /// means every identity field matched exactly.
+    /// requires the exact device code, kernel release, and serial model prefix
+    /// this profile was measured against, and a firmware version on a branch it
+    /// was measured on.
+    ///
+    /// Firmware is the one field here that moves under an owner who changed
+    /// nothing about their device. Kobo updates readers on its own schedule, so
+    /// pinning the build number took the platform away from everybody on a
+    /// model each time a wave shipped, until somebody holding that hardware
+    /// re-tested it. The kernel release is the field that actually tracks the
+    /// driver stack a profile was measured against, and it stays exact.
     #[must_use]
     pub fn write_identity_blockers(&self, snapshot: &DeviceSnapshot) -> Vec<String> {
         let mut blockers = Vec::new();
@@ -1154,12 +1195,14 @@ impl DeviceProfile {
             self.serial_prefix,
             identity.serial_prefix.as_deref(),
         );
-        compare_identity_one_of(
-            &mut blockers,
-            "firmware version",
-            self.firmware_versions,
-            identity.firmware_version.as_deref(),
-        );
+        match identity.firmware_version.as_deref() {
+            Some(version) if self.accepts_firmware(version) => {}
+            Some(version) => blockers.push(format!(
+                "firmware version: expected a {} build, found {version}",
+                self.firmware_branches().join(" or ")
+            )),
+            None => blockers.push("firmware version could not be read".to_owned()),
+        }
         compare_identity(
             &mut blockers,
             "kernel release",
@@ -1672,23 +1715,25 @@ where
     }
 }
 
-fn compare_identity_one_of(
-    blockers: &mut Vec<String>,
-    name: &str,
-    expected: &[&str],
-    actual: Option<&str>,
-) {
-    match actual {
-        Some(value) if expected.contains(&value) => {}
-        Some(value) => {
-            let wanted = match expected {
-                [only] => (*only).to_owned(),
-                choices => format!("one of {}", choices.join(", ")),
-            };
-            blockers.push(format!("{name}: expected {wanted}, found {value}"));
-        }
-        None => blockers.push(format!("{name} could not be read")),
+/// The release branch a firmware version belongs to, as `major.minor`.
+///
+/// Kobo's third component is a build number shared across a whole release
+/// wave rather than anything about one model: 23697 shipped as 4.38.23697 on
+/// the Clara HD, Elipsa 2E and Libra 2, and as 4.45.23697 on the Clara BW and
+/// Clara Colour. The first two components are what follow a model's own driver
+/// stack, so they are the largest unit a single measurement can honestly be
+/// carried across.
+///
+/// A string that is not two components followed by a build belongs to no
+/// branch and is matched by nothing, which is the direction that fails safe.
+#[must_use]
+pub fn firmware_branch(version: &str) -> Option<&str> {
+    let (major, rest) = version.split_once('.')?;
+    let (minor, build) = rest.split_once('.')?;
+    if major.is_empty() || minor.is_empty() || build.is_empty() {
+        return None;
     }
+    Some(&version[..major.len() + 1 + minor.len()])
 }
 
 fn compare_identity(blockers: &mut Vec<String>, name: &str, expected: &str, actual: Option<&str>) {
@@ -2859,6 +2904,74 @@ mod tests {
         assert!(!CLARA_COLOUR_393
             .write_identity_blockers(&clara_bw)
             .is_empty());
+    }
+
+    fn clara_bw_on_firmware(version: &str) -> DeviceSnapshot {
+        let mut identity = clara_bw_identity();
+        identity.firmware_version = Some(version.into());
+        clara_panel_snapshot(identity)
+    }
+
+    #[test]
+    fn a_later_build_on_a_measured_branch_is_accepted() {
+        // The case that took Cobalt off owners' devices without warning: Kobo
+        // moved the Clara BW from 4.45.23697 to 4.45.23792 on its own
+        // schedule, and nothing this profile describes changed underneath it.
+        assert!(CLARA_BW_391
+            .write_identity_blockers(&clara_bw_on_firmware("4.45.23792"))
+            .is_empty());
+    }
+
+    #[test]
+    fn a_branch_the_profile_was_never_measured_on_is_refused() {
+        let blockers = CLARA_BW_391.write_identity_blockers(&clara_bw_on_firmware("4.46.23836"));
+        assert!(
+            blockers.iter().any(|blocker| blocker.contains("4.45")),
+            "a refusal has to name the branch that would have been taken: {blockers:?}"
+        );
+    }
+
+    #[test]
+    fn a_shared_build_number_does_not_carry_a_measurement_between_branches() {
+        // 23697 shipped as 4.38.23697 on three models and as 4.45.23697 on
+        // two others, so the build number alone says nothing about which
+        // driver stack is underneath it.
+        assert!(!CLARA_BW_391
+            .write_identity_blockers(&clara_bw_on_firmware("4.38.23697"))
+            .is_empty());
+    }
+
+    #[test]
+    fn a_firmware_version_that_names_no_branch_is_refused() {
+        for version in ["", "4", "4.45", "4.45.", "unknown"] {
+            assert!(
+                !CLARA_BW_391
+                    .write_identity_blockers(&clara_bw_on_firmware(version))
+                    .is_empty(),
+                "{version:?} names no branch and must not be accepted"
+            );
+        }
+    }
+
+    #[test]
+    fn one_profile_claims_a_model_and_branch_so_installation_never_has_to_guess() {
+        // Matching a branch rather than a build widens what each profile
+        // answers to, and the installation path refuses outright when two of
+        // them claim one device. This is the invariant that keeps that
+        // refusal unreachable.
+        let mut claimed: Vec<(&str, &str)> = Vec::new();
+        for profile in SUPPORTED_PROFILES {
+            for branch in profile.firmware_branches() {
+                let claim = (profile.serial_prefix, branch);
+                assert!(
+                    !claimed.contains(&claim),
+                    "{} shares {} on branch {branch} with an earlier profile",
+                    profile.id,
+                    profile.serial_prefix
+                );
+                claimed.push(claim);
+            }
+        }
     }
 
     #[test]

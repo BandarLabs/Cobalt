@@ -134,8 +134,9 @@ impl Mounted {
 /// Resolves USB-visible identity through the shared device profile table.
 ///
 /// A mounted book partition exposes only the serial prefix and firmware. That
-/// is enough to select one reviewed profile because those pairs are unique in
-/// [`kobo_profile::SUPPORTED_PROFILES`]. Panel geometry and kernel identity are
+/// is enough to select one reviewed profile because each entry in
+/// [`kobo_profile::SUPPORTED_PROFILES`] claims a model and a firmware branch,
+/// and no two claim the same pair. Panel geometry and kernel identity are
 /// checked again by the runtime before it can write to a display.
 ///
 /// # Errors
@@ -157,11 +158,7 @@ pub fn install_profile(reader: &Mounted) -> Result<&'static kobo_profile::Device
     let matching = hardware
         .iter()
         .copied()
-        .filter(|profile| {
-            profile
-                .firmware_versions
-                .contains(&reader.firmware.as_str())
-        })
+        .filter(|profile| profile.accepts_firmware(&reader.firmware))
         .collect::<Vec<_>>();
     match matching.as_slice() {
         [profile] if profile.write_ready => Ok(*profile),
@@ -174,13 +171,13 @@ pub fn install_profile(reader: &Mounted) -> Result<&'static kobo_profile::Device
         [] => {
             let supported = hardware
                 .iter()
-                .flat_map(|profile| profile.firmware_versions.iter().copied())
+                .flat_map(|profile| profile.firmware_branches())
                 .collect::<BTreeSet<_>>()
                 .into_iter()
                 .collect::<Vec<_>>()
                 .join(", ");
             Err(format!(
-                "unsupported firmware {} on {}; reviewed firmware: {}",
+                "unsupported firmware {} on {}; reviewed branches: {}",
                 reader.firmware, hardware[0].model, supported
             ))
         }
@@ -1924,9 +1921,29 @@ mod tests {
         assert!(install_profile(&reader("N999000000000", "4.45.23697"))
             .expect_err("hardware")
             .contains("unsupported Kobo hardware"));
-        assert!(install_profile(&reader("N365000000000", "9.9.9"))
-            .expect_err("firmware")
-            .contains("unsupported firmware"));
+        let refusal = install_profile(&reader("N365000000000", "9.9.9")).expect_err("firmware");
+        assert!(refusal.contains("unsupported firmware"));
+        assert!(
+            refusal.contains("4.45"),
+            "a refusal has to name the branch that would have been taken: {refusal}"
+        );
+    }
+
+    #[test]
+    fn installation_accepts_a_later_build_on_a_reviewed_branch() {
+        // A mounted volume is all `kobo setup` can see, so this gate is a
+        // second one, separate from the runtime's, and it used to pin the
+        // build number on its own. A wave Kobo pushed unasked would otherwise
+        // refuse a first install onto hardware that is fully reviewed.
+        let reader = Mounted {
+            volume: PathBuf::from("/Volumes/KOBOeReader"),
+            serial: "N365410043013".to_owned(),
+            firmware: "4.45.23792".to_owned(),
+        };
+        assert_eq!(
+            install_profile(&reader).expect("supported").id,
+            "clara-bw-391"
+        );
     }
 
     #[test]
