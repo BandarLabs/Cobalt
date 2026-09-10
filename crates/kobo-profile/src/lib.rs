@@ -758,6 +758,27 @@ pub enum Standing {
     Unmeasured,
 }
 
+/// The firmware generation Cobalt can be started on.
+///
+/// NickelMenu is the only way into Cobalt from the reader's own menus, and it
+/// hooks Nickel by resolving mangled C++ symbols out of `libnickel` and
+/// rewriting a GOT entry behind one of them. That is a 4.x arrangement. It does
+/// not hold on the 5.x firmware, so a 5.x reader could be installed onto and
+/// then have no way to start what was installed.
+///
+/// This is why the generation is checked apart from the branch. An untested
+/// branch is a risk an owner can weigh, and [`Standing::UntestedFirmware`]
+/// lets them. A reader that cannot launch Cobalt at all is not a risk, it is a
+/// dead end, and consenting to it would only mean agreeing to a device that
+/// does nothing.
+pub const SUPPORTED_FIRMWARE_GENERATION: u32 = 4;
+
+/// How the blocker for an unlaunchable firmware generation begins.
+///
+/// Deliberately not [`FIRMWARE_BLOCKER`]. That prefix marks the blockers an
+/// informed owner may waive, and this one must outlive any consent.
+pub const FIRMWARE_GENERATION_BLOCKER: &str = "firmware generation";
+
 /// How every firmware-version blocker begins.
 ///
 /// Shared so that the message and the rule deciding whether an owner may waive
@@ -1245,6 +1266,13 @@ impl DeviceProfile {
             identity.serial_prefix.as_deref(),
         );
         match identity.firmware_version.as_deref() {
+            // Checked before the branch, and separately from it, because a
+            // reader NickelMenu cannot hook has nothing to weigh: it would be
+            // installed onto and then never able to start.
+            Some(version) if !launchable_generation(version) => blockers.push(format!(
+                "{FIRMWARE_GENERATION_BLOCKER}: expected {SUPPORTED_FIRMWARE_GENERATION}.x, \
+                 found {version}, which NickelMenu cannot hook"
+            )),
             Some(version) if self.accepts_firmware(version) => {}
             Some(version) => blockers.push(format!(
                 "{FIRMWARE_BLOCKER}: expected a {} build, found {version}",
@@ -1762,6 +1790,20 @@ where
     if actual != expected {
         mismatches.push(format!("{name}: expected {expected:?}, found {actual:?}"));
     }
+}
+
+/// Whether a firmware version is one NickelMenu can start Cobalt from.
+///
+/// A version that names no branch is refused here too. Nothing can be said
+/// about a generation that could not be read, and guessing that an unreadable
+/// version is a launchable one is the guess that ends with a reader carrying
+/// an installation it cannot run.
+#[must_use]
+pub fn launchable_generation(version: &str) -> bool {
+    firmware_branch(version)
+        .and_then(|branch| branch.split('.').next())
+        .and_then(|major| major.parse::<u32>().ok())
+        .is_some_and(|major| major == SUPPORTED_FIRMWARE_GENERATION)
 }
 
 /// The release branch a firmware version belongs to, as `major.minor`.
@@ -3000,6 +3042,37 @@ mod tests {
                 "{version:?} names no branch and must not be accepted"
             );
         }
+    }
+
+    #[test]
+    fn a_firmware_generation_nickelmenu_cannot_hook_is_refused_past_any_consent() {
+        // NickelMenu is the only way into Cobalt from the reader's own menus
+        // and it does not hook the 5.x firmware. A reader there is not
+        // untested hardware an owner can decide about, it is hardware with no
+        // way to start what would be installed on it, so this blocker has to
+        // survive the consent path that waives the other two.
+        let snapshot = clara_bw_on_firmware("5.0.24000");
+        let blockers = CLARA_BW_391.unwaivable_write_blockers(&snapshot);
+        assert!(
+            !blockers.is_empty(),
+            "a 5.x reader must not be waivable: {blockers:?}"
+        );
+    }
+
+    #[test]
+    fn a_derived_profile_does_not_excuse_its_own_unsupported_generation() {
+        // The provisional profile takes its firmware from the device, so the
+        // branch check can never fail on it. Without a separate generation
+        // check an unrecognised reader on 5.x would raise nothing at all.
+        let mut snapshot = clara_bw_on_firmware("5.0.24000");
+        snapshot.identity.serial_prefix = Some("N999".into());
+        snapshot.identity.device_code = Some(999);
+        let profile = crate::provisional::profile_from_probe(&snapshot, TouchTransform::Direct)
+            .expect("derivable");
+        assert!(
+            !profile.unwaivable_write_blockers(&snapshot).is_empty(),
+            "a derived 5.x profile must still refuse"
+        );
     }
 
     #[test]

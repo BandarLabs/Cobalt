@@ -155,6 +155,20 @@ pub fn install_profile(reader: &Mounted) -> Result<&'static kobo_profile::Device
             reader.model_code()
         ));
     }
+    // Checked before the model's own branches, and named for the reason rather
+    // than the symptom. Falling through to "reviewed branches: 4.45" would be
+    // true and would send an owner looking for a 4.45 build of a reader that
+    // Kobo has moved on from, when the answer is that nothing can start Cobalt
+    // there at all.
+    if !kobo_profile::launchable_generation(&reader.firmware) {
+        return Err(format!(
+            "firmware {} cannot start Cobalt: NickelMenu is the only way in from the \
+             reader's own menus and it does not hook the {}.x firmware, so an installation \
+             here could never be launched",
+            reader.firmware,
+            reader.firmware.split('.').next().unwrap_or("that")
+        ));
+    }
     let matching = hardware
         .iter()
         .copied()
@@ -1921,12 +1935,32 @@ mod tests {
         assert!(install_profile(&reader("N999000000000", "4.45.23697"))
             .expect_err("hardware")
             .contains("unsupported Kobo hardware"));
-        let refusal = install_profile(&reader("N365000000000", "9.9.9")).expect_err("firmware");
+        // A branch this model was never measured on, but one NickelMenu can
+        // still hook. Held at 4.x deliberately: a version from another
+        // generation is refused earlier and for a different reason, and using
+        // one here would test that refusal twice and this one never.
+        let refusal =
+            install_profile(&reader("N365000000000", "4.20.11000")).expect_err("firmware");
         assert!(refusal.contains("unsupported firmware"));
         assert!(
             refusal.contains("4.45"),
             "a refusal has to name the branch that would have been taken: {refusal}"
         );
+    }
+
+    #[test]
+    fn installation_refuses_a_firmware_generation_that_could_never_be_launched() {
+        // Installing here would succeed and leave the owner with a payload no
+        // menu entry can reach, so the refusal names NickelMenu rather than
+        // sending them to look for a 4.45 build of a reader that has none.
+        let reader = Mounted {
+            volume: PathBuf::from("/Volumes/KOBOeReader"),
+            serial: "N365410043013".to_owned(),
+            firmware: "5.0.24000".to_owned(),
+        };
+        let refusal = install_profile(&reader).expect_err("5.x cannot be launched");
+        assert!(refusal.contains("NickelMenu"), "{refusal}");
+        assert!(!refusal.contains("reviewed branches"), "{refusal}");
     }
 
     #[test]
