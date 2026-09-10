@@ -741,6 +741,23 @@ pub const SUPPORTED_PROFILES: &[&DeviceProfile] = &[
 pub const WRITE_EVIDENCE_PENDING: &str =
     "owner-attended display, touch, exit, and recovery evidence is incomplete";
 
+/// How well known the hardware a session resolved is.
+///
+/// The distinction lives here rather than beside the framebuffer because it is
+/// a statement about the profile table: whether this reader is in it, and
+/// whether the firmware it is running was measured. What is done about that is
+/// somebody else's decision, and the two callers who make it disagree, so this
+/// deliberately carries no policy of its own.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Standing {
+    /// A measured profile claims this model, on a firmware branch it covers.
+    Measured,
+    /// A measured profile claims this model, but not this firmware branch.
+    UntestedFirmware,
+    /// No profile claims this reader, so one was derived from its own probe.
+    Unmeasured,
+}
+
 /// How every firmware-version blocker begins.
 ///
 /// Shared so that the message and the rule deciding whether an owner may waive

@@ -71,6 +71,7 @@ mod app_store;
 mod autoupdate;
 #[cfg(feature = "device-write")]
 mod blackbox;
+mod consent;
 #[cfg(feature = "device-write")]
 mod device;
 mod frame;

@@ -280,20 +280,7 @@ enum WritePolicy {
     OwnerAccepted,
 }
 
-/// How well known the hardware under a session is.
-///
-/// Returned rather than inferred by the caller, because the difference decides
-/// what the owner is asked and the only code positioned to tell is the code
-/// that just resolved the profile.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum Standing {
-    /// A measured profile claims this model, on a firmware branch it covers.
-    Measured,
-    /// A measured profile claims this model, but not this firmware branch.
-    UntestedFirmware,
-    /// No profile claims this device and one was derived from the probe.
-    Unmeasured,
-}
+pub use kobo_profile::Standing;
 
 /// Picks the profile a device runs under, and says how well known it is.
 ///
