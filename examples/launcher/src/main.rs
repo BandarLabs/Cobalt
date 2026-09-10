@@ -316,23 +316,42 @@ impl KoboApp for Launcher {
         self.show(context);
     }
 
-    /// Returns to the list whenever the panel comes back to the launcher.
+    /// Puts the list back the moment the panel is handed over.
     ///
     /// Leaving an entry paints "Starting…" so the wait is explained, and the
     /// runtime repaints a returning application from the last screen it drew
     /// rather than waiting for a new one, which is what makes coming back
     /// instant. Together those two correct decisions meant that tapping back
     /// out of an application landed on a "Starting…" screen for an application
-    /// that had already started and already finished, with no way forward. The
-    /// transient has to be cleared by the only party that knows it was a
-    /// transient.
+    /// that had already started and already finished.
+    ///
+    /// Clearing it on the way back in is a round trip too late: the runtime has
+    /// already repainted what it held, and on this panel that is a full refresh
+    /// of a splash for something that started a minute ago. So the launcher
+    /// clears the transient on the way out instead, while it still owns what
+    /// the runtime will hold.
+    ///
+    /// Only losing the panel means the launch succeeded. A missing binary or an
+    /// application that exits before it draws never takes the panel, the
+    /// launcher is never told to go behind, and the splash stays up with the
+    /// way back on it, which is exactly what that screen is for.
+    fn on_background(&mut self, context: &mut Context) {
+        let View::Starting(index) = self.view else {
+            return;
+        };
+        // The entry took the panel, which on this platform means it is now
+        // running behind the launcher rather than gone. Remember which, so its
+        // tile can say so.
+        self.working = Some(index);
+        self.view = View::Home;
+        self.show(context);
+    }
+
+    /// Refreshes the list whenever the panel comes back to the launcher.
+    ///
+    /// The catalogue can have changed while the panel was elsewhere: the Store
+    /// is one of the applications the owner can leave for, and it installs.
     fn on_foreground(&mut self, context: &mut Context) {
-        if let View::Starting(index) = self.view {
-            // Control came back while an entry was starting, which on this
-            // platform means it is now running behind the launcher rather than
-            // gone. Remember which, so its tile can say so.
-            self.working = Some(index);
-        }
         if !matches!(self.view, View::Home) {
             self.view = View::Home;
         }
@@ -718,8 +737,9 @@ mod tests {
         let mut runner = AppRunner::new(Launcher::default());
         runner.start();
         runner.action(action_id(&opening(ENTRIES[0].name)));
-        runner.lifecycle(Lifecycle::Background);
-        let screen = painted(runner.lifecycle(Lifecycle::Foreground));
+        // The list the runtime holds while the panel is elsewhere, which is
+        // the one it repaints when the owner comes back.
+        let screen = painted(runner.lifecycle(Lifecycle::Background));
         let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::with_back(false));
         let text = layout
             .nodes
@@ -912,9 +932,12 @@ mod tests {
 
     /// Tapping back out of an application used to land on "Starting Terminal",
     /// for a terminal that had already started and already been left, with no
-    /// control on the screen that went anywhere. The runtime repaints a
-    /// returning application from the last screen it drew (that is what makes
-    /// coming back instant) so the transient has to be cleared here.
+    /// control on the screen that went anywhere.
+    ///
+    /// The list is now left behind on the way out, so coming back has nothing
+    /// to redraw and asks no refresh of the panel. What it does do is ask the
+    /// runtime what is installed, because the Store is one of the places the
+    /// owner can have been.
     #[test]
     fn coming_back_from_an_application_shows_the_list_again() {
         let mut runner = AppRunner::new(Launcher::default());
@@ -922,7 +945,7 @@ mod tests {
         runner.action(action_id(&opening(ENTRIES[0].name)));
         assert!(matches!(runner.app().view, View::Starting(0)));
 
-        runner.lifecycle(Lifecycle::Background);
+        let left_behind = painted(runner.lifecycle(Lifecycle::Background));
         let commands = runner.lifecycle(Lifecycle::Foreground);
 
         assert!(
@@ -932,19 +955,45 @@ mod tests {
         assert!(commands
             .iter()
             .any(|command| matches!(command, Command::Device(DeviceRequest::ListInstalledApps))));
-        let painted = commands
-            .iter()
-            .find_map(|command| match command {
-                Command::SetScreen(screen) => Some(screen),
-                _ => None,
-            })
-            .expect("coming back has to repaint, or the stale screen stays on the panel");
         assert!(
-            painted
+            left_behind
                 .nodes
                 .iter()
                 .any(|node| matches!(node, Node::TileGrid { .. })),
             "the list came back without any entries on it"
+        );
+    }
+
+    /// Clearing the transient when the panel comes back is a round trip too
+    /// late. The runtime repaints a returning application from the screen it
+    /// holds, and what it held for the launcher was "Starting…", so backing
+    /// out of an application spent a full E Ink refresh on a splash for
+    /// something that had already started before the list replaced it. The
+    /// screen the runtime holds has to be the list before the launcher is ever
+    /// asked for it.
+    #[test]
+    fn leaving_for_an_application_leaves_the_list_behind_not_the_splash() {
+        let mut runner = AppRunner::new(Launcher::default());
+        let list = painted(runner.start()).id;
+        runner.action(action_id(&opening(ENTRIES[0].name)));
+
+        let commands = runner.lifecycle(Lifecycle::Background);
+
+        let held = commands
+            .iter()
+            .rev()
+            .find_map(|command| match command {
+                Command::SetScreen(screen) => Some(screen),
+                _ => None,
+            })
+            .expect("the launcher left the splash as the screen the runtime holds");
+        assert_eq!(
+            held.id, list,
+            "coming back repaints this, and it is not the list"
+        );
+        assert!(
+            matches!(runner.app().view, View::Home),
+            "the launcher stayed on the screen it painted while leaving"
         );
     }
 
@@ -956,15 +1005,7 @@ mod tests {
         let mut runner = AppRunner::new(Launcher::default());
         runner.start();
         runner.action(action_id(&opening(ENTRIES[0].name)));
-        runner.lifecycle(Lifecycle::Background);
-        let commands = runner.lifecycle(Lifecycle::Foreground);
-        let home = commands
-            .into_iter()
-            .find_map(|command| match command {
-                Command::SetScreen(screen) => Some(screen),
-                _ => None,
-            })
-            .expect("coming back repaints the list");
+        let home = painted(runner.lifecycle(Lifecycle::Background));
         let home_layout = home.layout_with(&CLARA_BW_METRICS, &Chrome::with_back(false));
         let home_text = home_layout
             .nodes
