@@ -527,8 +527,16 @@ pub fn present(
         Watchdog::arm(&state, WATCHDOG_CHECK).map_err(|error| format!("arm watchdog: {error}"))?,
     );
 
-    let display = DisplaySession::open(Some(OWNER_UNLOCK_PHRASE))
-        .map_err(|error| format!("open display: {error}"))?;
+    // A reader outside the profile table gets a profile derived from its own
+    // probe rather than a refusal. The transform below is the one field that
+    // cannot be derived, and `Direct` is a starting point rather than a
+    // measurement: on unmeasured hardware the owner is told taps may land in
+    // the wrong place, because with this they may.
+    let (display, standing) = DisplaySession::open_including_untested(
+        Some(OWNER_UNLOCK_PHRASE),
+        kobo_profile::TouchTransform::Direct,
+    )
+    .map_err(|error| format!("open display: {error}"))?;
     let profile = display.profile();
     crate::remember_device_profile(profile)?;
 
@@ -659,16 +667,58 @@ pub fn present(
     // two portrait poses.
     let forward_is_194 = pose.rotation() % 4 == profile.reference_rotation % 4;
 
-    let application_outcome = host_applications(
-        application,
-        &display,
-        whole_screen,
-        &taps,
-        limits,
-        forward_is_194,
-        &watchdog,
-        frontlight,
-    );
+    // Asked here rather than earlier because asking needs the panel and the
+    // touch reader, and both are only up once the stock reader has let go.
+    // Declining therefore still costs a stop and a start of the reader, which
+    // is the price of being able to ask at all on hardware whose only output
+    // is the screen the question is about.
+    let firmware = display
+        .snapshot()
+        .identity
+        .firmware_version
+        .clone()
+        .unwrap_or_default();
+    let consented = match crate::consent::notice(standing, profile, &firmware) {
+        Some(_) if crate::consent::already_accepted(Path::new(COBALT_ROOT), profile, &firmware) => {
+            true
+        }
+        Some(notice) => match ask_consent(&display, &taps, whole_screen, &notice) {
+            crate::consent::Decision::Accepted => {
+                if let Err(error) = crate::consent::record(
+                    Path::new(COBALT_ROOT),
+                    profile,
+                    &firmware,
+                    env!("CARGO_PKG_VERSION"),
+                ) {
+                    // The session still runs. Failing to remember the answer
+                    // costs one more question next time, which is a far
+                    // smaller wrong than refusing an owner who just said yes.
+                    trace(&format!("could not record the acceptance: {error}"));
+                }
+                true
+            }
+            crate::consent::Decision::Declined => false,
+        },
+        None => true,
+    };
+
+    let application_outcome = if consented {
+        host_applications(
+            application,
+            &display,
+            whole_screen,
+            &taps,
+            limits,
+            forward_is_194,
+            &watchdog,
+            frontlight,
+        )
+    } else {
+        // Not an error. The owner was asked and answered, and everything below
+        // this point puts the reader back exactly as it does after a session
+        // that ran for an hour.
+        Ok("the owner declined to run on untested hardware".to_owned())
+    };
     // No panel work may outlive Cobalt's ownership of the display. This is an
     // explicit lifecycle fence rather than a timing assumption: the stock
     // reader can start drawing as soon as the session gives the descriptor
@@ -1021,6 +1071,152 @@ fn announce_reboot(
 
 /// How long the restart notice stays up before the screen is put back.
 const NOTICE_DWELL: Duration = Duration::from_secs(5);
+
+/// The two answers the consent notice offers.
+const CONSENT_ACCEPT: ActionId = ActionId(9001);
+const CONSENT_CLOSE: ActionId = ActionId(9002);
+
+/// How long an unanswered notice waits before it gives the reader back.
+///
+/// An owner who tapped the menu entry and then put the device down should not
+/// find a stopped reader an hour later. Declining is the safe answer, so that
+/// is what silence becomes.
+const CONSENT_PATIENCE: Duration = Duration::from_secs(120);
+
+/// Builds the screen the consent notice is drawn on.
+///
+/// Separated from the drawing so a test can lay it out and check that both
+/// answers are reachable, which is the property that matters and the one that
+/// cannot be checked by looking at a device.
+fn consent_screen(notice: &crate::consent::Notice) -> Screen {
+    let mut nodes = vec![kobo_ui::Node::Heading {
+        id: kobo_ui::NodeId(1),
+        text: notice.title.clone(),
+        level: 1,
+    }];
+    let mut next = 2;
+    for line in &notice.body {
+        nodes.push(kobo_ui::Node::Text {
+            id: kobo_ui::NodeId(next),
+            text: line.clone(),
+            links: Vec::new(),
+        });
+        next += 1;
+    }
+    nodes.push(kobo_ui::Node::Button {
+        id: kobo_ui::NodeId(next),
+        action: CONSENT_ACCEPT,
+        label: "Accept & Continue".to_owned(),
+        state: kobo_ui::ControlState::Enabled,
+        emphasis: kobo_ui::Emphasis::Primary,
+    });
+    next += 1;
+    nodes.push(kobo_ui::Node::Button {
+        id: kobo_ui::NodeId(next),
+        action: CONSENT_CLOSE,
+        label: "Close".to_owned(),
+        state: kobo_ui::ControlState::Enabled,
+        emphasis: kobo_ui::Emphasis::Normal,
+    });
+    next += 1;
+    // Only where the touch mapping is itself a guess. On a reader whose
+    // digitiser has been measured this line would be noise, and telling
+    // somebody how to work around a problem they do not have reads as a
+    // warning that they do.
+    if notice.touch_may_be_wrong {
+        nodes.push(kobo_ui::Node::Secondary {
+            id: kobo_ui::NodeId(next),
+            text: "If taps do not work, press the power button to close.".to_owned(),
+        });
+    }
+    Screen::new(0, nodes)
+}
+
+/// Puts the notice in front of the owner and waits for an answer.
+///
+/// The panel has to be open to ask, which means the question is drawn on the
+/// same hardware it is asking about. There is no way around that: a reader with
+/// no measured profile cannot be told anything except by writing to its screen.
+/// What it does mean is that the geometry and pixel-format checks have already
+/// passed by the time anybody sees this, so the notice itself is evidence that
+/// the panel takes a write correctly.
+///
+/// The power button answers Close. On unmeasured hardware the touch mapping is
+/// a guess, and an owner who cannot reach either button with a tap would
+/// otherwise have nothing to do but hold the power key until the device died.
+fn ask_consent(
+    display: &DisplaySession,
+    taps: &TouchSink,
+    whole_screen: Rect,
+    notice: &crate::consent::Notice,
+) -> crate::consent::Decision {
+    let screen = consent_screen(notice);
+    let chrome = Chrome::with_back(false);
+    let metrics = metrics_for(&screen);
+    let mut surface = Surface::new(
+        usize::try_from(whole_screen.width).unwrap_or(0),
+        usize::try_from(whole_screen.height).unwrap_or(0),
+    );
+    kobo_ui::render_oriented(
+        &screen,
+        &metrics,
+        &chrome,
+        &(),
+        &mut surface,
+        None,
+        kobo_ui::Orientation::Portrait,
+    );
+    if let Err(error) =
+        Painter::new(surface.width, surface.height).paint(display, whole_screen, &surface)
+    {
+        // Nothing was asked, so nothing may be assumed. A notice that could not
+        // be drawn is a notice the owner never saw.
+        trace(&format!("could not draw the consent notice: {error}"));
+        return crate::consent::Decision::Declined;
+    }
+
+    let (sender, events) = mpsc::channel();
+    taps.set(Some(sender));
+    let layout = screen.layout_with(&metrics, &chrome);
+    let deadline = Instant::now() + CONSENT_PATIENCE;
+    let decision = loop {
+        let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
+            trace("the consent notice went unanswered");
+            break crate::consent::Decision::Declined;
+        };
+        match events.recv_timeout(remaining) {
+            Ok(Event::Touch(TouchEvent::Up { x, y })) => {
+                let (x, y) = (
+                    i32::try_from(x).unwrap_or(-1),
+                    i32::try_from(y).unwrap_or(-1),
+                );
+                match layout.hit_test(x, y) {
+                    Some(CONSENT_ACCEPT) => break crate::consent::Decision::Accepted,
+                    Some(CONSENT_CLOSE) => break crate::consent::Decision::Declined,
+                    _ => {}
+                }
+            }
+            Ok(Event::Gpio(GpioEvent::Button {
+                button: gpio::Button::Power,
+                pressed: true,
+            })) => {
+                trace("the consent notice was closed with the power button");
+                break crate::consent::Decision::Declined;
+            }
+            Ok(_) => {}
+            Err(_) => {
+                // The touch reader is gone, so there is nothing left to answer
+                // with. Distinguished from a deliberate refusal because the
+                // owner never got to make one.
+                trace("the consent notice lost its input before it was answered");
+                break crate::consent::Decision::Declined;
+            }
+        }
+    };
+    taps.set(None);
+    trace(&format!("consent notice answered: {decision:?}"));
+    decision
+}
 
 fn restore_screen(
     display: &DisplaySession,
@@ -4763,6 +4959,54 @@ mod tests {
         let home = super::chrome_for(&listing, true, &mut status);
         assert!(!home.back, "the launcher was given a way out of itself");
         assert!(home.status.is_some(), "the launcher lost its status band");
+    }
+
+    /// Both answers on the consent notice can actually be tapped.
+    ///
+    /// The notice is the one screen an owner cannot get past by any other
+    /// route, so a layout that placed a button where no touch resolves to it
+    /// would leave them with a stopped reader and nothing to press. Checked by
+    /// sweeping the panel rather than by reading the button's own rectangle,
+    /// because what matters is that a tap lands on it, not that it was laid
+    /// out somewhere.
+    #[test]
+    fn both_answers_on_the_consent_notice_can_be_reached_by_a_tap() {
+        for touch_may_be_wrong in [false, true] {
+            let notice = crate::consent::Notice {
+                title: "Untested device".to_owned(),
+                body: vec![
+                    "Cobalt has not been tested on this Kobo.".to_owned(),
+                    "Cobalt does not change how your Kobo starts up.".to_owned(),
+                    "Provided without warranty, at your own risk.".to_owned(),
+                ],
+                touch_may_be_wrong,
+            };
+            let screen = super::consent_screen(&notice);
+            let metrics = super::metrics_for(&screen);
+            let layout = screen.layout_with(&metrics, &kobo_ui::Chrome::with_back(false));
+            let mut reachable = Vec::new();
+            let mut y = 0;
+            while y < metrics.height {
+                let mut x = 0;
+                while x < metrics.width {
+                    if let Some(action) = layout.hit_test(x, y) {
+                        if !reachable.contains(&action) {
+                            reachable.push(action);
+                        }
+                    }
+                    x += 4;
+                }
+                y += 4;
+            }
+            assert!(
+                reachable.contains(&super::CONSENT_ACCEPT),
+                "nothing on the panel accepts (footnote: {touch_may_be_wrong})"
+            );
+            assert!(
+                reachable.contains(&super::CONSENT_CLOSE),
+                "nothing on the panel closes (footnote: {touch_may_be_wrong})"
+            );
+        }
     }
 
     /// A rooted application's sub-screen still gets a way back.
