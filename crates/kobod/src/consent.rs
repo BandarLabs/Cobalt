@@ -169,6 +169,7 @@ mod tests {
     fn an_untested_branch_names_the_branch_that_was_tested_and_the_one_running() {
         let notice = notice(Standing::UntestedFirmware, &CLARA_BW_391, "4.46.23836")
             .expect("a notice is owed");
+        assert_eq!(notice.title, "Untested firmware");
         assert!(notice.body[0].contains("4.45"));
         assert!(notice.body[0].contains("4.46.23836"));
         assert!(!notice.touch_may_be_wrong);
@@ -181,6 +182,7 @@ mod tests {
         // that before they try to answer with it.
         let notice =
             notice(Standing::Unmeasured, &CLARA_BW_391, "4.28.17623").expect("a notice is owed");
+        assert_eq!(notice.title, "Untested device");
         assert!(notice.touch_may_be_wrong);
         assert!(notice.body.iter().any(|line| line.contains("wrong place")));
     }
