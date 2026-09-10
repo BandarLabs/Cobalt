@@ -3,6 +3,7 @@
 use std::fmt;
 
 pub mod observation;
+pub mod provisional;
 
 /// Which panel-controller interface the device's framebuffer speaks.
 ///
