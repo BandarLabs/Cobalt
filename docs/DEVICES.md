@@ -6,8 +6,17 @@ Part of [Cobalt](../README.md).
 
 ## Device support matrix
 
-Support is tied to an exact model, device code, firmware, kernel, framebuffer,
-and touch profile. A matching model name alone is not sufficient.
+The devices below are the ones somebody has physically tested, on the firmware
+named. Cobalt also runs on Kobos that are not listed. It says so first: a reader
+outside this table, or on a firmware branch that is not listed, is shown what
+has not been tested about it and asked whether to continue or go back. Nothing
+on this page is a claim about hardware that is not on it.
+
+A firmware entry covers its release branch. `4.45.23697` means every `4.45.x`
+build is taken without asking, because Kobo's third component is a build number
+shared across a whole release wave rather than anything about one model: 23697
+shipped as `4.38.23697` on three of the devices below and as `4.45.23697` on two
+others. A branch that is not listed still runs, behind the notice.
 
 | Device | Exact tested identity | Evidence status | Installation status |
 |---|---|---|---|
@@ -26,8 +35,11 @@ direction, panel refresh behavior, or recovery after Cobalt takes ownership of
 the device. Those claims require owner-attended hardware runs; simulator and
 fixture results are not substitutes.
 
-Firmware versions not listed here are unsupported even on the same model until
-a new read-only probe and the applicable attended evidence have been reviewed.
+Firmware branches not listed here have not been reviewed on that model, and
+neither have devices missing from the table. Both still start, after the owner
+has been told what is untested and has agreed. What that notice cannot do is
+turn either into tested hardware: adding a row still takes a read-only probe
+and the applicable attended evidence.
 
 ### Elipsa 2E portrait orientations
 
