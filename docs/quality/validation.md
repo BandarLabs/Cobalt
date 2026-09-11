@@ -1836,3 +1836,37 @@ rematch that keeps the score, the session written and read back, the opponent's
 priorities, and a solo tap answered before the panel is drawn again. The 274
 `kobo-ui` tests pass with the new one. `scripts/check-apps-sim.py tictactoe`
 passes against the committed route; captures are in `evidence/tictactoe/`.
+
+### Magnet sweep guidance and controlled sensor events (11 September 2026)
+
+MAGNET-01 to MAGNET-04 are closed, which completes the Magnet group.
+
+**Guidance that points somewhere.** The reader is drawn with one edge marked as
+the one to sweep, and Sweep the next edge walks round the four. Nothing claims
+to know where the sensor is: the profiles describe the panel, not the magnet,
+and the bezel says nothing. What the application does is help somebody find it,
+credit a change to the edge that was being swept when it happened, ring that
+edge on the diagram, and write the finding down so the next opening starts
+there and says "Found on the right edge".
+
+**Told apart.** A reader with no hall sensor, a build that cannot read it, an
+application that did not ask for it and a read that failed each say their own
+sentence, and none of them is "No magnet": a screen that says there is no
+magnet before it has asked is guessing. Nothing is claimed before the first
+answer arrives.
+
+**The count.** Still resettable, and now kept per edge, because how many times
+it moved matters less than where it was when it did. A restated state is not
+movement, and the first answer is not a change.
+
+**Controlled events.** `examples/magnet/drive.txt` drives the simulator's own
+hall-sensor controls: sweep the top edge, close the cover, see the magnet and
+the ring, open it, move to the right edge, close and open again, check the
+count, and clear it. `scripts/check-apps-sim.py magnet` passes against it.
+
+**Verification.** Eleven Magnet tests pass, including a change credited to the
+swept edge and written down, the finding read back so a calibrated reader
+starts at the answer, the sweep walking the four edges, the diagram marking the
+swept edge and ringing the one that answered, and every state free of layout
+issues at all nine text sizes. Strict Clippy and `cargo fmt` pass. Captures are
+in `evidence/magnet/`.

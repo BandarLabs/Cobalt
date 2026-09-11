@@ -6,28 +6,35 @@ The reader has a hall sensor behind one edge of the bezel. It is the thing a
 sleep cover closes against. This application shows everything the SDK exposes:
 ask once for the state, then wait to be told when it changes.
 
-| Nothing there | After a few sweeps |
+| Sweeping an edge | The edge that answered |
 | --- | --- |
-| ![The empty state, telling you to walk a magnet along each edge](screenshots/no-magnet.png) | ![The same screen with a count of how many times the sensor changed](screenshots/counting.png) |
+| ![The reader drawn with the top edge marked as the one to sweep](screenshots/no-magnet.png) | ![The same diagram with a ring where the sensor answered](screenshots/counting.png) |
 
-*Captured from a Kobo Clara BW over Wi-Fi with `kobo shot --device`.*
+*Captured from the Clara BW simulator by the committed route, which uses the
+simulator's own hall-sensor controls. The device capture is taken with the
+hardware acceptance run.*
 
 ## Using it
 
-Hold a magnet against an edge and walk it slowly along. The screen goes from
-"No magnet" to a horseshoe glyph the moment the sensor answers. Take the magnet
-away and the glyph goes with it.
+The reader is drawn with one edge marked: that is the edge to sweep. Hold a
+magnet against it and move it slowly along. The moment the sensor answers, the
+screen says so and a ring appears on that edge of the diagram. **Sweep the
+next edge** walks round the four of them.
 
-That is also what makes it a calibration screen. The sensor is one point behind
-a featureless bezel and nothing on the case says where, so the only way to find
-it is to sweep and watch. Mark the spot in pencil once you have it.
+Nothing here claims to know where the sensor is. The profiles describe the
+panel, not the magnet, and the bezel says nothing. What the application does is
+help you find it and then write down which edge answered, so opening it again
+on the same reader starts at that edge and says "Found on the right edge"
+rather than asking you to do it all over.
 
 ## Why there is a count
 
 A magnet moved slowly past the threshold can bounce, and a run that reads six
 changes where your hand made one is telling you something a gesture built on
 this sensor needs to know before it is written. The count resets from the
-screen, because the number is only useful against the sweep you have just done.
+screen, because the number is only useful against the sweep you have just done,
+and it is counted per edge: how many times it moved matters less than where it
+was when it did.
 
 It counts movement, not answers. The first reading establishes the state rather
 than changing it, and a restated state is not an edge.

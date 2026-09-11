@@ -1,0 +1,13 @@
+{
+  "source_sha": "7c7818c8bfa501643fc2aeccf90f213a5726cd2c",
+  "dirty": true,
+  "results": [
+    {
+      "app": "magnet",
+      "launched": true,
+      "status": "pass",
+      "route": "examples/magnet/drive.txt",
+      "exit_code": 0
+    }
+  ]
+}

@@ -2064,32 +2064,40 @@
     "pr": 2,
     "group": "Magnet",
     "task": "Show annotated sensor-location guidance",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "The reader is drawn with the edge to sweep marked, the four edges are walked one at a time, and the edge that answered is ringed and written down for next time."
+    ]
   },
   {
     "id": "MAGNET-02",
     "pr": 2,
     "group": "Magnet",
     "task": "Distinguish unsupported sensor from no magnet",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "No sensor, a build that cannot read it, an undeclared capability and a failed read each say their own sentence, and nothing is claimed before the first answer."
+    ]
   },
   {
     "id": "MAGNET-03",
     "pr": 2,
     "group": "Magnet",
     "task": "Provide resettable observation count",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "The count is resettable and kept per edge, ignoring restated states and the first answer."
+    ]
   },
   {
     "id": "MAGNET-04",
     "pr": 2,
     "group": "Magnet",
     "task": "Test controlled hall-sensor events",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "examples/magnet/drive.txt drives the simulator's hall-sensor controls through two edges, both cover states and a reset; scripts/check-apps-sim.py magnet passes against it."
+    ]
   },
   {
     "id": "MORSE-01",
