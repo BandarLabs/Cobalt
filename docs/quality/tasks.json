@@ -2751,48 +2751,60 @@
     "pr": 2,
     "group": "Miniflux (APP-5)",
     "task": "Persist full article bodies offline",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Saved batches carry complete supplied bodies and reopen after a restart with no request; the simulator journey reads them with the network off."
+    ]
   },
   {
     "id": "MINI-02",
     "pr": 2,
     "group": "Miniflux (APP-5)",
     "task": "Flush acknowledged read/star/archive mutations correctly",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Read, unread, star, unstar and archive are sent as assignments to /v1/entries, one at a time, and only leave the queue once acknowledged; the fixture account records each one."
+    ]
   },
   {
     "id": "MINI-03",
     "pr": 2,
     "group": "Miniflux (APP-5)",
     "task": "Parse HTML into the shared document reader with inline images, captions/alt text, e-ink scaling, offline image restoration and missing-image recovery",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Articles open in the shared document reader with figures and captions; a named picture is fetched once, saved, and read from the saved copy offline after a restart."
+    ]
   },
   {
     "id": "MINI-04",
     "pr": 2,
     "group": "Miniflux (APP-5)",
     "task": "Wire tabs, star, full-text and suggested-feed controls",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Unread, Starred and History are three views of one merged download; the row menu stars, keeps unread, archives and fetches full articles; a suggested feed is filed under a real category."
+    ]
   },
   {
     "id": "MINI-05",
     "pr": 2,
     "group": "Miniflux (APP-5)",
     "task": "Keep pending/retry state visible",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "The shelf states how many changes are waiting in the same sentence that says Miniflux did not answer, and the count survives a restart offline."
+    ]
   },
   {
     "id": "MINI-06",
     "pr": 2,
     "group": "Miniflux (APP-5)",
     "task": "Test fetch/read/mutate/reconnect/restart against a fixture server",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "scripts/quality/check-miniflux-sim.py drives fetch, read, mutate, reconnect and two restarts against an HTTPS fixture account at default and 170% text; evidence/miniflux-account{,-large}/."
+    ]
   },
   {
     "id": "SIDE-01",

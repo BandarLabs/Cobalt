@@ -4488,10 +4488,7 @@ mod tests {
             false,
         );
         assert!(!greyscale.has_colour());
-        assert_eq!(
-            greyscale.pixels[at(120, 10)],
-            kobo_ui::tone::INK
-        );
+        assert_eq!(greyscale.pixels[at(120, 10)], kobo_ui::tone::INK);
 
         let source = include_str!("../../../assets/cobalt-logo.svg");
         assert!(source.contains("viewBox=\"0 0 264 111\""));

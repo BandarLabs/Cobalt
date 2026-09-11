@@ -64,6 +64,7 @@ pub mod imports;
 pub mod keyboard;
 pub mod provider;
 pub mod samples;
+pub mod snapshot;
 pub mod terminal;
 pub mod validation;
 
@@ -1036,6 +1037,33 @@ impl Context {
                 .saturating_sub(used.saturating_add(area.gap))
                 .max(0);
             kobo_ui::paginate_rows(rows, &self.metrics, area)
+        })
+    }
+
+    /// The same, for rows that carry an overflow mark against their right edge.
+    ///
+    /// Separate from [`Self::paginate_rows_under`] because the mark takes a
+    /// column out of the title, and a list measured as though it did not
+    /// comes back with rows that wrap when they are drawn: the last row of
+    /// every page then falls under the position strip.
+    #[must_use]
+    pub fn paginate_rows_with_menu_under(
+        &self,
+        rows: &[(&str, &str)],
+        nav_bar: bool,
+        position: Position,
+        placed: &Screen,
+    ) -> Vec<Vec<usize>> {
+        kobo_ui::with_text_scale(self.metrics.text_scale, || {
+            let used = placed
+                .layout_with(&self.metrics, &Chrome::measuring(true))
+                .content_used();
+            let mut area = self.area_for(nav_bar, position);
+            area.height = area
+                .height
+                .saturating_sub(used.saturating_add(area.gap))
+                .max(0);
+            kobo_ui::paginate_rows_with_menu(rows, &self.metrics, area)
         })
     }
 

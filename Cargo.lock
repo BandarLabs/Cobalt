@@ -852,6 +852,7 @@ dependencies = [
  "kobo-comic",
  "kobo-doc",
  "kobo-image",
+ "kobo-json",
  "kobo-net",
  "kobo-profile",
  "kobo-read",
@@ -1397,8 +1398,12 @@ dependencies = [
 name = "kobo-rss-miniflux"
 version = "0.1.0"
 dependencies = [
+ "kobo-bookview",
+ "kobo-doc",
  "kobo-html",
  "kobo-json",
+ "kobo-net",
+ "kobo-read",
  "kobo-sdk",
  "kobo-ui",
 ]

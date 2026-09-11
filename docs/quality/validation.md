@@ -1491,3 +1491,98 @@ can be released. All 102 RSS tests, strict Rust 1.85.1 Clippy, formatting and
 the ARMv7 musl cross-check pass. The README documents the memory lifecycle.
 This changes no visible layout; existing recovery screenshots remain relevant.
 Disk cache cleanup and final RSS integration remain open.
+
+### Shared SDK snapshot storage — 9 September 2026
+
+The verified Feeds cache implementation now lives in `kobo_sdk::snapshot` as
+`Snapshot` and `SnapshotEvent`. Feeds re-exports these types instead of carrying
+a private duplicate. The configurable bound defaults to 512 KiB and supports
+the 768 KiB Miniflux response limit, capped by the SDK shelf download maximum.
+SDK.md and the public SDK guide document callback routing, acknowledged
+publication, recovery and lifecycle ownership.
+
+The extracted implementation passes 95 Feeds tests and 162 SDK tests (seven
+storage tests moved from Feeds; two new bound tests were added). Two existing
+SDK doctests remain ignored. Strict Clippy passes. The default-size HTTPS
+simulator fixture passes all image/feed persistence and repair scenarios using
+the shared implementation; `evidence/sdk-snapshot/` records its result and final
+offline restart capture. No visible interface changed in this extraction.
+Miniflux offline integration and the shared-change publication checks remain
+open; these new changes are local.
+
+### Miniflux offline response persistence — 9 September 2026
+
+Miniflux now uses the shared SDK snapshot with its 768 KiB response bound. The
+snapshot identity includes the server address and credential name. Startup
+loads the saved response without a network request; validated sync responses
+retain complete supplied HTML bodies and article metadata. File and pointer
+acknowledgements are both required before publication. Failed saves leave
+articles in memory and expose explicit retry without another fetch. Switching
+settings is blocked while storage or queued mutations remain unfinished, and
+changing settings cancels an outstanding fetch before opening the new scope.
+
+Eight Miniflux tests pass, including acknowledged publication, complete-body
+restore after restart with zero spawned tasks, failed-save retry and malformed
+response preservation. Strict Clippy passes. The README distinguishes this
+local storage work from the unfinished reader, image, subscription and mutation
+flows. No Miniflux checklist task is closed yet: simulator verification, account
+setup and the complete reading/sync journey remain outstanding.
+
+
+### Miniflux reading, tabs and acknowledged changes — 11 September 2026
+
+The Miniflux application is now the complete account-backed reader the
+checklist asks for, and MINI-01 to MINI-06 are closed on this evidence.
+
+**Shared before written twice.** The article-image loader and the acknowledged
+reading-position record left Feeds and became `kobo_bookview::illustrations`
+and `kobo_bookview::positions`; Feeds re-exports both, so the two readers of web
+articles share one implementation of the parts that are easy to get wrong.
+Saved image identities and the position file keep the names Feeds published
+under, so an upgrade opens what a reader already has. The SDK gained
+`Context::paginate_rows_with_menu_under`, because a list measured without the
+overflow mark's column comes back with rows that wrap when drawn.
+
+**Reading.** Articles open in the shared document reader through
+`kobo_doc::html`, with headings, quotes, figures and captions. A picture the
+feed named but did not carry is fetched once and saved; the saved copy is used
+afterwards, including offline after a restart. Reading positions are kept per
+article and returned to.
+
+**Three tabs, one download.** A sync collects unread, starred and read as three
+requests, because a Miniflux query carries one status, and merges them into one
+saved batch of at most 100 articles. All three tabs then work with the radio
+off. A part that fails ends the sync rather than writing half a batch over a
+whole one.
+
+**Changes.** Every change is sent as the state the article should end in, never
+as a toggle: the runtime sends an update once and never replays it, so a queue
+of assignments is the only kind that can be resumed safely after a lost reply.
+The queue is written down before it is sent, survives restarts, is shown on
+screen with its count, and is flushed before a sync downloads anything. The
+reviewed credential surface allows exactly these routes, which is why the
+bookmark toggle endpoint is not used.
+
+**Verification.** Twenty-six application tests pass, including reaching every
+article of a 100-entry batch at all nine interface scales with no error
+diagnostics, the merged three-part sync, an acknowledged save reopening after a
+restart with no request, a failed save keeping its articles, a lost reply going
+out again unchanged, and a refused account change while work is outstanding.
+Twenty-two `kobo-bookview` and 162 SDK tests pass, 90 in Feeds. Strict Clippy
+and `cargo fmt` pass.
+
+`scripts/quality/check-miniflux-sim.py` drives the actual simulator against an
+original HTTPS fixture account with real taps: first sync, reading with its
+picture, a page turn and a resumed position, the read mark reaching the server,
+starring from the row menu, a change made offline, a process restart with no
+network, catching up on reconnection, an applied change whose reply the fixture
+drops, a full article fetched and reopened offline after another restart, and a
+suggested feed filed under a real category. Every capture passes runtime layout
+diagnostics; the token is attached to every request by the runtime and never
+appears in the application. The journey passes at default text size and at
+170%; captures and results are in `evidence/miniflux-account/` and
+`evidence/miniflux-account-large/`, and the screenshots were visually inspected.
+
+Superseded: the earlier `evidence/miniflux-pages/` captures and their entry
+described list reachability against a hand-written saved file, which this
+journey covers end to end from a real account.

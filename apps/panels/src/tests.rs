@@ -208,6 +208,7 @@ fn failed_position_save_keeps_latest_page_and_retry_acknowledges_that_revision()
 use super::{shelf_key, Kept, Panels, Pending};
 use kobo_sdk::action_id;
 use kobo_ui::{Chrome, CLARA_BW_METRICS};
+use std::fmt::Write;
 
 #[test]
 fn library_and_pending_transfer_round_trip() {
@@ -538,7 +539,10 @@ fn large_catalog() -> kobo_opds::Feed {
         r#"<feed xmlns="http://www.w3.org/2005/Atom"><title>The garden library</title><link rel="next" href="next"/>"#,
     );
     for index in 0..128 {
-        source.push_str(&format!(r#"<entry><id>volume-{index}</id><title>Garden {index}: notes from a long summer beside the river</title><author><name>A. Gardener</name></author><link rel="http://opds-spec.org/acquisition" type="application/zip" href="{index}.cbz"/></entry>"#));
+        let _ = write!(
+            source,
+            r#"<entry><id>volume-{index}</id><title>Garden {index}: notes from a long summer beside the river</title><author><name>A. Gardener</name></author><link rel="http://opds-spec.org/acquisition" type="application/zip" href="{index}.cbz"/></entry>"#
+        );
     }
     source.push_str("</feed>");
     super::komga::parse(source.as_bytes(), "https://library.example/catalog").unwrap()

@@ -694,6 +694,15 @@ built with `rows_with_menu` gives up a whole touch target to the mark, whatever
 its title says, and its pair is `one_line_row_with_menu(text, nav_bar)` and
 `paginate_rows_with_menu(&[(title, summary), …], nav_bar)`.
 
+A screen whose list sits under more than a notice — tabs, a heading, a pending
+count, any of them there only sometimes — measures against what it is about to
+draw rather than against a list of things to subtract:
+`paginate_rows_under(rows, nav_bar, position, &prefix)`, and
+`paginate_rows_with_menu_under(…)` for rows carrying an overflow mark. Both take
+the built screen that precedes the list and reserve exactly its measured height.
+Build that prefix with the same function the screen itself uses, and leave the
+list and the page-position strip out of it.
+
 Two other things a page's measure has to be told, because both cost whole rows
 rather than a few pixels:
 
@@ -1759,3 +1768,28 @@ For rows with overflow menus, `Context::clamped_row_with_menu(text, lines,
 nav_bar)` measures the width left by the menu. Use
 `paginate_rows_with_menu_below_notice(rows, nav_bar, notice)` when the same list
 has a banner; it reserves both the menu column and the measured banner height.
+
+### Verified offline snapshots
+
+Use `kobo_sdk::snapshot::Snapshot` for a complete feed response or other
+replaceable offline content larger than a small store value. Create it with a
+stable identity that includes the server and account scope, then call `start`.
+The default bound is 512 KiB; `Snapshot::new(identity).at_most(768 * 1024)`
+accommodates a bounded Miniflux article response. The maximum is the SDK shelf
+download limit. Validate the response before saving it.
+
+Route key loads/saves matching `snapshot.key` to `stored`, and shelf results
+matching `snapshot.owns_file(name)` to `shelf`. Both return optional
+`SnapshotEvent` values. `Loaded` makes verified bytes available in `bytes`,
+or leaves it empty for a missing/damaged snapshot. `Saved` means both the file
+and its published pointer were acknowledged. `Failed` leaves earlier published
+content intact and exposes `retryable()`; offer explicit recovery with `retry`.
+Retry rereads the pointer before choosing a slot, including after uncertain
+acknowledgements.
+
+Keep the snapshot alive while `busy()` or `retryable()` is true. A new candidate
+received after a failed save replaces the pending candidate but starts no write
+until retry. `save` returns false for a busy snapshot, an oversized candidate or
+a retained candidate awaiting retry; do not report it as saved. An app should
+serialize refreshes with active saves. Releasing an idle snapshot from memory
+does not remove its files. Disk retention and cleanup remain the app's policy.

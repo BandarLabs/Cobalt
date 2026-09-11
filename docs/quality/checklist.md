@@ -18,7 +18,7 @@ A checked task requires implementation plus recorded validation. Physical measur
 
 The PR 1 implementation checklist is complete; CBR is deferred and COMIC-18 belongs to catalog integration in PR 2. This does not certify hardware accuracy: native sleep hands ownership back to the stock reader, and no generic kernel suspend, RTC wake or automatic cover-sleep backend is enabled. Physical acceptance remains scheduled after all three PRs.
 
-495 tracked tasks: 143 completed, 1 deferred by the owner, 351 open. Implementation in progress. Evidence is recorded per task in `tasks.json` and in [the validation log](validation.md).
+495 tracked tasks: 149 completed, 1 deferred by the owner, 345 open. Implementation in progress. Evidence is recorded per task in `tasks.json` and in [the validation log](validation.md).
 
 Design direction: use the familiar visual conventions of each app, restrained controls and plain copy. Crossword follows printed crossword typography and grids. Paperterm is the next app priority, including a real two-way laptop terminal session. Paperterm defaults to portrait with a physically scaled, denser terminal font; the measured grid takes precedence over forcing 80 columns.
 
@@ -443,12 +443,12 @@ Design direction: use the familiar visual conventions of each app, restrained co
 
 ## PR 2 · Miniflux (APP-5)
 
-- [ ] **MINI-01** Persist full article bodies offline.
-- [ ] **MINI-02** Flush acknowledged read/star/archive mutations correctly.
-- [ ] **MINI-03** Parse HTML into the shared document reader with inline images, captions/alt text, e-ink scaling, offline image restoration and missing-image recovery.
-- [ ] **MINI-04** Wire tabs, star, full-text and suggested-feed controls.
-- [ ] **MINI-05** Keep pending/retry state visible.
-- [ ] **MINI-06** Test fetch/read/mutate/reconnect/restart against a fixture server.
+- [x] **MINI-01** Persist full article bodies offline.
+- [x] **MINI-02** Flush acknowledged read/star/archive mutations correctly.
+- [x] **MINI-03** Parse HTML into the shared document reader with inline images, captions/alt text, e-ink scaling, offline image restoration and missing-image recovery.
+- [x] **MINI-04** Wire tabs, star, full-text and suggested-feed controls.
+- [x] **MINI-05** Keep pending/retry state visible.
+- [x] **MINI-06** Test fetch/read/mutate/reconnect/restart against a fixture server.
 
 ## PR 2 · Sidekick app
 
