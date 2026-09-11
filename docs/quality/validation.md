@@ -1929,3 +1929,66 @@ panel and text size. The 278 `kobo-ui` tests pass with the two new ones.
 destinations, every panel they turn onto, all thirteen sheets of icons and the
 whole job, at the default size and at 170%. Captures are in `evidence/gallery/`
 and `evidence/gallery-large/`.
+
+### A story, its discussion and what the device remembers (12 September 2026)
+
+HN-01 to HN-06 are closed, which completes the Hacker News group.
+
+**The headline, once.** It was in the top bar and in the first paragraph of the
+discussion, which is the same words twice on one panel with one of them cut
+short, and it cost the first page a headline's worth of comments. It stays in
+the bar, because that is the part of the screen that survives a page turn: a
+reader four pages into a thread should not have to page back to find out whose
+story they are arguing about.
+
+**The story and the discussion are two places.** A row opens the discussion,
+which is what this application is for. The article behind the story is offered
+on the story's own screen, beside Save, and opens in the shared reader with the
+same type sizes and the same front light control as every other book on the
+device. A story that is its own text says so instead of offering to fetch an
+article that does not exist, and a site that will not answer says which failure
+it was and leaves the discussion where it is.
+
+**What the device remembers.** Which stories have been opened and which were
+put aside, in one small state file. Both are said at the front of the row's
+second line, where an eye running down the left edge of a list finds them, and
+only on the rows that have them. A saved story is written down whole, with its
+article beside it, so the Saved list draws with no radio at all and the article
+opens from the copy on the device. Coming back from a story lands on the page
+of the list it was opened from.
+
+**Deep replies and folding.** A reply deeper than the gutter can show says how
+deep it is in its byline, which costs no width, and the drawn indent stops
+moving at the cap rather than pretending to keep going. Any comment folds away
+with its replies and opens again with them.
+
+**Two defects found by this work.** Tapping Saved while the front page was
+still arriving showed the saved list and then the front page a second later,
+because a ranking that lands after the reader has moved on put its own tab back
+on the panel. And the discussion's messages were drawn as a banner the
+paginator had never measured: on a full page at 170% the renderer refused the
+whole screen rather than draw through the panel edge, so a reader who turned
+the type up got nothing at all. Everything the screen has to say is now said
+inside the flow that was measured, and the end of a thread is written at the
+end of the thread rather than raised over the top of it.
+
+**Platform.** A new `paginate_tagged_under`, for a screen that draws a block of
+its own above the first page of a long piece of prose and nothing above the
+rest. The application had been reserving paragraphs of roughly the right height
+and swapping them for the real block while drawing, which is a dozen pixels out
+over four facts, which is one line too many at the foot of the first page. The
+same measurement the other `_under` paginators already use now serves this one,
+and the reservation and the tag that went with it are gone. The loading
+placeholder is measured too: six rows fit a Clara BW at the default text size
+and run off the bottom of it at 170%, where the renderer refuses the screen.
+
+**Verification.** Sixty-three Hacker News tests pass, including the round trip
+of a fold, a reply past the indent cap saying how deep it is, the list position
+kept across a story, the saved list asking the network for nothing, and a story
+with no link of its own. `scripts/check-apps-sim.py hn` passes against a
+committed route that is deliberately offline, and
+`scripts/quality/check-hn-sim.py` reads a private HTTPS fixture end to end at
+the default size and at 170%: the front page, a discussion six replies deep,
+the article behind it, saving, the marks on the list, and the saved story and
+its article reopening with the radio off. Captures are in `evidence/hn/` and
+`evidence/hn-large/`.

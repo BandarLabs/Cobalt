@@ -1759,48 +1759,64 @@
     "pr": 2,
     "group": "Hacker News",
     "task": "Reduce duplicate title and metadata noise",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "examples/hn/src/main.rs",
+      "docs/quality/evidence/hn/"
+    ]
   },
   {
     "id": "HN-02",
     "pr": 2,
     "group": "Hacker News",
     "task": "Clarify saved and read states",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "examples/hn/src/model.rs",
+      "docs/quality/evidence/hn/"
+    ]
   },
   {
     "id": "HN-03",
     "pr": 2,
     "group": "Hacker News",
     "task": "Preserve list position after reading",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "examples/hn/src/main.rs"
+    ]
   },
   {
     "id": "HN-04",
     "pr": 2,
     "group": "Hacker News",
     "task": "Test deep comments and collapse/expand",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "examples/hn/src/main.rs",
+      "docs/quality/evidence/hn-large/"
+    ]
   },
   {
     "id": "HN-05",
     "pr": 2,
     "group": "Hacker News",
     "task": "Handle unavailable links and long titles",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "examples/hn/src/main.rs"
+    ]
   },
   {
     "id": "HN-06",
     "pr": 2,
     "group": "Hacker News",
     "task": "Keep story and discussion navigation distinct",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "examples/hn/src/main.rs",
+      "scripts/quality/check-hn-sim.py"
+    ]
   },
   {
     "id": "HOME-01",

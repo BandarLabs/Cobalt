@@ -10117,9 +10117,37 @@ pub fn paginate_tagged(
     metrics: &DisplayMetrics,
     area: ProseArea,
 ) -> Vec<Vec<(u32, u8, QuoteRole, String)>> {
+    paginate_tagged_below(paragraphs, metrics, area, 0)
+}
+
+/// The same, for a screen that draws something of its own above the first page
+/// and nothing above the rest.
+///
+/// `taken` is how much of the first page that something occupies. A detail
+/// screen is usually this shape: a block of facts, a picture or a byline at
+/// the head of a long piece of prose, and only at the head of it. Measuring
+/// the whole document against the shortened page wastes a line on every page
+/// after the first; measuring it against the full page draws the last
+/// paragraph of the first page through whatever is below it.
+///
+/// Applications reached for the alternative before this existed, which was to
+/// reserve paragraphs of roughly the right height and swap them for the real
+/// block while drawing. It is close, and close is a paragraph over the edge:
+/// a block of four facts is a dozen pixels taller than four paragraphs of the
+/// same words, which is an eighth of a line, which is one line too many at the
+/// foot of the page.
+#[must_use]
+pub fn paginate_tagged_below(
+    paragraphs: &[(u32, u8, QuoteRole, &str)],
+    metrics: &DisplayMetrics,
+    area: ProseArea,
+    taken: i32,
+) -> Vec<Vec<(u32, u8, QuoteRole, String)>> {
     let mut pages: Vec<Page> = Vec::new();
     let mut page: Page = Vec::new();
-    let mut used = 0;
+    // Counted as though the block were the first thing on the page, so the
+    // gap between it and the first paragraph is the gap between any two.
+    let mut used = taken.max(0);
     let body_height = FontSize::Body.line_height_in(area.face);
     if area.width <= 0 || area.height < body_height {
         return pages;
@@ -10150,7 +10178,13 @@ pub fn paginate_tagged(
         }
         let mut lines = wrap_text_in(paragraph, width, size, area.face);
         while !lines.is_empty() {
-            let spacing = if page.is_empty() { 0 } else { area.gap };
+            // A gap above the first paragraph as well, when something the
+            // paginator did not place is already standing on the page.
+            let spacing = if page.is_empty() && used == 0 {
+                0
+            } else {
+                area.gap
+            };
             let room = area.height - used - spacing;
             let fits = max_i32(0, room / line_height) as usize;
             if fits == 0 {

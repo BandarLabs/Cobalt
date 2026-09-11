@@ -681,6 +681,32 @@ impl Context {
         })
     }
 
+    /// The same, for a screen that draws a block of its own above the first
+    /// page of the prose and nothing above the rest.
+    ///
+    /// `placed` is that block, built as a screen and measured here. A detail
+    /// screen is usually this shape: facts, a picture or a byline at the head
+    /// of something long, and only at the head of it.
+    #[must_use]
+    pub fn paginate_tagged_under(
+        &self,
+        paragraphs: &[(u32, u8, QuoteRole, &str)],
+        nav_bar: bool,
+        placed: &Screen,
+    ) -> Vec<Vec<(u32, u8, QuoteRole, String)>> {
+        kobo_ui::with_text_scale(self.metrics.text_scale, || {
+            let used = placed
+                .layout_with(&self.metrics, &Chrome::measuring(true))
+                .content_used();
+            kobo_ui::paginate_tagged_below(
+                paragraphs,
+                &self.metrics,
+                self.paged_area(nav_bar),
+                used,
+            )
+        })
+    }
+
     /// `text` cut to the single line a list row can show, ellipsised if it
     /// did not fit.
     ///
