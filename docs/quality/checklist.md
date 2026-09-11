@@ -18,7 +18,7 @@ A checked task requires implementation plus recorded validation. Physical measur
 
 The PR 1 implementation checklist is complete; CBR is deferred and COMIC-18 belongs to catalog integration in PR 2. This does not certify hardware accuracy: native sleep hands ownership back to the stock reader, and no generic kernel suspend, RTC wake or automatic cover-sleep backend is enabled. Physical acceptance remains scheduled after all three PRs.
 
-495 tracked tasks: 164 completed, 1 deferred by the owner, 330 open. Implementation in progress. Evidence is recorded per task in `tasks.json` and in [the validation log](validation.md).
+495 tracked tasks: 168 completed, 1 deferred by the owner, 326 open. Implementation in progress. Evidence is recorded per task in `tasks.json` and in [the validation log](validation.md).
 
 Design direction: use the familiar visual conventions of each app, restrained controls and plain copy. Crossword follows printed crossword typography and grids. Paperterm is the next app priority, including a real two-way laptop terminal session. Paperterm defaults to portrait with a physically scaled, denser terminal font; the measured grid takes precedence over forcing 80 columns.
 
@@ -479,10 +479,10 @@ Design direction: use the familiar visual conventions of each app, restrained co
 
 ## PR 2 · Tic-tac-toe
 
-- [ ] **TIC-01** Add session score and rematch.
-- [ ] **TIC-02** Clarify turn and win state.
-- [ ] **TIC-03** Provide optional small solo mode.
-- [ ] **TIC-04** Keep it as a simple regression fixture.
+- [x] **TIC-01** Add session score and rematch.
+- [x] **TIC-02** Clarify turn and win state.
+- [x] **TIC-03** Provide optional small solo mode.
+- [x] **TIC-04** Keep it as a simple regression fixture.
 
 ## PR 2 · Todo
 

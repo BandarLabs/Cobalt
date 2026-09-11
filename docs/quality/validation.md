@@ -1795,3 +1795,44 @@ a question read from what the poster wrote. `KOBO_BRIEF_ORIGIN` points the
 application at that fixture; unset, it is Hacker News. It passes at the default
 text size and at 170%; captures are in `evidence/brief/` and
 `evidence/brief-large/`.
+
+### Tic-tac-toe session, win state and one-player mode (11 September 2026)
+
+TIC-01 to TIC-04 are closed, which completes the Tic-tac-toe group.
+
+**The session is kept.** The line under the heading says how many games each
+side has won and how many were tied. Next game clears the board and keeps that
+count; Clear score starts the afternoon again. Both survive closing the
+application, and a finished board is counted once however many times it is
+tapped afterwards. The board itself is deliberately not saved: nobody comes
+back to a half-played game of noughts and crosses.
+
+**The end of a game is visible.** The three squares that won it are marked on
+the board, and the heading names the winner in the words of whoever is playing:
+"Your turn, playing O" and "The Kobo wins" in one-player mode, "O to play" and
+"X wins" in two.
+
+**One player.** Against the Kobo hands the crosses to the device. The opponent
+takes a win when it has one, blocks a loss when it must, and otherwise plays the
+middle, a corner, a side. It can be beaten, which is the point of playing it,
+and one tap leaves the board with its answer already on it.
+
+**Still the floor.** The application remains a grid and a few lines of text
+against the public builders, and its committed route now plays a game out to a
+win, checks the score, starts the next, hands over the crosses and clears the
+score. The route taps squares by name rather than by coordinate, so a line of
+text added above the board no longer re-breaks it.
+
+**A platform fix it caught.** Marking the winning line showed that the glyph in
+a chosen cell was drawn in paper whatever the cell was filled with, so three
+noughts on a shaded row came out as three empty squares. `kobo-ui` now inverts a
+cell mark only where the cell is drawn on ink, with a rendering test that counts
+the ink inside a chosen square. Any board or pad using a glyph with selection
+was affected.
+
+**Verification.** Fifteen Tic-tac-toe tests pass, including the winning line
+marked at all nine text sizes with no layout issues, a game counted once, a
+rematch that keeps the score, the session written and read back, the opponent's
+priorities, and a solo tap answered before the panel is drawn again. The 274
+`kobo-ui` tests pass with the new one. `scripts/check-apps-sim.py tictactoe`
+passes against the committed route; captures are in `evidence/tictactoe/`.

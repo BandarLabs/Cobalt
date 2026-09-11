@@ -817,6 +817,61 @@ mod responsive_profile_tests {
         }
     }
 
+    /// A mark on a chosen square has to stay visible.
+    ///
+    /// The glyph in a selected cell used to be drawn in paper, which is right
+    /// over ink and wrong over everything else the toolkit fills a cell with.
+    /// A tic-tac-toe board marking its winning line came out as three empty
+    /// squares.
+    #[test]
+    fn a_glyph_in_a_chosen_cell_is_still_drawn_in_ink() {
+        let metrics = CLARA_BW_METRICS;
+        let cells = (0..4).map(|index| {
+            Cell::new(ActionId(index + 1), " ")
+                .with_glyph(Glyph::Circle)
+                .with_selected(index < 2)
+        });
+        let screen = Screen::new(
+            1,
+            vec![Node::Grid {
+                id: NodeId(1),
+                columns: 2,
+                square: true,
+                cells: cells.collect(),
+            }],
+        );
+        let layout = screen.layout_with(&metrics, &Chrome::default());
+        assert!(
+            layout
+                .nodes
+                .iter()
+                .all(|node| !matches!(node.kind, LayoutKind::InlineGlyph(_, true))),
+            "a board glyph was inverted over a light cell"
+        );
+        let mut surface = Surface::new(
+            usize::try_from(metrics.width).expect("width"),
+            usize::try_from(metrics.height).expect("height"),
+        );
+        render_with(&screen, &metrics, &Chrome::default(), &mut surface, None);
+        let chosen = layout
+            .nodes
+            .iter()
+            .find(|node| matches!(node.kind, LayoutKind::InlineGlyph(..)))
+            .expect("a cell with a mark in it");
+        let mut inked = 0;
+        for y in chosen.rect.y..chosen.rect.y + chosen.rect.height {
+            for x in chosen.rect.x..chosen.rect.x + chosen.rect.width {
+                let at = usize::try_from(y).expect("row")
+                    * usize::try_from(metrics.width).expect("width")
+                    + usize::try_from(x).expect("column");
+                if surface.pixels[at] < tone::MUTED {
+                    inked += 1;
+                }
+            }
+        }
+        assert!(inked > 0, "the mark on a chosen square was invisible");
+    }
+
     #[test]
     fn every_supported_profile_and_orientation_has_safe_responsive_primitives() {
         for (name, metrics) in panels() {
@@ -8175,7 +8230,16 @@ fn layout_node(
                                     width: mark,
                                     height: mark,
                                 },
-                                kind: LayoutKind::InlineGlyph(glyph, cell.selected),
+                                // Inverted only where the cell is actually
+                                // drawn on ink. Every other selected cell is
+                                // filled with paper or the surface tone, and a
+                                // paper glyph on either of those is a mark
+                                // nobody can see: a won line of noughts came
+                                // out as three empty squares.
+                                kind: LayoutKind::InlineGlyph(
+                                    glyph,
+                                    cell.selected && style == CellStyle::CrosswordBlock,
+                                ),
                                 text_lines: vec![cell.label.clone()],
                             });
                             if !cell.label.is_empty() {
@@ -8203,7 +8267,16 @@ fn layout_node(
                                     width: mark,
                                     height: mark,
                                 },
-                                kind: LayoutKind::InlineGlyph(glyph, cell.selected),
+                                // Inverted only where the cell is actually
+                                // drawn on ink. Every other selected cell is
+                                // filled with paper or the surface tone, and a
+                                // paper glyph on either of those is a mark
+                                // nobody can see: a won line of noughts came
+                                // out as three empty squares.
+                                kind: LayoutKind::InlineGlyph(
+                                    glyph,
+                                    cell.selected && style == CellStyle::CrosswordBlock,
+                                ),
                                 text_lines: vec![cell.label.clone()],
                             });
                         }

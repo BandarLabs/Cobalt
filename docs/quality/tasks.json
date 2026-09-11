@@ -2976,32 +2976,40 @@
     "pr": 2,
     "group": "Tic-tac-toe",
     "task": "Add session score and rematch",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "The session score is shown under the heading, counted once per finished game, kept by Next game, cleared on request, and written down so it survives closing the application."
+    ]
   },
   {
     "id": "TIC-02",
     "pr": 2,
     "group": "Tic-tac-toe",
     "task": "Clarify turn and win state",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "The three squares that won are marked on the board and the heading names the winner in the words of whoever is playing; a kobo-ui fix keeps a chosen cell's mark in ink."
+    ]
   },
   {
     "id": "TIC-03",
     "pr": 2,
     "group": "Tic-tac-toe",
     "task": "Provide optional small solo mode",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Against the Kobo gives the crosses to the device: it takes a win, blocks a loss, then plays the middle, a corner, a side, and answers within the tap."
+    ]
   },
   {
     "id": "TIC-04",
     "pr": 2,
     "group": "Tic-tac-toe",
     "task": "Keep it as a simple regression fixture",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Still a grid and a few lines of text against the public builders; the committed drive.txt plays a game to a win, checks the score, starts the next, switches opponent and clears the score, tapping squares by name."
+    ]
   },
   {
     "id": "TODO-01",
