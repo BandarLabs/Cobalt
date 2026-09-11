@@ -1104,32 +1104,40 @@
     "pr": 2,
     "group": "Daily Brief",
     "task": "Show fetched time and source",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "The line above the stories names the list and the time the device clock read when they were fetched; a brief that has not been fetched says that instead."
+    ]
   },
   {
     "id": "BRIEF-02",
     "pr": 2,
     "group": "Daily Brief",
     "task": "Keep cached headlines with offline/retry state",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "A failed refresh keeps the saved brief, says the refresh did not happen and offers another attempt; with no network the brief and any story already read both open with no request."
+    ]
   },
   {
     "id": "BRIEF-03",
     "pr": 2,
     "group": "Daily Brief",
     "task": "Allow source selection",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Source offers four public Hacker News lists, says which is showing, and clears stories that came from the old list rather than leaving them under a new heading."
+    ]
   },
   {
     "id": "BRIEF-04",
     "pr": 2,
     "group": "Daily Brief",
     "task": "Open and save stories through the shared reader",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "A story opens in the shared reader with figures and captions and is saved as it is read, so it reopens offline; a question with no address of its own is read from the poster's own text."
+    ]
   },
   {
     "id": "CALIBRE-01",

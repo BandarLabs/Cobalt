@@ -6,10 +6,11 @@ This exists to demonstrate the one lifecycle e-readers actually need, and the
 one a mobile framework would call backgrounding. It is not a feed reader with
 extra steps: the whole point is what happens when you *leave*.
 
-![The brief: stories and sources side by side, then the top stories
+![The brief: which list it is, when it was fetched, and the stories
 numbered](screenshots/brief.png)
 
-*Captured from a Kobo Clara BW over Wi-Fi with `kobo shot --device`.*
+*Captured from the Clara BW simulator against a private fixture index. The
+device capture is taken with the hardware acceptance run.*
 
 ## What it demonstrates
 
@@ -35,6 +36,39 @@ as a list of findings rather than the one-line summary they are, so they go in
 a `band`. That is the SDK's two-or-three column escape from the downward flow,
 and it stacks itself back up if the panel is ever too narrow to give both slots
 a readable width.
+
+## Where the stories come from
+
+The brief is drawn from one of four public Hacker News lists: the front page,
+the best of the week, the questions, or the things people built. The **Source**
+control names them and says which one is showing; choosing another one clears
+the stories that came from the old list rather than leaving them under a new
+heading, and says so.
+
+![Choosing which list the brief is drawn from](screenshots/sources.png)
+
+Above the stories, the brief says which list it is and when it was fetched. A
+brief with no time on it cannot be told from this morning's.
+
+## When there is no network
+
+The brief that was fetched last stays on the panel, and a refresh that cannot
+happen says so, keeps it, and offers another attempt. Nothing is emptied
+because a request failed.
+
+## Reading a story
+
+Tapping a story opens it in the shared document reader, with its figures,
+captions and the type controls every other reader on the device has. The page
+is saved as it is read, so opening it again costs nothing and works with the
+radio off. A question or a show-and-tell has no address of its own, so what the
+poster wrote is what is read, and nothing is requested at all.
+
+![A story read in the shared reader](screenshots/story.png)
+
+Six headlines are one panel at most text sizes and two at the largest. That is
+the reader's choice of type rather than this becoming a feed: every story stays
+reachable either way.
 
 ## Running it
 

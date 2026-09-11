@@ -1748,3 +1748,50 @@ rolls, takes a checker in hand, plays the turn out, reads the record of it, find
 the seed and the history on the Match screen, and finds the record again after a
 restart. It passes at the default text size and at 170%; captures and results are
 in `evidence/backgammon/` and `evidence/backgammon-large/`.
+
+### Daily Brief source, time, offline state and reading (11 September 2026)
+
+BRIEF-01 to BRIEF-04 are closed, which completes the Daily Brief group.
+
+**A brief that says what it is.** The line above the stories names the list it
+was drawn from and when it was fetched, read off the device clock at the time.
+A brief with no time on it cannot be told from this morning's.
+
+**Four lists, chosen rather than given.** The Source control offers the front
+page, the best of the week, the questions and the things people built, all
+public Hacker News indexes. Choosing another clears the stories that came from
+the old one rather than leaving them under a new heading, says so, and writes
+the choice down. Nothing is fetched until a refresh.
+
+**A refresh that fails keeps the brief.** The stories on the panel stay exactly
+as they were; the screen says the refresh did not happen, and the one control
+on it offers another attempt. With no network at all, the saved brief and any
+story already read both open with no request.
+
+**Stories are read, not just listed.** A story opens in the shared document
+reader with its figures, captions and type controls, and is saved as it is read,
+so the second opening costs nothing and works with the radio off. A question or
+a show-and-tell has no address of its own, so what the poster wrote is what is
+read and nothing is requested.
+
+Six headlines are one panel at most text sizes and two at the largest. The list
+is measured under everything above it with `Context::paginate_ranked_rows_under`,
+added for the purpose, because a ranked list measured as a marked one comes back
+a row short: before this the sixth story was drawn under the Refresh button and
+off the panel at 110%.
+
+**Verification.** Fourteen Daily Brief tests pass, including every screen free
+of layout issues at all nine text sizes, a failed refresh keeping the brief and
+offering another attempt, a source change clearing what came from the old list,
+a linked story fetched once and saved, a question read with no request, and a
+brief written by the previous version still opening. Strict Clippy and
+`cargo fmt` pass.
+
+`scripts/quality/check-brief-sim.py` drives the actual simulator against a
+private HTTPS fixture index: an empty brief that asks for nothing, a fetch, a
+story read with its picture, a restart with no network where both the brief and
+the story are still there, a refresh that cannot happen, a change of source, and
+a question read from what the poster wrote. `KOBO_BRIEF_ORIGIN` points the
+application at that fixture; unset, it is Hacker News. It passes at the default
+text size and at 170%; captures are in `evidence/brief/` and
+`evidence/brief-large/`.

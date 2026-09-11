@@ -1067,6 +1067,37 @@ impl Context {
         })
     }
 
+    /// The same, for rows that lead with a rank rather than a mark.
+    ///
+    /// The lead column is as wide as the highest number it has to hold, so a
+    /// list measured as though it led with a mark hands every title the wrong
+    /// width and comes back a row short.
+    #[must_use]
+    pub fn paginate_ranked_rows_under(
+        &self,
+        rows: &[(&str, &str)],
+        nav_bar: bool,
+        highest: u16,
+        position: Position,
+        placed: &Screen,
+    ) -> Vec<Vec<usize>> {
+        kobo_ui::with_text_scale(self.metrics.text_scale, || {
+            let used = placed
+                .layout_with(&self.metrics, &Chrome::measuring(true))
+                .content_used();
+            let mut area = self.area_for(nav_bar, position);
+            area.height = area
+                .height
+                .saturating_sub(used.saturating_add(area.gap))
+                .max(0);
+            let rows: Vec<(&str, &str, &str)> = rows
+                .iter()
+                .map(|(title, summary)| (*title, *summary, ""))
+                .collect();
+            kobo_ui::paginate_ranked_rows_with_trailing(&rows, &self.metrics, area, highest)
+        })
+    }
+
     /// The page a list gets, given where it says which page that is.
     fn area_for(&self, nav_bar: bool, position: Position) -> kobo_ui::ProseArea {
         match position {

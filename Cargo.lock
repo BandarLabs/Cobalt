@@ -865,8 +865,12 @@ dependencies = [
 name = "kobo-brief"
 version = "0.3.12"
 dependencies = [
+ "kobo-bookview",
+ "kobo-doc",
  "kobo-json",
+ "kobo-read",
  "kobo-sdk",
+ "kobo-ui",
 ]
 
 [[package]]
