@@ -1044,40 +1044,50 @@
     "pr": 2,
     "group": "Backgammon",
     "task": "Clarify active player and legal source/destination on board",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Whose move it is is stated above the board and drawn in the centre bar as that side's checker; the checker in hand is marked solid and its legal destinations ringed, which used to be one mark for both."
+    ]
   },
   {
     "id": "BACK-02",
     "pr": 2,
     "group": "Backgammon",
     "task": "Make dice and doubling cube legible",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "The centre bar is wider, the dice and cube are drawn larger, and both are written out under the board in words, so nothing depends on a two-millimetre die."
+    ]
   },
   {
     "id": "BACK-03",
     "pr": 2,
     "group": "Backgammon",
     "task": "Separate match setup from moves",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Players, match length, the rules and a new match live on a Match screen; the board keeps Roll, Double and Undo."
+    ]
   },
   {
     "id": "BACK-04",
     "pr": 2,
     "group": "Backgammon",
     "task": "Show concise turn history",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Each finished turn is recorded in board notation, the last is shown under the board, and the last eight are listed on the Match screen and survive a restart."
+    ]
   },
   {
     "id": "BACK-05",
     "pr": 2,
     "group": "Backgammon",
     "task": "Use real entropy with explicit deterministic fixture seeds",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Dice come from the operating system's entropy; KOBO_BACKGAMMON_SEED plays an explicit fixture sequence and the Match screen names the seed; an unavailable source rolls nothing and says so."
+    ]
   },
   {
     "id": "BACK-06",

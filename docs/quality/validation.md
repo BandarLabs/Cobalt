@@ -1707,3 +1707,44 @@ the name it wrote. `scripts/quality/check-rss-image-save-sim.py` carries the
 four new Atom checks. Both pass at the default text size and at 170%; results
 and captures are refreshed in `evidence/rss-offline{,-large}` and
 `evidence/rss-image-save{,-large}`.
+
+### Backgammon dice, board and match (11 September 2026)
+
+BACK-01 to BACK-05 are closed, which completes the Backgammon group.
+
+**The dice were not dice.** Both numbers came off a counter that advanced by
+one each roll, so every game dealt the same sequence in the same order. They
+come from the operating system's entropy source now. `KOBO_BACKGAMMON_SEED`
+plays a fixed sequence for fixtures and captures, and the Match screen says so
+whenever a seed is in use, because a recorded game that reads as chance and is
+not would be a lie about the dice. A source that cannot be opened is reported
+on the board and rolls nothing rather than falling back to anything.
+
+**The board says what is happening.** Whose move it is is stated above the
+board in words and drawn in the centre bar as that side's own checker. The
+checker in hand is marked solid and the places it may go are ringed, which used
+to be the same mark for both. The centre bar is wider so the dice and the cube
+are drawn large enough to read, and both are written out under the board as
+well: the board is 52 mm across, and a die drawn there is two millimetres.
+
+**Setup left the board.** Who is playing, how long the match runs, the rules
+and a new match are on a Match screen of their own. The board keeps Roll,
+Double and Undo.
+
+**What has happened is written down.** Each finished turn is recorded the way a
+board writes it, "White 24/23 23/21" or "bar/20", the last one is shown under
+the board, and the last eight are on the Match screen and survive a restart. A
+match saved by the previous build is carried forward rather than discarded.
+
+**Verification.** Forty-two Backgammon tests pass, including a seeded sequence
+that replays and differs from another seed, a broken source that stops the turn
+and says why, the record surviving a save and reload, every screen free of
+layout issues at all nine text sizes, and the previous save format being
+carried forward. Strict Clippy and `cargo fmt` pass.
+
+`scripts/quality/check-backgammon-sim.py` drives the actual simulator with a
+seeded run: it reads the opening board, changes the players on the Match screen,
+rolls, takes a checker in hand, plays the turn out, reads the record of it, finds
+the seed and the history on the Match screen, and finds the record again after a
+restart. It passes at the default text size and at 170%; captures and results are
+in `evidence/backgammon/` and `evidence/backgammon-large/`.
