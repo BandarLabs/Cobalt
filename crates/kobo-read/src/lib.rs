@@ -2123,12 +2123,14 @@ impl Reader {
                     self.links_in(piece),
                 )
                 .with_formulae(formulae)
-        } else if piece.spans.is_empty()
-            && formulae.is_empty()
-            && piece.presentation == kobo_ui::ParagraphPresentation::default()
-        {
-            screen.text_linking(piece.text.clone(), self.links_in(piece))
         } else {
+            // Every paragraph goes through the same node, including the plain
+            // ones. A page is measured with the book's line spacing, and a
+            // plain text node is measured with the interface's: the tail of a
+            // paragraph split across a page break came out as the one node on
+            // the page whose lines were taller than the room the paginator had
+            // reserved for them, so its last line was dropped and the renderer
+            // refused the screen.
             screen
                 .rich_text_linking(
                     piece.text.clone(),

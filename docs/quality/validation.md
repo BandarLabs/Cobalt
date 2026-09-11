@@ -1529,7 +1529,7 @@ flows. No Miniflux checklist task is closed yet: simulator verification, account
 setup and the complete reading/sync journey remain outstanding.
 
 
-### Miniflux reading, tabs and acknowledged changes — 11 September 2026
+### Miniflux reading, tabs and acknowledged changes (11 September 2026)
 
 The Miniflux application is now the complete account-backed reader the
 checklist asks for, and MINI-01 to MINI-06 are closed on this evidence.
@@ -1586,3 +1586,68 @@ appears in the application. The journey passes at default text size and at
 Superseded: the earlier `evidence/miniflux-pages/` captures and their entry
 described list reachability against a hand-written saved file, which this
 journey covers end to end from a real account.
+
+### Grimoire references, initiative and a table of six (11 September 2026)
+
+GRIM-03 to GRIM-06 are closed on this evidence, which leaves the Grimoire
+group complete.
+
+**What the bundle actually held.** The index ships 624 magic items that had no
+way in from anywhere in the application, fifteen 2024 conditions whose bodies
+were empty because the generator read only the 2014 spelling of the field, and
+every rule section with a literal backslash-n where its paragraph breaks should
+have been, because each field was escaped twice on the way into the file. The
+generator now reads both spellings, escapes once, and converts the snapshots'
+Markdown into the reader's markup; Magic items is a category on the home
+screen. A table in the source is written out one labelled row at a time rather
+than as columns, because a column that fits at the default text size is clipped
+at the larger ones and the panel has nothing smaller to fall back on.
+
+**Reading.** References open in the shared document reader. The longest rule
+section is twenty pages at the default size and can be read to its last word at
+every one of the nine interface sizes, with headings as headings and no markup
+on the panel. Bookmarking and sending a monster to the initiative order moved
+to the row, since the reading screen belongs to the reader.
+
+**The table.** Initiative states the round and which turn of how many it is.
+Previous turn takes the round back with it, which is what a turn passed by
+accident costs at a table. A combatant has a screen of their own for taking the
+turn, correcting a roll or being removed, in the same shape the party already
+used for a member; ending combat sits in the top bar away from the control
+tapped every turn. Six combatants and six party members are measured for the
+panel: before this the sixth member was drawn under the Add member button and
+clipped by the foot of the screen at 170%, and a member's slots and buttons ran
+off the bottom entirely. A member is now two pages, health and slots.
+
+**Emptiness explained.** A category an edition does not hold says so and names
+the edition that does, instead of asking the reader to change a filter they
+never set. About counts what the build holds per edition rather than claiming
+it, and says plainly that the System Reference Documents cover no classes,
+subclasses, backgrounds or feats.
+
+**A platform fix.** The tail of a paragraph split across a page break was drawn
+as a plain text node measured with the interface's line spacing while the page
+had been measured with the book's. Where a reader's type size differs from the
+interface size the last line of such a paragraph was dropped, and the runtime
+refused the screen: the simulator reported it at 110% on the twentieth page of
+a rule section. Every paragraph now goes through one node in `kobo-read`. Feeds
+and the Miniflux reader are on the same path and had the same exposure.
+
+**Verification.** Twenty-two Grimoire tests pass, including the longest
+reference read page by page at all nine text sizes with no markup left in it,
+six combatants and six party members reachable at every size, every table
+screen free of layout issues at every size, a turn taken back across a round
+boundary, and a six-person party with its initiative restored from what was
+written down. Seventy-nine `kobo-read` and twenty-two `kobo-bookview` tests
+pass, with Feeds at ninety and Miniflux at twenty-six. The full workspace
+suite, strict Clippy and `cargo fmt` pass.
+
+`scripts/quality/check-grimoire-sim.py` drives the actual simulator through a
+table session: open Magic items, read a reference, search the rules and read a
+twenty-page section to its last page, find an edition with no spells and be
+told why, open a 2024 condition and find text under it, add a sixth combatant
+by typing, pass a turn and take it back, hand the turn to another combatant
+from their own screen, damage a party member and spend a slot, then restart the
+process and find all of it. It passes at the default text size, at 110% and at
+170%; captures and results are in `evidence/grimoire/` and
+`evidence/grimoire-large/`, and the screenshots were visually inspected.

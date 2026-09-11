@@ -1622,32 +1622,40 @@
     "pr": 2,
     "group": "Grimoire (APP-9)",
     "task": "Paginate long stat blocks",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "References open in the shared document reader; the longest rule section is twenty pages and reads to its last word at all nine text sizes, with headings and labelled table rows rather than Markdown."
+    ]
   },
   {
     "id": "GRIM-04",
     "pr": 2,
     "group": "Grimoire (APP-9)",
     "task": "Improve combat/initiative controls",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Initiative states the round and the turn, Previous turn takes the round back with it, a combatant has a screen of their own for taking the turn, editing or removal, and ending combat sits away from the control tapped every turn."
+    ]
   },
   {
     "id": "GRIM-05",
     "pr": 2,
     "group": "Grimoire (APP-9)",
     "task": "Explain unavailable source categories",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "A category an edition does not hold says so and names the edition that does; About counts what the build holds and states what the SRD does not cover. Magic items, previously bundled with no way in, are a category."
+    ]
   },
   {
     "id": "GRIM-06",
     "pr": 2,
     "group": "Grimoire (APP-9)",
     "task": "Test realistic six-person party and initiative persistence",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "scripts/quality/check-grimoire-sim.py drives a table session for six at default, 110% and 170% text, including a restart; six combatants and six members are measured for the panel at every size; evidence/grimoire{,-large}/."
+    ]
   },
   {
     "id": "GUTEN-01",

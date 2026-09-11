@@ -1054,6 +1054,9 @@ dependencies = [
 name = "kobo-grimoire"
 version = "0.1.1"
 dependencies = [
+ "kobo-bookview",
+ "kobo-doc",
+ "kobo-read",
  "kobo-sdk",
  "kobo-ui",
 ]

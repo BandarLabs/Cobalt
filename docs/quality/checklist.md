@@ -18,7 +18,7 @@ A checked task requires implementation plus recorded validation. Physical measur
 
 The PR 1 implementation checklist is complete; CBR is deferred and COMIC-18 belongs to catalog integration in PR 2. This does not certify hardware accuracy: native sleep hands ownership back to the stock reader, and no generic kernel suspend, RTC wake or automatic cover-sleep backend is enabled. Physical acceptance remains scheduled after all three PRs.
 
-495 tracked tasks: 149 completed, 1 deferred by the owner, 345 open. Implementation in progress. Evidence is recorded per task in `tasks.json` and in [the validation log](validation.md).
+495 tracked tasks: 153 completed, 1 deferred by the owner, 341 open. Implementation in progress. Evidence is recorded per task in `tasks.json` and in [the validation log](validation.md).
 
 Design direction: use the familiar visual conventions of each app, restrained controls and plain copy. Crossword follows printed crossword typography and grids. Paperterm is the next app priority, including a real two-way laptop terminal session. Paperterm defaults to portrait with a physically scaled, denser terminal font; the measured grid takes precedence over forcing 80 columns.
 
@@ -245,10 +245,10 @@ Design direction: use the familiar visual conventions of each app, restrained co
 
 - [x] **GRIM-01** Page spell results using remaining height after filters.
 - [x] **GRIM-02** Replace cycling filters with labeled selection.
-- [ ] **GRIM-03** Paginate long stat blocks.
-- [ ] **GRIM-04** Improve combat/initiative controls.
-- [ ] **GRIM-05** Explain unavailable source categories.
-- [ ] **GRIM-06** Test realistic six-person party and initiative persistence.
+- [x] **GRIM-03** Paginate long stat blocks.
+- [x] **GRIM-04** Improve combat/initiative controls.
+- [x] **GRIM-05** Explain unavailable source categories.
+- [x] **GRIM-06** Test realistic six-person party and initiative persistence.
 
 ## PR 2 · Gutenbird
 

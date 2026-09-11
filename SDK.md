@@ -694,8 +694,8 @@ built with `rows_with_menu` gives up a whole touch target to the mark, whatever
 its title says, and its pair is `one_line_row_with_menu(text, nav_bar)` and
 `paginate_rows_with_menu(&[(title, summary), …], nav_bar)`.
 
-A screen whose list sits under more than a notice — tabs, a heading, a pending
-count, any of them there only sometimes — measures against what it is about to
+A screen whose list sits under more than a notice, such as tabs, a heading or a
+pending count that is there only sometimes, measures against what it is about to
 draw rather than against a list of things to subtract:
 `paginate_rows_under(rows, nav_bar, position, &prefix)`, and
 `paginate_rows_with_menu_under(…)` for rows carrying an overflow mark. Both take
