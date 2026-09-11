@@ -12,6 +12,10 @@
     "missing and damaged images preserve the pointer while offline",
     "reopening online restores missing and damaged images into the other slot",
     "repaired image opens offline after another restart",
+    "an Atom entry reads with its figure, caption and alt text",
+    "a saved picture is reused across feeds without another download",
+    "a summary-only entry reads as its summary with no picture",
+    "the Atom article and its picture reopen offline after a restart",
     "zero POST/PUT/PATCH requests"
   ],
   "requests": [
@@ -37,6 +41,11 @@
     },
     {
       "path": "/ridge.png",
+      "authorization": null,
+      "token": null
+    },
+    {
+      "path": "/atom.xml",
       "authorization": null,
       "token": null
     }

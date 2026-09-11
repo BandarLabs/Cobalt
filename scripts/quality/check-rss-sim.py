@@ -66,7 +66,19 @@ def main():
         (state/'feed-status-v1').write_text('rss-status-v1\n'+digest+'\t"2026-09-09 08:30 UTC"\t""\n')
         snapshot = shelf/(digest[:60]+'.1')
         snapshot.write_bytes(FEED)
-        (shelf/'subscriptions.opml').write_text('<opml><body><outline text="Existing" xmlUrl="'+URL+'"/><outline text="Second journal" xmlUrl="https://example.com/second.xml"/><outline xmlUrl="http://example.com/insecure"/></body></opml>')
+        # Staged the way an owner stages it: written on the computer and
+        # carried across by the CLI, which reads the list with the same parser
+        # the reader uses and refuses anything the reader would refuse.
+        opml = private/'My Subscriptions.opml'
+        opml.write_text('<opml><body><outline text="Existing" xmlUrl="'+URL+'"/><outline text="Second journal" xmlUrl="https://example.com/second.xml"/><outline xmlUrl="http://example.com/insecure"/></body></opml>')
+        staged = subprocess.run([str(cli), 'feeds', 'push', str(opml), '--sim'], cwd=ROOT,
+                                env=env, capture_output=True, text=True, timeout=60)
+        assert staged.returncode == 0, staged.stderr
+        assert '2 feeds, 1 skipped' in staged.stdout, staged.stdout
+        assert (shelf/'my-subscriptions.opml').exists(), sorted(p.name for p in shelf.iterdir())
+        refused = subprocess.run([str(cli), 'feeds', 'push', str(private/'damaged.opml'), '--sim'],
+                                 cwd=ROOT, env=env, capture_output=True, text=True, timeout=60)
+        assert refused.returncode != 0, 'a missing list was transferred'
         picture = original_picture()
         image_key = hashlib.sha256(b'rss-image:https://example.com/ridge.png').hexdigest()
         (state/image_key).write_text('1:'+hashlib.sha256(picture).hexdigest())
@@ -210,7 +222,8 @@ def main():
                     'status': 'passed', 'checks': ['saved feed opens without network', 'saved body search, no matches and clearing without network',
                     'HTML reading and page turn with a verified offline image', 'offline refresh retains articles',
                     'process restart reopens saved body at saved page', 'original snapshot unchanged',
-                    'no server mutations', 'failed progress write preserves prior state', 'explicit save retry persists latest position', 'OPML preview supports selection and skips duplicate and HTTP entries', 'OPML save failure preserves subscriptions and retry adds only new feed', 'failed unfollow preserves disk state and retry survives restart', 'unreadable subscriptions survive retry and a repaired file can reload', 'starter browsing sends no requests and offline selection does not subscribe'], 'fixture': 'original-rss-journal',
+                    'no server mutations', 'failed progress write preserves prior state', 'explicit save retry persists latest position', 'OPML preview supports selection and skips duplicate and HTTP entries', 'OPML save failure preserves subscriptions and retry adds only new feed', 'failed unfollow preserves disk state and retry survives restart', 'unreadable subscriptions survive retry and a repaired file can reload', 'starter browsing sends no requests and offline selection does not subscribe',
+                    'the computer stages a checked OPML list into the Feeds shelf'], 'fixture': 'original-rss-journal',
                     'limits': ['Image snapshot is seeded locally; network download and image-save failure need separate coverage'],
                 }, indent=2)+'\n')
             finally:

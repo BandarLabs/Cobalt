@@ -14,6 +14,7 @@ kobo-read = { path = "../../crates/kobo-read" }
 kobo-net = { path = "../../crates/kobo-net" }
 kobo-html = { path = "../../crates/kobo-html" }
 kobo-json = { path = "../../crates/kobo-json" }
+kobo-opml = { path = "../../crates/kobo-opml" }
 kobo-sdk = { path = "../../crates/kobo-sdk" }
 kobo-xml = { path = "../../crates/kobo-xml" }
 

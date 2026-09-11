@@ -1672,3 +1672,38 @@ Ctrl-C from the reader, and the laptop terminal restored afterwards.
 
 The remaining Paperterm work is the companion side, STREAMCLI-01 to
 STREAMCLI-05, which belongs to PR 3.
+
+### Feeds subscription transfer and the other half of what publishers serve (11 September 2026)
+
+FEEDS-03 and FEEDS-06 are closed, which completes the Feeds group.
+
+**Carrying a subscription list across.** The reader could already read an OPML
+file waiting on its shelf; nothing could put one there. `kobo feeds check FILE`
+and `kobo feeds push FILE (--device IP | --sim)` do, and they read the list with
+the same parser the reader uses: the OPML reader moved out of the application
+into `kobo-opml`, so a file the Kobo would refuse is refused on the computer,
+where there is a keyboard and a full screen to say why. A list with nothing
+usable in it, one that ends mid-document, one that is not OPML and one naming
+only plain HTTP feeds are all refused before anything is transferred. The name
+the file takes on the shelf is reduced to what a shelf name may hold.
+
+**RSS and Atom, full articles and summaries.** The image journey now serves an
+Atom feed beside the RSS one. Its first entry carries real markup and reads with
+its figure, caption and alt text; its second offers a summary and nothing else
+and reads as that summary with no picture and no claim of more. The picture that
+entry names had already been saved for the other feed, and is not downloaded
+again: the fixture records one request for the Atom document and none for the
+image. After a restart with no network, both the article and its picture are
+still there.
+
+**Verification.** Eighty-eight Feeds tests and four `kobo-opml` tests pass, with
+306 in the CLI including the new refusals and shelf-name rules. The full
+workspace suite, strict Clippy and `cargo fmt` pass.
+
+`scripts/quality/check-rss-sim.py` now stages its OPML file by running the CLI
+against the simulator rather than writing the file itself, so the journey covers
+the transfer as well as the import, and asserts the summary the CLI prints and
+the name it wrote. `scripts/quality/check-rss-image-save-sim.py` carries the
+four new Atom checks. Both pass at the default text size and at 170%; results
+and captures are refreshed in `evidence/rss-offline{,-large}` and
+`evidence/rss-image-save{,-large}`.

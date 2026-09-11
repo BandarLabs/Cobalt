@@ -25,8 +25,15 @@ website name instead of adding an unusable subscription.
 
 HTML and plain-text articles use the shared document reader, with font controls,
 saved reading positions and page turns. HTML articles include supported inline
-images and captions. Feeds may supply a full article or a summary; Feeds displays
-the content they provide.
+images with their captions and alt text. RSS, Atom and JSON Feed all arrive the
+same way, and a feed may supply a full article or only a summary; Feeds shows
+what the feed gave and never claims to have more.
+
+A picture a feed names but does not carry is fetched once and saved. The saved
+copy is what every later reading uses, including in another feed that names the
+same picture, and including offline after a restart. A copy that has gone
+missing or been damaged leaves the caption in its place and is replaced the next
+time that article is opened with a connection.
 
 Articles and images are saved locally for offline reading. Refresh keeps the
 current articles available while it checks for new ones. If the request fails,
@@ -104,20 +111,32 @@ Search currently covers the open feed, not every subscription at once.
 
 ## Import subscriptions
 
-From **Add a feed**, choose **Import OPML** to select an `.opml` file already
-in the app’s shelf folder. The preview lists each new feed’s name and address and counts skipped duplicate
-or unsupported entries. Tap a feed to include or leave it out before choosing
-**Add feeds**. Only HTTPS feed addresses are accepted. Import files are limited
-to 256 KiB; choose a selection that fits within the 40-subscription capacity.
-The subscription list changes only after the save is acknowledged; failed saves
-can be retried from the preview. The computer-side file-transfer flow is still
-in progress.
+Export your subscriptions from whatever you read them in now, then carry the
+file across from your computer:
+
+```sh
+kobo feeds check ~/subscriptions.opml      # read it here first
+kobo feeds push ~/subscriptions.opml --device <address>
+```
+
+`check` and `push` read the list with the same parser the reader uses, so a
+file the Kobo would refuse is refused on the computer, where there is room to
+say why. `push` stages it in the Feeds shelf under a plain lowercase name.
+
+On the reader, **Add a feed** ▸ **Import OPML** lists the `.opml` files waiting
+there. The preview names each new feed and its address and counts the skipped
+duplicate or unsupported entries. Tap a feed to include it or leave it out
+before choosing **Add feeds**. Only HTTPS addresses are accepted, and one
+carrying a password is never imported. Import files are limited to 256 KiB;
+choose a selection that fits the 40-subscription capacity. The subscription
+list changes only after the save is acknowledged, and a failed save can be
+retried from the preview.
 
 ![OPML import preview](screenshots/import-opml.png)
 
-Saved articles remain available while a refresh checks for new ones. The import
-preview and offline reading flow are exercised at both default and 170% interface
-text size in the simulator.
+Saved articles remain available while a refresh checks for new ones. Staging a
+list from the computer, the import preview and the offline reading flow are all
+exercised at default and 170% interface text size in the simulator.
 
 ## Saving your subscriptions
 

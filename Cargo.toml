@@ -16,6 +16,7 @@ members = [
     "crates/kobo-image",
     "crates/kobo-json",
     "crates/kobo-net",
+    "crates/kobo-opml",
     "crates/kobo-opds",
     "crates/kobo-term",
     "crates/kobo-text",

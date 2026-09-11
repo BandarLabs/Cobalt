@@ -2693,8 +2693,10 @@
     "pr": 2,
     "group": "Feeds",
     "task": "Support OPML import",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "An OPML list is checked and carried across with kobo feeds check/push, which read it with the same kobo-opml parser the reader uses; the simulator journey stages its file through the CLI and imports it with selection, a failed save and a retry."
+    ]
   },
   {
     "id": "FEEDS-04",
@@ -2721,8 +2723,10 @@
     "pr": 2,
     "group": "Feeds",
     "task": "Test RSS, Atom, full-content and summary entries with inline images, captions/alt text, e-ink scaling, offline image restoration and missing-image recovery",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "RSS and Atom, full content and summary-only entries, read in the shared reader with figures, captions and alt text; a saved picture is reused across feeds without another download, and missing or damaged copies are repaired. Default and 170%."
+    ]
   },
   {
     "id": "MINI-01",

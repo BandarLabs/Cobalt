@@ -29,6 +29,22 @@ FEED = ('<rss><channel><title>The Field Journal</title><item><title>A morning by
         + ']]></content:encoded></item></channel></rss>').encode()
 
 
+# The other half of what publishers actually serve: Atom, with one entry whose
+# content is real markup and one that offers a summary and nothing else.
+ATOM = ('<?xml version="1.0" encoding="utf-8"?>'
+        '<feed xmlns="http://www.w3.org/2005/Atom"><title>The Ridge Letter</title>'
+        '<entry><title>An afternoon on the ridge</title>'
+        '<link href="https://example.com/ridge"/>'
+        '<content type="html">&lt;figure&gt;&lt;img src="/ridge.png" alt="A mountain ridge"/&gt;'
+        '&lt;figcaption&gt;The ridge from the north path.&lt;/figcaption&gt;&lt;/figure&gt;'
+        '&lt;p&gt;The path climbs through bracken and then gives out onto open ground.&lt;/p&gt;'
+        '</content></entry>'
+        '<entry><title>A note about the weather</title>'
+        '<link href="https://example.com/weather"/>'
+        '<summary>Rain until Thursday, then a cold clear spell.</summary>'
+        '</entry></feed>').encode()
+
+
 def original_picture():
     width, height = 320, 120
     def chunk(kind, data):
@@ -66,16 +82,19 @@ def main():
                        env=env, check=True, capture_output=True, timeout=30)
         picture = original_picture()
         latest_feed = [b'']
+        atom_feed = [b'']
         class Handler(http.server.BaseHTTPRequestHandler):
             def log_message(self, *_): pass
             def do_GET(self):
                 requests.append({'path': self.path, 'authorization': self.headers.get('Authorization'),
                                  'token': self.headers.get('X-Auth-Token')})
-                if self.path not in ('/ridge.png', '/journal.xml'):
+                if self.path not in ('/ridge.png', '/journal.xml', '/atom.xml'):
                     self.send_error(404); return
-                body = picture if self.path == '/ridge.png' else latest_feed[0]
+                body = {'/ridge.png': picture, '/atom.xml': atom_feed[0]}.get(self.path, latest_feed[0])
                 self.send_response(200)
-                self.send_header('Content-Type', 'image/png' if self.path == '/ridge.png' else 'application/rss+xml')
+                self.send_header('Content-Type', {'/ridge.png': 'image/png',
+                                                  '/atom.xml': 'application/atom+xml'}
+                                 .get(self.path, 'application/rss+xml'))
                 self.send_header('Content-Length', str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)
@@ -92,8 +111,11 @@ def main():
         shelf = private/'cobalt-sim-data/rss'
         state.mkdir(parents=True)
         shelf.mkdir(parents=True)
+        atom_url = origin+'/atom.xml'
+        atom_feed[0] = ATOM.replace(b'https://example.com', origin.encode())
         digest = hashlib.sha256(feed_url.encode()).hexdigest()
-        (state/'feeds').write_text(feed_url+'\tThe Field Journal\t'+origin+'/\n')
+        (state/'feeds').write_text(feed_url+'\tThe Field Journal\t'+origin+'/\n'
+                                   + atom_url+'\tThe Ridge Letter\t'+origin+'/\n')
         (state/digest).write_text('1:'+hashlib.sha256(fixture).hexdigest())
         snapshot = shelf/(digest[:60]+'.1')
         snapshot.write_bytes(fixture)
@@ -131,8 +153,15 @@ def main():
                 with urllib.request.urlopen(f'http://{address}/{endpoint}', timeout=5) as response:
                     return json.load(response)
 
+            def paths():
+                return [request['path'] for request in requests]
+
             def capture(name, fetches=0, picture=None):
-                drive('wait-idle', f'expect-state /activity#/effects/fetch {fetches}',
+                # A fetch count of None means the phase asserts on the requests
+                # the fixture actually received instead, which says more.
+                counted = [] if fetches is None else [
+                    f'expect-state /activity#/effects/fetch {fetches}']
+                drive('wait-idle', *counted,
                       'expect-state /activity#/effects/post 0', 'expect-state /activity#/effects/put 0',
                       'expect-state /activity#/effects/patch 0', 'shot '+name)
                 diagnostics = get('diagnostics')
@@ -144,6 +173,7 @@ def main():
                 metadata = json.loads((args.output/(name+'.json')).read_text())
                 assert metadata['app']=='rss' and metadata['source']['fixture']=='original-rss-journal'
                 assert metadata['fonts'] and len(metadata['source']['binarySha256'])==64
+                return layout
 
             try:
                 address = start()
@@ -229,6 +259,29 @@ def main():
                       'wait-for-id item-0', 'tap-id item-0', 'wait-idle')
                 capture('12-repaired-image-offline', picture=True)
                 assert len(requests)==5
+
+                # The other half of what publishers serve. An Atom feed with
+                # one entry of real markup and one that offers a summary only,
+                # read on the same panel and against the same saved picture.
+                drive('tap Back', 'tap Back', 'scenario normal', 'wait-for-id feed-1')
+                before_atom = len(requests)
+                drive('tap-id feed-1', 'wait-for-id item-0', 'tap-id item-0', 'wait-idle')
+                atom_article = capture('13-atom-article', fetches=None, picture=True)
+                assert any('The ridge from the north path.' in str(line)
+                           for node in atom_article['nodes'] for line in node['lines']), atom_article
+                assert paths()[before_atom:].count('/atom.xml') == 1, paths()[before_atom:]
+                assert '/ridge.png' not in paths()[before_atom:], \
+                    'a picture already saved was downloaded again for another feed'
+                drive('tap Back', 'tap-id item-1', 'wait-idle')
+                summary = capture('14-atom-summary-entry', fetches=None, picture=False)
+                assert any('Rain until Thursday' in str(line)
+                           for node in summary['nodes'] for line in node['lines']), summary
+                stop()
+                address = start()
+                drive('wait-for-id feed-1', 'scenario offline', 'tap-id feed-1',
+                      'wait-for-id item-0', 'tap-id item-0', 'wait-idle')
+                capture('15-atom-article-offline', fetches=None, picture=True)
+                assert len(requests)==before_atom+1, paths()[before_atom:]
                 (args.output/'result.json').write_text(json.dumps({
                     'status': 'passed', 'checks': ['credential-free HTTPS image acquisition',
                     'failed image write does not publish a pointer', 'visible image-save retry',
@@ -240,6 +293,10 @@ def main():
                     'missing and damaged images preserve the pointer while offline',
                     'reopening online restores missing and damaged images into the other slot',
                     'repaired image opens offline after another restart',
+                    'an Atom entry reads with its figure, caption and alt text',
+                    'a saved picture is reused across feeds without another download',
+                    'a summary-only entry reads as its summary with no picture',
+                    'the Atom article and its picture reopen offline after a restart',
                     'zero POST/PUT/PATCH requests'], 'requests': requests,
                     'fixture': 'original-rss-journal',
                 }, indent=2)+'\n')

@@ -14,7 +14,8 @@
     "OPML save failure preserves subscriptions and retry adds only new feed",
     "failed unfollow preserves disk state and retry survives restart",
     "unreadable subscriptions survive retry and a repaired file can reload",
-    "starter browsing sends no requests and offline selection does not subscribe"
+    "starter browsing sends no requests and offline selection does not subscribe",
+    "the computer stages a checked OPML list into the Feeds shelf"
   ],
   "fixture": "original-rss-journal",
   "limits": [

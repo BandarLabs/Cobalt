@@ -911,6 +911,7 @@ dependencies = [
  "kobo-image",
  "kobo-json",
  "kobo-net",
+ "kobo-opml",
  "kobo-profile",
  "kobo-protocol",
  "kobo-sdk",
@@ -1272,6 +1273,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "kobo-opml"
+version = "0.3.12"
+dependencies = [
+ "kobo-net",
+ "kobo-xml",
+]
+
+[[package]]
 name = "kobo-panels"
 version = "0.1.2"
 dependencies = [
@@ -1391,6 +1400,7 @@ dependencies = [
  "kobo-image",
  "kobo-json",
  "kobo-net",
+ "kobo-opml",
  "kobo-read",
  "kobo-sdk",
  "kobo-ui",
