@@ -3324,12 +3324,29 @@ fn layout_overlay(overlay: &Overlay, metrics: &DisplayMetrics, prose: Face, layo
     } else {
         0
     };
+    // Measured before anything is placed, because how much room the header
+    // needs depends on how many lines the title turned out to be. Narrowed by
+    // whatever the cross took, so a title is never set underneath it.
+    let title_width = max(1, width - 2 * padding - close);
+    // A dialogue's title is its question, and a question cut in half is worse
+    // than a dialogue one line taller: "Download Mrs Dalloway?" was reaching
+    // the reader as "Download Mrs" at the larger reader text settings. A
+    // popover's title is a label over a short menu, and stays on one line.
+    let title_lines: Vec<String> = if overlay.title.is_empty() {
+        Vec::new()
+    } else {
+        wrap_text_in(&overlay.title, title_width, FontSize::Title, prose)
+            .into_iter()
+            .take(match overlay.kind {
+                OverlayKind::Modal => 2,
+                OverlayKind::Popover { .. } => 1,
+            })
+            .collect()
+    };
     let mut scratch = Layout::default();
     let mut cursor = padding;
-    let mut title_height = 0;
-    if !overlay.title.is_empty() {
-        title_height = FontSize::Title.line_height();
-    }
+    let title_height =
+        FontSize::Title.line_height() * i32::try_from(title_lines.len()).unwrap_or(0);
     // The cross and the title share one band, so a modal with no title still
     // has room for the cross and one with a short title does not overlap it.
     let header = max(title_height, close);
@@ -3483,10 +3500,7 @@ fn layout_overlay(overlay: &Overlay, metrics: &DisplayMetrics, prose: Face, layo
             text_lines: Vec::new(),
         });
     }
-    if !overlay.title.is_empty() {
-        // Narrowed by whatever the cross took, so a long title is cut short
-        // rather than set underneath it.
-        let title_width = max(1, inner - close);
+    if !title_lines.is_empty() {
         layout.nodes.push(LayoutNode {
             id: overlay.id,
             rect: Rect {
@@ -3496,10 +3510,7 @@ fn layout_overlay(overlay: &Overlay, metrics: &DisplayMetrics, prose: Face, layo
                 height: title_height,
             },
             kind: LayoutKind::OverlayTitle,
-            text_lines: wrap_text_in(&overlay.title, title_width, FontSize::Title, prose)
-                .into_iter()
-                .take(1)
-                .collect(),
+            text_lines: title_lines,
         });
     }
     if closes {
@@ -6414,9 +6425,14 @@ fn intrinsic_width(node: &Node, available: i32, metrics: &DisplayMetrics, prose:
         }
         Node::Text { text, .. } => measure_text_in(text, FontSize::Body, prose).0,
         Node::Secondary { text, .. } => measure_text(text, FontSize::Caption).0,
+        // The same padding the button lays itself out with, not a smaller one
+        // that looks similar. A menu measured with two millimetres a side and
+        // drawn with four is two words wide and four millimetres short, which
+        // at the largest reader text settings is enough to break "Rename"
+        // across two lines in the middle of the word.
         Node::Button { label, .. } => measure_text(label, FontSize::Body)
             .0
-            .saturating_add(2 * metrics.space(Space::Small)),
+            .saturating_add(2 * metrics.tenth_mm(BUTTON_HORIZONTAL_PADDING_TENTH_MM)),
         // A list knows exactly how wide it wants to be, and a menu is a list.
         // The arithmetic is the inverse of `row_text_width`: a row always
         // reserves the lead column whether or not it has a lead, so that a
@@ -20667,6 +20683,69 @@ mod prose_tests {
             narrow < CLARA_BW_METRICS.width / 2,
             "a one word menu took half the panel: {narrow}"
         );
+    }
+
+    #[test]
+    fn a_dialogue_asks_its_whole_question_however_large_the_type_is() {
+        // At 170% "Download Mrs Dalloway?" reached the reader as
+        // "Download Mrs", because an overlay title was cut to one line
+        // whatever it said. A menu header is a label and still is; a
+        // dialogue's title is the question it exists to ask.
+        let metrics = DisplayMetrics {
+            text_scale: TextScale::Larger,
+            ..CLARA_BW_METRICS
+        };
+        with_text_scale(TextScale::Larger, || {
+            let mut screen = with_an_overlay(OverlayKind::Modal);
+            screen.overlay.as_mut().expect("an overlay").title =
+                "Download Mrs Dalloway?".to_owned();
+            let lines = screen
+                .layout_with(&metrics, &Chrome::default())
+                .nodes
+                .iter()
+                .find(|node| node.kind == LayoutKind::OverlayTitle)
+                .expect("the title")
+                .text_lines
+                .join(" ");
+            assert_eq!(lines, "Download Mrs Dalloway?");
+        });
+    }
+
+    #[test]
+    fn a_menu_of_buttons_is_wide_enough_for_the_words_on_them() {
+        // At the largest reader text setting a menu was measured with a
+        // narrower padding than the buttons in it were drawn with, so the
+        // label of every item wrapped inside a box built to hold it.
+        with_text_scale(TextScale::Largest, || {
+            let mut screen = with_an_overlay(OverlayKind::Popover {
+                anchor: ActionId(5),
+            });
+            let overlay = screen.overlay.as_mut().expect("an overlay");
+            overlay.title = String::new();
+            overlay.nodes = vec![Node::Button {
+                id: NodeId(41),
+                action: ActionId(6),
+                label: "Rename".to_owned(),
+                state: ControlState::Enabled,
+                emphasis: Emphasis::Normal,
+            }];
+            let metrics = DisplayMetrics {
+                text_scale: TextScale::Largest,
+                ..CLARA_BW_METRICS
+            };
+            let lines = screen
+                .layout_with(&metrics, &Chrome::default())
+                .nodes
+                .iter()
+                .find(|node| {
+                    node.kind
+                        == LayoutKind::Button(ActionId(6), ControlState::Enabled, Emphasis::Normal)
+                })
+                .expect("the menu item")
+                .text_lines
+                .clone();
+            assert_eq!(lines, vec!["Rename".to_owned()], "the label was broken up");
+        });
     }
 
     #[test]

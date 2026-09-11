@@ -1550,40 +1550,53 @@
     "pr": 2,
     "group": "Components reference",
     "task": "Document every control and loading/disabled/error variant",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "examples/gallery/src/main.rs",
+      "docs/quality/evidence/gallery/"
+    ]
   },
   {
     "id": "GALLERY-02",
     "pr": 2,
     "group": "Components reference",
     "task": "Exercise supported scales, profiles and long labels",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "examples/gallery/src/main.rs",
+      "docs/quality/evidence/gallery-large/"
+    ]
   },
   {
     "id": "GALLERY-03",
     "pr": 2,
     "group": "Components reference",
     "task": "Label intentional developer diagnostics",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "examples/gallery/src/main.rs"
+    ]
   },
   {
     "id": "GALLERY-04",
     "pr": 2,
     "group": "Components reference",
     "task": "Replace version-like section labels with meaningful categories",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "examples/gallery/src/main.rs"
+    ]
   },
   {
     "id": "GALLERY-05",
     "pr": 2,
     "group": "Components reference",
     "task": "Include complete task-flow examples",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "examples/gallery/src/main.rs",
+      "scripts/quality/check-gallery-sim.py"
+    ]
   },
   {
     "id": "GRIM-01",

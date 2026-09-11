@@ -1870,3 +1870,62 @@ starts at the answer, the sweep walking the four edges, the diagram marking the
 swept edge and ringing the one that answered, and every state free of layout
 issues at all nine text sizes. Strict Clippy and `cargo fmt` pass. Captures are
 in `evidence/magnet/`.
+
+### A components reference that fits every panel it ships on (11 September 2026)
+
+GALLERY-01 to GALLERY-05 are closed, which completes the Components reference
+group.
+
+**Every control, and the proof that it is here.** `every_control_the_toolkit_draws_is_somewhere_in_this_gallery`
+reads the builder's own source and fails if a method that draws something is
+not called by the gallery. Eight are excused by name, each with a reason: they
+start a screen, end one, or set a property of one rather than drawing a
+control. The vocabulary test beside it does the same job from the other end,
+by node kind. A control added to the toolkit and left out of this application
+now fails a test instead of shipping unseen.
+
+**Pages that fit the device, not the desk.** The reference no longer decides in
+advance how many panels a page takes. Each page is a list of parts, and the
+parts are dealt out into panels by measuring: parts are added until the
+runtime's own diagnostics say something has been pushed off the panel, and then
+a new panel starts. `every_page_fits_every_supported_panel_at_every_text_size`
+lays out all forty-odd screens on all eight supported panels at all nine text
+sizes, and the pages turn where they have to: the same reference is thirty-one
+panels on a Clara BW at the default size and thirty-seven at 170%.
+
+**A job from end to end.** Choosing a book, being asked to confirm it, watching
+it arrive, being told it is there and opening it. Each step is drawn with the
+controls the rest of the reference shows, and each has a way back out, which
+the journey walks in both directions. A reference made only of pages of
+controls says nothing about how they follow one another.
+
+**Labelled diagnostics.** Two warnings are provoked on purpose: the tone budget,
+because a shelf of tiles under a marked navigation bar spends all five inks and
+that is worth seeing, and the two primary actions on the buttons page, which is
+the same verb drawn twice with one of them refused.
+`every_warning_this_reference_provokes_is_one_it_means_to` fails on any other.
+
+**Platform fixes found by this work.** Three, all in the toolkit rather than in
+the application. A menu was measured with a narrower padding than the buttons
+inside it are drawn with, so at the largest text setting "Rename" was broken
+across two lines in the middle of the word. A dialogue's title was cut to one
+line whatever it said, so "Download Mrs Dalloway?" reached the reader as
+"Download Mrs"; a modal now takes a second line for its question, and a
+popover's title, which is a label over a short menu, still does not. A selected
+pencil mark with no action of its own is rejected by the protocol, which the
+reference was doing and nothing had caught.
+
+**Two doc comments corrected.** `table` did not say what its `weights` are:
+they are the widths in pixels that named columns ask for, not proportions, and
+the reference had passed `vec![1, 1]` meaning "two equal columns" and drawn two
+one-pixel ones. And `controls` claimed the label always stays, while the
+renderer draws the picture alone by a deliberate rule stated where it is drawn.
+The stepper's own explanation had come adrift onto `table` and is back.
+
+**Verification.** Thirteen gallery tests pass, including the sweep across every
+panel and text size. The 278 `kobo-ui` tests pass with the two new ones.
+`scripts/check-apps-sim.py gallery` passes against the committed route, and
+`scripts/quality/check-gallery-sim.py` walks every page of all five
+destinations, every panel they turn onto, all thirteen sheets of icons and the
+whole job, at the default size and at 170%. Captures are in `evidence/gallery/`
+and `evidence/gallery-large/`.

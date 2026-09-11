@@ -1052,7 +1052,9 @@ dependencies = [
 name = "kobo-gallery"
 version = "0.3.12"
 dependencies = [
+ "kobo-profile",
  "kobo-sdk",
+ "kobo-ui",
 ]
 
 [[package]]
