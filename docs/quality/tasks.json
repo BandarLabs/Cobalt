@@ -3053,48 +3053,64 @@
     "pr": 2,
     "group": "Todo",
     "task": "Make Add task prominent in empty state",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "examples/todo/src/main.rs",
+      "docs/quality/evidence/todo/"
+    ]
   },
   {
     "id": "TODO-02",
     "pr": 2,
     "group": "Todo",
     "task": "Edit and reorder tasks",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "examples/todo/src/main.rs",
+      "docs/quality/evidence/todo/"
+    ]
   },
   {
     "id": "TODO-03",
     "pr": 2,
     "group": "Todo",
     "task": "Undo completion",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "examples/todo/src/main.rs"
+    ]
   },
   {
     "id": "TODO-04",
     "pr": 2,
     "group": "Todo",
     "task": "Provide optional dated tasks",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "examples/todo/src/main.rs"
+    ]
   },
   {
     "id": "TODO-05",
     "pr": 2,
     "group": "Todo",
     "task": "Export tasks",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "examples/todo/src/main.rs",
+      "docs/quality/evidence/todo/"
+    ]
   },
   {
     "id": "TODO-06",
     "pr": 2,
     "group": "Todo",
     "task": "Test long text, tags and measured capacity",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "examples/todo/src/main.rs",
+      "docs/quality/evidence/todo-large/"
+    ]
   },
   {
     "id": "VAULT-01",

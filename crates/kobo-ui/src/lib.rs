@@ -7292,7 +7292,7 @@ fn layout_node(
         } => {
             // A control is never smaller than a finger, by construction. The
             // author never gets to choose a height at all.
-            let height = max(
+            let finger = max(
                 metrics.touch_target_minimum(),
                 metrics.touch_target_default(),
             );
@@ -7320,6 +7320,28 @@ fn layout_node(
             } else {
                 x.saturating_add((width - button_width) / 2)
             };
+            let lines = wrap_text(
+                label,
+                if legacy {
+                    button_width - 32
+                } else {
+                    button_width.saturating_sub(padding.saturating_mul(2))
+                },
+                FontSize::Body,
+            );
+            // Tall enough for the words on it. A finger is the floor, not the
+            // ceiling: at the larger reader text settings a two word label
+            // beside another control wraps, and a button drawn one line tall
+            // around two lines of text is a screen the renderer refuses
+            // outright, so the whole panel went blank rather than one label
+            // being a little taller than its neighbour.
+            // Exactly what the words need, and never less than a finger. No
+            // padding on top of that: a button that grew by a few pixels on
+            // every screen would take the room something else had already
+            // been measured into, which on a board game is the board.
+            let wrapped =
+                i32::try_from(lines.len()).unwrap_or(1).max(1) * FontSize::Body.line_height();
+            let height = max(finger, wrapped);
             layout.nodes.push(LayoutNode {
                 id: *id,
                 rect: Rect {
@@ -7329,15 +7351,7 @@ fn layout_node(
                     height,
                 },
                 kind: LayoutKind::Button(*action, *state, *emphasis),
-                text_lines: wrap_text(
-                    label,
-                    if legacy {
-                        button_width - 32
-                    } else {
-                        button_width.saturating_sub(padding.saturating_mul(2))
-                    },
-                    FontSize::Body,
-                ),
+                text_lines: lines,
             });
             y.saturating_add(height)
         }
@@ -20717,6 +20731,74 @@ mod prose_tests {
             narrow < CLARA_BW_METRICS.width / 2,
             "a one word menu took half the panel: {narrow}"
         );
+    }
+
+    #[test]
+    fn a_button_is_as_tall_as_the_words_on_it() {
+        // Two secondary actions side by side give each label half the panel,
+        // and at the larger reader text settings "Clear finished" needs two
+        // lines of it. Drawn in a box one line tall, the renderer refuses the
+        // whole screen, so a list that had a finished item on it went blank.
+        let metrics = DisplayMetrics {
+            text_scale: TextScale::Larger,
+            ..CLARA_BW_METRICS
+        };
+        with_text_scale(TextScale::Larger, || {
+            let screen = Screen::new(
+                1,
+                vec![Node::Band {
+                    id: NodeId(1),
+                    align: BandAlign::Middle,
+                    slots: vec![
+                        BandSlot {
+                            width: SlotWidth::Fill,
+                            nodes: vec![Node::Button {
+                                id: NodeId(2),
+                                action: ActionId(2),
+                                label: "Add".to_owned(),
+                                state: ControlState::Enabled,
+                                emphasis: Emphasis::Normal,
+                            }],
+                        },
+                        BandSlot {
+                            width: SlotWidth::Fill,
+                            nodes: vec![Node::Button {
+                                id: NodeId(3),
+                                action: ActionId(3),
+                                label: "Clear finished".to_owned(),
+                                state: ControlState::Enabled,
+                                emphasis: Emphasis::Normal,
+                            }],
+                        },
+                    ],
+                }],
+            );
+            let laid_out = screen.layout_with(&metrics, &Chrome::default());
+            let button = laid_out
+                .nodes
+                .iter()
+                .find(|node| {
+                    node.kind
+                        == LayoutKind::Button(ActionId(3), ControlState::Enabled, Emphasis::Normal)
+                })
+                .expect("the second button");
+            let needed =
+                i32::try_from(button.text_lines.len()).unwrap_or(1) * FontSize::Body.line_height();
+            assert!(
+                button.rect.height >= needed,
+                "{} lines of label in {} pixels",
+                button.text_lines.len(),
+                button.rect.height
+            );
+            assert!(
+                screen
+                    .diagnostics(&metrics, &Chrome::default())
+                    .issues
+                    .iter()
+                    .all(|issue| issue.severity != DiagnosticSeverity::Error),
+                "the renderer would refuse this screen"
+            );
+        });
     }
 
     #[test]

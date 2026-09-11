@@ -26,6 +26,26 @@ right.
 - **Typing, only where it is unavoidable.** Adding an item needs words, so the
   keyboard is raised for exactly that and put away again afterwards.
 
+## What it does
+
+Write something down, tick it off, and clear the finished ones away when they
+get in the way. Clearing can be undone once, until the next change: the
+alternative is asking "are you sure" before a button that is pressed once a
+week, which trains everybody to answer without reading it.
+
+Anything with a `#tag` in it can be narrowed to with the chips above the list.
+The tags are the ones the owner typed; nothing here invents a category.
+
+Changing the list is a different job from working through it, so it has its own
+screen. Edit opens the list as it is kept rather than grouped by what is
+finished, and tapping an item there opens that item: rename it, move it, give
+it a date, or take it off. A date is said against today ("due tomorrow", "3
+days late") because a list of things to do is read against today and nothing
+else.
+
+Save a copy offers the whole list to a paired computer as plain text, through
+the same export the rest of the system uses. The original stays on the reader.
+
 ## Why the list is saved on every change
 
 There is no save button and no "are you sure". E Ink devices are closed by

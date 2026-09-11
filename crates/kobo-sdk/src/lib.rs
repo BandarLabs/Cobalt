@@ -1156,6 +1156,35 @@ impl Context {
         })
     }
 
+    /// The same, for a list in labelled groups drawn under and over something
+    /// of the application's own.
+    ///
+    /// `placed` is everything on the screen that is not the list: a row of
+    /// filter chips above it, the buttons under it. Measured rather than
+    /// guessed, because both of those change size with the reader's text
+    /// setting and a list paginated as though they were not there puts its
+    /// last row through them.
+    #[must_use]
+    pub fn paginate_rows_in_sections_under(
+        &self,
+        rows: &[(Option<&str>, &str, &str)],
+        nav_bar: bool,
+        position: Position,
+        placed: &Screen,
+    ) -> Vec<Vec<usize>> {
+        kobo_ui::with_text_scale(self.metrics.text_scale, || {
+            let used = placed
+                .layout_with(&self.metrics, &Chrome::measuring(true))
+                .content_used();
+            let mut area = self.area_for(nav_bar, position);
+            area.height = area
+                .height
+                .saturating_sub(used.saturating_add(area.gap))
+                .max(0);
+            kobo_ui::paginate_rows_in_sections(rows, &self.metrics, area)
+        })
+    }
+
     /// Breaks a grid of tiles into pages that fit this panel.
     ///
     /// Returns the tile indices belonging to each page. The count of tiles a

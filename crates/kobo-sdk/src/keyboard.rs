@@ -41,7 +41,13 @@ const LETTERS: [&str; 3] = ["qwertyuiop", "asdfghjkl", "zxcvbnm"];
 /// The second layer. Chosen for what these applications actually need: digits,
 /// the punctuation of a sentence, and the handful of symbols that appear in
 /// search queries and addresses.
-const SYMBOLS: [&str; 3] = ["1234567890", "-/:;()&@\"", ".,?!'+="];
+///
+/// The hash is on it because applications on this device ask people to type
+/// one. The list of things to do groups itself by whatever tags the owner
+/// wrote into an item, and for as long as this layer had no `#` on it, that
+/// was a feature only reachable by somebody who had typed their list
+/// somewhere else and imported it.
+const SYMBOLS: [&str; 3] = ["1234567890", "-/:;()&@\"", ".,?!'+=#"];
 
 /// What a tap on the keyboard meant.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -468,6 +474,20 @@ mod tests {
     use super::TextEntry;
     use super::{Keyboard, Layer, Pressed, MAX_TEXT};
     use crate::{action_id, ScreenBuilder};
+
+    #[test]
+    fn every_symbol_an_application_asks_people_to_type_is_on_the_keyboard() {
+        // A control that asks for a character the keyboard cannot produce is
+        // a control nobody can use. The hash is the one that got shipped
+        // missing: the todo list groups by tags, and a tag starts with one.
+        let layers = super::LETTERS.concat() + &super::SYMBOLS.concat();
+        for wanted in ['#', '@', '/', ':', '-', '.', '?'] {
+            assert!(
+                layers.contains(wanted),
+                "the keyboard cannot type {wanted:?}"
+            );
+        }
+    }
     use kobo_ui::{Chrome, DisplayMetrics, LayoutKind, TextScale};
 
     fn panels() -> Vec<(String, DisplayMetrics)> {

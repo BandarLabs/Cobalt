@@ -18,7 +18,7 @@ A checked task requires implementation plus recorded validation. Physical measur
 
 The PR 1 implementation checklist is complete; CBR is deferred and COMIC-18 belongs to catalog integration in PR 2. This does not certify hardware accuracy: native sleep hands ownership back to the stock reader, and no generic kernel suspend, RTC wake or automatic cover-sleep backend is enabled. Physical acceptance remains scheduled after all three PRs.
 
-495 tracked tasks: 183 completed, 1 deferred by the owner, 311 open. Implementation in progress. Evidence is recorded per task in `tasks.json` and in [the validation log](validation.md).
+495 tracked tasks: 189 completed, 1 deferred by the owner, 305 open. Implementation in progress. Evidence is recorded per task in `tasks.json` and in [the validation log](validation.md).
 
 Design direction: use the familiar visual conventions of each app, restrained controls and plain copy. Crossword follows printed crossword typography and grids. Paperterm is the next app priority, including a real two-way laptop terminal session. Paperterm defaults to portrait with a physically scaled, denser terminal font; the measured grid takes precedence over forcing 80 columns.
 
@@ -486,12 +486,12 @@ Design direction: use the familiar visual conventions of each app, restrained co
 
 ## PR 2 · Todo
 
-- [ ] **TODO-01** Make Add task prominent in empty state.
-- [ ] **TODO-02** Edit and reorder tasks.
-- [ ] **TODO-03** Undo completion.
-- [ ] **TODO-04** Provide optional dated tasks.
-- [ ] **TODO-05** Export tasks.
-- [ ] **TODO-06** Test long text, tags and measured capacity.
+- [x] **TODO-01** Make Add task prominent in empty state.
+- [x] **TODO-02** Edit and reorder tasks.
+- [x] **TODO-03** Undo completion.
+- [x] **TODO-04** Provide optional dated tasks.
+- [x] **TODO-05** Export tasks.
+- [x] **TODO-06** Test long text, tags and measured capacity.
 
 ## PR 2 · Vault (APP-6)
 

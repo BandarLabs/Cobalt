@@ -1992,3 +1992,64 @@ the default size and at 170%: the front page, a discussion six replies deep,
 the article behind it, saving, the marks on the list, and the saved story and
 its article reopening with the radio off. Captures are in `evidence/hn/` and
 `evidence/hn-large/`.
+
+### A list that can be changed, dated and taken off the reader (12 September 2026)
+
+TODO-01 to TODO-06 are closed, which completes the Todo group.
+
+**The empty list offers the one thing to do about it.** A plain button beside
+nothing at all reads as a footnote, so on an empty list Add is the dominant
+verb and says what it adds.
+
+**Changing the list is its own screen.** Edit opens the list in the order it is
+kept rather than grouped by what is finished, because that is the order this
+screen can move. Tapping an item there opens that item: rename it, move it up
+or down, give it a date, or take it off. The list itself stays a list, where
+every row is one tap and that tap means the one thing a list of things to do is
+for. Renaming opens the field on the words already written, so fixing a typo is
+two taps rather than typing it again, and it does not move the item.
+
+**Dates, said against today.** Today, tomorrow, in a week, or none at all, as
+four chips with the current one drawn as chosen by the renderer. A row says
+"due tomorrow" or "3 days late" rather than a calendar date, because a list of
+things to do is read against today and nothing else. A finished item keeps its
+date to itself: what is due is what is still to do.
+
+**Undo.** Clear finished keeps what it took until the next change and offers it
+back. One undo, in memory only. An undo that outlives what it was undoing is a
+trap, and a confirmation before a button pressed once a week trains everybody
+to answer without reading it.
+
+**A copy for the computer.** Save a copy offers the whole list as plain text
+through `kobo_sdk::exports`, which is the platform's own owner-initiated
+export: the copy is verified and acknowledged before it is offered, and the
+original stays on the reader. This is the first application to use it.
+
+**Measured capacity.** How many rows a page holds was a constant. Six fits a
+Clara BW at the default text size and four fit it at 170%, so a list of long
+items drew its last rows through the buttons under them and the renderer
+refused the whole screen: a reader who turned the type up got a blank panel.
+The list is now measured under everything it is drawn around, the chips above
+it and the buttons below, and it says which page it is on rather than paging
+silently.
+
+**Three defects found by this work.** The keyboard had no `#` on either layer,
+so the tags this application groups by could only be typed by somebody who had
+written their list somewhere else and imported it. A button was drawn one line
+tall whatever its label said, so "Clear finished" beside another control at
+170% was two lines of text in a one line box, which the renderer refuses
+outright. And every store answer was read as though it were the list, so
+saving a copy emptied one: the key is checked now, and anything else is
+offered to the export that asked for it.
+
+**Verification.** Fifteen Todo tests pass, including every screen laid out at
+all nine text sizes with no layout errors, the round trip of a date through the
+state file, a list written by the version before dates still reading, the undo
+and its expiry, and an item renamed, moved and dated from its own screen. The
+277 `kobo-ui` tests pass with the new one, and the keyboard's own test now
+asks for every character an application makes somebody type. `scripts/check-apps-sim.py todo`
+passes against the committed route, and `scripts/quality/check-todo-sim.py`
+writes three items with tags, ticks one off, undoes a clear, edits, dates,
+moves and renames an item, offers the list to a computer and finds everything
+after a restart, at the default size and at 170%. Captures are in
+`evidence/todo/` and `evidence/todo-large/`.
