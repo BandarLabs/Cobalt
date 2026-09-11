@@ -2379,6 +2379,13 @@ pub enum CellStyle {
     /// Fifteen of these in three rows of five is a command deck. Empty pads
     /// stay as blank keys so the grid does not collapse into a list.
     Pad,
+    /// A place where a pad could be, with nothing assigned to it.
+    ///
+    /// The same square in a hairline rather than the bezel. A deck of fifteen
+    /// places with three assigned drew twelve boxes as heavy as the three
+    /// that did something, which is a panel mostly made of controls that do
+    /// nothing.
+    EmptyPad,
 }
 
 /// Whether a control can currently be activated.
@@ -8212,6 +8219,16 @@ fn layout_node(
                     y: y.saturating_add(row * (cell_height + gutter) + row / 3 * block_extra),
                     width: cell_width,
                     height: cell_height,
+                };
+                // A pad with neither a word nor a picture on it is a place
+                // rather than a key, and is drawn as one.
+                let style = if style == CellStyle::Pad
+                    && cell.glyph.is_none()
+                    && cell.label.trim().is_empty()
+                {
+                    CellStyle::EmptyPad
+                } else {
+                    style
                 };
                 layout.nodes.push(LayoutNode {
                     id: *id,
@@ -14126,14 +14143,18 @@ fn render_all_with_selected_font(
                     );
                 }
             }
-            LayoutKind::Cell(_, CellStyle::Pad, _) => {
+            LayoutKind::Cell(_, style @ (CellStyle::Pad | CellStyle::EmptyPad), _) => {
                 let radius = metrics.tenth_mm(PAD_RADIUS_TENTH_MM);
                 fill_rounded_clipped(surface, node.rect, radius, tone::PAPER, clip);
                 stroke_rounded_clipped(
                     surface,
                     node.rect,
                     radius,
-                    tone::INK,
+                    if style == CellStyle::Pad {
+                        tone::INK
+                    } else {
+                        tone::RULE
+                    },
                     metrics.tenth_mm(PAD_BORDER_TENTH_MM),
                     clip,
                 );
@@ -20731,6 +20752,44 @@ mod prose_tests {
             narrow < CLARA_BW_METRICS.width / 2,
             "a one word menu took half the panel: {narrow}"
         );
+    }
+
+    #[test]
+    fn a_deck_place_with_nothing_on_it_is_drawn_lighter_than_a_key() {
+        // Fifteen places with three assigned used to be twelve boxes as heavy
+        // as the three that did something, and every one of them looked as
+        // pressable as the next.
+        let cells: Vec<Cell> = (0..15)
+            .map(|index| {
+                let cell = Cell::new(ActionId(index + 1), if index < 3 { "Test" } else { "" });
+                if index < 3 {
+                    cell.with_glyph(Glyph::Grid)
+                } else {
+                    cell
+                }
+            })
+            .collect();
+        let screen = Screen::new(
+            1,
+            vec![Node::Grid {
+                id: NodeId(1),
+                columns: 5,
+                square: true,
+                cells,
+            }],
+        );
+        let laid_out = screen.layout_with(&CLARA_BW_METRICS, &Chrome::default());
+        let assigned = laid_out
+            .nodes
+            .iter()
+            .filter(|node| matches!(node.kind, LayoutKind::Cell(_, CellStyle::Pad, _)))
+            .count();
+        let places = laid_out
+            .nodes
+            .iter()
+            .filter(|node| matches!(node.kind, LayoutKind::Cell(_, CellStyle::EmptyPad, _)))
+            .count();
+        assert_eq!((assigned, places), (3, 12));
     }
 
     #[test]

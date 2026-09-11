@@ -1294,48 +1294,65 @@
     "pr": 2,
     "group": "Deck app",
     "task": "Reduce visual weight of unused pads",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "crates/kobo-ui/src/lib.rs",
+      "docs/quality/evidence/deck/"
+    ]
   },
   {
     "id": "DECK-02",
     "pr": 2,
     "group": "Deck app",
     "task": "Show layout title and connection state",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "apps/deck/src/main.rs",
+      "docs/quality/evidence/deck/"
+    ]
   },
   {
     "id": "DECK-03",
     "pr": 2,
     "group": "Deck app",
     "task": "Show per-action busy state and last result",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "apps/deck/src/main.rs",
+      "docs/quality/evidence/deck/"
+    ]
   },
   {
     "id": "DECK-04",
     "pr": 2,
     "group": "Deck app",
     "task": "Provide useful original preset layouts",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "crates/kobo-cli/src/deck.rs"
+    ]
   },
   {
     "id": "DECK-05",
     "pr": 2,
     "group": "Deck app",
     "task": "Preserve explicit confirmation for chosen commands",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "apps/deck/src/main.rs",
+      "scripts/quality/check-deck-sim.py"
+    ]
   },
   {
     "id": "DECK-06",
     "pr": 2,
     "group": "Deck app",
     "task": "Unify visible pad count with companion configuration",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "crates/kobo-cli/src/deck.rs",
+      "apps/deck/src/model.rs"
+    ]
   },
   {
     "id": "FANS-01",

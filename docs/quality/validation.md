@@ -2053,3 +2053,56 @@ writes three items with tags, ticks one off, undoes a clear, edits, dates,
 moves and renames an item, offers the list to a computer and finds everything
 after a restart, at the default size and at 170%. Captures are in
 `evidence/todo/` and `evidence/todo-large/`.
+
+### A deck that says which computer it is talking to (12 September 2026)
+
+DECK-01 to DECK-06 are closed, which completes the Deck group.
+
+**Places, and keys.** Fifteen places are drawn because that is the shape of the
+panel. The ones nobody has assigned are now drawn in a hairline rather than the
+bezel a key gets: a deck with three things on it used to read as twelve
+controls that do nothing. The renderer decides that from the cell itself, so
+any application whose deck is half empty gets the same treatment.
+
+**Which deck, and whether anyone is listening.** The bar carries the name of
+the page showing rather than the word Deck, and one line under the tabs says
+which computer this is paired with and whether it answered. A key that does
+nothing because the computer is asleep looked exactly like a key that does
+nothing because it has not been assigned.
+
+**What a key did.** A key that has run opens what it said, whether it worked or
+not; it used to do that only when the command had failed, so everything that
+worked was silent. The line under the deck says what the last one did. The
+status character that used to be appended to the key's own label is gone: a pad
+carries a single line, so the newline in front of it was drawn as a box with a
+cross in it on every key that had ever been pressed.
+
+**Asking first is kept.** A key marked confirm on the computer raises the
+question here and runs only when it is answered, and the computer can refuse a
+press that did not carry an answer. Both paths are tested.
+
+**Presets.** `kobo deck init --preset build` and `--preset home` write a deck
+that does something on the first press, which is the alternative to twenty
+minutes of `kobo deck set` before anything works. Neither writes over a deck
+that already exists.
+
+**One number for the pads.** The companion allowed twelve pads a page and the
+reader's deck draws fifteen places, so three of them could never be filled and
+nothing said so. The companion allows fifteen now, which is what the panel
+shows.
+
+**The defect this found.** The deck asked the computer for its keys again the
+moment an answer landed: three hundred and seventy requests went out in the ten
+seconds it took the harness to notice, on a device whose radio is the largest
+single draw on its battery. It waits five seconds between looks now, and the
+same journey costs nine requests.
+
+**Verification.** Fourteen Deck tests pass across the application, its model
+and the companion, including the paced polling, a confirmed key that does not
+run until it is answered, a finished key opening its output, and every pad the
+reader can see being assignable from the computer. The 278 `kobo-ui` tests pass
+with the new one. `scripts/check-apps-sim.py deck` passes against the committed
+route, and `scripts/quality/check-deck-sim.py` pairs with a private HTTPS
+fixture, presses a key, answers the one that asks, reads what it said and finds
+the deck again after a restart, at the default size and at 170%. Captures are
+in `evidence/deck/` and `evidence/deck-large/`.
