@@ -1128,12 +1128,7 @@
     "task": "Replace ignored response/static categories with real OPDS navigation",
     "status": "done",
     "evidence": [
-      "apps/calibre-web/src/main.rs",
-      "apps/calibre-web/src/reading.rs",
-      "apps/calibre-web/src/settings.rs",
-      "crates/kobo-policy/src/credential_servers.rs",
-      "docs/quality/evidence/calibre-web/result.json",
-      "docs/quality/validation.md"
+      "The catalog is navigated from the links the server actually publishes: the simulator journey parses a private OPDS feed and reaches authors, shelves and book details from it."
     ]
   },
   {
@@ -1143,12 +1138,7 @@
     "task": "Configure and test provider endpoint/authentication",
     "status": "done",
     "evidence": [
-      "apps/calibre-web/src/main.rs",
-      "apps/calibre-web/src/reading.rs",
-      "apps/calibre-web/src/settings.rs",
-      "crates/kobo-policy/src/credential_servers.rs",
-      "docs/quality/evidence/calibre-web/result.json",
-      "docs/quality/validation.md"
+      "The server address and account are entered on the reader, saved only when the store acknowledges it, and bound to one origin by the runtime; a refused password is reported as a refusal."
     ]
   },
   {
@@ -1158,12 +1148,7 @@
     "task": "Handle books, authors and shelves through live parsed catalog links",
     "status": "done",
     "evidence": [
-      "apps/calibre-web/src/main.rs",
-      "apps/calibre-web/src/reading.rs",
-      "apps/calibre-web/src/settings.rs",
-      "crates/kobo-policy/src/credential_servers.rs",
-      "docs/quality/evidence/calibre-web/result.json",
-      "docs/quality/validation.md"
+      "Books, authors and shelves are followed through parsed catalog links in the journey, including an authenticated catalog behind Basic credentials."
     ]
   },
   {
@@ -1173,12 +1158,7 @@
     "task": "Download and read a fixture book through BookView",
     "status": "done",
     "evidence": [
-      "apps/calibre-web/src/main.rs",
-      "apps/calibre-web/src/reading.rs",
-      "apps/calibre-web/src/settings.rs",
-      "crates/kobo-policy/src/credential_servers.rs",
-      "docs/quality/evidence/calibre-web/result.json",
-      "docs/quality/validation.md"
+      "A fixture EPUB is downloaded, its shelf copy published, and read through the shared reader."
     ]
   },
   {
@@ -1188,12 +1168,7 @@
     "task": "Retain downloaded book and progress offline",
     "status": "done",
     "evidence": [
-      "apps/calibre-web/src/main.rs",
-      "apps/calibre-web/src/reading.rs",
-      "apps/calibre-web/src/settings.rs",
-      "crates/kobo-policy/src/credential_servers.rs",
-      "docs/quality/evidence/calibre-web/result.json",
-      "docs/quality/validation.md"
+      "The book and its reading position reopen after a forced restart with no network, a failed position save is reported and retried, and a damaged download is repaired."
     ]
   },
   {
@@ -1203,12 +1178,7 @@
     "task": "Distinguish authentication, transport, HTTP and parsing failures",
     "status": "done",
     "evidence": [
-      "apps/calibre-web/src/main.rs",
-      "apps/calibre-web/src/reading.rs",
-      "apps/calibre-web/src/settings.rs",
-      "crates/kobo-policy/src/credential_servers.rs",
-      "docs/quality/evidence/calibre-web/result.json",
-      "docs/quality/validation.md"
+      "Authentication, transport, HTTP status and malformed-catalog failures are told apart on screen, and unreadable settings keep offline access to what is already downloaded."
     ]
   },
   {

@@ -1651,3 +1651,24 @@ from their own screen, damage a party member and spend a slot, then restart the
 process and find all of it. It passes at the default text size, at 110% and at
 170%; captures and results are in `evidence/grimoire/` and
 `evidence/grimoire-large/`, and the screenshots were visually inspected.
+
+### Paperterm and calibre-web re-verified after the reader change (11 September 2026)
+
+Both groups were already complete. Both read through the same path the
+`kobo-read` paragraph fix touched, so both were driven again rather than
+assumed.
+
+`scripts/quality/check-calibre-sim.py` passes all sixteen of its checks against
+the private HTTPS OPDS fixture, including the shared reader, a saved position
+reopened offline after a forced restart, a failed position save retried, a
+damaged download repaired, and an authenticated catalog behind a server-bound
+Basic account.
+
+`scripts/quality/check-paperterm-live.py` passes all seventeen of its checks
+with a real host PTY shared between a laptop terminal and the simulator over
+trusted TLS: negotiated grids of 54 columns in portrait, both input directions,
+reconnection with retained output, a paused input path that does not replay,
+Ctrl-C from the reader, and the laptop terminal restored afterwards.
+
+The remaining Paperterm work is the companion side, STREAMCLI-01 to
+STREAMCLI-05, which belongs to PR 3.
