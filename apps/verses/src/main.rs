@@ -1066,7 +1066,7 @@ mod tests {
         // Favourites were positions in the corpus, so adding a poem or
         // changing the order moved every one of them onto a different poem.
         let mut app = Verses::default();
-        let mut runner = AppRunner::new(Verses::default());
+        let runner = AppRunner::new(Verses::default());
         app.poem = CORPUS
             .iter()
             .position(|poem| poem.id == "shelley-ozymandias")
@@ -1087,7 +1087,7 @@ mod tests {
     #[test]
     fn favourites_written_before_poems_had_names_are_still_the_same_poems() {
         let mut app = Verses::default();
-        let mut runner = AppRunner::new(Verses::default());
+        let runner = AppRunner::new(Verses::default());
         // What the old shelf wrote: positions of Hope, The Tiger, Ozymandias.
         let legacy = br#"{"favorites":[0,2],"online_favorites":[],"sleep":false}"#;
         app.on_store(
@@ -1105,7 +1105,7 @@ mod tests {
     #[test]
     fn a_favourite_the_reader_cannot_keep_says_so() {
         let mut app = Verses::default();
-        let mut runner = AppRunner::new(Verses::default());
+        let runner = AppRunner::new(Verses::default());
         app.toggle_favorite();
         app.save(&mut runner.context());
         app.on_store(
