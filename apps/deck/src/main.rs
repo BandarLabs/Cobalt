@@ -148,7 +148,9 @@ impl App {
                 .collect::<Vec<_>>();
             screen = screen.tabs(self.page, tabs);
         }
-        if self.address != "local" {
+        if self.address == "local" {
+            screen = screen.top_bar_action("pair-preview", "Pair");
+        } else {
             screen = screen.top_bar_glyph("retry", "Refresh", Glyph::Refresh);
         }
         if let Some(note) = &self.notice {
@@ -180,7 +182,7 @@ impl App {
     /// What this deck is connected to, as a sentence.
     fn connection(&self) -> String {
         if self.address == "local" {
-            return "Running on this device.".to_owned();
+            return "Preview only. Pair to run commands.".to_owned();
         }
         if self.address.is_empty() {
             return "Not paired with a computer yet.".to_owned();
@@ -249,6 +251,10 @@ impl App {
         }
     }
     fn press(&mut self, cx: &mut Context, id: &str, confirmed: bool) {
+        if self.address == "local" {
+            self.notice = Some("Preview only. Pair with your computer to use these pads.".into());
+            return;
+        }
         if let Some(key) = self
             .deck
             .pages
@@ -401,6 +407,12 @@ impl KoboApp for App {
         self.show(cx);
     }
     fn on_action(&mut self, cx: &mut Context, a: ActionId) {
+        if a == action_id("pair-preview") && self.address == "local" {
+            self.view = View::Address;
+            self.notice = None;
+            self.show(cx);
+            return;
+        }
         if matches!(self.view, View::Address | View::Code) {
             if let Some(event) = self.entry.handle(a) {
                 if let Typing::Submitted(text) = event {
@@ -509,6 +521,20 @@ mod tests {
         {"id":"test","label":"Test","detail":"cargo test","confirm":false,"state":"idle"},
         {"id":"deploy","label":"Deploy","detail":"ship it","confirm":true,"state":"idle"}]}]}"#;
 
+    #[test]
+    fn static_preview_does_not_dispatch_a_command_or_claim_it_is_running() {
+        let mut app = App {
+            address: "local".into(),
+            ..App::default()
+        };
+        let mut context = kobo_sdk::Context::default();
+        app.press(&mut context, "fixture-pad", false);
+        assert!(context.take_commands().is_empty());
+        assert!(app.task.is_none());
+        assert!(app.pending.is_none());
+        assert!(app.notice.as_deref().unwrap().contains("Preview only"));
+    }
+
     /// A deck paired with a computer, with the layout that computer sent.
     fn paired() -> (AppRunner<App>, Vec<Command>) {
         let mut runner = AppRunner::new(App::default());
@@ -554,7 +580,7 @@ mod tests {
             address: "local".into(),
             ..App::default()
         };
-        assert!(local.connection().contains("this device"));
+        assert!(local.connection().contains("Preview only"));
         assert!(App::default().connection().contains("Not paired"));
     }
 

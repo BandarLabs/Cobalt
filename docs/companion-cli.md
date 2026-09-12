@@ -106,3 +106,12 @@ stopped. It sends a built-in connection-check question to the reader. Choose
 No agent setup or command execution is involved.
 
 ![Sidekick sample on the reader simulator](quality/evidence/sidekick-sample/default/sample-question.png)
+
+## Deck layouts
+
+A Deck layout push preserves existing pairing on the reader and simulator.
+On a fresh simulator, `kobo deck push --sim` opens a static preview. Pads show
+that they cannot run commands; choose **Pair** to connect to the computer.
+A device push updates the cached grid and never substitutes preview pairing
+for a real computer connection. See the [Deck guide](../apps/deck/README.md)
+for preview screenshots.

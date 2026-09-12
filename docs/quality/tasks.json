@@ -3723,16 +3723,22 @@
     "pr": 4,
     "group": "Deck companion",
     "task": "Preserve real pairing when pushing layouts",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Device layout pushes no longer write the pairing key. Simulator pushes create a preview marker only when pairing is absent; existing pairing bytes remain unchanged.",
+      "Seven CLI Deck tests pass, including executing the generated transfer shell against paired and unpaired temporary stores. Actual CLI simulator staging preservation is recorded in docs/quality/evidence/deck-preview/{default,170}/result.json."
+    ]
   },
   {
     "id": "DECKCLI-02",
     "pr": 4,
     "group": "Deck companion",
     "task": "Separate static simulator preview from executable pairing",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Static Deck preview is labeled Preview only and pad taps dispatch no network task or running state. Pair action opens normal computer pairing.",
+      "Default and 170% simulator journeys stage via actual CLI, tap a preview pad, check clean layout and open Pair. Screenshots inspected; 16 app tests and strict app/CLI Clippy passed. Evidence: docs/quality/evidence/deck-preview."
+    ]
   },
   {
     "id": "DECKCLI-03",

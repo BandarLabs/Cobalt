@@ -321,7 +321,7 @@ fn push(arguments: &[String]) -> Result<(), String> {
         Destination::Simulator => {
             write_store(&sim_root(), LOCAL_PAIRING.as_bytes(), snapshot.as_bytes())?;
             println!(
-                "Pushed {} pad(s) to the simulator store; Deck opens on the assigned grid.",
+                "Staged {} pad(s) in the simulator. Existing pairing is kept; an unpaired simulator opens a static preview.",
                 layout.pad_count()
             );
             Ok(())
@@ -900,8 +900,20 @@ fn push_toml_string(body: &mut String, value: &str) {
 
 fn write_store(root: &Path, pairing: &[u8], snapshot: &[u8]) -> Result<(), String> {
     fs::create_dir_all(root).map_err(|error| format!("create {}: {error}", root.display()))?;
-    write_atomic(&root.join(PAIRED_KEY), pairing)?;
     write_atomic(&root.join(CACHE_KEY), snapshot)?;
+    match OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(root.join(PAIRED_KEY))
+    {
+        Ok(mut file) => file
+            .write_all(pairing)
+            .and_then(|()| file.sync_all())
+            .map_err(|error| format!("Initialize simulator preview: {error}"))?,
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(error) => return Err(format!("Initialize simulator preview: {error}")),
+    }
     Ok(())
 }
 
@@ -935,9 +947,15 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
 }
 
 fn transfer(host: &str, snapshot: &str, pads: usize) -> Result<(), String> {
-    let pairing = super::base64_encode(LOCAL_PAIRING.as_bytes());
+    let output = remote(host, &transfer_script(snapshot, pads))?;
+    print!("{}", String::from_utf8_lossy(&output.stdout));
+    println!("Pairing was preserved. Open Deck and pair with the computer if needed.");
+    Ok(())
+}
+
+fn transfer_script(snapshot: &str, pads: usize) -> String {
     let encoded = super::base64_encode(snapshot.as_bytes());
-    let script = format!(
+    format!(
         "set -eu\n\
          root='{DEVICE_ROOT}'\n\
          mkdir -p \"$root\"\n\
@@ -949,18 +967,12 @@ fn transfer(host: &str, snapshot: &str, pads: usize) -> Result<(), String> {
            chmod 600 \"$partial\"\n\
            mv -f \"$partial\" \"$root/$key\"\n\
          }}\n\
-         write '{PAIRED_KEY}' <<'KOBO_DECK_PAIR'\n\
-         {pairing}\n\
-         KOBO_DECK_PAIR\n\
          write '{CACHE_KEY}' <<'KOBO_DECK_LAYOUT'\n\
          {encoded}\n\
          KOBO_DECK_LAYOUT\n\
          sync\n\
          printf 'Pushed {pads} Deck pad(s)\\n'\n"
-    );
-    let output = remote(host, &script)?;
-    print!("{}", String::from_utf8_lossy(&output.stdout));
-    Ok(())
+    )
 }
 
 fn remote(host: &str, script: &str) -> Result<super::RemoteShellOutput, String> {
@@ -1095,6 +1107,36 @@ mod tests {
         ]));
         assert!(past.is_err(), "a sixteenth pad has nowhere to be drawn");
         fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn layout_updates_preserve_real_pairing_and_do_not_pair_new_readers() {
+        let root = home();
+        let pairing = b"192.0.2.10:9331|fixture-pairing";
+        fs::write(root.join(PAIRED_KEY), pairing).unwrap();
+        write_store(&root, LOCAL_PAIRING.as_bytes(), b"{\"pages\":[]}").unwrap();
+        assert_eq!(fs::read(root.join(PAIRED_KEY)).unwrap(), pairing);
+        let snapshot = "{\"pages\":[]}";
+        let script =
+            super::transfer_script(snapshot, 0).replace(super::DEVICE_ROOT, root.to_str().unwrap());
+        let result = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(&script)
+            .output()
+            .unwrap();
+        assert!(result.status.success(), "{:?}", result.stderr);
+        assert_eq!(fs::read(root.join(PAIRED_KEY)).unwrap(), pairing);
+        assert_eq!(fs::read_to_string(root.join(CACHE_KEY)).unwrap(), snapshot);
+        fs::remove_file(root.join(PAIRED_KEY)).unwrap();
+        assert!(std::process::Command::new("sh")
+            .arg("-c")
+            .arg(&script)
+            .output()
+            .unwrap()
+            .status
+            .success());
+        assert!(!root.join(PAIRED_KEY).exists());
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

@@ -2337,3 +2337,21 @@ passed; app manifest advanced to 1.0.10 and its generated catalog page was
 updated. The harness uses a short isolated temporary directory to fit macOS
 Unix socket path limits. SIDECLI-06 is complete; physical receipt validation
 remains SIDECLI-04 and has not been claimed.
+
+
+### Deck pairing preservation and static preview (DECKCLI-01/02)
+
+Device layout pushes update cached grid state without writing pairing.
+Simulator pushes preserve an existing pairing and seed the local preview
+marker only when none exists. Preview pads are explicitly labeled, cannot
+spawn a command request or claim a running state, and offer Pair to enter the
+normal computer connection flow.
+
+Seven CLI Deck tests pass, including execution of the generated transfer shell
+against temporary paired/unpaired stores. Sixteen app tests pass, including
+no-task/no-running-state preview behavior. Strict all-target CLI and app
+Clippy passed. The actual CLI stages a sample, opens the simulator, taps a pad
+and opens Pair at default and 170% text. Both have no layout errors; screenshots
+were inspected and added to documentation. Evidence:
+`evidence/deck-preview/{default,170}`. The app manifest is 0.2.3 and its catalog
+page is regenerated. No physical reader was modified in these checks.

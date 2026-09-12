@@ -81,3 +81,18 @@ Every request uses Sidekick TLS and its pairing code. Commands come only from
 their home directory. Mark externally visible or destructive commands with
 `confirm = true`. Only four commands may run at once, each is stopped after ten
 minutes, and only the final 2 KB of cleaned output is retained.
+
+
+## Preview and pairing
+
+`kobo deck push --sim` stages a static preview when the simulator is unpaired.
+Preview pads do not execute commands. Choose **Pair** to enter your computer's
+address and pairing code. If the simulator already has a pairing, a layout
+push preserves it.
+
+`kobo deck push --device ADDRESS` updates the cached layout only and preserves
+reader pairing. An unpaired reader still needs to pair with the computer;
+transferring a layout does not establish an executable connection.
+
+![Static Deck preview](../../docs/quality/evidence/deck-preview/default/preview.png)
+![Preview pad feedback at larger text size](../../docs/quality/evidence/deck-preview/170/preview-tapped.png)
