@@ -4,8 +4,8 @@
   "short_label": "Habits",
   "summary": "Track daily and weekday habits with local streaks.",
   "page_description": "An offline-first habit tracker that puts today's commitments and streaks on a calm paper display.",
-  "version": "0.1.3",
-  "release_notes": "Update shared controls and page layout for Cobalt 0.3.12.",
+  "version": "0.1.4",
+  "release_notes": "Rebuilt on a renderer that keeps every control reachable at the largest text sizes, and on a keyboard that can type every character this app asks for.",
   "glyph": "check",
   "capabilities": []
 }

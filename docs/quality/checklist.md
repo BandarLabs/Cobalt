@@ -4,11 +4,12 @@ Source: the 8 September 2026 app/SDK/simulator/companion review. The ten new app
 
 ## Delivery plan
 
-Three PRs rooted in `beta`. The initial base was `7f1a543`; PR 1 is now merged as `c22c946` and PR 2 targets beta directly:
+Four PRs rooted in `beta`. The initial base was `7f1a543`; PR 1 is merged as `c22c946` and PR 2 targets beta directly. PR 2 grew large enough that its remaining app groups are better validated on hardware than stacked on top of it, so it ships the twenty app groups it has finished and the rest move to PR 3; the companion work it would have shared a branch with moves to PR 4:
 
 1. **Foundation:** simulator/runtime parity, shared SDK/document/board contracts, platform test interfaces and comic decoding/reading. Includes catalog integration fixes exposed by the stricter shared layout checks. Branch `beta-quality-foundation`, base `beta`.
 2. **Catalog:** complete and polish the 43 existing app journeys using those contracts. Branch `beta-quality-apps`, initially based on PR 1.
-3. **Companion:** owner onboarding, imports, credentials, recovery and CLI consistency, plus integrated acceptance scripts. Branch `beta-quality-companion`, initially based on PR 2.
+3. **Remaining catalog:** the app groups PR 2 did not reach, reading applications first, each pulling real data wherever the source permits it. Branch `beta-quality-apps-2`, base `beta`.
+4. **Companion:** owner onboarding, imports, credentials, recovery and CLI consistency, plus integrated acceptance scripts. Branch `beta-quality-companion`, base `beta`.
 
 After predecessors merge, later PRs can target beta without duplicating earlier diffs. No merge or deployment is implied by creating the PRs.
 
@@ -18,7 +19,7 @@ A checked task requires implementation plus recorded validation. Physical measur
 
 The PR 1 implementation checklist is complete; CBR is deferred and COMIC-18 belongs to catalog integration in PR 2. This does not certify hardware accuracy: native sleep hands ownership back to the stock reader, and no generic kernel suspend, RTC wake or automatic cover-sleep backend is enabled. Physical acceptance remains scheduled after all three PRs.
 
-495 tracked tasks: 200 completed, 1 deferred by the owner, 294 open. Implementation in progress. Evidence is recorded per task in `tasks.json` and in [the validation log](validation.md).
+496 tracked tasks: 205 completed, 1 deferred by the owner, 290 open. Implementation in progress. Evidence is recorded per task in `tasks.json` and in [the validation log](validation.md).
 
 Design direction: use the familiar visual conventions of each app, restrained controls and plain copy. Crossword follows printed crossword typography and grids. Paperterm is the next app priority, including a real two-way laptop terminal session. Paperterm defaults to portrait with a physically scaled, denser terminal font; the measured grid takes precedence over forcing 80 columns.
 
@@ -128,7 +129,7 @@ Design direction: use the familiar visual conventions of each app, restrained co
 - [x] **COMIC-19** Test original CBZ fixtures and hostile/corrupt archives; test clear refusal of CBR.
 - [x] **COMIC-20** Verify Clara-sized comic reading, scaling, navigation and reopen in simulator.
 
-## PR 2 · arXiv
+## PR 3 · arXiv
 
 - [ ] **ARXIV-01** Separate title, authors and metadata visually.
 - [ ] **ARXIV-02** Add saved searches and followed subjects.
@@ -136,7 +137,7 @@ Design direction: use the familiar visual conventions of each app, restrained co
 - [ ] **ARXIV-04** Validate long HTML, formulas, figures and tables.
 - [ ] **ARXIV-05** Retain saved reading through reopen and failed figure fetch.
 
-## PR 2 · Audiobook Studio
+## PR 3 · Audiobook Studio
 
 - [ ] **AUDIO-01** Preflight required provider configuration.
 - [ ] **AUDIO-02** Show truthful generation stages and cancellation.
@@ -170,7 +171,7 @@ Design direction: use the familiar visual conventions of each app, restrained co
 - [x] **CALIBRE-05** Retain downloaded book and progress offline.
 - [x] **CALIBRE-06** Distinguish authentication, transport, HTTP and parsing failures.
 
-## PR 2 · AI Command Center
+## PR 3 · AI Command Center
 
 - [ ] **CHAT-01** Guide provider setup and explain provider/model choice.
 - [ ] **CHAT-02** Persist and manage conversations.
@@ -195,7 +196,7 @@ Design direction: use the familiar visual conventions of each app, restrained co
 - [x] **DECK-05** Preserve explicit confirmation for chosen commands.
 - [x] **DECK-06** Unify visible pad count with companion configuration.
 
-## PR 2 · Fanshelf
+## PR 3 · Fanshelf
 
 - [ ] **FANS-01** Show download and reading progress consistently.
 - [ ] **FANS-02** Improve fandom/filter organization.
@@ -204,7 +205,7 @@ Design direction: use the familiar visual conventions of each app, restrained co
 - [ ] **FANS-05** Explain locked or unavailable work.
 - [ ] **FANS-06** Validate EPUB reading with synthetic owned content.
 
-## PR 2 · Fieldbook (APP-3)
+## PR 3 · Fieldbook (APP-3)
 
 - [ ] **FIELD-01** Label starter data truthfully.
 - [ ] **FIELD-02** Import actual field/species packs and search them.
@@ -215,7 +216,7 @@ Design direction: use the familiar visual conventions of each app, restrained co
 - [ ] **FIELD-07** Report save/sync failure instead of fictitious success.
 - [ ] **FIELD-08** Keep local logging independent of service availability.
 
-## PR 2 · Flashcards app
+## PR 3 · Flashcards app
 
 - [ ] **CARDS-01** Replace expected missing collection error with first-use setup.
 - [ ] **CARDS-02** Include an original ready-to-review sample.
@@ -224,7 +225,7 @@ Design direction: use the familiar visual conventions of each app, restrained co
 - [ ] **CARDS-05** Test reveal, grade and restart with imported fixtures.
 - [ ] **CARDS-06** Test Japanese, media and long cards.
 
-## PR 2 · Frame app
+## PR 3 · Frame app
 
 - [ ] **FRAME-01** Expose slideshow mode, interval and ordering controls.
 - [ ] **FRAME-02** Show album, date and count clearly.
@@ -250,7 +251,7 @@ Design direction: use the familiar visual conventions of each app, restrained co
 - [x] **GRIM-05** Explain unavailable source categories.
 - [x] **GRIM-06** Test realistic six-person party and initiative persistence.
 
-## PR 2 · Gutenbird
+## PR 3 · Gutenbird
 
 - [ ] **GUTEN-01** Remove catalog boilerplate from summaries.
 - [ ] **GUTEN-02** Clarify edition and language choices.
@@ -259,7 +260,7 @@ Design direction: use the familiar visual conventions of each app, restrained co
 - [ ] **GUTEN-05** Reuse shared provider setup.
 - [ ] **GUTEN-06** Verify fixture download, reading and offline reopen.
 
-## PR 2 · Habits
+## PR 3 · Habits
 
 - [ ] **HABIT-01** Make Add habit prominent on empty Today.
 - [ ] **HABIT-02** Clarify check and skip hierarchy.
@@ -277,7 +278,7 @@ Design direction: use the familiar visual conventions of each app, restrained co
 - [x] **HN-05** Handle unavailable links and long titles.
 - [x] **HN-06** Keep story and discussion navigation distinct.
 
-## PR 2 · Home Panel
+## PR 3 · Home Panel
 
 - [ ] **HOME-01** Guide server discovery and connection setup.
 - [ ] **HOME-02** Show online/stale/last-updated states.
@@ -287,7 +288,7 @@ Design direction: use the familiar visual conventions of each app, restrained co
 - [ ] **HOME-06** Provide an optional wall-panel mode.
 - [ ] **HOME-07** Validate against local service fixtures.
 
-## PR 2 · Inkling
+## PR 3 · Inkling
 
 - [ ] **INK-01** Expand audited answer and guess vocabulary.
 - [ ] **INK-02** Show uppercase letters with redundant state patterns.
@@ -297,7 +298,7 @@ Design direction: use the familiar visual conventions of each app, restrained co
 - [ ] **INK-06** Provide archive play.
 - [ ] **INK-07** Verify daily persistence and deterministic fixtures.
 
-## PR 2 · Kitchen Card (APP-2)
+## PR 3 · Kitchen Card (APP-2)
 
 - [ ] **KITCHEN-01** Configure Mealie endpoint and credentials.
 - [ ] **KITCHEN-02** Parse real recipe list and detail responses.
@@ -308,13 +309,14 @@ Design direction: use the familiar visual conventions of each app, restrained co
 - [ ] **KITCHEN-07** Add recipe scaling with readable fractions.
 - [ ] **KITCHEN-08** Add cooking timers and Finished state.
 
-## PR 2 · Lichess
+## PR 3 · Lichess
 
 - [ ] **LICHESS-01** Polish pairing and reconnection guidance.
 - [ ] **LICHESS-02** Show active side, clock and connection status clearly.
 - [ ] **LICHESS-03** Keep legal moves and selected squares legible.
 - [ ] **LICHESS-04** Validate move acknowledgement, stale connection and reconnect.
 - [ ] **LICHESS-05** Test complete fixture match and retained session state.
+- [ ] **LICHESS-06** Notice on the panel when a seek has already been matched.
 
 ## PR 2 · Logic Pack
 
@@ -331,7 +333,7 @@ Design direction: use the familiar visual conventions of each app, restrained co
 - [x] **MAGNET-03** Provide resettable observation count.
 - [x] **MAGNET-04** Test controlled hall-sensor events.
 
-## PR 2 · Morse
+## PR 3 · Morse
 
 - [ ] **MORSE-01** Expose speed, duration and repeat clearly.
 - [ ] **MORSE-02** Keep Stop reachable.
@@ -340,7 +342,7 @@ Design direction: use the familiar visual conventions of each app, restrained co
 - [ ] **MORSE-05** Add visible learning mode and letter reference.
 - [ ] **MORSE-06** Prepare hardware timing checks.
 
-## PR 2 · Music Stand (APP-4)
+## PR 3 · Music Stand (APP-4)
 
 - [ ] **MUSIC-01** Replace text placeholders with actual score pages.
 - [ ] **MUSIC-02** Render overlapping half-page crops correctly.
@@ -350,7 +352,7 @@ Design direction: use the familiar visual conventions of each app, restrained co
 - [ ] **MUSIC-06** Support reachable physical/page-button turns.
 - [ ] **MUSIC-07** Read host-prepared scores and report import failures.
 
-## PR 2 · Needles
+## PR 3 · Needles
 
 - [ ] **NEEDLES-01** Provide projects and named sections.
 - [ ] **NEEDLES-02** Emphasize current row count.
@@ -396,7 +398,7 @@ Design direction: use the familiar visual conventions of each app, restrained co
 - [x] **PARLOR-04** Complete game/resume checks for all four rulesets.
 - [x] **PARLOR-05** Keep unavailable board sizes honest until navigable.
 
-## PR 2 · Parser
+## PR 3 · Parser
 
 - [ ] **PARSER-01** Include an original tutorial story.
 - [ ] **PARSER-02** Offer useful command suggestions.
@@ -405,7 +407,7 @@ Design direction: use the familiar visual conventions of each app, restrained co
 - [ ] **PARSER-05** Run representative story fixtures.
 - [ ] **PARSER-06** Paginate long transcript and restore saved play.
 
-## PR 2 · Post
+## PR 3 · Post
 
 - [ ] **POST-01** Paginate inbox and letters.
 - [ ] **POST-02** Persist interrupted drafts.
@@ -414,7 +416,7 @@ Design direction: use the familiar visual conventions of each app, restrained co
 - [ ] **POST-05** Retry with duplicate protection.
 - [ ] **POST-06** Verify delivery/retry against a local mock.
 
-## PR 2 · Pub Quiz
+## PR 3 · Pub Quiz
 
 - [ ] **QUIZ-01** Allow player names and count.
 - [ ] **QUIZ-02** Provide categories and difficulty.
@@ -423,7 +425,7 @@ Design direction: use the familiar visual conventions of each app, restrained co
 - [ ] **QUIZ-05** Export a scorecard.
 - [ ] **QUIZ-06** Test full rounds, repeats and offline refreshed packs.
 
-## PR 2 · Read Later (APP-5/6)
+## PR 3 · Read Later (APP-5/6)
 
 - [ ] **LATER-01** Persist fetched full article bodies.
 - [ ] **LATER-02** Implement acknowledged durable archive/star/read outbox.
@@ -468,7 +470,7 @@ Design direction: use the familiar visual conventions of each app, restrained co
 - [x] **SUDOKU-06** Make assisted checking optional.
 - [x] **SUDOKU-07** Show a clear completion state.
 
-## PR 2 · Sync app
+## PR 3 · Sync app
 
 - [ ] **SYNCAPP-01** Guide folder choice through pairing and first verified sync.
 - [ ] **SYNCAPP-02** Show last success, bytes remaining and peer availability.
@@ -493,7 +495,7 @@ Design direction: use the familiar visual conventions of each app, restrained co
 - [x] **TODO-05** Export tasks.
 - [x] **TODO-06** Test long text, tags and measured capacity.
 
-## PR 2 · Vault (APP-6)
+## PR 3 · Vault (APP-6)
 
 - [ ] **VAULT-01** Page library rows without clipped actions.
 - [ ] **VAULT-02** Paginate long notes through final sentence.
@@ -503,7 +505,7 @@ Design direction: use the familiar visual conventions of each app, restrained co
 - [ ] **VAULT-06** Integrate Sync ingestion.
 - [ ] **VAULT-07** Preserve Back, list and reading positions.
 
-## PR 2 · Verses (APP-8)
+## PR 3 · Verses (APP-8)
 
 - [ ] **VERSE-01** Use real injectable calendar date and advance across midnight.
 - [ ] **VERSE-02** Provide complete permitted poems or label excerpts explicitly.
@@ -512,7 +514,7 @@ Design direction: use the familiar visual conventions of each app, restrained co
 - [ ] **VERSE-05** Make favorites usable.
 - [ ] **VERSE-06** Export attributed quote cards.
 
-## PR 2 · Catalog-wide release gates
+## PR 3 · Catalog-wide release gates
 
 - [ ] **APPQA-01** Use one dominant task action with stable secondary controls.
 - [ ] **APPQA-02** Differentiate loading, empty, offline, expired credentials and malformed content.
@@ -528,7 +530,7 @@ Design direction: use the familiar visual conventions of each app, restrained co
 - [ ] **APPQA-12** Regenerate screenshots only from the shipped build.
 - [ ] **APPQA-13** Keep Zotero Reader outside this catalog review.
 
-## PR 3 · Main CLI and companion operation engine
+## PR 4 · Main CLI and companion operation engine
 
 - [ ] **CLI-01** Provide guided interactive entry point for bare kobo.
 - [ ] **CLI-02** Keep plain compact help for noninteractive use.
@@ -569,7 +571,7 @@ Design direction: use the familiar visual conventions of each app, restrained co
 - [ ] **CLI-37** Keep arbitrary commands in explicit advanced controls.
 - [ ] **CLI-38** Avoid required AI/chat, vague slogans and decorative dashboard clutter.
 
-## PR 3 · Deck companion
+## PR 4 · Deck companion
 
 - [ ] **DECKCLI-01** Preserve real pairing when pushing layouts.
 - [ ] **DECKCLI-02** Separate static simulator preview from executable pairing.
@@ -579,7 +581,7 @@ Design direction: use the familiar visual conventions of each app, restrained co
 - [ ] **DECKCLI-06** Test a harmless action and show its acknowledgement.
 - [ ] **DECKCLI-07** Keep per-action confirmation configurable.
 
-## PR 3 · Flashcards companion
+## PR 4 · Flashcards companion
 
 - [ ] **FLASHCLI-01** Replace main CLI refusal stub with the supported helper entry point.
 - [ ] **FLASHCLI-02** Make helper install/version status discoverable.
@@ -591,7 +593,7 @@ Design direction: use the familiar visual conventions of each app, restrained co
 - [ ] **FLASHCLI-08** Expose verify, stage and review-log export consistently.
 - [ ] **FLASHCLI-09** Validate imported content and preserve previous collection on failure.
 
-## PR 3 · Frame companion
+## PR 4 · Frame companion
 
 - [ ] **FRAMECLI-01** Preview multiple photos and crop/pad choices.
 - [ ] **FRAMECLI-02** Perform bounded downsize with visual quality preview.
@@ -601,7 +603,7 @@ Design direction: use the familiar visual conventions of each app, restrained co
 - [ ] **FRAMECLI-06** Retain recoverable previous album.
 - [ ] **FRAMECLI-07** Verify reader availability before saying photos are ready.
 
-## PR 3 · Vault companion
+## PR 4 · Vault companion
 
 - [ ] **VAULTCLI-01** Pick folder and preview included/excluded notes.
 - [ ] **VAULTCLI-02** Preview a long note at reader dimensions.
@@ -611,7 +613,7 @@ Design direction: use the familiar visual conventions of each app, restrained co
 - [ ] **VAULTCLI-06** Explain direction and supported reader-edit export honestly.
 - [ ] **VAULTCLI-07** Enable optional ongoing sync after a successful import.
 
-## PR 3 · Sync companion
+## PR 4 · Sync companion
 
 - [ ] **SYNCCLI-01** Preserve isolated private daemon configuration.
 - [ ] **SYNCCLI-02** Provide explicit test/config root.
@@ -620,7 +622,7 @@ Design direction: use the familiar visual conventions of each app, restrained co
 - [ ] **SYNCCLI-05** Expose last successful sync, pause/resume and conflicts.
 - [ ] **SYNCCLI-06** Keep owner originals protected and directions explicit.
 
-## PR 3 · Needles companion
+## PR 4 · Needles companion
 
 - [ ] **NEEDLECLI-01** Manage required converter instead of demanding manual toolchain setup.
 - [ ] **NEEDLECLI-02** Preview extracted instructions against source.
@@ -629,21 +631,21 @@ Design direction: use the familiar visual conventions of each app, restrained co
 - [ ] **NEEDLECLI-05** Use the same prepare/preview/send flow for PDF, Markdown and text.
 - [ ] **NEEDLECLI-06** Support simulator and output-only targets.
 
-## PR 3 · Nonograms companion
+## PR 4 · Nonograms companion
 
 - [ ] **NONOCLI-01** Preview resulting puzzle at each supported size.
 - [ ] **NONOCLI-02** Validate solvability and difficulty before transfer.
 - [ ] **NONOCLI-03** Support named imports and multiple puzzles.
 - [ ] **NONOCLI-04** Support simulator and reader targets consistently.
 
-## PR 3 · Parser companion
+## PR 4 · Parser companion
 
 - [ ] **PARSERCLI-01** Share structural validation with interpreter.
 - [ ] **PARSERCLI-02** Distinguish recognized format from playable validated story.
 - [ ] **PARSERCLI-03** Show title, format and compatibility.
 - [ ] **PARSERCLI-04** Support shelf choice, duplicates and simulator transfer.
 
-## PR 3 · Paperterm companion
+## PR 4 · Paperterm companion
 
 - [ ] **STREAMCLI-01** Guide pairing through named reader choice.
 - [ ] **STREAMCLI-02** Offer known terminal/task presets and connection test.
@@ -651,7 +653,7 @@ Design direction: use the familiar visual conventions of each app, restrained co
 - [ ] **STREAMCLI-04** Provide obvious Stop and computer-awake explanation.
 - [ ] **STREAMCLI-05** Keep arbitrary terminal command entry advanced.
 
-## PR 3 · Sidekick companion
+## PR 4 · Sidekick companion
 
 - [ ] **SIDECLI-01** Unify helper install/start/status/stop in companion.
 - [ ] **SIDECLI-02** Show and select agent integrations before configuration.
@@ -660,7 +662,7 @@ Design direction: use the familiar visual conventions of each app, restrained co
 - [ ] **SIDECLI-05** Return success from help.
 - [ ] **SIDECLI-06** Provide self-contained sample mode.
 
-## PR 3 · Provider connections
+## PR 4 · Provider connections
 
 - [ ] **SERVICECLI-01** Fix secret/trust help exit status.
 - [ ] **SERVICECLI-02** Provide per-app Connect service form.
@@ -671,7 +673,7 @@ Design direction: use the familiar visual conventions of each app, restrained co
 - [ ] **SERVICECLI-07** Explain certificate errors and explicit trust installation.
 - [ ] **SERVICECLI-08** Avoid secret input in shell history.
 
-## PR 3 · Missing companion workflows
+## PR 4 · Missing companion workflows
 
 - [ ] **MISSINGCLI-01** Implement scores import/push with real score conversion.
 - [ ] **MISSINGCLI-02** Implement Fieldbook pack import and checklist export.
@@ -679,7 +681,7 @@ Design direction: use the familiar visual conventions of each app, restrained co
 - [ ] **MISSINGCLI-04** Generate setup instructions and command references from shared capabilities.
 - [ ] **MISSINGCLI-05** Remove obsolete commands and false availability claims.
 
-## PR 3 · Owner experience and final validation
+## PR 4 · Owner experience and final validation
 
 - [ ] **OWNERQA-01** Test photo first-use flow without command typing.
 - [ ] **OWNERQA-02** Test card preview/import/review-log flow.

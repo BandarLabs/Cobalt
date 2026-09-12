@@ -953,7 +953,7 @@
   },
   {
     "id": "ARXIV-01",
-    "pr": 2,
+    "pr": 3,
     "group": "arXiv",
     "task": "Separate title, authors and metadata visually",
     "status": "todo",
@@ -961,7 +961,7 @@
   },
   {
     "id": "ARXIV-02",
-    "pr": 2,
+    "pr": 3,
     "group": "arXiv",
     "task": "Add saved searches and followed subjects",
     "status": "todo",
@@ -969,7 +969,7 @@
   },
   {
     "id": "ARXIV-03",
-    "pr": 2,
+    "pr": 3,
     "group": "arXiv",
     "task": "Show downloading, available offline and reading progress",
     "status": "todo",
@@ -977,7 +977,7 @@
   },
   {
     "id": "ARXIV-04",
-    "pr": 2,
+    "pr": 3,
     "group": "arXiv",
     "task": "Validate long HTML, formulas, figures and tables",
     "status": "todo",
@@ -985,7 +985,7 @@
   },
   {
     "id": "ARXIV-05",
-    "pr": 2,
+    "pr": 3,
     "group": "arXiv",
     "task": "Retain saved reading through reopen and failed figure fetch",
     "status": "todo",
@@ -993,7 +993,7 @@
   },
   {
     "id": "AUDIO-01",
-    "pr": 2,
+    "pr": 3,
     "group": "Audiobook Studio",
     "task": "Preflight required provider configuration",
     "status": "todo",
@@ -1001,7 +1001,7 @@
   },
   {
     "id": "AUDIO-02",
-    "pr": 2,
+    "pr": 3,
     "group": "Audiobook Studio",
     "task": "Show truthful generation stages and cancellation",
     "status": "todo",
@@ -1009,7 +1009,7 @@
   },
   {
     "id": "AUDIO-03",
-    "pr": 2,
+    "pr": 3,
     "group": "Audiobook Studio",
     "task": "Checkpoint partial generation and support explicit retry",
     "status": "todo",
@@ -1017,7 +1017,7 @@
   },
   {
     "id": "AUDIO-04",
-    "pr": 2,
+    "pr": 3,
     "group": "Audiobook Studio",
     "task": "Provide a free original playable sample",
     "status": "todo",
@@ -1025,7 +1025,7 @@
   },
   {
     "id": "AUDIO-05",
-    "pr": 2,
+    "pr": 3,
     "group": "Audiobook Studio",
     "task": "Unify library and now-playing controls",
     "status": "todo",
@@ -1033,7 +1033,7 @@
   },
   {
     "id": "AUDIO-06",
-    "pr": 2,
+    "pr": 3,
     "group": "Audiobook Studio",
     "task": "Map missing-secret and partial failures to useful recovery",
     "status": "todo",
@@ -1201,7 +1201,7 @@
   },
   {
     "id": "CHAT-01",
-    "pr": 2,
+    "pr": 3,
     "group": "AI Command Center",
     "task": "Guide provider setup and explain provider/model choice",
     "status": "todo",
@@ -1209,7 +1209,7 @@
   },
   {
     "id": "CHAT-02",
-    "pr": 2,
+    "pr": 3,
     "group": "AI Command Center",
     "task": "Persist and manage conversations",
     "status": "todo",
@@ -1217,7 +1217,7 @@
   },
   {
     "id": "CHAT-03",
-    "pr": 2,
+    "pr": 3,
     "group": "AI Command Center",
     "task": "Export conversations",
     "status": "todo",
@@ -1225,7 +1225,7 @@
   },
   {
     "id": "CHAT-04",
-    "pr": 2,
+    "pr": 3,
     "group": "AI Command Center",
     "task": "Support explicit retry and cancel",
     "status": "todo",
@@ -1233,7 +1233,7 @@
   },
   {
     "id": "CHAT-05",
-    "pr": 2,
+    "pr": 3,
     "group": "AI Command Center",
     "task": "Paginate long replies and test provider-specific failures with fixtures",
     "status": "todo",
@@ -1356,7 +1356,7 @@
   },
   {
     "id": "FANS-01",
-    "pr": 2,
+    "pr": 3,
     "group": "Fanshelf",
     "task": "Show download and reading progress consistently",
     "status": "todo",
@@ -1364,7 +1364,7 @@
   },
   {
     "id": "FANS-02",
-    "pr": 2,
+    "pr": 3,
     "group": "Fanshelf",
     "task": "Improve fandom/filter organization",
     "status": "todo",
@@ -1372,7 +1372,7 @@
   },
   {
     "id": "FANS-03",
-    "pr": 2,
+    "pr": 3,
     "group": "Fanshelf",
     "task": "Provide bulk shelf management",
     "status": "todo",
@@ -1380,7 +1380,7 @@
   },
   {
     "id": "FANS-04",
-    "pr": 2,
+    "pr": 3,
     "group": "Fanshelf",
     "task": "Distinguish WIP, unread updates and manual update state",
     "status": "todo",
@@ -1388,7 +1388,7 @@
   },
   {
     "id": "FANS-05",
-    "pr": 2,
+    "pr": 3,
     "group": "Fanshelf",
     "task": "Explain locked or unavailable work",
     "status": "todo",
@@ -1396,7 +1396,7 @@
   },
   {
     "id": "FANS-06",
-    "pr": 2,
+    "pr": 3,
     "group": "Fanshelf",
     "task": "Validate EPUB reading with synthetic owned content",
     "status": "todo",
@@ -1404,7 +1404,7 @@
   },
   {
     "id": "FIELD-01",
-    "pr": 2,
+    "pr": 3,
     "group": "Fieldbook (APP-3)",
     "task": "Label starter data truthfully",
     "status": "todo",
@@ -1412,7 +1412,7 @@
   },
   {
     "id": "FIELD-02",
-    "pr": 2,
+    "pr": 3,
     "group": "Fieldbook (APP-3)",
     "task": "Import actual field/species packs and search them",
     "status": "todo",
@@ -1420,7 +1420,7 @@
   },
   {
     "id": "FIELD-03",
-    "pr": 2,
+    "pr": 3,
     "group": "Fieldbook (APP-3)",
     "task": "Record outing, location, date and time with sightings",
     "status": "todo",
@@ -1428,7 +1428,7 @@
   },
   {
     "id": "FIELD-04",
-    "pr": 2,
+    "pr": 3,
     "group": "Fieldbook (APP-3)",
     "task": "Edit, delete and undo sightings",
     "status": "todo",
@@ -1436,7 +1436,7 @@
   },
   {
     "id": "FIELD-05",
-    "pr": 2,
+    "pr": 3,
     "group": "Fieldbook (APP-3)",
     "task": "Show per-outing totals",
     "status": "todo",
@@ -1444,7 +1444,7 @@
   },
   {
     "id": "FIELD-06",
-    "pr": 2,
+    "pr": 3,
     "group": "Fieldbook (APP-3)",
     "task": "Produce a real downloadable checklist",
     "status": "todo",
@@ -1452,7 +1452,7 @@
   },
   {
     "id": "FIELD-07",
-    "pr": 2,
+    "pr": 3,
     "group": "Fieldbook (APP-3)",
     "task": "Report save/sync failure instead of fictitious success",
     "status": "todo",
@@ -1460,7 +1460,7 @@
   },
   {
     "id": "FIELD-08",
-    "pr": 2,
+    "pr": 3,
     "group": "Fieldbook (APP-3)",
     "task": "Keep local logging independent of service availability",
     "status": "todo",
@@ -1468,7 +1468,7 @@
   },
   {
     "id": "CARDS-01",
-    "pr": 2,
+    "pr": 3,
     "group": "Flashcards app",
     "task": "Replace expected missing collection error with first-use setup",
     "status": "todo",
@@ -1476,7 +1476,7 @@
   },
   {
     "id": "CARDS-02",
-    "pr": 2,
+    "pr": 3,
     "group": "Flashcards app",
     "task": "Include an original ready-to-review sample",
     "status": "todo",
@@ -1484,7 +1484,7 @@
   },
   {
     "id": "CARDS-03",
-    "pr": 2,
+    "pr": 3,
     "group": "Flashcards app",
     "task": "Show import status and guided companion handoff",
     "status": "todo",
@@ -1492,7 +1492,7 @@
   },
   {
     "id": "CARDS-04",
-    "pr": 2,
+    "pr": 3,
     "group": "Flashcards app",
     "task": "Explain local grading and review-log reconciliation accurately",
     "status": "todo",
@@ -1500,7 +1500,7 @@
   },
   {
     "id": "CARDS-05",
-    "pr": 2,
+    "pr": 3,
     "group": "Flashcards app",
     "task": "Test reveal, grade and restart with imported fixtures",
     "status": "todo",
@@ -1508,7 +1508,7 @@
   },
   {
     "id": "CARDS-06",
-    "pr": 2,
+    "pr": 3,
     "group": "Flashcards app",
     "task": "Test Japanese, media and long cards",
     "status": "todo",
@@ -1516,7 +1516,7 @@
   },
   {
     "id": "FRAME-01",
-    "pr": 2,
+    "pr": 3,
     "group": "Frame app",
     "task": "Expose slideshow mode, interval and ordering controls",
     "status": "todo",
@@ -1524,7 +1524,7 @@
   },
   {
     "id": "FRAME-02",
-    "pr": 2,
+    "pr": 3,
     "group": "Frame app",
     "task": "Show album, date and count clearly",
     "status": "todo",
@@ -1532,7 +1532,7 @@
   },
   {
     "id": "FRAME-03",
-    "pr": 2,
+    "pr": 3,
     "group": "Frame app",
     "task": "Provide an original multi-photo demo",
     "status": "todo",
@@ -1540,7 +1540,7 @@
   },
   {
     "id": "FRAME-04",
-    "pr": 2,
+    "pr": 3,
     "group": "Frame app",
     "task": "Show verified transfer status",
     "status": "todo",
@@ -1548,7 +1548,7 @@
   },
   {
     "id": "FRAME-05",
-    "pr": 2,
+    "pr": 3,
     "group": "Frame app",
     "task": "Integrate shared fit/crop behavior",
     "status": "todo",
@@ -1556,7 +1556,7 @@
   },
   {
     "id": "FRAME-06",
-    "pr": 2,
+    "pr": 3,
     "group": "Frame app",
     "task": "Prepare sleep ownership and energy validation",
     "status": "todo",
@@ -1677,7 +1677,7 @@
   },
   {
     "id": "GUTEN-01",
-    "pr": 2,
+    "pr": 3,
     "group": "Gutenbird",
     "task": "Remove catalog boilerplate from summaries",
     "status": "todo",
@@ -1685,7 +1685,7 @@
   },
   {
     "id": "GUTEN-02",
-    "pr": 2,
+    "pr": 3,
     "group": "Gutenbird",
     "task": "Clarify edition and language choices",
     "status": "todo",
@@ -1693,7 +1693,7 @@
   },
   {
     "id": "GUTEN-03",
-    "pr": 2,
+    "pr": 3,
     "group": "Gutenbird",
     "task": "Improve cover fallbacks",
     "status": "todo",
@@ -1701,7 +1701,7 @@
   },
   {
     "id": "GUTEN-04",
-    "pr": 2,
+    "pr": 3,
     "group": "Gutenbird",
     "task": "Persist shelf reading progress",
     "status": "todo",
@@ -1709,7 +1709,7 @@
   },
   {
     "id": "GUTEN-05",
-    "pr": 2,
+    "pr": 3,
     "group": "Gutenbird",
     "task": "Reuse shared provider setup",
     "status": "todo",
@@ -1717,7 +1717,7 @@
   },
   {
     "id": "GUTEN-06",
-    "pr": 2,
+    "pr": 3,
     "group": "Gutenbird",
     "task": "Verify fixture download, reading and offline reopen",
     "status": "todo",
@@ -1725,7 +1725,7 @@
   },
   {
     "id": "HABIT-01",
-    "pr": 2,
+    "pr": 3,
     "group": "Habits",
     "task": "Make Add habit prominent on empty Today",
     "status": "todo",
@@ -1733,7 +1733,7 @@
   },
   {
     "id": "HABIT-02",
-    "pr": 2,
+    "pr": 3,
     "group": "Habits",
     "task": "Clarify check and skip hierarchy",
     "status": "todo",
@@ -1741,7 +1741,7 @@
   },
   {
     "id": "HABIT-03",
-    "pr": 2,
+    "pr": 3,
     "group": "Habits",
     "task": "Provide easy habit editing",
     "status": "todo",
@@ -1749,7 +1749,7 @@
   },
   {
     "id": "HABIT-04",
-    "pr": 2,
+    "pr": 3,
     "group": "Habits",
     "task": "Explain missed and skipped day rules",
     "status": "todo",
@@ -1757,7 +1757,7 @@
   },
   {
     "id": "HABIT-05",
-    "pr": 2,
+    "pr": 3,
     "group": "Habits",
     "task": "Add useful weekly summary",
     "status": "todo",
@@ -1765,7 +1765,7 @@
   },
   {
     "id": "HABIT-06",
-    "pr": 2,
+    "pr": 3,
     "group": "Habits",
     "task": "Provide owner export and backup",
     "status": "todo",
@@ -1837,7 +1837,7 @@
   },
   {
     "id": "HOME-01",
-    "pr": 2,
+    "pr": 3,
     "group": "Home Panel",
     "task": "Guide server discovery and connection setup",
     "status": "todo",
@@ -1845,7 +1845,7 @@
   },
   {
     "id": "HOME-02",
-    "pr": 2,
+    "pr": 3,
     "group": "Home Panel",
     "task": "Show online/stale/last-updated states",
     "status": "todo",
@@ -1853,7 +1853,7 @@
   },
   {
     "id": "HOME-03",
-    "pr": 2,
+    "pr": 3,
     "group": "Home Panel",
     "task": "Acknowledge each tile action and failure",
     "status": "todo",
@@ -1861,7 +1861,7 @@
   },
   {
     "id": "HOME-04",
-    "pr": 2,
+    "pr": 3,
     "group": "Home Panel",
     "task": "Provide compact tile editing",
     "status": "todo",
@@ -1869,7 +1869,7 @@
   },
   {
     "id": "HOME-05",
-    "pr": 2,
+    "pr": 3,
     "group": "Home Panel",
     "task": "Add usable climate controls",
     "status": "todo",
@@ -1877,7 +1877,7 @@
   },
   {
     "id": "HOME-06",
-    "pr": 2,
+    "pr": 3,
     "group": "Home Panel",
     "task": "Provide an optional wall-panel mode",
     "status": "todo",
@@ -1885,7 +1885,7 @@
   },
   {
     "id": "HOME-07",
-    "pr": 2,
+    "pr": 3,
     "group": "Home Panel",
     "task": "Validate against local service fixtures",
     "status": "todo",
@@ -1893,7 +1893,7 @@
   },
   {
     "id": "INK-01",
-    "pr": 2,
+    "pr": 3,
     "group": "Inkling",
     "task": "Expand audited answer and guess vocabulary",
     "status": "todo",
@@ -1901,7 +1901,7 @@
   },
   {
     "id": "INK-02",
-    "pr": 2,
+    "pr": 3,
     "group": "Inkling",
     "task": "Show uppercase letters with redundant state patterns",
     "status": "todo",
@@ -1909,7 +1909,7 @@
   },
   {
     "id": "INK-03",
-    "pr": 2,
+    "pr": 3,
     "group": "Inkling",
     "task": "Keep keyboard knowledge visible",
     "status": "todo",
@@ -1917,7 +1917,7 @@
   },
   {
     "id": "INK-04",
-    "pr": 2,
+    "pr": 3,
     "group": "Inkling",
     "task": "Use real date instead of technical identifiers",
     "status": "todo",
@@ -1925,7 +1925,7 @@
   },
   {
     "id": "INK-05",
-    "pr": 2,
+    "pr": 3,
     "group": "Inkling",
     "task": "Add result export and distribution statistics",
     "status": "todo",
@@ -1933,7 +1933,7 @@
   },
   {
     "id": "INK-06",
-    "pr": 2,
+    "pr": 3,
     "group": "Inkling",
     "task": "Provide archive play",
     "status": "todo",
@@ -1941,7 +1941,7 @@
   },
   {
     "id": "INK-07",
-    "pr": 2,
+    "pr": 3,
     "group": "Inkling",
     "task": "Verify daily persistence and deterministic fixtures",
     "status": "todo",
@@ -1949,7 +1949,7 @@
   },
   {
     "id": "KITCHEN-01",
-    "pr": 2,
+    "pr": 3,
     "group": "Kitchen Card (APP-2)",
     "task": "Configure Mealie endpoint and credentials",
     "status": "todo",
@@ -1957,7 +1957,7 @@
   },
   {
     "id": "KITCHEN-02",
-    "pr": 2,
+    "pr": 3,
     "group": "Kitchen Card (APP-2)",
     "task": "Parse real recipe list and detail responses",
     "status": "todo",
@@ -1965,7 +1965,7 @@
   },
   {
     "id": "KITCHEN-03",
-    "pr": 2,
+    "pr": 3,
     "group": "Kitchen Card (APP-2)",
     "task": "Preserve ingredient quantities and cooking steps",
     "status": "todo",
@@ -1973,7 +1973,7 @@
   },
   {
     "id": "KITCHEN-04",
-    "pr": 2,
+    "pr": 3,
     "group": "Kitchen Card (APP-2)",
     "task": "Persist imported recipes through restart",
     "status": "todo",
@@ -1981,7 +1981,7 @@
   },
   {
     "id": "KITCHEN-05",
-    "pr": 2,
+    "pr": 3,
     "group": "Kitchen Card (APP-2)",
     "task": "Handle save and connection failures honestly",
     "status": "todo",
@@ -1989,7 +1989,7 @@
   },
   {
     "id": "KITCHEN-06",
-    "pr": 2,
+    "pr": 3,
     "group": "Kitchen Card (APP-2)",
     "task": "Add ingredient check-off",
     "status": "todo",
@@ -1997,7 +1997,7 @@
   },
   {
     "id": "KITCHEN-07",
-    "pr": 2,
+    "pr": 3,
     "group": "Kitchen Card (APP-2)",
     "task": "Add recipe scaling with readable fractions",
     "status": "todo",
@@ -2005,7 +2005,7 @@
   },
   {
     "id": "KITCHEN-08",
-    "pr": 2,
+    "pr": 3,
     "group": "Kitchen Card (APP-2)",
     "task": "Add cooking timers and Finished state",
     "status": "todo",
@@ -2013,7 +2013,7 @@
   },
   {
     "id": "LICHESS-01",
-    "pr": 2,
+    "pr": 3,
     "group": "Lichess",
     "task": "Polish pairing and reconnection guidance",
     "status": "todo",
@@ -2021,7 +2021,7 @@
   },
   {
     "id": "LICHESS-02",
-    "pr": 2,
+    "pr": 3,
     "group": "Lichess",
     "task": "Show active side, clock and connection status clearly",
     "status": "todo",
@@ -2029,7 +2029,7 @@
   },
   {
     "id": "LICHESS-03",
-    "pr": 2,
+    "pr": 3,
     "group": "Lichess",
     "task": "Keep legal moves and selected squares legible",
     "status": "todo",
@@ -2037,7 +2037,7 @@
   },
   {
     "id": "LICHESS-04",
-    "pr": 2,
+    "pr": 3,
     "group": "Lichess",
     "task": "Validate move acknowledgement, stale connection and reconnect",
     "status": "todo",
@@ -2045,9 +2045,17 @@
   },
   {
     "id": "LICHESS-05",
-    "pr": 2,
+    "pr": 3,
     "group": "Lichess",
     "task": "Test complete fixture match and retained session state",
+    "status": "todo",
+    "evidence": []
+  },
+  {
+    "id": "LICHESS-06",
+    "pr": 3,
+    "group": "Lichess",
+    "task": "Notice on the panel when a seek has already been matched",
     "status": "todo",
     "evidence": []
   },
@@ -2147,7 +2155,7 @@
   },
   {
     "id": "MORSE-01",
-    "pr": 2,
+    "pr": 3,
     "group": "Morse",
     "task": "Expose speed, duration and repeat clearly",
     "status": "todo",
@@ -2155,7 +2163,7 @@
   },
   {
     "id": "MORSE-02",
-    "pr": 2,
+    "pr": 3,
     "group": "Morse",
     "task": "Keep Stop reachable",
     "status": "todo",
@@ -2163,7 +2171,7 @@
   },
   {
     "id": "MORSE-03",
-    "pr": 2,
+    "pr": 3,
     "group": "Morse",
     "task": "Explain unsupported characters",
     "status": "todo",
@@ -2171,7 +2179,7 @@
   },
   {
     "id": "MORSE-04",
-    "pr": 2,
+    "pr": 3,
     "group": "Morse",
     "task": "Restore previous light setting",
     "status": "todo",
@@ -2179,7 +2187,7 @@
   },
   {
     "id": "MORSE-05",
-    "pr": 2,
+    "pr": 3,
     "group": "Morse",
     "task": "Add visible learning mode and letter reference",
     "status": "todo",
@@ -2187,7 +2195,7 @@
   },
   {
     "id": "MORSE-06",
-    "pr": 2,
+    "pr": 3,
     "group": "Morse",
     "task": "Prepare hardware timing checks",
     "status": "todo",
@@ -2195,7 +2203,7 @@
   },
   {
     "id": "MUSIC-01",
-    "pr": 2,
+    "pr": 3,
     "group": "Music Stand (APP-4)",
     "task": "Replace text placeholders with actual score pages",
     "status": "todo",
@@ -2203,7 +2211,7 @@
   },
   {
     "id": "MUSIC-02",
-    "pr": 2,
+    "pr": 3,
     "group": "Music Stand (APP-4)",
     "task": "Render overlapping half-page crops correctly",
     "status": "todo",
@@ -2211,7 +2219,7 @@
   },
   {
     "id": "MUSIC-03",
-    "pr": 2,
+    "pr": 3,
     "group": "Music Stand (APP-4)",
     "task": "Create and edit setlists and rehearsal order",
     "status": "todo",
@@ -2219,7 +2227,7 @@
   },
   {
     "id": "MUSIC-04",
-    "pr": 2,
+    "pr": 3,
     "group": "Music Stand (APP-4)",
     "task": "Persist per-score page, crop and marks",
     "status": "todo",
@@ -2227,7 +2235,7 @@
   },
   {
     "id": "MUSIC-05",
-    "pr": 2,
+    "pr": 3,
     "group": "Music Stand (APP-4)",
     "task": "Provide usable zoom and full-screen controls",
     "status": "todo",
@@ -2235,7 +2243,7 @@
   },
   {
     "id": "MUSIC-06",
-    "pr": 2,
+    "pr": 3,
     "group": "Music Stand (APP-4)",
     "task": "Support reachable physical/page-button turns",
     "status": "todo",
@@ -2243,7 +2251,7 @@
   },
   {
     "id": "MUSIC-07",
-    "pr": 2,
+    "pr": 3,
     "group": "Music Stand (APP-4)",
     "task": "Read host-prepared scores and report import failures",
     "status": "todo",
@@ -2251,7 +2259,7 @@
   },
   {
     "id": "NEEDLES-01",
-    "pr": 2,
+    "pr": 3,
     "group": "Needles",
     "task": "Provide projects and named sections",
     "status": "todo",
@@ -2259,7 +2267,7 @@
   },
   {
     "id": "NEEDLES-02",
-    "pr": 2,
+    "pr": 3,
     "group": "Needles",
     "task": "Emphasize current row count",
     "status": "todo",
@@ -2267,7 +2275,7 @@
   },
   {
     "id": "NEEDLES-03",
-    "pr": 2,
+    "pr": 3,
     "group": "Needles",
     "task": "Keep Undo adjacent to increment",
     "status": "todo",
@@ -2275,7 +2283,7 @@
   },
   {
     "id": "NEEDLES-04",
-    "pr": 2,
+    "pr": 3,
     "group": "Needles",
     "task": "Show pattern location and repeat progress",
     "status": "todo",
@@ -2283,7 +2291,7 @@
   },
   {
     "id": "NEEDLES-05",
-    "pr": 2,
+    "pr": 3,
     "group": "Needles",
     "task": "Read actual imported pattern sections",
     "status": "todo",
@@ -2291,7 +2299,7 @@
   },
   {
     "id": "NEEDLES-06",
-    "pr": 2,
+    "pr": 3,
     "group": "Needles",
     "task": "Support charts through shared image/document reading",
     "status": "todo",
@@ -2580,7 +2588,7 @@
   },
   {
     "id": "PARSER-01",
-    "pr": 2,
+    "pr": 3,
     "group": "Parser",
     "task": "Include an original tutorial story",
     "status": "todo",
@@ -2588,7 +2596,7 @@
   },
   {
     "id": "PARSER-02",
-    "pr": 2,
+    "pr": 3,
     "group": "Parser",
     "task": "Offer useful command suggestions",
     "status": "todo",
@@ -2596,7 +2604,7 @@
   },
   {
     "id": "PARSER-03",
-    "pr": 2,
+    "pr": 3,
     "group": "Parser",
     "task": "Clarify import and save slots",
     "status": "todo",
@@ -2604,7 +2612,7 @@
   },
   {
     "id": "PARSER-04",
-    "pr": 2,
+    "pr": 3,
     "group": "Parser",
     "task": "Complete interpreter conformance fixtures",
     "status": "todo",
@@ -2612,7 +2620,7 @@
   },
   {
     "id": "PARSER-05",
-    "pr": 2,
+    "pr": 3,
     "group": "Parser",
     "task": "Run representative story fixtures",
     "status": "todo",
@@ -2620,7 +2628,7 @@
   },
   {
     "id": "PARSER-06",
-    "pr": 2,
+    "pr": 3,
     "group": "Parser",
     "task": "Paginate long transcript and restore saved play",
     "status": "todo",
@@ -2628,7 +2636,7 @@
   },
   {
     "id": "POST-01",
-    "pr": 2,
+    "pr": 3,
     "group": "Post",
     "task": "Paginate inbox and letters",
     "status": "todo",
@@ -2636,7 +2644,7 @@
   },
   {
     "id": "POST-02",
-    "pr": 2,
+    "pr": 3,
     "group": "Post",
     "task": "Persist interrupted drafts",
     "status": "todo",
@@ -2644,7 +2652,7 @@
   },
   {
     "id": "POST-03",
-    "pr": 2,
+    "pr": 3,
     "group": "Post",
     "task": "Distinguish queued, sending, delivered and rejected",
     "status": "todo",
@@ -2652,7 +2660,7 @@
   },
   {
     "id": "POST-04",
-    "pr": 2,
+    "pr": 3,
     "group": "Post",
     "task": "Explain gateway/companion setup",
     "status": "todo",
@@ -2660,7 +2668,7 @@
   },
   {
     "id": "POST-05",
-    "pr": 2,
+    "pr": 3,
     "group": "Post",
     "task": "Retry with duplicate protection",
     "status": "todo",
@@ -2668,7 +2676,7 @@
   },
   {
     "id": "POST-06",
-    "pr": 2,
+    "pr": 3,
     "group": "Post",
     "task": "Verify delivery/retry against a local mock",
     "status": "todo",
@@ -2676,7 +2684,7 @@
   },
   {
     "id": "QUIZ-01",
-    "pr": 2,
+    "pr": 3,
     "group": "Pub Quiz",
     "task": "Allow player names and count",
     "status": "todo",
@@ -2684,7 +2692,7 @@
   },
   {
     "id": "QUIZ-02",
-    "pr": 2,
+    "pr": 3,
     "group": "Pub Quiz",
     "task": "Provide categories and difficulty",
     "status": "todo",
@@ -2692,7 +2700,7 @@
   },
   {
     "id": "QUIZ-03",
-    "pr": 2,
+    "pr": 3,
     "group": "Pub Quiz",
     "task": "Show pack source and freshness",
     "status": "todo",
@@ -2700,7 +2708,7 @@
   },
   {
     "id": "QUIZ-04",
-    "pr": 2,
+    "pr": 3,
     "group": "Pub Quiz",
     "task": "Clarify pass-device and answer-reveal screens",
     "status": "todo",
@@ -2708,7 +2716,7 @@
   },
   {
     "id": "QUIZ-05",
-    "pr": 2,
+    "pr": 3,
     "group": "Pub Quiz",
     "task": "Export a scorecard",
     "status": "todo",
@@ -2716,7 +2724,7 @@
   },
   {
     "id": "QUIZ-06",
-    "pr": 2,
+    "pr": 3,
     "group": "Pub Quiz",
     "task": "Test full rounds, repeats and offline refreshed packs",
     "status": "todo",
@@ -2724,7 +2732,7 @@
   },
   {
     "id": "LATER-01",
-    "pr": 2,
+    "pr": 3,
     "group": "Read Later (APP-5/6)",
     "task": "Persist fetched full article bodies",
     "status": "todo",
@@ -2732,7 +2740,7 @@
   },
   {
     "id": "LATER-02",
-    "pr": 2,
+    "pr": 3,
     "group": "Read Later (APP-5/6)",
     "task": "Implement acknowledged durable archive/star/read outbox",
     "status": "todo",
@@ -2740,7 +2748,7 @@
   },
   {
     "id": "LATER-03",
-    "pr": 2,
+    "pr": 3,
     "group": "Read Later (APP-5/6)",
     "task": "Wire all visible tabs and action controls",
     "status": "todo",
@@ -2748,7 +2756,7 @@
   },
   {
     "id": "LATER-04",
-    "pr": 2,
+    "pr": 3,
     "group": "Read Later (APP-5/6)",
     "task": "Paginate and retain reading position",
     "status": "todo",
@@ -2756,7 +2764,7 @@
   },
   {
     "id": "LATER-05",
-    "pr": 2,
+    "pr": 3,
     "group": "Read Later (APP-5/6)",
     "task": "Show pending/retry/offline state",
     "status": "todo",
@@ -2764,7 +2772,7 @@
   },
   {
     "id": "LATER-06",
-    "pr": 2,
+    "pr": 3,
     "group": "Read Later (APP-5/6)",
     "task": "Verify reconnect, server effects and process restart",
     "status": "todo",
@@ -3023,7 +3031,7 @@
   },
   {
     "id": "SYNCAPP-01",
-    "pr": 2,
+    "pr": 3,
     "group": "Sync app",
     "task": "Guide folder choice through pairing and first verified sync",
     "status": "todo",
@@ -3031,7 +3039,7 @@
   },
   {
     "id": "SYNCAPP-02",
-    "pr": 2,
+    "pr": 3,
     "group": "Sync app",
     "task": "Show last success, bytes remaining and peer availability",
     "status": "todo",
@@ -3039,7 +3047,7 @@
   },
   {
     "id": "SYNCAPP-03",
-    "pr": 2,
+    "pr": 3,
     "group": "Sync app",
     "task": "Show next scheduled window",
     "status": "todo",
@@ -3047,7 +3055,7 @@
   },
   {
     "id": "SYNCAPP-04",
-    "pr": 2,
+    "pr": 3,
     "group": "Sync app",
     "task": "Distinguish raw transfer from app ingestion",
     "status": "todo",
@@ -3055,7 +3063,7 @@
   },
   {
     "id": "SYNCAPP-05",
-    "pr": 2,
+    "pr": 3,
     "group": "Sync app",
     "task": "Integrate Vault and Frame import/index publication",
     "status": "todo",
@@ -3063,7 +3071,7 @@
   },
   {
     "id": "SYNCAPP-06",
-    "pr": 2,
+    "pr": 3,
     "group": "Sync app",
     "task": "Provide pause/resume and conflict/retry states",
     "status": "todo",
@@ -3175,7 +3183,7 @@
   },
   {
     "id": "VAULT-01",
-    "pr": 2,
+    "pr": 3,
     "group": "Vault (APP-6)",
     "task": "Page library rows without clipped actions",
     "status": "todo",
@@ -3183,7 +3191,7 @@
   },
   {
     "id": "VAULT-02",
-    "pr": 2,
+    "pr": 3,
     "group": "Vault (APP-6)",
     "task": "Paginate long notes through final sentence",
     "status": "todo",
@@ -3191,7 +3199,7 @@
   },
   {
     "id": "VAULT-03",
-    "pr": 2,
+    "pr": 3,
     "group": "Vault (APP-6)",
     "task": "Wire tag filtering and deduplicate tags",
     "status": "todo",
@@ -3199,7 +3207,7 @@
   },
   {
     "id": "VAULT-04",
-    "pr": 2,
+    "pr": 3,
     "group": "Vault (APP-6)",
     "task": "Build navigable folder hierarchy",
     "status": "todo",
@@ -3207,7 +3215,7 @@
   },
   {
     "id": "VAULT-05",
-    "pr": 2,
+    "pr": 3,
     "group": "Vault (APP-6)",
     "task": "Replace single packed-index bottleneck with scalable indexed shelf",
     "status": "todo",
@@ -3215,7 +3223,7 @@
   },
   {
     "id": "VAULT-06",
-    "pr": 2,
+    "pr": 3,
     "group": "Vault (APP-6)",
     "task": "Integrate Sync ingestion",
     "status": "todo",
@@ -3223,7 +3231,7 @@
   },
   {
     "id": "VAULT-07",
-    "pr": 2,
+    "pr": 3,
     "group": "Vault (APP-6)",
     "task": "Preserve Back, list and reading positions",
     "status": "todo",
@@ -3231,7 +3239,7 @@
   },
   {
     "id": "VERSE-01",
-    "pr": 2,
+    "pr": 3,
     "group": "Verses (APP-8)",
     "task": "Use real injectable calendar date and advance across midnight",
     "status": "todo",
@@ -3239,7 +3247,7 @@
   },
   {
     "id": "VERSE-02",
-    "pr": 2,
+    "pr": 3,
     "group": "Verses (APP-8)",
     "task": "Provide complete permitted poems or label excerpts explicitly",
     "status": "todo",
@@ -3247,7 +3255,7 @@
   },
   {
     "id": "VERSE-03",
-    "pr": 2,
+    "pr": 3,
     "group": "Verses (APP-8)",
     "task": "Paginate long poems",
     "status": "todo",
@@ -3255,7 +3263,7 @@
   },
   {
     "id": "VERSE-04",
-    "pr": 2,
+    "pr": 3,
     "group": "Verses (APP-8)",
     "task": "Show author and source context",
     "status": "todo",
@@ -3263,7 +3271,7 @@
   },
   {
     "id": "VERSE-05",
-    "pr": 2,
+    "pr": 3,
     "group": "Verses (APP-8)",
     "task": "Make favorites usable",
     "status": "todo",
@@ -3271,7 +3279,7 @@
   },
   {
     "id": "VERSE-06",
-    "pr": 2,
+    "pr": 3,
     "group": "Verses (APP-8)",
     "task": "Export attributed quote cards",
     "status": "todo",
@@ -3279,7 +3287,7 @@
   },
   {
     "id": "APPQA-01",
-    "pr": 2,
+    "pr": 3,
     "group": "Catalog-wide release gates",
     "task": "Use one dominant task action with stable secondary controls",
     "status": "todo",
@@ -3287,7 +3295,7 @@
   },
   {
     "id": "APPQA-02",
-    "pr": 2,
+    "pr": 3,
     "group": "Catalog-wide release gates",
     "task": "Differentiate loading, empty, offline, expired credentials and malformed content",
     "status": "todo",
@@ -3295,7 +3303,7 @@
   },
   {
     "id": "APPQA-03",
-    "pr": 2,
+    "pr": 3,
     "group": "Catalog-wide release gates",
     "task": "Keep cached content usable with honest freshness",
     "status": "todo",
@@ -3303,7 +3311,7 @@
   },
   {
     "id": "APPQA-04",
-    "pr": 2,
+    "pr": 3,
     "group": "Catalog-wide release gates",
     "task": "Show unsaved state before success",
     "status": "todo",
@@ -3311,7 +3319,7 @@
   },
   {
     "id": "APPQA-05",
-    "pr": 2,
+    "pr": 3,
     "group": "Catalog-wide release gates",
     "task": "Audit every visible action for a handler",
     "status": "todo",
@@ -3319,7 +3327,7 @@
   },
   {
     "id": "APPQA-06",
-    "pr": 2,
+    "pr": 3,
     "group": "Catalog-wide release gates",
     "task": "Supply a committed meaningful route for each of the 43 apps",
     "status": "todo",
@@ -3327,7 +3335,7 @@
   },
   {
     "id": "APPQA-07",
-    "pr": 2,
+    "pr": 3,
     "group": "Catalog-wide release gates",
     "task": "Exercise install/sample/own-data/task/offline-reopen for each app",
     "status": "todo",
@@ -3335,7 +3343,7 @@
   },
   {
     "id": "APPQA-08",
-    "pr": 2,
+    "pr": 3,
     "group": "Catalog-wide release gates",
     "task": "Test 0, 1, 20 and 100 items with long Unicode titles",
     "status": "todo",
@@ -3343,7 +3351,7 @@
   },
   {
     "id": "APPQA-09",
-    "pr": 2,
+    "pr": 3,
     "group": "Catalog-wide release gates",
     "task": "Test long bodies, supported fonts and CJK where applicable",
     "status": "todo",
@@ -3351,7 +3359,7 @@
   },
   {
     "id": "APPQA-10",
-    "pr": 2,
+    "pr": 3,
     "group": "Catalog-wide release gates",
     "task": "Test delayed/failed downloads and storage interruption",
     "status": "todo",
@@ -3359,7 +3367,7 @@
   },
   {
     "id": "APPQA-11",
-    "pr": 2,
+    "pr": 3,
     "group": "Catalog-wide release gates",
     "task": "Check every intermediate state under supported profile/scale/orientation",
     "status": "todo",
@@ -3367,7 +3375,7 @@
   },
   {
     "id": "APPQA-12",
-    "pr": 2,
+    "pr": 3,
     "group": "Catalog-wide release gates",
     "task": "Regenerate screenshots only from the shipped build",
     "status": "todo",
@@ -3375,7 +3383,7 @@
   },
   {
     "id": "APPQA-13",
-    "pr": 2,
+    "pr": 3,
     "group": "Catalog-wide release gates",
     "task": "Keep Zotero Reader outside this catalog review",
     "status": "todo",
@@ -3383,7 +3391,7 @@
   },
   {
     "id": "CLI-01",
-    "pr": 3,
+    "pr": 4,
     "group": "Main CLI and companion operation engine",
     "task": "Provide guided interactive entry point for bare kobo",
     "status": "todo",
@@ -3391,7 +3399,7 @@
   },
   {
     "id": "CLI-02",
-    "pr": 3,
+    "pr": 4,
     "group": "Main CLI and companion operation engine",
     "task": "Keep plain compact help for noninteractive use",
     "status": "todo",
@@ -3399,7 +3407,7 @@
   },
   {
     "id": "CLI-03",
-    "pr": 3,
+    "pr": 4,
     "group": "Main CLI and companion operation engine",
     "task": "Separate owner tasks from developer/release commands",
     "status": "todo",
@@ -3407,7 +3415,7 @@
   },
   {
     "id": "CLI-04",
-    "pr": 3,
+    "pr": 4,
     "group": "Main CLI and companion operation engine",
     "task": "Provide a desktop/local companion surface using the same operations",
     "status": "todo",
@@ -3415,7 +3423,7 @@
   },
   {
     "id": "CLI-05",
-    "pr": 3,
+    "pr": 4,
     "group": "Main CLI and companion operation engine",
     "task": "Name readers by stable identity and owner nickname",
     "status": "todo",
@@ -3423,7 +3431,7 @@
   },
   {
     "id": "CLI-06",
-    "pr": 3,
+    "pr": 4,
     "group": "Main CLI and companion operation engine",
     "task": "Select among multiple USB/Wi-Fi readers without first-device fallback",
     "status": "todo",
@@ -3431,7 +3439,7 @@
   },
   {
     "id": "CLI-07",
-    "pr": 3,
+    "pr": 4,
     "group": "Main CLI and companion operation engine",
     "task": "Remember pairing and reconnect after address changes",
     "status": "todo",
@@ -3439,7 +3447,7 @@
   },
   {
     "id": "CLI-08",
-    "pr": 3,
+    "pr": 4,
     "group": "Main CLI and companion operation engine",
     "task": "Preserve verified USB setup, eject, reboot and reconnect steps",
     "status": "todo",
@@ -3447,7 +3455,7 @@
   },
   {
     "id": "CLI-09",
-    "pr": 3,
+    "pr": 4,
     "group": "Main CLI and companion operation engine",
     "task": "Send and open an original sample for first success",
     "status": "todo",
@@ -3455,7 +3463,7 @@
   },
   {
     "id": "CLI-10",
-    "pr": 3,
+    "pr": 4,
     "group": "Main CLI and companion operation engine",
     "task": "Describe installation changes before approval",
     "status": "todo",
@@ -3463,7 +3471,7 @@
   },
   {
     "id": "CLI-11",
-    "pr": 3,
+    "pr": 4,
     "group": "Main CLI and companion operation engine",
     "task": "Provide one app setup card generated from capabilities",
     "status": "todo",
@@ -3471,7 +3479,7 @@
   },
   {
     "id": "CLI-12",
-    "pr": 3,
+    "pr": 4,
     "group": "Main CLI and companion operation engine",
     "task": "Persist completed setup steps",
     "status": "todo",
@@ -3479,7 +3487,7 @@
   },
   {
     "id": "CLI-13",
-    "pr": 3,
+    "pr": 4,
     "group": "Main CLI and companion operation engine",
     "task": "Choose files/folders through picker or explicit CLI path",
     "status": "todo",
@@ -3487,7 +3495,7 @@
   },
   {
     "id": "CLI-14",
-    "pr": 3,
+    "pr": 4,
     "group": "Main CLI and companion operation engine",
     "task": "Detect suitable target apps and resolve ambiguity",
     "status": "todo",
@@ -3495,7 +3503,7 @@
   },
   {
     "id": "CLI-15",
-    "pr": 3,
+    "pr": 4,
     "group": "Main CLI and companion operation engine",
     "task": "Preview content for the selected reader before sending",
     "status": "todo",
@@ -3503,7 +3511,7 @@
   },
   {
     "id": "CLI-16",
-    "pr": 3,
+    "pr": 4,
     "group": "Main CLI and companion operation engine",
     "task": "Report real preparing/sending/checking/ready stages",
     "status": "todo",
@@ -3511,7 +3519,7 @@
   },
   {
     "id": "CLI-17",
-    "pr": 3,
+    "pr": 4,
     "group": "Main CLI and companion operation engine",
     "task": "Persist receipts and resume approved interrupted transfers",
     "status": "todo",
@@ -3519,7 +3527,7 @@
   },
   {
     "id": "CLI-18",
-    "pr": 3,
+    "pr": 4,
     "group": "Main CLI and companion operation engine",
     "task": "Publish atomically and retain prior valid content",
     "status": "todo",
@@ -3527,7 +3535,7 @@
   },
   {
     "id": "CLI-19",
-    "pr": 3,
+    "pr": 4,
     "group": "Main CLI and companion operation engine",
     "task": "Retain selection and preparation on retry",
     "status": "todo",
@@ -3535,7 +3543,7 @@
   },
   {
     "id": "CLI-20",
-    "pr": 3,
+    "pr": 4,
     "group": "Main CLI and companion operation engine",
     "task": "Report useful owner errors with optional technical details",
     "status": "todo",
@@ -3543,7 +3551,7 @@
   },
   {
     "id": "CLI-21",
-    "pr": 3,
+    "pr": 4,
     "group": "Main CLI and companion operation engine",
     "task": "Export diagnostic reports without secrets or content by default",
     "status": "todo",
@@ -3551,7 +3559,7 @@
   },
   {
     "id": "CLI-22",
-    "pr": 3,
+    "pr": 4,
     "group": "Main CLI and companion operation engine",
     "task": "Provide understandable background status, pause and quit",
     "status": "todo",
@@ -3559,7 +3567,7 @@
   },
   {
     "id": "CLI-23",
-    "pr": 3,
+    "pr": 4,
     "group": "Main CLI and companion operation engine",
     "task": "Notify only useful completion or required action",
     "status": "todo",
@@ -3567,7 +3575,7 @@
   },
   {
     "id": "CLI-24",
-    "pr": 3,
+    "pr": 4,
     "group": "Main CLI and companion operation engine",
     "task": "Explain wake/network effects of continuous sync",
     "status": "todo",
@@ -3575,7 +3583,7 @@
   },
   {
     "id": "CLI-25",
-    "pr": 3,
+    "pr": 4,
     "group": "Main CLI and companion operation engine",
     "task": "Use consistent verbs and reader/simulator/output target resolution",
     "status": "todo",
@@ -3583,7 +3591,7 @@
   },
   {
     "id": "CLI-26",
-    "pr": 3,
+    "pr": 4,
     "group": "Main CLI and companion operation engine",
     "task": "Create required storage within validated import",
     "status": "todo",
@@ -3591,7 +3599,7 @@
   },
   {
     "id": "CLI-27",
-    "pr": 3,
+    "pr": 4,
     "group": "Main CLI and companion operation engine",
     "task": "Support offline preparation and bundled local help",
     "status": "todo",
@@ -3599,7 +3607,7 @@
   },
   {
     "id": "CLI-28",
-    "pr": 3,
+    "pr": 4,
     "group": "Main CLI and companion operation engine",
     "task": "Keep prepared, sent and available-offline states distinct",
     "status": "todo",
@@ -3607,7 +3615,7 @@
   },
   {
     "id": "CLI-29",
-    "pr": 3,
+    "pr": 4,
     "group": "Main CLI and companion operation engine",
     "task": "Provide keyboard and screen-reader-friendly forms",
     "status": "todo",
@@ -3615,7 +3623,7 @@
   },
   {
     "id": "CLI-30",
-    "pr": 3,
+    "pr": 4,
     "group": "Main CLI and companion operation engine",
     "task": "Provide numbered plain terminal alternative",
     "status": "todo",
@@ -3623,7 +3631,7 @@
   },
   {
     "id": "CLI-31",
-    "pr": 3,
+    "pr": 4,
     "group": "Main CLI and companion operation engine",
     "task": "Respect narrow widths, resize, NO_COLOR, non-TTY and reduced motion",
     "status": "todo",
@@ -3631,7 +3639,7 @@
   },
   {
     "id": "CLI-32",
-    "pr": 3,
+    "pr": 4,
     "group": "Main CLI and companion operation engine",
     "task": "Keep progress on stderr with versioned JSON on stdout",
     "status": "todo",
@@ -3639,7 +3647,7 @@
   },
   {
     "id": "CLI-33",
-    "pr": 3,
+    "pr": 4,
     "group": "Main CLI and companion operation engine",
     "task": "Use stable exit categories and bounded noninteractive behavior",
     "status": "todo",
@@ -3647,7 +3655,7 @@
   },
   {
     "id": "CLI-34",
-    "pr": 3,
+    "pr": 4,
     "group": "Main CLI and companion operation engine",
     "task": "Keep typed operations shared across UI, CLI and agent callers",
     "status": "todo",
@@ -3655,7 +3663,7 @@
   },
   {
     "id": "CLI-35",
-    "pr": 3,
+    "pr": 4,
     "group": "Main CLI and companion operation engine",
     "task": "Show host/reader/helper compatibility and signed update status",
     "status": "todo",
@@ -3663,7 +3671,7 @@
   },
   {
     "id": "CLI-36",
-    "pr": 3,
+    "pr": 4,
     "group": "Main CLI and companion operation engine",
     "task": "Preserve content, preferences and pairing through updates",
     "status": "todo",
@@ -3671,7 +3679,7 @@
   },
   {
     "id": "CLI-37",
-    "pr": 3,
+    "pr": 4,
     "group": "Main CLI and companion operation engine",
     "task": "Keep arbitrary commands in explicit advanced controls",
     "status": "todo",
@@ -3679,7 +3687,7 @@
   },
   {
     "id": "CLI-38",
-    "pr": 3,
+    "pr": 4,
     "group": "Main CLI and companion operation engine",
     "task": "Avoid required AI/chat, vague slogans and decorative dashboard clutter",
     "status": "todo",
@@ -3687,7 +3695,7 @@
   },
   {
     "id": "DECKCLI-01",
-    "pr": 3,
+    "pr": 4,
     "group": "Deck companion",
     "task": "Preserve real pairing when pushing layouts",
     "status": "todo",
@@ -3695,7 +3703,7 @@
   },
   {
     "id": "DECKCLI-02",
-    "pr": 3,
+    "pr": 4,
     "group": "Deck companion",
     "task": "Separate static simulator preview from executable pairing",
     "status": "todo",
@@ -3703,7 +3711,7 @@
   },
   {
     "id": "DECKCLI-03",
-    "pr": 3,
+    "pr": 4,
     "group": "Deck companion",
     "task": "Unify 15-pad configuration and UI limits",
     "status": "todo",
@@ -3711,7 +3719,7 @@
   },
   {
     "id": "DECKCLI-04",
-    "pr": 3,
+    "pr": 4,
     "group": "Deck companion",
     "task": "Provide app/URL/action picker and grid preview",
     "status": "todo",
@@ -3719,7 +3727,7 @@
   },
   {
     "id": "DECKCLI-05",
-    "pr": 3,
+    "pr": 4,
     "group": "Deck companion",
     "task": "Offer practical original presets",
     "status": "todo",
@@ -3727,7 +3735,7 @@
   },
   {
     "id": "DECKCLI-06",
-    "pr": 3,
+    "pr": 4,
     "group": "Deck companion",
     "task": "Test a harmless action and show its acknowledgement",
     "status": "todo",
@@ -3735,7 +3743,7 @@
   },
   {
     "id": "DECKCLI-07",
-    "pr": 3,
+    "pr": 4,
     "group": "Deck companion",
     "task": "Keep per-action confirmation configurable",
     "status": "todo",
@@ -3743,7 +3751,7 @@
   },
   {
     "id": "FLASHCLI-01",
-    "pr": 3,
+    "pr": 4,
     "group": "Flashcards companion",
     "task": "Replace main CLI refusal stub with the supported helper entry point",
     "status": "todo",
@@ -3751,7 +3759,7 @@
   },
   {
     "id": "FLASHCLI-02",
-    "pr": 3,
+    "pr": 4,
     "group": "Flashcards companion",
     "task": "Make helper install/version status discoverable",
     "status": "todo",
@@ -3759,7 +3767,7 @@
   },
   {
     "id": "FLASHCLI-03",
-    "pr": 3,
+    "pr": 4,
     "group": "Flashcards companion",
     "task": "Distribute verified host helper without requiring a toolchain",
     "status": "todo",
@@ -3767,7 +3775,7 @@
   },
   {
     "id": "FLASHCLI-04",
-    "pr": 3,
+    "pr": 4,
     "group": "Flashcards companion",
     "task": "Keep existing helper license/distribution boundary intact",
     "status": "todo",
@@ -3775,7 +3783,7 @@
   },
   {
     "id": "FLASHCLI-05",
-    "pr": 3,
+    "pr": 4,
     "group": "Flashcards companion",
     "task": "Explain actual supported formats and unsupported features",
     "status": "todo",
@@ -3783,7 +3791,7 @@
   },
   {
     "id": "FLASHCLI-06",
-    "pr": 3,
+    "pr": 4,
     "group": "Flashcards companion",
     "task": "Preview front/back, media and card counts",
     "status": "todo",
@@ -3791,7 +3799,7 @@
   },
   {
     "id": "FLASHCLI-07",
-    "pr": 3,
+    "pr": 4,
     "group": "Flashcards companion",
     "task": "Explain and implement add/merge versus replace",
     "status": "todo",
@@ -3799,7 +3807,7 @@
   },
   {
     "id": "FLASHCLI-08",
-    "pr": 3,
+    "pr": 4,
     "group": "Flashcards companion",
     "task": "Expose verify, stage and review-log export consistently",
     "status": "todo",
@@ -3807,7 +3815,7 @@
   },
   {
     "id": "FLASHCLI-09",
-    "pr": 3,
+    "pr": 4,
     "group": "Flashcards companion",
     "task": "Validate imported content and preserve previous collection on failure",
     "status": "todo",
@@ -3815,7 +3823,7 @@
   },
   {
     "id": "FRAMECLI-01",
-    "pr": 3,
+    "pr": 4,
     "group": "Frame companion",
     "task": "Preview multiple photos and crop/pad choices",
     "status": "todo",
@@ -3823,7 +3831,7 @@
   },
   {
     "id": "FRAMECLI-02",
-    "pr": 3,
+    "pr": 4,
     "group": "Frame companion",
     "task": "Perform bounded downsize with visual quality preview",
     "status": "todo",
@@ -3831,7 +3839,7 @@
   },
   {
     "id": "FRAMECLI-03",
-    "pr": 3,
+    "pr": 4,
     "group": "Frame companion",
     "task": "Show storage estimate and album naming",
     "status": "todo",
@@ -3839,7 +3847,7 @@
   },
   {
     "id": "FRAMECLI-04",
-    "pr": 3,
+    "pr": 4,
     "group": "Frame companion",
     "task": "Deduplicate repeated import clearly",
     "status": "todo",
@@ -3847,7 +3855,7 @@
   },
   {
     "id": "FRAMECLI-05",
-    "pr": 3,
+    "pr": 4,
     "group": "Frame companion",
     "task": "Show concrete deletion/replacement list",
     "status": "todo",
@@ -3855,7 +3863,7 @@
   },
   {
     "id": "FRAMECLI-06",
-    "pr": 3,
+    "pr": 4,
     "group": "Frame companion",
     "task": "Retain recoverable previous album",
     "status": "todo",
@@ -3863,7 +3871,7 @@
   },
   {
     "id": "FRAMECLI-07",
-    "pr": 3,
+    "pr": 4,
     "group": "Frame companion",
     "task": "Verify reader availability before saying photos are ready",
     "status": "todo",
@@ -3871,7 +3879,7 @@
   },
   {
     "id": "VAULTCLI-01",
-    "pr": 3,
+    "pr": 4,
     "group": "Vault companion",
     "task": "Pick folder and preview included/excluded notes",
     "status": "todo",
@@ -3879,7 +3887,7 @@
   },
   {
     "id": "VAULTCLI-02",
-    "pr": 3,
+    "pr": 4,
     "group": "Vault companion",
     "task": "Preview a long note at reader dimensions",
     "status": "todo",
@@ -3887,7 +3895,7 @@
   },
   {
     "id": "VAULTCLI-03",
-    "pr": 3,
+    "pr": 4,
     "group": "Vault companion",
     "task": "Package incrementally with scalable index",
     "status": "todo",
@@ -3895,7 +3903,7 @@
   },
   {
     "id": "VAULTCLI-04",
-    "pr": 3,
+    "pr": 4,
     "group": "Vault companion",
     "task": "Separate transfer acknowledgement from indexing completion",
     "status": "todo",
@@ -3903,7 +3911,7 @@
   },
   {
     "id": "VAULTCLI-05",
-    "pr": 3,
+    "pr": 4,
     "group": "Vault companion",
     "task": "Handle rename without duplicating the whole library",
     "status": "todo",
@@ -3911,7 +3919,7 @@
   },
   {
     "id": "VAULTCLI-06",
-    "pr": 3,
+    "pr": 4,
     "group": "Vault companion",
     "task": "Explain direction and supported reader-edit export honestly",
     "status": "todo",
@@ -3919,7 +3927,7 @@
   },
   {
     "id": "VAULTCLI-07",
-    "pr": 3,
+    "pr": 4,
     "group": "Vault companion",
     "task": "Enable optional ongoing sync after a successful import",
     "status": "todo",
@@ -3927,7 +3935,7 @@
   },
   {
     "id": "SYNCCLI-01",
-    "pr": 3,
+    "pr": 4,
     "group": "Sync companion",
     "task": "Preserve isolated private daemon configuration",
     "status": "todo",
@@ -3935,7 +3943,7 @@
   },
   {
     "id": "SYNCCLI-02",
-    "pr": 3,
+    "pr": 4,
     "group": "Sync companion",
     "task": "Provide explicit test/config root",
     "status": "todo",
@@ -3943,7 +3951,7 @@
   },
   {
     "id": "SYNCCLI-03",
-    "pr": 3,
+    "pr": 4,
     "group": "Sync companion",
     "task": "Provide structured plan, status and diagnostics",
     "status": "todo",
@@ -3951,7 +3959,7 @@
   },
   {
     "id": "SYNCCLI-04",
-    "pr": 3,
+    "pr": 4,
     "group": "Sync companion",
     "task": "Unify raw synced files with actual app ingestion",
     "status": "todo",
@@ -3959,7 +3967,7 @@
   },
   {
     "id": "SYNCCLI-05",
-    "pr": 3,
+    "pr": 4,
     "group": "Sync companion",
     "task": "Expose last successful sync, pause/resume and conflicts",
     "status": "todo",
@@ -3967,7 +3975,7 @@
   },
   {
     "id": "SYNCCLI-06",
-    "pr": 3,
+    "pr": 4,
     "group": "Sync companion",
     "task": "Keep owner originals protected and directions explicit",
     "status": "todo",
@@ -3975,7 +3983,7 @@
   },
   {
     "id": "NEEDLECLI-01",
-    "pr": 3,
+    "pr": 4,
     "group": "Needles companion",
     "task": "Manage required converter instead of demanding manual toolchain setup",
     "status": "todo",
@@ -3983,7 +3991,7 @@
   },
   {
     "id": "NEEDLECLI-02",
-    "pr": 3,
+    "pr": 4,
     "group": "Needles companion",
     "task": "Preview extracted instructions against source",
     "status": "todo",
@@ -3991,7 +3999,7 @@
   },
   {
     "id": "NEEDLECLI-03",
-    "pr": 3,
+    "pr": 4,
     "group": "Needles companion",
     "task": "Flag image-only pages and missing charts",
     "status": "todo",
@@ -3999,7 +4007,7 @@
   },
   {
     "id": "NEEDLECLI-04",
-    "pr": 3,
+    "pr": 4,
     "group": "Needles companion",
     "task": "Choose title and preview section/row parsing",
     "status": "todo",
@@ -4007,7 +4015,7 @@
   },
   {
     "id": "NEEDLECLI-05",
-    "pr": 3,
+    "pr": 4,
     "group": "Needles companion",
     "task": "Use the same prepare/preview/send flow for PDF, Markdown and text",
     "status": "todo",
@@ -4015,7 +4023,7 @@
   },
   {
     "id": "NEEDLECLI-06",
-    "pr": 3,
+    "pr": 4,
     "group": "Needles companion",
     "task": "Support simulator and output-only targets",
     "status": "todo",
@@ -4023,7 +4031,7 @@
   },
   {
     "id": "NONOCLI-01",
-    "pr": 3,
+    "pr": 4,
     "group": "Nonograms companion",
     "task": "Preview resulting puzzle at each supported size",
     "status": "todo",
@@ -4031,7 +4039,7 @@
   },
   {
     "id": "NONOCLI-02",
-    "pr": 3,
+    "pr": 4,
     "group": "Nonograms companion",
     "task": "Validate solvability and difficulty before transfer",
     "status": "todo",
@@ -4039,7 +4047,7 @@
   },
   {
     "id": "NONOCLI-03",
-    "pr": 3,
+    "pr": 4,
     "group": "Nonograms companion",
     "task": "Support named imports and multiple puzzles",
     "status": "todo",
@@ -4047,7 +4055,7 @@
   },
   {
     "id": "NONOCLI-04",
-    "pr": 3,
+    "pr": 4,
     "group": "Nonograms companion",
     "task": "Support simulator and reader targets consistently",
     "status": "todo",
@@ -4055,7 +4063,7 @@
   },
   {
     "id": "PARSERCLI-01",
-    "pr": 3,
+    "pr": 4,
     "group": "Parser companion",
     "task": "Share structural validation with interpreter",
     "status": "todo",
@@ -4063,7 +4071,7 @@
   },
   {
     "id": "PARSERCLI-02",
-    "pr": 3,
+    "pr": 4,
     "group": "Parser companion",
     "task": "Distinguish recognized format from playable validated story",
     "status": "todo",
@@ -4071,7 +4079,7 @@
   },
   {
     "id": "PARSERCLI-03",
-    "pr": 3,
+    "pr": 4,
     "group": "Parser companion",
     "task": "Show title, format and compatibility",
     "status": "todo",
@@ -4079,7 +4087,7 @@
   },
   {
     "id": "PARSERCLI-04",
-    "pr": 3,
+    "pr": 4,
     "group": "Parser companion",
     "task": "Support shelf choice, duplicates and simulator transfer",
     "status": "todo",
@@ -4087,7 +4095,7 @@
   },
   {
     "id": "STREAMCLI-01",
-    "pr": 3,
+    "pr": 4,
     "group": "Paperterm companion",
     "task": "Guide pairing through named reader choice",
     "status": "todo",
@@ -4095,7 +4103,7 @@
   },
   {
     "id": "STREAMCLI-02",
-    "pr": 3,
+    "pr": 4,
     "group": "Paperterm companion",
     "task": "Offer known terminal/task presets and connection test",
     "status": "todo",
@@ -4103,7 +4111,7 @@
   },
   {
     "id": "STREAMCLI-03",
-    "pr": 3,
+    "pr": 4,
     "group": "Paperterm companion",
     "task": "Show stopped, waiting, connected and reconnecting states",
     "status": "todo",
@@ -4111,7 +4119,7 @@
   },
   {
     "id": "STREAMCLI-04",
-    "pr": 3,
+    "pr": 4,
     "group": "Paperterm companion",
     "task": "Provide obvious Stop and computer-awake explanation",
     "status": "todo",
@@ -4119,7 +4127,7 @@
   },
   {
     "id": "STREAMCLI-05",
-    "pr": 3,
+    "pr": 4,
     "group": "Paperterm companion",
     "task": "Keep arbitrary terminal command entry advanced",
     "status": "todo",
@@ -4127,7 +4135,7 @@
   },
   {
     "id": "SIDECLI-01",
-    "pr": 3,
+    "pr": 4,
     "group": "Sidekick companion",
     "task": "Unify helper install/start/status/stop in companion",
     "status": "todo",
@@ -4135,7 +4143,7 @@
   },
   {
     "id": "SIDECLI-02",
-    "pr": 3,
+    "pr": 4,
     "group": "Sidekick companion",
     "task": "Show and select agent integrations before configuration",
     "status": "todo",
@@ -4143,7 +4151,7 @@
   },
   {
     "id": "SIDECLI-03",
-    "pr": 3,
+    "pr": 4,
     "group": "Sidekick companion",
     "task": "Preserve dry-run, printed configuration and backups",
     "status": "todo",
@@ -4151,7 +4159,7 @@
   },
   {
     "id": "SIDECLI-04",
-    "pr": 3,
+    "pr": 4,
     "group": "Sidekick companion",
     "task": "Verify a harmless sample event on the reader",
     "status": "todo",
@@ -4159,7 +4167,7 @@
   },
   {
     "id": "SIDECLI-05",
-    "pr": 3,
+    "pr": 4,
     "group": "Sidekick companion",
     "task": "Return success from help",
     "status": "todo",
@@ -4167,7 +4175,7 @@
   },
   {
     "id": "SIDECLI-06",
-    "pr": 3,
+    "pr": 4,
     "group": "Sidekick companion",
     "task": "Provide self-contained sample mode",
     "status": "todo",
@@ -4175,7 +4183,7 @@
   },
   {
     "id": "SERVICECLI-01",
-    "pr": 3,
+    "pr": 4,
     "group": "Provider connections",
     "task": "Fix secret/trust help exit status",
     "status": "todo",
@@ -4183,7 +4191,7 @@
   },
   {
     "id": "SERVICECLI-02",
-    "pr": 3,
+    "pr": 4,
     "group": "Provider connections",
     "task": "Provide per-app Connect service form",
     "status": "todo",
@@ -4191,7 +4199,7 @@
   },
   {
     "id": "SERVICECLI-03",
-    "pr": 3,
+    "pr": 4,
     "group": "Provider connections",
     "task": "Use discovery and browser authentication where supported",
     "status": "todo",
@@ -4199,7 +4207,7 @@
   },
   {
     "id": "SERVICECLI-04",
-    "pr": 3,
+    "pr": 4,
     "group": "Provider connections",
     "task": "Use labeled masked tokens with direct provider guidance otherwise",
     "status": "todo",
@@ -4207,7 +4215,7 @@
   },
   {
     "id": "SERVICECLI-05",
-    "pr": 3,
+    "pr": 4,
     "group": "Provider connections",
     "task": "Test endpoint and required capabilities",
     "status": "todo",
@@ -4215,7 +4223,7 @@
   },
   {
     "id": "SERVICECLI-06",
-    "pr": 3,
+    "pr": 4,
     "group": "Provider connections",
     "task": "Show account/server identity",
     "status": "todo",
@@ -4223,7 +4231,7 @@
   },
   {
     "id": "SERVICECLI-07",
-    "pr": 3,
+    "pr": 4,
     "group": "Provider connections",
     "task": "Explain certificate errors and explicit trust installation",
     "status": "todo",
@@ -4231,7 +4239,7 @@
   },
   {
     "id": "SERVICECLI-08",
-    "pr": 3,
+    "pr": 4,
     "group": "Provider connections",
     "task": "Avoid secret input in shell history",
     "status": "todo",
@@ -4239,7 +4247,7 @@
   },
   {
     "id": "MISSINGCLI-01",
-    "pr": 3,
+    "pr": 4,
     "group": "Missing companion workflows",
     "task": "Implement scores import/push with real score conversion",
     "status": "todo",
@@ -4247,7 +4255,7 @@
   },
   {
     "id": "MISSINGCLI-02",
-    "pr": 3,
+    "pr": 4,
     "group": "Missing companion workflows",
     "task": "Implement Fieldbook pack import and checklist export",
     "status": "todo",
@@ -4255,7 +4263,7 @@
   },
   {
     "id": "MISSINGCLI-03",
-    "pr": 3,
+    "pr": 4,
     "group": "Missing companion workflows",
     "task": "Provide Panels CBZ import with page/cover preview and clear CBR guidance",
     "status": "todo",
@@ -4263,7 +4271,7 @@
   },
   {
     "id": "MISSINGCLI-04",
-    "pr": 3,
+    "pr": 4,
     "group": "Missing companion workflows",
     "task": "Generate setup instructions and command references from shared capabilities",
     "status": "todo",
@@ -4271,7 +4279,7 @@
   },
   {
     "id": "MISSINGCLI-05",
-    "pr": 3,
+    "pr": 4,
     "group": "Missing companion workflows",
     "task": "Remove obsolete commands and false availability claims",
     "status": "todo",
@@ -4279,7 +4287,7 @@
   },
   {
     "id": "OWNERQA-01",
-    "pr": 3,
+    "pr": 4,
     "group": "Owner experience and final validation",
     "task": "Test photo first-use flow without command typing",
     "status": "todo",
@@ -4287,7 +4295,7 @@
   },
   {
     "id": "OWNERQA-02",
-    "pr": 3,
+    "pr": 4,
     "group": "Owner experience and final validation",
     "task": "Test card preview/import/review-log flow",
     "status": "todo",
@@ -4295,7 +4303,7 @@
   },
   {
     "id": "OWNERQA-03",
-    "pr": 3,
+    "pr": 4,
     "group": "Owner experience and final validation",
     "task": "Test notes import and optional sync flow",
     "status": "todo",
@@ -4303,7 +4311,7 @@
   },
   {
     "id": "OWNERQA-04",
-    "pr": 3,
+    "pr": 4,
     "group": "Owner experience and final validation",
     "task": "Test disconnected reader with retained prepared files",
     "status": "todo",
@@ -4311,7 +4319,7 @@
   },
   {
     "id": "OWNERQA-05",
-    "pr": 3,
+    "pr": 4,
     "group": "Owner experience and final validation",
     "task": "Test multiple-reader selection and identity revalidation",
     "status": "todo",
@@ -4319,7 +4327,7 @@
   },
   {
     "id": "OWNERQA-06",
-    "pr": 3,
+    "pr": 4,
     "group": "Owner experience and final validation",
     "task": "Test partial transfer with truthful acknowledged counts",
     "status": "todo",
@@ -4327,7 +4335,7 @@
   },
   {
     "id": "OWNERQA-07",
-    "pr": 3,
+    "pr": 4,
     "group": "Owner experience and final validation",
     "task": "Test unsupported/oversized/corrupt input recovery",
     "status": "todo",
@@ -4335,7 +4343,7 @@
   },
   {
     "id": "OWNERQA-08",
-    "pr": 3,
+    "pr": 4,
     "group": "Owner experience and final validation",
     "task": "Test rejected/missing token versus host/certificate errors",
     "status": "todo",
@@ -4343,7 +4351,7 @@
   },
   {
     "id": "OWNERQA-09",
-    "pr": 3,
+    "pr": 4,
     "group": "Owner experience and final validation",
     "task": "Test expected empty app sample flow",
     "status": "todo",
@@ -4351,7 +4359,7 @@
   },
   {
     "id": "OWNERQA-10",
-    "pr": 3,
+    "pr": 4,
     "group": "Owner experience and final validation",
     "task": "Test missing/incompatible helper recovery",
     "status": "todo",
@@ -4359,7 +4367,7 @@
   },
   {
     "id": "OWNERQA-11",
-    "pr": 3,
+    "pr": 4,
     "group": "Owner experience and final validation",
     "task": "Prepare 6\u20138-person nontechnical usability protocol including assistive technology",
     "status": "todo",
@@ -4367,7 +4375,7 @@
   },
   {
     "id": "OWNERQA-12",
-    "pr": 3,
+    "pr": 4,
     "group": "Owner experience and final validation",
     "task": "Measure completion, assistance, wrong-target attempts and error comprehension",
     "status": "todo",
@@ -4375,7 +4383,7 @@
   },
   {
     "id": "OWNERQA-13",
-    "pr": 3,
+    "pr": 4,
     "group": "Owner experience and final validation",
     "task": "Record first-success timing separately from firmware reboot",
     "status": "todo",
@@ -4383,7 +4391,7 @@
   },
   {
     "id": "OWNERQA-14",
-    "pr": 3,
+    "pr": 4,
     "group": "Owner experience and final validation",
     "task": "Validate recovery without repeated file selection",
     "status": "todo",
@@ -4391,7 +4399,7 @@
   },
   {
     "id": "OWNERQA-15",
-    "pr": 3,
+    "pr": 4,
     "group": "Owner experience and final validation",
     "task": "Validate understanding of prepared/sent/offline distinctions",
     "status": "todo",
@@ -4399,7 +4407,7 @@
   },
   {
     "id": "OWNERQA-16",
-    "pr": 3,
+    "pr": 4,
     "group": "Owner experience and final validation",
     "task": "Prepare one-week repeated-use follow-up protocol",
     "status": "todo",
@@ -4407,7 +4415,7 @@
   },
   {
     "id": "OWNERQA-17",
-    "pr": 3,
+    "pr": 4,
     "group": "Owner experience and final validation",
     "task": "Run all automated simulator and integration gates",
     "status": "todo",
@@ -4415,7 +4423,7 @@
   },
   {
     "id": "OWNERQA-18",
-    "pr": 3,
+    "pr": 4,
     "group": "Owner experience and final validation",
     "task": "Prepare one combined Clara BW hardware validation script for after all three PRs",
     "status": "todo",
@@ -4423,7 +4431,7 @@
   },
   {
     "id": "OWNERQA-19",
-    "pr": 3,
+    "pr": 4,
     "group": "Owner experience and final validation",
     "task": "Record unperformed physical/user-study checks honestly",
     "status": "todo",
@@ -4431,7 +4439,7 @@
   },
   {
     "id": "OWNERQA-20",
-    "pr": 3,
+    "pr": 4,
     "group": "Owner experience and final validation",
     "task": "Verify licenses and absence of copied local-reference source",
     "status": "todo",
@@ -4439,7 +4447,7 @@
   },
   {
     "id": "OWNERQA-21",
-    "pr": 3,
+    "pr": 4,
     "group": "Owner experience and final validation",
     "task": "Open no more than three logically grouped PRs with tests and remaining validation stated",
     "status": "todo",

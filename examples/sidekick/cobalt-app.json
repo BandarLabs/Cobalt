@@ -3,10 +3,10 @@
   "display_name": "Sidekick",
   "short_label": "Sidekick",
   "summary": "Answer coding-agent permission prompts from your Kobo.",
-  "version": "1.0.8",
+  "version": "1.0.9",
   "glyph": "key",
   "capabilities": [
     "network"
   ],
-  "release_notes": "Update shared controls and page layout for Cobalt 0.3.12."
+  "release_notes": "A question says which terminal on which computer is asking, two arriving at once are both on the board, and an answer that came too late is not reported as a decision."
 }

@@ -3,10 +3,10 @@
   "display_name": "Components",
   "short_label": "Components",
   "summary": "See every Cobalt UI component on the device in one reference app.",
-  "version": "1.0.9",
+  "version": "1.0.10",
   "glyph": "chart",
   "capabilities": [
     "network"
   ],
-  "release_notes": "Update shared controls and page layout for Cobalt 0.3.12."
+  "release_notes": "Every reference panel is measured against the screen it is drawn on, so the components gallery fits at all nine text sizes instead of running off the bottom."
 }

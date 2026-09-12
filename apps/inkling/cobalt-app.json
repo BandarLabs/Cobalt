@@ -4,8 +4,8 @@
   "short_label": "Inkling",
   "summary": "Solve a fresh five-letter puzzle each day.",
   "page_description": "A daily five-letter word puzzle you can play anywhere, with or without Wi-Fi.",
-  "version": "0.1.2",
-  "release_notes": "Update shared controls and page layout for Cobalt 0.3.12.",
+  "version": "0.1.3",
+  "release_notes": "Rebuilt on a renderer that keeps every control reachable at the largest text sizes, and on a keyboard that can type every character this app asks for.",
   "glyph": "note",
   "capabilities": []
 }
