@@ -5,6 +5,9 @@
   "reader_simulator": false,
   "text_scale": null,
   "checks": [
+    "front/back HTML preview and card count",
+    "embedded image bytes and media count",
+    "preview preserves existing files",
     "helper version and notice",
     "supported formats and review limits",
     "import with spaces in path",

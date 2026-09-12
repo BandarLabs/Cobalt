@@ -3800,8 +3800,10 @@
     "pr": 4,
     "group": "Flashcards companion",
     "task": "Preview front/back, media and card counts",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "kobo flashcards preview creates an offline HTML front/back preview for a selected card with card/due/media counts, embedded PNG/JPEG and other media inventory. Real-helper acceptance checks actual front/back text, embedded image bytes, output preservation and invalid selection; five helper-command tests and strict CLI Clippy pass. Browser screenshot inspected: docs/quality/evidence/flashcards-companion/preview.png."
+    ]
   },
   {
     "id": "FLASHCLI-07",

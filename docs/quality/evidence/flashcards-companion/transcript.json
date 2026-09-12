@@ -21,7 +21,7 @@
       "<fixture>/collection.cobfc"
     ],
     "exit_code": 0,
-    "output": "imported apkg: 3 notes, 3 due cards (3 new, 0 learning, 0 review), 1 decks, 0 media files (0 bytes), 0 image-bearing notes resolved, 0 sound-bearing notes retained\nbundle sha256: e93c1a5f72ab3b9e4c1549aa163f21c8999a1aeecc06626174eefdf3d48e84d1\n"
+    "output": "imported apkg: 3 notes, 3 due cards (3 new, 0 learning, 0 review), 1 decks, 0 media files (0 bytes), 0 image-bearing notes resolved, 0 sound-bearing notes retained\nbundle sha256: d2856bb11f8f27737b1a9c604f81515beee7d815d96f64139180f2456e429d00\n"
   },
   {
     "arguments": [
@@ -29,7 +29,39 @@
       "<fixture>/collection.cobfc"
     ],
     "exit_code": 0,
-    "output": "verified: 3 notes, 3 due cards (3 new, 0 learning, 0 review), 0 digest-verified media files; 0 image-bearing notes resolve to bundled bytes; 0 sound-bearing notes are retained\nbundle sha256: e93c1a5f72ab3b9e4c1549aa163f21c8999a1aeecc06626174eefdf3d48e84d1\n"
+    "output": "verified: 3 notes, 3 due cards (3 new, 0 learning, 0 review), 0 digest-verified media files; 0 image-bearing notes resolve to bundled bytes; 0 sound-bearing notes are retained\nbundle sha256: d2856bb11f8f27737b1a9c604f81515beee7d815d96f64139180f2456e429d00\n"
+  },
+  {
+    "arguments": [
+      "preview",
+      "<fixture>/collection.cobfc",
+      "--out",
+      "<fixture>/preview.html"
+    ],
+    "exit_code": 0,
+    "output": "Previewed card 1 of 3 at <fixture>/preview.html. Open this file in your browser. Use --card NUMBER to inspect another card.\n"
+  },
+  {
+    "arguments": [
+      "preview",
+      "<fixture>/collection.cobfc",
+      "--out",
+      "<fixture>/preview.html"
+    ],
+    "exit_code": 1,
+    "output": "flashcards-import: Create preview <fixture>/preview.html: File exists (os error 17). Choose a new output filename.\nkobo: The Flashcards importer did not complete (exit status: 1). Review its message above before retrying.\n"
+  },
+  {
+    "arguments": [
+      "preview",
+      "<fixture>/collection.cobfc",
+      "--out",
+      "<fixture>/invalid-card.html",
+      "--card",
+      "0"
+    ],
+    "exit_code": 1,
+    "output": "flashcards-import: Choose a card from 1 to 3\nkobo: The Flashcards importer did not complete (exit status: 1). Review its message above before retrying.\n"
   },
   {
     "arguments": [
@@ -39,7 +71,27 @@
       "<fixture>/reader"
     ],
     "exit_code": 0,
-    "output": "staged 3740 digest-verified bytes to <fixture>/reader/.adds/cobalt/data/flashcards/collection.cobfc\nbundle sha256: e93c1a5f72ab3b9e4c1549aa163f21c8999a1aeecc06626174eefdf3d48e84d1\n"
+    "output": "staged 3749 digest-verified bytes to <fixture>/reader/.adds/cobalt/data/flashcards/collection.cobfc\nbundle sha256: d2856bb11f8f27737b1a9c604f81515beee7d815d96f64139180f2456e429d00\n"
+  },
+  {
+    "arguments": [
+      "import",
+      "<fixture>/second deck.apkg",
+      "--merge",
+      "<fixture>/with-media.cobfc"
+    ],
+    "exit_code": 0,
+    "output": "imported apkg: 3 notes, 3 due cards (3 new, 0 learning, 0 review), 1 decks, 1 media files (67 bytes), 1 image-bearing notes resolved, 0 sound-bearing notes retained\nbundle sha256: eecdd6a8029bfc9a820f32c43c13086c824088c05bb7915fa6308000bcd04f09\n"
+  },
+  {
+    "arguments": [
+      "preview",
+      "<fixture>/with-media.cobfc",
+      "--out",
+      "<fixture>/with-media.html"
+    ],
+    "exit_code": 0,
+    "output": "Previewed card 1 of 3 at <fixture>/with-media.html. Open this file in your browser. Use --card NUMBER to inspect another card.\n"
   },
   {
     "arguments": [
@@ -51,7 +103,7 @@
       "<fixture>/collection.cobfc"
     ],
     "exit_code": 0,
-    "output": "imported apkg: 6 notes, 6 due cards (6 new, 0 learning, 0 review), 1 decks, 0 media files (0 bytes), 0 image-bearing notes resolved, 0 sound-bearing notes retained\nbundle sha256: 8b81fc0e52c92fbb9d678cdac7a0760d60340a05eb06ff3fc18ba396a7ac6da3\n"
+    "output": "imported apkg: 6 notes, 6 due cards (6 new, 0 learning, 0 review), 1 decks, 1 media files (67 bytes), 1 image-bearing notes resolved, 0 sound-bearing notes retained\nbundle sha256: 235c44935f0b26da11a6575f6e556b78d832628b1353d4e977562e6f493691b5\n"
   },
   {
     "arguments": [
@@ -59,7 +111,7 @@
       "<fixture>/merged.cobfc"
     ],
     "exit_code": 0,
-    "output": "verified: 6 notes, 6 due cards (6 new, 0 learning, 0 review), 0 digest-verified media files; 0 image-bearing notes resolve to bundled bytes; 0 sound-bearing notes are retained\nbundle sha256: 8b81fc0e52c92fbb9d678cdac7a0760d60340a05eb06ff3fc18ba396a7ac6da3\n"
+    "output": "verified: 6 notes, 6 due cards (6 new, 0 learning, 0 review), 1 digest-verified media files; 1 image-bearing notes resolve to bundled bytes; 0 sound-bearing notes are retained\nbundle sha256: 235c44935f0b26da11a6575f6e556b78d832628b1353d4e977562e6f493691b5\n"
   },
   {
     "arguments": [
@@ -69,7 +121,7 @@
       "<fixture>/merged.cobfc"
     ],
     "exit_code": 0,
-    "output": "imported colpkg: 3 notes, 3 due cards (3 new, 0 learning, 0 review), 1 decks, 0 media files (0 bytes), 0 image-bearing notes resolved, 0 sound-bearing notes retained\nbundle sha256: 42e7a4852e2c44923824d4207959300c91ea51e5d04353a3dbc7ab9e5e243559\n"
+    "output": "imported colpkg: 3 notes, 3 due cards (3 new, 0 learning, 0 review), 1 decks, 0 media files (0 bytes), 0 image-bearing notes resolved, 0 sound-bearing notes retained\nbundle sha256: e211ee6f79944876daa017eb09c06e099ad9beb82d5fe374719af8da72ef1def\n"
   },
   {
     "arguments": [
@@ -77,7 +129,7 @@
       "<fixture>/merged.cobfc"
     ],
     "exit_code": 0,
-    "output": "verified: 3 notes, 3 due cards (3 new, 0 learning, 0 review), 0 digest-verified media files; 0 image-bearing notes resolve to bundled bytes; 0 sound-bearing notes are retained\nbundle sha256: 42e7a4852e2c44923824d4207959300c91ea51e5d04353a3dbc7ab9e5e243559\n"
+    "output": "verified: 3 notes, 3 due cards (3 new, 0 learning, 0 review), 0 digest-verified media files; 0 image-bearing notes resolve to bundled bytes; 0 sound-bearing notes are retained\nbundle sha256: e211ee6f79944876daa017eb09c06e099ad9beb82d5fe374719af8da72ef1def\n"
   },
   {
     "arguments": [

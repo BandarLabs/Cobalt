@@ -1,5 +1,7 @@
 #![forbid(unsafe_code)]
 
+mod preview;
+
 use kobo_flashcards_format::{
     ATKINSON_LICENSE, DEJAVU_LICENSE, JAPANESE_FONT_LICENSE, JAPANESE_FONT_SOURCE, RESVG_LICENSE,
 };
@@ -85,6 +87,31 @@ fn run(arguments: &[String]) -> Result<(), String> {
             println!("===============================================================================\n{text}");
         }
         return Ok(());
+    }
+    if matches!(arguments.first(), Some(operation) if operation == "preview") {
+        let (input, output, card) = match arguments {
+            [_, input, flag, output] if flag == "--out" => (input, output, 1),
+            [_, input, flag, output, selector, number]
+                if flag == "--out" && selector == "--card" =>
+            {
+                (
+                    input,
+                    output,
+                    number
+                        .parse::<usize>()
+                        .map_err(|_| "--card needs a positive number")?,
+                )
+            }
+            _ => return Err(
+                "usage: flashcards-import preview BUNDLE.cobfc --out PREVIEW.html [--card NUMBER]"
+                    .into(),
+            ),
+        };
+        return preview::write(
+            std::path::Path::new(input),
+            std::path::Path::new(output),
+            card,
+        );
     }
     if matches!(arguments, [operation, _] if operation == "verify") {
         return verify_command(&arguments[1]);
@@ -200,7 +227,7 @@ fn export_review_log_command(root: &str, output: &str) -> Result<(), String> {
 }
 
 const fn usage() -> &'static str {
-    "usage: flashcards-import import INPUT.apkg --merge OUTPUT.cobfc [--merge-into EXISTING.cobfc]\n       flashcards-import import INPUT.colpkg --replace OUTPUT.cobfc\n       flashcards-import verify BUNDLE.cobfc\n       flashcards-import stage BUNDLE.cobfc --kobo-root MOUNT\n       flashcards-import export-review-log --kobo-root MOUNT OUTPUT.ndjson\n       flashcards-import --version\n       flashcards-import --formats\n       flashcards-import --notice\n       flashcards-import --licenses"
+    "usage: flashcards-import preview BUNDLE.cobfc --out PREVIEW.html [--card NUMBER]\n       flashcards-import import INPUT.apkg --merge OUTPUT.cobfc [--merge-into EXISTING.cobfc]\n       flashcards-import import INPUT.colpkg --replace OUTPUT.cobfc\n       flashcards-import verify BUNDLE.cobfc\n       flashcards-import stage BUNDLE.cobfc --kobo-root MOUNT\n       flashcards-import export-review-log --kobo-root MOUNT OUTPUT.ndjson\n       flashcards-import --version\n       flashcards-import --formats\n       flashcards-import --notice\n       flashcards-import --licenses"
 }
 
 #[cfg(test)]

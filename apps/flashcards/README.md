@@ -109,3 +109,19 @@ not supported; a filename ending in `.apkg` alone does not guarantee support.
 The helper explains that reader grades remain in a separate Cobalt log and
 are not automatically applied to Anki scheduling. The full compatibility
 reference above describes the supported media and template subset.
+
+
+Preview a verified collection before transferring it:
+
+```sh
+kobo flashcards preview collection.cobfc --out preview.html
+kobo flashcards preview collection.cobfc --out second-card.html --card 2
+```
+
+Open the HTML file in a browser to compare the imported front and back, card
+and due counts, and referenced media. PNG/JPEG images are embedded for offline
+viewing; other media are listed by name and size. Template HTML and scripts do
+not execute. This is a content preview, not an exact simulation of reader
+pagination. Output files must be new, so a preview never replaces another file.
+
+![Offline front and back preview on the computer](screenshots/preview.png)

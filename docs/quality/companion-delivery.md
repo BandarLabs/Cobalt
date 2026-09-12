@@ -127,3 +127,14 @@ without touching an owner collection.
 All 22 importer library tests pass on Rust 1.88, including metadata conflicts,
 malformed databases, duplicate media and archive-bomb refusal. FLASHCLI-07 and
 FLASHCLI-09 are complete on these regressions and the public-CLI acceptance.
+
+
+`kobo flashcards preview COLLECTION.cobfc --out PREVIEW.html [--card NUMBER]`
+now creates an offline, front/back content preview with card/due/media counts.
+PNG/JPEG bytes are embedded; other media have names and byte counts. Card text
+is escaped and scripts are disabled. A preview requires a new output filename.
+Real-helper acceptance verifies text, original image bytes, file preservation
+and invalid selection. Five helper-command tests and strict CLI Clippy pass.
+The generated HTML was inspected in the browser and captured in `preview.png`.
+FLASHCLI-06 is complete; verified distribution and the final license-boundary
+audit remain open.

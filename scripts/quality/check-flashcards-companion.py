@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Exercise the CLI against the real standalone importer and an original deck."""
 import argparse
+import base64
+import struct
+import zlib
 import hashlib
 import json
 import os
@@ -52,6 +55,18 @@ def main():
         assert 'does not update Anki scheduling' in formats.stdout, 'Review boundary missing'
         run('import', package, '--merge', bundle)
         run('verify', bundle)
+        preview = root/'preview.html'
+        run('preview', bundle, '--out', preview)
+        preview_bytes = preview.read_bytes()
+        assert b'Magnetic north.' in preview_bytes and b'Front' in preview_bytes
+        assert b'Card 1 of 3' in preview_bytes
+        run('preview', bundle, '--out', preview, succeeds=False)
+        assert preview.read_bytes() == preview_bytes, 'Preview replaced an existing file'
+        missing_card = root/'invalid-card.html'
+        run('preview', bundle, '--out', missing_card, '--card', '0', succeeds=False)
+        assert not missing_card.exists()
+        shutil.copyfile(preview, args.output/'preview.html')
+
         run('stage', bundle, '--kobo-root', mount)
         destination = mount/'.adds/cobalt/data/flashcards/collection.cobfc'
         assert destination.read_bytes() == bundle.read_bytes()
@@ -65,9 +80,23 @@ def main():
             database.execute('UPDATE notes SET id = id + 100000')
             database.execute('UPDATE cards SET id = id + 100000, nid = nid + 100000')
             database.execute('UPDATE revlog SET id = id + 100000, cid = cid + 100000')
+            database.execute("UPDATE notes SET flds = replace(flds, 'What does a compass point toward?', 'What does a compass point toward?<img src=\"sample.png\">')")
         with zipfile.ZipFile(second, 'w') as archive:
             archive.write(database_path, 'collection.anki2')
-            archive.writestr('media', '{}')
+            archive.writestr('media', '{"0":"sample.png"}')
+            def chunk(kind, data):
+                return struct.pack('>I', len(data))+kind+data+struct.pack('>I', zlib.crc32(kind+data))
+            png = b'\x89PNG\r\n\x1a\n'+chunk(b'IHDR', struct.pack('>IIBBBBB', 1, 1, 8, 0, 0, 0, 0))
+            png += chunk(b'IDAT', zlib.compress(b'\x00\x80'))+chunk(b'IEND', b'')
+            archive.writestr('0', png)
+        media_bundle = root/'with-media.cobfc'
+        run('import', second, '--merge', media_bundle)
+        media_preview = root/'with-media.html'
+        run('preview', media_bundle, '--out', media_preview)
+        document = media_preview.read_text()
+        images = re.findall(r'data:image/png;base64,([^"]+)', document)
+        assert images and all(base64.b64decode(image) == png for image in images)
+        assert 'sample.png' in document and '1 media files' in document
         merged = root/'merged.cobfc'
         run('import', second, '--merge', merged, '--merge-into', bundle)
         merged_report = run('verify', merged)
@@ -106,7 +135,7 @@ def main():
             'status': 'passed', 'basis': 'real-helper-and-original-three-card-package',
             'physical_hardware': False, 'reader_simulator': args.reader_sim,
             'text_scale': args.scale if args.reader_sim else None,
-            'checks': ['helper version and notice', 'supported formats and review limits', 'import with spaces in path', 'bundle verification',
+            'checks': ['front/back HTML preview and card count', 'embedded image bytes and media count', 'preview preserves existing files', 'helper version and notice', 'supported formats and review limits', 'import with spaces in path', 'bundle verification',
                        'staged bytes match prepared bundle', 'helper failures reach CLI',
                        'corrupt stage preserves installed collection',
                        'merge preserves both card inventories and source bundle',

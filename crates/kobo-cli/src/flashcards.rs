@@ -4,7 +4,8 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-const USAGE: &str = "usage: kobo flashcards import DECK.apkg --merge COLLECTION.cobfc [--merge-into EXISTING.cobfc]\n\
+const USAGE: &str = "usage: kobo flashcards preview COLLECTION.cobfc --out PREVIEW.html [--card NUMBER]\n\
+                     \x20      kobo flashcards import DECK.apkg --merge COLLECTION.cobfc [--merge-into EXISTING.cobfc]\n\
                      \x20      kobo flashcards import COLLECTION.colpkg --replace COLLECTION.cobfc\n\
                      \x20      kobo flashcards verify COLLECTION.cobfc\n\
                      \x20      kobo flashcards stage COLLECTION.cobfc --kobo-root MOUNT\n\
@@ -35,6 +36,8 @@ fn helper_arguments(arguments: &[String]) -> Result<Vec<String>, String> {
         ["status"] => Ok(vec!["--version".to_owned()]),
         ["formats"] => Ok(vec!["--formats".to_owned()]),
         ["--licenses" | "--notice"]
+        | ["preview", _, "--out", _]
+        | ["preview", _, "--out", _, "--card", _]
         | ["verify", _]
         | ["stage", _, "--kobo-root", _]
         | ["export-review-log", "--kobo-root", _, _]
