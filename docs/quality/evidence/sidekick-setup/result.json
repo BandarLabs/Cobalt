@@ -1,0 +1,11 @@
+{
+  "status": "passed",
+  "helper_sha256": "386dc10090835acce1fe47301c901ae19a758141cf77433d56cc0eec4da8df2a",
+  "checks": [
+    "eight help invocations exit successfully",
+    "missing arguments remain an error",
+    "redirected setup shows status and leaves configuration unchanged",
+    "real terminal displays integrations, retries invalid number and cancels"
+  ],
+  "hook_installation_tested": false
+}

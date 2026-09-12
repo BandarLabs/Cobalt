@@ -4209,8 +4209,11 @@
     "pr": 4,
     "group": "Sidekick companion",
     "task": "Show and select agent integrations before configuration",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Sidekick setup displays supported integrations, detection and config paths; numbered terminal selection installs only the selected integration. Redirected setup is read-only; explicit named setup and dry-run/print are retained.",
+      "51 helper tests and strict all-target Clippy passed; docs/quality/evidence/sidekick-setup/result.json records real terminal invalid-choice/cancellation acceptance. No user hooks were installed during acceptance."
+    ]
   },
   {
     "id": "SIDECLI-03",
@@ -4233,8 +4236,10 @@
     "pr": 4,
     "group": "Sidekick companion",
     "task": "Return success from help",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Eight actual helper help invocations return success, including subcommands; missing arguments remain errors. Evidence: docs/quality/evidence/sidekick-setup/result.json."
+    ]
   },
   {
     "id": "SIDECLI-06",

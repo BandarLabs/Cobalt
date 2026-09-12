@@ -23,7 +23,10 @@ before.
 ```sh
 kobo-sidekickd init    # certificate with the LAN address in it, pairing code
 kobo-sidekickd run     # both listeners, until killed
-kobo-sidekickd setup codex    # prints the hook config to paste; also: claude
+kobo-sidekickd setup          # choose one integration by number
+kobo-sidekickd setup claude --dry-run  # preview one integration
+kobo-sidekickd setup claude --print    # print configuration for manual setup
+kobo-sidekickd setup claude            # configure the named integration
 kobo-sidekickd hook codex     # what the agent runs; reads stdin, asks, answers
 ```
 
@@ -35,6 +38,21 @@ already look, so the simulator trusts the daemon with no further ceremony,
 and where `kobo setup` looks, so a reader picks it up with the install. A
 reader set up before the authority existed gets it with
 `kobo trust set sidekick --device IP`.
+
+### Choosing an integration
+
+`setup` displays supported integrations, whether each was detected, and its
+configuration path. Choose one number to configure that integration, or press
+Enter or **0** to cancel. It no longer configures every detected integration
+at once. When input or output is redirected, it lists status and explicit
+commands without changing configuration.
+
+`setup AGENT --dry-run` previews the change. `setup --dry-run` retains the
+preview of all detected integrations. `setup AGENT --print` prints manual
+configuration. Explicit setup preserves the existing merge and backup
+behavior. Help (`--help`, `-h`, or `help`) returns success; subcommand help is
+also available without initializing pairing, starting listeners or installing
+hooks.
 
 ## The two listeners
 

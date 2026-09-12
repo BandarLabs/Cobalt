@@ -2265,3 +2265,20 @@ replacement retry and private file permissions on the local test filesystem.
 Strict all-target CLI Clippy passed. The provider acceptance result was
 refreshed against the newly built CLI. Hardware filesystem and power-loss
 acceptance remain outstanding; CLI-18 stays open for the wider transfer scope.
+
+
+### Sidekick integration choice and help (SIDECLI-02, SIDECLI-05)
+
+Bare helper setup now displays supported integrations with detection state
+and config paths, then configures only the selected number. Blank input, EOF
+and zero cancel. Redirected setup lists status and instructions without
+writing configuration. Explicit named setup, dry-run previews and printed
+configuration retain their existing paths. Help and subcommand help return
+success without starting listeners or installing hooks.
+
+All 51 helper tests and strict all-target Clippy passed. Acceptance drove the
+built helper in a real terminal through invalid choice and cancellation,
+checked eight help forms and the noninteractive setup behavior, and retained
+missing-argument errors. No user hook configuration was written. Evidence:
+`evidence/sidekick-setup/result.json`, terminal transcript and rendered chooser.
+The full helper lifecycle, sample event and reader acceptance remain open.

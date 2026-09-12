@@ -36,7 +36,7 @@ const USAGE: &str = "usage: kobo-sidekickd init [--host ADDRESS ...]\n\
                      \x20      kobo-sidekickd agents\n\
                      \x20      kobo-sidekickd hook AGENT\n\
                      \n\
-                     setup with no agent registers every one it finds.";
+                     setup with no agent lets you choose an integration.";
 
 /// `setup`, with an optional agent and an optional `--dry-run`, in either
 /// order, because nobody should have to remember which comes first.
@@ -60,6 +60,16 @@ fn main() -> ExitCode {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     let result = match arguments.split_first() {
         Some((verb, rest)) => match (verb.as_str(), rest) {
+            ("--help" | "-h" | "help", []) => {
+                println!("{USAGE}");
+                Ok(())
+            }
+            ("init" | "run" | "setup" | "agents" | "hook", [flag])
+                if matches!(flag.as_str(), "--help" | "-h") =>
+            {
+                println!("{USAGE}");
+                Ok(())
+            }
             ("init", extra) => state::init(extra),
             ("run", []) => server::run(),
             ("hook", [agent]) => hooks::run_hook(agent),

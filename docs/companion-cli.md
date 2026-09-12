@@ -87,3 +87,15 @@ refuses to overwrite it. Local input is limited to 4 KB and must be a regular
 text file. New staging files request private permissions; permission support
 depends on the USB volume's filesystem. This does not certify power-loss
 recovery on a physical reader.
+
+## Sidekick integrations
+
+Run `kobo-sidekickd setup` in a terminal to see supported integrations and
+choose one by number. Enter or **0** cancels. Redirected input displays status
+and explicit commands without configuring anything. Use
+`kobo-sidekickd setup AGENT --dry-run` to preview a selected integration, or
+`--print` to obtain configuration for manual setup. Read the
+[Sidekick companion guide](../crates/kobo-sidekickd/README.md) for pairing and
+listener setup.
+
+![Sidekick integration chooser, rendered from terminal output](quality/evidence/sidekick-setup/selection.svg)

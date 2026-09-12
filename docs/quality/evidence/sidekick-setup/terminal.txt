@@ -1,0 +1,9 @@
+Connect Sidekick to an integration
+
+1. Claude Code (detected) — ~/.claude/settings.json
+2. Codex (detected) — ~/.codex/hooks.json
+0. Cancel
+Only the selected integration will be configured.
+Choose a number (blank cancels): 99
+Choose one of the listed numbers.
+Choose a number (blank cancels): 
