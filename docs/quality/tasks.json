@@ -3394,24 +3394,30 @@
     "pr": 4,
     "group": "Main CLI and companion operation engine",
     "task": "Provide guided interactive entry point for bare kobo",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Bare kobo uses a numbered owner menu only when both stdin/stdout are terminals. USB setup, Frame preview, OPML check and Paperterm demo reuse existing handlers; developer/release reference is a separate choice. Noninteractive bare invocation prints compact help without reading input. Two menu regressions verify literal paths, cancellation and invalid-choice retry. Real PTY acceptance validates an original OPML file through the menu; strict CLI Clippy passes. Evidence: docs/quality/evidence/owner-start. Desktop surface, named-reader selection and transfer receipts remain separate open tasks."
+    ]
   },
   {
     "id": "CLI-02",
     "pr": 4,
     "group": "Main CLI and companion operation engine",
     "task": "Keep plain compact help for noninteractive use",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Bare kobo uses a numbered owner menu only when both stdin/stdout are terminals. USB setup, Frame preview, OPML check and Paperterm demo reuse existing handlers; developer/release reference is a separate choice. Noninteractive bare invocation prints compact help without reading input. Two menu regressions verify literal paths, cancellation and invalid-choice retry. Real PTY acceptance validates an original OPML file through the menu; strict CLI Clippy passes. Evidence: docs/quality/evidence/owner-start. Desktop surface, named-reader selection and transfer receipts remain separate open tasks."
+    ]
   },
   {
     "id": "CLI-03",
     "pr": 4,
     "group": "Main CLI and companion operation engine",
     "task": "Separate owner tasks from developer/release commands",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Bare kobo uses a numbered owner menu only when both stdin/stdout are terminals. USB setup, Frame preview, OPML check and Paperterm demo reuse existing handlers; developer/release reference is a separate choice. Noninteractive bare invocation prints compact help without reading input. Two menu regressions verify literal paths, cancellation and invalid-choice retry. Real PTY acceptance validates an original OPML file through the menu; strict CLI Clippy passes. Evidence: docs/quality/evidence/owner-start. Desktop surface, named-reader selection and transfer receipts remain separate open tasks."
+    ]
   },
   {
     "id": "CLI-04",

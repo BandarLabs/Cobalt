@@ -240,3 +240,12 @@ Flashcards full artifact audit: exit 0 at source
 Paperterm; Flashcards sources are unchanged since that audited commit.
 FLASHCLI-04 complete. FLASHCLI-03 remains open for verified distribution.
 Overall: 224 done, 271 open, one deferred.
+
+Main CLI entry: bare kobo offers numbered owner tasks in a terminal, with
+developer/release help as a separate choice. Redirected input/output uses
+compact help without a prompt. Literal paths, cancellation and invalid-choice
+retry pass unit tests. Real PTY acceptance opens the menu and validates an
+original OPML file with a space-containing path through the existing handler.
+Strict CLI Clippy passes. CLI-01/02/03 complete; broader reader selection,
+desktop surface and transfer-operation work remain open. Evidence:
+`evidence/owner-start`. Overall: 227 done, 268 open, one deferred.

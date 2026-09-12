@@ -1,0 +1,9 @@
+{
+  "status": "passed",
+  "checks": [
+    "noninteractive help exits without prompting",
+    "real PTY displays numbered owner choices",
+    "menu reads a path containing spaces",
+    "existing feed checker validates original OPML fixture"
+  ]
+}

@@ -27,6 +27,7 @@ mod host_release;
 mod menu;
 mod needles;
 mod nonograms;
+mod owner_start;
 mod package;
 mod runtime_dev;
 mod stream_demo;
@@ -487,7 +488,16 @@ fn canonical(command: &str) -> &str {
 
 fn run(arguments: &[String]) -> Result<(), String> {
     let Some(command) = arguments.first().map(String::as_str) else {
-        print_help();
+        use std::io::IsTerminal;
+        if std::io::stdin().is_terminal() && std::io::stdout().is_terminal() {
+            let selected =
+                owner_start::choose(&mut std::io::stdin().lock(), &mut std::io::stdout().lock())?;
+            if let Some(selected) = selected {
+                return run(&selected);
+            }
+        } else {
+            println!("{}", owner_start::COMPACT_HELP);
+        }
         return Ok(());
     };
     match canonical(command) {
