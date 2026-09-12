@@ -1639,6 +1639,7 @@ dependencies = [
 name = "kobo-verses"
 version = "0.1.0"
 dependencies = [
+ "kobo-image",
  "kobo-sdk",
  "kobo-ui",
  "serde",
