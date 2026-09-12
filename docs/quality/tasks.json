@@ -3890,8 +3890,10 @@
     "pr": 4,
     "group": "Frame companion",
     "task": "Retain recoverable previous album",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Two rotating recovery slots preserve the previous nonempty shelf before push/removal. frame restore restores images and album metadata, publishing the manifest last. Real CLI simulator-shelf acceptance verifies replacement/removal recovery, bounded slots, failed snapshot refusal and missing-backup refusal. Actual generated device shell scripts pass copy/restore/failed-copy tests locally. Strict CLI Clippy passes. Evidence: docs/quality/evidence/frame-companion-plan. Physical device acceptance remains open."
+    ]
   },
   {
     "id": "FRAMECLI-07",

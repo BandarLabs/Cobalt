@@ -22,6 +22,7 @@ mod feeds;
 mod flashcards;
 mod frame;
 mod frame_preview;
+mod frame_recovery;
 mod host_release;
 mod menu;
 mod needles;

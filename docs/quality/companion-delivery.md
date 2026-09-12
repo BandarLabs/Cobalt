@@ -172,3 +172,12 @@ recoverable deletion and physical reader acceptance remain open.
 The Flashcards artifact audit at a8ac3863 stopped at the stale generated device
 dependency notice. FLASHCLI-04 stays open until the notices are reconciled and
 the complete audit passes.
+
+Frame recovery: before a changed nonempty shelf is published, preserve a complete
+copy in one of two rotating slots. `frame restore` restores the prior photo
+files and manifest; repeated unchanged pushes leave recovery untouched. The
+CLI acceptance script passes replacement/removal restoration, bounded slots,
+failed-copy refusal and incomplete-backup refusal. Generated device shell
+scripts also pass local execution tests, including failed backup preservation.
+Fifteen filtered CLI tests and strict all-target CLI Clippy pass. FRAMECLI-06 is
+complete; physical Clara BW transfer/restore acceptance is still outstanding.

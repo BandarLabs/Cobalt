@@ -103,5 +103,23 @@ folder names are used. Identical photos are reused on repeated imports.
 To replace the shelf, first run `plan` with `--delete`. Review each `Remove`
 entry, then use the same options with `push` to apply the replacement.
 Planning is a snapshot, not a reservation: the next push reads the shelf
-again and checks capacity before transferring. It does not keep a recoverable
-copy of deleted photos, so retain the originals on your computer.
+again and checks capacity before transferring. Before changing an existing nonempty shelf, Frame saves a recovery copy. If
+that copy fails, the change is refused. Keep originals on your computer too.
+
+## Undo the last album change
+
+```sh
+kobo frame restore --device 192.168.1.42
+```
+
+Restore brings back the shelf saved before the last push or removal, including
+its album names and photo files. An unchanged repeated push does not replace
+that recovery copy. Restore itself leaves the recovery copy available, so it
+can be retried after a connection failure. A missing backup photo is reported
+before the current manifest changes.
+
+Recovery uses two rotating copies on the reader, each at most the size of a
+previous shelf. Allow up to 300 MB in addition to the current shelf and space
+for an incoming transfer. A full disk can prevent a change; Frame must finish
+saving the previous shelf before it proceeds. This is one-step recovery, not
+an archive of every past album. The same commands accept `--sim` for rehearsal.

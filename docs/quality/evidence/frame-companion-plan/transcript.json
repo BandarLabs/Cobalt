@@ -26,7 +26,7 @@
       "ls",
       "--sim"
     ],
-    "output": "photo-b7919f4bf812bc8d\t1789209933\tSummer holiday\tfirst.png\n",
+    "output": "photo-b7919f4bf812bc8d\t1789210368\tSummer holiday\tfirst.png\n",
     "exit_code": 0
   },
   {
@@ -61,6 +61,83 @@
       "Summer holiday"
     ],
     "output": "0 new, 1 already present, 0 removed; 0 image bytes to send\n  Keep: Summer holiday / first.png (photo-b7919f4bf812bc8d)\nFrame updated: 1 photo(s), 0 new, 0 removed\n",
+    "exit_code": 0
+  },
+  {
+    "arguments": [
+      "push",
+      "<fixture>/second.png",
+      "--sim",
+      "--delete",
+      "--album",
+      "Autumn"
+    ],
+    "output": "1 new, 0 already present, 1 removed; 11675 image bytes to send\n  Add: Autumn / second.png (photo-dabdbb88e913d353)\n  Remove: Summer holiday / first.png (photo-b7919f4bf812bc8d)\nFrame updated: 1 photo(s), 1 new, 1 removed\n",
+    "exit_code": 0
+  },
+  {
+    "arguments": [
+      "ls",
+      "--sim"
+    ],
+    "output": "photo-dabdbb88e913d353\t1789210368\tAutumn\tsecond.png\n",
+    "exit_code": 0
+  },
+  {
+    "arguments": [
+      "restore",
+      "--sim"
+    ],
+    "output": "Restored the previous Frame album: 1 photo(s).\n",
+    "exit_code": 0
+  },
+  {
+    "arguments": [
+      "ls",
+      "--sim"
+    ],
+    "output": "photo-b7919f4bf812bc8d\t1789210368\tSummer holiday\tfirst.png\n",
+    "exit_code": 0
+  },
+  {
+    "arguments": [
+      "rm",
+      "photo-b7919f4bf812bc8d",
+      "--sim"
+    ],
+    "output": "Removed Frame photo photo-b7919f4bf812bc8d. Use `kobo frame restore` with the same target to undo.\n",
+    "exit_code": 0
+  },
+  {
+    "arguments": [
+      "ls",
+      "--sim"
+    ],
+    "output": "Frame shelf is empty.\n",
+    "exit_code": 0
+  },
+  {
+    "arguments": [
+      "restore",
+      "--sim"
+    ],
+    "output": "Restored the previous Frame album: 1 photo(s).\n",
+    "exit_code": 0
+  },
+  {
+    "arguments": [
+      "ls",
+      "--sim"
+    ],
+    "output": "photo-b7919f4bf812bc8d\t1789210368\tSummer holiday\tfirst.png\n",
+    "exit_code": 0
+  },
+  {
+    "arguments": [
+      "restore",
+      "--sim"
+    ],
+    "output": "Restored the previous Frame album: 1 photo(s).\n",
     "exit_code": 0
   }
 ]

@@ -16,6 +16,7 @@ const USAGE: &str = "usage: kobo frame preview INPUT --out DIRECTORY [--profile 
                      \x20      kobo frame init (--sim | --device IP)\n\
                      \x20      kobo frame push INPUT (--sim | --device IP) [--fit crop|pad] [--album NAME] [--delete]\n\
                      \x20      kobo frame plan INPUT (--sim | --device IP) [--fit crop|pad] [--album NAME] [--delete]\n\
+                     \x20      kobo frame restore (--sim | --device IP)\n\
                      \x20      kobo frame ls (--sim | --device IP)\n\
                      \x20      kobo frame rm ID (--sim | --device IP)";
 
@@ -34,6 +35,7 @@ pub fn command(arguments: &[String]) -> Result<(), String> {
         Some("init") => init(&arguments[1..]),
         Some("push") => push(&arguments[1..], false),
         Some("plan") => push(&arguments[1..], true),
+        Some("restore") => restore(&arguments[1..]),
         Some("ls") => list(&arguments[1..]),
         Some("rm") => remove(&arguments[1..]),
         _ => Err(USAGE.to_owned()),
@@ -104,10 +106,20 @@ fn push(arguments: &[String], plan_only: bool) -> Result<(), String> {
     match &target {
         Target::Device(host) => {
             enforce_capacity(host, &push)?;
+            if push.manifest != existing {
+                let script = format!(
+                    "set -eu\nroot='{ROOT}'\n{}",
+                    super::frame_recovery::save_script(&existing)
+                );
+                remote(host, &script)?;
+            }
             transfer(host, &push)?;
         }
         Target::Sim => {
             enforce_local_capacity(&push)?;
+            if push.manifest != existing {
+                super::frame_recovery::save(&sim_root(), &existing)?;
+            }
             publish_local(&push)?;
         }
     }
@@ -159,35 +171,68 @@ fn list(arguments: &[String]) -> Result<(), String> {
 
 fn remove(arguments: &[String]) -> Result<(), String> {
     let (id, target) = parse_remove(arguments)?;
+    let existing = match &target {
+        Target::Device(host) => read_manifest(host)?,
+        Target::Sim => read_local_manifest()?,
+    };
+    let mut manifest = existing.clone();
+    let index = manifest
+        .photos
+        .iter()
+        .position(|photo| photo.id == id)
+        .ok_or_else(|| format!("Frame has no photo with id {id:?}"))?;
+    let photo = manifest.photos.remove(index);
+    let push = Push {
+        manifest,
+        photos: Vec::new(),
+        removed: vec![photo],
+    };
     match target {
         Target::Device(host) => {
-            let mut manifest = read_manifest(&host)?;
-            let Some(index) = manifest.photos.iter().position(|photo| photo.id == id) else {
-                return Err(format!("Frame has no photo with id {id:?}"));
-            };
-            let photo = manifest.photos.remove(index);
-            let encoded = super::base64_encode(&manifest.encode());
-            let script = format!(
-                "set -eu\nroot='{ROOT}'\npartial=\"$root/.{MANIFEST}.writing\"\nbase64 -d > \"$partial\" <<'COBALT_FRAME_MANIFEST'\n{encoded}\nCOBALT_FRAME_MANIFEST\nchmod 600 \"$partial\"\nmv -f \"$partial\" \"$root/{MANIFEST}\"\nsync\nrm -f \"$root/{}.png\"\nsync\nprintf 'Removed Frame photo {}\\n'\n",
-                photo.id, photo.id
-            );
-            let output = remote(&host, &script)?;
-            print!("{}", String::from_utf8_lossy(&output.stdout));
+            remote(
+                &host,
+                &format!(
+                    "set -eu\nroot='{ROOT}'\n{}",
+                    super::frame_recovery::save_script(&existing)
+                ),
+            )?;
+            transfer(&host, &push)?;
         }
         Target::Sim => {
-            let mut manifest = read_local_manifest()?;
-            let Some(index) = manifest.photos.iter().position(|photo| photo.id == id) else {
-                return Err(format!("Frame has no photo with id {id:?}"));
-            };
-            let photo = manifest.photos.remove(index);
-            publish_local(&Push {
-                manifest,
-                photos: Vec::new(),
-                removed: vec![photo.clone()],
-            })?;
-            println!("Removed Frame photo {}", photo.id);
+            super::frame_recovery::save(&sim_root(), &existing)?;
+            publish_local(&push)?;
         }
     }
+    println!("Removed Frame photo {id}. Use `kobo frame restore` with the same target to undo.");
+    Ok(())
+}
+
+fn restore(arguments: &[String]) -> Result<(), String> {
+    let count = match parse_target(arguments)? {
+        Target::Sim => super::frame_recovery::restore(&sim_root())?,
+        Target::Device(host) => {
+            let current = read_manifest(&host)?;
+            let selection = super::frame_recovery::select_script();
+            let output = remote(
+                &host,
+                &format!("set -eu\nroot='{ROOT}'\n{selection}base64 \"$backup/{MANIFEST}\"\n"),
+            )?;
+            let previous =
+                Manifest::decode(&base64_decode(&String::from_utf8_lossy(&output.stdout))?)?;
+            let mut script = format!(
+                "set -eu\nroot='{ROOT}'\n{}",
+                super::frame_recovery::restore_script(&previous)
+            );
+            for photo in &current.photos {
+                if !previous.photos.iter().any(|p| p.id == photo.id) {
+                    let _ = writeln!(script, "rm -f \"$root/{}.png\"", photo.id);
+                }
+            }
+            remote(&host, &script)?;
+            previous.photos.len()
+        }
+    };
+    println!("Restored the previous Frame album: {count} photo(s).");
     Ok(())
 }
 

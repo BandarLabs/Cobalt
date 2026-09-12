@@ -7,6 +7,10 @@
     "repeated import explicitly reuses photo",
     "concrete deletion list",
     "plan leaves existing shelf unchanged",
-    "repeated push preserves image bytes"
+    "repeated push preserves image bytes",
+    "replacement and removal can be restored",
+    "recovery limited to two slots",
+    "failed recovery copy refuses replacement",
+    "incomplete recovery refused before manifest change"
   ]
 }
