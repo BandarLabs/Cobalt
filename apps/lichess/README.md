@@ -183,3 +183,18 @@ without exposing protocol event names; rate-limit guidance does not claim the
 seek was cancelled when only the next check is delayed.
 
 ![Checking for a matched game at 170% text size](screenshots/reconciling-large.png)
+
+A delayed match check says “Waiting to check again” and keeps cancellation
+available. Saved-game and challenge recovery messages explain the next action,
+including choosing from Ongoing games when several games match.
+
+The presentation fixture includes the failed-check and cancellation path:
+
+```sh
+python3 scripts/quality/check-lichess-pairing-sim.py --scenario pairing-error --output /tmp/lichess-pairing-error
+```
+
+This debug demo validates layout and cancellation controls; the separate TLS
+session fixture validates transport behavior.
+
+![Pairing check failure at 170% text size](screenshots/pairing-error-large.png)

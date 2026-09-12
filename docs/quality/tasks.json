@@ -2016,9 +2016,9 @@
     "pr": 3,
     "group": "Lichess",
     "task": "Polish pairing and reconnection guidance",
-    "status": "todo",
+    "status": "done",
     "evidence": [
-      "Partial PR #181 evidence: simplified pairing/recovery copy, removed the duplicated checking banner and separated clock settings from game type. Normal and 170% checking-screen captures pass; 111 app tests and strict Clippy pass. Incorrect rate-limit copy no longer claims the seek was cancelled. Remaining guidance review stays open. Evidence: docs/quality/evidence/lichess-recovery on beta-quality-apps-2."
+      "PR #181: reviewed and simplified pairing, challenge, saved-game and connection-recovery guidance. Checking and retry screens use plain language and avoid duplicate status messages. Normal and 170% checking/error captures and explicit cancellation pass; prior real TLS session and disconnect fixtures cover recovery behavior. 111 app tests and strict Clippy pass. Evidence: docs/quality/evidence/lichess-pairing-guidance, lichess-recovery and lichess-connection on beta-quality-apps-2. Physical acceptance remains separate."
     ]
   },
   {

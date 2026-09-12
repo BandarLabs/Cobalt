@@ -3,8 +3,8 @@
   "display_name": "Lichess",
   "short_label": "Lichess",
   "summary": "Play Lichess games, challenge players, solve puzzles, or play offline.",
-  "version": "1.0.11",
-  "release_notes": "Uses plain pairing and recovery guidance, removes duplicate checking messages and separates clock settings from game type for readable enlarged text.",
+  "version": "1.0.12",
+  "release_notes": "Clarifies saved-game, challenge and pairing recovery messages. A delayed match check now says it is waiting to check again and keeps cancellation available.",
   "minimum_cobalt_version": "0.3.5",
   "glyph": "grid",
   "capabilities": [

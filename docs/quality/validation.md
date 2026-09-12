@@ -2346,3 +2346,12 @@ pairing was cancelled. Normal and 170% checking-screen captures pass; all 111
 app tests and strict Clippy pass. Updated screenshot evidence is in
 `evidence/lichess-recovery`. LICHESS-01 remains open for the rest of its guidance
 review; counts remain 232 complete, 263 open, one deferred.
+
+LICHESS-01 is complete. Reviewed pairing, challenge, saved-game and connection
+recovery guidance; removed protocol vocabulary and clarified ambiguous matches.
+The failed-check screen and explicit cancellation pass at normal and 170% text
+sizes with clean rendering/touch diagnostics. Evidence:
+`evidence/lichess-pairing-guidance`, alongside the prior checking-screen and
+real TLS recovery evidence. All 111 app tests and strict Clippy pass.
+All six Lichess app-quality tasks are now complete; companion work and physical
+acceptance retain their own scope. Tracker: 233 complete, 262 open, one deferred.

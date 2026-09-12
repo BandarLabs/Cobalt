@@ -883,8 +883,10 @@ impl Lichess {
             .activity(
                 if reconciling {
                     "Checking games"
-                } else {
+                } else if self.seek_task.is_some() {
                     "Finding an opponent"
+                } else {
+                    "Waiting to check again"
                 },
                 None,
             )
@@ -956,7 +958,7 @@ impl Lichess {
         let Some(game) = &self.game else {
             return ScreenBuilder::new("lichess-game")
                 .top_bar("Game")
-                .activity("Opening the board stream", None)
+                .activity("Opening your game", None)
                 .build();
         };
         let elapsed = self.clock.waited().as_secs();
@@ -1068,7 +1070,7 @@ impl Lichess {
         if game.takeback_pending() {
             screen = screen.banner(
                 BannerLevel::Attention,
-                "Takeback controls are not supported. External board changes are reconciled by reopening the stream.",
+                "Takebacks are unavailable here. The board updates if moves change on Lichess.",
             );
         }
         if game.opponent_gone {
@@ -1581,7 +1583,7 @@ impl Lichess {
             Self::keep_live(context);
         } else {
             self.deferred_board_open = self.session.clone();
-            self.notice = Some("Waiting for a task slot before reopening the board.".to_owned());
+            self.notice = Some("Opening your game. Please wait.".to_owned());
         }
     }
 
@@ -2757,8 +2759,7 @@ impl Lichess {
                     .as_ref()
                     .is_some_and(|session| session.game_id == id);
                 if current && !self.board_is_live(&id) {
-                    self.notice =
-                        Some("The game finished while its board stream was paused.".to_owned());
+                    self.notice = Some("This game finished while you were away.".to_owned());
                     self.discard_game(context, &id);
                 } else if self.game.as_ref().is_some_and(|game| game.id == id) {
                     self.notice = None;
@@ -2839,7 +2840,7 @@ impl Lichess {
                 }
                 let pending = self.pending_move.clone();
                 let Some(game) = Game::from_full(full, color) else {
-                    self.notice = Some("The server board could not be reconstructed.".to_owned());
+                    self.notice = Some("Could not load the position. Reconnecting.".to_owned());
                     self.close_board(context, id);
                     self.schedule_board_reconnect(context, id);
                     return;
@@ -2907,7 +2908,7 @@ impl Lichess {
             }
             BoardRecord::Unsupported(variant) => {
                 self.notice = Some(format!(
-                    "The {variant} variant is not supported; its reconnect state was cleared."
+                    "The {variant} variant is not supported. Choose a standard game."
                 ));
                 self.discard_game(context, id);
             }
@@ -3004,8 +3005,7 @@ impl Lichess {
             self.clear_pending_action();
         }
         if let Some(summary) = recovered {
-            self.notice =
-                Some("Recovered the accepted challenge from the current-game snapshot.".to_owned());
+            self.notice = Some("Your challenge started. Opening the game.".to_owned());
             self.open_board(context, summary.session());
             true
         } else {
@@ -3013,11 +3013,9 @@ impl Lichess {
                 self.route = Route::Play;
             }
             self.notice = Some(if ambiguous {
-                "Several games matched the accepted challenge; choose the correct one from Ongoing games."
-                    .to_owned()
+                "Several games found. Choose from Ongoing games.".to_owned()
             } else {
-                "The accepted challenge was not active after reconnect; the wait was cleared."
-                    .to_owned()
+                "That challenge is no longer active. You can choose another game.".to_owned()
             });
             false
         }
@@ -3239,7 +3237,7 @@ impl Lichess {
                     self.event_backoff = 1;
                     self.next_event(context);
                 } else {
-                    self.notice = Some("The event stream did not open cleanly.".to_owned());
+                    self.notice = Some("Could not connect to Lichess. Trying again.".to_owned());
                 }
             }
             Pending::EventNext => {
@@ -3247,10 +3245,7 @@ impl Lichess {
                     self.handle_event(context, event);
                     self.next_event(context);
                 } else {
-                    self.notice = Some(
-                        "The event stream record was malformed; reopening without replay."
-                            .to_owned(),
-                    );
+                    self.notice = Some("Could not read the game update. Reconnecting.".to_owned());
                     self.recover_accepted_challenge(context);
                     self.close_event(context);
                 }
@@ -3311,7 +3306,7 @@ impl Lichess {
                     self.board_backoff = 1;
                     self.next_board(context, &id);
                 } else {
-                    self.notice = Some("The board stream did not open cleanly.".to_owned());
+                    self.notice = Some("Could not open your game. Trying again.".to_owned());
                 }
             }
             Pending::BoardNext(id) => {
@@ -3441,7 +3436,7 @@ impl Lichess {
                 }
                 if error == TaskError::NotFound {
                     self.notice = Some(
-                        "The saved game is no longer available; reconnect state was cleared."
+                        "That game is no longer available. Choose another from Ongoing games."
                             .to_owned(),
                     );
                     self.discard_game(context, &id);
@@ -3913,6 +3908,18 @@ impl Lichess {
                 self.notice = Some("Checking games.".to_owned());
                 self.route = Route::Pairing;
             }
+            "pairing-error" => {
+                if !self.install_demo("reconciling") {
+                    return false;
+                }
+                self.tasks.clear();
+                self.tasks
+                    .insert(TaskId(998), Pending::SeekGrace { generation: 1 });
+                self.notice = Some(
+                    "Could not check your game. Wait for another check or cancel pairing."
+                        .to_owned(),
+                );
+            }
             "challenge" => {
                 self.account = AccountState::Ready(Account {
                     id: "demo-owner".to_owned(),
@@ -4003,14 +4010,16 @@ impl KoboApp for Lichess {
                 if value.is_some() && self.session.is_none() {
                     context.store().forget(SESSION_KEY);
                     self.notice =
-                        Some("Corrupted reconnect state was discarded safely.".to_owned());
+                        Some("Could not restore your last game. Check Ongoing games.".to_owned());
                 }
             } else if key == PUZZLE_KEY {
                 self.loaded_puzzles = true;
                 if let Some(bytes) = value {
                     if !self.decode_puzzles(&bytes) {
                         context.store().forget(PUZZLE_KEY);
-                        self.notice = Some("Corrupted puzzle state was discarded.".to_owned());
+                        self.notice = Some(
+                            "Saved puzzles could not be read. Download them again.".to_owned(),
+                        );
                     }
                 }
             } else if key == BOARD_RATE_KEY {
@@ -4021,7 +4030,7 @@ impl KoboApp for Lichess {
                     } else {
                         context.store().forget(BOARD_RATE_KEY);
                         self.notice =
-                            Some("Corrupted board retry metadata was discarded.".to_owned());
+                            Some("Saved connection settings could not be read. Checking your game again.".to_owned());
                     }
                 }
             } else if key == EVENT_RATE_KEY {
@@ -4031,8 +4040,10 @@ impl KoboApp for Lichess {
                         self.event_rate_limit = Some(not_before);
                     } else {
                         context.store().forget(EVENT_RATE_KEY);
-                        self.notice =
-                            Some("Corrupted event retry metadata was discarded.".to_owned());
+                        self.notice = Some(
+                            "Saved connection settings could not be read. Connecting again."
+                                .to_owned(),
+                        );
                     }
                 }
             } else if key == SEEK_RATE_KEY {
@@ -4043,7 +4054,7 @@ impl KoboApp for Lichess {
                     } else {
                         context.store().forget(SEEK_RATE_KEY);
                         self.notice =
-                            Some("Corrupted pairing retry metadata was discarded.".to_owned());
+                            Some("Saved pairing settings could not be read. Check your account before pairing.".to_owned());
                     }
                 }
             }
@@ -6360,7 +6371,7 @@ mod tests {
             .notice
             .as_deref()
             .unwrap_or_default()
-            .contains("Several games matched"));
+            .contains("Several games found"));
     }
 
     #[test]

@@ -21,6 +21,7 @@ from simulator_cli import build_cli, verify_cli
 root = Path(__file__).resolve().parents[2]
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--output", type=Path, required=True)
+parser.add_argument("--scenario", choices=["reconciling", "pairing-error"], default="reconciling")
 args = parser.parse_args()
 target = Path(os.environ.get("CARGO_TARGET_DIR", str(root / "target"))).resolve()
 cli, provenance = build_cli(root, target)
@@ -39,7 +40,7 @@ for scale in ["default", "170"]:
             CARGO_PROFILE_DEV_DEBUG="0",
             CARGO_INCREMENTAL="0",
             CARGO_BUILD_JOBS="2",
-            KOBO_LICHESS_DEMO="reconciling",
+            KOBO_LICHESS_DEMO=args.scenario,
             KOBO_SIM_PROFILE="clara-bw-391",
             KOBO_TEXT_SCALE=scale,
             KOBO_SIM_OFFLINE="1",
@@ -69,7 +70,7 @@ for scale in ["default", "170"]:
                             "http://" + address + "/layout", timeout=2
                         ) as response:
                             layout = json.load(response)
-                        if "Checking games" in json.dumps(layout):
+                        if ("Checking games" if args.scenario == "reconciling" else "Could not check your game") in json.dumps(layout):
                             break
                     except OSError:
                         pass
@@ -84,7 +85,7 @@ for scale in ["default", "170"]:
                     address,
                     "--ideal",
                     "--script",
-                    str(root / "apps/lichess/drive/reconciling.kobo"),
+                    str(root / "apps/lichess/drive" / (args.scenario + ".kobo")),
                     "--shots",
                     str(out),
                 ],
@@ -114,10 +115,11 @@ for scale in ["default", "170"]:
                 json.dumps(
                     dict(
                         build=provenance,
+                        scenario=args.scenario,
                         scale=scale,
                         profile="clara-bw-391",
                         status="pass",
-                        scope="Offline demo of the checking screen; not live matchmaking or physical hardware validation",
+                        scope="Offline demo of pairing recovery guidance; not live matchmaking or physical hardware validation",
                     ),
                     indent=2,
                 )
