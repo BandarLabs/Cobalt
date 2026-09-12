@@ -661,10 +661,10 @@ Design direction: the bar is a well-made iPad application, built for a panel tha
 
 ## PR 4 · Sidekick companion
 
-- [ ] **SIDECLI-01** Unify helper install/start/status/stop in companion.
+- [x] **SIDECLI-01** Unify helper install/start/status/stop in companion.
 - [x] **SIDECLI-02** Show and select agent integrations before configuration.
 - [x] **SIDECLI-03** Preserve dry-run, printed configuration and backups.
-- [ ] **SIDECLI-04** Verify a harmless sample event on the reader.
+- [x] **SIDECLI-04** Verify a harmless sample event on the reader.
 - [x] **SIDECLI-05** Return success from help.
 - [x] **SIDECLI-06** Provide self-contained sample mode.
 

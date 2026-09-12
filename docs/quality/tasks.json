@@ -4261,8 +4261,11 @@
     "pr": 4,
     "group": "Sidekick companion",
     "task": "Unify helper install/start/status/stop in companion",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "crates/kobo-cli/src/sidekick.rs",
+      "docs/quality/evidence/sidekick-companion/"
+    ]
   },
   {
     "id": "SIDECLI-02",
@@ -4292,8 +4295,11 @@
     "pr": 4,
     "group": "Sidekick companion",
     "task": "Verify a harmless sample event on the reader",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "crates/kobo-cli/src/sidekick.rs",
+      "docs/quality/evidence/sidekick-companion/"
+    ]
   },
   {
     "id": "SIDECLI-05",

@@ -1,0 +1,37 @@
+Companion and reader, end to end, 12 September 2026.
+
+  $ kobo-sidekickd init
+  sidekick: minted a certificate for 192.168.1.10
+  Sidekick is initialised.
+    address       192.168.1.10:9331
+    pairing code  bdu2kj
+
+  $ kobo sidekick run
+  Sidekick helper started in the background (PID 90477).
+  Run 'kobo sidekick test' to send the reader a harmless question, or 'kobo sidekick stop' to stop it.
+
+  $ kobo sidekick status
+  Sidekick helper: running
+    binary   target/debug/kobo-sidekickd
+    hook     127.0.0.1:9330
+    config   /tmp/skhome/.config/kobo/sidekick
+    started  PID 90477 by this companion
+
+  $ kobo sidekick test
+  Sent a test question to the reader. Pick it up and answer; waiting up to 600 seconds.
+  The reader answered: allow. The whole path works.
+
+  $ kobo sidekick stop
+  Sidekick helper stopped.
+
+  $ kobo sidekick test
+  kobo: the Sidekick helper is not running; start it with 'kobo sidekick run'
+
+The reader in between: the Sidekick app in the simulator, paired to the helper
+over its own TLS certificate, showing the question in
+test-question-on-the-reader.png and answering Allow.
+
+Nothing was run by the test on either side. The question says so on the panel,
+which is the point: a permission prompt from a real agent is a poor first test
+because the thing it asks about is usually something nobody wants to allow
+twice.

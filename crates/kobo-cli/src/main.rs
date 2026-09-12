@@ -36,6 +36,7 @@ mod vault;
 mod panel;
 mod setup;
 mod sha256;
+mod sidekick;
 mod sync;
 
 const DEVICE_PACKAGES: &[&str] = &["kobo-doctor", "kobod", "kobo-todo", "kobo-terminal"];
@@ -496,6 +497,7 @@ fn run(arguments: &[String]) -> Result<(), String> {
         "frame" => frame::command(&arguments[1..]),
         "vault" => vault::command(&arguments[1..]),
         "sync" => sync::command(&arguments[1..]),
+        "sidekick" => sidekick::command(&arguments[1..]),
         "export" => exports::command(&arguments[1..]),
         "feeds" => feeds::command(&arguments[1..]),
         "needles" => needles::command(&arguments[1..]),
@@ -6467,19 +6469,6 @@ fn report_trust_names<'a>(names: impl Iterator<Item = &'a str>) {
 }
 
 fn print_help() {
-    // Two commands write to the panel and are compiled out without the
-    // feature, so they are named here only when they are really present.
-    // Advertising a command this binary would reject is worse than saying
-    // nothing, and it is the sort of drift a help string invites.
-    #[cfg(feature = "device-write")]
-    const WRITING: &str = "\n\nBuilt with --features device-write, so also:\n  \
-         tap --device IP X,Y [MS:X,Y ...]  Tap the real panel through the real touch node.\n  \
-         \x20                              Several steps run in one upload, timed on the\n  \
-         \x20                              device, which is how an application is driven.\n  \
-         smoke-display --device IP --confirm ...  Attended display checks, one at a time";
-    #[cfg(not(feature = "device-write"))]
-    const WRITING: &str = "\n\nBuilt without --features device-write, so the commands that write \
-         to a panel\n(tap, smoke-display) are not in this binary.";
     println!(
         "Kobo application SDK\n\n\
          Usage: kobo <command>\n\n\
@@ -6504,6 +6493,10 @@ fn print_help() {
            sync run [--foreground] [--seconds N] Start the private host Syncthing peer\n\
            export --app APP --device IP --out DIR  Receive a prepared text or image copy\n\
            sync status|stop                      Inspect or stop that dedicated peer\n\
+           sidekick setup [AGENT]               Install the Sidekick hook for a coding agent\n\
+           sidekick run [--foreground]          Start the helper the reader answers through\n\
+           sidekick status|stop                 Inspect or stop that helper\n\
+           sidekick test                        Ask the reader a harmless question, print the answer\n\
            feeds check FILE                     Read an OPML subscription list here\n\
            feeds push FILE (--device IP | --sim)  Stage that list on the reader for Feeds\n\
            needles prepare PDF --out FILE       Extract a user-owned PDF for Needles\n\
@@ -6564,8 +6557,31 @@ fn print_help() {
            verify <arm-binary>     Verify static ARM hard-float format\n\
            run --sim [--app NAME]  Run SDK, IPC, daemon and one app on host\n\
            run                    Device execution remains safety-gated\n\
-           version                Print version\n\n\
-         Every command that takes --device also takes -s, and these names\n\
+           version                Print version"
+    );
+    print_other_names();
+}
+
+/// The aliases, and the note about what this build can and cannot write.
+///
+/// Split from the list itself because the list is at the length the lints
+/// allow and every new command pushes it over.
+fn print_other_names() {
+    // Two commands write to the panel and are compiled out without the
+    // feature, so they are named here only when they are really present.
+    // Advertising a command this binary would reject is worse than saying
+    // nothing, and it is the sort of drift a help string invites.
+    #[cfg(feature = "device-write")]
+    const WRITING: &str = "\n\nBuilt with --features device-write, so also:\n  \
+         tap --device IP X,Y [MS:X,Y ...]  Tap the real panel through the real touch node.\n  \
+         \x20                              Several steps run in one upload, timed on the\n  \
+         \x20                              device, which is how an application is driven.\n  \
+         smoke-display --device IP --confirm ...  Attended display checks, one at a time";
+    #[cfg(not(feature = "device-write"))]
+    const WRITING: &str = "\n\nBuilt without --features device-write, so the commands that write \
+         to a panel\n(tap, smoke-display) are not in this binary.";
+    println!(
+        "\nEvery command that takes --device also takes -s, and these names\n\
          work if they are the ones you already know:\n\
            logcat -> logs   install -> deploy   wait-for-device -> wait\n\
            sim, simulator -> dev   init, create -> new{WRITING}"
