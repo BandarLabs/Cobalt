@@ -4,6 +4,8 @@ Source: the 8 September 2026 app/SDK/simulator/companion review. The ten new app
 
 ## Delivery plan
 
+Completion counts track all four PRs. PR 3 evidence lives on `beta-quality-apps-2`; PR 4 evidence lives on `beta-quality-companion`. A completed task does not imply its implementation is present in every sibling branch.
+
 Four PRs rooted in `beta`. The initial base was `7f1a543`; PR 1 is merged as `c22c946` and PR 2 targets beta directly. PR 2 grew large enough that its remaining app groups are better validated on hardware than stacked on top of it, so it ships the twenty app groups it has finished and the rest move to PR 3; the companion work it would have shared a branch with moves to PR 4:
 
 1. **Foundation:** simulator/runtime parity, shared SDK/document/board contracts, platform test interfaces and comic decoding/reading. Includes catalog integration fixes exposed by the stricter shared layout checks. Branch `beta-quality-foundation`, base `beta`.
@@ -19,7 +21,7 @@ A checked task requires implementation plus recorded validation. Physical measur
 
 The PR 1 implementation checklist is complete; CBR is deferred and COMIC-18 belongs to catalog integration in PR 2. This does not certify hardware accuracy: native sleep hands ownership back to the stock reader, and no generic kernel suspend, RTC wake or automatic cover-sleep backend is enabled. Physical acceptance moves ahead of PR 3: twenty app groups are validated as far as a simulator can speak for them, and panel latency, ghosting, touch accuracy and the live services each application talks to are not among those things.
 
-496 tracked tasks: 227 completed, 1 deferred by the owner, 268 open. Implementation in progress. Evidence is recorded per task in `tasks.json` and in [the validation log](validation.md).
+496 tracked tasks: 229 completed, 1 deferred by the owner, 266 open. Implementation in progress. Evidence is recorded per task in `tasks.json` and in [the validation log](validation.md).
 
 Design direction: the bar is a well-made iPad application, built for a panel that cannot animate. Familiar visual conventions per app, restrained controls, plain copy, full repaints and page turns rather than scrolling, and controls that do not move under a finger. Crossword follows printed crossword typography and grids. PR 3 takes the reading applications first, in the owner's order: Gutenbird, arXiv, Verses, Read Later, Frame, Sync, Lichess, Music Stand. Each pulls real data wherever the source permits it, and Lichess is the application the catalog is shown with, so it has to work against the live service rather than a fixture. Paperterm defaults to portrait with a physically scaled, denser terminal font; the measured grid takes precedence over forcing 80 columns.
 
@@ -313,8 +315,8 @@ Design direction: the bar is a well-made iPad application, built for a panel tha
 
 - [ ] **LICHESS-01** Polish pairing and reconnection guidance.
 - [ ] **LICHESS-02** Show active side, clock and connection status clearly.
-- [ ] **LICHESS-03** Keep legal moves and selected squares legible.
-- [ ] **LICHESS-04** Validate move acknowledgement, stale connection and reconnect.
+- [x] **LICHESS-03** Keep legal moves and selected squares legible.
+- [x] **LICHESS-04** Validate move acknowledgement, stale connection and reconnect.
 - [ ] **LICHESS-05** Test complete fixture match and retained session state.
 - [ ] **LICHESS-06** Notice on the panel when a seek has already been matched.
 

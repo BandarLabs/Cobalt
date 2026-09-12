@@ -2032,16 +2032,20 @@
     "pr": 3,
     "group": "Lichess",
     "task": "Keep legal moves and selected squares legible",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "PR #181 at e33fe681: joined chess board has bordered selected squares and legal-destination dots. Normal and 170% simulator screenshots inspected; 107 current app tests pass, including board sizing, legal-move and selection tests. Evidence: docs/quality/evidence/lichess-computer and lichess-todo-review on beta-quality-apps-2. Physical display acceptance remains separate."
+    ]
   },
   {
     "id": "LICHESS-04",
     "pr": 3,
     "group": "Lichess",
     "task": "Validate move acknowledgement, stale connection and reconnect",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "PR #181 at e33fe681: 107 current app tests pass. Tests reject optimistic/local move application, require authoritative board acknowledgement rather than POST success, suppress duplicate submissions, and reopen authoritative state after stale events. Deterministic fixture pairs, moves, reconnects and ends by agreed draw. Evidence: docs/quality/evidence/lichess-todo-review on beta-quality-apps-2. No live moves were sent."
+    ]
   },
   {
     "id": "LICHESS-05",
