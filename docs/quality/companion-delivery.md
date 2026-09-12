@@ -94,3 +94,14 @@ python3 scripts/quality/check-flashcards-companion.py --cli /path/to/kobo \
   --helper /path/to/flashcards-import --fixture-generator /path/to/quality_fixture \
   --output /tmp/flashcards-companion
 ```
+
+
+The Flashcards journey now also opens the staged collection in the actual SDK
+simulator, reveals and grades one card, then exports the saved review through
+the CLI. Normal and 170% text sizes pass with clean layout diagnostics; the
+export is byte-for-byte identical to the one-record reader log. Screenshots
+were inspected at both scales. FLASHCLI-01 and FLASHCLI-08 are complete on this
+evidence; the other Flashcards tasks and physical acceptance remain open.
+Add `--reader-sim --scale 170` to the reproduction command above to include
+this journey. The script copies between private simulated shelves explicitly;
+it does not claim a physical USB or network transfer.

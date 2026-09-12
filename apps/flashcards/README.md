@@ -100,3 +100,5 @@ after verification, with Flashcards closed. To copy the separate review log:
 ```sh
 kobo flashcards export-review-log --kobo-root MOUNT reviews.ndjson
 ```
+
+![An imported original study card reviewed at enlarged text size](screenshots/companion-review.png)

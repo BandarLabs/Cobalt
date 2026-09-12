@@ -3754,8 +3754,10 @@
     "pr": 4,
     "group": "Flashcards companion",
     "task": "Replace main CLI refusal stub with the supported helper entry point",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Main CLI delegates to the separate importer. Four CLI tests and strict Clippy pass; real-helper import/verify/stage and simulator reveal/grade/export pass at normal and 170% text size. Exported review bytes match the reader log. See docs/quality/evidence/flashcards-companion/{default,170} and companion-delivery.md. Physical-device acceptance remains separate."
+    ]
   },
   {
     "id": "FLASHCLI-02",
@@ -3810,8 +3812,10 @@
     "pr": 4,
     "group": "Flashcards companion",
     "task": "Expose verify, stage and review-log export consistently",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Main CLI delegates to the separate importer. Four CLI tests and strict Clippy pass; real-helper import/verify/stage and simulator reveal/grade/export pass at normal and 170% text size. Exported review bytes match the reader log. See docs/quality/evidence/flashcards-companion/{default,170} and companion-delivery.md. Physical-device acceptance remains separate."
+    ]
   },
   {
     "id": "FLASHCLI-09",

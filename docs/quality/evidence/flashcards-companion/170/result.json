@@ -1,0 +1,18 @@
+{
+  "status": "passed",
+  "basis": "real-helper-and-original-three-card-package",
+  "physical_hardware": false,
+  "reader_simulator": true,
+  "text_scale": "170",
+  "checks": [
+    "helper notice",
+    "import with spaces in path",
+    "bundle verification",
+    "staged bytes match prepared bundle",
+    "helper failures reach CLI",
+    "corrupt stage preserves installed collection",
+    "reader opened staged deck",
+    "revealed and graded a card",
+    "one saved review exported without changes"
+  ]
+}

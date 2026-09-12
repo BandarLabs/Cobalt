@@ -4,6 +4,10 @@ import argparse
 import hashlib
 import json
 import os
+import re
+import shutil
+import signal
+import time
 from pathlib import Path
 import subprocess
 import tempfile
@@ -15,10 +19,12 @@ def main():
     parser.add_argument('--helper', type=Path, required=True)
     parser.add_argument('--fixture-generator', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--reader-sim', action='store_true')
+    parser.add_argument('--scale', default='100')
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     env = dict(os.environ, KOBO_FLASHCARDS_IMPORT=str(args.helper.resolve()))
-    with tempfile.TemporaryDirectory(prefix='cobalt-flashcards-') as directory:
+    with tempfile.TemporaryDirectory(prefix='cobalt-fc-', dir='/tmp') as directory:
         root = Path(directory)
         package = root/'original study cards.apkg'
         bundle = root/'collection.cobfc'
@@ -49,14 +55,73 @@ def main():
         run('verify', corrupt, succeeds=False)
         run('stage', corrupt, '--kobo-root', mount, succeeds=False)
         assert hashlib.sha256(destination.read_bytes()).hexdigest() == digest
+        if args.reader_sim:
+            reader_review(args, root, env, destination)
+            log_name = 'cobalt-review-log.ndjson'
+            reader_log = root/'cobalt-sim-data/flashcards'/log_name
+            assert reader_log.is_file(), 'Reader did not save a review log'
+            records = [json.loads(line) for line in reader_log.read_text().splitlines()]
+            assert len(records) == 1, 'Expected exactly one saved review'
+            assert records[0]['grade'] == 'good', 'Reader saved a different grade'
+            assert records[0]['bundle_sha256'] == digest, 'Review belongs to another collection'
+            shutil.copyfile(reader_log, destination.parent/log_name)
+            exported = root/'reviews.ndjson'
+            run('export-review-log', '--kobo-root', mount, exported)
+            assert exported.read_bytes() == reader_log.read_bytes(), 'Export changed the review log'
         (args.output/'transcript.json').write_text(json.dumps(transcript, indent=2)+'\n')
         (args.output/'result.json').write_text(json.dumps({
             'status': 'passed', 'basis': 'real-helper-and-original-three-card-package',
-            'physical_hardware': False,
+            'physical_hardware': False, 'reader_simulator': args.reader_sim,
+            'text_scale': args.scale if args.reader_sim else None,
             'checks': ['helper notice', 'import with spaces in path', 'bundle verification',
                        'staged bytes match prepared bundle', 'helper failures reach CLI',
-                       'corrupt stage preserves installed collection'],
+                       'corrupt stage preserves installed collection'] +
+                      (['reader opened staged deck', 'revealed and graded a card',
+                        'one saved review exported without changes'] if args.reader_sim else []),
         }, indent=2)+'\n')
+
+
+def reader_review(args, root, env, destination):
+    repo = Path(__file__).resolve().parents[2]
+    shelf = root/'cobalt-sim-data/flashcards'
+    shelf.mkdir(parents=True)
+    shutil.copyfile(destination, shelf/'collection.cobfc')
+    simulator_env = dict(env, TMPDIR=str(root), KOBO_SIM_OFFLINE='1',
+                         KOBO_SIM_PROFILE='clara-bw-391', KOBO_TEXT_SCALE=args.scale,
+                         CARGO_PROFILE_DEV_DEBUG='0', CARGO_INCREMENTAL='0', CARGO_BUILD_JOBS='3')
+    cli = str(args.cli.resolve())
+    with (args.output/'simulator.log').open('w') as log:
+        simulator = subprocess.Popen([cli, 'dev', '127.0.0.1:0'], cwd=repo/'apps/flashcards',
+                                     env=simulator_env, stdout=log, stderr=log, start_new_session=True)
+        try:
+            deadline = time.monotonic()+120
+            address = None
+            while time.monotonic() < deadline:
+                assert simulator.poll() is None, 'Simulator exited; see simulator.log'
+                match = re.search(r'Kobo app simulator: http://(127\.0\.0\.1:\d+)',
+                                  (args.output/'simulator.log').read_text())
+                if match:
+                    address = match.group(1)
+                    break
+                time.sleep(.1)
+            assert address, 'Simulator did not start'
+            steps = ['wait-for-id deck-0', 'clean', 'shot 01-decks', 'tap-id deck-0',
+                     'wait-for-id answer', 'clean', 'shot 02-question', 'tap-id answer',
+                     'wait-for-id good', 'clean', 'shot 03-answer', 'tap-id good',
+                     'wait 1000', 'wait-for-id answer', 'clean', 'shot 04-next-card']
+            command = [cli, 'drive', '--address', address, '--ideal', '--shots', str(args.output.resolve())]
+            for step in steps:
+                command.extend(['--step', step])
+            subprocess.run(command, cwd=repo, env=simulator_env, stdout=log, stderr=log,
+                           check=True, timeout=90)
+        finally:
+            if simulator.poll() is None:
+                os.killpg(simulator.pid, signal.SIGTERM)
+                try:
+                    simulator.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    os.killpg(simulator.pid, signal.SIGKILL)
+                    simulator.wait(timeout=5)
 
 
 if __name__ == '__main__':
