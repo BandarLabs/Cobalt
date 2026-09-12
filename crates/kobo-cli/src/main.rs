@@ -727,6 +727,133 @@ fn wifi_trace_command(arguments: &[String]) -> Result<(), String> {
     }
 }
 
+/// Prepares Paperterm pairing and installs the trust root on a named reader.
+///
+/// What this replaces: `kobo stream init` minted a certificate, printed
+/// "address your-computer:9332" when nobody had passed --host, and told the
+/// owner to go and run `kobo trust set stream --device READER_IP`. Both
+/// addresses were things the companion could find out for itself, and the
+/// second command was one more thing to get wrong before anything worked.
+///
+/// So it finds this computer's address, finds the readers on the same network
+/// and names them, and installs the trust root on the one that was chosen. A
+/// reader can still be named outright with --device, and --host still overrides
+/// the address the certificate is minted for.
+fn stream_init(arguments: &[String]) -> Result<(), String> {
+    const USAGE: &str = "usage: kobo stream init [--device IP] [--host ADDRESS ...]";
+    let mut device = None;
+    let mut hosts = Vec::new();
+    let mut index = 0;
+    while index < arguments.len() {
+        match arguments[index].as_str() {
+            "--device" | "-s" => {
+                device = Some(arguments.get(index + 1).ok_or(USAGE)?.clone());
+                index += 2;
+            }
+            "--host" => {
+                hosts.push("--host".to_owned());
+                hosts.push(arguments.get(index + 1).ok_or(USAGE)?.clone());
+                index += 2;
+            }
+            _ => return Err(USAGE.to_owned()),
+        }
+    }
+    // A reader named on the command line is checked before anything is minted
+    // or printed, so a typo does not leave a half-done pairing behind.
+    let reader = match device {
+        Some(host) => {
+            if !valid_device_host(&host) {
+                return Err(format!("{host:?} is not an address this can reach"));
+            }
+            Some(host)
+        }
+        None => choose_reader(),
+    };
+    // The certificate has to name an address the reader can reach. Without
+    // --host that is this computer's own address, which it can find.
+    if hosts.is_empty() {
+        if let Some(address) = connect::local_address() {
+            println!("Minting the certificate for this computer at {address}.");
+            hosts.push("--host".to_owned());
+            hosts.push(address);
+        }
+    }
+    kobo_stream::init(&hosts)?;
+    let Some(reader) = reader else {
+        println!(
+            "No reader was named, so the trust root is not installed yet. Run
+  kobo trust set stream --device READER_IP
+or run this again with --device once the reader is on this network."
+        );
+        return Ok(());
+    };
+    let authority = stream_authority()?;
+    println!("Installing the trust root on {reader}.");
+    trust_set("stream", &authority, &SecretTarget::Device(reader.clone()))?;
+    println!("Paperterm is paired with {reader}. Open it on the reader and type the pairing code.");
+    Ok(())
+}
+
+/// The readers on this network, named, and the one to use.
+///
+/// One reader is chosen without asking, because there is nothing to choose.
+/// Several are listed by what they are rather than by address alone, because
+/// "192.168.1.23" is not how anybody knows their own reader.
+fn choose_reader() -> Option<String> {
+    let subnet = connect::local_subnet().or_else(|| {
+        println!("This computer has no route to a network, so no reader can be found from here.");
+        None
+    })?;
+    println!("Looking for readers on {subnet}.1-254.");
+    let mut readers = Vec::new();
+    for address in connect::sweep(&subnet, connect::PROBE_TIMEOUT) {
+        let host = address.to_string();
+        if let Some(identity) = identify_device(&host) {
+            if identity.is_kobo() {
+                println!("  {host}  {}", identity.summary());
+                readers.push(host);
+            }
+        }
+    }
+    match readers.as_slice() {
+        [] => {
+            println!("No reader answered. Put it on this Wi-Fi, or name it with --device IP.");
+            None
+        }
+        [only] => Some(only.clone()),
+        several => {
+            println!(
+                "{} readers answered. Name the one you want with --device IP.",
+                several.len()
+            );
+            None
+        }
+    }
+}
+
+/// The stream authority this computer minted, wherever it keeps it.
+fn stream_authority() -> Result<PathBuf, String> {
+    let root = if let Some(value) = std::env::var_os("KOBO_STREAM_CONFIG_DIR") {
+        PathBuf::from(value)
+    } else {
+        let home = std::env::var_os("HOME").ok_or("no HOME in the environment")?;
+        PathBuf::from(home).join(".config").join("kobo")
+    };
+    stream_authority_in(&root)
+}
+
+/// The same, under a named root, which is the half a test can ask about.
+fn stream_authority_in(root: &Path) -> Result<PathBuf, String> {
+    let authority = root.join("stream").join("ca-cert.pem");
+    if !authority.is_file() {
+        return Err(format!(
+            "{} is not there, so there is no trust root to install",
+            authority.display()
+        ));
+    }
+    Ok(authority)
+}
+
 fn stream_command(arguments: &[String]) -> Result<(), String> {
     const USAGE: &str = "usage: kobo stream init [--host ADDRESS ...]\n\
                          \x20      kobo stream [--grid COLSxROWS] [--controls | --interactive] \
@@ -736,7 +863,7 @@ fn stream_command(arguments: &[String]) -> Result<(), String> {
         return print_command_help(USAGE);
     }
     if arguments.first().is_some_and(|argument| argument == "init") {
-        return kobo_stream::init(&arguments[1..]);
+        return stream_init(&arguments[1..]);
     }
     let separator = arguments
         .iter()
@@ -6505,7 +6632,7 @@ fn print_help() {
                                              Prepare and atomically transfer a photo puzzle\n\
            parser check FILE             Validate a .z3/.z5/.z8 story on the host\n\
            parser push FILE --device IP  Transfer a checked story to Parser\n\
-           stream init [--host ADDRESS]  Create Paperterm pairing material on this computer\n\
+           stream init [--device IP]     Pair Paperterm with a named reader on this network\n\
            stream [--grid CxR] -- COMMAND   Serve host rows to Paperterm; the reader has no shell\n\
            shot [--device HOST]   Save a PNG of the panel (device or simulator)\n\
            record --device IP [--seconds N] [--fps F] [--out DIR]  Film the panel, read-only\n\
@@ -6590,6 +6717,40 @@ fn print_other_names() {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn stream_init_refuses_a_reader_it_cannot_reach_before_minting_anything() {
+        // A typo used to be found after the certificate had been minted and
+        // the pairing code printed, which leaves a half-done pairing behind.
+        let error = super::stream_init(&["--device".to_owned(), "not a host".to_owned()])
+            .expect_err("refused");
+        assert!(error.contains("not an address"), "{error}");
+    }
+
+    #[test]
+    fn stream_init_names_its_arguments_and_nothing_else() {
+        for arguments in [
+            vec!["--reader".to_owned(), "1.2.3.4".to_owned()],
+            vec!["--device".to_owned()],
+            vec!["--host".to_owned()],
+        ] {
+            let error = super::stream_init(&arguments).expect_err("refused");
+            assert!(
+                error.starts_with("usage: kobo stream init"),
+                "{arguments:?} gave {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_stream_authority_says_which_file_is_missing() {
+        // Under an empty root this names the file rather than failing later
+        // inside an install with nothing to point at.
+        let empty = std::env::temp_dir().join("kobo-stream-authority-test");
+        let _ignored = std::fs::create_dir_all(&empty);
+        let error = super::stream_authority_in(&empty).expect_err("nothing is there");
+        assert!(error.contains("ca-cert.pem"), "{error}");
+    }
+
     #[test]
     fn companion_help_exits_successfully() {
         super::parser_command(&["--help".into()]).expect("parser help");

@@ -790,7 +790,15 @@ pub fn init(hosts: &[String]) -> Result<(), String> {
         .first()
         .cloned()
         .unwrap_or_else(|| "your-computer".to_owned());
-    println!("Paperterm is initialised.\n\n  address       {address}:{DEFAULT_PORT}\n  pairing code  {}\n\nNext: kobo trust set stream --device READER_IP", std::fs::read_to_string(pairing_path).unwrap_or_default().trim());
+    // What remains is the caller's to say: the companion installs the trust
+    // root itself now, and printing an instruction it has already carried out
+    // said the same thing twice, once of them wrongly.
+    println!(
+        "Paperterm is initialised.\n\n  address       {address}:{DEFAULT_PORT}\n  pairing code  {}",
+        std::fs::read_to_string(pairing_path)
+            .unwrap_or_default()
+            .trim()
+    );
     Ok(())
 }
 

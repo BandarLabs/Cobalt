@@ -653,7 +653,7 @@ Design direction: the bar is a well-made iPad application, built for a panel tha
 
 ## PR 4 · Paperterm companion
 
-- [ ] **STREAMCLI-01** Guide pairing through named reader choice.
+- [x] **STREAMCLI-01** Guide pairing through named reader choice.
 - [x] **STREAMCLI-02** Offer known terminal/task presets and connection test.
 - [x] **STREAMCLI-03** Show stopped, waiting, connected and reconnecting states.
 - [x] **STREAMCLI-04** Provide obvious Stop and computer-awake explanation.

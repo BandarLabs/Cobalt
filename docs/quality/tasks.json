@@ -4213,8 +4213,11 @@
     "pr": 4,
     "group": "Paperterm companion",
     "task": "Guide pairing through named reader choice",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "crates/kobo-cli/src/main.rs",
+      "docs/quality/evidence/paperterm-companion/"
+    ]
   },
   {
     "id": "STREAMCLI-02",
