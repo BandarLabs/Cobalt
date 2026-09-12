@@ -33,7 +33,8 @@ const TEST_PATIENCE: Duration = Duration::from_secs(600);
 /// How long a background start waits to see the helper actually listening.
 const START_PATIENCE: Duration = Duration::from_secs(10);
 
-const USAGE: &str = "usage: kobo sidekick setup [AGENT] | run [--foreground] | status | stop | test";
+const USAGE: &str =
+    "usage: kobo sidekick setup [AGENT] | run [--foreground] | status | stop | test";
 
 pub fn command(arguments: &[String]) -> Result<(), String> {
     match arguments.split_first() {
@@ -138,9 +139,10 @@ fn status() {
     println!(
         "Sidekick helper: {}\n  binary   {}\n  hook     127.0.0.1:{HOOK_PORT}\n  config   {}",
         if running { "running" } else { "stopped" },
-        helper.map_or_else(|| "not found on PATH".to_owned(), |path| path
-            .display()
-            .to_string()),
+        helper.map_or_else(
+            || "not found on PATH".to_owned(),
+            |path| path.display().to_string()
+        ),
         config().map_or_else(|_| "unknown".to_owned(), |path| path.display().to_string()),
     );
     if let Some(pid) = read_pid() {
@@ -180,7 +182,9 @@ fn stop() -> Result<(), String> {
         }
         std::thread::sleep(Duration::from_millis(200));
     }
-    Err(format!("PID {pid} was asked to stop and is still answering"))
+    Err(format!(
+        "PID {pid} was asked to stop and is still answering"
+    ))
 }
 
 /// Sends the reader a question of the companion's own and prints the answer.
