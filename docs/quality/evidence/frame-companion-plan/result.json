@@ -1,0 +1,12 @@
+{
+  "status": "passed",
+  "physical_hardware": false,
+  "checks": [
+    "plan does not create shelf",
+    "album name survives push and list",
+    "repeated import explicitly reuses photo",
+    "concrete deletion list",
+    "plan leaves existing shelf unchanged",
+    "repeated push preserves image bytes"
+  ]
+}

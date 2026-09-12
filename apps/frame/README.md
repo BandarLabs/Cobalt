@@ -19,8 +19,7 @@ kobo frame rm photo-0123456789abcdef --device 192.168.1.42
 of identical content already on the shelf. It adds to an album by default;
 pass `--delete` only when the input should replace the shelf and remove photos
 not present in it. Frame accepts at most 500 photos and 150 MB of prepared
-PNG data. Sources are bounded to 4 MB and four Clara BW panels of decoded
-pixels. Camera EXIF orientation is applied before either center-crop (the
+PNG data. Sources are bounded to 32 MB and 50 million decoded pixels. Camera EXIF orientation is applied before either center-crop (the
 default) or white-pad fitting.
 
 HEIC/HEIF is deliberately refused with a conversion instruction. Supporting it
@@ -88,3 +87,21 @@ an existing directory is never replaced.
 Sample photograph: [Blue Marble, NASA Johnson Space Center](https://svs.gsfc.nasa.gov/30613),
 Earth Science and Remote Sensing Unit. It is used here to demonstrate photo
 preparation; the other validation image is an original grayscale test pattern.
+
+## Review an album transfer
+
+```sh
+kobo frame plan ~/Pictures/family --device 192.168.1.42 --album "Summer holiday"
+kobo frame push ~/Pictures/family --device 192.168.1.42 --album "Summer holiday"
+```
+
+`plan` reads the reader’s shelf and prepares the photos locally. It lists new
+photos, photos already present, and image bytes to send, without transferring
+or removing anything. `--album` names the incoming photos; otherwise their
+folder names are used. Identical photos are reused on repeated imports.
+
+To replace the shelf, first run `plan` with `--delete`. Review each `Remove`
+entry, then use the same options with `push` to apply the replacement.
+Planning is a snapshot, not a reservation: the next push reads the shelf
+again and checks capacity before transferring. It does not keep a recoverable
+copy of deleted photos, so retain the originals on your computer.

@@ -161,3 +161,14 @@ A two-image Clara BW comparison was generated and inspected in the browser;
 evidence and source credits are under `evidence/frame-companion-preview`.
 FRAMECLI-01 and FRAMECLI-02 are complete. Album control, transfer acknowledgement
 and recovery remain separate open tasks.
+
+Frame transfer planning: `frame plan` reports named additions/removals, reused
+photos and image bytes without publishing anything. `--album` persists through
+push/list. Seven Frame tests and strict CLI Clippy pass; the automated private
+simulator-shelf journey verifies unchanged bytes after planning and repeated
+push. Evidence: `evidence/frame-companion-plan`. FRAMECLI-03/04/05 are complete;
+recoverable deletion and physical reader acceptance remain open.
+
+The Flashcards artifact audit at a8ac3863 stopped at the stale generated device
+dependency notice. FLASHCLI-04 stays open until the notices are reconciled and
+the complete audit passes.

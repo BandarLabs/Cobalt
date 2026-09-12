@@ -3860,24 +3860,30 @@
     "pr": 4,
     "group": "Frame companion",
     "task": "Show storage estimate and album naming",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Real CLI acceptance verifies explicit album naming, image transfer byte estimate, repeat-import deduplication and named removal plan. Planning preserves all shelf bytes and does not create a new shelf. Seven Frame tests and strict CLI Clippy pass. Evidence: docs/quality/evidence/frame-companion-plan. Physical reader acceptance remains separate."
+    ]
   },
   {
     "id": "FRAMECLI-04",
     "pr": 4,
     "group": "Frame companion",
     "task": "Deduplicate repeated import clearly",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Real CLI acceptance verifies explicit album naming, image transfer byte estimate, repeat-import deduplication and named removal plan. Planning preserves all shelf bytes and does not create a new shelf. Seven Frame tests and strict CLI Clippy pass. Evidence: docs/quality/evidence/frame-companion-plan. Physical reader acceptance remains separate."
+    ]
   },
   {
     "id": "FRAMECLI-05",
     "pr": 4,
     "group": "Frame companion",
     "task": "Show concrete deletion/replacement list",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Real CLI acceptance verifies explicit album naming, image transfer byte estimate, repeat-import deduplication and named removal plan. Planning preserves all shelf bytes and does not create a new shelf. Seven Frame tests and strict CLI Clippy pass. Evidence: docs/quality/evidence/frame-companion-plan. Physical reader acceptance remains separate."
+    ]
   },
   {
     "id": "FRAMECLI-06",
