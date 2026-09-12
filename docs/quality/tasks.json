@@ -2058,7 +2058,8 @@
     "task": "Notice on the panel when a seek has already been matched",
     "status": "todo",
     "evidence": [
-      "Owner report, 12 September 2026, on a reader running the beta platform: playing the computer works and signing in to Lichess works. Seeking a game takes long enough that the server pairs the player, and the panel is still waiting when it does."
+      "Owner report, 12 September 2026, on a reader running the beta platform: playing the computer works and signing in to Lichess works. Seeking a game takes long enough that the server pairs the player, and the panel is still waiting when it does.",
+      "Recovery now checks current games while the seek connection remains open. 105 app tests pass, including missed event, empty live check, cancellation and ambiguous matches; strict Rust 1.85.1 Clippy passes. Offline checking-screen captures pass at default/170% in evidence/lichess-recovery. Live account and Clara BW reproduction remain open; status is unchanged."
     ]
   },
   {
@@ -4427,7 +4428,7 @@
     "id": "OWNERQA-18",
     "pr": 4,
     "group": "Owner experience and final validation",
-    "task": "Prepare one combined Clara BW hardware validation script for after all three PRs",
+    "task": "Prepare one combined Clara BW hardware validation script for after all four PRs",
     "status": "todo",
     "evidence": []
   },
@@ -4451,8 +4452,10 @@
     "id": "OWNERQA-21",
     "pr": 4,
     "group": "Owner experience and final validation",
-    "task": "Open no more than three logically grouped PRs with tests and remaining validation stated",
+    "task": "Deliver the revised four-PR plan with tests and remaining validation stated",
     "status": "todo",
-    "evidence": []
+    "evidence": [
+      "12 September reconciliation: original catalog scope split between merged #168 and open #181; original companion scope moves to PR 4. #167 is merged. No task is completed by this bookkeeping change."
+    ]
   }
 ]

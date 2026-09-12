@@ -4,12 +4,16 @@ Source: the 8 September 2026 app/SDK/simulator/companion review. The ten new app
 
 ## Delivery plan
 
-Four PRs rooted in `beta`. The initial base was `7f1a543`; PR 1 is merged as `c22c946` and PR 2 targets beta directly. PR 2 grew large enough that its remaining app groups are better validated on hardware than stacked on top of it, so it ships the twenty app groups it has finished and the rest move to PR 3; the companion work it would have shared a branch with moves to PR 4:
+Four PRs rooted in `beta`. Reconciled against GitHub on 12 September 2026 after fetching beta and `beta-quality-apps-2`. The original three-part plan now has two catalog PRs; companion scope moves from PR 3 to PR 4 without duplicating tasks.
 
-1. **Foundation:** simulator/runtime parity, shared SDK/document/board contracts, platform test interfaces and comic decoding/reading. Includes catalog integration fixes exposed by the stricter shared layout checks. Branch `beta-quality-foundation`, base `beta`.
-2. **Catalog:** complete and polish the 43 existing app journeys using those contracts. Branch `beta-quality-apps`, initially based on PR 1.
-3. **Remaining catalog:** the app groups PR 2 did not reach, reading applications first, each pulling real data wherever the source permits it. Branch `beta-quality-apps-2`, base `beta`. Group order, set by the owner: Gutenbird, arXiv, Verses, Read Later, Frame, Sync, Lichess, Music Stand, then the rest. Lichess is the application the catalogue is shown with, so it is held to working against the live service rather than a fixture.
-4. **Companion:** owner onboarding, imports, credentials, recovery and CLI consistency, plus integrated acceptance scripts. Branch `beta-quality-companion`, base `beta`.
+| Delivery | GitHub PR / branch | State | Completed | Open | Deferred |
+| --- | --- | --- | ---: | ---: | ---: |
+| 1 · Foundation, SDK, simulator and comic contracts | [#167](https://github.com/BandarLabs/Cobalt/pull/167), `beta-quality-foundation` | Merged 8 September | 92 | 0 | 1 |
+| 2 · First catalog batch, including Feeds and Miniflux | [#168](https://github.com/BandarLabs/Cobalt/pull/168), `beta-quality-apps` | Merged 12 September; `beta-v0.3.14` published | 113 | 0 | 0 |
+| 3 · Remaining catalog and release gates | [#181](https://github.com/BandarLabs/Cobalt/pull/181), `beta-quality-apps-2` | Open | 0 | 157 | 0 |
+| 4 · Main CLI, companions and integrated acceptance | `beta-quality-companion` | Planned; no PR open | 0 | 133 | 0 |
+
+PR 2 contains twenty app groups plus the comic catalog integration group. PR 3 contains twenty-three app groups plus catalog-wide gates. Its order is Gutenbird, arXiv, Verses, Read Later, Frame, Sync, Lichess, Music Stand, then the remaining groups. Live-service and reader-reported failures remain priorities within that work. PR 4 retains the original companion scope: onboarding, imports, credentials, recovery, consistent commands and integrated acceptance scripts.
 
 After predecessors merge, later PRs can target beta without duplicating earlier diffs. No merge or deployment is implied by creating the PRs.
 
@@ -19,7 +23,7 @@ A checked task requires implementation plus recorded validation. Physical measur
 
 The PR 1 implementation checklist is complete; CBR is deferred and COMIC-18 belongs to catalog integration in PR 2. This does not certify hardware accuracy: native sleep hands ownership back to the stock reader, and no generic kernel suspend, RTC wake or automatic cover-sleep backend is enabled. PR 2 is merged and published as `beta-v0.3.14` and a signed beta Store catalogue of thirty-six app versions, which is the build physical acceptance now runs against. Physical acceptance moves ahead of PR 3: twenty app groups are validated as far as a simulator can speak for them, and panel latency, ghosting, touch accuracy and the live services each application talks to are not among those things.
 
-496 tracked tasks: 205 completed, 1 deferred by the owner, 290 open. Implementation in progress. Evidence is recorded per task in `tasks.json` and in [the validation log](validation.md).
+496 tracked tasks: 205 completed, 1 deferred by the owner, 290 open. Implementation in progress. Evidence is recorded per task in `tasks.json` and in [the validation log](validation.md). See the [12 September reconciliation](reconciliation-2026-09-12.md) for the remaining groups and PR mapping.
 
 Design direction: the bar is a well-made iPad application, built for a panel that cannot animate. Familiar visual conventions per app, restrained controls, plain copy, full repaints and page turns rather than scrolling, and controls that do not move under a finger. Crossword follows printed crossword typography and grids. PR 3 takes the reading applications first, in the owner's order: Gutenbird, arXiv, Verses, Read Later, Frame, Sync, Lichess, Music Stand. Each pulls real data wherever the source permits it, and Lichess is the application the catalog is shown with, so it has to work against the live service rather than a fixture. Paperterm defaults to portrait with a physically scaled, denser terminal font; the measured grid takes precedence over forcing 80 columns.
 
@@ -700,7 +704,7 @@ Design direction: the bar is a well-made iPad application, built for a panel tha
 - [ ] **OWNERQA-15** Validate understanding of prepared/sent/offline distinctions.
 - [ ] **OWNERQA-16** Prepare one-week repeated-use follow-up protocol.
 - [ ] **OWNERQA-17** Run all automated simulator and integration gates.
-- [ ] **OWNERQA-18** Prepare one combined Clara BW hardware validation script for after all three PRs.
+- [ ] **OWNERQA-18** Prepare one combined Clara BW hardware validation script for after all four PRs.
 - [ ] **OWNERQA-19** Record unperformed physical/user-study checks honestly.
 - [ ] **OWNERQA-20** Verify licenses and absence of copied local-reference source.
-- [ ] **OWNERQA-21** Open no more than three logically grouped PRs with tests and remaining validation stated.
+- [ ] **OWNERQA-21** Deliver the revised four-PR plan with tests and remaining validation stated.

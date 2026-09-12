@@ -2204,3 +2204,26 @@ says about each, takes a real turn found from the marked legal squares rather
 than from a fixed coordinate, closes the application and picks the game up where
 it was left, at the default size and at 170%. Captures are in `evidence/parlor/`
 and `evidence/parlor-large/`.
+
+
+## Lichess: recover a match while the seek is still open · 12 September
+
+The previous fallback read current games only after the seek request ended.
+A missed account-stream start event could therefore leave the panel waiting
+while the seek connection stayed open. Pairing now schedules a current-games
+read every ten seconds. Empty results preserve an active seek; a unique new
+match opens its board and cancels the seek. Ambiguous matches cancel the seek
+and return to the game list. Cancellation stops the checks, and an ended seek
+still reconciles before reporting no match. The seek POST is never replayed.
+
+**Validation:** all 105 Lichess tests pass on Rust 1.85.1; strict Clippy for all
+app targets passes. New SDK-runner regressions cover recovery before the seek
+ends, one POST only, an empty active check, and cancellation. An additional
+regression covers ambiguous matches. The offline checking screen was driven
+and visually inspected on Clara BW metrics at default and 170% text size;
+both diagnostics contain no errors. Reproduce those captures with
+`scripts/quality/check-lichess-pairing-sim.py --output /tmp/lichess-pairing`.
+Evidence is under `evidence/lichess-recovery/{default,170}`. These are demo
+captures, not live-service or physical-device proof. LICHESS-06 remains open.
+The existing uncommitted tile-label patch was present during host checks and
+is deliberately excluded from this change.

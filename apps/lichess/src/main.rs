@@ -1808,6 +1808,14 @@ impl Lichess {
             self.notice = None;
             self.reset_clock(context, true);
             Self::keep_live(context);
+            // The seek connection can outlive a missed account-stream event.
+            // Read current games while it is open; never replay the seek.
+            let _ = self.spawn(
+                context,
+                Pending::SeekGrace { generation },
+                Task::Sleep { seconds: 10 },
+                false,
+            );
         } else {
             self.seek_waiting = false;
             self.selected_preset = None;
@@ -1887,6 +1895,8 @@ impl Lichess {
                 pending,
                 Pending::SeekGrace {
                     generation: pending_generation
+                } | Pending::SeekReconcile {
+                    generation: pending_generation
                 } if *pending_generation == generation
             )
         }) {
@@ -1899,7 +1909,7 @@ impl Lichess {
         }
     }
 
-    fn reconcile_ended_seek(&mut self, context: &mut Context, generation: u64) {
+    fn reconcile_seek(&mut self, context: &mut Context, generation: u64) {
         if !self.seek_waiting
             || self.seek_generation != generation
             || self.selected_preset.is_none()
@@ -1950,6 +1960,9 @@ impl Lichess {
                 self.seek_candidate = first;
             }
             if ambiguous {
+                if let Some(task) = self.seek_task.take() {
+                    context.cancel(task);
+                }
                 self.seek_waiting = false;
                 self.selected_preset = None;
                 self.seek_baseline.clear();
@@ -1964,6 +1977,14 @@ impl Lichess {
         }
         if self.seek_candidate.is_some() {
             self.open_seek_candidate(context);
+        } else if self.seek_task.is_some() {
+            self.notice = None;
+            let _ = self.spawn(
+                context,
+                Pending::SeekGrace { generation },
+                Task::Sleep { seconds: 10 },
+                false,
+            );
         } else {
             self.seek_waiting = false;
             self.selected_preset = None;
@@ -3189,7 +3210,7 @@ impl Lichess {
                 }
             }
             Pending::SeekGrace { generation } => {
-                self.reconcile_ended_seek(context, generation);
+                self.reconcile_seek(context, generation);
             }
             Pending::SeekReconcile { generation } => {
                 if self.seek_waiting && self.seek_generation == generation {
@@ -6424,6 +6445,127 @@ mod tests {
             app.session.as_ref().map(|session| session.game_id.as_str()),
             Some("abcdEF12")
         );
+    }
+
+    #[test]
+    fn live_seek_checks_for_a_missed_start_without_replaying_the_seek() {
+        let mut runner = AppRunner::new(ready_app());
+        let mut commands = runner.action(action_id(api::SeekPreset::Rapid10_5.action()));
+        let seek = runner.app().seek_task.expect("live seek");
+        let grace = runner
+            .app()
+            .tasks
+            .iter()
+            .find_map(|(task, pending)| {
+                matches!(pending, Pending::SeekGrace { generation: 1 }).then_some(*task)
+            })
+            .expect("check scheduled before seek ends");
+        commands.extend(runner.task_outcome(grace, TaskOutcome::Completed(Vec::new())));
+        let reconcile = runner
+            .app()
+            .tasks
+            .iter()
+            .find_map(|(task, pending)| {
+                matches!(pending, Pending::SeekReconcile { generation: 1 }).then_some(*task)
+            })
+            .expect("current games request");
+        commands.extend(runner.task_outcome(reconcile, TaskOutcome::Completed(
+            br#"{"nowPlaying":[{"gameId":"newGame2","color":"black","rated":true,"source":"lobby","speed":"rapid","variant":{"key":"standard"},"secondsLeft":600,"opponent":{"username":"NewOpponent"}}]}"#.to_vec()
+        )));
+        assert_eq!(runner.app().route, Route::Game);
+        assert!(!runner.app().seek_waiting);
+        assert!(commands
+            .iter()
+            .any(|command| matches!(command, Command::Cancel(task) if *task == seek)));
+        assert!(!runner.app().has_pending(|pending| matches!(
+            pending,
+            Pending::SeekGrace { .. } | Pending::SeekReconcile { .. }
+        )));
+        assert_eq!(
+            commands
+                .iter()
+                .filter(|command| matches!(command,
+                    Command::Spawn { work: kobo_sdk::Task::Post { url, .. }, .. }
+                        if url == "https://lichess.org/api/board/seek"
+                ))
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn an_empty_live_seek_check_keeps_waiting_and_cancel_stops_checks() {
+        let mut runner = AppRunner::new(ready_app());
+        runner.action(action_id(api::SeekPreset::Rapid10_0.action()));
+        let seek = runner.app().seek_task;
+        let grace = runner
+            .app()
+            .tasks
+            .iter()
+            .find_map(|(task, pending)| {
+                matches!(pending, Pending::SeekGrace { generation: 1 }).then_some(*task)
+            })
+            .expect("scheduled check");
+        runner.task_outcome(grace, TaskOutcome::Completed(Vec::new()));
+        let reconcile = runner
+            .app()
+            .tasks
+            .iter()
+            .find_map(|(task, pending)| {
+                matches!(pending, Pending::SeekReconcile { generation: 1 }).then_some(*task)
+            })
+            .expect("current games request");
+        runner.task_outcome(
+            reconcile,
+            TaskOutcome::Completed(br#"{"nowPlaying":[]}"#.to_vec()),
+        );
+        assert_eq!(
+            runner
+                .app()
+                .tasks
+                .values()
+                .filter(|pending| matches!(pending, Pending::SeekGrace { generation: 1 }))
+                .count(),
+            1
+        );
+        assert_eq!(runner.app().route, Route::Pairing);
+        assert!(runner.app().seek_waiting);
+        assert_eq!(runner.app().seek_task, seek);
+        runner.action(action_id("cancel-seek"));
+        assert!(!runner.app().has_pending(|pending| matches!(
+            pending,
+            Pending::SeekGrace { .. } | Pending::SeekReconcile { .. }
+        )));
+        // A late response must not reopen a cancelled pairing.
+        runner.task_outcome(
+            reconcile,
+            TaskOutcome::Completed(br#"{"nowPlaying":[]}"#.to_vec()),
+        );
+        assert!(runner.app().session.is_none());
+    }
+
+    #[test]
+    fn ambiguous_live_matches_cancel_the_seek_without_choosing_a_game() {
+        let mut app = ready_app();
+        let mut context = Context::default();
+        app.start_seek(&mut context, api::SeekPreset::Rapid10_0);
+        let seek = app.seek_task.expect("live seek");
+        app.finish_seek_reconciliation(
+            &mut context,
+            1,
+            vec![
+                summary("firstGame", api::SeekPreset::Rapid10_0),
+                summary("otherGame", api::SeekPreset::Rapid10_0),
+            ],
+        );
+        assert_eq!(app.route, Route::Play);
+        assert!(!app.seek_waiting);
+        assert!(app.seek_task.is_none());
+        assert!(app.session.is_none());
+        assert!(context
+            .commands()
+            .iter()
+            .any(|command| matches!(command, Command::Cancel(task) if *task == seek)));
     }
 
     #[test]

@@ -3,8 +3,8 @@
   "display_name": "Lichess",
   "short_label": "Lichess",
   "summary": "Play Lichess games, challenge players, solve puzzles, or play offline.",
-  "version": "1.0.5",
-  "release_notes": "Rebuilt on a renderer that keeps every control reachable at the largest text sizes, and on a keyboard that can type every character this app asks for.",
+  "version": "1.0.6",
+  "release_notes": "Checks for a matched game while pairing is still waiting, so a missed start event can recover without seeking again.",
   "minimum_cobalt_version": "0.3.5",
   "glyph": "grid",
   "capabilities": [

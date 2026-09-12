@@ -41,7 +41,9 @@ broadening credential authority.
 - One selected seek at a time, opened only after the event stream and
   current-game snapshot are ready
 - A uniquely matching new game opens immediately
-- Ended seeks reconcile once and are never replayed automatically
+- While waiting, check current games every ten seconds to recover a missed start event
+- An empty check keeps an open seek waiting; an ended seek is reconciled before reporting no match
+- Seeks are never replayed automatically; Cancel stops the recovery checks
 - `gameStart`, `gameFinish`, and incoming challenge events
 - Board stream reconstruction from server-acknowledged UCI moves
 - White/black vector pieces, dark player clocks above and below the board,
@@ -82,3 +84,19 @@ cargo run --locked -p kobo-cli -- app-check --registry apps/catalog.json \
 The HTTPS mock uses a generated test-only CA/key pair under
 `crates/kobo-net/tests/fixtures`; it carries no owner credential and never
 contacts Lichess.
+
+## Pairing recovery checks
+
+Run `cargo test -p kobo-lichess` for the missed-event, cancellation and
+ambiguous-match cases. To check the recovery screen on Clara BW at normal
+and 170% text size, build the CLI, then run:
+
+```sh
+python3 scripts/quality/check-lichess-pairing-sim.py --output /tmp/lichess-pairing
+```
+
+This capture uses an offline demo. It does not create a Lichess game or
+validate a live account. The owner-reported delay still needs a live-service
+and Clara BW check before LICHESS-06 is closed.
+
+![Checking for a matched game](screenshots/reconciling.png)
