@@ -2548,8 +2548,8 @@ impl Gutenbird {
         let Some(memory) = self.book.memory() else {
             return;
         };
-        let memory = memory.encode();
-        context.store().save(place, memory);
+        self.place = Some(memory.clone());
+        context.store().save(place, memory.encode());
     }
 
     fn keep_book(&mut self, context: &mut Context) {
@@ -3342,8 +3342,9 @@ impl KoboApp for Gutenbird {
                 self.looked_for_cover(context, &key, value);
             }
             StoreResult::Loaded {
-                value: Some(value), ..
-            } => {
+                key,
+                value: Some(value),
+            } if self.open_keys().is_some_and(|(_, place)| place == key) => {
                 let memory = Memory::decode(&value);
                 if let Some(reader) = self.book.reader_mut() {
                     let metrics = context.metrics();
@@ -5929,6 +5930,28 @@ Please read this before you distribute or use this work.\n";
             reader.page().iter().any(|piece| piece.block == 20),
             "the reader was not put back where they were left"
         );
+        // An earlier book's response must not restore its position here.
+        runner.store_result(StoreResult::Loaded {
+            key: "place-another-download".into(),
+            value: Some(Memory::default().encode()),
+        });
+        assert_eq!(runner.app().place.as_ref().unwrap().at, 20);
+        assert!(runner
+            .app()
+            .book
+            .reader()
+            .unwrap()
+            .page()
+            .iter()
+            .any(|piece| piece.block == 20));
+        // Saving also refreshes the position used for an in-session reopen.
+        runner.app_mut().place = Some(Memory::default());
+        let expected = runner.app().book.memory().unwrap().encode();
+        let mut context = runner.context();
+        runner.app_mut().save_place(&mut context);
+        assert_eq!(runner.app().place.as_ref().unwrap().encode(), expected);
+        assert!(context.commands().iter().any(|command| matches!(command,
+            Command::Store(StoreRequest::Save { value, .. }) if *value == expected)));
     }
 
     #[test]

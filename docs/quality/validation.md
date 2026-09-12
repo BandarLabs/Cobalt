@@ -2473,3 +2473,19 @@ runtime fonts, at Clara BW default metrics. It is local fixture evidence.
 ![Failed cover fallback](evidence/gutenbird-covers/failed-cover.png)
 
 **496 tasks: 246 completed, 249 open, one deferred.**
+
+
+### Gutenbird reading-position isolation (partial GUTEN-04)
+
+Gutenbird 1.0.18 ignores saved-value responses that do not match the selected
+download's position key. Previously any unhandled value response was decoded
+as reading memory, allowing a delayed response for another book or format to
+move the current reader. Saving now refreshes the in-memory position as well
+as issuing the store write, preventing an in-session reopen from using an older
+position held before the save.
+
+All 95 Gutenbird tests and strict Clippy pass. The restoration test verifies
+that a foreign key cannot change a restored position and that saving refreshes
+memory with the same bytes sent to storage. No visual layout or copy changed;
+existing screenshots remain applicable. GUTEN-04 remains open for the full
+restart/offline-reopen flow alongside GUTEN-06.

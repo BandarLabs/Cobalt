@@ -1717,7 +1717,9 @@
     "group": "Gutenbird",
     "task": "Persist shelf reading progress",
     "status": "todo",
-    "evidence": []
+    "evidence": [
+      "Gutenbird 1.0.18 accepts saved reading-position responses only for the currently selected download key. Saving also refreshes the in-memory position used when reopening in the same session. The existing restoration test now checks rejection of a delayed response from another download and equality of stored/current saved memory. All 95 tests and strict Clippy pass. Full restart/offline-reopen validation remains open."
+    ]
   },
   {
     "id": "GUTEN-05",

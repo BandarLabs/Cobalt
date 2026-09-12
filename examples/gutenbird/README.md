@@ -135,3 +135,11 @@ the reader; differing covers keep the neutral book icon until an edition is
 opened.
 
 ![Lettered cover after a failed download, rendered from an original fixture](../../docs/quality/evidence/gutenbird-covers/failed-cover.png)
+
+
+## Reading position
+
+Reading positions belong to the selected download URL. Saving updates both the
+stored position and the position held for reopening during the same session.
+A delayed storage response for a different book or format is ignored, so it
+cannot move the book currently being read.
