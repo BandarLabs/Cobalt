@@ -21,6 +21,7 @@ mod exports;
 mod feeds;
 mod flashcards;
 mod frame;
+mod frame_preview;
 mod host_release;
 mod menu;
 mod needles;

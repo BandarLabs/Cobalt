@@ -3840,16 +3840,20 @@
     "pr": 4,
     "group": "Frame companion",
     "task": "Preview multiple photos and crop/pad choices",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "frame preview compares multiple photos in crop/pad using the bounded Frame preparation engine at a selected reader profile. Real CLI generated two image comparisons; browser screenshot inspected. Regression verifies downsize from 640x320 to 64x96, distinct fits, existing-output preservation and corrupt-image refusal. Strict CLI Clippy passes. Evidence: docs/quality/evidence/frame-companion-preview."
+    ]
   },
   {
     "id": "FRAMECLI-02",
     "pr": 4,
     "group": "Frame companion",
     "task": "Perform bounded downsize with visual quality preview",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "frame preview compares multiple photos in crop/pad using the bounded Frame preparation engine at a selected reader profile. Real CLI generated two image comparisons; browser screenshot inspected. Regression verifies downsize from 640x320 to 64x96, distinct fits, existing-output preservation and corrupt-image refusal. Strict CLI Clippy passes. Evidence: docs/quality/evidence/frame-companion-preview."
+    ]
   },
   {
     "id": "FRAMECLI-03",

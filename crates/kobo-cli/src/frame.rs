@@ -12,7 +12,8 @@ use std::time::Duration;
 const ROOT: &str = "/mnt/onboard/.adds/cobalt/data/frame";
 const KOBOD: &str = "/mnt/onboard/.adds/cobalt/bin/kobod";
 const TRANSFER_TIMEOUT: Duration = Duration::from_secs(300);
-const USAGE: &str = "usage: kobo frame init (--sim | --device IP)\n\
+const USAGE: &str = "usage: kobo frame preview INPUT --out DIRECTORY [--profile PROFILE]\n\
+                     \x20      kobo frame init (--sim | --device IP)\n\
                      \x20      kobo frame push INPUT (--sim | --device IP) [--fit crop|pad] [--delete]\n\
                      \x20      kobo frame ls (--sim | --device IP)\n\
                      \x20      kobo frame rm ID (--sim | --device IP)";
@@ -28,6 +29,7 @@ pub fn command(arguments: &[String]) -> Result<(), String> {
         return super::print_command_help(USAGE);
     }
     match arguments.first().map(String::as_str) {
+        Some("preview") => super::frame_preview::command(&arguments[1..]),
         Some("init") => init(&arguments[1..]),
         Some("push") => push(&arguments[1..]),
         Some("ls") => list(&arguments[1..]),

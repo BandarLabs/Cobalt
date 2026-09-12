@@ -146,3 +146,18 @@ Both builder and auditor now collect the canonical registry, including app
 contributions and derived minimum runtime versions. Shell syntax checks and
 manifest generation against the current registry pass. The full artifact
 audit must be rerun before FLASHCLI-04 can close.
+
+
+## Frame comparison preview
+
+`kobo frame preview INPUT --out DIRECTORY [--profile PROFILE]` compares crop
+and pad for multiple photos before transfer. It reuses the bounded Frame image
+preparation engine and shows reader resolution, album names and image storage.
+Images open at full resolution; previews stay compact enough to compare both
+fits. Existing output directories are refused and failed preparation leaves
+no preview directory. A regression checks real downsize, differing fits,
+output preservation and corrupt-image rejection. Strict CLI Clippy passes.
+A two-image Clara BW comparison was generated and inspected in the browser;
+evidence and source credits are under `evidence/frame-companion-preview`.
+FRAMECLI-01 and FRAMECLI-02 are complete. Album control, transfer acknowledgement
+and recovery remain separate open tasks.

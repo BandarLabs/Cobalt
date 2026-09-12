@@ -66,3 +66,25 @@ service and keeps transfer authority in the existing audited mechanism.
 
 Frame is intentionally grayscale. E-ink gives a held photograph essentially
 no panel power cost; changing the photograph is the work.
+
+
+## Compare photos before transfer
+
+```sh
+kobo frame preview /path/to/photos --out /path/to/new-preview
+```
+
+Open `index.html` in the new directory to compare crop and pad for each photo.
+Crop fills the screen and trims edges; pad keeps the whole image with white
+borders. The page shows album names, reader dimensions and prepared image
+storage. No reader connection or transfer is made. The default is Clara BW;
+`--profile PROFILE` selects another supported reader profile. The preview uses
+the same bounded conversion as `frame push`. Choose a new output directory;
+an existing directory is never replaced.
+
+
+![Crop and pad comparison before transfer](screenshots/companion-preview.png)
+
+Sample photograph: [Blue Marble, NASA Johnson Space Center](https://svs.gsfc.nasa.gov/30613),
+Earth Science and Remote Sensing Unit. It is used here to demonstrate photo
+preparation; the other validation image is an original grayscale test pattern.
