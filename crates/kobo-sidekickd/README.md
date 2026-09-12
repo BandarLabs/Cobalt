@@ -99,3 +99,6 @@ For isolated local testing, `KOBO_SIDEKICK_CONFIG_DIR` overrides the root
 containing `sidekick/` identity and `trust/` certificates. It does not change
 agent integration configuration paths. Leave it unset for normal owner use;
 a custom root's certificate must be installed explicitly if pairing a reader.
+
+Deck configuration supports 1–6 pages with 1–15 keys per page, matching the
+CLI and reader grid. Oversized pages are rejected before commands are loaded.

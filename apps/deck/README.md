@@ -96,3 +96,10 @@ transferring a layout does not establish an executable connection.
 
 ![Static Deck preview](../../docs/quality/evidence/deck-preview/default/preview.png)
 ![Preview pad feedback at larger text size](../../docs/quality/evidence/deck-preview/170/preview-tapped.png)
+
+
+Each page supports 1–15 pads. The CLI and computer helper both reject pages
+outside that range, including hand-edited configuration. Use another page
+for additional actions, up to six pages.
+
+![All 15 pads at larger text size](../../docs/quality/evidence/deck-fifteen-pads/preview.png)

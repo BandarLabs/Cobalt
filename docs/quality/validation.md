@@ -2355,3 +2355,14 @@ and opens Pair at default and 170% text. Both have no layout errors; screenshots
 were inspected and added to documentation. Evidence:
 `evidence/deck-preview/{default,170}`. The app manifest is 0.2.3 and its catalog
 page is regenerated. No physical reader was modified in these checks.
+
+
+### Deck 15-pad boundary (DECKCLI-03)
+
+The helper incorrectly rejected pages above 12 keys while the CLI and reader
+supported 15. It now accepts 1–15, and the CLI import parser applies the same
+bound to hand-edited files. Eight CLI Deck tests and all 53 helper tests pass,
+including 15 accepted / 16 rejected boundaries. Strict CLI/helper all-target
+Clippy passed. The actual CLI assigned all 15 pads and staged a preview;
+170% simulator capture shows Pad 15 and has no layout errors. Screenshot
+inspected and documented. Evidence: `evidence/deck-fifteen-pads`.

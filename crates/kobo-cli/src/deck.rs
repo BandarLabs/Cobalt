@@ -788,8 +788,11 @@ fn parse_toml(source: &str) -> Result<Layout, String> {
     }
     for page in &pages {
         validate_page_name(&page.name)?;
-        if page.keys.is_empty() {
-            return Err(format!("page '{}' needs between 1 and 12 keys", page.name));
+        if !(1..=MAX_KEYS).contains(&page.keys.len()) {
+            return Err(format!(
+                "page '{}' needs between 1 and {MAX_KEYS} keys",
+                page.name
+            ));
         }
         for key in &page.keys {
             validate_label(&key.label)?;
@@ -1166,6 +1169,19 @@ mod tests {
             Some("deck")
         );
         fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn imported_configuration_obeys_the_same_fifteen_pad_limit() {
+        let mut config = "[[page]]\nname = \"Full page\"\n".to_owned();
+        for pad in 1..=15 {
+            config.push_str(&format!(
+                "[[page.key]]\nlabel = \"Pad {pad}\"\nrun = \"true\"\n"
+            ));
+        }
+        assert_eq!(parse_toml(&config).unwrap().pad_count(), 15);
+        config.push_str("[[page.key]]\nlabel = \"Pad 16\"\nrun = \"true\"\n");
+        assert!(parse_toml(&config).unwrap_err().contains("1 and 15"));
     }
 
     #[test]

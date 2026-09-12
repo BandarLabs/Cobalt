@@ -16,6 +16,7 @@ parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--cli', type=Path, required=True)
 parser.add_argument('--output', type=Path, required=True)
 parser.add_argument('--scale', default='default')
+parser.add_argument('--pads', type=int, choices=(1, 15), default=1)
 args = parser.parse_args()
 repo = Path(__file__).resolve().parents[2]
 cli = str(args.cli.resolve())
@@ -30,6 +31,8 @@ with tempfile.TemporaryDirectory(prefix='deck-preview-', dir='/tmp') as temp:
                               capture_output=True, text=True, check=True, timeout=30)
     owner = str(root/'owner')
     command('deck', 'set', '1', '--label', 'Sample', '--run', 'printf sample', '--home', owner)
+    for pad in range(2, args.pads+1):
+        command('deck', 'set', str(pad), '--label', 'Pad '+str(pad), '--run', 'printf sample', '--home', owner)
     command('deck', 'push', '--sim', '--home', owner)
     store = root/'cobalt-sim-state/deck'
     assert (store/'paired').read_text() == 'local|assigned'
@@ -62,6 +65,8 @@ with tempfile.TemporaryDirectory(prefix='deck-preview-', dir='/tmp') as temp:
             layout = get('layout')
             words = ' '.join(str(line) for node in layout['nodes'] for line in node['lines'])
             assert 'Preview only' in words and 'Running' not in words
+            if args.pads == 15:
+                assert 'Pad 15' in words
             (output/'preview-tapped.layout.json').write_text(json.dumps(layout, indent=2)+'\n')
             drive('tap Pair', 'wait-for Pair with your computer', 'wait-idle')
         finally:
@@ -77,7 +82,7 @@ with tempfile.TemporaryDirectory(prefix='deck-preview-', dir='/tmp') as temp:
     (store/'paired').write_bytes(paired)
     command('deck', 'push', '--sim', '--home', owner)
     assert (store/'paired').read_bytes() == paired
-(output/'result.json').write_text(json.dumps({'status':'passed', 'scale':args.scale,
+(output/'result.json').write_text(json.dumps({'status':'passed', 'scale':args.scale, 'pads':args.pads,
     'cli_sha256':hashlib.sha256(Path(cli).read_bytes()).hexdigest(),
     'checks':['fresh simulator opens static preview', 'preview tap does not claim execution',
               'no layout errors after tap', 'subsequent push preserves real pairing bytes'],
