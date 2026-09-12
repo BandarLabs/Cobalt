@@ -3900,8 +3900,10 @@
     "pr": 4,
     "group": "Frame companion",
     "task": "Verify reader availability before saying photos are ready",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Push reads the manifest and photo sizes back from the target before reporting Frame transfer verified. SSH/read failures propagate as errors; mismatched manifest, missing/empty photos and incomplete new files are refused by regression tests. Real CLI simulator-shelf journey passes verification and all prior recovery checks. Eight Frame tests and strict all-target CLI Clippy pass. Evidence: docs/quality/evidence/frame-companion-plan. Does not claim an app is open or a physical screen displayed the photo; hardware acceptance remains separate."
+    ]
   },
   {
     "id": "VAULTCLI-01",

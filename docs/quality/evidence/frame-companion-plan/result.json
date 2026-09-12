@@ -3,6 +3,7 @@
   "physical_hardware": false,
   "checks": [
     "plan does not create shelf",
+    "push reports success only after shelf readback",
     "album name survives push and list",
     "repeated import explicitly reuses photo",
     "concrete deletion list",

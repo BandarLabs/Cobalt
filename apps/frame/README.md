@@ -123,3 +123,13 @@ previous shelf. Allow up to 300 MB in addition to the current shelf and space
 for an incoming transfer. A full disk can prevent a change; Frame must finish
 saving the previous shelf before it proceeds. This is one-step recovery, not
 an archive of every past album. The same commands accept `--sim` for rehearsal.
+
+## Transfer verification
+
+A successful push says `Frame transfer verified` only after reading the shelf
+back from the target. The manifest must match, every photo must be present
+and nonempty, and newly transferred files must have the expected byte length.
+A lost connection or failed readback returns an error instead of a success
+message. This checks stored files, not whether Frame is currently open or a
+photo has appeared on the physical screen. Open Frame on the reader to view
+it. Hardware display acceptance remains a separate check.

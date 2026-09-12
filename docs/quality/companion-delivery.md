@@ -181,3 +181,10 @@ failed-copy refusal and incomplete-backup refusal. Generated device shell
 scripts also pass local execution tests, including failed backup preservation.
 Fifteen filtered CLI tests and strict all-target CLI Clippy pass. FRAMECLI-06 is
 complete; physical Clara BW transfer/restore acceptance is still outstanding.
+
+Frame publication verification: re-read the target manifest and all file sizes
+before the success message. Refuse mismatched manifests, missing/empty files
+and wrong-size new files. Eight Frame tests, strict CLI Clippy and the complete
+private-shelf acceptance journey pass. FRAMECLI-07 is complete. This verifies
+storage and target reachability, not physical display; that acceptance remains
+open. Overall: 219 done, 276 open, one deferred.

@@ -18,7 +18,7 @@
       "--album",
       "Summer holiday"
     ],
-    "output": "1 new, 0 already present, 0 removed; 11806 image bytes to send\n  Add: Summer holiday / first.png (photo-b7919f4bf812bc8d)\nFrame updated: 1 photo(s), 1 new, 0 removed\n",
+    "output": "1 new, 0 already present, 0 removed; 11806 image bytes to send\n  Add: Summer holiday / first.png (photo-b7919f4bf812bc8d)\nFrame transfer verified: 1 photo(s), 1 new, 0 removed\n",
     "exit_code": 0
   },
   {
@@ -26,7 +26,7 @@
       "ls",
       "--sim"
     ],
-    "output": "photo-b7919f4bf812bc8d\t1789210368\tSummer holiday\tfirst.png\n",
+    "output": "photo-b7919f4bf812bc8d\t1789210530\tSummer holiday\tfirst.png\n",
     "exit_code": 0
   },
   {
@@ -60,7 +60,7 @@
       "--album",
       "Summer holiday"
     ],
-    "output": "0 new, 1 already present, 0 removed; 0 image bytes to send\n  Keep: Summer holiday / first.png (photo-b7919f4bf812bc8d)\nFrame updated: 1 photo(s), 0 new, 0 removed\n",
+    "output": "0 new, 1 already present, 0 removed; 0 image bytes to send\n  Keep: Summer holiday / first.png (photo-b7919f4bf812bc8d)\nFrame transfer verified: 1 photo(s), 0 new, 0 removed\n",
     "exit_code": 0
   },
   {
@@ -72,7 +72,7 @@
       "--album",
       "Autumn"
     ],
-    "output": "1 new, 0 already present, 1 removed; 11675 image bytes to send\n  Add: Autumn / second.png (photo-dabdbb88e913d353)\n  Remove: Summer holiday / first.png (photo-b7919f4bf812bc8d)\nFrame updated: 1 photo(s), 1 new, 1 removed\n",
+    "output": "1 new, 0 already present, 1 removed; 11675 image bytes to send\n  Add: Autumn / second.png (photo-dabdbb88e913d353)\n  Remove: Summer holiday / first.png (photo-b7919f4bf812bc8d)\nFrame transfer verified: 1 photo(s), 1 new, 1 removed\n",
     "exit_code": 0
   },
   {
@@ -80,7 +80,7 @@
       "ls",
       "--sim"
     ],
-    "output": "photo-dabdbb88e913d353\t1789210368\tAutumn\tsecond.png\n",
+    "output": "photo-dabdbb88e913d353\t1789210530\tAutumn\tsecond.png\n",
     "exit_code": 0
   },
   {
@@ -96,7 +96,7 @@
       "ls",
       "--sim"
     ],
-    "output": "photo-b7919f4bf812bc8d\t1789210368\tSummer holiday\tfirst.png\n",
+    "output": "photo-b7919f4bf812bc8d\t1789210530\tSummer holiday\tfirst.png\n",
     "exit_code": 0
   },
   {
@@ -129,7 +129,7 @@
       "ls",
       "--sim"
     ],
-    "output": "photo-b7919f4bf812bc8d\t1789210368\tSummer holiday\tfirst.png\n",
+    "output": "photo-b7919f4bf812bc8d\t1789210530\tSummer holiday\tfirst.png\n",
     "exit_code": 0
   },
   {

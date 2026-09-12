@@ -44,7 +44,7 @@ def main():
         shelf = root/'cobalt-sim-data/frame'
         assert not shelf.exists(), 'Planning created or changed the shelf'
         assert '1 new' in initial and 'Summer holiday' in initial
-        run('push', first, '--sim', '--album', 'Summer holiday')
+        assert 'Frame transfer verified:' in run('push', first, '--sim', '--album', 'Summer holiday')
         assert 'Summer holiday' in run('ls', '--sim')
         before = {p.name: p.read_bytes() for p in shelf.iterdir()}
         repeated = run('plan', first, '--sim', '--album', 'Summer holiday')
@@ -87,7 +87,7 @@ def main():
 
     (args.output/'transcript.json').write_text(json.dumps(transcript, indent=2)+'\n')
     (args.output/'result.json').write_text(json.dumps({'status': 'passed', 'physical_hardware': False,
-        'checks': ['plan does not create shelf', 'album name survives push and list',
+        'checks': ['plan does not create shelf', 'push reports success only after shelf readback', 'album name survives push and list',
                    'repeated import explicitly reuses photo', 'concrete deletion list',
                    'plan leaves existing shelf unchanged', 'repeated push preserves image bytes', 'replacement and removal can be restored',
                    'recovery limited to two slots', 'failed recovery copy refuses replacement', 'incomplete recovery refused before manifest change']}, indent=2)+'\n')

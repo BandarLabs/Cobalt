@@ -114,6 +114,14 @@ fn push(arguments: &[String], plan_only: bool) -> Result<(), String> {
                 remote(host, &script)?;
             }
             transfer(host, &push)?;
+            let actual = read_manifest(host)?;
+            let ids = push
+                .manifest
+                .photos
+                .iter()
+                .map(|p| p.id.as_str())
+                .collect::<Vec<_>>();
+            verify_published(&push, &actual, &frame_sizes(host, &ids)?)?;
         }
         Target::Sim => {
             enforce_local_capacity(&push)?;
@@ -121,10 +129,18 @@ fn push(arguments: &[String], plan_only: bool) -> Result<(), String> {
                 super::frame_recovery::save(&sim_root(), &existing)?;
             }
             publish_local(&push)?;
+            let actual = read_local_manifest()?;
+            let ids = push
+                .manifest
+                .photos
+                .iter()
+                .map(|p| p.id.as_str())
+                .collect::<Vec<_>>();
+            verify_published(&push, &actual, &local_sizes(&ids)?)?;
         }
     }
     println!(
-        "Frame updated: {} photo(s), {} new, {} removed",
+        "Frame transfer verified: {} photo(s), {} new, {} removed",
         push.manifest.photos.len(),
         push.photos
             .iter()
@@ -132,6 +148,33 @@ fn push(arguments: &[String], plan_only: bool) -> Result<(), String> {
             .count(),
         push.removed.len()
     );
+    Ok(())
+}
+
+fn verify_published(
+    push: &Push,
+    actual: &Manifest,
+    sizes: &BTreeMap<String, usize>,
+) -> Result<(), String> {
+    if actual != &push.manifest {
+        return Err("Frame verification found a different shelf. Run `kobo frame ls` with the same target to inspect it before retrying.".into());
+    }
+    for photo in &actual.photos {
+        let size = sizes.get(&photo.id).copied().unwrap_or(0);
+        if size == 0 {
+            return Err(format!("Frame verification found a missing or empty photo: {}. The transfer is not verified.", photo.name));
+        }
+        if let Some(png) = push
+            .photos
+            .iter()
+            .find(|p| p.photo.id == photo.id)
+            .and_then(|p| p.png.as_ref())
+        {
+            if size != png.len() {
+                return Err(format!("Frame verification found an incomplete photo: {}. The transfer is not verified.", photo.name));
+            }
+        }
+    }
     Ok(())
 }
 
@@ -777,6 +820,33 @@ mod tests {
         };
         let current = BTreeMap::from([(old.id, 64)]);
         assert_eq!(capacity_bytes(&push, &current).expect("capacity"), 96);
+    }
+
+    #[test]
+    fn publication_verification_refuses_changed_missing_and_truncated_photos() {
+        let item = photo("photo-new");
+        let push = Push {
+            manifest: Manifest {
+                photos: vec![item.clone()],
+            },
+            photos: vec![PreparedPhoto {
+                photo: item.clone(),
+                png: Some(vec![1; 32]),
+            }],
+            removed: vec![],
+        };
+        let sizes = BTreeMap::from([(item.id.clone(), 32)]);
+        assert!(super::verify_published(&push, &push.manifest, &sizes).is_ok());
+        assert!(super::verify_published(&push, &Manifest::default(), &sizes).is_err());
+        for size in [0, 31, 33] {
+            assert!(super::verify_published(
+                &push,
+                &push.manifest,
+                &BTreeMap::from([(item.id.clone(), size)])
+            )
+            .is_err());
+        }
+        assert!(super::verify_published(&push, &push.manifest, &BTreeMap::new()).is_err());
     }
 
     #[test]
