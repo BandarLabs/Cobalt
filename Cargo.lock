@@ -1087,6 +1087,7 @@ dependencies = [
  "kobo-profile",
  "kobo-read",
  "kobo-sdk",
+ "kobo-text",
  "kobo-ui",
 ]
 

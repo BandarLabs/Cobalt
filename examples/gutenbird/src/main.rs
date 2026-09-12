@@ -414,6 +414,29 @@ enum Awaiting {
     Book,
 }
 
+/// Catalogs sometimes embed a complete metadata record in their prose field.
+/// Only extract a labeled synopsis when the surrounding record identifies it;
+/// ordinary descriptions and their provenance notes remain untouched.
+fn description_parts(text: &str) -> (&str, Option<&str>) {
+    let paragraphs: Vec<&str> = text.split("\n\n").map(str::trim).collect();
+    let metadata = paragraphs.iter().any(|part| part.starts_with("Title:"))
+        && paragraphs.iter().any(|part| part.starts_with("EBook No.:"));
+    if metadata {
+        if let Some(summary) = paragraphs
+            .iter()
+            .find_map(|part| part.strip_prefix("Summary:").map(str::trim))
+            .filter(|summary| !summary.is_empty())
+        {
+            let edition = paragraphs
+                .iter()
+                .copied()
+                .find(|part| part.starts_with("This edition "));
+            return (summary, edition);
+        }
+    }
+    (text, None)
+}
+
 /// One piece of a book's trailing description, so pages can be packed from
 /// it without cutting a paragraph or a heading across a page turn.
 #[derive(Clone, Debug)]
@@ -1606,8 +1629,13 @@ impl Gutenbird {
     fn detail_blocks(publication: &Publication) -> Vec<DetailBlock> {
         let mut blocks = Vec::new();
         if let Some(summary) = &publication.summary {
+            let (description, edition) = description_parts(summary);
+            if let Some(edition) = edition {
+                blocks.push(DetailBlock::Section("Edition"));
+                blocks.push(DetailBlock::Text(edition.to_owned()));
+            }
             blocks.push(DetailBlock::Section("About"));
-            blocks.push(DetailBlock::Text(summary.clone()));
+            blocks.push(DetailBlock::Text(description.to_owned()));
         }
         if !publication.categories.is_empty() {
             blocks.push(DetailBlock::Section("Categories"));
@@ -5791,6 +5819,74 @@ Please read this before you distribute or use this work.\n";
     // -----------------------------------------------------------------
     // Parity: the same catalog, twice
     // -----------------------------------------------------------------
+
+    #[test]
+    fn catalog_metadata_is_not_presented_as_the_book_summary() {
+        let fixture =
+            include_bytes!("../../../crates/kobo-opds/tests/fixtures/gutenberg/entry-564.xml");
+        let feed = kobo_opds::parse(fixture, "https://www.gutenberg.org/ebooks/564.opds").unwrap();
+        assert!(!feed.publications.is_empty());
+        for book in &feed.publications {
+            let original = book.summary.as_deref().unwrap();
+            let (summary, edition) = super::description_parts(original);
+            assert!(
+                summary.starts_with("\"The Mystery of Edwin Drood\""),
+                "{summary}"
+            );
+            assert!(summary.contains("automatically generated summary"));
+            assert!(!summary.contains("EBook No.:"));
+            assert!(!summary.contains("Downloads:"));
+            if original.contains("This edition had all images removed.") {
+                assert_eq!(edition, Some("This edition had all images removed."));
+            }
+        }
+        if std::env::var_os("KOBO_QUALITY_CAPTURE_DIR").is_some() {
+            kobo_text::install(CLARA_BW_METRICS).expect("install runtime fonts for capture");
+        }
+        let book = feed.publications[0].clone();
+        let mut app = Gutenbird {
+            view: View::Details,
+            open: Some(book.clone()),
+            complete: true,
+            ..Gutenbird::default()
+        };
+        let context = kobo_sdk::Context::default();
+        let blocks = Gutenbird::detail_blocks(&book);
+        let pages = app.detail_pagination(&context, &book, &blocks);
+        for page in 0..pages.len() {
+            app.detail_page = page;
+            let screen = app.details_screen(&context);
+            let diagnostics = screen.diagnostics(&context.metrics(), &Chrome::with_back(true));
+            assert!(!diagnostics
+                .issues
+                .iter()
+                .any(|issue| issue.severity == DiagnosticSeverity::Error));
+            if let Ok(directory) = std::env::var("KOBO_QUALITY_CAPTURE_DIR") {
+                let metrics = context.metrics();
+                let mut surface = kobo_ui::Surface::new(
+                    usize::try_from(metrics.width).unwrap(),
+                    usize::try_from(metrics.height).unwrap(),
+                );
+                kobo_ui::render(&screen, &mut surface, None);
+                let png = kobo_image::encode_png_grey(
+                    u32::try_from(metrics.width).unwrap(),
+                    u32::try_from(metrics.height).unwrap(),
+                    &surface.pixels,
+                )
+                .unwrap();
+                std::fs::create_dir_all(&directory).unwrap();
+                std::fs::write(
+                    std::path::Path::new(&directory).join(format!("detail-{}.png", page + 1)),
+                    png,
+                )
+                .unwrap();
+            }
+        }
+        let ordinary = "Title: a story about a librarian\n\nSummary: this is ordinary prose.";
+        assert_eq!(super::description_parts(ordinary), (ordinary, None));
+        let unlabeled = "A novel.\n\nA second paragraph.";
+        assert_eq!(super::description_parts(unlabeled), (unlabeled, None));
+    }
 
     const PARITY_ATOM: &str = include_str!("../tests/fixtures/parity-1.2.xml");
     const PARITY_JSON: &str = include_str!("../tests/fixtures/parity-2.0.json");

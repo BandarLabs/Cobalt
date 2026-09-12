@@ -1680,8 +1680,11 @@
     "pr": 3,
     "group": "Gutenbird",
     "task": "Remove catalog boilerplate from summaries",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Gutenbird extracts a labeled Summary only from a recognized Title/EBook No. metadata record. Ordinary descriptions and provenance text remain untouched; edition notices remain in a separate section.",
+      "All 87 app tests passed. Saved Gutenberg entry-564 fixture verifies extraction, provenance, edition warning and ordinary-prose preservation. Detail pagination has no layout errors; runtime-font captures inspected in docs/quality/evidence/gutenbird-summary. Strict Clippy passed."
+    ]
   },
   {
     "id": "GUTEN-02",

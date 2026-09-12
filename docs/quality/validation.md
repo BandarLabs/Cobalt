@@ -2366,3 +2366,21 @@ credential transfer recovery remains partial CLI-18. Completion evidence and
 implementation live on `beta-quality-companion` in PR #182. This metadata
 update does not import companion changes into PR #181 or certify hardware
 acceptance. Global counts: 243 done, 252 open, one deferred.
+
+
+### Gutenbird catalog descriptions (GUTEN-01)
+
+Recognized Title/EBook No. records now supply the labeled Summary to About,
+instead of displaying the entire metadata record as prose. Edition notices
+remain separate and summary provenance remains verbatim. The OPDS parser and
+ordinary catalog descriptions are unchanged.
+
+All 87 app tests passed; the actual saved Gutenberg entry-564 fixture tests
+summary extraction, edition warning, provenance and ordinary-prose handling.
+The fixture's detail pages pass layout diagnostics and were rendered with
+runtime fonts, then visually inspected. Reproduce captures with
+`KOBO_QUALITY_CAPTURE_DIR=PATH cargo +1.85.1 test --manifest-path examples/gutenbird/Cargo.toml catalog_metadata_is_not_presented`.
+This is a rendered fixture check, not a live download/offline-reopen journey.
+GUTEN-02 through GUTEN-06 remain open. Manifest 1.0.11 and generated app page
+are updated. Evidence: `evidence/gutenbird-summary/detail-1.png` and subsequent
+pages. The font dependency is test-only.

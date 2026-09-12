@@ -79,3 +79,14 @@ command over USB. The other apps:
 [Todo](../todo/README.md) ·
 [Tic-tac-toe](../tictactoe/README.md) ·
 [Magnet Sensor](../magnet/README.md)
+
+
+### Book descriptions
+
+When a catalog embeds a labeled metadata record in its description field,
+Gutenbird shows the synopsis under **About** rather than repeating the title,
+author and download counters. Edition notices, such as missing illustrations,
+remain in their own **Edition** section. Summary provenance is retained, and
+ordinary descriptions are unchanged.
+
+![Book description and edition notice](../../docs/quality/evidence/gutenbird-summary/detail-1.png)
