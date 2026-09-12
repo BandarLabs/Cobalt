@@ -4150,8 +4150,10 @@
     "pr": 4,
     "group": "Paperterm companion",
     "task": "Provide obvious Stop and computer-awake explanation",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Startup prints Ctrl+] stop control and computer-awake guidance. Local Ctrl+] explicitly closes the shared PTY command/session, restores terminal settings and prints Paperterm stopped. Real PTY CLI tests pass active-session stop within five seconds, final-screen service stop, terminal-mode restoration and closed sharing port. 22 stream tests and strict stream/CLI Clippy pass. Evidence: docs/quality/evidence/paperterm-stop/result.json; scripts/quality/check-paperterm-stop.py."
+    ]
   },
   {
     "id": "STREAMCLI-05",

@@ -12,7 +12,7 @@ use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
@@ -441,7 +441,9 @@ pub fn run_with_title(options: Options, title: &str) -> Result<i32, String> {
     let input = Arc::new(Mutex::new(pty));
     let session = Arc::new(Session::new(options.grid));
     let mut raw_stdin = RawStdin::enable();
-    forward_stdin(Arc::clone(&input));
+    let stop = Arc::new(AtomicBool::new(false));
+    forward_stdin(Arc::clone(&input), Arc::clone(&stop));
+    eprintln!("Paperterm is sharing this session. Keep the computer awake.\r\nPress Ctrl+] on this computer to stop sharing and end the command.\r");
     let session_id = random_session()?;
     let title = title.to_owned();
     let mode = options.input_mode();
@@ -449,6 +451,17 @@ pub fn run_with_title(options: Options, title: &str) -> Result<i32, String> {
     let mut ended_at = None;
     let readers = Arc::new(AtomicUsize::new(0));
     loop {
+        if stop.load(Ordering::Acquire) {
+            input
+                .lock()
+                .map_err(|_| "terminal lock failed")?
+                .close()
+                .map_err(|error| format!("stop shared command: {error}"))?;
+            session.finish(0);
+            drop(raw_stdin.take());
+            eprintln!("\r\nPaperterm stopped. The shared command has ended.");
+            return Ok(0);
+        }
         if ended_at.is_none() {
             let output_eof = drain_pty(&input, &session);
             if exit_code.is_none() {
@@ -588,12 +601,16 @@ impl Drop for RawStdin {
     }
 }
 
-fn forward_stdin(pty: Arc<Mutex<kobo_abi::pty::Pty>>) {
+fn forward_stdin(pty: Arc<Mutex<kobo_abi::pty::Pty>>, stop: Arc<AtomicBool>) {
     std::thread::spawn(move || {
         let mut stdin = std::io::stdin().lock();
         let mut bytes = [0_u8; 1024];
         while let Ok(read) = stdin.read(&mut bytes) {
             if read == 0 {
+                break;
+            }
+            if bytes[..read].contains(&0x1d) {
+                stop.store(true, Ordering::Release);
                 break;
             }
             if pty

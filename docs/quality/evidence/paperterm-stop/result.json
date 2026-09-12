@@ -1,0 +1,11 @@
+{
+  "status": "passed",
+  "physical_hardware": false,
+  "checks": [
+    "Ctrl+] stops an active connection check within five seconds",
+    "Ctrl+] then Enter closes the final-screen service",
+    "terminal settings restored",
+    "sharing port closed",
+    "clear stopped message"
+  ]
+}

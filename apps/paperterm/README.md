@@ -128,3 +128,18 @@ choose another port, use `kobo stream pairing --port 9123` and
 `kobo stream demo --port 9123` so the displayed address matches the service.
 The demo also displays these details when it starts. An older setup without
 a saved address explains how to add the computer address with `stream init`.
+
+## Stop sharing from the computer
+
+Press **Ctrl+]** (hold Control and press the closing square bracket) in the
+computer terminal running Paperterm. This ends the shared command and its
+child processes, closes sharing, and restores your terminal settings. Save
+any work in the shared program first. Ctrl+C still goes to the shared program
+as its usual interrupt; it is not the stop-sharing shortcut.
+
+Keep the computer awake and connected while sharing. The Kobo displays a
+session running on that computer; it cannot keep the command available when
+the computer sleeps. The connection check can also finish with `exit`; its
+final screen remains available for a minute, or Ctrl+] followed by Enter closes it early after terminal settings have been
+restored.
+The Ctrl+] byte is reserved locally while sharing.

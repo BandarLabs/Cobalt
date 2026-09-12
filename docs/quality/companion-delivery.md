@@ -188,3 +188,16 @@ and wrong-size new files. Eight Frame tests, strict CLI Clippy and the complete
 private-shelf acceptance journey pass. FRAMECLI-07 is complete. This verifies
 storage and target reachability, not physical display; that acceptance remains
 open. Overall: 219 done, 276 open, one deferred.
+
+Paperterm Stop: startup prints the laptop Ctrl+] shortcut and computer-awake
+explanation. Stop closes the PTY command/session and sharing service, restores
+the laptop terminal and prints a stopped message. Real CLI PTY tests cover an
+active connection check and the final-screen service, including closed port
+and restored mode settings. macOS PENDIN is ignored as a transient retype flag;
+all other terminal settings are compared. 22 stream tests and strict Clippy
+pass. STREAMCLI-04 complete; evidence in `evidence/paperterm-stop`.
+
+Flashcards audit at ea937dc1 passed the generated license notice check, then
+stopped because `app-verify` and `app-catalog-verify` are absent from the CLI.
+The complete boundary task stays open pending real verification commands and
+a full passing audit. The audit process has exited; no audit is running.
