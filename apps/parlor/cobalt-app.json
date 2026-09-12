@@ -4,7 +4,7 @@
   "short_label": "Parlor",
   "summary": "Play touch-first Reversi together on one Kobo.",
   "page_description": "A pass-and-play board-game shelf, beginning with touch-first Reversi.",
-  "minimum_cobalt_version": "0.3.13",
+  "minimum_cobalt_version": "0.3.14",
   "version": "0.1.3",
   "release_notes": "Four games on one shelf, a mark for each, whose move it is under the game's name, and a board this panel cannot draw says so rather than raising an error.",
   "glyph": "circle",

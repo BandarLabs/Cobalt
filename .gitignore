@@ -1,6 +1,9 @@
 .DS_Store
 /.kobo/
 /target/
+# The daemon's tests write their scratch devices here, one directory per run,
+# and they are not build output the root pattern already covers.
+/crates/kobod/target/
 /.pass
 
 # Credentials. `kobo secret` reads keys off this machine and writes them
