@@ -265,47 +265,47 @@ pub const FORMULA_PICTURE_PREFIX: &str = "formula:";
 /// The pixels to the em a formula's picture was drawn at.
 pub const FORMULA_PICTURE_EM: u32 = 48;
 
-/// The most formulae one document will be typeset pictures for.
+/// The most formulae one document will be given pictures.
 ///
-/// A survey paper can carry a thousand pieces of mathematics, and a reader
-/// can only ever reserve room for a few dozen pictures at a time, so the
-/// nine hundred and fiftieth of them was never going to be shown to anybody.
-/// Drawing all one thousand and sixteen in one such paper took fifteen and a
-/// half seconds on a Clara BW — five to typeset them and nine more to turn
-/// them into something the panel could draw — and almost every picture that
-/// bought was thrown away unlooked at.
+/// This used to be sixty-four, and sixty-four was chosen when the parser drew
+/// every formula itself: the count was really a time budget wearing a
+/// count's clothes, because typesetting is 4.7 ms apiece on a Clara BW and
+/// the parser spends that inside a lifecycle callback the runtime allows 250
+/// ms in total. Sixty-four was as many as could be afforded there, and a
+/// paper's sixty-fifth formula onwards was read as text no matter how long
+/// the reader sat with it.
 ///
-/// Past this many, a formula is read as the line of text it has always fallen
-/// back to. That is a worse-looking page than a drawn one, at the far end of
-/// a paper nobody has scrolled to, and it is the difference between a paper
-/// that opens and a paper that does not.
-pub const MAX_FORMULA_PICTURES: usize = 64;
-
-/// How long one document may spend drawing formulae.
+/// Drawing now happens a few at a time in the picture pipeline, off the
+/// callback, so the question is no longer what fits in an open but what fits
+/// in memory. Measured over a 163-page paper carrying 231 formulae: every one
+/// of them together is 764 KB of panel grey, a mean of 3.4 KB each, against
+/// the 8 MB the runtime will hold. Five hundred and twelve is about 1.7 MB of
+/// that, comfortably clear of the plates a paper's figures also want, and
+/// more mathematics than any paper reached while this was being measured.
 ///
-/// The count above bounds how many pictures are worth keeping; it says
-/// nothing about how long making them takes, and a reader with a slower
-/// machine than the one this was written on should not be made to wait for a
-/// count that was chosen elsewhere.
-///
-/// Measured on a Clara BW, reading a 1.4 MB paper carrying 1016 formulae:
-/// the markup alone parses in about 290 ms, typesetting a formula costs
-/// 4.7 ms, and turning its picture into something the panel can draw costs
-/// 9.4 ms more. Opening that paper with every formula drawn takes fifteen
-/// and a half seconds. With sixty-four it takes two and a half, against nine
-/// and a half before any of this work — and sixty-four is already more
-/// mathematics than a page of it can show.
-///
-/// So the budget is set above what the count costs on this device — it is
-/// the count that should decide on hardware this work was measured on, and
-/// the clock that should decide on anything slower. A machine that cannot
-/// afford sixty-four draws what it can and reads the rest as the text they
-/// have always fallen back to, without having to be told which machine it is.
-pub const FORMULA_DRAWING_BUDGET: core::time::Duration = core::time::Duration::from_millis(500);
+/// Past this many a formula is still read as the line of text it has always
+/// fallen back to, which is a worse-looking page rather than a lost one.
+pub const MAX_FORMULA_PICTURES: usize = 512;
 
 /// The same, for the renderer, which measures type in fractions of a pixel.
 #[cfg(feature = "raster")]
-pub(crate) const FORMULA_PICTURE_EM_F32: f32 = 48.0;
+const FORMULA_PICTURE_EM_F32: f32 = 48.0;
+
+/// Typesets one formula, given the LaTeX [`Document::formulae`] kept for it.
+///
+/// Separated from parsing because of what it costs: 4.7 ms on a Clara BW, and
+/// a paper is hundreds of formulae. Called from whatever is drawing the
+/// document, a few at a time, so that no single callback spends more than the
+/// runtime allows one.
+///
+/// Returns `None` when the source will not parse or will not draw. There is
+/// no half-drawn formula, and no need for one: the written form of it is
+/// already in the text, so a formula that never draws simply reads.
+#[cfg(feature = "raster")]
+#[must_use]
+pub fn draw_formula(latex: &str) -> Option<Vec<u8>> {
+    kobo_html::math::raster(latex, FORMULA_PICTURE_EM_F32)
+}
 
 /// How big a formula's picture should be drawn, for a given reading em.
 ///
@@ -484,6 +484,24 @@ pub struct Document {
     /// drawing them rather than to the parser. A book of four hundred
     /// engravings should not cost four hundred decodes to open.
     pub images: BTreeMap<String, Vec<u8>>,
+    /// The LaTeX behind each formula the text refers to, keyed as its picture
+    /// is keyed in [`images`].
+    ///
+    /// Source rather than a picture, for the same reason the pictures above
+    /// arrive undecoded: typesetting one costs 4.7 ms on a Clara BW and a
+    /// paper carries hundreds of them, so a parser that drew them would spend
+    /// the whole of a lifecycle callback -- and several more after it --
+    /// before the first page could be shown. What the parser can afford is to
+    /// say which formula is which and what it says, and to leave the drawing
+    /// to whatever owns a clock and a picture queue.
+    ///
+    /// A name here and not in [`images`] is a formula nothing has drawn yet,
+    /// or one nothing will. Either way the page reads: the written form of
+    /// every formula stays in the text it belongs to, and the picture is laid
+    /// over those words rather than in place of them.
+    ///
+    /// [`images`]: Document::images
+    pub formulae: BTreeMap<String, String>,
     /// Outline fonts embedded by the publisher, keyed by their resolved
     /// archive name.
     ///

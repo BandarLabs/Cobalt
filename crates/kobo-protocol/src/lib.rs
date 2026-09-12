@@ -1590,7 +1590,7 @@ pub const MAX_LIBRARY_DOCUMENT_BYTES: usize = 4 * 1024 * 1024;
 pub struct LibraryEntry {
     pub id: String,
     pub title: String,
-    /// 1 EPUB, 2 Markdown, 3 HTML, 4 text, 5 PDF.
+    /// 1 EPUB, 2 Markdown, 3 HTML, 4 text, 5 PDF, 6 Kepub.
     pub kind: u8,
     pub bytes: u32,
     /// False for a Kobo Store title that is in the stock library but whose
@@ -1599,9 +1599,14 @@ pub struct LibraryEntry {
 }
 
 impl LibraryEntry {
+    /// Whether the built-in reader can page this.
+    ///
+    /// PDF nothing here parses, and a Kepub is EPUB with the stock reader's
+    /// own spans threaded through the markup: opening one as plain EPUB shows
+    /// the spans rather than the book.
     #[must_use]
     pub const fn is_readable(&self) -> bool {
-        self.on_card && self.kind != 5
+        self.on_card && self.kind != 5 && self.kind != 6
     }
 }
 
@@ -3711,11 +3716,19 @@ fn valid_library_id(id: &str) -> bool {
         && !id.split('/').any(|part| part == "..")
 }
 
+/// The kinds a shelf entry may name: EPUB, Markdown, HTML, text, PDF, Kepub.
+///
+/// Kept beside both halves of the entry codec because the two ends disagreeing
+/// about it is not a dropped tile. The listing is encoded as one value, so an
+/// entry the encoder refuses fails the whole reply, and a reply that cannot be
+/// written ends the session that was hosting the shelf.
+const LIBRARY_KINDS: std::ops::RangeInclusive<u8> = 1..=6;
+
 fn encode_library_entry(output: &mut Vec<u8>, entry: &LibraryEntry) -> Result<(), ProtocolError> {
     if !valid_library_id(&entry.id)
         || entry.title.is_empty()
         || entry.title.len() > MAX_LIBRARY_TITLE_LEN
-        || !(1..=5).contains(&entry.kind)
+        || !LIBRARY_KINDS.contains(&entry.kind)
     {
         return Err(ProtocolError::InvalidValue("library entry"));
     }
@@ -3736,7 +3749,7 @@ fn decode_library_entry(reader: &mut Reader<'_>) -> Result<LibraryEntry, Protoco
     if !valid_library_id(&id)
         || title.is_empty()
         || title.len() > MAX_LIBRARY_TITLE_LEN
-        || !(1..=5).contains(&kind)
+        || !LIBRARY_KINDS.contains(&kind)
     {
         return Err(ProtocolError::InvalidValue("library entry"));
     }
@@ -7661,6 +7674,45 @@ mod tests {
             let bytes = encode(&frame).expect("encode");
             assert_eq!(decode(&bytes).expect("decode"), frame);
         }
+    }
+
+    /// A Kepub is the kind most Kobo owners have most of, and the encoder
+    /// used to refuse it. A refused entry is not a missing tile: encoding is
+    /// the whole listing, so one purchased book took the shelf, the launcher
+    /// and the session down with it.
+    #[test]
+    fn a_kepub_listing_survives_the_wire() {
+        let frame = Frame {
+            version: VERSION,
+            request_id: 11,
+            message: Message::DeviceResult(DeviceResult::Library {
+                entries: vec![LibraryEntry {
+                    id: "n//mnt/onboard/Piranesi.kepub.epub".to_owned(),
+                    title: "Piranesi".to_owned(),
+                    kind: 6,
+                    bytes: 900_000,
+                    on_card: true,
+                }],
+                truncated: false,
+            }),
+        };
+        let bytes = encode(&frame).expect("a Kepub entry the wire refuses takes the session down");
+        assert_eq!(decode(&bytes).expect("decode"), frame);
+    }
+
+    #[test]
+    fn a_kepub_is_listed_and_not_offered_as_readable() {
+        let kepub = LibraryEntry {
+            id: "n//mnt/onboard/Piranesi.kepub.epub".to_owned(),
+            title: "Piranesi".to_owned(),
+            kind: 6,
+            bytes: 900_000,
+            on_card: true,
+        };
+        assert!(
+            !kepub.is_readable(),
+            "a Kepub on the card was offered to a reader that shows its markup"
+        );
     }
 
     #[test]

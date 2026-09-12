@@ -41,6 +41,7 @@
 //! that block used to be on.
 
 use std::collections::{BTreeMap, VecDeque};
+use std::time::{Duration, Instant};
 
 pub mod comic;
 pub mod illustrations;
@@ -88,6 +89,35 @@ pub const MAX_PICTURE_BYTES: u32 = 4 * 1024 * 1024;
 /// The longest a picture's address may be.
 const MAX_PICTURE_NAME: usize = 512;
 
+/// How long one pass may spend typesetting formulae.
+///
+/// Chosen by subtraction from the runtime's 250 ms callback deadline. A pass
+/// that spends its budget still finishes the formula it is on, which is 4.7 ms
+/// on a Clara BW; a pass that empties the queue then measures the batch, which
+/// is one repagination -- 4.8 ms here for a 73-page paper, and about twenty
+/// times that on the reader. Sixty milliseconds of drawing leaves a third of
+/// the deadline unspent in the worst of those.
+///
+/// Lower would be safer and slower: a whole paper's mathematics is around a
+/// second of typesetting on that machine, and every millisecond taken off this
+/// is another round trip through the runtime to get through it.
+const FORMULA_PASS: Duration = Duration::from_millis(60);
+
+/// Typesets one formula, or nothing when this build cannot draw.
+///
+/// Without the feature there is no rasteriser and no fonts to draw with, and
+/// every formula stays the line of text the document already carries for it.
+#[cfg(feature = "raster")]
+fn draw_formula(latex: &str) -> Option<Vec<u8>> {
+    kobo_doc::draw_formula(latex)
+}
+
+#[cfg(not(feature = "raster"))]
+#[allow(clippy::missing_const_for_fn)]
+fn draw_formula(_latex: &str) -> Option<Vec<u8>> {
+    None
+}
+
 /// The width a plate is fitted into, in millimetres.
 const PLATE_WIDTH_MM: u16 = 80;
 
@@ -132,6 +162,15 @@ pub struct BookView {
     /// Source bytes for pictures with room reserved and no pixels yet, in the
     /// order the text refers to them.
     plates: VecDeque<(String, Vec<u8>)>,
+    /// Formulae the document named and nothing has typeset yet, as the LaTeX
+    /// to set them from, in the order the text refers to them.
+    ///
+    /// A formula costs 4.7 ms to typeset on the reader and a paper carries
+    /// hundreds, so they are drawn here, a few per pass, rather than by the
+    /// parser: two hundred formulae is a second of work, and a second spent
+    /// inside one callback is a second in which nothing repaints, no touch is
+    /// read, and the watchdog counts.
+    unset: VecDeque<(String, String)>,
     /// A plate read and fitted, waiting for its greys.
     dithering: Option<(String, kobo_image::Picture)>,
     /// The task carrying the pipeline forward, if one is in flight.
@@ -228,19 +267,38 @@ impl BookView {
         // could name it.
         self.release(context);
         let images = std::mem::take(&mut document.images);
+        let formulae = std::mem::take(&mut document.formulae);
         let metrics = context.metrics();
         let mut reader = Reader::open(document, memory, &metrics);
         // Before the page count is read, because the sizes are what an
         // illustrated document is measured at.
+        //
+        // Counted separately from the plates. Both used to come out of one
+        // allowance of sixty-four, in the order the document happened to
+        // mention them, so a paper whose formulae outnumbered that lost its
+        // last few to its first three figures -- silently, because a formula
+        // with no picture reads as text and looks like a formula nobody chose
+        // to draw. They are different pictures with different costs: a plate
+        // is a megabyte off the radio, a formula is three kilobytes this
+        // machine already has everything it needs to make.
+        let mut wanted_formulae = 0;
         for name in reader
             .pictures_wanted()
             .into_iter()
-            .take(MAX_PICTURES)
             .map(str::to_owned)
             .collect::<Vec<_>>()
         {
-            if let Some(bytes) = images.get(&name) {
-                self.reserve(&name, bytes, &metrics);
+            if let Some(latex) = formulae.get(&name) {
+                if wanted_formulae < kobo_doc::MAX_FORMULA_PICTURES {
+                    wanted_formulae += 1;
+                    self.unset.push_back((name, latex.clone()));
+                }
+                continue;
+            }
+            if self.reserved.len() < MAX_PICTURES {
+                if let Some(bytes) = images.get(&name) {
+                    self.reserve(&name, bytes, &metrics);
+                }
             }
         }
         reader.set_pictures(self.reserved.clone(), &metrics);
@@ -468,7 +526,9 @@ impl BookView {
             Outcome::Elsewhere => return None,
             handled => handled,
         };
-        if self.plating.is_none() && (!self.plates.is_empty() || self.dithering.is_some()) {
+        if self.plating.is_none()
+            && (!self.plates.is_empty() || self.dithering.is_some() || !self.unset.is_empty())
+        {
             self.decode_more(context);
         }
         // A page turn is also the moment the pictures on the page turned to
@@ -523,6 +583,11 @@ impl BookView {
         reader
             .pictures_wanted()
             .into_iter()
+            // A formula names no file anywhere. It is drawn from the LaTeX the
+            // document carries, so asking the web for one turns `formula:12`
+            // into an address beside the paper and spends a fetch, and the
+            // reader's only connection, discovering there is nothing there.
+            .filter(|name| !name.starts_with(FORMULA_PICTURE_PREFIX))
             .take(MAX_PICTURES)
             .filter(|name| !self.reserved.contains_key(*name))
             .map(str::to_owned)
@@ -542,7 +607,18 @@ impl BookView {
         if bytes.is_empty() || self.reserved.contains_key(name) {
             return false;
         }
-        if self.reserved.len() + self.offered.len() >= MAX_PICTURES {
+        // Plates only, counted against the plate ceiling: this is for bytes
+        // that came off the radio, and a formula never does.
+        if name.starts_with(FORMULA_PICTURE_PREFIX) {
+            return false;
+        }
+        let plates = self
+            .reserved
+            .keys()
+            .chain(self.offered.keys())
+            .filter(|held| !held.starts_with(FORMULA_PICTURE_PREFIX))
+            .count();
+        if plates >= MAX_PICTURES {
             return false;
         }
         let wanted = self
@@ -609,7 +685,7 @@ impl BookView {
     /// is left out here and the page reads its description instead -- which is
     /// what a document with a broken figure should look like.
     fn reserve(&mut self, name: &str, bytes: &[u8], metrics: &DisplayMetrics) -> bool {
-        if self.reserved.len() >= MAX_PICTURES {
+        if !self.room_for(name) {
             return false;
         }
         let Some((width, height)) = plate_box(metrics) else {
@@ -644,10 +720,37 @@ impl BookView {
         true
     }
 
+    /// Whether there is room for one more picture of the kind `name` is.
+    ///
+    /// Two ceilings, because the two kinds cost different things. A plate is
+    /// a megabyte fetched over the radio and decoded from an arbitrary file,
+    /// and sixty-four of them is as many as the runtime should be asked to
+    /// hold. A formula is three and a half kilobytes this machine can make
+    /// for itself, and a paper wants hundreds: measured over a 163-page paper
+    /// carrying 231 of them, all of the mathematics together came to 764 KB.
+    ///
+    /// Sharing one ceiling meant a paper's figures and its formulae took
+    /// slots from each other in whatever order the document mentioned them.
+    fn room_for(&self, name: &str) -> bool {
+        let formula = name.starts_with(FORMULA_PICTURE_PREFIX);
+        let held = self
+            .reserved
+            .keys()
+            .filter(|held| held.starts_with(FORMULA_PICTURE_PREFIX) == formula)
+            .count();
+        held < if formula {
+            kobo_doc::MAX_FORMULA_PICTURES
+        } else {
+            MAX_PICTURES
+        }
+    }
+
     /// Asks the runtime to carry the pipeline forward, if there is anything
     /// left to carry and nothing already carrying it.
     fn kick(&mut self, context: &mut Context) {
-        if self.plating.is_some() || (self.plates.is_empty() && self.dithering.is_none()) {
+        if self.plating.is_some()
+            || (self.plates.is_empty() && self.dithering.is_none() && self.unset.is_empty())
+        {
             return;
         }
         self.plating = context.spawn(Task::Sleep { seconds: 0 });
@@ -678,6 +781,7 @@ impl BookView {
         let Some((width, height)) = plate_box(&metrics) else {
             self.plates.clear();
             self.dithering = None;
+            self.unset.clear();
             return Step::Quiet;
         };
         let showing: Vec<String> = self.reader.as_ref().map_or_else(Vec::new, |reader| {
@@ -687,6 +791,15 @@ impl BookView {
                 .map(str::to_owned)
                 .collect()
         });
+        // Formulae first, and their own pass. Typesetting one is a different
+        // shape of work from turning a photograph into sixteen greys -- small
+        // enough to do several of in the time one plate takes -- and mixing
+        // the two would make every pass as long as the slower of them.
+        if !self.unset.is_empty() {
+            let repaint = self.set_formulae(context, &showing);
+            self.kick(context);
+            return repaint;
+        }
         let mut on_this_page = false;
         if let Some((name, mut picture)) = self.dithering.take() {
             // The second half: the greys.
@@ -734,6 +847,62 @@ impl BookView {
         }
     }
 
+    /// Typesets as many formulae as fit in one pass, page being read first.
+    ///
+    /// Unlike a plate, a formula can be budgeted for by the clock. The
+    /// objection to a time budget over there is that one plate is itself over
+    /// the callback deadline, so a pass runs for the budget plus a whole
+    /// plate; a formula is 4.7 ms on a Clara BW, so a pass that checks the
+    /// clock before each one overruns by at most that.
+    ///
+    /// The batch is measured in one go rather than each formula on arrival,
+    /// for the reason [`BookView::settle_pictures`] gives: measuring is what
+    /// moves the text, and doing it two hundred times over would move the page
+    /// under somebody who is reading it. Settling is left until the queue
+    /// drains, unless something on the page in front of them was in the batch.
+    fn set_formulae(&mut self, context: &mut Context, showing: &[String]) -> Step {
+        self.wanted_first_unset(showing);
+        let until = Instant::now().checked_add(FORMULA_PASS);
+        let mut on_this_page = false;
+        while until.is_none_or(|until| Instant::now() < until) {
+            let Some((name, latex)) = self.unset.pop_front() else {
+                break;
+            };
+            // A formula that will not typeset is not an error and is not
+            // retried: the words it was written as are already in the text,
+            // so the sentence reads either way.
+            let Some(png) = draw_formula(&latex) else {
+                continue;
+            };
+            on_this_page |= showing.contains(&name);
+            self.offered.insert(name, png);
+        }
+        // Measured when the queue runs dry, or as soon as the batch holds
+        // something on the page in front of somebody. Everything else waits:
+        // a formula sixty pages ahead is not worth moving the text for, and
+        // measuring after every pass would move it a dozen times over.
+        if !self.unset.is_empty() && !on_this_page {
+            return Step::Quiet;
+        }
+        if self.settle_pictures(context) {
+            Step::Repaint
+        } else {
+            Step::Quiet
+        }
+    }
+
+    /// Moves the formulae on the page being read to the front of the queue.
+    fn wanted_first_unset(&mut self, names: &[String]) {
+        if names.is_empty() {
+            return;
+        }
+        let (wanted, rest): (VecDeque<_>, VecDeque<_>) = self
+            .unset
+            .drain(..)
+            .partition(|(name, _)| names.contains(name));
+        self.unset = wanted.into_iter().chain(rest).collect();
+    }
+
     /// Moves the named plates to the front of the queue, keeping their order.
     fn wanted_first(&mut self, names: &[String]) {
         if names.is_empty() {
@@ -761,6 +930,7 @@ impl BookView {
             context.drop_picture(handle);
         }
         self.plates.clear();
+        self.unset.clear();
         self.offered.clear();
         self.reserved.clear();
         self.dithering = None;
@@ -904,6 +1074,164 @@ mod tests {
     use kobo_doc::{Block, Document};
     use kobo_read::{Memory, Reader};
     use kobo_sdk::{Command, Context, PictureHandle, Task, TaskError, TaskId, TaskOutcome};
+    use std::collections::BTreeMap;
+
+    /// Opening a paper draws none of its mathematics.
+    ///
+    /// This is what the whole arrangement is for. Typesetting a formula costs
+    /// 4.7 ms on a Clara BW, and it used to happen while the markup was being
+    /// read -- inside the one callback that opens a document, which the
+    /// runtime allows 250 ms in total. Two hundred formulae is most of a
+    /// second there, so a paper of them was capped at sixty-four and the rest
+    /// of the paper read as text no matter how long its reader sat with it.
+    #[test]
+    fn opening_a_paper_draws_none_of_its_mathematics() {
+        let mut context = Context::default();
+        let mut view = BookView::new();
+
+        view.open(&mut context, mathematical(200), Memory::default());
+
+        assert!(
+            handed(&context.take_commands()).is_empty(),
+            "a formula was drawn while the paper was opening"
+        );
+        assert!(
+            view.reader()
+                .expect("a paper")
+                .picture_named("formula:0")
+                .is_none(),
+            "a formula had a picture before anything had drawn one"
+        );
+    }
+
+    /// And then every one of them is drawn, off the opening callback.
+    ///
+    /// Two hundred is over three times the sixty-four this used to stop at.
+    #[cfg(feature = "raster")]
+    #[test]
+    fn every_formula_in_a_paper_is_typeset_by_the_pipeline() {
+        let mut context = Context::default();
+        let mut view = BookView::new();
+
+        view.open(&mut context, mathematical(200), Memory::default());
+        let _ = context.take_commands();
+        drain(&mut view);
+
+        let reader = view.reader().expect("a paper");
+        let undrawn: Vec<String> = (0..200)
+            .map(|index| format!("{}{index}", kobo_doc::FORMULA_PICTURE_PREFIX))
+            .filter(|name| reader.picture_named(name).is_none())
+            .collect();
+        assert!(
+            undrawn.is_empty(),
+            "{} of two hundred formulae were never typeset: {:?}",
+            undrawn.len(),
+            &undrawn[..undrawn.len().min(5)]
+        );
+    }
+
+    /// No pass of the pipeline may run for as long as the runtime allows a
+    /// whole callback.
+    ///
+    /// This is the property that makes the ceiling above safe at any speed. A
+    /// machine that cannot typeset two hundred formulae quickly does fewer of
+    /// them per pass rather than holding the panel, so the assertion is the
+    /// runtime's own deadline rather than a number chosen for this machine:
+    /// where the budget matters, it is the budget that keeps this true.
+    #[cfg(feature = "raster")]
+    #[test]
+    fn no_pass_of_the_pipeline_holds_the_panel_past_its_deadline() {
+        let mut context = Context::default();
+        let mut view = BookView::new();
+
+        view.open(&mut context, mathematical(200), Memory::default());
+        let _ = context.take_commands();
+        let (passes, longest) = drain(&mut view);
+
+        assert!(passes > 1, "the whole pipeline ran in a single pass");
+        assert!(
+            longest < kobo_sdk::CALLBACK_DEADLINE,
+            "a pass ran for {longest:?}, against a {:?} deadline",
+            kobo_sdk::CALLBACK_DEADLINE
+        );
+    }
+
+    /// A formula is never asked for over the radio.
+    ///
+    /// It names no file anywhere: the document carries the LaTeX and the
+    /// reader draws it. Asking for one turns `formula:0` into an address
+    /// beside the paper and spends the device's only connection finding out
+    /// there is nothing there.
+    #[test]
+    fn a_formula_is_never_fetched_from_the_web() {
+        let mut context = Context::default();
+        let mut view = BookView::new();
+
+        assert!(view.open_html(
+            &mut context,
+            "<p>we take <math display=\"block\" alttext=\"x\"><mi>x</mi></math> as given.</p>\
+             <img src=\"x1.png\">",
+            "https://arxiv.org/html/2401.00001v2/",
+            Memory::default(),
+        ));
+
+        assert_eq!(
+            fetched(&context.take_commands()),
+            vec!["https://arxiv.org/html/2401.00001v2/x1.png".to_owned()],
+            "a formula was asked for over the radio"
+        );
+        assert!(
+            !view
+                .missing_pictures()
+                .iter()
+                .any(|name| name.starts_with(kobo_doc::FORMULA_PICTURE_PREFIX)),
+            "a formula was listed as a picture the web could supply: {:?}",
+            view.missing_pictures()
+        );
+    }
+
+    /// A paper's figures and its formulae do not take room from each other.
+    ///
+    /// They used to share one allowance of sixty-four, filled in whatever
+    /// order the document happened to mention them, so a paper with more
+    /// mathematics than that lost its last few formulae to its first figure --
+    /// silently, because a formula with no picture reads as text and looks
+    /// like one nobody chose to draw.
+    #[cfg(feature = "raster")]
+    #[test]
+    fn a_papers_figures_and_its_formulae_do_not_take_room_from_each_other() {
+        let plate = plate_bytes();
+        let mut context = Context::default();
+        let mut view = BookView::new();
+
+        let mut document = mathematical(super::MAX_PICTURES + 8);
+        document.blocks.push(Block::Picture {
+            name: "plate.png".to_owned(),
+            alt: "A figure".to_owned(),
+            illustration: true,
+        });
+        document
+            .images
+            .insert("plate.png".to_owned(), plate.clone());
+        view.open(&mut context, document, Memory::default());
+        let _ = context.take_commands();
+        drain(&mut view);
+
+        let reader = view.reader().expect("a paper");
+        let last = format!(
+            "{}{}",
+            kobo_doc::FORMULA_PICTURE_PREFIX,
+            super::MAX_PICTURES + 7
+        );
+        assert!(
+            reader.picture_named(&last).is_some(),
+            "the paper's last formula lost its room to a figure"
+        );
+        assert!(
+            reader.picture_named("plate.png").is_some(),
+            "the figure lost its room to the paper's formulae"
+        );
+    }
 
     /// A page can name anything at all, and most of it is not a picture this
     /// device is willing to go and get. The rule is the page's own host: what
@@ -1065,6 +1393,50 @@ mod tests {
 
     fn plate_bytes() -> Vec<u8> {
         kobo_image::encode_png_grey(1200, 2000, &vec![128; 1200 * 2000]).expect("a png of a plate")
+    }
+
+    /// A paper of `count` formulae, each set on a line of its own.
+    fn mathematical(count: usize) -> Document {
+        let mut blocks = prose(2);
+        let mut formulae = BTreeMap::new();
+        for index in 0..count {
+            let name = format!("{}{index}", kobo_doc::FORMULA_PICTURE_PREFIX);
+            formulae.insert(name.clone(), "\\frac{6\\pi}{11}".to_owned());
+            blocks.push(Block::Picture {
+                name,
+                alt: "(6 π)/11".to_owned(),
+                illustration: false,
+            });
+        }
+        Document {
+            blocks,
+            formulae,
+            ..Document::default()
+        }
+    }
+
+    /// Carries the pipeline to a standstill, answering every sleep it asks for.
+    ///
+    /// Returns how many passes it took and the longest any one of them ran,
+    /// which is the number the runtime's callback deadline is about.
+    ///
+    /// A fresh context per pass, because a bare [`Context`] counts work out and
+    /// never counts it back in: the lane a finished task occupied is freed by
+    /// the runtime dispatching its answer, and there is no runtime here. Left
+    /// on one context the pipeline stalls after four passes, which is a
+    /// property of the harness and not of the view.
+    fn drain(view: &mut BookView) -> (usize, std::time::Duration) {
+        let mut passes = 0;
+        let mut longest = std::time::Duration::ZERO;
+        while let Some(task) = view.plating {
+            let mut context = Context::default();
+            let started = std::time::Instant::now();
+            let _ = view.woke(&mut context, task, &TaskOutcome::Completed(Vec::new()));
+            longest = longest.max(started.elapsed());
+            passes += 1;
+            assert!(passes < 10_000, "the pipeline never came to rest");
+        }
+        (passes, longest)
     }
 
     fn illustrated(plate: &[u8]) -> Document {

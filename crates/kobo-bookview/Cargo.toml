@@ -16,6 +16,13 @@ kobo-read = { path = "../kobo-read" }
 kobo-sdk = { path = "../kobo-sdk" }
 kobo-ui = { path = "../kobo-ui" }
 
+[features]
+# Sets a document's formulae as mathematics rather than leaving them the line
+# of text they are written as. Optional because the KaTeX faces and the
+# rasteriser behind it are some three megabytes, which only a reader of papers
+# has any use for.
+raster = ["kobo-doc/raster"]
+
 [lints]
 workspace = true
 

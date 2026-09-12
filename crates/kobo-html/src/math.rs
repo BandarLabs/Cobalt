@@ -300,11 +300,17 @@ fn draw_element(name: &str, children: &[Node], out: &mut String) {
         "math" | "semantics" | "mrow" | "mstyle" | "mpadded" | "menclose" => {
             draw_all(children, out);
         }
+        "msub" => script(children, out, "_"),
+        "msup" => script(children, out, "^"),
         // Limits sit under and over their operator in print and after it in
         // a line, which is how they are read aloud either way, so they are set
-        // exactly as a subscript and a superscript are.
-        "msub" | "munder" => script(children, out, "_"),
-        "msup" | "mover" => script(children, out, "^"),
+        // exactly as a subscript and a superscript are -- unless what is set
+        // over the base is an accent, which is a different thing wearing the
+        // same markup. `\hat{x}` is `<mover><mi>x</mi><mo>^</mo></mover>`, and
+        // read as a superscript it came out `x^^`: the marker this writes,
+        // then the mark itself. The mark alone says it.
+        "munder" => accented(children, out, "_"),
+        "mover" => accented(children, out, "^"),
         "msubsup" => {
             let (base, rest) = children
                 .split_first()
@@ -392,6 +398,39 @@ fn script(children: &[Node], out: &mut String, marker: &str) {
     attach(out, marker, &attached);
 }
 
+/// Sets what stands over or under a base, as an accent when it is one.
+///
+/// A hat and an exponent are the same markup in `MathML` and different things
+/// on the page: `\hat{x}` and `x^{2}` are both a base with something raised
+/// over it, and only the second is being raised. An accent is written as the
+/// mark alone, which is what a reader without the drawn form has to go on.
+fn accented(children: &[Node], out: &mut String, marker: &str) {
+    let Some((base, rest)) = children.split_first() else {
+        return;
+    };
+    let over = drawn(rest);
+    let over = over.trim();
+    draw(base, out);
+    if is_accent(over) {
+        out.push_str(over);
+        return;
+    }
+    attach(out, marker, over);
+}
+
+/// Whether a string is one of the marks a typesetter sets over a letter.
+///
+/// The ones `LaTeXML` writes for `\hat`, `\bar`, `\tilde`, `\dot`, `\ddot`,
+/// `\check`, `\breve`, `\acute`, `\grave` and `\vec`, in both the spacing and
+/// the plain spellings it chooses between.
+fn is_accent(over: &str) -> bool {
+    const MARKS: [&str; 15] = [
+        "^", "\u{2c6}", "\u{af}", "\u{203e}", "~", "\u{2dc}", "\u{2d9}", "\u{a8}", "\u{2c7}",
+        "\u{2d8}", "\u{b4}", "`", "\u{2192}", "\u{20d7}", "\u{2015}",
+    ];
+    MARKS.contains(&over)
+}
+
 /// Writes one `^` or `_` and its argument, grouping when the argument is more
 /// than a single character so that `x^2y` cannot be read as `x^(2y)`.
 fn attach(out: &mut String, marker: &str, attached: &str) {
@@ -471,6 +510,9 @@ fn plain(character: char) -> Option<char> {
     // at the end. Anything irregular falls through to the letter tables.
     const DIGITS: u32 = 0x1D7CE;
     let code = character as u32;
+    if (0x2100..=0x214F).contains(&code) {
+        return letterlike(character);
+    }
     if !(0x1D400..=0x1D7FF).contains(&code) {
         return None;
     }
@@ -484,6 +526,48 @@ fn plain(character: char) -> Option<char> {
     } else {
         char::from_u32('a' as u32 + offset - 26)
     }
+}
+
+/// The same, for the letters given code points of their own before the
+/// alphabets above existed.
+///
+/// `\mathcal{L}` is `ℒ`, not the `𝓛` of the run above, and `\mathbb{R}` is
+/// `ℝ`: the letters mathematicians were already using went into Letterlike
+/// Symbols, and the later block was left with holes where they would have
+/// been. The reading face covers that block no better than the other, so a
+/// paper whose loss is called `\mathcal{L}` -- which it says on every second
+/// line -- came out as a row of boxes where it had written a name.
+///
+/// Letters only. The block also holds `№`, `℃` and the ounce sign, none of
+/// which is a letter wearing a style, and those are left as they are.
+fn letterlike(character: char) -> Option<char> {
+    Some(match character {
+        '\u{2102}' | '\u{212D}' => 'C',
+        '\u{2107}' | '\u{2130}' => 'E',
+        '\u{210A}' => 'g',
+        '\u{210B}' | '\u{210C}' | '\u{210D}' => 'H',
+        '\u{210E}' | '\u{210F}' => 'h',
+        '\u{2110}' | '\u{2111}' => 'I',
+        '\u{2112}' => 'L',
+        '\u{2113}' => 'l',
+        '\u{2115}' => 'N',
+        '\u{2118}' | '\u{2119}' => 'P',
+        '\u{211A}' => 'Q',
+        '\u{211B}' | '\u{211C}' | '\u{211D}' => 'R',
+        '\u{2124}' | '\u{2128}' => 'Z',
+        // Canonically the Greek letter, which the reading face does cover.
+        '\u{2126}' => '\u{3a9}',
+        '\u{212C}' => 'B',
+        '\u{212F}' | '\u{2147}' => 'e',
+        '\u{2131}' => 'F',
+        '\u{2133}' => 'M',
+        '\u{2134}' => 'o',
+        '\u{2145}' => 'D',
+        '\u{2146}' => 'd',
+        '\u{2148}' => 'i',
+        '\u{2149}' => 'j',
+        _ => return None,
+    })
 }
 
 #[cfg(test)]
@@ -547,6 +631,53 @@ mod tests {
         assert_eq!(render(markup), "E_y");
         let indicator = "<math><mn>\u{1d7d9}</mn></math>";
         assert_eq!(render(indicator), "1");
+    }
+
+    /// A hat is a hat and not an exponent, though the markup is the same.
+    ///
+    /// `\hat{x}` is `<mover><mi>x</mi><mo>^</mo></mover>`, exactly the shape
+    /// `x^{2}` has, and read as a superscript it wrote the marker and then the
+    /// mark: the reconstruction in arXiv:2609.09143 read `x^^` on a Clara BW.
+    /// A limit under a sum is the same markup again and is still a limit.
+    #[test]
+    fn an_accent_is_written_as_the_mark_rather_than_as_something_raised() {
+        let hat = "<math><mover accent=\"true\"><mi>x</mi><mo>^</mo></mover></math>";
+        assert_eq!(render(hat), "x^");
+        let bar = "<math><mover accent=\"true\"><mi>x</mi><mo>\u{af}</mo></mover></math>";
+        assert_eq!(render(bar), "x\u{af}");
+        let vector = "<math><mover accent=\"true\"><mi>v</mi><mo>\u{2192}</mo></mover></math>";
+        assert_eq!(render(vector), "v\u{2192}");
+        // Still a limit when what is over the base is not a mark.
+        let sum = "<math><munder><mo>\u{2211}</mo><mrow><mi>i</mi><mo>=</mo><mn>1</mn>\
+                   </mrow></munder></math>";
+        assert_eq!(render(sum), "\u{2211}_(i=1)");
+        // And still an exponent when it was written as one.
+        let square = "<math><msup><mi>x</mi><mn>2</mn></msup></math>";
+        assert_eq!(render(square), "x^2");
+    }
+
+    /// Including the letters that were given code points before that plane
+    /// existed, which is where `LaTeXML` writes the common ones.
+    ///
+    /// `\mathcal{L}` is `\u{2112}`, not the `\u{1d4db}` of the run above, and
+    /// `\mathbb{R}` is `\u{211d}`: Unicode put the letters mathematicians were
+    /// already using into Letterlike Symbols and left holes in the later block
+    /// where they would have been. Folding only the later block meant a paper
+    /// whose loss is called `\mathcal{L}` drew a box on every second line --
+    /// photographed off a Clara BW as `\u{2112}_(VQ)` reading `▯_(VQ)`.
+    #[test]
+    fn the_script_capitals_a_paper_names_its_losses_with_are_folded_too() {
+        let loss = "<math><msub><mi>\u{2112}</mi><mrow><mi>V</mi><mi>Q</mi></mrow></msub></math>";
+        assert_eq!(render(loss), "L_(VQ)");
+        let reals = "<math><msup><mi>\u{211d}</mi><mi>k</mi></msup></math>";
+        assert_eq!(render(reals), "R^k");
+        let script = "<math><mrow><mi>\u{212c}</mi><mi>\u{2130}</mi><mi>\u{2131}</mi>\
+                      <mi>\u{2133}</mi><mi>\u{2113}</mi></mrow></math>";
+        assert_eq!(render(script), "BEFMl");
+        // Not everything in the block is a letter wearing a style, and the
+        // ones that are not are left as the characters they are.
+        let numero = "<math><mtext>\u{2116}</mtext></math>";
+        assert_eq!(render(numero), "\u{2116}");
     }
 
     /// Nothing here may lose characters. A construction this does not know is
