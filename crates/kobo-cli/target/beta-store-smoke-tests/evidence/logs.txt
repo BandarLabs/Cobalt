@@ -1,3 +1,0 @@
-mock: catalog verified
-mock: package activated
-mock: launch recovered

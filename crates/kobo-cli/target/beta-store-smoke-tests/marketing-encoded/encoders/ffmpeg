@@ -1,3 +1,0 @@
-#!/bin/sh
-for last do :; done
-cp frame-0000.png "$last"
