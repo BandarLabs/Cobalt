@@ -138,3 +138,11 @@ and invalid selection. Five helper-command tests and strict CLI Clippy pass.
 The generated HTML was inspected in the browser and captured in `preview.png`.
 FLASHCLI-06 is complete; verified distribution and the final license-boundary
 audit remain open.
+
+
+The first clean artifact build completed its ARM and host compilation, then
+failed in packaging because the scripts read the retired central app catalog.
+Both builder and auditor now collect the canonical registry, including app
+contributions and derived minimum runtime versions. Shell syntax checks and
+manifest generation against the current registry pass. The full artifact
+audit must be rerun before FLASHCLI-04 can close.
