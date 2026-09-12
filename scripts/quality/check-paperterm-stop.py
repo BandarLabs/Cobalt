@@ -8,6 +8,7 @@ import pty
 import select
 import socket
 import subprocess
+import sys
 import tempfile
 import termios
 import time
@@ -20,10 +21,10 @@ def main():
     args = parser.parse_args()
     cli = str(args.cli.resolve())
     with tempfile.TemporaryDirectory(prefix='paperterm-stop-', dir='/tmp') as private:
-        env = dict(os.environ, KOBO_STREAM_CONFIG_DIR=private)
+        env = dict(os.environ, KOBO_STREAM_CONFIG_DIR=private, HOME=private, SHELL="/bin/sh")
         subprocess.run([cli, 'stream', 'init', '--host', '127.0.0.1'], env=env,
                        capture_output=True, check=True, timeout=30)
-        for finished in [False, True]:
+        for preset, finished in [("demo", False), ("demo", True), ("terminal", False), ("monitor", False)]:
             with socket.socket() as probe:
                 probe.bind(('127.0.0.1', 0))
                 port = probe.getsockname()[1]
@@ -35,7 +36,7 @@ def main():
                 settings[3] &= ~getattr(termios, 'PENDIN', 0)
                 return settings
             original = terminal_settings()
-            process = subprocess.Popen([cli, 'stream', 'demo', '--port', str(port)], env=env,
+            process = subprocess.Popen([cli, 'stream', preset, '--port', str(port)], env=env,
                                        stdin=slave, stdout=slave, stderr=slave, start_new_session=True)
             output = bytearray()
 
@@ -48,7 +49,13 @@ def main():
                         output.extend(os.read(master, 65536))
             try:
                 await_text(b'Press Ctrl+]')
-                await_text(b'Press Enter to send.')
+                if preset == 'demo':
+                    await_text(b'Press Enter to send.')
+                elif preset == 'terminal':
+                    os.write(master, b"printf 'TERMINAL_%s\\n' READY\r")
+                    await_text(b'TERMINAL_READY')
+                else:
+                    await_text(b'Processes:' if sys.platform == 'darwin' else b'top -')
                 if finished:
                     os.write(master, b'exit\r')
                     await_text(b'Connection check finished.')
@@ -57,7 +64,13 @@ def main():
                         assert time.monotonic() < deadline, 'Terminal was not restored after child exit'
                         time.sleep(.05)
                 os.write(master, b'\x1d\n' if finished else b'\x1d')
-                assert process.wait(timeout=5) == 0, 'Stop failed'
+                deadline = time.monotonic() + 5
+                while process.poll() is None:
+                    assert time.monotonic() < deadline, f'{preset} did not stop within five seconds'
+                    # Keep consuming output like a terminal emulator, including top's redraws.
+                    if select.select([master], [], [], .05)[0]:
+                        output.extend(os.read(master, 65536))
+                assert process.returncode == 0, 'Stop failed'
                 assert terminal_settings() == original, 'Stop changed terminal mode settings'
                 while select.select([master], [], [], 0)[0]:
                     output.extend(os.read(master, 65536))
@@ -73,7 +86,8 @@ def main():
                 os.close(slave)
     args.output.mkdir(parents=True, exist_ok=True)
     (args.output/'result.json').write_text(json.dumps({'status': 'passed', 'physical_hardware': False,
-        'checks': ['Ctrl+] stops an active connection check within five seconds',
+        'checks': ['connection check, login shell and system monitor run in real PTYs',
+                   'Ctrl+] stops each preset within five seconds',
                    'Ctrl+] then Enter closes the final-screen service',
                    'terminal settings restored', 'sharing port closed', 'clear stopped message']}, indent=2)+'\n')
 

@@ -2,7 +2,8 @@
   "status": "passed",
   "physical_hardware": false,
   "checks": [
-    "Ctrl+] stops an active connection check within five seconds",
+    "connection check, login shell and system monitor run in real PTYs",
+    "Ctrl+] stops each preset within five seconds",
     "Ctrl+] then Enter closes the final-screen service",
     "terminal settings restored",
     "sharing port closed",

@@ -4134,8 +4134,10 @@
     "pr": 4,
     "group": "Paperterm companion",
     "task": "Offer known terminal/task presets and connection test",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "kobo stream presents connection-check, login-shell and top system-monitor commands; custom command entry is labelled advanced. Presets use literal argument vectors and saved pairing identity. Real PTY CLI acceptance runs all three presets, observes real shell/monitor output, stops each within five seconds, restores terminal modes and verifies closed ports. Preset parser regression and strict CLI Clippy pass. Evidence: docs/quality/evidence/paperterm-stop. Named-reader pairing and connection-state reporting remain separate open tasks."
+    ]
   },
   {
     "id": "STREAMCLI-03",
@@ -4160,8 +4162,10 @@
     "pr": 4,
     "group": "Paperterm companion",
     "task": "Keep arbitrary terminal command entry advanced",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "kobo stream presents connection-check, login-shell and top system-monitor commands; custom command entry is labelled advanced. Presets use literal argument vectors and saved pairing identity. Real PTY CLI acceptance runs all three presets, observes real shell/monitor output, stops each within five seconds, restores terminal modes and verifies closed ports. Preset parser regression and strict CLI Clippy pass. Evidence: docs/quality/evidence/paperterm-stop. Named-reader pairing and connection-state reporting remain separate open tasks."
+    ]
   },
   {
     "id": "SIDECLI-01",

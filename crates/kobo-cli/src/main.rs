@@ -738,7 +738,9 @@ fn stream_companion(arguments: &[String]) -> Result<(), String> {
             .ok()
             .filter(|port| *port > 0)
             .ok_or("--port must be 1 through 65535")?,
-        _ => return Err("usage: kobo stream demo|pairing [--port PORT]".to_owned()),
+        _ => {
+            return Err("usage: kobo stream demo|terminal|monitor|pairing [--port PORT]".to_owned())
+        }
     };
     let pairing = kobo_stream::pairing_instructions(port)?;
     if arguments[0] == "pairing" {
@@ -746,33 +748,82 @@ fn stream_companion(arguments: &[String]) -> Result<(), String> {
         return Ok(());
     }
     eprintln!("{pairing}\n");
-    let executable = std::env::current_exe().map_err(|error| format!("find this CLI: {error}"))?;
-    let executable = executable.to_str().ok_or("CLI path must be UTF-8")?;
-    eprintln!("Open Paperterm on your reader and connect to this computer. Keep the computer awake.\nThis check echoes text; it does not run commands. Type exit to finish.");
+    let (command, title) = stream_preset(&arguments[0], std::env::var("SHELL").ok().as_deref())?;
+    eprintln!(
+        "Open Paperterm on your reader and connect to this computer. Keep the computer awake."
+    );
+    if arguments[0] == "demo" {
+        eprintln!("This check echoes text; it does not run commands. Type exit to finish.");
+    }
     kobo_stream::run_with_title(
         kobo_stream::Options {
             grid: kobo_stream::Grid::fallback(),
             controls: true,
             interactive: true,
             port,
-            command: vec![
-                executable.to_owned(),
-                "stream".to_owned(),
-                "__connection-check".to_owned(),
-            ],
+            command,
         },
-        "Connection check",
+        title,
     )
     .map(|_| ())
 }
 
+fn stream_preset(name: &str, shell: Option<&str>) -> Result<(Vec<String>, &'static str), String> {
+    match name {
+        "demo" => {
+            let executable = std::env::current_exe().map_err(|e| format!("find this CLI: {e}"))?;
+            let executable = executable.to_str().ok_or("CLI path must be UTF-8")?;
+            Ok((
+                vec![
+                    executable.into(),
+                    "stream".into(),
+                    "__connection-check".into(),
+                ],
+                "Connection check",
+            ))
+        }
+        "terminal" => {
+            let shell = shell.unwrap_or("/bin/sh");
+            if !Path::new(shell).is_absolute() || !Path::new(shell).is_file() {
+                return Err("Your default shell is unavailable. Set SHELL to an installed shell's absolute path, or use the connection check: kobo stream demo".into());
+            }
+            Ok((vec![shell.into(), "-l".into()], "Terminal"))
+        }
+        "monitor" => Ok((vec!["top".into()], "System monitor")),
+        _ => Err(
+            "Choose demo, terminal or monitor. Use kobo stream --help for custom commands.".into(),
+        ),
+    }
+}
+
+const STREAM_START: &str = "Paperterm shares a computer terminal with your reader.
+
+Start with a connection check:
+  kobo stream demo
+
+Then choose a session:
+  kobo stream terminal    Open your usual shell
+  kobo stream monitor     Watch this computer's processes with top
+
+First use: run kobo stream init --host COMPUTER_ADDRESS, then
+kobo trust set stream --device READER_IP. Open Paperterm on the reader
+and enter the computer address and pairing code.
+
+Keep the computer awake. Press Ctrl+] on the computer to stop sharing.
+For custom commands and other advanced options: kobo stream --help";
+
 fn stream_command(arguments: &[String]) -> Result<(), String> {
     const USAGE: &str = "usage: kobo stream init [--host ADDRESS ...]\n\
                          \x20      kobo stream demo [--port PORT]\n\
+                         \x20      kobo stream terminal|monitor [--port PORT]\n\
                          \x20      kobo stream pairing [--port PORT]\n\
                          \x20      kobo stream [--grid COLSxROWS] [--controls | --interactive] \
                          [--read-only] [--port PORT] -- COMMAND [ARG ...]\n\
                          Host-only. The reader never opens a shell; it paints rows this command serves.";
+    if arguments.is_empty() {
+        println!("{STREAM_START}");
+        return Ok(());
+    }
     if wants_help(arguments) {
         return print_command_help(USAGE);
     }
@@ -782,10 +833,12 @@ fn stream_command(arguments: &[String]) -> Result<(), String> {
     if arguments.first().is_some_and(|argument| argument == "init") {
         return kobo_stream::init(&arguments[1..]);
     }
-    if arguments
-        .first()
-        .is_some_and(|argument| argument == "demo" || argument == "pairing")
-    {
+    if arguments.first().is_some_and(|argument| {
+        matches!(
+            argument.as_str(),
+            "demo" | "terminal" | "monitor" | "pairing"
+        )
+    }) {
         return stream_companion(arguments);
     }
     let separator = arguments
@@ -6976,6 +7029,20 @@ mod tests {
     }
 
     /// A session is what somebody asked for by not asking for anything else.
+    #[test]
+    fn paperterm_presets_are_literal_commands_with_clear_titles() {
+        let (command, title) = super::stream_preset("terminal", Some("/bin/sh")).unwrap();
+        assert_eq!(command, ["/bin/sh", "-l"]);
+        assert_eq!(title, "Terminal");
+        assert!(super::stream_preset("terminal", Some("sh; echo unsafe")).is_err());
+        let (command, title) = super::stream_preset("monitor", None).unwrap();
+        assert_eq!(command, ["top"]);
+        assert_eq!(title, "System monitor");
+        assert!(super::stream_preset("unknown", None).is_err());
+        assert!(super::STREAM_START.contains("kobo stream demo"));
+        super::stream_command(&[]).unwrap();
+    }
+
     #[test]
     fn a_shell_with_no_command_is_a_request_for_a_session() {
         let arguments = ["--device".to_owned(), "192.168.1.2".to_owned()];

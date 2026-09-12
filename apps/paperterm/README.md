@@ -143,3 +143,18 @@ the computer sleeps. The connection check can also finish with `exit`; its
 final screen remains available for a minute, or Ctrl+] followed by Enter closes it early after terminal settings have been
 restored.
 The Ctrl+] byte is reserved locally while sharing.
+
+## Choose a session
+
+Run `kobo stream` to see the starting commands. Use `kobo stream demo` first
+to check typing between the computer and reader. After that:
+
+- `kobo stream terminal` opens your default login shell (`SHELL`, or `/bin/sh`).
+  The reader can type into this shell, just like the computer terminal.
+- `kobo stream monitor` runs `top` to show this computer’s processes. `top`
+  must be installed and available on the computer's PATH.
+
+Both accept `--port PORT` and use the saved pairing identity. They start only
+when explicitly requested. Custom commands remain available under
+`kobo stream --help`; you do not need to enter one for the connection check
+or either preset. Named reader selection is not yet available in this flow.

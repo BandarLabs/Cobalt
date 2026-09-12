@@ -217,3 +217,12 @@ signed wrong-length catalog entry. Strict CLI Clippy passes. Both commands
 also pass against the existing ea937dc1 ARM validation package and signed
 catalog; evidence is `evidence/flashcards-verification-commands/result.json`.
 This is not a substitute for the complete fresh-source artifact audit.
+
+Paperterm presets: no-argument `kobo stream` shows connection check, login
+shell and system monitor. `terminal` uses the default shell as a literal
+executable; `monitor` runs top. Both retain pairing, custom-port and Stop
+behavior. Real PTY tests observe connection-check, shell and monitor output,
+then verify Stop within five seconds, restored terminal modes and closed
+ports. The monitor harness consumes redraw output throughout stopping, as a
+terminal emulator does. Preset regression and strict CLI Clippy pass.
+STREAMCLI-02/05 complete; named-reader setup and state reporting remain open.
