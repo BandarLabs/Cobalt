@@ -29,13 +29,13 @@
   "frame": {
     "colourAppearance": "luminance",
     "format": "grey8",
-    "sha256": "596f99c508d723e7d0963c9d3aaa68ffd406ceddf7b96527fb5f7507eb3e4c51",
+    "sha256": "173d85be724d92edaabe0416dd2a09b27509555353ff111d562eeee4c9677ecf",
     "view": "ideal"
   },
   "interfaceScalePercent": 170,
   "mode": "single-app",
   "orientation": "portrait",
-  "paints": "18",
+  "paints": "17",
   "publisherFontHandle": null,
   "readingScalePercent": 100,
   "runtimeVersion": "0.3.14",
@@ -56,11 +56,11 @@
     "clock": {
       "date": "2026-09-12",
       "mode": "real",
-      "monotonicMillis": "7760",
-      "unixMillis": "1789207509131",
+      "monotonicMillis": "7493",
+      "unixMillis": "1789213843623",
       "utcOffsetMinutes": 0
     },
-    "dirtyPixelsSinceClean": 3887653,
+    "dirtyPixelsSinceClean": 3886127,
     "hardware": {
       "batteryPercent": 72,
       "charging": false,
@@ -86,16 +86,16 @@
     },
     "observation": null,
     "panel": {
-      "completed": "19",
+      "completed": "18",
       "contentsKnown": true,
       "failures": "0",
-      "finishedAtMillis": "7454",
+      "finishedAtMillis": "7033",
       "mode": "automatic",
       "queued": false,
       "status": "idle",
       "submissionMarker": null,
-      "submitted": "19",
-      "submittedAtMillis": "7433",
+      "submitted": "18",
+      "submittedAtMillis": "7012",
       "timing": "host control observations; not hardware calibration",
       "visibleFrame": "last confirmed completion with approximate residue"
     },
@@ -117,7 +117,7 @@
       },
       "width": 1072
     },
-    "refreshCount": 19,
+    "refreshCount": 18,
     "scenario": "normal",
     "touch": {
       "display": {
@@ -130,9 +130,9 @@
       }
     },
     "transition": {
-      "dirty": 3887653,
+      "dirty": 3886127,
       "full": false,
-      "refresh": 19,
+      "refresh": 18,
       "region": {
         "height": 1072,
         "width": 960,
@@ -154,11 +154,11 @@
     }
   },
   "source": {
-    "binarySha256": "66add28b777aaea34a83ee91e521b3cfab1916da62bf2e68184d685f2d8483d3",
+    "binarySha256": "8e8b739cb687833133835cd3e927343c387cc90d5d4804f17fd4b1b116216eab",
     "dirty": true,
     "fixture": null,
     "requestedSeed": null,
-    "revision": "cd23dfd6859736253405c65ac13cd70a38ffac61"
+    "revision": "79e943387000682dcaa74c2f7d40b9f4c03361a3"
   },
   "version": 1
 }

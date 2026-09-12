@@ -2280,3 +2280,14 @@ The capture harness builds the CLI from the app checkout to avoid sibling
 branch renderer mismatches. Failed preliminary captures are not acceptance
 evidence. Lichess restart transport acceptance remains open: existing static
 demos and error scenarios do not supply an offline HTTP line-stream fixture.
+
+Simulator capture provenance: Crossword completion, Lichess computer play and
+Lichess pairing recovery harnesses now build the CLI from the current checkout
+and use Cargo's reported executable. Each result records the source revision,
+whether tracked changes were present, Rust toolchain and executable SHA-256.
+A post-capture fingerprint check rejects replacement of a shared target binary;
+use a dedicated CARGO_TARGET_DIR when captures run beside other builds.
+All three harnesses pass at normal and 170% text size. A deliberate executable
+replacement was correctly rejected. Refreshed screenshots and result metadata
+are in the corresponding evidence directories. These remain offline presentation
+checks, not live matchmaking, session-restart transport or hardware acceptance.

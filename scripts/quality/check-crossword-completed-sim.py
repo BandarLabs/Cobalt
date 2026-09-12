@@ -15,17 +15,14 @@ import time
 import urllib.request
 from pathlib import Path
 
+from simulator_cli import build_cli, verify_cli
+
 root = Path(__file__).resolve().parents[2]
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--output", type=Path, required=True)
 args = parser.parse_args()
 target = Path(os.environ.get("CARGO_TARGET_DIR", str(root / "target"))).resolve()
-# Build the CLI from this checkout as well as the app: sibling branches can
-# have different UI protocol encodings even when sharing a Cargo target cache.
-subprocess.run(["cargo", "+1.85.1", "build", "-p", "kobo-cli"], cwd=root,
-               env=dict(os.environ, CARGO_TARGET_DIR=str(target), CARGO_PROFILE_DEV_DEBUG="0",
-                        CARGO_INCREMENTAL="0", CARGO_BUILD_JOBS="1"), check=True)
-cli = target / "debug/kobo"
+cli, provenance = build_cli(root, target)
 for scale in ["default", "170"]:
     out = args.output.resolve() / scale
     out.mkdir(parents=True, exist_ok=True)
@@ -110,9 +107,11 @@ for scale in ["default", "170"]:
                         for issue in data.get("issues", [])
                         if issue["severity"] == "error"
                     ], data
+            verify_cli(cli, provenance)
             (out / "result.json").write_text(
                 json.dumps(
                     dict(
+                        build=provenance,
                         scale=scale,
                         profile="clara-bw-391",
                         status="pass",

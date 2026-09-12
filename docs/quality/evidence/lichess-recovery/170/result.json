@@ -1,4 +1,10 @@
 {
+  "build": {
+    "source_revision": "79e943387000682dcaa74c2f7d40b9f4c03361a3",
+    "tracked_changes": true,
+    "cli_sha256": "c1a4bec4e721a3168aee22c18b1487f227d3af8053b738dc45618f06ca079222",
+    "toolchain": "1.85.1"
+  },
   "scale": "170",
   "profile": "clara-bw-391",
   "status": "pass",

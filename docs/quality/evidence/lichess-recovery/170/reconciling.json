@@ -29,7 +29,7 @@
   "frame": {
     "colourAppearance": "luminance",
     "format": "grey8",
-    "sha256": "5b5e863f3f20097c5ab5e2356fbc0992e7db6edd4ab2d822f608a43a899235e8",
+    "sha256": "409e60fea777046b3a8dbecd3188ed5107c0fd668a070def7c758424f50877d3",
     "view": "ideal"
   },
   "interfaceScalePercent": 170,
@@ -56,11 +56,11 @@
     "clock": {
       "date": "2026-09-12",
       "mode": "real",
-      "monotonicMillis": "1133",
-      "unixMillis": "1789205866867",
+      "monotonicMillis": "862",
+      "unixMillis": "1789213855741",
       "utcOffsetMinutes": 0
     },
-    "dirtyPixelsSinceClean": 184193,
+    "dirtyPixelsSinceClean": 183958,
     "hardware": {
       "batteryPercent": 72,
       "charging": false,
@@ -89,13 +89,13 @@
       "completed": "2",
       "contentsKnown": true,
       "failures": "0",
-      "finishedAtMillis": "346",
+      "finishedAtMillis": "347",
       "mode": "automatic",
       "queued": false,
       "status": "idle",
       "submissionMarker": null,
       "submitted": "2",
-      "submittedAtMillis": "338",
+      "submittedAtMillis": "337",
       "timing": "host control observations; not hardware calibration",
       "visibleFrame": "last confirmed completion with approximate residue"
     },
@@ -121,7 +121,7 @@
     "scenario": "normal",
     "touch": null,
     "transition": {
-      "dirty": 184193,
+      "dirty": 183958,
       "full": false,
       "refresh": 2,
       "region": {
@@ -134,7 +134,7 @@
         {
           "region": {
             "height": 40,
-            "width": 128,
+            "width": 136,
             "x": 48,
             "y": 8
           },
@@ -190,11 +190,11 @@
     }
   },
   "source": {
-    "binarySha256": "356edd8114372e2158485b9cdd2afb9f64763847b65101e317bc1c6ed7d667a0",
+    "binarySha256": "8e8b739cb687833133835cd3e927343c387cc90d5d4804f17fd4b1b116216eab",
     "dirty": true,
     "fixture": null,
     "requestedSeed": null,
-    "revision": "4e4c79b90d9278cb0c79994673662de727f968a7"
+    "revision": "79e943387000682dcaa74c2f7d40b9f4c03361a3"
   },
   "version": 1
 }

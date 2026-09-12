@@ -16,12 +16,14 @@ import time
 import urllib.request
 from pathlib import Path
 
+from simulator_cli import build_cli, verify_cli
+
 root = Path(__file__).resolve().parents[2]
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--output", type=Path, required=True)
 args = parser.parse_args()
 target = Path(os.environ.get("CARGO_TARGET_DIR", str(root / "target"))).resolve()
-cli = target / "debug/kobo"
+cli, provenance = build_cli(root, target)
 for scale in ["default", "170"]:
     out = args.output.resolve() / scale
     out.mkdir(parents=True, exist_ok=True)
@@ -107,9 +109,11 @@ for scale in ["default", "170"]:
                         for issue in data.get("issues", [])
                         if issue["severity"] == "error"
                     ], data
+            verify_cli(cli, provenance)
             (out / "result.json").write_text(
                 json.dumps(
                     dict(
+                        build=provenance,
                         scale=scale,
                         profile="clara-bw-391",
                         status="pass",

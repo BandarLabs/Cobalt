@@ -29,7 +29,7 @@
   "frame": {
     "colourAppearance": "luminance",
     "format": "grey8",
-    "sha256": "8b9abd749e676bc714dc0f4410227b7efebc0ec57b6319ae6d00b117d826728d",
+    "sha256": "f069dc3b305fb2fa573b25eccbf00f2558cf7a40caed1f31cdb682c6feb5d174",
     "view": "ideal"
   },
   "interfaceScalePercent": 170,
@@ -56,11 +56,11 @@
     "clock": {
       "date": "2026-09-12",
       "mode": "real",
-      "monotonicMillis": "4209",
-      "unixMillis": "1789213311182",
+      "monotonicMillis": "4325",
+      "unixMillis": "1789213816742",
       "utcOffsetMinutes": 0
     },
-    "dirtyPixelsSinceClean": 8627848,
+    "dirtyPixelsSinceClean": 8628224,
     "hardware": {
       "batteryPercent": 72,
       "charging": false,
@@ -89,13 +89,13 @@
       "completed": "31",
       "contentsKnown": true,
       "failures": "0",
-      "finishedAtMillis": "3770",
+      "finishedAtMillis": "3924",
       "mode": "automatic",
       "queued": false,
       "status": "idle",
       "submissionMarker": null,
       "submitted": "31",
-      "submittedAtMillis": "3741",
+      "submittedAtMillis": "3896",
       "timing": "host control observations; not hardware calibration",
       "visibleFrame": "last confirmed completion with approximate residue"
     },
@@ -130,7 +130,7 @@
       }
     },
     "transition": {
-      "dirty": 8627848,
+      "dirty": 8628224,
       "full": false,
       "refresh": 31,
       "region": {
@@ -185,7 +185,7 @@
     "dirty": true,
     "fixture": null,
     "requestedSeed": null,
-    "revision": "d4d3c38ab3bc6406ccbe1e00c4758fb9c72f327d"
+    "revision": "79e943387000682dcaa74c2f7d40b9f4c03361a3"
   },
   "version": 1
 }
