@@ -2355,3 +2355,14 @@ sizes with clean rendering/touch diagnostics. Evidence:
 real TLS recovery evidence. All 111 app tests and strict Clippy pass.
 All six Lichess app-quality tasks are now complete; companion work and physical
 acceptance retain their own scope. Tracker: 233 complete, 262 open, one deferred.
+
+
+### Companion checklist reconciliation
+
+Synced PR 4 task records through companion commit `f91c56af`: app setup cards,
+provider help, Sidekick selection/help/backups/sample, and Deck pairing,
+preview, limits and confirmation preferences. Ten additional tasks are done;
+credential transfer recovery remains partial CLI-18. Completion evidence and
+implementation live on `beta-quality-companion` in PR #182. This metadata
+update does not import companion changes into PR #181 or certify hardware
+acceptance. Global counts: 243 done, 252 open, one deferred.

@@ -3492,8 +3492,12 @@
     "pr": 4,
     "group": "Main CLI and companion operation engine",
     "task": "Provide one app setup card generated from capabilities",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "crates/kobo-cli/src/apps.rs: bundled manifest setup steps and plain-language capabilities; offline search and numbered owner menu.",
+      "docs/quality/evidence/app-guides/result.json: 44 guides checked, case-insensitive search, unknown app refusal and real PTY Lichess selection after invalid input.",
+      "Five focused guide/menu tests and strict all-target CLI Clippy passed."
+    ]
   },
   {
     "id": "CLI-12",
@@ -3550,7 +3554,8 @@
     "task": "Publish atomically and retain prior valid content",
     "status": "todo",
     "evidence": [
-      "Partial evidence: Feeds simulator staging is atomic and preserves the previous list on malformed/oversized input or occupied staging path. Real CLI fixture acceptance: docs/quality/evidence/feeds-companion. This does not complete atomic publication/recovery across all companions."
+      "Partial evidence: Feeds simulator staging is atomic and preserves the previous list on malformed/oversized input or occupied staging path. Real CLI fixture acceptance: docs/quality/evidence/feeds-companion. This does not complete atomic publication/recovery across all companions.",
+      "Credential imports now stage then rename for network and volume destinations; bounded regular-file input rejects invalid/oversized values before transfer. Shell failed-write and occupied-stage regressions preserve the previous credential; real CLI volume validation/retry passes. Evidence: docs/quality/evidence/provider-help/result.json. Other transfer workflows remain open."
     ]
   },
   {
@@ -3718,24 +3723,34 @@
     "pr": 4,
     "group": "Deck companion",
     "task": "Preserve real pairing when pushing layouts",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Device layout pushes no longer write the pairing key. Simulator pushes create a preview marker only when pairing is absent; existing pairing bytes remain unchanged.",
+      "Seven CLI Deck tests pass, including executing the generated transfer shell against paired and unpaired temporary stores. Actual CLI simulator staging preservation is recorded in docs/quality/evidence/deck-preview/{default,170}/result.json."
+    ]
   },
   {
     "id": "DECKCLI-02",
     "pr": 4,
     "group": "Deck companion",
     "task": "Separate static simulator preview from executable pairing",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Static Deck preview is labeled Preview only and pad taps dispatch no network task or running state. Pair action opens normal computer pairing.",
+      "Default and 170% simulator journeys stage via actual CLI, tap a preview pad, check clean layout and open Pair. Screenshots inspected; 16 app tests and strict app/CLI Clippy passed. Evidence: docs/quality/evidence/deck-preview."
+    ]
   },
   {
     "id": "DECKCLI-03",
     "pr": 4,
     "group": "Deck companion",
     "task": "Unify 15-pad configuration and UI limits",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Helper validation now accepts 1–15 pads per page, matching the CLI and reader. CLI import validation rejects oversized hand-edited pages instead of accepting invisible extra pads.",
+      "Eight CLI Deck tests and all 53 helper tests passed, including explicit 15/16-pad boundaries. Strict all-target CLI/helper Clippy passed.",
+      "docs/quality/evidence/deck-fifteen-pads/result.json and preview.png: actual CLI assigns all 15 pads; 170% simulator screenshot visibly includes Pad 15 and passes layout diagnostics."
+    ]
   },
   {
     "id": "DECKCLI-04",
@@ -3766,8 +3781,12 @@
     "pr": 4,
     "group": "Deck companion",
     "task": "Keep per-action confirmation configurable",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Each pad supports explicit --confirm and --no-confirm. Editing without either retains the existing setting; new pads default false. Conflicting/repeated flags are rejected before writing.",
+      "Nine CLI Deck tests and strict all-target Clippy passed. Actual executable set/show checks preserve true and false on edits, switch explicitly and retain bytes on conflicting flags: docs/quality/evidence/deck-confirmation/result.json.",
+      "Existing helper confirmation execution tests remain passing in the 53-test helper run recorded for DECKCLI-03; no physical command execution is claimed."
+    ]
   },
   {
     "id": "FLASHCLI-01",
@@ -4204,16 +4223,23 @@
     "pr": 4,
     "group": "Sidekick companion",
     "task": "Show and select agent integrations before configuration",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Sidekick setup displays supported integrations, detection and config paths; numbered terminal selection installs only the selected integration. Redirected setup is read-only; explicit named setup and dry-run/print are retained.",
+      "51 helper tests and strict all-target Clippy passed; docs/quality/evidence/sidekick-setup/result.json records real terminal invalid-choice/cancellation acceptance. No user hooks were installed during acceptance."
+    ]
   },
   {
     "id": "SIDECLI-03",
     "pr": 4,
     "group": "Sidekick companion",
     "task": "Preserve dry-run, printed configuration and backups",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Dry-run and manual printed configuration retained. Setup stages and syncs merged configuration before rename and creates exclusively named backups without overwriting prior copies.",
+      "52 helper tests and strict all-target Clippy passed. Fixture lifecycle verifies dry-run leaves files untouched, occupied staging preserves original, idempotent setup makes no backup, later setup retains both historical backups, and malformed JSON is unchanged.",
+      "docs/quality/evidence/sidekick-setup/result.json: actual helper prints manual configuration for both integrations; real terminal and help acceptance remain passing. User hook installation was not performed."
+    ]
   },
   {
     "id": "SIDECLI-04",
@@ -4228,24 +4254,33 @@
     "pr": 4,
     "group": "Sidekick companion",
     "task": "Return success from help",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Eight actual helper help invocations return success, including subcommands; missing arguments remain errors. Evidence: docs/quality/evidence/sidekick-setup/result.json."
+    ]
   },
   {
     "id": "SIDECLI-06",
     "pr": 4,
     "group": "Sidekick companion",
     "task": "Provide self-contained sample mode",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "kobo-sidekickd sample provides its own non-permission Received question, uses normal pairing, and starts without agent hooks or Deck commands.",
+      "docs/quality/evidence/sidekick-sample/default/result.json and 170/result.json: actual helper and simulator pair through on-screen keyboard over verified TLS, show sample, tap Received, acknowledge on computer, clear pending state and render without layout errors.",
+      "Screenshots inspected at default and 170% text. Fixed choice-answer history incorrectly saying Left at the terminal; all 30 app tests and strict Clippy passed. Physical reader acceptance remains SIDECLI-04."
+    ]
   },
   {
     "id": "SERVICECLI-01",
     "pr": 4,
     "group": "Provider connections",
     "task": "Fix secret/trust help exit status",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Secret/trust help and subcommand help return success without source discovery or reader access. Missing required arguments remain errors.",
+      "docs/quality/evidence/provider-help/result.json: 12 help invocations, 10 ambiguous/invalid argument refusals, missing-argument checks, and synthetic volume secret set/list/remove passed; strict all-target CLI Clippy passed."
+    ]
   },
   {
     "id": "SERVICECLI-02",
