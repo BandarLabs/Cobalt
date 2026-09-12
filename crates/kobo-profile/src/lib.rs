@@ -727,6 +727,161 @@ pub const LIBRA_COLOUR_390_446: DeviceProfile = DeviceProfile {
     ..LIBRA_COLOUR_390
 };
 
+/// Kobo Libra H2O, an older i.MX6SLL Libra sibling to the Libra 2, on the same
+/// firmware branch (4.38.23697) but a different kernel build
+/// (4.1.15-00417-g0c800cffe1f9 against the Libra 2's -00868-).
+///
+/// Measured with `kobo doctor` against the physical device: geometry, pixel
+/// layout and `memory_length` are byte-identical to the Libra 2's, which the
+/// shared `MxcEpdcV2` derivation with `num_screens: 2` reproduces exactly
+/// (`xres_virtual` 1280, `yres_virtual` 1792, `stride` 5120). The touch
+/// controller reports `cyttsp5_mt` rather than the Libra 2's Elan, with axis
+/// maximums one short of the Libra 2's (1679/1263 against 1680/1264) -- a
+/// different digitiser, not a rounding difference.
+///
+/// Unlike every profile above, the framebuffer's own `rotation` read back as
+/// `0`, not `1`. That is a plain, unargued kernel fact and is kept as read;
+/// nothing here claims the Clara/Elipsa/Libra convention of `rotation: 1`
+/// meaning "buttons on the right" extends to this device.
+///
+/// `touch_transform` was measured with `kobo touch-probe` against the
+/// physical device on 2026-09-12: three taps in an L, reader held in normal
+/// reading orientation (rotation 0 as read back above), one leg per physical
+/// axis. Raw taps at top-left, bottom-left and bottom-right corners read
+/// raw=(48,1234), raw=(1657,1214) and raw=(1621,76). This device's touch
+/// ranges happen to be exactly one less than its display dimensions in both
+/// axes (`touch_x_max` 1679 against `height` 1680, `touch_y_max` 1263 against
+/// `width` 1264), so `scale_touch_axis` is the identity and the raw values
+/// can be checked by hand: swapping axes and mirroring only X puts all three
+/// taps in their expected quadrant -- (29,48), (49,1657) and (1187,1621) --
+/// while every other combination of swap and mirror puts at least one tap in
+/// the wrong quadrant. That is `TransposeMirrorX`, the Clara BW/Clara HD
+/// transform rather than the Libra 2's plain `Transpose` or the Elipsa/Libra
+/// Colour `TransposeMirrorY`, despite this device sharing the Libra 2's exact
+/// panel geometry -- one more instance of the rule that this field is
+/// measured per device rather than inferred from a physically similar one.
+///
+/// Confirmed against this transform on the same date with two further
+/// independent passes tapping literal screen corners rather than an L. The
+/// first caught three of four (top-left was lost, most likely to the screen
+/// still waking) and all three read back in exactly the right quadrant:
+/// raw=(48,56) at top-right reported display=(1207,48), raw=(1656,55) at
+/// bottom-right reported display=(1208,1656), raw=(1630,122x) at bottom-left
+/// reported display=(41-52,1630). A second pass, with a pause before the
+/// first tap to let the probe's SSH channel attach, caught all four: raw
+/// (127,1138) at top-left reported display=(125,127); raw=(126,100) at
+/// top-right reported display=(1163,126); raw=(1620,125) at bottom-right
+/// reported display=(1138,1620); raw=(1659,1163) at bottom-left reported
+/// display=(100,1659). Every one of seven corner taps across both passes
+/// landed in its correct quadrant. This is the same standard of evidence the
+/// Clara BW and Libra 2 profiles were confirmed against.
+///
+/// The buttons-left pose (rotation 2, the framebuffer's own reported
+/// half-turn pairing with rotation 0) was confirmed the same way: a
+/// four-corner `kobo touch-probe` pass against the mechanically-composed
+/// `rotated_180` transform, all four landing correctly -- raw=(1585,100) at
+/// top-left reported display=(100,94); raw=(1615,1188) at top-right reported
+/// display=(1188,63); raw=(53,1196) at bottom-right reported
+/// display=(1196,1626); raw=(57,55) at bottom-left reported
+/// display=(55,1622). Both entries in `verified_rotations` are now measured,
+/// not staged.
+///
+/// `write_ready` is kept `false` in this patch pending maintainer review, per
+/// `CONTRIBUTING.md`. The full attended `--features device-write` smoke pass
+/// has already been run against the physical device, though: all five
+/// `kobo smoke-display` stages passed --
+/// `DISPLAY_ONLY_GC16` (a GC16 refresh writing no pixel byte),
+/// `REVERSIBLE_PIXELS_GC16` (4096 bytes inverted, restored, and verified),
+/// `SCREEN_SNAPSHOT_RESTORE` (the full 8,494,080-byte visible screen
+/// snapshotted, a 262,144-byte region changed, and the whole screen restored
+/// and verified -- the guarantee everything else rests on),
+/// `REVERSIBLE_PIXELS_DU` (the fast partial-refresh waveform, same
+/// restore-and-verify), and `WAIT_TIMING_GC16_DU` (GC16, GL16, and DU
+/// waveforms timed and a further 262,144-byte region restored and verified).
+/// Combined with the geometry and touch evidence above, this is the same
+/// standard of attended evidence every other `write_ready` profile in this
+/// table carries.
+///
+/// Confirmed against the physical device: `kobo guard-test`
+/// (`GUARD_RESTORE_AFTER_FAILURE`) ran a child that deliberately exited
+/// non-zero and restored the full 8,494,080-byte visible screen, verified. A
+/// clean stock-reader restart was confirmed the same session: Nickel
+/// (`/usr/local/Kobo/nickel`) was observed alive and healthy after at least
+/// six stop/hand-back cycles across the smoke and guard passes above, with no
+/// reset in the kernel log.
+pub const LIBRA_H2O_384: DeviceProfile = DeviceProfile {
+    id: "libra-h2o-384",
+    model: "Kobo Libra H2O",
+    device_code: 384,
+    device_tree_model: "Freescale i.MX6SLL NTX Board",
+    compatible_fragments: &["fsl,imx6sll"],
+    framebuffer_id: "mxc_epdc_fb",
+    framebuffer_controller: FramebufferController::MxcfbV2,
+    width: 1264,
+    height: 1680,
+    pixels_per_inch: 300,
+    virtual_width: 1280,
+    virtual_height: 1792,
+    x_offset: 0,
+    y_offset: 0,
+    bits_per_pixel: 32,
+    grayscale: 0,
+    stride: 5120,
+    memory_length: 9_175_040,
+    framebuffer_kind: 0,
+    framebuffer_visual: 2,
+    rotation: 0,
+    red: Bitfield {
+        offset: 16,
+        length: 8,
+        msb_right: 0,
+    },
+    green: Bitfield {
+        offset: 8,
+        length: 8,
+        msb_right: 0,
+    },
+    blue: Bitfield {
+        offset: 0,
+        length: 8,
+        msb_right: 0,
+    },
+    alpha: Bitfield {
+        offset: 24,
+        length: 8,
+        msb_right: 0,
+    },
+    touch_transform: TouchTransform::TransposeMirrorX,
+    reference_rotation: 0,
+    // Rotation 2 (buttons-left) is the framebuffer's own reported half-turn
+    // pairing with rotation 0, confirmed by `kobo doctor`. The composed
+    // transform at that pose (`swap_axes: true, mirror_x: false,
+    // mirror_y: true` -- the mechanical `rotated_180` of the base transform)
+    // was itself confirmed with a four-corner `kobo touch-probe` pass: all
+    // four taps landed in their correct quadrant. See the doc comment above
+    // this constant for the raw values.
+    verified_rotations: &[0, 2],
+    geometry_rule: GeometryRule::MxcEpdcV2 { num_screens: 2 },
+    touch_name: "cyttsp5_mt",
+    touch_x_min: 0,
+    touch_x_max: 1679,
+    touch_y_min: 0,
+    touch_y_max: 1263,
+    serial_prefix: "N873",
+    firmware_versions: &["4.38.23697"],
+    kernel_release: "4.1.15-00417-g0c800cffe1f9",
+    // Kept false pending maintainer review, per CONTRIBUTING.md, even though
+    // the full attended evidence already exists; see the doc comment above
+    // this constant.
+    write_ready: false,
+    // Unmeasured on this device. Not copied from the Libra 2: that evidence
+    // is specific to its wpa_supplicant behaviour and this is older, different
+    // firmware on the same SoC family.
+    leftover_radio_daemons: &[],
+    reap_nickel_supplicant: false,
+    colour_panel: false,
+};
+
 pub const SUPPORTED_PROFILES: &[&DeviceProfile] = &[
     &CLARA_BW_391,
     &CLARA_BW_395,
@@ -736,6 +891,7 @@ pub const SUPPORTED_PROFILES: &[&DeviceProfile] = &[
     &LIBRA_2_388,
     &LIBRA_COLOUR_390,
     &LIBRA_COLOUR_390_446,
+    &LIBRA_H2O_384,
 ];
 
 pub const WRITE_EVIDENCE_PENDING: &str =
@@ -1846,12 +2002,15 @@ mod tests {
     const CLARA_BW_POSE: PanelPose<'static> = PanelPose::reference(&CLARA_BW_391);
     const ELIPSA_2E_POSE: PanelPose<'static> = PanelPose::reference(&ELIPSA_2E_389);
     const CLARA_HD_POSE: PanelPose<'static> = PanelPose::reference(&CLARA_HD_376);
+    /// The Libra H2O at the pose it was measured in: `rotation: 0` as the
+    /// framebuffer reports it, the only pose in `verified_rotations`.
+    const LIBRA_H2O_POSE: PanelPose<'static> = PanelPose::reference(&LIBRA_H2O_384);
 
     use super::{
         identify_profile, write_ready_profile, Bitfield, DeviceProfile, DeviceSnapshot,
         FramebufferSnapshot, IdentitySnapshot, Readiness, TouchSnapshot, CLARA_BW_391,
         CLARA_BW_395, CLARA_COLOUR_393, CLARA_HD_376, ELIPSA_2E_389, LIBRA_2_388, LIBRA_COLOUR_390,
-        LIBRA_COLOUR_390_446, WRITE_EVIDENCE_PENDING,
+        LIBRA_COLOUR_390_446, LIBRA_H2O_384, WRITE_EVIDENCE_PENDING,
     };
 
     /// The Libra 2 as `kobo doctor` read it from a cold boot into Nickel, in
@@ -1923,6 +2082,252 @@ mod tests {
         );
     }
 
+    /// The Libra H2O as `kobo doctor` read it from a cold boot into Nickel.
+    /// Unlike the Libra 2's snapshot builder, `rotation` never changes the
+    /// geometry fields here: both this device's verified poses (0 and 2) are
+    /// portrait, buttons-right and buttons-left, with an identical
+    /// framebuffer -- there is no measured landscape pose to represent.
+    fn measured_libra_h2o(rotation: u32) -> DeviceSnapshot {
+        let red = Bitfield {
+            offset: 16,
+            length: 8,
+            msb_right: 0,
+        };
+        DeviceSnapshot {
+            compatible: vec!["fsl,imx6sll-lpddr3-arm2".into(), "fsl,imx6sll".into()],
+            model: Some("Freescale i.MX6SLL NTX Board".into()),
+            framebuffer: Some(FramebufferSnapshot {
+                id: "mxc_epdc_fb".into(),
+                width: 1264,
+                height: 1680,
+                virtual_width: 1280,
+                virtual_height: 1792,
+                x_offset: 0,
+                y_offset: 0,
+                bits_per_pixel: 32,
+                grayscale: 0,
+                stride: 5120,
+                memory_length: 9_175_040,
+                kind: 0,
+                visual: 2,
+                rotation,
+                red,
+                green: Bitfield { offset: 8, ..red },
+                blue: Bitfield { offset: 0, ..red },
+                alpha: Bitfield { offset: 24, ..red },
+            }),
+            touch: Some(TouchSnapshot {
+                path: "/dev/input/event1".into(),
+                name: "cyttsp5_mt".into(),
+                x_min: 0,
+                x_max: 1679,
+                y_min: 0,
+                y_max: 1263,
+            }),
+            identity: IdentitySnapshot {
+                serial_prefix: Some("N873".into()),
+                firmware_version: Some("4.38.23697".into()),
+                kernel_release: Some("4.1.15-00417-g0c800cffe1f9".into()),
+                device_code: Some(384),
+            },
+        }
+    }
+
+    #[test]
+    fn libra_h2o_matches_the_measured_device() {
+        let snapshot = measured_libra_h2o(0);
+        let report = LIBRA_H2O_384.validate(&snapshot);
+        assert!(report.mismatches.is_empty(), "{:?}", report.mismatches);
+        assert!(LIBRA_H2O_384.write_identity_blockers(&snapshot).is_empty());
+        // Identity matches exactly, but write_ready stays false pending
+        // maintainer review (see the doc comment on LIBRA_H2O_384), even
+        // though the full attended evidence already exists.
+        assert_eq!(report.readiness, Readiness::ReadOnlyMatched);
+        assert_eq!(report.write_blockers, vec![WRITE_EVIDENCE_PENDING]);
+        assert_eq!(
+            super::identify_profile(&snapshot).map(|profile| profile.id),
+            Some("libra-h2o-384")
+        );
+    }
+
+    /// The same hardware with the buttons on the left, which it reports as
+    /// rotation 2 with every geometry field unchanged. Accepted since the
+    /// pose was verified with a physical four-corner `kobo touch-probe` pass;
+    /// see the doc comment on `LIBRA_H2O_384` for the raw values.
+    #[test]
+    fn libra_h2o_matches_the_buttons_left_pose() {
+        let snapshot = measured_libra_h2o(2);
+        let report = LIBRA_H2O_384.validate(&snapshot);
+        assert!(report.mismatches.is_empty(), "{:?}", report.mismatches);
+        // write_ready is false, same as the buttons-right pose: this is an
+        // identity fact, not a per-pose one.
+        assert_eq!(report.readiness, Readiness::ReadOnlyMatched);
+        assert_eq!(report.write_blockers, vec![WRITE_EVIDENCE_PENDING]);
+        assert_eq!(
+            super::identify_profile(&snapshot).map(|profile| profile.id),
+            Some("libra-h2o-384")
+        );
+        let pose = PanelPose::resolve(
+            &LIBRA_H2O_384,
+            snapshot.framebuffer.as_ref().expect("a framebuffer"),
+        )
+        .expect("a verified pose resolves");
+        assert_eq!(
+            pose.touch_mapping(),
+            TouchMapping {
+                swap_axes: true,
+                mirror_x: false,
+                mirror_y: true,
+            },
+            "a half turn from TransposeMirrorX flips both mirrors"
+        );
+    }
+
+    #[test]
+    fn libra_h2o_composed_touch_at_the_buttons_left_pose() {
+        let pose =
+            PanelPose::for_test(&LIBRA_H2O_384, 2).expect("a half turn from the reference");
+        assert_eq!(
+            pose.touch_mapping(),
+            TouchMapping {
+                swap_axes: true,
+                mirror_x: false,
+                mirror_y: true,
+            },
+            "a half turn flips both mirrors and leaves the swap alone"
+        );
+
+        // Four corners, tapped in order with the reader physically flipped
+        // buttons-left: top-left, top-right, bottom-right, bottom-left.
+        let top_left = pose
+            .touch_to_display(1585, 100)
+            .expect("measured tap maps to the display");
+        let top_right = pose
+            .touch_to_display(1616, 1188)
+            .expect("measured tap maps to the display");
+        let bottom_right = pose
+            .touch_to_display(53, 1196)
+            .expect("measured tap maps to the display");
+        let bottom_left = pose
+            .touch_to_display(57, 55)
+            .expect("measured tap maps to the display");
+
+        assert_eq!(top_left, (100, 94));
+        assert_eq!(top_right, (1188, 63));
+        assert_eq!(bottom_right, (1196, 1626));
+        assert_eq!(bottom_left, (55, 1622));
+
+        const SAME_EDGE_TOLERANCE: u32 = 48;
+        assert!(top_left.0 < top_right.0, "the top edge runs rightward");
+        assert!(
+            top_left.1.abs_diff(top_right.1) < SAME_EDGE_TOLERANCE,
+            "the top edge stays at one end"
+        );
+        assert!(
+            top_right.1 < bottom_right.1,
+            "the right edge runs downward"
+        );
+        assert!(
+            top_right.0.abs_diff(bottom_right.0) < SAME_EDGE_TOLERANCE,
+            "the right edge stays at one side"
+        );
+        assert!(
+            bottom_left.0 < bottom_right.0,
+            "the bottom edge runs rightward"
+        );
+        assert!(
+            bottom_left.1.abs_diff(bottom_right.1) < SAME_EDGE_TOLERANCE,
+            "the bottom edge stays at one end"
+        );
+        assert!(top_left.1 < bottom_left.1, "the left edge runs downward");
+        assert!(
+            top_left.0.abs_diff(bottom_left.0) < SAME_EDGE_TOLERANCE,
+            "the left edge stays at one side"
+        );
+    }
+
+    #[test]
+    fn libra_h2o_touch_matches_four_physically_measured_taps() {
+        // Four corners, tapped in order on the physical device with `kobo
+        // touch-probe`: top-left, top-right, bottom-right, bottom-left. Every
+        // one landed in its correct quadrant; see the evidence recorded on
+        // `LIBRA_H2O_384` itself.
+        let top_left = LIBRA_H2O_POSE
+            .touch_to_display(127, 1138)
+            .expect("measured tap maps to the display");
+        let top_right = LIBRA_H2O_POSE
+            .touch_to_display(126, 100)
+            .expect("measured tap maps to the display");
+        let bottom_right = LIBRA_H2O_POSE
+            .touch_to_display(1620, 125)
+            .expect("measured tap maps to the display");
+        let bottom_left = LIBRA_H2O_POSE
+            .touch_to_display(1659, 1163)
+            .expect("measured tap maps to the display");
+
+        assert_eq!(top_left, (125, 127));
+        assert_eq!(top_right, (1163, 126));
+        assert_eq!(bottom_right, (1138, 1620));
+        assert_eq!(bottom_left, (100, 1659));
+
+        // The shape of the square, stated independently of the exact numbers,
+        // so a mirrored or unswapped axis fails here even if the constants
+        // above are edited. The tolerance is wider than the Libra 2 test's:
+        // these four corners were tapped by hand across two live passes
+        // rather than measured once in a lab, and the largest same-edge
+        // spread observed (39px, bottom edge) is real tap imprecision, not a
+        // transform defect -- the exact-value assertions above already pin
+        // down the transform itself.
+        const SAME_EDGE_TOLERANCE: u32 = 48;
+        assert!(top_left.0 < top_right.0, "the top edge runs rightward");
+        assert!(
+            top_left.1.abs_diff(top_right.1) < SAME_EDGE_TOLERANCE,
+            "the top edge stays at one end"
+        );
+        assert!(
+            top_right.1 < bottom_right.1,
+            "the right edge runs downward"
+        );
+        assert!(
+            top_right.0.abs_diff(bottom_right.0) < SAME_EDGE_TOLERANCE,
+            "the right edge stays at one side"
+        );
+        assert!(
+            bottom_left.0 < bottom_right.0,
+            "the bottom edge runs rightward"
+        );
+        assert!(
+            bottom_left.1.abs_diff(bottom_right.1) < SAME_EDGE_TOLERANCE,
+            "the bottom edge stays at one end"
+        );
+        assert!(top_left.1 < bottom_left.1, "the left edge runs downward");
+        assert!(
+            top_left.0.abs_diff(bottom_left.0) < SAME_EDGE_TOLERANCE,
+            "the left edge stays at one side"
+        );
+    }
+
+    #[test]
+    fn libra_h2o_touch_edges_stay_inside_the_panel_and_round_trip() {
+        for raw in [(0, 0), (0, 1263), (1679, 0), (1679, 1263)] {
+            let display = LIBRA_H2O_POSE
+                .touch_to_display(raw.0, raw.1)
+                .expect("measured Libra H2O edge maps to the display");
+            assert!(display.0 < LIBRA_H2O_384.width, "x escaped: {display:?}");
+            assert!(display.1 < LIBRA_H2O_384.height, "y escaped: {display:?}");
+        }
+        assert_eq!(LIBRA_H2O_POSE.touch_to_display(0, 0), Some((1263, 0)));
+        assert_eq!(LIBRA_H2O_POSE.touch_to_display(1679, 1263), Some((0, 1679)));
+        for display in [(0, 0), (1263, 0), (0, 1679), (1263, 1679), (632, 840)] {
+            let raw = LIBRA_H2O_POSE
+                .display_to_touch(display.0, display.1)
+                .expect("Libra H2O display point maps to the controller");
+            assert_eq!(LIBRA_H2O_POSE.touch_to_display(raw.0, raw.1), Some(display));
+        }
+        assert_eq!(LIBRA_H2O_POSE.display_to_touch(1264, 0), None);
+        assert_eq!(LIBRA_H2O_POSE.display_to_touch(0, 1680), None);
+    }
+
     /// A leftover daemon is named for a device, not guessed at. The Libra 2
     /// has both halves measured: the two-supplicant collision after a normal
     /// hand-back, and the clean recovery once the leftover one was killed. The
@@ -1953,6 +2358,7 @@ mod tests {
                 ("libra-2-388", &["/bin/wpa_supplicant"][..]),
                 ("libra-colour-390", &[][..]),
                 ("libra-colour-390-4.46.23836", &[][..]),
+                ("libra-h2o-384", &[][..]),
             ]
         );
     }
@@ -1974,6 +2380,7 @@ mod tests {
                 ("libra-2-388", true),
                 ("libra-colour-390", false),
                 ("libra-colour-390-4.46.23836", false),
+                ("libra-h2o-384", false),
             ]
         );
     }
