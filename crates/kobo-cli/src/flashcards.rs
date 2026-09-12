@@ -10,6 +10,7 @@ const USAGE: &str = "usage: kobo flashcards import DECK.apkg --merge COLLECTION.
                      \x20      kobo flashcards stage COLLECTION.cobfc --kobo-root MOUNT\n\
                      \x20      kobo flashcards export-review-log --kobo-root MOUNT OUTPUT.ndjson\n\
                      \x20      kobo flashcards status\n\
+                     \x20      kobo flashcards formats\n\
                      \x20      kobo flashcards --licenses\n\n\
                      Uses the separate flashcards-import helper. Install it beside kobo or on PATH.\n\
                      Import prepares a local bundle; stage transfers it to a mounted reader.\n\
@@ -31,7 +32,8 @@ fn helper() -> PathBuf {
 fn helper_arguments(arguments: &[String]) -> Result<Vec<String>, String> {
     let values = arguments.iter().map(String::as_str).collect::<Vec<_>>();
     match values.as_slice() {
-        ["status"] => Ok(vec!["--notice".to_owned()]),
+        ["status"] => Ok(vec!["--version".to_owned()]),
+        ["formats"] => Ok(vec!["--formats".to_owned()]),
         ["--licenses" | "--notice"]
         | ["verify", _]
         | ["stage", _, "--kobo-root", _]
@@ -74,7 +76,14 @@ pub fn command(arguments: &[String]) -> Result<(), String> {
     if super::wants_help(arguments) {
         return super::print_command_help(USAGE);
     }
-    run_helper(&helper(), &helper_arguments(arguments)?)
+    let path = helper();
+    let forwarded = helper_arguments(arguments)?;
+    if arguments == ["status"] {
+        println!("Helper: {}", path.display());
+        run_helper(&path, &forwarded)?;
+        return run_helper(&path, &["--notice".to_owned()]);
+    }
+    run_helper(&path, &forwarded)
 }
 
 #[cfg(test)]
@@ -125,10 +134,10 @@ mod tests {
     }
 
     #[test]
-    fn status_uses_the_helpers_own_notice() {
+    fn status_uses_the_helpers_own_version() {
         assert_eq!(
             helper_arguments(&args(&["status"])).unwrap(),
-            args(&["--notice"])
+            args(&["--version"])
         );
     }
 }

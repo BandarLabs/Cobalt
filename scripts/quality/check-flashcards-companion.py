@@ -39,11 +39,15 @@ def main():
                                     env=env, capture_output=True, text=True, timeout=60)
             transcript.append({'arguments': [str(a).replace(str(root), '<fixture>') for a in arguments],
                                'exit_code': result.returncode,
-                               'output': (result.stdout+result.stderr).replace(str(root), '<fixture>')})
+                               'output': (result.stdout+result.stderr).replace(str(root), '<fixture>').replace(str(args.helper.resolve()), '<helper>')})
             assert (result.returncode == 0) == succeeds, transcript[-1]
             return result
 
-        run('status')
+        status = run('status')
+        assert 'flashcards-import 0.' in status.stdout, 'Helper version missing'
+        formats = run('formats')
+        assert 'collection.anki21b' in formats.stdout, 'Modern-package boundary missing'
+        assert 'does not update Anki scheduling' in formats.stdout, 'Review boundary missing'
         run('import', package, '--merge', bundle)
         run('verify', bundle)
         run('stage', bundle, '--kobo-root', mount)
@@ -73,7 +77,7 @@ def main():
             'status': 'passed', 'basis': 'real-helper-and-original-three-card-package',
             'physical_hardware': False, 'reader_simulator': args.reader_sim,
             'text_scale': args.scale if args.reader_sim else None,
-            'checks': ['helper notice', 'import with spaces in path', 'bundle verification',
+            'checks': ['helper version and notice', 'supported formats and review limits', 'import with spaces in path', 'bundle verification',
                        'staged bytes match prepared bundle', 'helper failures reach CLI',
                        'corrupt stage preserves installed collection'] +
                       (['reader opened staged deck', 'revealed and graded a card',

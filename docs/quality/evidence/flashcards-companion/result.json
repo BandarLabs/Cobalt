@@ -2,8 +2,11 @@
   "status": "passed",
   "basis": "real-helper-and-original-three-card-package",
   "physical_hardware": false,
+  "reader_simulator": false,
+  "text_scale": null,
   "checks": [
-    "helper notice",
+    "helper version and notice",
+    "supported formats and review limits",
     "import with spaces in path",
     "bundle verification",
     "staged bytes match prepared bundle",

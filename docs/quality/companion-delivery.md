@@ -105,3 +105,11 @@ evidence; the other Flashcards tasks and physical acceptance remain open.
 Add `--reader-sim --scale 170` to the reproduction command above to include
 this journey. The script copies between private simulated shelves explicitly;
 it does not claim a physical USB or network transfer.
+
+
+Helper discovery now includes the actual helper version/source and notice.
+`formats` prints the installed helper's package subset, modern-package refusal
+and separate-review-log boundary before an import. Four CLI tests, three helper
+command tests and strict CLI Clippy pass. The rebuilt real-helper acceptance
+also verifies status and formats. FLASHCLI-02 and FLASHCLI-05 are complete;
+verified binary distribution (FLASHCLI-03) remains open.

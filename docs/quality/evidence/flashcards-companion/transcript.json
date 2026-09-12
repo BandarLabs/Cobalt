@@ -4,7 +4,14 @@
       "status"
     ],
     "exit_code": 0,
-    "output": "flashcards-import is an unofficial host-only converter for the documented legacy Anki package subset. It links pinned Anki rslib under AGPL-3.0-or-later, is not affiliated with Ankitects, and contains no upstream logos. Its Cobalt bundle output is neutral and the Kobo app links no Anki code.\n"
+    "output": "Helper: <helper>\nflashcards-import 0.3.10\nSource: unrecorded-development-build\nflashcards-import is an unofficial host-only converter for the documented legacy Anki package subset. It links pinned Anki rslib under AGPL-3.0-or-later, is not affiliated with Ankitects, and contains no upstream logos. Its Cobalt bundle output is neutral and the Kobo app links no Anki code.\n"
+  },
+  {
+    "arguments": [
+      "formats"
+    ],
+    "exit_code": 0,
+    "output": "Supported imports: legacy APKG (merge) and COLPKG (explicit replace).\nThe archive must contain one collection.anki2 or collection.anki21 SQLite file,\na legacy JSON media map, and collection schema 11 or 14 through 18.\n\nNot supported: modern collection.anki21b/meta packages, schemas 12 and 13,\nencrypted archives, JavaScript or add-on template filters. Used media must be\nsupported by the reader; a card side with multiple images is refused.\n\nThe reader reviews the imported due queue. Grades are saved to a separate\nCobalt review log; exporting that log does not update Anki scheduling.\nFor full limits, see docs/FLASHCARDS_COMPATIBILITY.md.\n"
   },
   {
     "arguments": [
@@ -14,7 +21,7 @@
       "<fixture>/collection.cobfc"
     ],
     "exit_code": 0,
-    "output": "imported apkg: 3 notes, 3 due cards (3 new, 0 learning, 0 review), 1 decks, 0 media files (0 bytes), 0 image-bearing notes resolved, 0 sound-bearing notes retained\nbundle sha256: f330c2bddf03d6cf767e306dc66cc6b0e64bb56b74879745597b71faa93983ec\n"
+    "output": "imported apkg: 3 notes, 3 due cards (3 new, 0 learning, 0 review), 1 decks, 0 media files (0 bytes), 0 image-bearing notes resolved, 0 sound-bearing notes retained\nbundle sha256: 8890ec16db40e6a2d17c4d9488c60b060e23aa83f36e82d132e092c9fa95790f\n"
   },
   {
     "arguments": [
@@ -22,7 +29,7 @@
       "<fixture>/collection.cobfc"
     ],
     "exit_code": 0,
-    "output": "verified: 3 notes, 3 due cards (3 new, 0 learning, 0 review), 0 digest-verified media files; 0 image-bearing notes resolve to bundled bytes; 0 sound-bearing notes are retained\nbundle sha256: f330c2bddf03d6cf767e306dc66cc6b0e64bb56b74879745597b71faa93983ec\n"
+    "output": "verified: 3 notes, 3 due cards (3 new, 0 learning, 0 review), 0 digest-verified media files; 0 image-bearing notes resolve to bundled bytes; 0 sound-bearing notes are retained\nbundle sha256: 8890ec16db40e6a2d17c4d9488c60b060e23aa83f36e82d132e092c9fa95790f\n"
   },
   {
     "arguments": [
@@ -32,7 +39,7 @@
       "<fixture>/reader"
     ],
     "exit_code": 0,
-    "output": "staged 3743 digest-verified bytes to <fixture>/reader/.adds/cobalt/data/flashcards/collection.cobfc\nbundle sha256: f330c2bddf03d6cf767e306dc66cc6b0e64bb56b74879745597b71faa93983ec\n"
+    "output": "staged 3753 digest-verified bytes to <fixture>/reader/.adds/cobalt/data/flashcards/collection.cobfc\nbundle sha256: 8890ec16db40e6a2d17c4d9488c60b060e23aa83f36e82d132e092c9fa95790f\n"
   },
   {
     "arguments": [

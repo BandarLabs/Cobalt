@@ -10,6 +10,17 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 const NOTICE: &str = "flashcards-import is an unofficial host-only converter for the documented legacy Anki package subset. It links pinned Anki rslib under AGPL-3.0-or-later, is not affiliated with Ankitects, and contains no upstream logos. Its Cobalt bundle output is neutral and the Kobo app links no Anki code.";
+const FORMATS: &str = "Supported imports: legacy APKG (merge) and COLPKG (explicit replace).
+The archive must contain one collection.anki2 or collection.anki21 SQLite file,
+a legacy JSON media map, and collection schema 11 or 14 through 18.
+
+Not supported: modern collection.anki21b/meta packages, schemas 12 and 13,
+encrypted archives, JavaScript or add-on template filters. Used media must be
+supported by the reader; a card side with multiple images is refused.
+
+The reader reviews the imported due queue. Grades are saved to a separate
+Cobalt review log; exporting that log does not update Anki scheduling.
+For full limits, see docs/FLASHCARDS_COMPATIBILITY.md.";
 const ANKI_NOTICE: &str = include_str!("../../../licenses/NOTICE-Flashcards-Anki.md");
 const ANKI_LICENSE: &str = include_str!("../../../licenses/LICENSE-Anki.txt");
 const ANKI_SOURCE: &str = include_str!("../../../licenses/SOURCE-Flashcards-Anki.md");
@@ -50,6 +61,17 @@ fn run(arguments: &[String]) -> Result<(), String> {
         println!("{}", usage());
         return Ok(());
     }
+    if arguments == ["--version"] {
+        println!(
+            "flashcards-import {}\nSource: {COBALT_SOURCE_COMMIT}",
+            env!("CARGO_PKG_VERSION")
+        );
+        return Ok(());
+    }
+    if arguments == ["--formats"] {
+        println!("{FORMATS}");
+        return Ok(());
+    }
     if arguments == ["--notice"] {
         println!("{NOTICE}");
         return Ok(());
@@ -71,7 +93,7 @@ fn run(arguments: &[String]) -> Result<(), String> {
     {
         return stage_command(&arguments[1], &arguments[3]);
     }
-    if matches!(arguments, [operation, flag, root, output] if operation == "export-review-log" && flag == "--kobo-root")
+    if matches!(arguments, [operation, flag, _, _] if operation == "export-review-log" && flag == "--kobo-root")
     {
         return export_review_log_command(&arguments[2], &arguments[3]);
     }
@@ -178,7 +200,7 @@ fn export_review_log_command(root: &str, output: &str) -> Result<(), String> {
 }
 
 const fn usage() -> &'static str {
-    "usage: flashcards-import import INPUT.apkg --merge OUTPUT.cobfc [--merge-into EXISTING.cobfc]\n       flashcards-import import INPUT.colpkg --replace OUTPUT.cobfc\n       flashcards-import verify BUNDLE.cobfc\n       flashcards-import stage BUNDLE.cobfc --kobo-root MOUNT\n       flashcards-import export-review-log --kobo-root MOUNT OUTPUT.ndjson\n       flashcards-import --notice\n       flashcards-import --licenses"
+    "usage: flashcards-import import INPUT.apkg --merge OUTPUT.cobfc [--merge-into EXISTING.cobfc]\n       flashcards-import import INPUT.colpkg --replace OUTPUT.cobfc\n       flashcards-import verify BUNDLE.cobfc\n       flashcards-import stage BUNDLE.cobfc --kobo-root MOUNT\n       flashcards-import export-review-log --kobo-root MOUNT OUTPUT.ndjson\n       flashcards-import --version\n       flashcards-import --formats\n       flashcards-import --notice\n       flashcards-import --licenses"
 }
 
 #[cfg(test)]
@@ -196,6 +218,14 @@ mod tests {
             .all(|(_, document)| !document.is_empty()));
         assert!(ANKI_SOURCE.contains("9e32ad8849068510a82273889c21b22e1acf0949"));
         assert!(JAPANESE_FONT_SOURCE.contains("165c01b46ea533872e002e0785ff17e44f6d97d8"));
+    }
+
+    #[test]
+    fn compatibility_and_version_are_available_without_importing() {
+        run(&["--version".to_owned()]).expect("version");
+        run(&["--formats".to_owned()]).expect("formats");
+        assert!(FORMATS.contains("schemas 12 and 13"));
+        assert!(FORMATS.contains("does not update Anki scheduling"));
     }
 
     #[test]

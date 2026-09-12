@@ -3764,8 +3764,10 @@
     "pr": 4,
     "group": "Flashcards companion",
     "task": "Make helper install/version status discoverable",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "kobo flashcards status reports selected helper, its own version/source and notice; missing-helper test verifies installation guidance. formats reports the installed helper supported package subset and review-log boundary. Four CLI tests, three helper-command tests and strict CLI Clippy pass; real-helper acceptance verifies both commands. See docs/quality/evidence/flashcards-companion/transcript.json and docs/FLASHCARDS_COMPATIBILITY.md. Verified binary distribution remains FLASHCLI-03."
+    ]
   },
   {
     "id": "FLASHCLI-03",
@@ -3788,8 +3790,10 @@
     "pr": 4,
     "group": "Flashcards companion",
     "task": "Explain actual supported formats and unsupported features",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "kobo flashcards status reports selected helper, its own version/source and notice; missing-helper test verifies installation guidance. formats reports the installed helper supported package subset and review-log boundary. Four CLI tests, three helper-command tests and strict CLI Clippy pass; real-helper acceptance verifies both commands. See docs/quality/evidence/flashcards-companion/transcript.json and docs/FLASHCARDS_COMPATIBILITY.md. Verified binary distribution remains FLASHCLI-03."
+    ]
   },
   {
     "id": "FLASHCLI-06",

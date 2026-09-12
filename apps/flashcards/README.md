@@ -88,7 +88,7 @@ cargo +1.88.0 build --locked --manifest-path crates/kobo-flashcards-import/Cargo
 The binary is in `crates/kobo-flashcards-import/target/debug/flashcards-import`
 unless `CARGO_TARGET_DIR` overrides the build directory. Advanced setups can
 set `KOBO_FLASHCARDS_IMPORT` to its absolute path. `kobo flashcards status`
-prints the helper's own notice; `kobo flashcards --licenses` shows its bundled
+shows the selected helper, its version/source and its own notice; `kobo flashcards --licenses` shows its bundled
 license and source information. Distribution must retain the existing host
 artifact notices and corresponding-source requirements.
 
@@ -102,3 +102,10 @@ kobo flashcards export-review-log --kobo-root MOUNT reviews.ndjson
 ```
 
 ![An imported original study card reviewed at enlarged text size](screenshots/companion-review.png)
+
+Before importing, run `kobo flashcards formats` for the installed helper's
+supported package types and limits. Modern `collection.anki21b` packages are
+not supported; a filename ending in `.apkg` alone does not guarantee support.
+The helper explains that reader grades remain in a separate Cobalt log and
+are not automatically applied to Anki scheduling. The full compatibility
+reference above describes the supported media and template subset.
