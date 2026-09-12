@@ -4,8 +4,8 @@
   "short_label": "Verses",
   "summary": "Read a public-domain poem each day.",
   "page_description": "Discover a daily poem, browse its source, and keep favorites for later.",
-  "version": "0.1.2",
-  "release_notes": "Rebuilt on a renderer that keeps every control reachable at the largest text sizes, and on a keyboard that can type every character this app asks for.",
+  "version": "0.1.3",
+  "release_notes": "Read complete poems set as verse, centred with the space between stanzas, paged against the screen, each saying which edition it came from. A poetry service that is down now says so rather than reporting no matches.",
   "glyph": "note",
   "capabilities": [
     "network"
