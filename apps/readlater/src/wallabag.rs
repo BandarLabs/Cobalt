@@ -11,6 +11,7 @@ pub struct Entry {
     pub site: String,
     pub reading_time: u64,
     pub content: String,
+    pub position: usize,
 }
 
 pub fn queue_url(server: &str, depth: u16) -> String {
@@ -70,6 +71,7 @@ pub fn parse_entry(value: &Value) -> Option<Entry> {
                 .unwrap_or(0),
         )
         .unwrap_or(0),
+        position: 0,
         content: kobo_html::to_text(
             value
                 .get("content")

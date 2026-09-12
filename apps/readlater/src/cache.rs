@@ -22,6 +22,7 @@ pub fn encode(entries: &[Entry]) -> Option<Vec<u8>> {
                 .set("site", entry.site.clone())
                 .set("minutes", entry.reading_time.to_string())
                 .set("text", entry.content.clone())
+                .set("position", entry.position.to_string())
                 .build()
         })
         .collect();
@@ -59,6 +60,10 @@ pub fn decode(bytes: &[u8]) -> Option<Vec<Entry>> {
                 site: text("site")?.into(),
                 reading_time: text("minutes")?.parse().ok()?,
                 content: text("text")?.into(),
+                position: match value.get("position") {
+                    None => 0,
+                    Some(value) => value.as_str()?.parse().ok()?,
+                },
             })
         })
         .collect()
@@ -74,6 +79,7 @@ mod tests {
             title: "日本語".into(),
             site: "example.org".into(),
             reading_time: 5,
+            position: 12,
             content: "Use <section> & preserve \"quotes\".\n\nSecond paragraph.".into(),
         }];
         assert_eq!(decode(&encode(&entries).unwrap()), Some(entries));

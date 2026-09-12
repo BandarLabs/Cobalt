@@ -1,0 +1,16 @@
+Kobo app simulator: http://127.0.0.1:51823
+task 1 failed: Denied
+shot /Users/abhishekanand/Downloads/cobalt-quality-apps/docs/quality/evidence/lichess-computer/default/computer-start.png
+shot /Users/abhishekanand/Downloads/cobalt-quality-apps/docs/quality/evidence/lichess-computer/default/computer-selection.png
+shot /Users/abhishekanand/Downloads/cobalt-quality-apps/docs/quality/evidence/lichess-computer/default/computer-reply.png
+shot /Users/abhishekanand/Downloads/cobalt-quality-apps/docs/quality/evidence/lichess-computer/default/computer-resumed.png
+layout warning: screen: 5 of the five inks on one screen;                  the panel does not resolve that many
+shot /Users/abhishekanand/Downloads/cobalt-quality-apps/docs/quality/evidence/lichess-computer/default/computer-menu.png
+layout warning: screen: 5 of the five inks on one screen;                  the panel does not resolve that many
+layout warning: screen: 5 of the five inks on one screen;                  the panel does not resolve that many
+layout warning: screen: 5 of the five inks on one screen;                  the panel does not resolve that many
+layout warning: screen: 5 of the five inks on one screen;                  the panel does not resolve that many
+layout warning: screen: 5 of the five inks on one screen;                  the panel does not resolve that many
+layout warning: screen: 5 of the five inks on one screen;                  the panel does not resolve that many
+shot /Users/abhishekanand/Downloads/cobalt-quality-apps/docs/quality/evidence/lichess-computer/default/computer-result.png
+drive: every step passed; screenshots in /Users/abhishekanand/Downloads/cobalt-quality-apps/docs/quality/evidence/lichess-computer/default
