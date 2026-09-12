@@ -104,3 +104,5 @@ After pairing Sidekick, try `kobo-sidekickd sample` with the normal daemon
 stopped. It sends a built-in connection-check question to the reader. Choose
 **Received** to confirm delivery to the computer; press Ctrl-C to stop.
 No agent setup or command execution is involved.
+
+![Sidekick sample on the reader simulator](quality/evidence/sidekick-sample/default/sample-question.png)

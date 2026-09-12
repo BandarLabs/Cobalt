@@ -4250,10 +4250,11 @@
     "pr": 4,
     "group": "Sidekick companion",
     "task": "Provide self-contained sample mode",
-    "status": "todo",
+    "status": "done",
     "evidence": [
-      "Implemented kobo-sidekickd sample with a built-in Received question, authenticated reader listener only, no hook listener or Deck commands. Uses normal pairing; isolated config root supports acceptance.",
-      "docs/quality/evidence/sidekick-sample/result.json: verified local TLS rejects wrong pairing, receives and acknowledges question, clears pending state, and starts with hook port occupied. Simulator UI/reader acceptance remains outstanding, so task remains open."
+      "kobo-sidekickd sample provides its own non-permission Received question, uses normal pairing, and starts without agent hooks or Deck commands.",
+      "docs/quality/evidence/sidekick-sample/default/result.json and 170/result.json: actual helper and simulator pair through on-screen keyboard over verified TLS, show sample, tap Received, acknowledge on computer, clear pending state and render without layout errors.",
+      "Screenshots inspected at default and 170% text. Fixed choice-answer history incorrectly saying Left at the terminal; all 30 app tests and strict Clippy passed. Physical reader acceptance remains SIDECLI-04."
     ]
   },
   {

@@ -398,6 +398,20 @@ impl Sidekick {
         let Some(ask) = &self.ask else {
             return;
         };
+        let sentence = if labels.is_empty() {
+            format!(
+                "{} {} for {}.",
+                decided(choice),
+                trimmed_to(&ask.detail, 60),
+                agent_name(&ask.source)
+            )
+        } else {
+            format!(
+                "Answered {} for {}.",
+                labels.join(", "),
+                agent_name(&ask.source)
+            )
+        };
         let body = kobo_json::ObjectBuilder::new()
             .set("token", self.code.as_str())
             .set("id", ask.id)
@@ -423,12 +437,6 @@ impl Sidekick {
             // default text size and four lines at 170%, where the renderer
             // refused the whole screen and a reader who had just answered
             // saw nothing at all.
-            let sentence = format!(
-                "{} {} for {}.",
-                decided(choice),
-                trimmed_to(&ask.detail, 60),
-                agent_name(&ask.source)
-            );
             self.last = Some(context.clamped_row(&sentence, 2, false));
             self.view = View::Sending;
             self.trouble = None;
@@ -1237,6 +1245,12 @@ mod tests {
         let (_, _, body) = posted(&commands).expect("the answer was sent");
         assert!(body.contains(r#""labels":["Every step"]"#), "{body}");
         assert!(body.contains(r#""id":7"#), "{body}");
+        let confirmation = app.last.as_deref().unwrap();
+        assert!(
+            confirmation.starts_with("Answered Every step"),
+            "{confirmation}"
+        );
+        assert!(!confirmation.contains("Left at the terminal"));
     }
 
     #[test]

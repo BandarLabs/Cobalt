@@ -1,0 +1,243 @@
+{
+  "paints": 30,
+  "nodes": [
+    {
+      "kind": "StatusBand",
+      "x": 0,
+      "y": 0,
+      "width": 1072,
+      "height": 59,
+      "centre": {
+        "x": 536,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusClock",
+      "x": 47,
+      "y": 0,
+      "width": 134,
+      "height": 59,
+      "centre": {
+        "x": 114,
+        "y": 29
+      },
+      "action": null,
+      "lines": [
+        "13:08"
+      ]
+    },
+    {
+      "kind": "StatusBattery(Some(Percent(72)), false)",
+      "x": 955,
+      "y": 12,
+      "width": 70,
+      "height": 35,
+      "centre": {
+        "x": 990,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusSignal(Strong)",
+      "x": 896,
+      "y": 12,
+      "width": 35,
+      "height": 35,
+      "centre": {
+        "x": 913,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusBluetooth",
+      "x": 837,
+      "y": 12,
+      "width": 35,
+      "height": 35,
+      "centre": {
+        "x": 854,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "TopBar",
+      "x": 0,
+      "y": 59,
+      "width": 1072,
+      "height": 100,
+      "centre": {
+        "x": 536,
+        "y": 109
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Back",
+      "x": 47,
+      "y": 59,
+      "width": 100,
+      "height": 100,
+      "centre": {
+        "x": 97,
+        "y": 109
+      },
+      "action": 4294967295,
+      "lines": []
+    },
+    {
+      "kind": "TopBarTitle",
+      "x": 171,
+      "y": 69,
+      "width": 854,
+      "height": 79,
+      "centre": {
+        "x": 598,
+        "y": 108
+      },
+      "action": null,
+      "lines": [
+        "Sidekick"
+      ]
+    },
+    {
+      "kind": "Divider",
+      "x": 0,
+      "y": 159,
+      "width": 1072,
+      "height": 4,
+      "centre": {
+        "x": 536,
+        "y": 161
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "SplashGlyph(Circle)",
+      "x": 489,
+      "y": 343,
+      "width": 94,
+      "height": 94,
+      "centre": {
+        "x": 536,
+        "y": 390
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "SplashTitle",
+      "x": 169,
+      "y": 484,
+      "width": 733,
+      "height": 105,
+      "centre": {
+        "x": 535,
+        "y": 536
+      },
+      "action": null,
+      "lines": [
+        "Watching"
+      ]
+    },
+    {
+      "kind": "Section",
+      "x": 47,
+      "y": 794,
+      "width": 978,
+      "height": 60,
+      "centre": {
+        "x": 536,
+        "y": 824
+      },
+      "action": null,
+      "lines": [
+        "Last answer"
+      ]
+    },
+    {
+      "kind": "Text",
+      "x": 47,
+      "y": 878,
+      "width": 978,
+      "height": 158,
+      "centre": {
+        "x": 536,
+        "y": 957
+      },
+      "action": null,
+      "lines": [
+        "Answered Received for Sidekick",
+        "sample."
+      ]
+    },
+    {
+      "kind": "Section",
+      "x": 47,
+      "y": 1072,
+      "width": 978,
+      "height": 60,
+      "centre": {
+        "x": 536,
+        "y": 1102
+      },
+      "action": null,
+      "lines": [
+        "Paired with"
+      ]
+    },
+    {
+      "kind": "Text",
+      "x": 47,
+      "y": 1156,
+      "width": 978,
+      "height": 79,
+      "centre": {
+        "x": 536,
+        "y": 1195
+      },
+      "action": null,
+      "lines": [
+        "127.0.0.1:9331"
+      ]
+    },
+    {
+      "kind": "Spacer",
+      "x": 47,
+      "y": 1247,
+      "width": 978,
+      "height": 24,
+      "centre": {
+        "x": 536,
+        "y": 1259
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Button(ActionId(693242804), Enabled, Normal)",
+      "x": 276,
+      "y": 1283,
+      "width": 519,
+      "height": 118,
+      "centre": {
+        "x": 535,
+        "y": 1342
+      },
+      "action": 693242804,
+      "lines": [
+        "Change pairing"
+      ]
+    }
+  ]
+}

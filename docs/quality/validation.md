@@ -2319,3 +2319,21 @@ held the hook port throughout, proving the sample did not require it.
 Evidence: `evidence/sidekick-sample/result.json` and terminal transcript.
 This is protocol evidence; simulator and physical reader acceptance remain
 outstanding, and SIDECLI-04/06 remain open.
+
+
+### Sidekick sample simulator acceptance (SIDECLI-06)
+
+The sample now passes through the actual helper and SDK simulator at default
+and 170% interface text. The driver types the address and pairing code through
+the reader keyboard, waits for the built-in question, taps Received and checks
+the reader confirmation plus the helper's acknowledgement. The authenticated
+pending queue then clears. Both captures have no layout errors and were
+visually inspected. Evidence: `evidence/sidekick-sample/{default,170}`.
+
+This journey exposed incorrect last-answer text for choice responses: the
+reader said Left at the terminal despite successful acknowledgement. The app
+now records the selected labels. All 30 app tests and strict all-target Clippy
+passed; app manifest advanced to 1.0.10 and its generated catalog page was
+updated. The harness uses a short isolated temporary directory to fit macOS
+Unix socket path limits. SIDECLI-06 is complete; physical receipt validation
+remains SIDECLI-04 and has not been claimed.
