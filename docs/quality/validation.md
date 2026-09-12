@@ -2578,3 +2578,25 @@ that durable storage, acknowledged action replay and complete controls remain
 unfinished. No checklist items were closed.
 
 ![Retained queue after refresh failure](evidence/readlater-refresh/refresh-failed.png)
+
+
+### Read Later acknowledged article storage (partial LATER-01/03/05)
+
+Read Later 0.1.4 uses the SDK's two-slot Snapshot for its complete extracted
+article collection, identified by server and credential name. Versioned JSON
+preserves text verbatim, including angle brackets, Unicode and paragraph breaks;
+it is not passed through HTML extraction a second time. The collection is
+bounded to 8 MiB. Updates received during an outstanding save are queued for
+the next save, and late snapshot reads fill missing bodies without replacing
+fresh metadata.
+
+Twelve app/parser/storage tests and strict Clippy pass. The lifecycle test
+checks content and pointer acknowledgements before publication, restores the
+saved collection in a fresh app instance, and simulates a full-disk write failure
+while retaining the previous snapshot. Settings and Retry saving are reachable
+on the queue; the runtime-font failure render was inspected.
+
+![Save failure with retry](evidence/readlater-cache/save-failed.png)
+
+This is app-level storage evidence. The full simulator restart/recovery journey
+and acknowledged server action outbox remain open; no task was closed here.

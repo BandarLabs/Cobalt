@@ -8,9 +8,15 @@ Unreadable list responses leave current articles unchanged, and replies from a
 previous server or credential cannot replace the current list. The queue's
 **Sync** control retries a failed refresh.
 
-Durable article storage, acknowledged archive/star replay, filtering and reading
-pagination are still tracked under LATER-01 through LATER-06. The current app
-must not be treated as a complete offline Wallabag client yet.
+Articles now use acknowledged local snapshots scoped to the server and credential
+name. Saves keep a previous copy until the new content and its pointer are
+acknowledged. A failed save shows **Retry saving**; Settings remains available
+from the reading list. The collection is bounded to 8 MiB, and extracted article
+text is stored verbatim, including Unicode and paragraph breaks.
+
+Full simulator restart/recovery validation, acknowledged archive/star replay,
+filtering and reading pagination remain under LATER-01 through LATER-06. The app
+is not yet a complete offline Wallabag client.
 
 ![Read Later setup on the Clara BW simulator](screenshots/readlater-setup.png)
 
@@ -31,3 +37,6 @@ this MVP expects that runtime credential and cannot provision it itself.
 
 
 ![Refresh failure retains the current reading list, rendered from an original fixture](../../docs/quality/evidence/readlater-refresh/refresh-failed.png)
+
+
+![Saving failure retains the previous copy and offers retry](../../docs/quality/evidence/readlater-cache/save-failed.png)

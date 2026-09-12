@@ -1,4 +1,7 @@
+mod cache;
 mod wallabag;
+
+use kobo_sdk::snapshot::{Snapshot, SnapshotEvent};
 
 use kobo_sdk::keyboard::{Keyboard, Pressed};
 use kobo_sdk::{
@@ -10,6 +13,7 @@ use wallabag::Entry;
 
 const CONFIG: &str = "config";
 const ACTIONS: &str = "actions";
+const CACHE_ERROR: &str = "Articles could not be saved or opened. Retry saving before closing.";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum View {
@@ -30,6 +34,8 @@ enum PendingTask {
 
 #[derive(Default)]
 struct ReadLater {
+    snapshot: Option<Snapshot>,
+    cache_dirty: bool,
     server: String,
     credential: String,
     depth: u16,
@@ -46,6 +52,88 @@ struct ReadLater {
 }
 
 impl ReadLater {
+    fn open_cache(&mut self, context: &mut Context) {
+        if !self.ready() {
+            return;
+        }
+        let snapshot = Snapshot::new(&format!(
+            "readlater-v1:{}\n{}",
+            self.server, self.credential
+        ))
+        .at_most(cache::LIMIT);
+        snapshot.start(context);
+        self.snapshot = Some(snapshot);
+        self.cache_dirty = false;
+    }
+
+    fn keep_articles(&mut self, context: &mut Context) {
+        self.cache_dirty = true;
+        self.flush_cache(context);
+    }
+
+    fn flush_cache(&mut self, context: &mut Context) {
+        if !self.cache_dirty {
+            return;
+        }
+        let Some(snapshot) = &mut self.snapshot else {
+            return;
+        };
+        if snapshot.busy() {
+            return;
+        }
+        let Some(bytes) = cache::encode(&self.entries) else {
+            self.notice = Some("These articles exceed the offline storage limit. Keep fewer articles and sync again.".into());
+            return;
+        };
+        if snapshot.save(context, bytes) {
+            self.cache_dirty = false;
+        }
+    }
+
+    fn cache_event(&mut self, context: &mut Context, event: Option<SnapshotEvent>) {
+        match event {
+            Some(SnapshotEvent::Loaded) => {
+                if let Some(bytes) = self
+                    .snapshot
+                    .as_ref()
+                    .and_then(|snapshot| snapshot.bytes.as_deref())
+                {
+                    if let Some(mut entries) = cache::decode(bytes) {
+                        if self.cache_dirty {
+                            for entry in &mut self.entries {
+                                if entry.content.is_empty() {
+                                    if let Some(saved) =
+                                        entries.iter_mut().find(|saved| saved.id == entry.id)
+                                    {
+                                        entry.content = std::mem::take(&mut saved.content);
+                                    }
+                                }
+                            }
+                        } else {
+                            self.entries = entries;
+                            self.entries_origin =
+                                Some((self.server.clone(), self.credential.clone()));
+                        }
+                    } else {
+                        self.notice = Some(
+                            "Saved articles could not be opened. Sync to download them again."
+                                .into(),
+                        );
+                    }
+                }
+            }
+            Some(SnapshotEvent::Failed) => {
+                self.notice = Some(CACHE_ERROR.into());
+            }
+            Some(SnapshotEvent::Saved) if self.notice.as_deref() == Some(CACHE_ERROR) => {
+                self.notice = None;
+            }
+            _ => {}
+        }
+        self.flush_cache(context);
+        self.show(context);
+    }
+
     fn ready(&self) -> bool {
         self.server.starts_with("https://") && !self.credential.is_empty()
     }
@@ -79,6 +167,7 @@ impl ReadLater {
                 let mut page = ScreenBuilder::new("readlater")
                     .top_bar("Read Later")
                     .top_bar_action("sync", "Sync")
+                    .top_bar_glyph("settings", "Settings", Glyph::Settings)
                     .tabs(
                         0,
                         [
@@ -89,6 +178,9 @@ impl ReadLater {
                     );
                 if let Some(note) = &self.notice {
                     page = page.banner(BannerLevel::Attention, note);
+                }
+                if self.snapshot.as_ref().is_some_and(Snapshot::retryable) || self.cache_dirty {
+                    page = page.button("retry-save", "Retry saving");
                 }
                 if self.entries.is_empty() {
                     page.splash(
@@ -209,6 +301,41 @@ impl KoboApp for ReadLater {
         context.store().load(ACTIONS);
         self.show(context);
     }
+    fn on_load(&mut self, context: &mut Context, key: &str, result: StoreResult) {
+        if let Some(snapshot) = self
+            .snapshot
+            .as_mut()
+            .filter(|snapshot| snapshot.key == key)
+        {
+            let event = snapshot.stored(context, &result);
+            self.cache_event(context, event);
+        } else {
+            self.on_store(context, result);
+        }
+    }
+
+    fn on_save(&mut self, context: &mut Context, key: &str, result: StoreResult) {
+        if let Some(snapshot) = self
+            .snapshot
+            .as_mut()
+            .filter(|snapshot| snapshot.key == key)
+        {
+            let event = snapshot.stored(context, &result);
+            self.cache_event(context, event);
+        }
+    }
+
+    fn on_shelf(&mut self, context: &mut Context, name: &str, result: StoreResult) {
+        if let Some(snapshot) = self
+            .snapshot
+            .as_mut()
+            .filter(|snapshot| snapshot.owns_file(name))
+        {
+            let event = snapshot.shelf(context, &result);
+            self.cache_event(context, event);
+        }
+    }
+
     fn on_store(&mut self, context: &mut Context, result: StoreResult) {
         if let StoreResult::Loaded { key, value } = result {
             if key == CONFIG {
@@ -224,6 +351,9 @@ impl KoboApp for ReadLater {
                         .unwrap_or("wallabag")
                         .clone_into(&mut self.credential);
                 }
+            }
+            if key == CONFIG {
+                self.open_cache(context);
             }
             if key == ACTIONS {
                 self.pending = value
@@ -245,11 +375,25 @@ impl KoboApp for ReadLater {
                 Some(Pressed::Submitted) => {
                     let value = self.keyboard.take().trim().to_owned();
                     if !value.is_empty() {
+                        if self
+                            .snapshot
+                            .as_ref()
+                            .is_some_and(|snapshot| snapshot.busy() || snapshot.retryable())
+                        {
+                            self.notice = Some("Finish saving articles before changing the server. Retry saving if needed.".into());
+                            self.editing = None;
+                            self.view = Some(View::Queue);
+                            self.show(context);
+                            return;
+                        }
                         match setting {
                             Setting::Server => self.server = value,
                             Setting::Credential => self.credential = value,
                         }
                         self.persist_config(context);
+                        self.entries.clear();
+                        self.entries_origin = None;
+                        self.open_cache(context);
                     }
                     self.editing = None;
                 }
@@ -272,6 +416,11 @@ impl KoboApp for ReadLater {
         } else if action == action_id("credential") {
             self.keyboard.clear();
             self.editing = Some(Setting::Credential);
+        } else if action == action_id("retry-save") {
+            if let Some(snapshot) = &mut self.snapshot {
+                snapshot.retry(context);
+            }
+            self.flush_cache(context);
         } else if action == action_id("sync") {
             self.sync(context);
         } else if action == action_id("back") || action == ActionId::BACK {
@@ -329,6 +478,7 @@ impl KoboApp for ReadLater {
                     self.entries = entries;
                     self.entries_origin = Some(origin);
                     self.notice = Some(format!("Synced {} articles.", self.entries.len()));
+                    self.keep_articles(context);
                 } else {
                     self.notice = Some("The reading list could not be loaded. Your current articles are unchanged. Try syncing again.".into());
                 }
@@ -338,6 +488,7 @@ impl KoboApp for ReadLater {
                     if let Some(slot) = self.entries.get_mut(index) {
                         if slot.id == entry.id {
                             *slot = entry;
+                            self.keep_articles(context);
                         }
                     }
                 }
@@ -367,6 +518,156 @@ fn main() -> ExitCode {
 mod tests {
     use super::*;
     use kobo_ui::{Chrome, CLARA_BW_METRICS};
+    #[test]
+    fn acknowledged_article_snapshot_restores_in_a_fresh_app() {
+        use kobo_sdk::{Command, StoreRequest};
+        let mut app = ReadLater {
+            server: "https://bag.example".into(),
+            credential: "wallabag".into(),
+            ..ReadLater::default()
+        };
+        let mut context = Context::default();
+        app.open_cache(&mut context);
+        let key = app.snapshot.as_ref().unwrap().key.clone();
+        app.on_load(
+            &mut context,
+            &key,
+            StoreResult::Loaded {
+                key: key.clone(),
+                value: None,
+            },
+        );
+        let _ = context.take_commands();
+        app.entries = vec![Entry {
+            id: 7,
+            title: "An article".into(),
+            site: "example.org".into(),
+            reading_time: 2,
+            content: "First paragraph.\n\nUse <section> literally.".into(),
+        }];
+        app.keep_articles(&mut context);
+        let (name, bytes) = context
+            .take_commands()
+            .into_iter()
+            .find_map(|command| match command {
+                Command::Store(StoreRequest::ShelfWrite {
+                    name,
+                    bytes,
+                    last: true,
+                    ..
+                }) => Some((name, bytes)),
+                _ => None,
+            })
+            .unwrap();
+        assert!(app.snapshot.as_ref().unwrap().bytes.is_none());
+        app.on_shelf(
+            &mut context,
+            &name,
+            StoreResult::ShelfWritten {
+                name: name.clone(),
+                size: u32::try_from(bytes.len()).unwrap(),
+            },
+        );
+        let pointer = context
+            .take_commands()
+            .into_iter()
+            .find_map(|command| match command {
+                Command::Store(StoreRequest::Save { value, .. }) => Some(value),
+                _ => None,
+            })
+            .unwrap();
+        assert!(app.snapshot.as_ref().unwrap().bytes.is_none());
+        app.on_save(&mut context, &key, StoreResult::Saved { key: key.clone() });
+        assert!(app.snapshot.as_ref().unwrap().bytes.is_some());
+        let mut reopened = ReadLater {
+            server: app.server.clone(),
+            credential: app.credential.clone(),
+            ..ReadLater::default()
+        };
+        reopened.open_cache(&mut context);
+        reopened.on_load(
+            &mut context,
+            &key,
+            StoreResult::Loaded {
+                key: key.clone(),
+                value: Some(pointer),
+            },
+        );
+        reopened.on_shelf(
+            &mut context,
+            &name,
+            StoreResult::ShelfRead {
+                name: name.clone(),
+                offset: 0,
+                size: u32::try_from(bytes.len()).unwrap(),
+                bytes,
+            },
+        );
+        assert_eq!(reopened.entries, app.entries);
+        assert_eq!(
+            reopened.entries_origin,
+            Some((app.server.clone(), app.credential.clone()))
+        );
+        failed_save_preserves_snapshot(&mut app, &mut context);
+    }
+
+    fn failed_save_preserves_snapshot(app: &mut ReadLater, context: &mut Context) {
+        use kobo_sdk::{Command, StoreRequest};
+        app.entries[0].content = "Changed article".into();
+        app.keep_articles(context);
+        let pending_name = context
+            .take_commands()
+            .into_iter()
+            .find_map(|command| match command {
+                Command::Store(StoreRequest::ShelfWrite { name, .. }) => Some(name),
+                _ => None,
+            })
+            .unwrap();
+        app.on_shelf(
+            context,
+            &pending_name,
+            StoreResult::Denied(kobo_sdk::StoreError::TooFull),
+        );
+        assert!(app.snapshot.as_ref().unwrap().retryable());
+        assert_ne!(
+            cache::decode(app.snapshot.as_ref().unwrap().bytes.as_deref().unwrap()).unwrap(),
+            app.entries
+        );
+        assert!(app.notice.as_deref().unwrap().contains("Retry saving"));
+        capture_queue(app, "save-failed.png");
+    }
+
+    #[test]
+    fn late_snapshot_fills_bodies_without_overwriting_fresh_metadata() {
+        let saved = Entry {
+            id: 7,
+            title: "Old title".into(),
+            site: "example.org".into(),
+            reading_time: 2,
+            content: "Saved full body".into(),
+        };
+        let mut app = ReadLater {
+            server: "https://bag.example".into(),
+            credential: "wallabag".into(),
+            ..ReadLater::default()
+        };
+        let mut context = Context::default();
+        app.open_cache(&mut context);
+        app.snapshot.as_mut().unwrap().bytes = cache::encode(&[saved]);
+        app.entries = vec![Entry {
+            id: 7,
+            title: "New title".into(),
+            site: "example.org".into(),
+            reading_time: 3,
+            content: String::new(),
+        }];
+        app.cache_dirty = true;
+        app.cache_event(&mut context, Some(SnapshotEvent::Loaded));
+        assert_eq!(app.entries[0].title, "New title");
+        assert_eq!(app.entries[0].reading_time, 3);
+        assert_eq!(app.entries[0].content, "Saved full body");
+    }
+
     #[test]
     fn refresh_keeps_fetched_bodies_and_rejects_invalid_lists() {
         let origin = ("https://bag.example".to_owned(), "wallabag".to_owned());
@@ -403,7 +704,7 @@ mod tests {
         );
         assert_eq!(app.entries[0].content, "An original saved article body.");
         assert!(app.notice.as_deref().unwrap().contains("unchanged"));
-        capture_refresh_failure(&app);
+        capture_queue(&app, "refresh-failed.png");
         app.server = "https://another.example".into();
         app.task = Some((TaskId(3), PendingTask::Queue));
         app.task_origin = Some(origin);
@@ -430,7 +731,7 @@ mod tests {
         );
     }
 
-    fn capture_refresh_failure(app: &ReadLater) {
+    fn capture_queue(app: &ReadLater, name: &str) {
         let Ok(directory) = std::env::var("KOBO_QUALITY_CAPTURE_DIR") else {
             return;
         };
@@ -458,11 +759,7 @@ mod tests {
         )
         .unwrap();
         std::fs::create_dir_all(&directory).unwrap();
-        std::fs::write(
-            std::path::Path::new(&directory).join("refresh-failed.png"),
-            png,
-        )
-        .unwrap();
+        std::fs::write(std::path::Path::new(&directory).join(name), png).unwrap();
     }
 
     #[test]
