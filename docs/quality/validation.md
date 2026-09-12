@@ -2430,3 +2430,27 @@ and was visually inspected: `evidence/gutenbird-editions/language-choices.png`.
 Reproduce with KOBO_QUALITY_CAPTURE_DIR and the
 `same_title_shelf_captions` test. Manifest 1.0.14 and generated app page are
 updated. Explicit selection of otherwise-grouped format variants remains open.
+
+
+### Gutenbird edition and download selection (GUTEN-02 complete)
+
+Gutenbird 1.0.16 keeps multi-publication entry responses as a shelf of choices,
+including same-title illustrated/plain editions. Catalog image notices provide
+short No images/With images captions. Other editions use stated download titles
+or numbered editions. Language, publisher and date distinctions remain visible.
+The format picker added in 1.0.15 retains URL-specific offline copies and saved
+positions. An oversized selected download is rejected before a fetch is spawned.
+
+All 93 app tests and strict all-target Clippy pass. The saved Gutenberg entry-564
+fixture exercises the actual feed handler, shelf selections and the two requested
+download URLs. The size test now checks fetch commands, rather than relying on
+silent selection of the smaller edition. The format tests cover offline reuse,
+sample labels, unavailable/paid/unsupported/oversized filtering and pagination.
+
+The runtime-font local render at
+[evidence/gutenbird-editions/edition-choices.png](evidence/gutenbird-editions/edition-choices.png)
+was inspected alongside the language and format-picker captures. This is local
+fixture evidence, not a physical-reader or live download acceptance run. The
+remaining full download/offline-reopen task is GUTEN-06.
+
+**496 tasks: 245 completed, 250 open, one deferred.**

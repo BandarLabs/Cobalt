@@ -964,56 +964,14 @@ impl Gutenbird {
         self.spawn_feed(context, next, FeedPurpose::More);
     }
 
-    /// A feed with exactly one publication (or a few sharing one title, the
-    /// shape Gutenberg's `.images`/`.noimages` pair leaves behind) and no
-    /// navigation at all is a complete catalog entry document rather than a
-    /// page to browse -- OPDS 1.2 section 5.1.2's distinction between a
-    /// partial and a complete entry. This is what turns following one of
-    /// Gutenberg's `subsection` links into opening a book, without this
-    /// application ever having written Gutenberg's name to decide it.
+    /// Only a single-publication document opens directly. A title is not an
+    /// edition identity: catalogs can offer different images, translations or
+    /// downloads under the same title, and the reader must retain that choice.
     fn resolve_entry(feed: &Feed) -> Option<Publication> {
-        if !feed.navigation.is_empty() {
-            return None;
-        }
-        match feed.publications.len() {
-            0 => None,
-            1 => Some(feed.publications[0].clone()),
-            _ => {
-                let first = feed.publications.first()?;
-                if !feed.publications.iter().all(|publication| {
-                    publication.title == first.title
-                        && publication.authors == first.authors
-                        && publication.language == first.language
-                        && publication.publisher == first.publisher
-                        && publication.issued == first.issued
-                }) {
-                    return None;
-                }
-                // The illustrated edition, now that an illustration reaches
-                // the panel. This was the smaller one for as long as pictures
-                // were discarded on the way in, when Gutenberg's illustrated
-                // Pride and Prejudice was twenty-five megabytes to draw the
-                // same words as the five-hundred-kilobyte edition beside it.
-                // It costs radio time, and the download says how much as it
-                // goes, but a book's plates are part of the book.
-                feed.publications
-                    .iter()
-                    .find(|publication| {
-                        publication.acquisition.iter().any(|acquisition| {
-                            acquisition.href.contains(".images") && affordable(acquisition)
-                        })
-                    })
-                    .or_else(|| {
-                        // Nothing illustrated small enough to read, so the
-                        // plainest edition that will open. A book of words is
-                        // better than a book that takes the reader down.
-                        feed.publications
-                            .iter()
-                            .find(|publication| publication.acquisition.iter().any(affordable))
-                    })
-                    .or_else(|| feed.publications.first())
-                    .cloned()
-            }
+        if feed.navigation.is_empty() && feed.publications.len() == 1 {
+            feed.publications.first().cloned()
+        } else {
+            None
         }
     }
 
@@ -2474,6 +2432,14 @@ impl Gutenbird {
             self.problem = Some("Nothing here can be read on this device.".to_owned());
             return;
         };
+        if !affordable(&acquisition) {
+            self.failed = Some(
+                "This download is too large for this device. Choose another download or edition."
+                    .to_owned(),
+            );
+            self.retryable = false;
+            return;
+        }
         let kind = download_kind(acquisition.media_type.as_deref());
         if self
             .download
@@ -3013,6 +2979,33 @@ fn publication_caption(
                 .clone()
                 .unwrap_or_else(|| "Date not listed".to_owned()),
         );
+    }
+    if peers.len() > 1 {
+        let notice = publication
+            .summary
+            .as_deref()
+            .and_then(|summary| description_parts(summary).1);
+        let image_label = match notice {
+            Some("This edition had all images removed.") => Some("No images"),
+            Some("This edition has images.") => Some("With images"),
+            _ => None,
+        };
+        if let Some(label) = image_label {
+            parts.push(label.to_owned());
+        } else if let Some(acquisition) = publication.best_acquisition() {
+            if let Some(title) = acquisition
+                .title
+                .as_deref()
+                .filter(|title| !title.trim().is_empty())
+            {
+                parts.push(title.to_owned());
+            } else if let Some(index) = peers.iter().position(|book| {
+                book.best_acquisition()
+                    .is_some_and(|link| link.href == acquisition.href)
+            }) {
+                parts.push(format!("Edition {}", index + 1));
+            }
+        }
     }
     if let Some(author) = publication
         .authors
@@ -4235,10 +4228,9 @@ Please read this before you distribute or use this work.\n";
     }
 
     #[test]
-    fn gutenbergs_images_and_noimages_editions_of_one_entry_collapse_to_one_book() {
+    fn gutenbergs_images_and_noimages_editions_remain_available() {
         // Gutenberg's per-book entry document answers with two publications
-        // sharing a title -- the `.images` and `.noimages` editions -- and
-        // one book is shown rather than the same title twice.
+        // sharing a title. Both must stay available to the reader.
         let feed = Feed {
             publications: vec![
                 publication(
@@ -4258,16 +4250,12 @@ Please read this before you distribute or use this work.\n";
             ],
             ..Feed::default()
         };
-        let resolved = Gutenbird::resolve_entry(&feed).expect("collapses to one book");
-        // The illustrated edition of this one is twenty-four megabytes, which
-        // is past what this device can parse, so the plain one is what opens.
-        assert!(resolved.acquisition[0].href.contains(".noimages"));
+        assert!(Gutenbird::resolve_entry(&feed).is_none());
     }
 
     #[test]
-    fn editions_that_name_no_pictures_fall_back_to_the_first() {
-        // Not every catalog spells its editions the way Gutenberg does, and
-        // one of two identical-looking books is better than neither.
+    fn unnamed_editions_are_not_silently_discarded() {
+        // Missing edition metadata does not prove two downloads are equal.
         let feed = Feed {
             publications: vec![
                 publication(
@@ -4281,8 +4269,7 @@ Please read this before you distribute or use this work.\n";
             ],
             ..Feed::default()
         };
-        let resolved = Gutenbird::resolve_entry(&feed).expect("collapses to one book");
-        assert_eq!(resolved.acquisition[0].length, Some(900_000));
+        assert!(Gutenbird::resolve_entry(&feed).is_none());
     }
 
     #[test]
@@ -6192,6 +6179,72 @@ Please read this before you distribute or use this work.\n";
     // -----------------------------------------------------------------
 
     #[test]
+    fn gutenberg_entry_offers_both_editions_and_reads_the_chosen_url() {
+        let bytes =
+            include_bytes!("../../../crates/kobo-opds/tests/fixtures/gutenberg/entry-564.xml");
+        let mut app = Gutenbird::default();
+        let mut context = Context::default();
+        app.took_feed(
+            &mut context,
+            bytes,
+            FeedPurpose::Push { catalog: 0 },
+            "https://www.gutenberg.org/ebooks/564.opds".into(),
+        );
+        assert_eq!(app.view, View::Shelf);
+        assert_eq!(app.stack.last().unwrap().feed.publications.len(), 2);
+        let books = &app.stack.last().unwrap().feed.publications;
+        let captions: Vec<_> = books
+            .iter()
+            .map(|book| super::publication_caption(book, books, None))
+            .collect();
+        assert!(captions[0].starts_with("No images"));
+        assert!(captions[1].starts_with("With images"));
+        assert_ne!(captions[0], captions[1]);
+        if let Ok(directory) = std::env::var("KOBO_QUALITY_CAPTURE_DIR") {
+            kobo_text::install(CLARA_BW_METRICS).unwrap();
+            let screen = app.shelf_screen(&context);
+            let metrics = context.metrics();
+            assert!(!screen
+                .diagnostics(&metrics, &Chrome::with_back(true))
+                .issues
+                .iter()
+                .any(|issue| issue.severity == DiagnosticSeverity::Error));
+            let mut surface = kobo_ui::Surface::new(
+                usize::try_from(metrics.width).unwrap(),
+                usize::try_from(metrics.height).unwrap(),
+            );
+            kobo_ui::render(&screen, &mut surface, None);
+            let png = kobo_image::encode_png_grey(
+                u32::try_from(metrics.width).unwrap(),
+                u32::try_from(metrics.height).unwrap(),
+                &surface.pixels,
+            )
+            .unwrap();
+            std::fs::create_dir_all(&directory).unwrap();
+            std::fs::write(
+                std::path::Path::new(&directory).join("edition-choices.png"),
+                png,
+            )
+            .unwrap();
+        }
+        let mut runner = AppRunner::new(app);
+        for index in 0..2 {
+            runner.app_mut().view = View::Shelf;
+            runner.app_mut().task = None;
+            let expected = runner.app().stack.last().unwrap().feed.publications[index]
+                .best_acquisition()
+                .unwrap()
+                .href
+                .clone();
+            runner.action(action_id(&format!("book-{index}")));
+            assert_eq!(runner.app().view, View::Details);
+            let commands = runner.action(action_id("read"));
+            assert!(commands.iter().any(|command| matches!(command,
+                Command::Spawn { work: Task::Fetch { url, .. }, .. } if url == &expected)));
+        }
+    }
+
+    #[test]
     fn same_title_shelf_captions_lead_with_the_distinguishing_edition() {
         let mut english = publication("Poems", vec![]);
         english.language = Some("en".into());
@@ -6452,18 +6505,31 @@ Please read this before you distribute or use this work.\n";
             ],
             ..Feed::default()
         };
-        let resolved = Gutenbird::resolve_entry(&feed).expect("collapses to one book");
-        assert_eq!(
-            resolved.acquisition[0].length,
-            Some(558_547),
-            "took the edition that crashed the reader"
-        );
+        assert!(Gutenbird::resolve_entry(&feed).is_none());
+        let mut runner = AppRunner::new(Gutenbird {
+            open: Some(feed.publications[0].clone()),
+            view: View::Details,
+            ..Gutenbird::default()
+        });
+        let commands = runner.action(action_id("read"));
+        assert!(!commands
+            .iter()
+            .any(|command| matches!(command, Command::Spawn { .. })));
+        assert!(runner
+            .app()
+            .failed
+            .as_deref()
+            .unwrap()
+            .contains("too large"));
+        runner.app_mut().open = Some(feed.publications[1].clone());
+        let commands = runner.action(action_id("read"));
+        assert!(commands.iter().any(|command| matches!(command,
+            Command::Spawn { work: Task::Fetch { url, .. }, .. } if url.ends_with(".noimages"))));
     }
 
     #[test]
-    fn an_illustrated_edition_small_enough_to_read_is_still_preferred() {
-        // The ceiling is not a preference for plainness. A book whose plates
-        // fit is still the better book.
+    fn an_illustrated_edition_is_not_silently_chosen() {
+        // Both editions fit; the choice belongs to the reader.
         let feed = Feed {
             publications: vec![
                 publication(
@@ -6483,8 +6549,7 @@ Please read this before you distribute or use this work.\n";
             ],
             ..Feed::default()
         };
-        let resolved = Gutenbird::resolve_entry(&feed).expect("collapses to one book");
-        assert!(resolved.acquisition[0].href.contains(".images"));
+        assert!(Gutenbird::resolve_entry(&feed).is_none());
     }
 
     #[test]

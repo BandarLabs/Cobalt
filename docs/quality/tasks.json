@@ -1691,13 +1691,14 @@
     "pr": 3,
     "group": "Gutenbird",
     "task": "Clarify edition and language choices",
-    "status": "todo",
+    "status": "done",
     "evidence": [
       "Detail header now shows the selected download format and readable language name, preserving region/script tags and unknown codes. Selection uses Publication::best_acquisition, matching the downloader.",
       "88 app tests and strict Clippy pass; runtime-font detail captures refreshed and inspected. Explicit edition/language selection remains to be completed, so this task stays open.",
       "Entry resolution no longer collapses same-title publications with different authors, languages, publishers or issued dates. Unknown and known language are kept distinct. All 89 app tests and strict Clippy pass, including existing illustrated/plain edition behavior.",
       "Same-title shelf captions now lead with differing language, publisher or issued date, including explicit missing metadata. Ordinary author/source captions remain unchanged. All 90 tests and strict Clippy pass; runtime-font two-language fixture captured and inspected in docs/quality/evidence/gutenbird-editions/language-choices.png.",
-      "Added an explicit paged download picker for readable, available EPUB/plain-text links within an entry. URL-specific saved positions and offline copies are retained when switching; sample labels, stated sizes and link titles are shown. All 92 app tests and strict Clippy pass, including correct fetch URL, offline reuse, busy-state protection, filtering and pagination. Runtime-font fixture screenshot inspected in docs/quality/evidence/gutenbird-formats/download-choices.png. Illustrated/plain entry resolution still needs an explicit choice; task remains open."
+      "Added an explicit paged download picker for readable, available EPUB/plain-text links within an entry. URL-specific saved positions and offline copies are retained when switching; sample labels, stated sizes and link titles are shown. All 92 app tests and strict Clippy pass, including correct fetch URL, offline reuse, busy-state protection, filtering and pagination. Runtime-font fixture screenshot inspected in docs/quality/evidence/gutenbird-formats/download-choices.png. Illustrated/plain entry resolution still needs an explicit choice; task remains open.",
+      "Completed edition selection: only single-publication documents open directly; multiple editions remain selectable on the shelf. Catalog image notices supply No images/With images labels; other choices use stated download titles or edition numbers. Saved Gutenberg entry fixture verifies both choices and their requested URLs. Oversized selected downloads are rejected before spawning a fetch. All 93 app tests and strict Clippy pass; runtime-font edition-choices.png inspected. Together with the language shelf and format-picker evidence above, this completes GUTEN-02."
     ]
   },
   {

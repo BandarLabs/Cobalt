@@ -102,8 +102,13 @@ labels, catalog-provided titles and sizes where supplied. Selecting a link
 returns to the book details; **Read** uses that download's offline copy and
 saved position. Switching formats does not overwrite the other copy. Downloads
 that exceed the device limit, require purchase or are unavailable are excluded.
-This picker chooses formats within an entry; illustrated/plain entries that
-are collapsed by catalog entry resolution still need a separate edition choice.
+A catalog response containing multiple editions opens a shelf of choices,
+even when all titles match. Image-edition notices appear as **No images** or
+**With images**; other editions use the catalog's download title or an edition
+number. The full notice remains in the book details. An oversized download is
+refused before fetching, with guidance to choose another download or edition.
+
+![Image edition choices from the saved Gutenberg entry fixture](../../docs/quality/evidence/gutenbird-editions/edition-choices.png)
 
 ![Download choices rendered from an original fixture with runtime fonts](../../docs/quality/evidence/gutenbird-formats/download-choices.png)
 
