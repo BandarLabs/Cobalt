@@ -2291,3 +2291,13 @@ All three harnesses pass at normal and 170% text size. A deliberate executable
 replacement was correctly rejected. Refreshed screenshots and result metadata
 are in the corresponding evidence directories. These remain offline presentation
 checks, not live matchmaking, session-restart transport or hardware acceptance.
+
+Offline stream fixture transport: debug simulator builds can route one exact
+HTTPS origin to a numeric loopback endpoint while preserving TLS verification,
+HTTP framing and runtime credential policy. Other destinations fail closed.
+The new integration test passes real GET, authenticated POST and retained
+NDJSON requests and checks Host/SNI preservation and destination refusal.
+All 104 kobo-net tests pass (91 unit, 13 integration); strict all-target
+Clippy and release-profile checks pass for kobo-net and kobo-sim.
+LICHESS-05 stays open until the actual
+app completes and resumes a fixture game through this transport.

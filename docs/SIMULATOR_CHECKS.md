@@ -125,3 +125,32 @@ Rebuild `kobo-cli` after SDK, protocol, policy or simulator changes before runni
 app fixtures. Protocol 14 task tag 4 requires a matching beta runtime. A server
 receiving a request is not proof that the app received its acknowledgement; test
 lost responses and reconciliation before calling a sync feature complete.
+
+## Offline HTTP stream fixtures
+
+Debug simulator builds accept `KOBO_SIM_HTTP_FIXTURE=hostname=127.0.0.1:port`
+(or a numeric IPv6 loopback socket). This routes that hostname's HTTPS port 443
+to a local fixture server. Every other host and port is refused, including
+redirect targets; there is no fallback to the public network. Requests keep
+their original URL, Host header and TLS server name. Certificate verification,
+credential policy, response limits, cancellation and retained stream parsing
+use the normal runtime paths.
+
+The fixture server must present a certificate for the original hostname.
+Put its test CA in a private `KOBO_SIM_TRUST_DIR`, and use a private `TMPDIR`
+with synthetic credentials and stores. Do not set `KOBO_SIM_OFFLINE`: that
+separate switch disables requests altogether. Invalid fixture configuration
+also disables requests and prints a diagnostic. Release builds do not contain
+the routing hook and refuse fixture-mode networking. Restart the simulator to
+change the endpoint; configuration is fixed before the first TLS request.
+
+The transport acceptance test can be run with:
+
+```sh
+cargo +1.85.1 test -p kobo-net --test fixture_endpoint
+```
+
+It runs real TLS GET, authenticated POST and retained NDJSON requests, checks
+the original Host header and TLS server name, and verifies that unlisted
+hosts and ports are denied. This is infrastructure for complete app fixtures;
+it does not by itself prove a Lichess match or saved-session restart.

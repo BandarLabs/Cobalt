@@ -24,6 +24,8 @@
 //! requests and Kobo-specific TLS roots stay visible, while Rustls uses its
 //! maintained ring provider instead of an experimental provider.
 
+#[cfg(debug_assertions)]
+pub mod fixture;
 pub mod gzip;
 mod lines;
 pub mod pem;
@@ -1505,6 +1507,10 @@ fn connect(address: &Address, cancelled: &dyn Fn() -> bool) -> Result<Held, Task
 
 fn connect_socket(address: &Address, cancelled: &dyn Fn() -> bool) -> Result<TcpStream, TaskError> {
     let deadline = Instant::now() + CONNECT_TIMEOUT;
+    #[cfg(debug_assertions)]
+    if let Some(destination) = fixture::destination(address) {
+        return connect_resolved(&[destination?], deadline, cancelled);
+    }
     let addresses = resolve_addresses(resolver_service()?, address, deadline, cancelled)?;
     connect_resolved(&addresses, deadline, cancelled)
 }
