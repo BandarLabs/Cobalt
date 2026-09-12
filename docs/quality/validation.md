@@ -2517,3 +2517,19 @@ Clara BW hardware acceptance remains a separate gate.
 - [Offline reopened page](evidence/gutenbird-offline/default/03-offline-reopened.png)
 
 **496 tasks: 248 completed, 247 open, one deferred.**
+
+
+### Public catalog provider setup (partial GUTEN-05)
+
+The shared provider flow now has `ProviderSetup::public(service)`. It preserves
+an endpoint's trailing slash and query, omits account entry and credentials,
+and exposes a bounded response for application validation. Existing account
+providers retain their base-address and fixed-probe behavior. Tests check the
+actual fetch command, URL preservation, missing credential, validation gate,
+cancellation and rejection of malformed addresses without replacing the previous
+address or echoing private values.
+
+All 165 SDK tests and strict all-target Clippy pass. SDK.md documents usage.
+Gutenbird has not yet adopted this mode: OPDS response validation before saving,
+app integration and corresponding setup screenshots remain under GUTEN-05.
+No checklist item was closed by this prerequisite change.

@@ -1728,7 +1728,9 @@
     "group": "Gutenbird",
     "task": "Reuse shared provider setup",
     "status": "todo",
-    "evidence": []
+    "evidence": [
+      "Added ProviderSetup::public to the SDK as the required public-catalog setup mode. It retains the exact HTTPS endpoint path/trailing slash/query, hides account entry, sends no credential and keeps response validation/cancellation shared. All 165 SDK tests and strict Clippy pass. SDK.md documents the API. Gutenbird integration, OPDS validation before saving and simulator setup screenshots remain open."
+    ]
   },
   {
     "id": "GUTEN-06",

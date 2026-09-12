@@ -1021,6 +1021,26 @@ A save acknowledgement confirms storage, not a successful connection. Validate
 the provider response before showing Connected. See
 [Panels' server flow](apps/panels/src/server.rs).
 
+### Public library setup
+
+Use `ProviderSetup::public("catalog")` for a public HTTPS catalog or library
+endpoint. It reuses the address editor, connection check, cancellation and
+response-validation flow without offering account entry or sending a credential.
+Unlike an authenticated provider's base address, a public endpoint is fetched
+exactly as entered, preserving its path, trailing slash and query. The response
+is bounded to 256 KiB. HTTP, user information in the URL and fragments are refused.
+
+```rust
+let mut setup = kobo_sdk::provider::ProviderSetup::public("catalog")?;
+setup.restore_address("https://library.example/opds/?language=en")?;
+```
+
+Handle `provider::Event::Response(bytes)` by parsing the expected catalog format.
+Only call `setup.verified()` and persist the address after that validation.
+Call `setup.invalid_response()` for an HTML page or a malformed catalog. An
+HTTP success alone does not verify a library. Cancelled or superseded check
+responses are ignored by the shared flow.
+
 ### Owner trust roots
 
 Every request is HTTPS, verified against the public roots every browser
