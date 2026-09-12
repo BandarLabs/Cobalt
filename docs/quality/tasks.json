@@ -2062,8 +2062,10 @@
     "pr": 3,
     "group": "Lichess",
     "task": "Notice on the panel when a seek has already been matched",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "PR #181: the local TLS fixture drops every gameStart notification while matching the seek. At normal and 170% text sizes, the actual simulator app opens the matched board using its ten-second current-games check, with no account recheck and exactly one seek. The complete move, restart and draw flow also passes. 110 app tests and strict Clippy pass. Evidence: docs/quality/evidence/lichess-missed-start on beta-quality-apps-2. No public service or physical hardware was used."
+    ]
   },
   {
     "id": "LOGIC-01",
