@@ -2053,7 +2053,9 @@
     "group": "Lichess",
     "task": "Test complete fixture match and retained session state",
     "status": "todo",
-    "evidence": []
+    "evidence": [
+      "Partial PR #181 evidence: saved-online-session restart regression loads SDK store-save bytes into a fresh app, opens the board stream, restores authoritative moves and clears the saved record after the final board result. 108 app tests and strict Clippy pass. Full restarted simulator transport acceptance remains open. Evidence: lichess-todo-review/resume-result.json on beta-quality-apps-2."
+    ]
   },
   {
     "id": "LICHESS-06",
