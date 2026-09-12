@@ -43,6 +43,19 @@ const MTK_MARKERS: [&str; 4] = [
 ];
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(18);
 
+/// Whether the kernel has registered a real Bluetooth controller.
+///
+/// Takes the root so it can be tested without `/sys`. `/sys/class/bluetooth`
+/// existing is not enough: the directory is created by the kernel's
+/// Bluetooth subsystem itself, whether or not any controller ever attaches,
+/// so an empty directory is the same "no radio" case as a missing one. Each
+/// entry it does hold is created only when a controller registers, by any
+/// driver or vendor stack, which is why this one check covers every backend
+/// below rather than needing a variant per backend.
+fn adapter_present(root: &Path) -> bool {
+    std::fs::read_dir(root).is_ok_and(|mut entries| entries.next().is_some())
+}
+
 /// The MTK driver is not safely re-initialised by Nickel in the same boot.
 ///
 /// Once Cobalt changes or scans the MTK stack, panel hand-back must reboot
@@ -67,8 +80,22 @@ pub struct Bluetooth {
 
 impl Bluetooth {
     /// Opens a firmware Bluetooth control surface when one can be proven.
+    ///
+    /// Every backend below also requires [`adapter_present`]. The marker
+    /// files and tool binaries alone are not proof: a Libra H2O (which has no
+    /// Bluetooth radio at all) was found carrying two of the four MTK marker
+    /// paths as zero-byte stub files with epoch timestamps -- almost
+    /// certainly generic firmware-image scaffolding rather than a real
+    /// service -- which made this open the MTK D-Bus backend and then fail
+    /// every request against a destination nothing was ever listening on.
+    /// `/sys/class/bluetooth` carrying at least one adapter is the one signal
+    /// here that is not a name or a path a build process gets to leave behind
+    /// by accident: it is the kernel's own record that a controller attached.
     #[must_use]
     pub fn open() -> Option<Self> {
+        if !adapter_present(Path::new("/sys/class/bluetooth")) {
+            return None;
+        }
         let dbus = DBUS_TOOLS
             .into_iter()
             .map(Path::new)
@@ -84,16 +111,14 @@ impl Bluetooth {
                     scanning: Arc::new(AtomicBool::new(false)),
                 });
             }
-            if Path::new("/sys/class/bluetooth").exists() {
-                return Some(Self {
-                    backend: Backend::Dbus {
-                        tool: tool.to_path_buf(),
-                        bus: BLUEZ_BUS,
-                        mtk: false,
-                    },
-                    scanning: Arc::new(AtomicBool::new(false)),
-                });
-            }
+            return Some(Self {
+                backend: Backend::Dbus {
+                    tool: tool.to_path_buf(),
+                    bus: BLUEZ_BUS,
+                    mtk: false,
+                },
+                scanning: Arc::new(AtomicBool::new(false)),
+            });
         }
         BLUETOOTHCTL_TOOLS
             .into_iter()
@@ -762,8 +787,38 @@ fn clip(value: &str, bytes: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{classify, device_path, parse_ctl_devices, parse_managed_devices, property};
+    use super::{adapter_present, classify, device_path, parse_ctl_devices, parse_managed_devices, property};
     use kobo_protocol::BluetoothDeviceKind;
+    use std::fs;
+    use std::path::PathBuf;
+
+    fn root(name: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "kobo-bluetooth-adapter-{name}-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&path);
+        fs::create_dir_all(&path).expect("a test directory");
+        path
+    }
+
+    #[test]
+    fn an_empty_bluetooth_class_directory_is_no_adapter() {
+        // The bug this pins: a Libra H2O has /sys/class/bluetooth (the kernel
+        // creates it whether or not any controller ever attaches) but no
+        // hci0 inside it, and no real Bluetooth radio. Marker files and tool
+        // binaries existing elsewhere must not override this.
+        let root = root("empty");
+        assert!(!adapter_present(&root.join("does-not-exist")));
+        assert!(!adapter_present(&root));
+    }
+
+    #[test]
+    fn an_adapter_entry_is_found() {
+        let root = root("with-hci0");
+        fs::create_dir_all(root.join("hci0")).expect("an adapter directory");
+        assert!(adapter_present(&root));
+    }
 
     #[test]
     fn bluez_device_lines_are_deduplicated() {
