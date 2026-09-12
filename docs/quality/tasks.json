@@ -4248,8 +4248,11 @@
     "pr": 4,
     "group": "Provider connections",
     "task": "Fix secret/trust help exit status",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Secret/trust help and subcommand help return success without source discovery or reader access. Missing required arguments remain errors.",
+      "docs/quality/evidence/provider-help/result.json: 12 help invocations, 10 ambiguous/invalid argument refusals, missing-argument checks, and synthetic volume secret set/list/remove passed; strict all-target CLI Clippy passed."
+    ]
   },
   {
     "id": "SERVICECLI-02",

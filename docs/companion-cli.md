@@ -65,3 +65,17 @@ or mark setup steps complete. Replace placeholders such as `<address>` before
 running a command yourself.
 
 ![Lichess setup guide, rendered from the verified CLI output](quality/evidence/app-guides/lichess-guide.svg)
+
+## Credentials and certificates
+
+Use `kobo secret --help` for credential commands and `kobo trust --help` for
+private-server certificate commands. Help exits successfully without looking
+for local credentials or connecting to a reader. Missing required arguments
+still return an error.
+
+Choose exactly one destination: `--device ADDRESS` for a reader over the
+network, or `--volume PATH` for its mounted USB volume. Repeated or mixed
+destinations are refused. Use `--from PATH` once with `set`; it is not accepted
+with `list` or `remove`. Credential values belong in a private file, not in the
+command line. For the app's required token scope and provider link, open its
+setup guide, for example `kobo apps setup lichess`.

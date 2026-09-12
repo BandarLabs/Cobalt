@@ -21,7 +21,7 @@ A checked task requires implementation plus recorded validation. Physical measur
 
 The PR 1 implementation checklist is complete; CBR is deferred and COMIC-18 belongs to catalog integration in PR 2. This does not certify hardware accuracy: native sleep hands ownership back to the stock reader, and no generic kernel suspend, RTC wake or automatic cover-sleep backend is enabled. Physical acceptance moves ahead of PR 3: twenty app groups are validated as far as a simulator can speak for them, and panel latency, ghosting, touch accuracy and the live services each application talks to are not among those things.
 
-496 tracked tasks: 234 completed, 1 deferred by the owner, 261 open. Implementation in progress. Evidence is recorded per task in `tasks.json` and in [the validation log](validation.md).
+496 tracked tasks: 235 completed, 1 deferred by the owner, 260 open. Implementation in progress. Evidence is recorded per task in `tasks.json` and in [the validation log](validation.md).
 
 Design direction: the bar is a well-made iPad application, built for a panel that cannot animate. Familiar visual conventions per app, restrained controls, plain copy, full repaints and page turns rather than scrolling, and controls that do not move under a finger. Crossword follows printed crossword typography and grids. PR 3 takes the reading applications first, in the owner's order: Gutenbird, arXiv, Verses, Read Later, Frame, Sync, Lichess, Music Stand. Each pulls real data wherever the source permits it, and Lichess is the application the catalog is shown with, so it has to work against the live service rather than a fixture. Paperterm defaults to portrait with a physically scaled, denser terminal font; the measured grid takes precedence over forcing 80 columns.
 
@@ -666,7 +666,7 @@ Design direction: the bar is a well-made iPad application, built for a panel tha
 
 ## PR 4 · Provider connections
 
-- [ ] **SERVICECLI-01** Fix secret/trust help exit status.
+- [x] **SERVICECLI-01** Fix secret/trust help exit status.
 - [ ] **SERVICECLI-02** Provide per-app Connect service form.
 - [ ] **SERVICECLI-03** Use discovery and browser authentication where supported.
 - [ ] **SERVICECLI-04** Use labeled masked tokens with direct provider guidance otherwise.

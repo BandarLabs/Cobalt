@@ -2230,3 +2230,19 @@ all-target CLI Clippy passed. Evidence: `evidence/app-guides/result.json` and
 `terminal.txt`; reproduce with `scripts/quality/check-app-guides.py`.
 
 Setup persistence, named readers and account verification remain open.
+
+
+### Provider command help and destination selection (SERVICECLI-01)
+
+Secret and trust help now return success, including help for set/list/remove,
+without credential discovery or reader access. Missing arguments remain an
+error. Both parsers reject repeated/mixed destinations and repeated source
+paths; `--from` belongs to set only. Ambiguity is rejected before source reads
+or transfer dispatch.
+
+The built CLI passed 12 help calls, 10 argument refusal cases, two missing
+argument checks and a synthetic volume credential set/list/remove lifecycle.
+The installed synthetic value was verified and never appeared in command
+output. Strict all-target CLI Clippy passed. No real token, reader or service
+was used. Evidence: `evidence/provider-help/result.json` and help transcripts;
+reproduce with `scripts/quality/check-provider-help.py`.

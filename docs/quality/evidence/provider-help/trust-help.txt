@@ -1,0 +1,3 @@
+usage: kobo trust set <name> --from PATH (--device IP | --volume PATH)
+       kobo trust list (--device IP | --volume PATH)
+       kobo trust remove <name> (--device IP | --volume PATH)

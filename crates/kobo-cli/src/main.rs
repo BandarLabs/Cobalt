@@ -6266,14 +6266,17 @@ fn parse_secret(arguments: &[String]) -> Result<(SecretAction, SecretTarget), St
                 if !valid_device_host(&host) {
                     return Err("device host contains unsupported characters".to_owned());
                 }
-                target = Some(SecretTarget::Device(host));
+                select_secret_target(&mut target, SecretTarget::Device(host))?;
                 index += 2;
             }
             "--volume" => {
-                target = Some(SecretTarget::Volume(PathBuf::from(value()?)));
+                select_secret_target(&mut target, SecretTarget::Volume(PathBuf::from(value()?)))?;
                 index += 2;
             }
             "--from" => {
+                if verb != "set" || source.is_some() {
+                    return Err("Use --from once, with set only.".to_owned());
+                }
                 source = Some(PathBuf::from(value()?));
                 index += 2;
             }
@@ -6298,7 +6301,29 @@ fn parse_secret(arguments: &[String]) -> Result<(SecretAction, SecretTarget), St
     Ok((action, target))
 }
 
+fn provider_help_requested(arguments: &[String]) -> bool {
+    matches!(arguments, [help] if matches!(help.as_str(), "--help" | "-h" | "help"))
+        || matches!(arguments, [verb, help]
+            if matches!(verb.as_str(), "set" | "list" | "remove")
+                && matches!(help.as_str(), "--help" | "-h"))
+}
+
+fn select_secret_target(
+    target: &mut Option<SecretTarget>,
+    next: SecretTarget,
+) -> Result<(), String> {
+    if target.is_some() {
+        return Err("Choose one reader: use --device ADDRESS or --volume PATH once.".to_owned());
+    }
+    *target = Some(next);
+    Ok(())
+}
+
 fn secret_command(arguments: &[String]) -> Result<(), String> {
+    if provider_help_requested(arguments) {
+        println!("{SECRET_USAGE}");
+        return Ok(());
+    }
     let (action, target) = parse_secret(arguments)?;
     match (&action, &target) {
         (SecretAction::Set { name, source }, _) => {
@@ -6432,6 +6457,10 @@ const TRUST_USAGE: &str =
 /// PEM certificate rather than a credential, so unlike a secret it is checked
 /// for being one before it travels, and listing it is harmless.
 fn trust_command(arguments: &[String]) -> Result<(), String> {
+    if provider_help_requested(arguments) {
+        println!("{TRUST_USAGE}");
+        return Ok(());
+    }
     let (action, target) = parse_trust(arguments)?;
     match (action, target) {
         (SecretAction::Set { name, source }, target) => trust_set(&name, &source, &target),
@@ -6587,14 +6616,17 @@ fn parse_trust(arguments: &[String]) -> Result<(SecretAction, SecretTarget), Str
                 if !valid_device_host(&host) {
                     return Err("device host contains unsupported characters".to_owned());
                 }
-                target = Some(SecretTarget::Device(host));
+                select_secret_target(&mut target, SecretTarget::Device(host))?;
                 index += 2;
             }
             "--volume" => {
-                target = Some(SecretTarget::Volume(PathBuf::from(value()?)));
+                select_secret_target(&mut target, SecretTarget::Volume(PathBuf::from(value()?)))?;
                 index += 2;
             }
             "--from" => {
+                if verb != "set" || source.is_some() {
+                    return Err("Use --from once, with set only.".to_owned());
+                }
                 source = Some(PathBuf::from(value()?));
                 index += 2;
             }

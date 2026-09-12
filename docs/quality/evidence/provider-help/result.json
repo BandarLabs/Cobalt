@@ -1,0 +1,140 @@
+{
+  "status": "passed",
+  "cli_sha256": "48475213c631aeab257b96033c1435af9aa5d5ae73d54d11226b1a08da472710",
+  "checks": [
+    {
+      "args": [
+        "secret",
+        "--help"
+      ],
+      "exit": 0
+    },
+    {
+      "args": [
+        "secret",
+        "-h"
+      ],
+      "exit": 0
+    },
+    {
+      "args": [
+        "secret",
+        "help"
+      ],
+      "exit": 0
+    },
+    {
+      "args": [
+        "secret",
+        "set",
+        "--help"
+      ],
+      "exit": 0
+    },
+    {
+      "args": [
+        "secret",
+        "list",
+        "--help"
+      ],
+      "exit": 0
+    },
+    {
+      "args": [
+        "secret",
+        "remove",
+        "-h"
+      ],
+      "exit": 0
+    },
+    {
+      "command": "secret",
+      "refused": "kobo: Choose one reader: use --device ADDRESS or --volume PATH once."
+    },
+    {
+      "command": "secret",
+      "refused": "kobo: Choose one reader: use --device ADDRESS or --volume PATH once."
+    },
+    {
+      "command": "secret",
+      "refused": "kobo: Choose one reader: use --device ADDRESS or --volume PATH once."
+    },
+    {
+      "command": "secret",
+      "refused": "kobo: Use --from once, with set only."
+    },
+    {
+      "command": "secret",
+      "refused": "kobo: Use --from once, with set only."
+    },
+    {
+      "args": [
+        "trust",
+        "--help"
+      ],
+      "exit": 0
+    },
+    {
+      "args": [
+        "trust",
+        "-h"
+      ],
+      "exit": 0
+    },
+    {
+      "args": [
+        "trust",
+        "help"
+      ],
+      "exit": 0
+    },
+    {
+      "args": [
+        "trust",
+        "set",
+        "--help"
+      ],
+      "exit": 0
+    },
+    {
+      "args": [
+        "trust",
+        "list",
+        "--help"
+      ],
+      "exit": 0
+    },
+    {
+      "args": [
+        "trust",
+        "remove",
+        "-h"
+      ],
+      "exit": 0
+    },
+    {
+      "command": "trust",
+      "refused": "kobo: Choose one reader: use --device ADDRESS or --volume PATH once."
+    },
+    {
+      "command": "trust",
+      "refused": "kobo: Choose one reader: use --device ADDRESS or --volume PATH once."
+    },
+    {
+      "command": "trust",
+      "refused": "kobo: Choose one reader: use --device ADDRESS or --volume PATH once."
+    },
+    {
+      "command": "trust",
+      "refused": "kobo: Use --from once, with set only."
+    },
+    {
+      "command": "trust",
+      "refused": "kobo: Use --from once, with set only."
+    },
+    {
+      "synthetic_volume_lifecycle": "set/list/remove passed without printing value"
+    }
+  ],
+  "live_services_contacted": false
+}
