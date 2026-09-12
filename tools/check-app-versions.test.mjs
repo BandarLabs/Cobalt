@@ -595,6 +595,60 @@ test("no drive script in this tree counts as a release input", () => {
   assert.ok(seen > 30, `expected the shelf's drive scripts, found ${seen}`);
 });
 
+// A node the runtime only learned to draw in a later release is a floor on
+// which readers may install the app, and the protocol map cannot express it:
+// protocol 14 dates from 0.3.12, while the numbered board and the pencil board
+// arrived with 0.3.14. Crossword and Logic Pack were installable on 0.3.12 and
+// failed when their first board screen was encoded, which is a blank refusal
+// on a reader rather than a message anybody can act on.
+test("an app drawing a board the runtime learned late says which release it needs", () => {
+  const LATE_NODES = [
+    ["crossword_board", "0.3.14"],
+    ["pencil_board", "0.3.14"]
+  ];
+  const packages = [
+    ...readdirSync("apps", { withFileTypes: true }).map(e => ["apps", e]),
+    ...readdirSync("examples", { withFileTypes: true }).map(e => ["examples", e])
+  ].filter(([, entry]) => entry.isDirectory());
+
+  let checked = 0;
+  for (const [root, entry] of packages) {
+    const directory = `${root}/${entry.name}`;
+    let manifest;
+    try {
+      manifest = JSON.parse(readFileSync(`${directory}/cobalt-app.json`, "utf8"));
+    } catch {
+      continue;
+    }
+    let sources = "";
+    const walk = source => {
+      for (const file of readdirSync(source, { withFileTypes: true })) {
+        const path = `${source}/${file.name}`;
+        if (file.isDirectory()) {
+          walk(path);
+        } else if (file.name.endsWith(".rs")) {
+          sources += readFileSync(path, "utf8");
+        }
+      }
+    };
+    try {
+      walk(`${directory}/src`);
+    } catch {
+      continue;
+    }
+    for (const [node, floor] of LATE_NODES) {
+      if (!sources.includes(`${node}(`)) continue;
+      checked += 1;
+      assert.equal(
+        manifest.minimum_cobalt_version,
+        floor,
+        `${entry.name} draws ${node} and must declare minimum_cobalt_version ${floor}`
+      );
+    }
+  }
+  assert.ok(checked >= 2, `expected the board apps, found ${checked}`);
+});
+
 test("drive scripts do not count as unpublished Store catalog inputs", () => {
   const packageDirectories = new Map([
     ["kobo-todo", "examples/todo"],

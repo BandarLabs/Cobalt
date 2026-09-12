@@ -292,12 +292,12 @@
     },
     {
       "protocol_version": 14,
-      "reason": "Renderer-only improvements using existing wire messages: chess grids use joined alternating squares and visible selection borders; tile titles select the font that matches measured line geometry, preventing long book titles from overflowing. No protocol or action changes. Lichess is versioned separately for its application changes.",
+      "reason": "Renderer-only improvements using existing wire messages: chess grids use joined alternating squares and visible selection borders; tile titles are drawn at the size they were measured at, so a two line book title no longer overflows its cell and collide with the book beside it; crossword squares share one rule per line instead of two and are held to a printed square's size, and their letters are set in body rather than heading. No protocol, node or action changes. Applications whose own sources changed are versioned separately.",
       "files": [
         {
           "path": "crates/kobo-ui/src/lib.rs",
           "base_blob": "ee95176aef1432bdd0f9374f86eb313ae47a88aa",
-          "compatible_blob": "5e4b0c9a3264883fb77d79333156f6c9eae38d26"
+          "compatible_blob": "d9bdea2f409157d3f5b3c598afeb8c47120fb94a"
         }
       ]
     }
