@@ -13,6 +13,17 @@ use std::process::ExitCode;
 /// order they are stored in.
 const PUZZLE_ORDER: [usize; 4] = [3, 0, 1, 2];
 
+/// One line of the clue list: what a paper prints against a number, plus where
+/// tapping it puts the reader.
+struct ClueRow {
+    heading: Option<&'static str>,
+    clue: String,
+    detail: String,
+    first: usize,
+    down: bool,
+    number: u16,
+}
+
 const HELP: &str = "Fill the white squares\n\nRead an Across or Down clue and tap a square to enter its answer. Small corner numbers match the clue list. The shaded row or column is the active word.\n\nEnter one letter or the whole word. One letter advances within the word; a whole word fills from its first square. The outlined square above the keyboard is your target. Tap another square in that word to move. The arrow changes between Across and Down.\n\nUse More for Undo, Clear square, Check word, Reveal square and Restart. Checking reports incorrect and empty letters without changing them. Reveal and Restart ask first and can be undone. Assistance counts are retained.\n\nPuzzles keeps separate progress for all four puzzles. Starter, Easy and Medium are editorial guides based on size and vocabulary. Answers read across and down; the clues differ. Odds and ends has black squares; the other three are word squares.\n\nSaves are confirmed by storage. If a save fails, keep the app open and choose Retry save. Unreadable records are kept intact. Completed means you have solved that puzzle at least once; undo can reopen it.";
 #[derive(Clone, Copy, Default, Eq, PartialEq)]
 enum View {
@@ -108,7 +119,7 @@ impl Crossword {
             View::Puzzles => self.puzzles_screen(b, context),
             View::Board => self.board_screen(b),
             View::Entry => self.entry_screen(b),
-            View::Clues => self.clues_screen(b),
+            View::Clues => self.clues_screen(b, context),
             View::More => self.more_screen(b),
             View::Reveal => b
                 .confirmation(
@@ -293,21 +304,131 @@ impl Crossword {
         }
         entry.keyboard(&self.keyboard, "Enter").build()
     }
-    fn clues_screen(&self, mut b: ScreenBuilder) -> Screen {
-        let p = &PUZZLES[self.current];
-        let g = self.game();
-
-        let offset = self.clue_page * 2;
-        b = b
-            .top_bar(if g.position.down { "Down" } else { "Across" })
-            .top_bar_action("direction", if g.position.down { "→" } else { "↓" });
-        for n in offset..(offset + 2).min(p.side) {
-            let cell = if g.position.down { n } else { n * p.side };
-            let (title, text) = p.clue(cell, g.position.down);
-            b = b.button(format!("clue-{n}"), title).text(text);
+    /// Every clue the puzzle has, the way a paper prints them: Across first,
+    /// then Down, each against its own number.
+    ///
+    /// This listed two clues to a page, indexed by row and column, which only
+    /// worked while a grid held one entry per row. On a grid with black
+    /// squares row zero began on a black square, and opening the list took the
+    /// application down with it.
+    fn clue_rows(&self) -> Vec<ClueRow> {
+        let puzzle = &PUZZLES[self.current];
+        let game = self.game();
+        let solving = puzzle.run(game.position.selected, game.position.down);
+        let mut across_heading = true;
+        let mut down_heading = true;
+        let mut rows = Vec::new();
+        for entry in puzzle.entries() {
+            let heading = if entry.down {
+                std::mem::take(&mut down_heading).then_some("Down")
+            } else {
+                std::mem::take(&mut across_heading).then_some("Across")
+            };
+            let length = puzzle.run(entry.first, entry.down).len();
+            let here = entry.down == game.position.down && solving.first() == Some(&entry.first);
+            rows.push(ClueRow {
+                heading,
+                clue: puzzle.clue_of(&entry).to_owned(),
+                detail: if here {
+                    "Solving now".to_owned()
+                } else {
+                    format!("{length} letters")
+                },
+                first: entry.first,
+                down: entry.down,
+                number: u16::try_from(entry.number).unwrap_or(u16::MAX),
+            });
         }
-        b.action_bar([("clues-previous", "Previous"), ("clues-next", "Next")])
-            .build()
+        rows.sort_by_key(|row| (row.down, row.number));
+        // Sorting moved the headings, so they are placed again on whichever
+        // row now opens each direction.
+        let mut across_heading = true;
+        let mut down_heading = true;
+        for row in &mut rows {
+            row.heading = if row.down {
+                std::mem::take(&mut down_heading).then_some("Down")
+            } else {
+                std::mem::take(&mut across_heading).then_some("Across")
+            };
+        }
+        rows
+    }
+
+    fn clue_pages(&self, context: &Context) -> Vec<Vec<usize>> {
+        let rows = self.clue_rows();
+        let borrowed: Vec<(Option<&str>, &str, &str)> = rows
+            .iter()
+            .map(|row| (row.heading, row.clue.as_str(), row.detail.as_str()))
+            .collect();
+        let prefix = ScreenBuilder::new("crossword")
+            .top_bar("Clues")
+            .top_bar_action("board", "Grid")
+            .build();
+        let pages = context.paginate_rows_in_sections_under(
+            &borrowed,
+            true,
+            kobo_sdk::Position::AtTheFoot,
+            &prefix,
+        );
+        if pages.is_empty() {
+            vec![Vec::new()]
+        } else {
+            pages
+        }
+    }
+
+    fn clues_screen(&self, mut b: ScreenBuilder, context: &Context) -> Screen {
+        let rows = self.clue_rows();
+        let pages = self.clue_pages(context);
+        let page = self.clue_page.min(pages.len().saturating_sub(1));
+        b = b.top_bar("Clues").top_bar_action("board", "Grid");
+        for index in &pages[page] {
+            let row = &rows[*index];
+            if let Some(heading) = row.heading {
+                b = b.section(heading);
+            }
+            b = b.rows([(
+                format!("clue-{index}"),
+                row.clue.as_str(),
+                row.detail.as_str(),
+                kobo_sdk::RowLead::Number(row.number),
+            )]);
+        }
+        if pages.len() > 1 {
+            b = b
+                .page_position(
+                    u16::try_from(page + 1).unwrap_or(1),
+                    u16::try_from(pages.len()).unwrap_or(1),
+                )
+                .action_bar([("clues-previous", "Previous"), ("clues-next", "Next")]);
+        }
+        b.build()
+    }
+
+    fn clues_action(&mut self, context: &Context, action: ActionId) {
+        let is = |name: &str| action == action_id(name);
+
+        if is("clues-previous") {
+            self.clue_page = self.clue_page.saturating_sub(1);
+        } else if is("clues-next") {
+            self.clue_page =
+                (self.clue_page + 1).min(self.clue_pages(context).len().saturating_sub(1));
+        } else if is("board") {
+            self.view = View::Board;
+        } else {
+            let rows = self.clue_rows();
+            if let Some(row) = rows
+                .iter()
+                .enumerate()
+                .find(|(index, _)| is(&format!("clue-{index}")))
+                .map(|(_, row)| row)
+            {
+                self.game_mut().position.selected = row.first;
+                self.game_mut().position.down = row.down;
+                self.keyboard.clear();
+                self.view = View::Entry;
+            }
+        }
     }
     fn entry_action(&mut self, action: ActionId) {
         let p = &PUZZLES[self.current];
@@ -338,30 +459,6 @@ impl Crossword {
                     Err(message) => self.notice = Some(message.into()),
                 }
             }
-        }
-    }
-    fn clues_action(&mut self, action: ActionId) {
-        let p = &PUZZLES[self.current];
-        let is = |name: &str| action == action_id(name);
-
-        if is("direction") {
-            self.game_mut().position.down = !self.game().position.down;
-            self.clue_page = 0;
-        } else if is("clues-previous") {
-            self.clue_page = self.clue_page.saturating_sub(1);
-        } else if is("clues-next") {
-            self.clue_page = (self.clue_page + 1).min((p.side - 1) / 2);
-        } else if let Some(n) = (self.clue_page * 2..(self.clue_page * 2 + 2).min(p.side))
-            .find(|n| is(&format!("clue-{n}")))
-        {
-            let first = if self.game().position.down {
-                n
-            } else {
-                n * p.side
-            };
-            self.game_mut().position.selected = p.word(first, self.game().position.down)[0];
-            self.keyboard.clear();
-            self.view = View::Entry;
         }
     }
     fn more_action(&mut self, action: ActionId) {
@@ -580,7 +677,7 @@ impl KoboApp for Crossword {
                     }
                 }
                 View::Entry => self.entry_action(action),
-                View::Clues => self.clues_action(action),
+                View::Clues => self.clues_action(context, action),
                 View::More => self.more_action(action),
                 View::Reveal if is("confirm-reveal") => {
                     self.game_mut().reveal(p);
