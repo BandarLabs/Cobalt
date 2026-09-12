@@ -11,3 +11,5 @@ At the smallest legal square, up to three-character board marks can step down th
 The SDK also provides `grid_with_selection` for keypad toggles. A selected key adds an ink outline without expanding its text label. Its rendering regression verifies changed pixels stay inside the selected key and its hit rectangle remains stable.
 
 `Context::paginate_oriented(text, nav_bar, orientation)` measures interface prose for an app-requested orientation, retaining status and page-control space. Pair it with `Context::set_orientation` and `metrics().oriented(orientation)` for the rest of the view.
+
+Nonograms adoption also highlights the selected square’s matching clue gutters with the existing key field and ink outline. Selection is derived from the visible board cells, so panned absolute coordinates and clue action IDs are unchanged. A regression checks every selection in a panned 3×2 window and hit-tests the two highlighted clue targets. Actual app captures are recorded on the catalog branch.

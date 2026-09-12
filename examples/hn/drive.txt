@@ -1,0 +1,14 @@
+# What Hacker News does on a device with no network, which is what a Kobo is
+# most of the time. Deliberately offline: the route that needs the site is
+# scripts/quality/check-hn-sim.py, which brings its own.
+wait-for Top
+wait 900
+tap Saved
+wait-for Nothing saved yet
+wait 900
+tap Ask
+wait 900
+tap Show
+wait 900
+tap Top
+wait 900

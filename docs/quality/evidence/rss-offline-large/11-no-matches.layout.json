@@ -1,0 +1,269 @@
+{
+  "paints": 13,
+  "nodes": [
+    {
+      "kind": "StatusBand",
+      "x": 0,
+      "y": 0,
+      "width": 1072,
+      "height": 59,
+      "centre": {
+        "x": 536,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusClock",
+      "x": 47,
+      "y": 0,
+      "width": 134,
+      "height": 59,
+      "centre": {
+        "x": 114,
+        "y": 29
+      },
+      "action": null,
+      "lines": [
+        "07:12"
+      ]
+    },
+    {
+      "kind": "StatusBattery(Some(Percent(72)), false)",
+      "x": 955,
+      "y": 12,
+      "width": 70,
+      "height": 35,
+      "centre": {
+        "x": 990,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusSignal(Strong)",
+      "x": 896,
+      "y": 12,
+      "width": 35,
+      "height": 35,
+      "centre": {
+        "x": 913,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusBluetooth",
+      "x": 837,
+      "y": 12,
+      "width": 35,
+      "height": 35,
+      "centre": {
+        "x": 854,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "TopBar",
+      "x": 0,
+      "y": 59,
+      "width": 1072,
+      "height": 100,
+      "centre": {
+        "x": 536,
+        "y": 109
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Back",
+      "x": 47,
+      "y": 59,
+      "width": 100,
+      "height": 100,
+      "centre": {
+        "x": 97,
+        "y": 109
+      },
+      "action": 4294967295,
+      "lines": []
+    },
+    {
+      "kind": "BarGlyph(ActionId(3683784189), Trash)",
+      "x": 925,
+      "y": 59,
+      "width": 100,
+      "height": 100,
+      "centre": {
+        "x": 975,
+        "y": 109
+      },
+      "action": 3683784189,
+      "lines": [
+        "Unfollow"
+      ]
+    },
+    {
+      "kind": "BarGlyph(ActionId(3572655668), Refresh)",
+      "x": 801,
+      "y": 59,
+      "width": 100,
+      "height": 100,
+      "centre": {
+        "x": 851,
+        "y": 109
+      },
+      "action": 3572655668,
+      "lines": [
+        "Refresh"
+      ]
+    },
+    {
+      "kind": "TopBarTitle",
+      "x": 171,
+      "y": 69,
+      "width": 606,
+      "height": 79,
+      "centre": {
+        "x": 474,
+        "y": 108
+      },
+      "action": null,
+      "lines": [
+        "Results for quartz"
+      ]
+    },
+    {
+      "kind": "Divider",
+      "x": 0,
+      "y": 159,
+      "width": 1072,
+      "height": 4,
+      "centre": {
+        "x": 536,
+        "y": 161
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Banner(Info)",
+      "x": 47,
+      "y": 175,
+      "width": 978,
+      "height": 127,
+      "centre": {
+        "x": 536,
+        "y": 238
+      },
+      "action": null,
+      "lines": [
+        "1 unread of 1 article"
+      ]
+    },
+    {
+      "kind": "SplashGlyph(Circle)",
+      "x": 489,
+      "y": 584,
+      "width": 94,
+      "height": 94,
+      "centre": {
+        "x": 536,
+        "y": 631
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "SplashTitle",
+      "x": 169,
+      "y": 725,
+      "width": 733,
+      "height": 105,
+      "centre": {
+        "x": 535,
+        "y": 777
+      },
+      "action": null,
+      "lines": [
+        "Nothing here yet"
+      ]
+    },
+    {
+      "kind": "SplashText",
+      "x": 169,
+      "y": 877,
+      "width": 733,
+      "height": 158,
+      "centre": {
+        "x": 535,
+        "y": 956
+      },
+      "action": null,
+      "lines": [
+        "No saved articles match",
+        "this search."
+      ]
+    },
+    {
+      "kind": "Spacer",
+      "x": 0,
+      "y": 1306,
+      "width": 1072,
+      "height": 142,
+      "centre": {
+        "x": 536,
+        "y": 1377
+      },
+      "action": 2579088367,
+      "lines": []
+    },
+    {
+      "kind": "Divider",
+      "x": 0,
+      "y": 1306,
+      "width": 1072,
+      "height": 4,
+      "centre": {
+        "x": 536,
+        "y": 1308
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Button(ActionId(2579088367), Enabled, Normal)",
+      "x": 47,
+      "y": 1320,
+      "width": 978,
+      "height": 118,
+      "centre": {
+        "x": 536,
+        "y": 1379
+      },
+      "action": 2579088367,
+      "lines": [
+        "Change search"
+      ]
+    },
+    {
+      "kind": "InlineGlyph(Search, false)",
+      "x": 258,
+      "y": 1355,
+      "width": 47,
+      "height": 47,
+      "centre": {
+        "x": 281,
+        "y": 1378
+      },
+      "action": 2579088367,
+      "lines": []
+    }
+  ]
+}

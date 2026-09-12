@@ -1,0 +1,14 @@
+{
+  "status": "passed",
+  "scale": "110",
+  "fixture": "srd-corpus",
+  "checks": [
+    "every category the reference holds has a way in",
+    "bundled magic items are listed with their category and rarity",
+    "a 19-page rule is reachable to its last page",
+    "an empty category says why rather than blaming a filter",
+    "2024 conditions carry their text",
+    "a turn passed by accident is taken back",
+    "the table state of an evening survives a restart"
+  ]
+}

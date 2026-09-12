@@ -1,0 +1,42 @@
+{
+  "status": "passed",
+  "profile": "clara-bw-391",
+  "scale": "extra-large",
+  "basis": "actual-sdk-simulator-with-private-https-opds-and-original-epub",
+  "checks": [
+    "parsed catalog",
+    "authors and shelves navigation",
+    "book details",
+    "EPUB download",
+    "verified shelf publication",
+    "shared reader",
+    "saved position",
+    "forced restart and offline reopening",
+    "position save failure and retry",
+    "damaged download repair",
+    "on-screen setup with failed save and retry",
+    "HTTP authentication refusal",
+    "malformed catalog response",
+    "unreadable settings preserved with offline access",
+    "on-reader server-bound Basic account",
+    "authenticated catalog navigation and EPUB download"
+  ],
+  "requests": [
+    "/opds",
+    "/opds/authors",
+    "/opds/shelves",
+    "/books/river.epub",
+    "/books/river.epub",
+    "/opds",
+    "/denied",
+    "/invalid",
+    "/opds",
+    "/opds/authors",
+    "/books/river.epub"
+  ],
+  "authenticated_paths": [
+    "/opds",
+    "/opds/authors",
+    "/books/river.epub"
+  ]
+}

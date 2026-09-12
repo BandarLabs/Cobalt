@@ -1,0 +1,341 @@
+{
+  "paints": 6,
+  "nodes": [
+    {
+      "kind": "StatusBand",
+      "x": 0,
+      "y": 0,
+      "width": 1072,
+      "height": 59,
+      "centre": {
+        "x": 536,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusClock",
+      "x": 47,
+      "y": 0,
+      "width": 112,
+      "height": 59,
+      "centre": {
+        "x": 103,
+        "y": 29
+      },
+      "action": null,
+      "lines": [
+        "07:01"
+      ]
+    },
+    {
+      "kind": "StatusBattery(Some(Percent(72)), false)",
+      "x": 955,
+      "y": 12,
+      "width": 70,
+      "height": 35,
+      "centre": {
+        "x": 990,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusSignal(Strong)",
+      "x": 896,
+      "y": 12,
+      "width": 35,
+      "height": 35,
+      "centre": {
+        "x": 913,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusBluetooth",
+      "x": 837,
+      "y": 12,
+      "width": 35,
+      "height": 35,
+      "centre": {
+        "x": 854,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "TopBar",
+      "x": 0,
+      "y": 59,
+      "width": 1072,
+      "height": 100,
+      "centre": {
+        "x": 536,
+        "y": 109
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Back",
+      "x": 47,
+      "y": 59,
+      "width": 100,
+      "height": 100,
+      "centre": {
+        "x": 97,
+        "y": 109
+      },
+      "action": 4294967295,
+      "lines": []
+    },
+    {
+      "kind": "TopBarTitle",
+      "x": 171,
+      "y": 77,
+      "width": 854,
+      "height": 64,
+      "centre": {
+        "x": 598,
+        "y": 109
+      },
+      "action": null,
+      "lines": [
+        "Sudoku"
+      ]
+    },
+    {
+      "kind": "Divider",
+      "x": 0,
+      "y": 159,
+      "width": 1072,
+      "height": 4,
+      "centre": {
+        "x": 536,
+        "y": 161
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Heading(1)",
+      "x": 47,
+      "y": 175,
+      "width": 978,
+      "height": 112,
+      "centre": {
+        "x": 536,
+        "y": 231
+      },
+      "action": null,
+      "lines": [
+        "Not saved"
+      ]
+    },
+    {
+      "kind": "Secondary",
+      "x": 47,
+      "y": 299,
+      "width": 978,
+      "height": 50,
+      "centre": {
+        "x": 536,
+        "y": 324
+      },
+      "action": null,
+      "lines": [
+        "Free some storage, then retry."
+      ]
+    },
+    {
+      "kind": "Button(ActionId(3446652729), Enabled, Normal)",
+      "x": 374,
+      "y": 361,
+      "width": 324,
+      "height": 118,
+      "centre": {
+        "x": 536,
+        "y": 420
+      },
+      "action": 3446652729,
+      "lines": [
+        "Retry save"
+      ]
+    },
+    {
+      "kind": "Band",
+      "x": 47,
+      "y": 491,
+      "width": 978,
+      "height": 118,
+      "centre": {
+        "x": 536,
+        "y": 550
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Button(ActionId(1010949589), Enabled, Normal)",
+      "x": 176,
+      "y": 491,
+      "width": 219,
+      "height": 118,
+      "centre": {
+        "x": 285,
+        "y": 550
+      },
+      "action": 1010949589,
+      "lines": [
+        "Erase"
+      ]
+    },
+    {
+      "kind": "Button(ActionId(3626922417), Enabled, Normal)",
+      "x": 633,
+      "y": 491,
+      "width": 307,
+      "height": 118,
+      "centre": {
+        "x": 786,
+        "y": 550
+      },
+      "action": 3626922417,
+      "lines": [
+        "Check off"
+      ]
+    },
+    {
+      "kind": "Band",
+      "x": 47,
+      "y": 621,
+      "width": 978,
+      "height": 118,
+      "centre": {
+        "x": 536,
+        "y": 680
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Button(ActionId(1271400888), Enabled, Normal)",
+      "x": 164,
+      "y": 621,
+      "width": 242,
+      "height": 118,
+      "centre": {
+        "x": 285,
+        "y": 680
+      },
+      "action": 1271400888,
+      "lines": [
+        "Reveal"
+      ]
+    },
+    {
+      "kind": "Button(ActionId(2726617470), Enabled, Normal)",
+      "x": 691,
+      "y": 621,
+      "width": 190,
+      "height": 118,
+      "centre": {
+        "x": 786,
+        "y": 680
+      },
+      "action": 2726617470,
+      "lines": [
+        "New"
+      ]
+    },
+    {
+      "kind": "Band",
+      "x": 47,
+      "y": 751,
+      "width": 978,
+      "height": 118,
+      "centre": {
+        "x": 536,
+        "y": 810
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Button(ActionId(4271641068), Enabled, Normal)",
+      "x": 158,
+      "y": 751,
+      "width": 254,
+      "height": 118,
+      "centre": {
+        "x": 285,
+        "y": 810
+      },
+      "action": 4271641068,
+      "lines": [
+        "Restart"
+      ]
+    },
+    {
+      "kind": "Button(ActionId(3685020920), Enabled, Normal)",
+      "x": 687,
+      "y": 751,
+      "width": 199,
+      "height": 118,
+      "centre": {
+        "x": 786,
+        "y": 810
+      },
+      "action": 3685020920,
+      "lines": [
+        "View"
+      ]
+    },
+    {
+      "kind": "Spacer",
+      "x": 0,
+      "y": 1306,
+      "width": 1072,
+      "height": 142,
+      "centre": {
+        "x": 536,
+        "y": 1377
+      },
+      "action": 3268139107,
+      "lines": []
+    },
+    {
+      "kind": "Divider",
+      "x": 0,
+      "y": 1306,
+      "width": 1072,
+      "height": 4,
+      "centre": {
+        "x": 536,
+        "y": 1308
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Button(ActionId(3268139107), Enabled, Normal)",
+      "x": 47,
+      "y": 1320,
+      "width": 978,
+      "height": 118,
+      "centre": {
+        "x": 536,
+        "y": 1379
+      },
+      "action": 3268139107,
+      "lines": [
+        "Return to puzzle"
+      ]
+    }
+  ]
+}

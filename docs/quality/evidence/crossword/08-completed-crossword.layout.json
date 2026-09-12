@@ -1,0 +1,925 @@
+{
+  "paints": 43,
+  "nodes": [
+    {
+      "kind": "StatusBand",
+      "x": 0,
+      "y": 0,
+      "width": 1072,
+      "height": 59,
+      "centre": {
+        "x": 536,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusClock",
+      "x": 47,
+      "y": 0,
+      "width": 112,
+      "height": 59,
+      "centre": {
+        "x": 103,
+        "y": 29
+      },
+      "action": null,
+      "lines": [
+        "07:01"
+      ]
+    },
+    {
+      "kind": "StatusBattery(Some(Percent(72)), false)",
+      "x": 955,
+      "y": 12,
+      "width": 70,
+      "height": 35,
+      "centre": {
+        "x": 990,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusSignal(Strong)",
+      "x": 896,
+      "y": 12,
+      "width": 35,
+      "height": 35,
+      "centre": {
+        "x": 913,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusBluetooth",
+      "x": 837,
+      "y": 12,
+      "width": 35,
+      "height": 35,
+      "centre": {
+        "x": 854,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "TopBar",
+      "x": 0,
+      "y": 59,
+      "width": 1072,
+      "height": 100,
+      "centre": {
+        "x": 536,
+        "y": 109
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Back",
+      "x": 47,
+      "y": 59,
+      "width": 100,
+      "height": 100,
+      "centre": {
+        "x": 97,
+        "y": 109
+      },
+      "action": 4294967295,
+      "lines": []
+    },
+    {
+      "kind": "TopBarTitle",
+      "x": 171,
+      "y": 77,
+      "width": 854,
+      "height": 64,
+      "centre": {
+        "x": 598,
+        "y": 109
+      },
+      "action": null,
+      "lines": [
+        "Odds and ends"
+      ]
+    },
+    {
+      "kind": "Divider",
+      "x": 0,
+      "y": 159,
+      "width": 1072,
+      "height": 4,
+      "centre": {
+        "x": 536,
+        "y": 161
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Secondary",
+      "x": 47,
+      "y": 175,
+      "width": 978,
+      "height": 50,
+      "centre": {
+        "x": 536,
+        "y": 200
+      },
+      "action": null,
+      "lines": [
+        "Puzzle complete"
+      ]
+    },
+    {
+      "kind": "Spacer",
+      "x": 48,
+      "y": 237,
+      "width": 975,
+      "height": 975,
+      "centre": {
+        "x": 535,
+        "y": 724
+      },
+      "action": 2401847275,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(508360168), Crossword, false)",
+      "x": 48,
+      "y": 237,
+      "width": 195,
+      "height": 195,
+      "centre": {
+        "x": 145,
+        "y": 334
+      },
+      "action": 508360168,
+      "lines": []
+    },
+    {
+      "kind": "CellLabel(true)",
+      "x": 48,
+      "y": 237,
+      "width": 195,
+      "height": 195,
+      "centre": {
+        "x": 145,
+        "y": 334
+      },
+      "action": 508360168,
+      "lines": [
+        "C"
+      ]
+    },
+    {
+      "kind": "CellLabel(true)",
+      "x": 56,
+      "y": 245,
+      "width": 48,
+      "height": 32,
+      "centre": {
+        "x": 80,
+        "y": 261
+      },
+      "action": 508360168,
+      "lines": [
+        "1"
+      ]
+    },
+    {
+      "kind": "Cell(ActionId(525137787), Crossword, false)",
+      "x": 243,
+      "y": 237,
+      "width": 195,
+      "height": 195,
+      "centre": {
+        "x": 340,
+        "y": 334
+      },
+      "action": 525137787,
+      "lines": []
+    },
+    {
+      "kind": "CellLabel(true)",
+      "x": 243,
+      "y": 237,
+      "width": 195,
+      "height": 195,
+      "centre": {
+        "x": 340,
+        "y": 334
+      },
+      "action": 525137787,
+      "lines": [
+        "A"
+      ]
+    },
+    {
+      "kind": "CellLabel(true)",
+      "x": 251,
+      "y": 245,
+      "width": 48,
+      "height": 32,
+      "centre": {
+        "x": 275,
+        "y": 261
+      },
+      "action": 525137787,
+      "lines": [
+        "2"
+      ]
+    },
+    {
+      "kind": "Cell(ActionId(541915406), Crossword, false)",
+      "x": 438,
+      "y": 237,
+      "width": 195,
+      "height": 195,
+      "centre": {
+        "x": 535,
+        "y": 334
+      },
+      "action": 541915406,
+      "lines": []
+    },
+    {
+      "kind": "CellLabel(true)",
+      "x": 438,
+      "y": 237,
+      "width": 195,
+      "height": 195,
+      "centre": {
+        "x": 535,
+        "y": 334
+      },
+      "action": 541915406,
+      "lines": [
+        "T"
+      ]
+    },
+    {
+      "kind": "CellLabel(true)",
+      "x": 446,
+      "y": 245,
+      "width": 48,
+      "height": 32,
+      "centre": {
+        "x": 470,
+        "y": 261
+      },
+      "action": 541915406,
+      "lines": [
+        "3"
+      ]
+    },
+    {
+      "kind": "Cell(ActionId(558693025), CrosswordBlock, false)",
+      "x": 633,
+      "y": 237,
+      "width": 195,
+      "height": 195,
+      "centre": {
+        "x": 730,
+        "y": 334
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(575470644), CrosswordBlock, false)",
+      "x": 828,
+      "y": 237,
+      "width": 195,
+      "height": 195,
+      "centre": {
+        "x": 925,
+        "y": 334
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(592248263), Crossword, false)",
+      "x": 48,
+      "y": 432,
+      "width": 195,
+      "height": 195,
+      "centre": {
+        "x": 145,
+        "y": 529
+      },
+      "action": 592248263,
+      "lines": []
+    },
+    {
+      "kind": "CellLabel(true)",
+      "x": 48,
+      "y": 432,
+      "width": 195,
+      "height": 195,
+      "centre": {
+        "x": 145,
+        "y": 529
+      },
+      "action": 592248263,
+      "lines": [
+        "O"
+      ]
+    },
+    {
+      "kind": "CellLabel(true)",
+      "x": 56,
+      "y": 440,
+      "width": 48,
+      "height": 32,
+      "centre": {
+        "x": 80,
+        "y": 456
+      },
+      "action": 592248263,
+      "lines": [
+        "4"
+      ]
+    },
+    {
+      "kind": "Cell(ActionId(609025882), Crossword, false)",
+      "x": 243,
+      "y": 432,
+      "width": 195,
+      "height": 195,
+      "centre": {
+        "x": 340,
+        "y": 529
+      },
+      "action": 609025882,
+      "lines": []
+    },
+    {
+      "kind": "CellLabel(true)",
+      "x": 243,
+      "y": 432,
+      "width": 195,
+      "height": 195,
+      "centre": {
+        "x": 340,
+        "y": 529
+      },
+      "action": 609025882,
+      "lines": [
+        "R"
+      ]
+    },
+    {
+      "kind": "Cell(ActionId(625803501), Crossword, false)",
+      "x": 438,
+      "y": 432,
+      "width": 195,
+      "height": 195,
+      "centre": {
+        "x": 535,
+        "y": 529
+      },
+      "action": 625803501,
+      "lines": []
+    },
+    {
+      "kind": "CellLabel(true)",
+      "x": 438,
+      "y": 432,
+      "width": 195,
+      "height": 195,
+      "centre": {
+        "x": 535,
+        "y": 529
+      },
+      "action": 625803501,
+      "lines": [
+        "E"
+      ]
+    },
+    {
+      "kind": "Cell(ActionId(374139216), CrosswordBlock, false)",
+      "x": 633,
+      "y": 432,
+      "width": 195,
+      "height": 195,
+      "centre": {
+        "x": 730,
+        "y": 529
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(390916835), CrosswordBlock, false)",
+      "x": 828,
+      "y": 432,
+      "width": 195,
+      "height": 195,
+      "centre": {
+        "x": 925,
+        "y": 529
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(2435402513), Crossword, false)",
+      "x": 48,
+      "y": 627,
+      "width": 195,
+      "height": 195,
+      "centre": {
+        "x": 145,
+        "y": 724
+      },
+      "action": 2435402513,
+      "lines": []
+    },
+    {
+      "kind": "CellLabel(true)",
+      "x": 48,
+      "y": 627,
+      "width": 195,
+      "height": 195,
+      "centre": {
+        "x": 145,
+        "y": 724
+      },
+      "action": 2435402513,
+      "lines": [
+        "W"
+      ]
+    },
+    {
+      "kind": "CellLabel(true)",
+      "x": 56,
+      "y": 635,
+      "width": 48,
+      "height": 32,
+      "centre": {
+        "x": 80,
+        "y": 651
+      },
+      "action": 2435402513,
+      "lines": [
+        "5"
+      ]
+    },
+    {
+      "kind": "Cell(ActionId(2418624894), Crossword, false)",
+      "x": 243,
+      "y": 627,
+      "width": 195,
+      "height": 195,
+      "centre": {
+        "x": 340,
+        "y": 724
+      },
+      "action": 2418624894,
+      "lines": []
+    },
+    {
+      "kind": "CellLabel(true)",
+      "x": 243,
+      "y": 627,
+      "width": 195,
+      "height": 195,
+      "centre": {
+        "x": 340,
+        "y": 724
+      },
+      "action": 2418624894,
+      "lines": [
+        "E"
+      ]
+    },
+    {
+      "kind": "Cell(ActionId(2401847275), Crossword, false)",
+      "x": 438,
+      "y": 627,
+      "width": 195,
+      "height": 195,
+      "centre": {
+        "x": 535,
+        "y": 724
+      },
+      "action": 2401847275,
+      "lines": []
+    },
+    {
+      "kind": "CellLabel(true)",
+      "x": 438,
+      "y": 627,
+      "width": 195,
+      "height": 195,
+      "centre": {
+        "x": 535,
+        "y": 724
+      },
+      "action": 2401847275,
+      "lines": [
+        "D"
+      ]
+    },
+    {
+      "kind": "Cell(ActionId(2385069656), Crossword, false)",
+      "x": 633,
+      "y": 627,
+      "width": 195,
+      "height": 195,
+      "centre": {
+        "x": 730,
+        "y": 724
+      },
+      "action": 2385069656,
+      "lines": []
+    },
+    {
+      "kind": "CellLabel(true)",
+      "x": 633,
+      "y": 627,
+      "width": 195,
+      "height": 195,
+      "centre": {
+        "x": 730,
+        "y": 724
+      },
+      "action": 2385069656,
+      "lines": [
+        "G"
+      ]
+    },
+    {
+      "kind": "CellLabel(true)",
+      "x": 641,
+      "y": 635,
+      "width": 48,
+      "height": 32,
+      "centre": {
+        "x": 665,
+        "y": 651
+      },
+      "action": 2385069656,
+      "lines": [
+        "6"
+      ]
+    },
+    {
+      "kind": "Cell(ActionId(2502512989), Crossword, false)",
+      "x": 828,
+      "y": 627,
+      "width": 195,
+      "height": 195,
+      "centre": {
+        "x": 925,
+        "y": 724
+      },
+      "action": 2502512989,
+      "lines": []
+    },
+    {
+      "kind": "CellLabel(true)",
+      "x": 828,
+      "y": 627,
+      "width": 195,
+      "height": 195,
+      "centre": {
+        "x": 925,
+        "y": 724
+      },
+      "action": 2502512989,
+      "lines": [
+        "E"
+      ]
+    },
+    {
+      "kind": "CellLabel(true)",
+      "x": 836,
+      "y": 635,
+      "width": 48,
+      "height": 32,
+      "centre": {
+        "x": 860,
+        "y": 651
+      },
+      "action": 2502512989,
+      "lines": [
+        "7"
+      ]
+    },
+    {
+      "kind": "Cell(ActionId(2485735370), CrosswordBlock, false)",
+      "x": 48,
+      "y": 822,
+      "width": 195,
+      "height": 195,
+      "centre": {
+        "x": 145,
+        "y": 919
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(2468957751), CrosswordBlock, false)",
+      "x": 243,
+      "y": 822,
+      "width": 195,
+      "height": 195,
+      "centre": {
+        "x": 340,
+        "y": 919
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(2452180132), Crossword, false)",
+      "x": 438,
+      "y": 822,
+      "width": 195,
+      "height": 195,
+      "centre": {
+        "x": 535,
+        "y": 919
+      },
+      "action": 2452180132,
+      "lines": []
+    },
+    {
+      "kind": "CellLabel(true)",
+      "x": 438,
+      "y": 822,
+      "width": 195,
+      "height": 195,
+      "centre": {
+        "x": 535,
+        "y": 919
+      },
+      "action": 2452180132,
+      "lines": [
+        "D"
+      ]
+    },
+    {
+      "kind": "CellLabel(true)",
+      "x": 446,
+      "y": 830,
+      "width": 48,
+      "height": 32,
+      "centre": {
+        "x": 470,
+        "y": 846
+      },
+      "action": 2452180132,
+      "lines": [
+        "8"
+      ]
+    },
+    {
+      "kind": "Cell(ActionId(2301181561), Crossword, false)",
+      "x": 633,
+      "y": 822,
+      "width": 195,
+      "height": 195,
+      "centre": {
+        "x": 730,
+        "y": 919
+      },
+      "action": 2301181561,
+      "lines": []
+    },
+    {
+      "kind": "CellLabel(true)",
+      "x": 633,
+      "y": 822,
+      "width": 195,
+      "height": 195,
+      "centre": {
+        "x": 730,
+        "y": 919
+      },
+      "action": 2301181561,
+      "lines": [
+        "O"
+      ]
+    },
+    {
+      "kind": "Cell(ActionId(2284403942), Crossword, false)",
+      "x": 828,
+      "y": 822,
+      "width": 195,
+      "height": 195,
+      "centre": {
+        "x": 925,
+        "y": 919
+      },
+      "action": 2284403942,
+      "lines": []
+    },
+    {
+      "kind": "CellLabel(true)",
+      "x": 828,
+      "y": 822,
+      "width": 195,
+      "height": 195,
+      "centre": {
+        "x": 925,
+        "y": 919
+      },
+      "action": 2284403942,
+      "lines": [
+        "M"
+      ]
+    },
+    {
+      "kind": "Cell(ActionId(388783258), CrosswordBlock, false)",
+      "x": 48,
+      "y": 1017,
+      "width": 195,
+      "height": 195,
+      "centre": {
+        "x": 145,
+        "y": 1114
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(405560877), CrosswordBlock, false)",
+      "x": 243,
+      "y": 1017,
+      "width": 195,
+      "height": 195,
+      "centre": {
+        "x": 340,
+        "y": 1114
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(355228020), Crossword, true)",
+      "x": 438,
+      "y": 1017,
+      "width": 195,
+      "height": 195,
+      "centre": {
+        "x": 535,
+        "y": 1114
+      },
+      "action": 355228020,
+      "lines": []
+    },
+    {
+      "kind": "CellLabel(true)",
+      "x": 438,
+      "y": 1017,
+      "width": 195,
+      "height": 195,
+      "centre": {
+        "x": 535,
+        "y": 1114
+      },
+      "action": 355228020,
+      "lines": [
+        "Y"
+      ]
+    },
+    {
+      "kind": "CellLabel(true)",
+      "x": 446,
+      "y": 1025,
+      "width": 48,
+      "height": 32,
+      "centre": {
+        "x": 470,
+        "y": 1041
+      },
+      "action": 355228020,
+      "lines": [
+        "9"
+      ]
+    },
+    {
+      "kind": "Cell(ActionId(372005639), Crossword, true)",
+      "x": 633,
+      "y": 1017,
+      "width": 195,
+      "height": 195,
+      "centre": {
+        "x": 730,
+        "y": 1114
+      },
+      "action": 372005639,
+      "lines": []
+    },
+    {
+      "kind": "CellLabel(true)",
+      "x": 633,
+      "y": 1017,
+      "width": 195,
+      "height": 195,
+      "centre": {
+        "x": 730,
+        "y": 1114
+      },
+      "action": 372005639,
+      "lines": [
+        "O"
+      ]
+    },
+    {
+      "kind": "Cell(ActionId(321672782), Crossword, true)",
+      "x": 828,
+      "y": 1017,
+      "width": 195,
+      "height": 195,
+      "centre": {
+        "x": 925,
+        "y": 1114
+      },
+      "action": 321672782,
+      "lines": []
+    },
+    {
+      "kind": "CellLabel(true)",
+      "x": 828,
+      "y": 1017,
+      "width": 195,
+      "height": 195,
+      "centre": {
+        "x": 925,
+        "y": 1114
+      },
+      "action": 321672782,
+      "lines": [
+        "U"
+      ]
+    },
+    {
+      "kind": "NavBar",
+      "x": 0,
+      "y": 1306,
+      "width": 1072,
+      "height": 142,
+      "centre": {
+        "x": 536,
+        "y": 1377
+      },
+      "action": 3897901536,
+      "lines": []
+    },
+    {
+      "kind": "Divider",
+      "x": 0,
+      "y": 1306,
+      "width": 1072,
+      "height": 4,
+      "centre": {
+        "x": 536,
+        "y": 1308
+      },
+      "action": 3897901536,
+      "lines": []
+    },
+    {
+      "kind": "NavDestination(ActionId(2553763873), None)",
+      "x": 0,
+      "y": 1306,
+      "width": 536,
+      "height": 142,
+      "centre": {
+        "x": 268,
+        "y": 1377
+      },
+      "action": 2553763873,
+      "lines": [
+        "Clues"
+      ]
+    },
+    {
+      "kind": "NavDestination(ActionId(3897901536), None)",
+      "x": 536,
+      "y": 1306,
+      "width": 536,
+      "height": 142,
+      "centre": {
+        "x": 804,
+        "y": 1377
+      },
+      "action": 3897901536,
+      "lines": [
+        "More"
+      ]
+    }
+  ]
+}

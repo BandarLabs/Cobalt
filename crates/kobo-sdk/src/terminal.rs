@@ -685,7 +685,7 @@ mod tests {
             .iter()
             .find(|node| node.kind == LayoutKind::TerminalGrid)
             .expect("terminal grid");
-        let (cell_width, cell_height) = mono_cell(FontSize::Caption);
+        let (cell_width, cell_height) = mono_cell(FontSize::Terminal);
         assert_eq!(
             terminal_grid(terminal.rect.width, terminal.rect.height),
             negotiated,

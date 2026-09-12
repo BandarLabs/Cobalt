@@ -1,0 +1,256 @@
+{
+  "simulation": {
+    "profile": {
+      "id": "clara-bw-391",
+      "model": "Kobo Clara BW",
+      "width": 1072,
+      "height": 1448,
+      "pixelsPerInch": 300,
+      "rotation": 3,
+      "colourPanel": false,
+      "touch": {
+        "name": "cyttsp5_mt",
+        "xMin": 0,
+        "xMax": 1447,
+        "yMin": 0,
+        "yMax": 1071
+      }
+    },
+    "scenario": "normal",
+    "lifecycle": "foreground",
+    "transition": {
+      "waveform": "GL16",
+      "full": false,
+      "refresh": 5,
+      "dirty": 429505,
+      "regions": [
+        {
+          "waveform": "GL16",
+          "region": {
+            "x": 0,
+            "y": 8,
+            "width": 1072,
+            "height": 1136
+          }
+        },
+        {
+          "waveform": "GL16",
+          "region": {
+            "x": 168,
+            "y": 1176,
+            "width": 64,
+            "height": 32
+          }
+        },
+        {
+          "waveform": "GL16",
+          "region": {
+            "x": 168,
+            "y": 1232,
+            "width": 416,
+            "height": 48
+          }
+        },
+        {
+          "waveform": "GL16",
+          "region": {
+            "x": 0,
+            "y": 1304,
+            "width": 1072,
+            "height": 8
+          }
+        },
+        {
+          "waveform": "GL16",
+          "region": {
+            "x": 168,
+            "y": 1360,
+            "width": 704,
+            "height": 32
+          }
+        }
+      ],
+      "region": {
+        "x": 0,
+        "y": 8,
+        "width": 1072,
+        "height": 1384
+      }
+    },
+    "refreshCount": 5,
+    "dirtyPixelsSinceClean": 429505,
+    "touch": {
+      "display": {
+        "x": 536,
+        "y": 354
+      },
+      "raw": {
+        "x": 354,
+        "y": 535
+      }
+    },
+    "panelApproximation": true,
+    "panel": {
+      "mode": "automatic",
+      "status": "idle",
+      "contentsKnown": true,
+      "visibleFrame": "last confirmed completion with approximate residue",
+      "queued": false,
+      "submitted": "5",
+      "completed": "5",
+      "failures": "0",
+      "submissionMarker": null,
+      "submittedAtMillis": "1851",
+      "finishedAtMillis": "1879",
+      "timing": "host control observations; not hardware calibration"
+    },
+    "observation": null,
+    "backends": [
+      "network",
+      "battery-read",
+      "frontlight-control",
+      "wifi-control",
+      "library",
+      "cover-sensor"
+    ],
+    "navigation": {
+      "mode": "single-app",
+      "app": "panels",
+      "processId": null,
+      "hosted": []
+    },
+    "appStore": {
+      "mode": "catalog-preview",
+      "signedTransactions": false
+    },
+    "clock": {
+      "mode": "manual",
+      "unixMillis": "1788850860000",
+      "monotonicMillis": "0",
+      "utcOffsetMinutes": 0,
+      "date": "2026-09-08"
+    },
+    "input": {
+      "source": "synthetic evdev replay",
+      "rawEvents": "7",
+      "quiescent": true,
+      "needsResynchronization": false,
+      "forwardKey": 194
+    },
+    "power": null,
+    "hardware": {
+      "batteryPercent": 72,
+      "charging": false,
+      "frontlightPercent": 20,
+      "coverClosed": false,
+      "orientation": "portrait",
+      "frontlightAppearanceCalibrated": false,
+      "orientationControl": "display-composition"
+    }
+  },
+  "layout": {
+    "paints": 5,
+    "nodes": [
+      {
+        "kind": "TopBar",
+        "x": 0,
+        "y": 0,
+        "width": 1072,
+        "height": 100,
+        "centre": {
+          "x": 536,
+          "y": 50
+        },
+        "action": null,
+        "lines": []
+      },
+      {
+        "kind": "Back",
+        "x": 47,
+        "y": 0,
+        "width": 100,
+        "height": 100,
+        "centre": {
+          "x": 97,
+          "y": 50
+        },
+        "action": 4294967295,
+        "lines": []
+      },
+      {
+        "kind": "BarAction(ActionId(487004783))",
+        "x": 793,
+        "y": 0,
+        "width": 232,
+        "height": 100,
+        "centre": {
+          "x": 909,
+          "y": 50
+        },
+        "action": 487004783,
+        "lines": [
+          "Reading"
+        ]
+      },
+      {
+        "kind": "TopBarTitle",
+        "x": 171,
+        "y": 18,
+        "width": 598,
+        "height": 64,
+        "centre": {
+          "x": 470,
+          "y": 50
+        },
+        "action": null,
+        "lines": [
+          "A small garden"
+        ]
+      },
+      {
+        "kind": "Divider",
+        "x": 0,
+        "y": 100,
+        "width": 1072,
+        "height": 4,
+        "centre": {
+          "x": 536,
+          "y": 102
+        },
+        "action": null,
+        "lines": []
+      },
+      {
+        "kind": "Secondary",
+        "x": 47,
+        "y": 116,
+        "width": 978,
+        "height": 50,
+        "centre": {
+          "x": 536,
+          "y": 141
+        },
+        "action": 2456245216,
+        "lines": [
+          "Page 1 of 4"
+        ]
+      },
+      {
+        "kind": "Picture(PictureHandle(2000))",
+        "x": 116,
+        "y": 178,
+        "width": 840,
+        "height": 1157,
+        "centre": {
+          "x": 536,
+          "y": 756
+        },
+        "action": 2456245216,
+        "lines": []
+      }
+    ]
+  },
+  "diagnostics": {
+    "issues": []
+  }
+}

@@ -1,12 +1,14 @@
 [package]
 name = "kobo-sudoku"
-version.workspace = true
+version = "1.0.11"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 publish = false
 
 [dependencies]
+kobo-state = { path = "../../crates/kobo-state" }
+kobo-json = { path = "../../crates/kobo-json" }
 kobo-sdk = { path = "../../crates/kobo-sdk" }
 
 [dev-dependencies]

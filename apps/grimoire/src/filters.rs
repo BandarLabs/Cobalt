@@ -101,7 +101,7 @@ impl Filter {
 }
 
 impl Grimoire {
-    fn filters(&self) -> &'static [Filter] {
+    pub(super) fn filters(&self) -> &'static [Filter] {
         match self.kind {
             Kind::Spell => &[
                 Filter::Class,
@@ -111,7 +111,9 @@ impl Grimoire {
                 Filter::Concentration,
             ],
             Kind::Monster => &[Filter::Challenge, Filter::Type],
-            Kind::Rule => &[],
+            // A rule and a magic item are found by name, and the shelf offers
+            // search for that. Neither carries an index tag worth filtering on.
+            Kind::Rule | Kind::Item => &[],
         }
     }
     pub(super) fn clear_filters(&mut self) {

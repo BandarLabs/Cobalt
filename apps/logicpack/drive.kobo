@@ -1,14 +1,15 @@
 expect Logic Pack
 tap Minesweeper
-expect First reveal is safe
-tap How to play
+tap Small field
+wait-for-id more
+tap Help
 expect Reveal every safe square
-wait 250
 clean
 shot logicpack-help
 tap Play
-tap ?
-tap Check
+tap-id mine-0
+tap More
+tap Check puzzle
 expect Not solved yet
 clean
 shot logicpack-mines

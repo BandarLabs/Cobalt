@@ -1,0 +1,28 @@
+{
+  "status": "passed",
+  "profile": "clara-bw-391",
+  "scale": "extra-large",
+  "original_fixture": true,
+  "basis": "simulator-sdk-ipc",
+  "puzzles": 36,
+  "source_head": "a83c2f5c35069e5ac4a857dad80c1089f4607fba",
+  "source_dirty": true,
+  "pack_sha256": "b20a4d191dd92ecc5e7a12f38896fef2c23c0989554eff6634369aded3944aec",
+  "checks": [
+    "notes",
+    "exact restart",
+    "persistent undo",
+    "failed-save preservation",
+    "explicit retry",
+    "optional checking",
+    "reveal confirmation",
+    "full completion",
+    "completion restart",
+    "new difficulty",
+    "all help pages",
+    "landscape row windows",
+    "landscape restart",
+    "landscape help",
+    "committed drive route"
+  ]
+}

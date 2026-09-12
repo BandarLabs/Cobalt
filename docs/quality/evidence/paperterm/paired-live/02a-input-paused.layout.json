@@ -1,0 +1,239 @@
+{
+  "paints": 36,
+  "nodes": [
+    {
+      "kind": "StatusBand",
+      "x": 0,
+      "y": 0,
+      "width": 1072,
+      "height": 59,
+      "centre": {
+        "x": 536,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusClock",
+      "x": 47,
+      "y": 0,
+      "width": 112,
+      "height": 59,
+      "centre": {
+        "x": 103,
+        "y": 29
+      },
+      "action": null,
+      "lines": [
+        "23:08"
+      ]
+    },
+    {
+      "kind": "StatusBattery(Some(Percent(72)), false)",
+      "x": 955,
+      "y": 12,
+      "width": 70,
+      "height": 35,
+      "centre": {
+        "x": 990,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusSignal(Strong)",
+      "x": 896,
+      "y": 12,
+      "width": 35,
+      "height": 35,
+      "centre": {
+        "x": 913,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusBluetooth",
+      "x": 837,
+      "y": 12,
+      "width": 35,
+      "height": 35,
+      "centre": {
+        "x": 854,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "TopBar",
+      "x": 0,
+      "y": 59,
+      "width": 1072,
+      "height": 100,
+      "centre": {
+        "x": 536,
+        "y": 109
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Back",
+      "x": 47,
+      "y": 59,
+      "width": 100,
+      "height": 100,
+      "centre": {
+        "x": 97,
+        "y": 109
+      },
+      "action": 4294967295,
+      "lines": []
+    },
+    {
+      "kind": "BarAction(ActionId(693242804))",
+      "x": 818,
+      "y": 59,
+      "width": 207,
+      "height": 100,
+      "centre": {
+        "x": 921,
+        "y": 109
+      },
+      "action": 693242804,
+      "lines": [
+        "Pairing"
+      ]
+    },
+    {
+      "kind": "TopBarTitle",
+      "x": 171,
+      "y": 77,
+      "width": 623,
+      "height": 64,
+      "centre": {
+        "x": 482,
+        "y": 109
+      },
+      "action": null,
+      "lines": [
+        "Paperterm"
+      ]
+    },
+    {
+      "kind": "Divider",
+      "x": 0,
+      "y": 159,
+      "width": 1072,
+      "height": 4,
+      "centre": {
+        "x": 536,
+        "y": 161
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Secondary",
+      "x": 47,
+      "y": 175,
+      "width": 978,
+      "height": 50,
+      "centre": {
+        "x": 536,
+        "y": 200
+      },
+      "action": null,
+      "lines": [
+        "Input paused \u00b7 Keyboard"
+      ]
+    },
+    {
+      "kind": "Banner(Attention)",
+      "x": 47,
+      "y": 237,
+      "width": 978,
+      "height": 240,
+      "centre": {
+        "x": 536,
+        "y": 357
+      },
+      "action": null,
+      "lines": [
+        "Input may have reached your computer.",
+        "Queued keys were discarded. Check the",
+        "terminal before continuing."
+      ]
+    },
+    {
+      "kind": "TerminalGrid",
+      "x": 47,
+      "y": 489,
+      "width": 972,
+      "height": 770,
+      "centre": {
+        "x": 533,
+        "y": 874
+      },
+      "action": null,
+      "lines": [
+        "PTY True True",
+        "READY> SIZE 54 33",
+        "SIZE 54 18",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        ""
+      ]
+    },
+    {
+      "kind": "TerminalCursor",
+      "x": 47,
+      "y": 594,
+      "width": 18,
+      "height": 35,
+      "centre": {
+        "x": 56,
+        "y": 611
+      },
+      "action": null,
+      "lines": [
+        " "
+      ]
+    },
+    {
+      "kind": "Button(ActionId(3723751547), Enabled, Normal)",
+      "x": 322,
+      "y": 1271,
+      "width": 427,
+      "height": 118,
+      "centre": {
+        "x": 535,
+        "y": 1330
+      },
+      "action": 3723751547,
+      "lines": [
+        "Resume typing"
+      ]
+    }
+  ]
+}

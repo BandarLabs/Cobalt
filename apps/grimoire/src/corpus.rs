@@ -74,6 +74,46 @@ mod tests {
         }
     }
 
+    /// Bodies are the reader's markup, written once. Escaping them twice put a
+    /// visible backslash-n between every paragraph, and shipping the snapshots'
+    /// Markdown as written put "## Traps" and rows of pipes on the panel.
+    #[test]
+    fn bodies_are_readable_markup_rather_than_escapes_or_markdown() {
+        let corpus = load();
+        assert!(
+            !corpus.iter().any(|entry| entry.body.contains("\\n")),
+            "an entry body still carries an escape sequence"
+        );
+        assert!(
+            !corpus
+                .iter()
+                .any(|entry| entry.body.contains("**") || entry.body.contains("## ")),
+            "an entry body still carries Markdown"
+        );
+        let rule = corpus
+            .iter()
+            .find(|entry| entry.kind == "rule" && entry.body.len() > 4000)
+            .expect("a long rule section");
+        assert!(rule.body.contains("<h"), "a long rule lost its headings");
+        // A table arrives as one paragraph per row, labelled by its headings:
+        // columns cannot hold their text at the larger interface sizes.
+        assert!(
+            !corpus.iter().any(|entry| entry.body.contains("<table>")),
+            "a body still carries a table the panel cannot draw at every size"
+        );
+        assert!(
+            corpus.iter().any(|entry| entry.kind == "rule"
+                && entry.body.contains("<p><strong>Setback</strong> Save DC: ")),
+            "the trap table lost its rows"
+        );
+        assert!(
+            corpus
+                .iter()
+                .all(|entry| entry.kind != "monster" || entry.body.starts_with("<p>AC ")),
+            "a stat block lost its opening line"
+        );
+    }
+
     #[test]
     fn prefix_search_handles_names_case_insensitively() {
         let corpus = load();

@@ -9,8 +9,11 @@
 //! The rules are the ones people actually play at a table: whoever is holding
 //! the device taps, and the mark alternates. Nought goes first.
 
-use kobo_sdk::{action_id, ActionId, Context, Glyph, KoboApp, Screen, ScreenBuilder};
+use kobo_sdk::{action_id, ActionId, Context, Glyph, KoboApp, Screen, ScreenBuilder, StoreResult};
 use std::process::ExitCode;
+
+/// Where the running score and the choice of opponent are kept.
+const SAVED: &str = "tictactoe-v1";
 
 const SIZE: usize = 3;
 
@@ -85,11 +88,73 @@ enum Outcome {
     Tie,
 }
 
+/// Who is holding the other side.
+///
+/// Two people and one panel is the game this was written for. Solo exists
+/// because one person with a Kobo and ten minutes is the commoner case, and
+/// the opponent is deliberately a plain one: it takes a win, blocks a loss,
+/// and otherwise plays the middle, a corner, a side. It can be beaten, which
+/// is the point of playing it.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum Mode {
+    #[default]
+    TwoPlayers,
+    Solo,
+}
+
+impl Mode {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::TwoPlayers => "Two players",
+            Self::Solo => "Against the Kobo",
+        }
+    }
+
+    const fn other(self) -> Self {
+        match self {
+            Self::TwoPlayers => Self::Solo,
+            Self::Solo => Self::TwoPlayers,
+        }
+    }
+}
+
+/// What this session of play has come to, which is the thing a table keeps
+/// track of out loud and had nowhere to live here.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct Score {
+    nought: u16,
+    cross: u16,
+    ties: u16,
+}
+
+impl Score {
+    fn record(&mut self, outcome: Outcome) {
+        match outcome {
+            Outcome::Won(Mark::Nought) => self.nought = self.nought.saturating_add(1),
+            Outcome::Won(Mark::Cross) => self.cross = self.cross.saturating_add(1),
+            Outcome::Tie => self.ties = self.ties.saturating_add(1),
+            _ => {}
+        }
+    }
+
+    const fn played(self) -> u16 {
+        self.nought
+            .saturating_add(self.cross)
+            .saturating_add(self.ties)
+    }
+}
+
 struct Game {
     board: [Mark; CELLS],
     turn: Mark,
     outcome: Outcome,
     help: bool,
+    mode: Mode,
+    score: Score,
+    /// Whether this game has already been added to the score. A won board
+    /// stays on the panel until somebody starts the next one, and counting it
+    /// twice would be the easiest mistake here to make.
+    counted: bool,
 }
 
 impl Default for Game {
@@ -100,6 +165,9 @@ impl Default for Game {
             turn: Mark::Nought,
             outcome: Outcome::Playing,
             help: false,
+            mode: Mode::default(),
+            score: Score::default(),
+            counted: false,
         }
     }
 }
@@ -122,6 +190,45 @@ impl Game {
         true
     }
 
+    /// The three squares that won it, if it was won.
+    fn winning_line(&self) -> Option<[usize; SIZE]> {
+        LINES.into_iter().find(|line| {
+            let first = self.board[line[0]];
+            first != Mark::Empty && line.iter().all(|cell| self.board[*cell] == first)
+        })
+    }
+
+    /// The square the Kobo takes, playing the plainest sound strategy there
+    /// is: win if it can, block if it must, then the middle, a corner, a side.
+    fn reply(&self) -> Option<usize> {
+        let mine = self.turn;
+        for mark in [mine, mine.other()] {
+            for line in LINES {
+                let taken = line
+                    .iter()
+                    .filter(|cell| self.board[**cell] == mark)
+                    .count();
+                let empty = line.iter().find(|cell| self.board[**cell] == Mark::Empty);
+                if taken == SIZE - 1 {
+                    if let Some(cell) = empty {
+                        return Some(*cell);
+                    }
+                }
+            }
+        }
+        [4, 0, 2, 6, 8, 1, 3, 5, 7]
+            .into_iter()
+            .find(|cell| self.board[*cell] == Mark::Empty)
+    }
+
+    /// Starts the next game, keeping the score and the choice of opponent.
+    fn rematch(&mut self) {
+        self.board = [Mark::Empty; CELLS];
+        self.turn = Mark::Nought;
+        self.outcome = Outcome::Playing;
+        self.counted = false;
+    }
+
     fn settle(&self) -> Outcome {
         for line in LINES {
             let first = self.board[line[0]];
@@ -136,12 +243,69 @@ impl Game {
         }
     }
 
+    /// Whose turn it is, or how it ended, in the words of whoever is playing.
     fn status(&self) -> String {
-        match self.outcome {
-            Outcome::Playing => format!("{} to play", self.turn.name()),
-            Outcome::Won(mark) => format!("{} wins", mark.name()),
-            Outcome::Tie => "A tie".to_owned(),
+        match (self.outcome, self.mode) {
+            (Outcome::Playing, Mode::Solo) if self.turn == Mark::Nought => {
+                "Your turn, playing O".to_owned()
+            }
+            (Outcome::Playing, Mode::Solo) => "The Kobo is playing X".to_owned(),
+            (Outcome::Playing, Mode::TwoPlayers) => format!("{} to play", self.turn.name()),
+            (Outcome::Won(Mark::Nought), Mode::Solo) => "You win".to_owned(),
+            (Outcome::Won(_), Mode::Solo) => "The Kobo wins".to_owned(),
+            (Outcome::Won(mark), Mode::TwoPlayers) => format!("{} wins", mark.name()),
+            (Outcome::Tie, _) => "A tie".to_owned(),
         }
+    }
+
+    /// The session, counted the way a table counts it.
+    fn tally(&self) -> String {
+        if self.score.played() == 0 {
+            return "No games finished yet".to_owned();
+        }
+        let (first, second) = match self.mode {
+            Mode::Solo => ("You", "Kobo"),
+            Mode::TwoPlayers => ("O", "X"),
+        };
+        format!(
+            "{first} {} · {second} {} · ties {}",
+            self.score.nought, self.score.cross, self.score.ties
+        )
+    }
+
+    fn encode(&self) -> String {
+        format!(
+            "{};{};{};{}",
+            match self.mode {
+                Mode::TwoPlayers => "two",
+                Mode::Solo => "solo",
+            },
+            self.score.nought,
+            self.score.cross,
+            self.score.ties
+        )
+    }
+
+    /// Takes back the session: how it is being played, and how it has gone.
+    ///
+    /// The board itself is deliberately not saved. A half-finished game of
+    /// noughts and crosses is not something anybody comes back to; the score
+    /// of the afternoon is.
+    fn decode(&mut self, text: &str) {
+        let fields: Vec<&str> = text.split(';').collect();
+        let [mode, nought, cross, ties] = fields[..] else {
+            return;
+        };
+        self.mode = if mode == "solo" {
+            Mode::Solo
+        } else {
+            Mode::TwoPlayers
+        };
+        self.score = Score {
+            nought: nought.parse().unwrap_or(0),
+            cross: cross.parse().unwrap_or(0),
+            ties: ties.parse().unwrap_or(0),
+        };
     }
 }
 
@@ -163,31 +327,53 @@ fn screen(game: &Game) -> Screen {
             .bottom_action("close-help", "Play")
             .build();
     }
+    // The three squares that won it are marked on the board itself. A line of
+    // noughts among nine cells is not obvious at a glance, and "O wins" above
+    // a board that still looks live is the kind of thing somebody argues with.
+    let winning = game.winning_line().unwrap_or([CELLS; SIZE]);
     let cells = NAMES
         .iter()
         .zip(game.board.iter())
-        .map(|(name, mark)| (*name, mark.label(), mark.glyph()));
+        .enumerate()
+        .map(|(index, (name, mark))| (*name, mark.label(), mark.glyph(), winning.contains(&index)));
     ScreenBuilder::new("tictactoe")
         .top_bar("Tic-tac-toe")
         .heading(game.status())
-        .board(COLUMNS, cells)
+        .secondary(game.tally())
+        .board_with_selection(COLUMNS, cells)
         .buttons([
             (
                 "reset",
                 if game.outcome == Outcome::Playing {
-                    "Reset game"
+                    "Start again"
                 } else {
-                    "Play again"
+                    "Next game"
                 },
             ),
+            ("mode", game.mode.other().label()),
+        ])
+        .action_bar([
             ("how-to-play", "How to play"),
+            ("clear-score", "Clear score"),
         ])
         .build()
 }
 
 impl KoboApp for Game {
     fn on_start(&mut self, context: &mut Context) {
+        context.store().load(SAVED);
         context.set_screen(screen(self));
+    }
+
+    fn on_store(&mut self, context: &mut Context, result: StoreResult) {
+        if let StoreResult::Loaded { key, value } = result {
+            if key == SAVED {
+                if let Some(text) = value.and_then(|bytes| String::from_utf8(bytes).ok()) {
+                    self.decode(&text);
+                }
+                context.set_screen(screen(self));
+            }
+        }
     }
 
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
@@ -204,7 +390,23 @@ impl KoboApp for Game {
             return;
         }
         if action == action_id("reset") {
-            *self = Self::default();
+            self.rematch();
+            context.set_screen(screen(self));
+            return;
+        }
+        if action == action_id("mode") {
+            self.mode = self.mode.other();
+            // A game half-played against one opponent is not a game against
+            // the other, so the board starts again. The score is what the
+            // afternoon has come to and stays.
+            self.rematch();
+            self.keep(context);
+            context.set_screen(screen(self));
+            return;
+        }
+        if action == action_id("clear-score") {
+            self.score = Score::default();
+            self.keep(context);
             context.set_screen(screen(self));
             return;
         }
@@ -213,9 +415,33 @@ impl KoboApp for Game {
         };
         // Only repaint when the board actually changed. On this panel an
         // unnecessary refresh is the most visible thing an application can do.
-        if self.play(cell) {
-            context.set_screen(screen(self));
+        if !self.play(cell) {
+            return;
         }
+        self.finish(context);
+        if self.mode == Mode::Solo && self.outcome == Outcome::Playing {
+            if let Some(reply) = self.reply() {
+                self.play(reply);
+                self.finish(context);
+            }
+        }
+        context.set_screen(screen(self));
+    }
+}
+
+impl Game {
+    /// Counts a finished game once, and writes the session down.
+    fn finish(&mut self, context: &mut Context) {
+        if self.outcome == Outcome::Playing || self.counted {
+            return;
+        }
+        self.counted = true;
+        self.score.record(self.outcome);
+        self.keep(context);
+    }
+
+    fn keep(&self, context: &mut Context) {
+        context.store().save(SAVED, self.encode());
     }
 }
 
@@ -231,7 +457,7 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::{screen, Game, Mark, Outcome, CELLS, NAMES, SIZE};
+    use super::{screen, Game, Mark, Mode, Outcome, Score, CELLS, NAMES, SIZE};
     use kobo_sdk::action_id;
     use kobo_ui::{Chrome, CLARA_BW_METRICS};
 
@@ -360,6 +586,161 @@ mod tests {
             "the reset button is off the bottom of the panel"
         );
         assert_eq!(CELLS, SIZE * SIZE);
+    }
+
+    /// The session is what a table keeps track of out loud, and a rematch
+    /// keeps it: the board starts again, the count does not.
+    #[test]
+    fn a_finished_game_is_counted_once_and_a_rematch_keeps_the_score() {
+        let mut runner = kobo_sdk::AppRunner::new(Game::default());
+        runner.start();
+        runner.store_result(kobo_sdk::StoreResult::Loaded {
+            key: super::SAVED.into(),
+            value: None,
+        });
+        for cell in [0, 3, 1, 4, 2] {
+            runner.action(action_id(NAMES[cell]));
+        }
+        assert_eq!(runner.app().outcome, Outcome::Won(Mark::Nought));
+        assert_eq!(runner.app().score.nought, 1);
+        // The won board stays until somebody starts the next game, and taps
+        // on it must not count it again.
+        runner.action(action_id(NAMES[5]));
+        assert_eq!(runner.app().score.nought, 1, "the game was counted twice");
+        runner.action(action_id("reset"));
+        assert!(runner.app().board.iter().all(|mark| *mark == Mark::Empty));
+        assert_eq!(runner.app().score.nought, 1, "a rematch cleared the score");
+        assert_eq!(runner.app().turn, Mark::Nought);
+        assert!(
+            runner.app().tally().contains("O 1"),
+            "{}",
+            runner.app().tally()
+        );
+    }
+
+    /// The score and the choice of opponent survive closing the application;
+    /// a half-played board deliberately does not.
+    #[test]
+    fn the_session_is_written_down_and_read_back() {
+        let mut game = Game {
+            mode: Mode::Solo,
+            score: Score {
+                nought: 3,
+                cross: 2,
+                ties: 1,
+            },
+            ..Game::default()
+        };
+        let written = game.encode();
+        let mut reopened = Game::default();
+        reopened.decode(&written);
+        assert_eq!(reopened.mode, Mode::Solo);
+        assert_eq!(reopened.score, game.score);
+        assert!(reopened.board.iter().all(|mark| *mark == Mark::Empty));
+        // Nonsense in the store leaves the session as it was rather than
+        // taking the application down with it.
+        game.decode("not a score");
+        assert_eq!(game.score.nought, 3);
+    }
+
+    /// The Kobo takes a win when it has one, blocks one when it must, and
+    /// otherwise plays the middle. It can be beaten; that is the point.
+    #[test]
+    fn the_kobo_takes_a_win_before_it_blocks_and_blocks_before_it_builds() {
+        let mut game = Game {
+            mode: Mode::Solo,
+            turn: Mark::Cross,
+            ..Game::default()
+        };
+        // X can finish the top row; O is one away on the left column.
+        game.board[0] = Mark::Cross;
+        game.board[1] = Mark::Cross;
+        game.board[3] = Mark::Nought;
+        game.board[6] = Mark::Nought;
+        assert_eq!(game.reply(), Some(2), "a win in hand was not taken");
+
+        let mut blocking = Game {
+            mode: Mode::Solo,
+            turn: Mark::Cross,
+            ..Game::default()
+        };
+        blocking.board[0] = Mark::Nought;
+        blocking.board[1] = Mark::Nought;
+        assert_eq!(blocking.reply(), Some(2), "a loss in one was not blocked");
+
+        let opening = Game {
+            mode: Mode::Solo,
+            turn: Mark::Cross,
+            ..Game::default()
+        };
+        assert_eq!(opening.reply(), Some(4), "the middle was left empty");
+    }
+
+    /// One tap in solo play leaves the board with the Kobo's answer already on
+    /// it, and never with two marks of the same kind added at once.
+    #[test]
+    fn a_solo_tap_is_answered_before_the_panel_is_drawn_again() {
+        let mut runner = kobo_sdk::AppRunner::new(Game {
+            mode: Mode::Solo,
+            ..Game::default()
+        });
+        runner.start();
+        runner.store_result(kobo_sdk::StoreResult::Loaded {
+            key: super::SAVED.into(),
+            value: None,
+        });
+        runner.action(action_id(NAMES[0]));
+        let board = runner.app().board;
+        assert_eq!(board[0], Mark::Nought);
+        assert_eq!(
+            board.iter().filter(|mark| **mark == Mark::Cross).count(),
+            1,
+            "the Kobo played more than one mark"
+        );
+        assert_eq!(
+            runner.app().turn,
+            Mark::Nought,
+            "the turn did not come back"
+        );
+    }
+
+    /// The three squares that won it are marked on the board, at every size.
+    #[test]
+    fn the_winning_line_is_marked_on_the_board_at_every_text_size() {
+        let mut game = Game::default();
+        for cell in [0, 3, 1, 4, 2] {
+            game.play(cell);
+        }
+        assert_eq!(game.winning_line(), Some([0, 1, 2]));
+        for text_scale in kobo_ui::TextScale::STEPS {
+            let metrics = kobo_ui::DisplayMetrics {
+                text_scale,
+                ..CLARA_BW_METRICS
+            };
+            let drawn = screen(&game).layout_with(&metrics, &Chrome::measuring(true));
+            let marked: Vec<bool> = NAMES
+                .iter()
+                .map(|name| {
+                    drawn.nodes.iter().any(|node| {
+                        matches!(
+                            node.kind,
+                            kobo_ui::LayoutKind::Cell(action, _, true) if action == action_id(name)
+                        )
+                    })
+                })
+                .collect();
+            assert_eq!(
+                marked,
+                [true, true, true, false, false, false, false, false, false],
+                "{text_scale:?}: the winning line is not the marked one"
+            );
+            let diagnostics = screen(&game).diagnostics(&metrics, &Chrome::measuring(true));
+            assert!(
+                diagnostics.issues.is_empty(),
+                "{text_scale:?}: {:?}",
+                diagnostics.issues
+            );
+        }
     }
 
     #[test]

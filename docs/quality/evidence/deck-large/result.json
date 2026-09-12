@@ -1,0 +1,25 @@
+{
+  "status": "passed",
+  "scale": "170",
+  "fixture": "a-paired-command-deck",
+  "requests": [
+    "/deck?version=0&token=abc123",
+    "/deck/press?token=abc123",
+    "/deck?version=4&token=abc123",
+    "/deck?version=4&token=abc123",
+    "/deck/result?key=test&token=abc123",
+    "/deck?version=4&token=abc123",
+    "/deck/press?token=abc123",
+    "/deck?version=4&token=abc123",
+    "/deck?version=0&token=abc123"
+  ],
+  "checks": [
+    "an unpaired deck says what to do about it before asking for it",
+    "the deck the computer sent is drawn, keys and pages",
+    "a key without a confirmation runs on the first tap",
+    "a key that has run opens what it said, not only when it failed",
+    "the deck says what the last key it ran did",
+    "a key that asks first only runs after it is answered",
+    "the deck is on the device, so reopening it draws it at once"
+  ]
+}

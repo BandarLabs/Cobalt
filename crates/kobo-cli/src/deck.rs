@@ -6,17 +6,24 @@ use std::io::Write;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
-const USAGE: &str = "usage: kobo deck init [--home DIR]\n\
+const USAGE: &str = "usage: kobo deck init [--preset build|home] [--home DIR]\n\
                      \x20      kobo deck set PAD [--page NAME] --label LABEL [--detail TEXT] \
                      (--run CMD | --url URL | --launch APP) [--confirm] [--home DIR]\n\
                      \x20      kobo deck ls [--home DIR]\n\
                      \x20      kobo deck show [--json] [--home DIR]\n\
                      \x20      kobo deck push (--sim | --device IP | --out PATH) [--home DIR]\n\
-                     Assign a pad (1-12) on the computer-owned deck.toml. --launch and --url\n\
+                     Assign a pad (1-15) on the computer-owned deck.toml. --launch and --url\n\
                      become shell commands Sidekick runs from the owner's home directory.";
 const DEFAULT_PAGE: &str = "Home";
 const MAX_PAGES: usize = 6;
-const MAX_KEYS: usize = 12;
+/// How many pads one page holds.
+///
+/// Fifteen, because that is how many the reader's deck draws: three rows of
+/// five is the shape of the panel it is painted on. Twelve was allowed here
+/// for a while, which meant the computer could describe a deck the reader
+/// could not see all of, and the two numbers never appeared on the same
+/// screen so nobody noticed.
+const MAX_KEYS: usize = 15;
 const MAX_LABEL: usize = 16;
 const MAX_DETAIL: usize = 40;
 const MAX_PAGE_NAME: usize = 24;
@@ -65,13 +72,134 @@ pub fn command(arguments: &[String]) -> Result<(), String> {
 }
 
 fn init(arguments: &[String]) -> Result<(), String> {
-    let home = parse_home_only(arguments)?;
+    let (preset, home) = parse_init(arguments)?;
     let directory = config_dir(home)?;
     fs::create_dir_all(&directory)
         .map_err(|error| format!("create {}: {error}", directory.display()))?;
     println!("Deck config directory ready: {}", directory.display());
-    println!("Assign pads with kobo deck set, then kobo deck push --sim or --device IP.");
+    let Some(preset) = preset else {
+        println!("Assign pads with kobo deck set, then kobo deck push --sim or --device IP.");
+        println!("Or start from one: kobo deck init --preset build, or --preset home.");
+        return Ok(());
+    };
+    let path = config_path(home)?;
+    if path.exists() {
+        return Err(format!(
+            "{} already exists; a preset would write over what is on it",
+            path.display()
+        ));
+    }
+    let layout = preset.layout();
+    write_layout(&path, &layout)?;
+    println!(
+        "Wrote the {} preset to {}: {} pad(s) across {} page(s).",
+        preset.name(),
+        path.display(),
+        layout.pad_count(),
+        layout.pages.len()
+    );
+    println!("Change any of them with kobo deck set, then kobo deck push --sim or --device IP.");
     Ok(())
+}
+
+/// A deck worth having before anybody has written one.
+///
+/// Not a demonstration: every command here is one somebody actually runs, and
+/// the point of a preset is that a new deck does something on the first press
+/// rather than after twenty minutes of `kobo deck set`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Preset {
+    /// What a developer reaches for between saves.
+    Build,
+    /// What the same person reaches for when they put the laptop down.
+    Home,
+}
+
+impl Preset {
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Build => "build",
+            Self::Home => "home",
+        }
+    }
+
+    fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "build" => Some(Self::Build),
+            "home" => Some(Self::Home),
+            _ => None,
+        }
+    }
+
+    fn layout(self) -> Layout {
+        let keys: Vec<(&str, &str, &str, bool)> = match self {
+            Self::Build => vec![
+                ("Test", "cargo test", "cargo test --workspace", false),
+                ("Format", "cargo fmt", "cargo fmt --all", false),
+                ("Lint", "cargo clippy", "cargo clippy --workspace", false),
+                ("Build", "release build", "cargo build --release", false),
+                ("Status", "git status", "git status --short", false),
+                ("Pull", "git pull", "git pull --ff-only", false),
+                // The one that asks first, because it is the one that is hard
+                // to take back from the other side of the room.
+                ("Deploy", "deploy the site", "make deploy", true),
+            ],
+            Self::Home => vec![
+                ("Music", "play the playlist", "playerctl play", false),
+                ("Pause", "pause it", "playerctl pause", false),
+                ("Next", "next track", "playerctl next", false),
+                ("Lights", "lights on", "lights on", false),
+                ("Dim", "lights low", "lights dim", false),
+                ("Timer", "ten minutes", "timer 10m", false),
+                ("Lock", "lock the screen", "loginctl lock-session", true),
+            ],
+        };
+        Layout {
+            pages: vec![Page {
+                name: match self {
+                    Self::Build => "Build".to_owned(),
+                    Self::Home => "Home".to_owned(),
+                },
+                keys: keys
+                    .into_iter()
+                    .map(|(label, detail, run, confirm)| Key {
+                        label: label.to_owned(),
+                        detail: detail.to_owned(),
+                        run: run.to_owned(),
+                        confirm,
+                    })
+                    .collect(),
+            }],
+        }
+    }
+}
+
+fn parse_init(arguments: &[String]) -> Result<(Option<Preset>, Option<&str>), String> {
+    let mut preset = None;
+    let mut home = None;
+    let mut at = 0;
+    while at < arguments.len() {
+        match arguments[at].as_str() {
+            "--preset" => {
+                let name = arguments.get(at + 1).ok_or_else(|| USAGE.to_owned())?;
+                preset = Some(Preset::from_name(name).ok_or_else(|| {
+                    format!("unknown preset {name}; the presets are build and home")
+                })?);
+                at += 2;
+            }
+            "--home" => {
+                home = Some(
+                    arguments
+                        .get(at + 1)
+                        .ok_or_else(|| USAGE.to_owned())?
+                        .as_str(),
+                );
+                at += 2;
+            }
+            _ => return Err(USAGE.to_owned()),
+        }
+    }
+    Ok((preset, home))
 }
 
 fn set(arguments: &[String]) -> Result<(), String> {
@@ -862,11 +990,18 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn home() -> PathBuf {
+        // A counter as well as the clock: these tests run in parallel, and two
+        // of them asking the clock in the same nanosecond got the same
+        // directory, where one deleted the other's deck halfway through.
+        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_or(0, |duration| duration.as_nanos());
-        let root =
-            std::env::temp_dir().join(format!("cobalt-deck-cli-{}-{unique}", std::process::id()));
+        let count = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let root = std::env::temp_dir().join(format!(
+            "cobalt-deck-cli-{}-{unique}-{count}",
+            std::process::id()
+        ));
         fs::create_dir_all(&root).expect("home");
         root
     }
@@ -914,6 +1049,51 @@ mod tests {
         let decoded = kobo_json::parse(&json).expect("json");
         let pages = decoded.get("pages").and_then(|value| value.as_array());
         assert_eq!(pages.map(<[_]>::len), Some(1));
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn a_preset_writes_a_deck_that_does_something_on_the_first_press() {
+        // The alternative to this is twenty minutes of `kobo deck set` before
+        // a new deck does anything at all, which is how a deck ends up with
+        // one key on it forever.
+        let root = home();
+        let owner = root.display().to_string();
+        command(&args(&["init", "--preset", "build", "--home", &owner])).expect("preset");
+        let layout = load(&config_path(Some(&owner)).expect("path")).expect("load");
+        assert_eq!(layout.pages.len(), 1);
+        assert_eq!(layout.pages[0].name, "Build");
+        assert!(layout.pages[0].keys.len() >= 5);
+        assert!(
+            layout.pages[0].keys.iter().any(|key| key.confirm),
+            "a preset with a deploy on it should ask before running it"
+        );
+        // And it refuses to write over a deck somebody has already made.
+        let second = command(&args(&["init", "--preset", "home", "--home", &owner]));
+        assert!(second.is_err(), "a preset wrote over an existing deck");
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn the_computer_can_assign_every_pad_the_reader_can_see() {
+        // Fifteen places are drawn on the panel. The companion allowed twelve
+        // for a while, so three of them could never be filled and nothing
+        // said so.
+        let root = home();
+        let owner = root.display().to_string();
+        for pad in 1..=15 {
+            let pad = pad.to_string();
+            command(&args(&[
+                "set", &pad, "--run", "true", "--label", "Key", "--home", &owner,
+            ]))
+            .unwrap_or_else(|error| panic!("pad {pad}: {error}"));
+        }
+        let layout = load(&config_path(Some(&owner)).expect("path")).expect("load");
+        assert_eq!(layout.pad_count(), 15);
+        let past = command(&args(&[
+            "set", "16", "--run", "true", "--label", "Key", "--home", &owner,
+        ]));
+        assert!(past.is_err(), "a sixteenth pad has nowhere to be drawn");
         fs::remove_dir_all(root).expect("cleanup");
     }
 

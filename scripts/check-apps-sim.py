@@ -61,6 +61,10 @@ def run_app(app, kobo, out, environment, timeout):
         env = dict(environment, TMPDIR=state, KOBO_INKLING_DAY='2026-09-01')
         if app == 'fanshelf':
             env['FANSHELF_DEMO'] = '1'
+        if app == 'backgammon':
+            # Real dice come from the operating system, so a route that says
+            # what was rolled needs the fixture source rather than chance.
+            env['KOBO_BACKGAMMON_SEED'] = '7'
         try:
             seed(app, state, kobo, env, log)
             process = subprocess.Popen([str(kobo), 'dev', '127.0.0.1:0'], cwd=directory,

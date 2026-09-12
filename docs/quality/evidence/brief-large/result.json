@@ -1,0 +1,29 @@
+{
+  "status": "passed",
+  "scale": "170",
+  "fixture": "original-brief-index",
+  "requests": [
+    "/v0/topstories.json",
+    "/v0/item/1.json",
+    "/v0/item/2.json",
+    "/v0/item/3.json",
+    "/v0/item/4.json",
+    "/v0/item/5.json",
+    "/v0/item/6.json",
+    "/article-1.html",
+    "/ridge.png",
+    "/v0/askstories.json",
+    "/v0/item/11.json",
+    "/v0/item/12.json",
+    "/v0/item/13.json"
+  ],
+  "checks": [
+    "a brief with nothing in it says so and asks for nothing",
+    "the brief says which list it is and when it was fetched",
+    "a story opens in the shared reader with its picture",
+    "the brief and a read story reopen with no network",
+    "a refresh with no network keeps the brief and offers another",
+    "another list is chosen, fetched and labelled as itself",
+    "a question is read from what the poster wrote"
+  ]
+}

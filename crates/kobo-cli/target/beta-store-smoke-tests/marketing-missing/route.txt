@@ -1,6 +1,0 @@
-cobalt-beta-marketing-route 1
-privacy public-demo-no-owner-data
-title Beta acceptance
-interaction Open result|64|48
-result Accepted result
-timing 1200|2200

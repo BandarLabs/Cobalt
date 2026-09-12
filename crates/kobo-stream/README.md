@@ -8,7 +8,7 @@ credentials are written to the reader.
 ```sh
 kobo stream init --host 192.168.1.20
 kobo trust set stream --device READER_IP
-kobo stream --controls -- claude
+kobo stream --interactive -- /bin/sh
 ```
 
 The service uses a per-run random session id, requires the six-character
@@ -20,6 +20,21 @@ unknown wide glyphs become `·`.
 
 The command runs behind Cobalt's existing safe PTY wrapper. It has a
 controlling terminal at the negotiated grid, so terminal applications such as
-`vi` and Claude Code see the same cursor screen as the reader. Screen
+`vi` and the shell see the same cursor screen as the reader. Screen
 snapshots are deliberately capped at two per second; input writes go directly
 to the PTY and do not wait for that display cadence.
+
+
+In interactive mode, the laptop and Paperterm send input to the same PTY.
+Laptop input uses raw terminal mode, restored when the child ends. Output is
+flushed even without a newline, so shell prompts appear immediately. Output
+draining yields after a bounded batch so a busy command cannot indefinitely
+hold the input lock. Paperterm defaults to portrait and negotiates its measured
+grid, including when its keyboard opens or closes.
+
+For isolated tests, set `KOBO_STREAM_CONFIG_DIR` to an absolute directory; the
+identity lives in its `stream` subdirectory and the trust copy in `trust`.
+Without this override the location remains `~/.config/kobo`. The live fixture
+in `scripts/quality/check-paperterm-live.py` exercises a real laptop TTY, host
+PTY and SDK simulator over trusted TLS without using the owner's identity.
+See [the captured session](../../apps/paperterm/screenshots/terminal.png).

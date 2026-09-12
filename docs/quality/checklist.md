@@ -4,21 +4,24 @@ Source: the 8 September 2026 app/SDK/simulator/companion review. The ten new app
 
 ## Delivery plan
 
-Three stacked PRs rooted in freshly fetched `beta` (`7f1a543`):
+Four PRs rooted in `beta`. The initial base was `7f1a543`; PR 1 is merged as `c22c946` and PR 2 targets beta directly. PR 2 grew large enough that its remaining app groups are better validated on hardware than stacked on top of it, so it ships the twenty app groups it has finished and the rest move to PR 3; the companion work it would have shared a branch with moves to PR 4:
 
 1. **Foundation:** simulator/runtime parity, shared SDK/document/board contracts, platform test interfaces and comic decoding/reading. Includes catalog integration fixes exposed by the stricter shared layout checks. Branch `beta-quality-foundation`, base `beta`.
 2. **Catalog:** complete and polish the 43 existing app journeys using those contracts. Branch `beta-quality-apps`, initially based on PR 1.
-3. **Companion:** owner onboarding, imports, credentials, recovery and CLI consistency, plus integrated acceptance scripts. Branch `beta-quality-companion`, initially based on PR 2.
+3. **Remaining catalog:** the app groups PR 2 did not reach, reading applications first, each pulling real data wherever the source permits it. Branch `beta-quality-apps-2`, base `beta`.
+4. **Companion:** owner onboarding, imports, credentials, recovery and CLI consistency, plus integrated acceptance scripts. Branch `beta-quality-companion`, base `beta`.
 
 After predecessors merge, later PRs can target beta without duplicating earlier diffs. No merge or deployment is implied by creating the PRs.
 
-A checked task requires implementation plus recorded validation. Physical measurements and user studies remain open until performed; the owner asked to run Clara BW hardware validation after all three PRs are ready. Scripts/protocols can be completed independently of their physical execution. Existing documented stock-menu dependency consumption is allowed; copying its or other local reference source is not.
+A checked task requires implementation plus recorded validation. Physical measurements and user studies remain open until performed; the owner asked for Clara BW hardware validation once PR 2 is on a reader rather than after every PR is written. Scripts/protocols can be completed independently of their physical execution. Existing documented stock-menu dependency consumption is allowed; copying its or other local reference source is not.
 
 ## Status
 
-The PR 1 implementation checklist is complete; CBR is deferred and COMIC-18 belongs to catalog integration in PR 2. This does not certify hardware accuracy: native sleep hands ownership back to the stock reader, and no generic kernel suspend, RTC wake or automatic cover-sleep backend is enabled. Physical acceptance remains scheduled after all three PRs.
+The PR 1 implementation checklist is complete; CBR is deferred and COMIC-18 belongs to catalog integration in PR 2. This does not certify hardware accuracy: native sleep hands ownership back to the stock reader, and no generic kernel suspend, RTC wake or automatic cover-sleep backend is enabled. Physical acceptance moves ahead of PR 3: twenty app groups are validated as far as a simulator can speak for them, and panel latency, ghosting, touch accuracy and the live services each application talks to are not among those things.
 
-494 tracked tasks: 98 completed, 1 deferred by the owner, 395 open. Implementation in progress. Evidence is recorded per task in `tasks.json` and in [the validation log](validation.md).
+496 tracked tasks: 205 completed, 1 deferred by the owner, 290 open. Implementation in progress. Evidence is recorded per task in `tasks.json` and in [the validation log](validation.md).
+
+Design direction: the bar is a well-made iPad application, built for a panel that cannot animate. Familiar visual conventions per app, restrained controls, plain copy, full repaints and page turns rather than scrolling, and controls that do not move under a finger. Crossword follows printed crossword typography and grids. PR 3 takes the reading applications first, in the owner's order: Gutenbird, arXiv, Verses, Read Later, Frame, Sync, Lichess, Music Stand. Each pulls real data wherever the source permits it, and Lichess is the application the catalog is shown with, so it has to work against the live service rather than a fixture. Paperterm defaults to portrait with a physically scaled, denser terminal font; the measured grid takes precedence over forcing 80 columns.
 
 ## PR 1 · Simulator fidelity (SIM-1–10)
 
@@ -122,11 +125,11 @@ The PR 1 implementation checklist is complete; CBR is deferred and COMIC-18 belo
 - [x] **COMIC-15** Persist page, direction and viewport per book.
 - [x] **COMIC-16** Support RTL and two-page spreads with a reachable single-page fallback.
 - [x] **COMIC-17** Keep page decode lazy and prefetch/cache bounded.
-- [ ] **COMIC-18** Route local comics through the same import preview and receipt as other documents. (Delivered with PR 2.)
+- [x] **COMIC-18** Route local comics through the same import preview and receipt as other documents. (Delivered with PR 2.)
 - [x] **COMIC-19** Test original CBZ fixtures and hostile/corrupt archives; test clear refusal of CBR.
 - [x] **COMIC-20** Verify Clara-sized comic reading, scaling, navigation and reopen in simulator.
 
-## PR 2 · arXiv
+## PR 3 · arXiv
 
 - [ ] **ARXIV-01** Separate title, authors and metadata visually.
 - [ ] **ARXIV-02** Add saved searches and followed subjects.
@@ -134,7 +137,7 @@ The PR 1 implementation checklist is complete; CBR is deferred and COMIC-18 belo
 - [ ] **ARXIV-04** Validate long HTML, formulas, figures and tables.
 - [ ] **ARXIV-05** Retain saved reading through reopen and failed figure fetch.
 
-## PR 2 · Audiobook Studio
+## PR 3 · Audiobook Studio
 
 - [ ] **AUDIO-01** Preflight required provider configuration.
 - [ ] **AUDIO-02** Show truthful generation stages and cancellation.
@@ -145,30 +148,30 @@ The PR 1 implementation checklist is complete; CBR is deferred and COMIC-18 belo
 
 ## PR 2 · Backgammon
 
-- [ ] **BACK-01** Clarify active player and legal source/destination on board.
-- [ ] **BACK-02** Make dice and doubling cube legible.
-- [ ] **BACK-03** Separate match setup from moves.
-- [ ] **BACK-04** Show concise turn history.
-- [ ] **BACK-05** Use real entropy with explicit deterministic fixture seeds.
+- [x] **BACK-01** Clarify active player and legal source/destination on board.
+- [x] **BACK-02** Make dice and doubling cube legible.
+- [x] **BACK-03** Separate match setup from moves.
+- [x] **BACK-04** Show concise turn history.
+- [x] **BACK-05** Use real entropy with explicit deterministic fixture seeds.
 - [x] **BACK-06** Resolve opening layout diagnostic.
 
 ## PR 2 · Daily Brief
 
-- [ ] **BRIEF-01** Show fetched time and source.
-- [ ] **BRIEF-02** Keep cached headlines with offline/retry state.
-- [ ] **BRIEF-03** Allow source selection.
-- [ ] **BRIEF-04** Open and save stories through the shared reader.
+- [x] **BRIEF-01** Show fetched time and source.
+- [x] **BRIEF-02** Keep cached headlines with offline/retry state.
+- [x] **BRIEF-03** Allow source selection.
+- [x] **BRIEF-04** Open and save stories through the shared reader.
 
 ## PR 2 · calibre-web (APP-1)
 
-- [ ] **CALIBRE-01** Replace ignored response/static categories with real OPDS navigation.
-- [ ] **CALIBRE-02** Configure and test provider endpoint/authentication.
-- [ ] **CALIBRE-03** Handle books, authors and shelves through live parsed catalog links.
-- [ ] **CALIBRE-04** Download and read a fixture book through BookView.
-- [ ] **CALIBRE-05** Retain downloaded book and progress offline.
-- [ ] **CALIBRE-06** Distinguish authentication, transport, HTTP and parsing failures.
+- [x] **CALIBRE-01** Replace ignored response/static categories with real OPDS navigation.
+- [x] **CALIBRE-02** Configure and test provider endpoint/authentication.
+- [x] **CALIBRE-03** Handle books, authors and shelves through live parsed catalog links.
+- [x] **CALIBRE-04** Download and read a fixture book through BookView.
+- [x] **CALIBRE-05** Retain downloaded book and progress offline.
+- [x] **CALIBRE-06** Distinguish authentication, transport, HTTP and parsing failures.
 
-## PR 2 · AI Command Center
+## PR 3 · AI Command Center
 
 - [ ] **CHAT-01** Guide provider setup and explain provider/model choice.
 - [ ] **CHAT-02** Persist and manage conversations.
@@ -178,22 +181,22 @@ The PR 1 implementation checklist is complete; CBR is deferred and COMIC-18 belo
 
 ## PR 2 · Crossword
 
-- [ ] **CROSS-01** Render numbered cells and active word distinctly.
-- [ ] **CROSS-02** Keep clue and entry together.
-- [ ] **CROSS-03** Add puzzle corpus/import and difficulty.
-- [ ] **CROSS-04** Add check/reveal choices.
-- [ ] **CROSS-05** Persist completion and statistics.
+- [x] **CROSS-01** Render numbered cells and active word distinctly.
+- [x] **CROSS-02** Keep clue and entry together.
+- [x] **CROSS-03** Add puzzle corpus/import and difficulty.
+- [x] **CROSS-04** Add check/reveal choices.
+- [x] **CROSS-05** Persist completion and statistics.
 
 ## PR 2 · Deck app
 
-- [ ] **DECK-01** Reduce visual weight of unused pads.
-- [ ] **DECK-02** Show layout title and connection state.
-- [ ] **DECK-03** Show per-action busy state and last result.
-- [ ] **DECK-04** Provide useful original preset layouts.
-- [ ] **DECK-05** Preserve explicit confirmation for chosen commands.
-- [ ] **DECK-06** Unify visible pad count with companion configuration.
+- [x] **DECK-01** Reduce visual weight of unused pads.
+- [x] **DECK-02** Show layout title and connection state.
+- [x] **DECK-03** Show per-action busy state and last result.
+- [x] **DECK-04** Provide useful original preset layouts.
+- [x] **DECK-05** Preserve explicit confirmation for chosen commands.
+- [x] **DECK-06** Unify visible pad count with companion configuration.
 
-## PR 2 · Fanshelf
+## PR 3 · Fanshelf
 
 - [ ] **FANS-01** Show download and reading progress consistently.
 - [ ] **FANS-02** Improve fandom/filter organization.
@@ -202,7 +205,7 @@ The PR 1 implementation checklist is complete; CBR is deferred and COMIC-18 belo
 - [ ] **FANS-05** Explain locked or unavailable work.
 - [ ] **FANS-06** Validate EPUB reading with synthetic owned content.
 
-## PR 2 · Fieldbook (APP-3)
+## PR 3 · Fieldbook (APP-3)
 
 - [ ] **FIELD-01** Label starter data truthfully.
 - [ ] **FIELD-02** Import actual field/species packs and search them.
@@ -213,7 +216,7 @@ The PR 1 implementation checklist is complete; CBR is deferred and COMIC-18 belo
 - [ ] **FIELD-07** Report save/sync failure instead of fictitious success.
 - [ ] **FIELD-08** Keep local logging independent of service availability.
 
-## PR 2 · Flashcards app
+## PR 3 · Flashcards app
 
 - [ ] **CARDS-01** Replace expected missing collection error with first-use setup.
 - [ ] **CARDS-02** Include an original ready-to-review sample.
@@ -222,7 +225,7 @@ The PR 1 implementation checklist is complete; CBR is deferred and COMIC-18 belo
 - [ ] **CARDS-05** Test reveal, grade and restart with imported fixtures.
 - [ ] **CARDS-06** Test Japanese, media and long cards.
 
-## PR 2 · Frame app
+## PR 3 · Frame app
 
 - [ ] **FRAME-01** Expose slideshow mode, interval and ordering controls.
 - [ ] **FRAME-02** Show album, date and count clearly.
@@ -233,22 +236,22 @@ The PR 1 implementation checklist is complete; CBR is deferred and COMIC-18 belo
 
 ## PR 2 · Components reference
 
-- [ ] **GALLERY-01** Document every control and loading/disabled/error variant.
-- [ ] **GALLERY-02** Exercise supported scales, profiles and long labels.
-- [ ] **GALLERY-03** Label intentional developer diagnostics.
-- [ ] **GALLERY-04** Replace version-like section labels with meaningful categories.
-- [ ] **GALLERY-05** Include complete task-flow examples.
+- [x] **GALLERY-01** Document every control and loading/disabled/error variant.
+- [x] **GALLERY-02** Exercise supported scales, profiles and long labels.
+- [x] **GALLERY-03** Label intentional developer diagnostics.
+- [x] **GALLERY-04** Replace version-like section labels with meaningful categories.
+- [x] **GALLERY-05** Include complete task-flow examples.
 
 ## PR 2 · Grimoire (APP-9)
 
 - [x] **GRIM-01** Page spell results using remaining height after filters.
 - [x] **GRIM-02** Replace cycling filters with labeled selection.
-- [ ] **GRIM-03** Paginate long stat blocks.
-- [ ] **GRIM-04** Improve combat/initiative controls.
-- [ ] **GRIM-05** Explain unavailable source categories.
-- [ ] **GRIM-06** Test realistic six-person party and initiative persistence.
+- [x] **GRIM-03** Paginate long stat blocks.
+- [x] **GRIM-04** Improve combat/initiative controls.
+- [x] **GRIM-05** Explain unavailable source categories.
+- [x] **GRIM-06** Test realistic six-person party and initiative persistence.
 
-## PR 2 · Gutenbird
+## PR 3 · Gutenbird
 
 - [ ] **GUTEN-01** Remove catalog boilerplate from summaries.
 - [ ] **GUTEN-02** Clarify edition and language choices.
@@ -257,7 +260,7 @@ The PR 1 implementation checklist is complete; CBR is deferred and COMIC-18 belo
 - [ ] **GUTEN-05** Reuse shared provider setup.
 - [ ] **GUTEN-06** Verify fixture download, reading and offline reopen.
 
-## PR 2 · Habits
+## PR 3 · Habits
 
 - [ ] **HABIT-01** Make Add habit prominent on empty Today.
 - [ ] **HABIT-02** Clarify check and skip hierarchy.
@@ -268,14 +271,14 @@ The PR 1 implementation checklist is complete; CBR is deferred and COMIC-18 belo
 
 ## PR 2 · Hacker News
 
-- [ ] **HN-01** Reduce duplicate title and metadata noise.
-- [ ] **HN-02** Clarify saved and read states.
-- [ ] **HN-03** Preserve list position after reading.
-- [ ] **HN-04** Test deep comments and collapse/expand.
-- [ ] **HN-05** Handle unavailable links and long titles.
-- [ ] **HN-06** Keep story and discussion navigation distinct.
+- [x] **HN-01** Reduce duplicate title and metadata noise.
+- [x] **HN-02** Clarify saved and read states.
+- [x] **HN-03** Preserve list position after reading.
+- [x] **HN-04** Test deep comments and collapse/expand.
+- [x] **HN-05** Handle unavailable links and long titles.
+- [x] **HN-06** Keep story and discussion navigation distinct.
 
-## PR 2 · Home Panel
+## PR 3 · Home Panel
 
 - [ ] **HOME-01** Guide server discovery and connection setup.
 - [ ] **HOME-02** Show online/stale/last-updated states.
@@ -285,7 +288,7 @@ The PR 1 implementation checklist is complete; CBR is deferred and COMIC-18 belo
 - [ ] **HOME-06** Provide an optional wall-panel mode.
 - [ ] **HOME-07** Validate against local service fixtures.
 
-## PR 2 · Inkling
+## PR 3 · Inkling
 
 - [ ] **INK-01** Expand audited answer and guess vocabulary.
 - [ ] **INK-02** Show uppercase letters with redundant state patterns.
@@ -295,7 +298,7 @@ The PR 1 implementation checklist is complete; CBR is deferred and COMIC-18 belo
 - [ ] **INK-06** Provide archive play.
 - [ ] **INK-07** Verify daily persistence and deterministic fixtures.
 
-## PR 2 · Kitchen Card (APP-2)
+## PR 3 · Kitchen Card (APP-2)
 
 - [ ] **KITCHEN-01** Configure Mealie endpoint and credentials.
 - [ ] **KITCHEN-02** Parse real recipe list and detail responses.
@@ -306,30 +309,31 @@ The PR 1 implementation checklist is complete; CBR is deferred and COMIC-18 belo
 - [ ] **KITCHEN-07** Add recipe scaling with readable fractions.
 - [ ] **KITCHEN-08** Add cooking timers and Finished state.
 
-## PR 2 · Lichess
+## PR 3 · Lichess
 
 - [ ] **LICHESS-01** Polish pairing and reconnection guidance.
 - [ ] **LICHESS-02** Show active side, clock and connection status clearly.
 - [ ] **LICHESS-03** Keep legal moves and selected squares legible.
 - [ ] **LICHESS-04** Validate move acknowledgement, stale connection and reconnect.
 - [ ] **LICHESS-05** Test complete fixture match and retained session state.
+- [ ] **LICHESS-06** Notice on the panel when a seek has already been matched.
 
 ## PR 2 · Logic Pack
 
-- [ ] **LOGIC-01** Add varied validated puzzles and difficulty.
-- [ ] **LOGIC-02** Persist progress.
-- [ ] **LOGIC-03** Provide undo and contextual controls.
-- [ ] **LOGIC-04** Render appropriate line, bridge and cross-sum boards with attached clues.
-- [ ] **LOGIC-05** Test completion and reopen for each game.
+- [x] **LOGIC-01** Add varied validated puzzles and difficulty.
+- [x] **LOGIC-02** Persist progress.
+- [x] **LOGIC-03** Provide undo and contextual controls.
+- [x] **LOGIC-04** Render appropriate line, bridge and cross-sum boards with attached clues.
+- [x] **LOGIC-05** Test completion and reopen for each game.
 
 ## PR 2 · Magnet
 
-- [ ] **MAGNET-01** Show annotated sensor-location guidance.
-- [ ] **MAGNET-02** Distinguish unsupported sensor from no magnet.
-- [ ] **MAGNET-03** Provide resettable observation count.
-- [ ] **MAGNET-04** Test controlled hall-sensor events.
+- [x] **MAGNET-01** Show annotated sensor-location guidance.
+- [x] **MAGNET-02** Distinguish unsupported sensor from no magnet.
+- [x] **MAGNET-03** Provide resettable observation count.
+- [x] **MAGNET-04** Test controlled hall-sensor events.
 
-## PR 2 · Morse
+## PR 3 · Morse
 
 - [ ] **MORSE-01** Expose speed, duration and repeat clearly.
 - [ ] **MORSE-02** Keep Stop reachable.
@@ -338,7 +342,7 @@ The PR 1 implementation checklist is complete; CBR is deferred and COMIC-18 belo
 - [ ] **MORSE-05** Add visible learning mode and letter reference.
 - [ ] **MORSE-06** Prepare hardware timing checks.
 
-## PR 2 · Music Stand (APP-4)
+## PR 3 · Music Stand (APP-4)
 
 - [ ] **MUSIC-01** Replace text placeholders with actual score pages.
 - [ ] **MUSIC-02** Render overlapping half-page crops correctly.
@@ -348,7 +352,7 @@ The PR 1 implementation checklist is complete; CBR is deferred and COMIC-18 belo
 - [ ] **MUSIC-06** Support reachable physical/page-button turns.
 - [ ] **MUSIC-07** Read host-prepared scores and report import failures.
 
-## PR 2 · Needles
+## PR 3 · Needles
 
 - [ ] **NEEDLES-01** Provide projects and named sections.
 - [ ] **NEEDLES-02** Emphasize current row count.
@@ -359,41 +363,42 @@ The PR 1 implementation checklist is complete; CBR is deferred and COMIC-18 belo
 
 ## PR 2 · Nonograms
 
-- [ ] **NONO-01** Attach clues to matching rows and columns.
-- [ ] **NONO-02** Show selected line and marks distinctly.
-- [ ] **NONO-03** Provide undo.
-- [ ] **NONO-04** Make supported larger grids navigable.
-- [ ] **NONO-05** Distinguish unsupported sizes before play.
-- [ ] **NONO-06** Validate imported puzzle solvability and difficulty.
+- [x] **NONO-01** Attach clues to matching rows and columns.
+- [x] **NONO-02** Show selected line and marks distinctly.
+- [x] **NONO-03** Provide undo.
+- [x] **NONO-04** Make supported larger grids navigable.
+- [x] **NONO-05** Distinguish unsupported sizes before play.
+- [x] **NONO-06** Validate imported puzzle solvability and difficulty.
+- [x] **NONO-07** Replace repetitive bundled stroke patterns with varied original picture puzzles while preserving existing saved games. (Added during implementation review.)
 
 ## PR 2 · Panels
 
 - [x] **PANELS-01** Use shared comic archive/reader components.
-- [ ] **PANELS-02** Guide server or local-comic import.
-- [ ] **PANELS-03** Provide original sample comic pages.
-- [ ] **PANELS-04** Show thumbnails and reading progress.
+- [x] **PANELS-02** Guide server or local-comic import.
+- [x] **PANELS-03** Provide original sample comic pages.
+- [x] **PANELS-04** Show thumbnails and reading progress.
 - [x] **PANELS-05** Expose page zoom, fit and spread controls.
 - [x] **PANELS-06** Verify RTL reading.
-- [ ] **PANELS-07** Verify interrupted download and offline resume.
+- [x] **PANELS-07** Verify interrupted download and offline resume.
 
 ## PR 2 · Paperterm
 
-- [ ] **PAPER-01** Guide host setup and pairing.
-- [ ] **PAPER-02** Provide sample/read-only preview.
-- [ ] **PAPER-03** Keep session mode and connection visible.
-- [ ] **PAPER-04** Explain reconnect and retain a usable keyboard toggle.
-- [ ] **PAPER-05** Validate wide rows, cursor and keyboard input.
-- [ ] **PAPER-06** Validate orientation on supported profiles.
+- [x] **PAPER-01** Guide host setup and pairing.
+- [x] **PAPER-02** Provide sample/read-only preview.
+- [x] **PAPER-03** Keep session mode and connection visible.
+- [x] **PAPER-04** Explain reconnect and retain a usable keyboard toggle.
+- [x] **PAPER-05** Validate wide rows, cursor and keyboard input.
+- [x] **PAPER-06** Validate orientation on supported profiles.
 
 ## PR 2 · Parlor
 
-- [ ] **PARLOR-01** Distinguish boards and pieces.
-- [ ] **PARLOR-02** Show current player and last move.
-- [ ] **PARLOR-03** Improve legal-target contrast.
-- [ ] **PARLOR-04** Complete game/resume checks for all four rulesets.
-- [ ] **PARLOR-05** Keep unavailable board sizes honest until navigable.
+- [x] **PARLOR-01** Distinguish boards and pieces.
+- [x] **PARLOR-02** Show current player and last move.
+- [x] **PARLOR-03** Improve legal-target contrast.
+- [x] **PARLOR-04** Complete game/resume checks for all four rulesets.
+- [x] **PARLOR-05** Keep unavailable board sizes honest until navigable.
 
-## PR 2 · Parser
+## PR 3 · Parser
 
 - [ ] **PARSER-01** Include an original tutorial story.
 - [ ] **PARSER-02** Offer useful command suggestions.
@@ -402,7 +407,7 @@ The PR 1 implementation checklist is complete; CBR is deferred and COMIC-18 belo
 - [ ] **PARSER-05** Run representative story fixtures.
 - [ ] **PARSER-06** Paginate long transcript and restore saved play.
 
-## PR 2 · Post
+## PR 3 · Post
 
 - [ ] **POST-01** Paginate inbox and letters.
 - [ ] **POST-02** Persist interrupted drafts.
@@ -411,7 +416,7 @@ The PR 1 implementation checklist is complete; CBR is deferred and COMIC-18 belo
 - [ ] **POST-05** Retry with duplicate protection.
 - [ ] **POST-06** Verify delivery/retry against a local mock.
 
-## PR 2 · Pub Quiz
+## PR 3 · Pub Quiz
 
 - [ ] **QUIZ-01** Allow player names and count.
 - [ ] **QUIZ-02** Provide categories and difficulty.
@@ -420,7 +425,7 @@ The PR 1 implementation checklist is complete; CBR is deferred and COMIC-18 belo
 - [ ] **QUIZ-05** Export a scorecard.
 - [ ] **QUIZ-06** Test full rounds, repeats and offline refreshed packs.
 
-## PR 2 · Read Later (APP-5/6)
+## PR 3 · Read Later (APP-5/6)
 
 - [ ] **LATER-01** Persist fetched full article bodies.
 - [ ] **LATER-02** Implement acknowledged durable archive/star/read outbox.
@@ -431,41 +436,41 @@ The PR 1 implementation checklist is complete; CBR is deferred and COMIC-18 belo
 
 ## PR 2 · Feeds
 
-- [ ] **FEEDS-01** Distinguish failed discovery from no feed found.
-- [ ] **FEEDS-02** Accept direct feed URLs.
-- [ ] **FEEDS-03** Support OPML import.
-- [ ] **FEEDS-04** Provide working original or public starter feeds.
-- [ ] **FEEDS-05** Show last refresh, unread counts and per-feed failure.
-- [ ] **FEEDS-06** Test RSS, Atom, full-content and summary entries.
+- [x] **FEEDS-01** Distinguish failed discovery from no feed found.
+- [x] **FEEDS-02** Accept direct feed URLs.
+- [x] **FEEDS-03** Support OPML import.
+- [x] **FEEDS-04** Provide working original or public starter feeds.
+- [x] **FEEDS-05** Show last refresh, unread counts and per-feed failure.
+- [x] **FEEDS-06** Test RSS, Atom, full-content and summary entries with inline images, captions/alt text, e-ink scaling, offline image restoration and missing-image recovery.
 
 ## PR 2 · Miniflux (APP-5)
 
-- [ ] **MINI-01** Persist full article bodies offline.
-- [ ] **MINI-02** Flush acknowledged read/star/archive mutations correctly.
-- [ ] **MINI-03** Parse HTML into the shared document reader.
-- [ ] **MINI-04** Wire tabs, star, full-text and suggested-feed controls.
-- [ ] **MINI-05** Keep pending/retry state visible.
-- [ ] **MINI-06** Test fetch/read/mutate/reconnect/restart against a fixture server.
+- [x] **MINI-01** Persist full article bodies offline.
+- [x] **MINI-02** Flush acknowledged read/star/archive mutations correctly.
+- [x] **MINI-03** Parse HTML into the shared document reader with inline images, captions/alt text, e-ink scaling, offline image restoration and missing-image recovery.
+- [x] **MINI-04** Wire tabs, star, full-text and suggested-feed controls.
+- [x] **MINI-05** Keep pending/retry state visible.
+- [x] **MINI-06** Test fetch/read/mutate/reconnect/restart against a fixture server.
 
 ## PR 2 · Sidekick app
 
-- [ ] **SIDE-01** Guide desktop connection setup.
-- [ ] **SIDE-02** Show paired host and session identity.
-- [ ] **SIDE-03** Handle reconnect and stale requests.
-- [ ] **SIDE-04** Test simultaneous fixture prompts.
-- [ ] **SIDE-05** Require response acknowledgement before completion.
+- [x] **SIDE-01** Guide desktop connection setup.
+- [x] **SIDE-02** Show paired host and session identity.
+- [x] **SIDE-03** Handle reconnect and stale requests.
+- [x] **SIDE-04** Test simultaneous fixture prompts.
+- [x] **SIDE-05** Require response acknowledgement before completion.
 
 ## PR 2 · Sudoku (APP-7)
 
-- [ ] **SUDOKU-01** Persist exact game state after each move.
-- [ ] **SUDOKU-02** Provide varied valid puzzles with difficulty.
-- [ ] **SUDOKU-03** Add pencil marks.
-- [ ] **SUDOKU-04** Add undo.
-- [ ] **SUDOKU-05** Render stronger 3x3 boundaries and row/column selection.
-- [ ] **SUDOKU-06** Make assisted checking optional.
-- [ ] **SUDOKU-07** Show a clear completion state.
+- [x] **SUDOKU-01** Persist exact game state after each move.
+- [x] **SUDOKU-02** Provide varied valid puzzles with difficulty.
+- [x] **SUDOKU-03** Add pencil marks.
+- [x] **SUDOKU-04** Add undo.
+- [x] **SUDOKU-05** Render stronger 3x3 boundaries and row/column selection.
+- [x] **SUDOKU-06** Make assisted checking optional.
+- [x] **SUDOKU-07** Show a clear completion state.
 
-## PR 2 · Sync app
+## PR 3 · Sync app
 
 - [ ] **SYNCAPP-01** Guide folder choice through pairing and first verified sync.
 - [ ] **SYNCAPP-02** Show last success, bytes remaining and peer availability.
@@ -476,21 +481,21 @@ The PR 1 implementation checklist is complete; CBR is deferred and COMIC-18 belo
 
 ## PR 2 · Tic-tac-toe
 
-- [ ] **TIC-01** Add session score and rematch.
-- [ ] **TIC-02** Clarify turn and win state.
-- [ ] **TIC-03** Provide optional small solo mode.
-- [ ] **TIC-04** Keep it as a simple regression fixture.
+- [x] **TIC-01** Add session score and rematch.
+- [x] **TIC-02** Clarify turn and win state.
+- [x] **TIC-03** Provide optional small solo mode.
+- [x] **TIC-04** Keep it as a simple regression fixture.
 
 ## PR 2 · Todo
 
-- [ ] **TODO-01** Make Add task prominent in empty state.
-- [ ] **TODO-02** Edit and reorder tasks.
-- [ ] **TODO-03** Undo completion.
-- [ ] **TODO-04** Provide optional dated tasks.
-- [ ] **TODO-05** Export tasks.
-- [ ] **TODO-06** Test long text, tags and measured capacity.
+- [x] **TODO-01** Make Add task prominent in empty state.
+- [x] **TODO-02** Edit and reorder tasks.
+- [x] **TODO-03** Undo completion.
+- [x] **TODO-04** Provide optional dated tasks.
+- [x] **TODO-05** Export tasks.
+- [x] **TODO-06** Test long text, tags and measured capacity.
 
-## PR 2 · Vault (APP-6)
+## PR 3 · Vault (APP-6)
 
 - [ ] **VAULT-01** Page library rows without clipped actions.
 - [ ] **VAULT-02** Paginate long notes through final sentence.
@@ -500,7 +505,7 @@ The PR 1 implementation checklist is complete; CBR is deferred and COMIC-18 belo
 - [ ] **VAULT-06** Integrate Sync ingestion.
 - [ ] **VAULT-07** Preserve Back, list and reading positions.
 
-## PR 2 · Verses (APP-8)
+## PR 3 · Verses (APP-8)
 
 - [ ] **VERSE-01** Use real injectable calendar date and advance across midnight.
 - [ ] **VERSE-02** Provide complete permitted poems or label excerpts explicitly.
@@ -509,7 +514,7 @@ The PR 1 implementation checklist is complete; CBR is deferred and COMIC-18 belo
 - [ ] **VERSE-05** Make favorites usable.
 - [ ] **VERSE-06** Export attributed quote cards.
 
-## PR 2 · Catalog-wide release gates
+## PR 3 · Catalog-wide release gates
 
 - [ ] **APPQA-01** Use one dominant task action with stable secondary controls.
 - [ ] **APPQA-02** Differentiate loading, empty, offline, expired credentials and malformed content.
@@ -525,7 +530,7 @@ The PR 1 implementation checklist is complete; CBR is deferred and COMIC-18 belo
 - [ ] **APPQA-12** Regenerate screenshots only from the shipped build.
 - [ ] **APPQA-13** Keep Zotero Reader outside this catalog review.
 
-## PR 3 · Main CLI and companion operation engine
+## PR 4 · Main CLI and companion operation engine
 
 - [ ] **CLI-01** Provide guided interactive entry point for bare kobo.
 - [ ] **CLI-02** Keep plain compact help for noninteractive use.
@@ -566,7 +571,7 @@ The PR 1 implementation checklist is complete; CBR is deferred and COMIC-18 belo
 - [ ] **CLI-37** Keep arbitrary commands in explicit advanced controls.
 - [ ] **CLI-38** Avoid required AI/chat, vague slogans and decorative dashboard clutter.
 
-## PR 3 · Deck companion
+## PR 4 · Deck companion
 
 - [ ] **DECKCLI-01** Preserve real pairing when pushing layouts.
 - [ ] **DECKCLI-02** Separate static simulator preview from executable pairing.
@@ -576,7 +581,7 @@ The PR 1 implementation checklist is complete; CBR is deferred and COMIC-18 belo
 - [ ] **DECKCLI-06** Test a harmless action and show its acknowledgement.
 - [ ] **DECKCLI-07** Keep per-action confirmation configurable.
 
-## PR 3 · Flashcards companion
+## PR 4 · Flashcards companion
 
 - [ ] **FLASHCLI-01** Replace main CLI refusal stub with the supported helper entry point.
 - [ ] **FLASHCLI-02** Make helper install/version status discoverable.
@@ -588,7 +593,7 @@ The PR 1 implementation checklist is complete; CBR is deferred and COMIC-18 belo
 - [ ] **FLASHCLI-08** Expose verify, stage and review-log export consistently.
 - [ ] **FLASHCLI-09** Validate imported content and preserve previous collection on failure.
 
-## PR 3 · Frame companion
+## PR 4 · Frame companion
 
 - [ ] **FRAMECLI-01** Preview multiple photos and crop/pad choices.
 - [ ] **FRAMECLI-02** Perform bounded downsize with visual quality preview.
@@ -598,7 +603,7 @@ The PR 1 implementation checklist is complete; CBR is deferred and COMIC-18 belo
 - [ ] **FRAMECLI-06** Retain recoverable previous album.
 - [ ] **FRAMECLI-07** Verify reader availability before saying photos are ready.
 
-## PR 3 · Vault companion
+## PR 4 · Vault companion
 
 - [ ] **VAULTCLI-01** Pick folder and preview included/excluded notes.
 - [ ] **VAULTCLI-02** Preview a long note at reader dimensions.
@@ -608,7 +613,7 @@ The PR 1 implementation checklist is complete; CBR is deferred and COMIC-18 belo
 - [ ] **VAULTCLI-06** Explain direction and supported reader-edit export honestly.
 - [ ] **VAULTCLI-07** Enable optional ongoing sync after a successful import.
 
-## PR 3 · Sync companion
+## PR 4 · Sync companion
 
 - [ ] **SYNCCLI-01** Preserve isolated private daemon configuration.
 - [ ] **SYNCCLI-02** Provide explicit test/config root.
@@ -617,7 +622,7 @@ The PR 1 implementation checklist is complete; CBR is deferred and COMIC-18 belo
 - [ ] **SYNCCLI-05** Expose last successful sync, pause/resume and conflicts.
 - [ ] **SYNCCLI-06** Keep owner originals protected and directions explicit.
 
-## PR 3 · Needles companion
+## PR 4 · Needles companion
 
 - [ ] **NEEDLECLI-01** Manage required converter instead of demanding manual toolchain setup.
 - [ ] **NEEDLECLI-02** Preview extracted instructions against source.
@@ -626,21 +631,21 @@ The PR 1 implementation checklist is complete; CBR is deferred and COMIC-18 belo
 - [ ] **NEEDLECLI-05** Use the same prepare/preview/send flow for PDF, Markdown and text.
 - [ ] **NEEDLECLI-06** Support simulator and output-only targets.
 
-## PR 3 · Nonograms companion
+## PR 4 · Nonograms companion
 
 - [ ] **NONOCLI-01** Preview resulting puzzle at each supported size.
 - [ ] **NONOCLI-02** Validate solvability and difficulty before transfer.
 - [ ] **NONOCLI-03** Support named imports and multiple puzzles.
 - [ ] **NONOCLI-04** Support simulator and reader targets consistently.
 
-## PR 3 · Parser companion
+## PR 4 · Parser companion
 
 - [ ] **PARSERCLI-01** Share structural validation with interpreter.
 - [ ] **PARSERCLI-02** Distinguish recognized format from playable validated story.
 - [ ] **PARSERCLI-03** Show title, format and compatibility.
 - [ ] **PARSERCLI-04** Support shelf choice, duplicates and simulator transfer.
 
-## PR 3 · Paperterm companion
+## PR 4 · Paperterm companion
 
 - [ ] **STREAMCLI-01** Guide pairing through named reader choice.
 - [ ] **STREAMCLI-02** Offer known terminal/task presets and connection test.
@@ -648,7 +653,7 @@ The PR 1 implementation checklist is complete; CBR is deferred and COMIC-18 belo
 - [ ] **STREAMCLI-04** Provide obvious Stop and computer-awake explanation.
 - [ ] **STREAMCLI-05** Keep arbitrary terminal command entry advanced.
 
-## PR 3 · Sidekick companion
+## PR 4 · Sidekick companion
 
 - [ ] **SIDECLI-01** Unify helper install/start/status/stop in companion.
 - [ ] **SIDECLI-02** Show and select agent integrations before configuration.
@@ -657,7 +662,7 @@ The PR 1 implementation checklist is complete; CBR is deferred and COMIC-18 belo
 - [ ] **SIDECLI-05** Return success from help.
 - [ ] **SIDECLI-06** Provide self-contained sample mode.
 
-## PR 3 · Provider connections
+## PR 4 · Provider connections
 
 - [ ] **SERVICECLI-01** Fix secret/trust help exit status.
 - [ ] **SERVICECLI-02** Provide per-app Connect service form.
@@ -668,7 +673,7 @@ The PR 1 implementation checklist is complete; CBR is deferred and COMIC-18 belo
 - [ ] **SERVICECLI-07** Explain certificate errors and explicit trust installation.
 - [ ] **SERVICECLI-08** Avoid secret input in shell history.
 
-## PR 3 · Missing companion workflows
+## PR 4 · Missing companion workflows
 
 - [ ] **MISSINGCLI-01** Implement scores import/push with real score conversion.
 - [ ] **MISSINGCLI-02** Implement Fieldbook pack import and checklist export.
@@ -676,7 +681,7 @@ The PR 1 implementation checklist is complete; CBR is deferred and COMIC-18 belo
 - [ ] **MISSINGCLI-04** Generate setup instructions and command references from shared capabilities.
 - [ ] **MISSINGCLI-05** Remove obsolete commands and false availability claims.
 
-## PR 3 · Owner experience and final validation
+## PR 4 · Owner experience and final validation
 
 - [ ] **OWNERQA-01** Test photo first-use flow without command typing.
 - [ ] **OWNERQA-02** Test card preview/import/review-log flow.

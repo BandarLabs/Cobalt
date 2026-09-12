@@ -12,7 +12,9 @@
 //! A small retained UI tree and grayscale rasterizer for the Kobo display.
 
 mod board;
+mod pencil;
 pub use board::{BoardCell, BoardClue, BoardMark, BoardSurface};
+pub use pencil::{PencilBoard, PencilEdge, PencilMark, PencilMarkKind};
 
 use std::cmp::{max, min};
 use std::collections::BTreeMap;
@@ -815,6 +817,61 @@ mod responsive_profile_tests {
         }
     }
 
+    /// A mark on a chosen square has to stay visible.
+    ///
+    /// The glyph in a selected cell used to be drawn in paper, which is right
+    /// over ink and wrong over everything else the toolkit fills a cell with.
+    /// A tic-tac-toe board marking its winning line came out as three empty
+    /// squares.
+    #[test]
+    fn a_glyph_in_a_chosen_cell_is_still_drawn_in_ink() {
+        let metrics = CLARA_BW_METRICS;
+        let cells = (0..4).map(|index| {
+            Cell::new(ActionId(index + 1), " ")
+                .with_glyph(Glyph::Circle)
+                .with_selected(index < 2)
+        });
+        let screen = Screen::new(
+            1,
+            vec![Node::Grid {
+                id: NodeId(1),
+                columns: 2,
+                square: true,
+                cells: cells.collect(),
+            }],
+        );
+        let layout = screen.layout_with(&metrics, &Chrome::default());
+        assert!(
+            layout
+                .nodes
+                .iter()
+                .all(|node| !matches!(node.kind, LayoutKind::InlineGlyph(_, true))),
+            "a board glyph was inverted over a light cell"
+        );
+        let mut surface = Surface::new(
+            usize::try_from(metrics.width).expect("width"),
+            usize::try_from(metrics.height).expect("height"),
+        );
+        render_with(&screen, &metrics, &Chrome::default(), &mut surface, None);
+        let chosen = layout
+            .nodes
+            .iter()
+            .find(|node| matches!(node.kind, LayoutKind::InlineGlyph(..)))
+            .expect("a cell with a mark in it");
+        let mut inked = 0;
+        for y in chosen.rect.y..chosen.rect.y + chosen.rect.height {
+            for x in chosen.rect.x..chosen.rect.x + chosen.rect.width {
+                let at = usize::try_from(y).expect("row")
+                    * usize::try_from(metrics.width).expect("width")
+                    + usize::try_from(x).expect("column");
+                if surface.pixels[at] < tone::MUTED {
+                    inked += 1;
+                }
+            }
+        }
+        assert!(inked > 0, "the mark on a chosen square was invisible");
+    }
+
     #[test]
     fn every_supported_profile_and_orientation_has_safe_responsive_primitives() {
         for (name, metrics) in panels() {
@@ -1471,8 +1528,8 @@ pub const MAX_TERMINAL_ROWS: usize = 64;
 
 /// The most characters one terminal row may carry.
 ///
-/// 53 columns fit across this panel; 160 is the widest terminal anyone
-/// conventionally uses, and anything past the grid is dropped, never wrapped.
+/// The measured font and physical panel width determine the visible columns.
+/// This upper bound limits each row; anything past the grid is clipped, never wrapped.
 pub const MAX_TERMINAL_COLUMNS: usize = 160;
 
 /// The character grid that fits in a region of the given pixel size.
@@ -1530,7 +1587,7 @@ fn terminal_cell_at(row: &str, column: usize) -> (char, usize) {
 /// Terminal text is set at the smallest size, because a terminal's value is in
 /// how much of it can be seen at once and a shell's output is read in glances
 /// rather than at length.
-const TERMINAL_SIZE: FontSize = FontSize::Caption;
+const TERMINAL_SIZE: FontSize = FontSize::Terminal;
 
 /// The physical characteristics of a panel the UI is being laid out for.
 ///
@@ -2296,6 +2353,10 @@ pub struct BarAction {
 /// phone platforms draw and what a printed keyboard looks like.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub enum CellStyle {
+    /// Solid crossword block, never a letter square.
+    CrosswordBlock,
+    /// Joined white crossword square with a restrained active-word highlight.
+    Crossword,
     #[default]
     Board,
     /// A shaded playable square on a conventional draughts board.
@@ -2318,6 +2379,13 @@ pub enum CellStyle {
     /// Fifteen of these in three rows of five is a command deck. Empty pads
     /// stay as blank keys so the grid does not collapse into a list.
     Pad,
+    /// A place where a pad could be, with nothing assigned to it.
+    ///
+    /// The same square in a hairline rather than the bezel. A deck of fifteen
+    /// places with three assigned drew twelve boxes as heavy as the three
+    /// that did something, which is a panel mostly made of controls that do
+    /// nothing.
+    EmptyPad,
 }
 
 /// Whether a control can currently be activated.
@@ -3263,12 +3331,29 @@ fn layout_overlay(overlay: &Overlay, metrics: &DisplayMetrics, prose: Face, layo
     } else {
         0
     };
+    // Measured before anything is placed, because how much room the header
+    // needs depends on how many lines the title turned out to be. Narrowed by
+    // whatever the cross took, so a title is never set underneath it.
+    let title_width = max(1, width - 2 * padding - close);
+    // A dialogue's title is its question, and a question cut in half is worse
+    // than a dialogue one line taller: "Download Mrs Dalloway?" was reaching
+    // the reader as "Download Mrs" at the larger reader text settings. A
+    // popover's title is a label over a short menu, and stays on one line.
+    let title_lines: Vec<String> = if overlay.title.is_empty() {
+        Vec::new()
+    } else {
+        wrap_text_in(&overlay.title, title_width, FontSize::Title, prose)
+            .into_iter()
+            .take(match overlay.kind {
+                OverlayKind::Modal => 2,
+                OverlayKind::Popover { .. } => 1,
+            })
+            .collect()
+    };
     let mut scratch = Layout::default();
     let mut cursor = padding;
-    let mut title_height = 0;
-    if !overlay.title.is_empty() {
-        title_height = FontSize::Title.line_height();
-    }
+    let title_height =
+        FontSize::Title.line_height() * i32::try_from(title_lines.len()).unwrap_or(0);
     // The cross and the title share one band, so a modal with no title still
     // has room for the cross and one with a short title does not overlap it.
     let header = max(title_height, close);
@@ -3422,10 +3507,7 @@ fn layout_overlay(overlay: &Overlay, metrics: &DisplayMetrics, prose: Face, layo
             text_lines: Vec::new(),
         });
     }
-    if !overlay.title.is_empty() {
-        // Narrowed by whatever the cross took, so a long title is cut short
-        // rather than set underneath it.
-        let title_width = max(1, inner - close);
+    if !title_lines.is_empty() {
         layout.nodes.push(LayoutNode {
             id: overlay.id,
             rect: Rect {
@@ -3435,10 +3517,7 @@ fn layout_overlay(overlay: &Overlay, metrics: &DisplayMetrics, prose: Face, layo
                 height: title_height,
             },
             kind: LayoutKind::OverlayTitle,
-            text_lines: wrap_text_in(&overlay.title, title_width, FontSize::Title, prose)
-                .into_iter()
-                .take(1)
-                .collect(),
+            text_lines: title_lines,
         });
     }
     if closes {
@@ -3632,7 +3711,12 @@ fn layout_top_bar(
             // narrower than the bar is tall is one a thumb misses.
             control
         } else {
-            let (text_width, _) = measure_text(&action.label, FontSize::Body);
+            let size = if FontSize::Body.line_height() <= control {
+                FontSize::Body
+            } else {
+                FontSize::Caption
+            };
+            let (text_width, _) = measure_text(&action.label, size);
             max(
                 control,
                 text_width.saturating_add(metrics.space(Space::Medium)),
@@ -4327,6 +4411,10 @@ pub enum Node {
     /// none of them should need a new primitive in the protocol. So the caller
     /// chooses the columns, and whether cells are square or a single row high.
     /// A bounded board viewport with explicit marks and aligned clue gutters.
+    PencilBoard {
+        id: NodeId,
+        board: PencilBoard,
+    },
     Board {
         id: NodeId,
         surface: BoardSurface,
@@ -4862,6 +4950,8 @@ pub struct Cell {
     pub glyph: Option<Glyph>,
     /// Drawn inverted while this cell is the current board selection.
     pub selected: bool,
+    /// Small crossword clue number in the upper-left corner (1–99).
+    pub corner: Option<u8>,
 }
 
 impl Cell {
@@ -4872,6 +4962,7 @@ impl Cell {
             label: label.into(),
             glyph: None,
             selected: false,
+            corner: None,
         }
     }
 
@@ -5268,14 +5359,30 @@ pub enum Glyph {
     BlackDraughtsMan,
     /// An outlined man on a conventional draughts board.
     WhiteDraughtsMan,
-    /// An unoccupied intersection on a Nine Men's Morris board.
-    MorrisPoint,
-    /// A legal destination on a Nine Men's Morris board.
-    MorrisLegalPoint,
+    /// An unoccupied point on a board: a small solid dot.
+    ///
+    /// Named for what it is rather than for the first game that wanted it.
+    /// An intersection on a Nine Men's Morris board and an empty square on
+    /// any other board are the same mark, and a glyph called
+    /// `MorrisPoint` is one that nobody else reaches for.
+    BoardPoint,
+    /// A legal destination: a thin ring, large enough to read at arm's length.
+    ///
+    /// Every board game on this device has to say where a piece may go, and
+    /// they were saying it with whatever dotted circle their typeface
+    /// happened to carry. This is the mark the renderer draws.
+    LegalPoint,
     /// Remove the character before the typing position.
     Backspace,
     /// Capitalize the next typed letter.
     Shift,
+    /// Three points in a line joined by a rule: a mill.
+    ///
+    /// The one shape Nine Men's Morris is played for, and the only mark that
+    /// says which game a shelf card opens. The card wore [`Self::BoardPoint`]
+    /// before this existed, and a single dot the width of a full stop is not
+    /// an emblem anyone reads at arm's length.
+    Mill,
 }
 
 impl Glyph {
@@ -5286,7 +5393,7 @@ impl Glyph {
     /// the set was twenty-one: `Light` and `Close` were authored, shipped, and
     /// covered by none of the tests that walk every glyph. A glyph nobody
     /// rasterises in a test is a blank space beside a label on the panel.
-    pub const ALL: [Self; 68] = [
+    pub const ALL: [Self; 69] = [
         Self::App,
         Self::Book,
         Self::Note,
@@ -5351,10 +5458,11 @@ impl Glyph {
         Self::WhiteDraughtsKing,
         Self::BlackDraughtsMan,
         Self::WhiteDraughtsMan,
-        Self::MorrisPoint,
-        Self::MorrisLegalPoint,
+        Self::BoardPoint,
+        Self::LegalPoint,
         Self::Backspace,
         Self::Shift,
+        Self::Mill,
     ];
 }
 
@@ -5383,6 +5491,7 @@ impl Node {
             | Self::PagedList { id, .. }
             | Self::Grid { id, .. }
             | Self::Board { id, .. }
+            | Self::PencilBoard { id, .. }
             | Self::Rows { id, .. }
             | Self::Table { id, .. }
             | Self::TileGrid { id, .. }
@@ -5643,6 +5752,9 @@ pub enum LayoutKind {
     /// Explicit board ink; selection is an outline independent of the mark.
     BoardMark(BoardMark, bool),
     BoardClue,
+    PencilMark(PencilMarkKind, bool),
+    PencilEdge(u8, bool),
+    PencilNumber(bool),
     /// The three nested squares and four connectors behind a Morris board.
     MorrisBoard,
     /// One cell of a table, drawn in the body face.
@@ -5740,6 +5852,7 @@ impl LayoutKind {
     #[must_use]
     pub const fn acts_on(&self) -> Option<ActionId> {
         match *self {
+            Self::Cell(_, CellStyle::CrosswordBlock, _) => None,
             Self::Button(action, ControlState::Enabled, _)
             | Self::BarAction(action)
             | Self::BarGlyph(action, _)
@@ -6336,9 +6449,14 @@ fn intrinsic_width(node: &Node, available: i32, metrics: &DisplayMetrics, prose:
         }
         Node::Text { text, .. } => measure_text_in(text, FontSize::Body, prose).0,
         Node::Secondary { text, .. } => measure_text(text, FontSize::Caption).0,
+        // The same padding the button lays itself out with, not a smaller one
+        // that looks similar. A menu measured with two millimetres a side and
+        // drawn with four is two words wide and four millimetres short, which
+        // at the largest reader text settings is enough to break "Rename"
+        // across two lines in the middle of the word.
         Node::Button { label, .. } => measure_text(label, FontSize::Body)
             .0
-            .saturating_add(2 * metrics.space(Space::Small)),
+            .saturating_add(2 * metrics.tenth_mm(BUTTON_HORIZONTAL_PADDING_TENTH_MM)),
         // A list knows exactly how wide it wants to be, and a menu is a list.
         // The arithmetic is the inverse of `row_text_width`: a row always
         // reserves the lead column whether or not it has a lead, so that a
@@ -6633,6 +6751,7 @@ fn layout_flow_node(
             | Node::Flex { .. }
             | Node::Grid { .. }
             | Node::Board { .. }
+            | Node::PencilBoard { .. }
             | Node::Table { .. }
             | Node::Picture { .. }
             | Node::TileGrid { .. }
@@ -7197,7 +7316,7 @@ fn layout_node(
         } => {
             // A control is never smaller than a finger, by construction. The
             // author never gets to choose a height at all.
-            let height = max(
+            let finger = max(
                 metrics.touch_target_minimum(),
                 metrics.touch_target_default(),
             );
@@ -7225,6 +7344,28 @@ fn layout_node(
             } else {
                 x.saturating_add((width - button_width) / 2)
             };
+            let lines = wrap_text(
+                label,
+                if legacy {
+                    button_width - 32
+                } else {
+                    button_width.saturating_sub(padding.saturating_mul(2))
+                },
+                FontSize::Body,
+            );
+            // Tall enough for the words on it. A finger is the floor, not the
+            // ceiling: at the larger reader text settings a two word label
+            // beside another control wraps, and a button drawn one line tall
+            // around two lines of text is a screen the renderer refuses
+            // outright, so the whole panel went blank rather than one label
+            // being a little taller than its neighbour.
+            // Exactly what the words need, and never less than a finger. No
+            // padding on top of that: a button that grew by a few pixels on
+            // every screen would take the room something else had already
+            // been measured into, which on a board game is the board.
+            let wrapped =
+                i32::try_from(lines.len()).unwrap_or(1).max(1) * FontSize::Body.line_height();
+            let height = max(finger, wrapped);
             layout.nodes.push(LayoutNode {
                 id: *id,
                 rect: Rect {
@@ -7234,15 +7375,7 @@ fn layout_node(
                     height,
                 },
                 kind: LayoutKind::Button(*action, *state, *emphasis),
-                text_lines: wrap_text(
-                    label,
-                    if legacy {
-                        button_width - 32
-                    } else {
-                        button_width.saturating_sub(padding.saturating_mul(2))
-                    },
-                    FontSize::Body,
-                ),
+                text_lines: lines,
             });
             y.saturating_add(height)
         }
@@ -7930,6 +8063,18 @@ fn layout_node(
             });
             y.saturating_add(height)
         }
+        Node::PencilBoard { id, board } => pencil::layout(
+            *id,
+            board,
+            Rect {
+                x,
+                y,
+                width,
+                height: bottom.saturating_sub(y),
+            },
+            metrics,
+            layout,
+        ),
         Node::Board { id, surface } => board::layout(
             *id,
             surface,
@@ -7969,6 +8114,8 @@ fn layout_node(
             };
             let (mut x, mut width, gutter) = if backgammon_board {
                 (0, metrics.width, 0)
+            } else if *square && cells.iter().any(|cell| cell.corner.is_some()) {
+                (x, width, 0)
             } else if pad_deck {
                 (x, width, metrics.space(Space::Small))
             } else {
@@ -8021,12 +8168,9 @@ fn layout_node(
             let morris_board = *square
                 && columns == 7
                 && cells.len() == 49
-                && cells.iter().any(|cell| {
-                    matches!(
-                        cell.glyph,
-                        Some(Glyph::MorrisPoint | Glyph::MorrisLegalPoint)
-                    )
-                });
+                && cells
+                    .iter()
+                    .any(|cell| matches!(cell.glyph, Some(Glyph::BoardPoint | Glyph::LegalPoint)));
             let index = layout.nodes.len();
             layout.nodes.push(LayoutNode {
                 id: *id,
@@ -8072,6 +8216,10 @@ fn layout_node(
                     } else {
                         CellStyle::BackgammonBottom
                     }
+                } else if *square && cells.iter().any(|c| c.corner.is_some()) && cell.label == "#" {
+                    CellStyle::CrosswordBlock
+                } else if *square && cells.iter().any(|c| c.corner.is_some()) {
+                    CellStyle::Crossword
                 } else if morris_board {
                     CellStyle::Plain
                 } else if draughts_board && (row + column) % 2 == 1 {
@@ -8085,6 +8233,16 @@ fn layout_node(
                     y: y.saturating_add(row * (cell_height + gutter) + row / 3 * block_extra),
                     width: cell_width,
                     height: cell_height,
+                };
+                // A pad with neither a word nor a picture on it is a place
+                // rather than a key, and is drawn as one.
+                let style = if style == CellStyle::Pad
+                    && cell.glyph.is_none()
+                    && cell.label.trim().is_empty()
+                {
+                    CellStyle::EmptyPad
+                } else {
+                    style
                 };
                 layout.nodes.push(LayoutNode {
                     id: *id,
@@ -8133,7 +8291,16 @@ fn layout_node(
                                     width: mark,
                                     height: mark,
                                 },
-                                kind: LayoutKind::InlineGlyph(glyph, cell.selected),
+                                // Inverted only where the cell is actually
+                                // drawn on ink. Every other selected cell is
+                                // filled with paper or the surface tone, and a
+                                // paper glyph on either of those is a mark
+                                // nobody can see: a won line of noughts came
+                                // out as three empty squares.
+                                kind: LayoutKind::InlineGlyph(
+                                    glyph,
+                                    cell.selected && style == CellStyle::CrosswordBlock,
+                                ),
                                 text_lines: vec![cell.label.clone()],
                             });
                             if !cell.label.is_empty() {
@@ -8161,16 +8328,48 @@ fn layout_node(
                                     width: mark,
                                     height: mark,
                                 },
-                                kind: LayoutKind::InlineGlyph(glyph, cell.selected),
+                                // Inverted only where the cell is actually
+                                // drawn on ink. Every other selected cell is
+                                // filled with paper or the surface tone, and a
+                                // paper glyph on either of those is a mark
+                                // nobody can see: a won line of noughts came
+                                // out as three empty squares.
+                                kind: LayoutKind::InlineGlyph(
+                                    glyph,
+                                    cell.selected && style == CellStyle::CrosswordBlock,
+                                ),
                                 text_lines: vec![cell.label.clone()],
                             });
                         }
-                        None => layout.nodes.push(LayoutNode {
-                            id: *id,
-                            rect,
-                            kind: LayoutKind::CellLabel(style == CellStyle::Board),
-                            text_lines: vec![cell.label.clone()],
-                        }),
+                        None if style == CellStyle::CrosswordBlock => (),
+                        None => {
+                            layout.nodes.push(LayoutNode {
+                                id: *id,
+                                rect,
+                                kind: LayoutKind::CellLabel(matches!(
+                                    style,
+                                    CellStyle::Board | CellStyle::Crossword
+                                )),
+                                text_lines: vec![cell.label.clone()],
+                            });
+                            if let Some(number) = cell.corner.filter(|n| (1..=99).contains(n)) {
+                                let inset = metrics.rule_thickness() * 2;
+                                layout.nodes.push(LayoutNode {
+                                    id: *id,
+                                    rect: Rect {
+                                        x: rect.x + inset,
+                                        y: rect.y + inset,
+                                        width: rect.width / 4,
+                                        height: (rect.height / 6)
+                                            .max(with_text_scale(TextScale::Smallest, || {
+                                                FontSize::Caption.line_height()
+                                            })),
+                                    },
+                                    kind: LayoutKind::CellLabel(true),
+                                    text_lines: vec![number.to_string()],
+                                });
+                            }
+                        }
                     }
                 }
             }
@@ -9173,6 +9372,8 @@ pub fn terminal_grid_for(screen: &Screen, metrics: &DisplayMetrics) -> (u16, u16
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FontSize {
+    /// Dense monospace terminal text; interface labels retain their usual sizes.
+    Terminal,
     Caption,
     Body,
     Title,
@@ -9215,6 +9416,7 @@ impl FontSize {
     #[must_use]
     pub const fn tenth_mm(self) -> i32 {
         match self {
+            Self::Terminal => 18,
             Self::Caption => 24,
             Self::Body => 31,
             Self::Title => 42,
@@ -9243,7 +9445,7 @@ impl FontSize {
     #[must_use]
     pub const fn scale(self) -> i32 {
         match self {
-            Self::Caption => 2,
+            Self::Terminal | Self::Caption => 2,
             Self::Body => 3,
             Self::Title => 4,
             Self::Heading => 5,
@@ -9300,7 +9502,7 @@ impl FontSize {
 
     const fn unscaled_fallback_line_height(self) -> i32 {
         match self {
-            Self::Caption => 18,
+            Self::Terminal | Self::Caption => 18,
             Self::Body => 27,
             Self::Title => 36,
             Self::Heading => 45,
@@ -9960,9 +10162,37 @@ pub fn paginate_tagged(
     metrics: &DisplayMetrics,
     area: ProseArea,
 ) -> Vec<Vec<(u32, u8, QuoteRole, String)>> {
+    paginate_tagged_below(paragraphs, metrics, area, 0)
+}
+
+/// The same, for a screen that draws something of its own above the first page
+/// and nothing above the rest.
+///
+/// `taken` is how much of the first page that something occupies. A detail
+/// screen is usually this shape: a block of facts, a picture or a byline at
+/// the head of a long piece of prose, and only at the head of it. Measuring
+/// the whole document against the shortened page wastes a line on every page
+/// after the first; measuring it against the full page draws the last
+/// paragraph of the first page through whatever is below it.
+///
+/// Applications reached for the alternative before this existed, which was to
+/// reserve paragraphs of roughly the right height and swap them for the real
+/// block while drawing. It is close, and close is a paragraph over the edge:
+/// a block of four facts is a dozen pixels taller than four paragraphs of the
+/// same words, which is an eighth of a line, which is one line too many at the
+/// foot of the page.
+#[must_use]
+pub fn paginate_tagged_below(
+    paragraphs: &[(u32, u8, QuoteRole, &str)],
+    metrics: &DisplayMetrics,
+    area: ProseArea,
+    taken: i32,
+) -> Vec<Vec<(u32, u8, QuoteRole, String)>> {
     let mut pages: Vec<Page> = Vec::new();
     let mut page: Page = Vec::new();
-    let mut used = 0;
+    // Counted as though the block were the first thing on the page, so the
+    // gap between it and the first paragraph is the gap between any two.
+    let mut used = taken.max(0);
     let body_height = FontSize::Body.line_height_in(area.face);
     if area.width <= 0 || area.height < body_height {
         return pages;
@@ -9993,7 +10223,13 @@ pub fn paginate_tagged(
         }
         let mut lines = wrap_text_in(paragraph, width, size, area.face);
         while !lines.is_empty() {
-            let spacing = if page.is_empty() { 0 } else { area.gap };
+            // A gap above the first paragraph as well, when something the
+            // paginator did not place is already standing on the page.
+            let spacing = if page.is_empty() && used == 0 {
+                0
+            } else {
+                area.gap
+            };
             let room = area.height - used - spacing;
             let fits = max_i32(0, room / line_height) as usize;
             if fits == 0 {
@@ -12299,6 +12535,16 @@ fn validate_node(
                 check_text_coverage(id, item, Face::Text, issues);
             }
         }
+        Node::PencilBoard { board, .. } => {
+            if !board.is_valid() {
+                issues.push(LayoutIssue {
+                    severity: DiagnosticSeverity::Error,
+                    node: Some(id),
+                    kind: LayoutIssueKind::InvalidBoard,
+                    rect: None,
+                });
+            }
+        }
         Node::Board { surface, .. } => {
             if !surface.is_valid() {
                 issues.push(LayoutIssue {
@@ -12507,6 +12753,7 @@ fn validate_content_bounds(
         // does an empty list. Neither is content that layout hid.
         let expects_rect = !matches!(node, Node::Rows { rows, .. } if rows.is_empty())
             && !matches!(node, Node::Grid { cells, .. } if cells.is_empty())
+            && !matches!(node, Node::Terminal { rows, .. } if rows.is_empty())
             && !matches!(node, Node::Flex { .. });
         let completely_hidden = expects_rect
             && (rects.is_empty()
@@ -12662,7 +12909,14 @@ fn node_enabled_interaction_count(node: &Node) -> usize {
         Node::Field { clear, .. } => 1 + usize::from(clear.is_some()),
         Node::Chips { chips, .. } | Node::Tabs { tabs: chips, .. } => chips.len(),
         Node::Card { .. } | Node::Band { .. } => 0,
-        Node::Grid { cells, .. } => cells.len(),
+        Node::Grid { cells, square, .. } => {
+            let crossword = *square && cells.iter().any(|cell| cell.corner.is_some());
+            cells
+                .iter()
+                .filter(|cell| !crossword || cell.label != "#")
+                .count()
+        }
+        Node::PencilBoard { board, .. } => board.action_count(),
         Node::Board { surface, .. } => {
             surface.cells.len() + surface.row_clues.len() + surface.column_clues.len()
         }
@@ -12735,11 +12989,19 @@ fn validate_layout_nodes(layout: &Layout, metrics: &DisplayMetrics, issues: &mut
                 rect: Some(node.rect),
             });
         }
-        let Some((size, face)) = layout_text_style(node) else {
+        let style = match node.kind {
+            LayoutKind::Quote(_, role) => Some((role.size(), layout.prose_face)),
+            _ => layout_text_style(node),
+        };
+        let Some((size, face)) = style else {
             continue;
         };
-        let scale = if matches!(node.kind, LayoutKind::CellLabel(true)) {
+        let scale = if matches!(node.kind, LayoutKind::PencilNumber(_)) {
+            pencil::label_style(node).1
+        } else if matches!(node.kind, LayoutKind::CellLabel(true)) {
             board_label_style(node).1
+        } else if matches!(node.kind, LayoutKind::CellLabel(false)) {
+            key_label_style(node).1
         } else {
             text_scale()
         };
@@ -12854,11 +13116,50 @@ fn board_label_size(node: &LayoutNode) -> FontSize {
     board_label_style(node).0
 }
 
+// Keyboard keys keep physical targets. Fit their short labels within those targets,
+// including the compact landscape keyboard at the largest reader text settings.
+fn key_label_style(node: &LayoutNode) -> (FontSize, TextScale) {
+    let current = text_scale();
+    let fits = |size: FontSize| {
+        size.line_height() <= node.rect.height
+            && node
+                .text_lines
+                .iter()
+                .all(|line| measure_text(line, size).0 <= node.rect.width)
+    };
+    for size in [FontSize::Body, FontSize::Caption] {
+        if fits(size) {
+            return (size, current);
+        }
+    }
+    for scale in TextScale::STEPS
+        .into_iter()
+        .take_while(|s| *s != current)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+    {
+        if with_text_scale(scale, || fits(FontSize::Caption)) {
+            return (FontSize::Caption, scale);
+        }
+    }
+    (FontSize::Caption, current)
+}
+
 fn layout_text_style(node: &LayoutNode) -> Option<(FontSize, Face)> {
     let size = match node.kind {
         LayoutKind::Heading(level) => FontSize::for_heading_level(level),
         LayoutKind::CellLabel(true) => board_label_size(node),
+        LayoutKind::PencilNumber(_) => pencil::label_style(node).0,
+        LayoutKind::CellLabel(false) => key_label_style(node).0,
         LayoutKind::TopBarTitle => BAR_TITLE,
+        LayoutKind::BarAction(_) => {
+            if FontSize::Body.line_height() <= node.rect.height {
+                FontSize::Body
+            } else {
+                FontSize::Caption
+            }
+        }
         LayoutKind::OverlayTitle => FontSize::Title,
         LayoutKind::BoardClue
         | LayoutKind::Secondary
@@ -12885,10 +13186,8 @@ fn layout_text_style(node: &LayoutNode) -> Option<(FontSize, Face)> {
         | LayoutKind::Quote(..)
         | LayoutKind::Button(..)
         | LayoutKind::PagedList
-        | LayoutKind::BarAction(_)
         | LayoutKind::RowTitle
         | LayoutKind::RowTitleDone
-        | LayoutKind::CellLabel(_)
         | LayoutKind::ChoicePrompt
         | LayoutKind::ChoiceOption(_, _)
         | LayoutKind::StepperValue
@@ -13781,6 +14080,21 @@ fn render_all_with_selected_font(
             // ruled squares and an empty cell stays paper white. Filling would
             // make every move a full-cell change, which is slow on E Ink and
             // looks like a mistake.
+            LayoutKind::Cell(_, CellStyle::Crossword, selected) => {
+                if selected {
+                    fill_clipped(surface, node.rect, tone::SURFACE, clip);
+                }
+                stroke_clipped(
+                    surface,
+                    node.rect,
+                    tone::INK,
+                    metrics.rule_thickness(),
+                    clip,
+                );
+            }
+            LayoutKind::Cell(_, CellStyle::CrosswordBlock, _) => {
+                fill_clipped(surface, node.rect, tone::INK, clip);
+            }
             LayoutKind::Cell(_, CellStyle::Board, true) => {
                 fill_clipped(surface, node.rect, tone::SURFACE, clip);
                 stroke_clipped(
@@ -13843,17 +14157,40 @@ fn render_all_with_selected_font(
                     );
                 }
             }
-            LayoutKind::Cell(_, CellStyle::Pad, _) => {
+            LayoutKind::Cell(_, style @ (CellStyle::Pad | CellStyle::EmptyPad), _) => {
                 let radius = metrics.tenth_mm(PAD_RADIUS_TENTH_MM);
                 fill_rounded_clipped(surface, node.rect, radius, tone::PAPER, clip);
                 stroke_rounded_clipped(
                     surface,
                     node.rect,
                     radius,
-                    tone::INK,
+                    if style == CellStyle::Pad {
+                        tone::INK
+                    } else {
+                        tone::RULE
+                    },
                     metrics.tenth_mm(PAD_BORDER_TENTH_MM),
                     clip,
                 );
+            }
+            LayoutKind::PencilNumber(inverted) => {
+                let (size, scale) = pencil::label_style(&node);
+                with_text_scale(scale, || {
+                    draw_centered(
+                        surface,
+                        &node.text_lines,
+                        node.rect,
+                        size,
+                        if inverted { tone::PAPER } else { tone::INK },
+                        clip,
+                    );
+                });
+            }
+            LayoutKind::PencilMark(mark, selected) => {
+                pencil::draw_mark(surface, node.rect, mark, selected, metrics, clip);
+            }
+            LayoutKind::PencilEdge(state, vertical) => {
+                pencil::draw_edge(surface, node.rect, state, vertical, metrics, clip);
             }
             LayoutKind::BoardMark(mark, locked) => {
                 board::draw_mark(surface, node.rect, mark, locked, metrics, clip);
@@ -13884,7 +14221,7 @@ fn render_all_with_selected_font(
                 let (size, scale) = if board {
                     board_label_style(&node)
                 } else {
-                    (FontSize::Body, text_scale())
+                    key_label_style(&node)
                 };
                 with_text_scale(scale, || {
                     draw_centered(surface, &node.text_lines, node.rect, size, tone::INK, clip);
@@ -13973,12 +14310,13 @@ fn render_all_with_selected_font(
                 } else {
                     0
                 };
-                draw_lines(
+                draw_lines_in(
                     surface,
                     &node.text_lines,
                     node.rect.x,
                     node.rect.y + top,
                     role.size(),
+                    prose,
                     role.tone(),
                     clip,
                 );
@@ -14205,7 +14543,11 @@ fn render_all_with_selected_font(
                 surface,
                 &node.text_lines,
                 node.rect,
-                FontSize::Body,
+                if FontSize::Body.line_height() <= node.rect.height {
+                    FontSize::Body
+                } else {
+                    FontSize::Caption
+                },
                 tone::INK,
                 clip,
             ),
@@ -15880,6 +16222,31 @@ mod tests {
     use super::*;
 
     #[test]
+    fn reading_quotes_validate_in_their_reading_face_and_scale() {
+        let screen = Screen::new(
+            1,
+            vec![Node::Quote {
+                id: NodeId(1),
+                depth: 1,
+                role: QuoteRole::Body,
+                text: "A good walk leaves room to notice small details along the river. ".repeat(3),
+                fold: None,
+            }],
+        )
+        .with_reading(true)
+        .with_text_scale(Some(TextScale::Default));
+        let metrics = DisplayMetrics {
+            text_scale: TextScale::Largest,
+            ..CLARA_BW_METRICS
+        };
+        let _environment = environment::TextEnvironment::enter(&screen, &metrics);
+        let layout = screen.layout_with(&metrics, &Chrome::default());
+        let mut issues = Vec::new();
+        validate_layout_nodes(&layout, &metrics, &mut issues);
+        assert!(issues.is_empty(), "{issues:?}");
+    }
+
+    #[test]
     fn publisher_styled_text_keeps_alignment_and_inline_emphasis() {
         let screen = Screen::new(
             1,
@@ -16011,6 +16378,27 @@ mod tests {
                 node.rect
             );
         }
+    }
+
+    #[test]
+    fn an_empty_terminal_waiting_for_output_is_not_hidden_content() {
+        let screen = Screen::new(
+            1,
+            vec![Node::Terminal {
+                id: NodeId(1),
+                rows: vec![],
+                cursor: None,
+            }],
+        );
+        assert!(screen
+            .diagnostics(&CLARA_BW_METRICS, &Chrome::default())
+            .issues
+            .is_empty());
+        let (columns, rows) = terminal_grid_for(&screen, &CLARA_BW_METRICS);
+        assert!(
+            columns > 0 && rows > 0,
+            "empty terminals must still negotiate a grid"
+        );
     }
 
     /// A ten-key row on a narrow panel turns each cell taller than it is
@@ -20378,6 +20766,175 @@ mod prose_tests {
             narrow < CLARA_BW_METRICS.width / 2,
             "a one word menu took half the panel: {narrow}"
         );
+    }
+
+    #[test]
+    fn a_deck_place_with_nothing_on_it_is_drawn_lighter_than_a_key() {
+        // Fifteen places with three assigned used to be twelve boxes as heavy
+        // as the three that did something, and every one of them looked as
+        // pressable as the next.
+        let cells: Vec<Cell> = (0..15)
+            .map(|index| {
+                let cell = Cell::new(ActionId(index + 1), if index < 3 { "Test" } else { "" });
+                if index < 3 {
+                    cell.with_glyph(Glyph::Grid)
+                } else {
+                    cell
+                }
+            })
+            .collect();
+        let screen = Screen::new(
+            1,
+            vec![Node::Grid {
+                id: NodeId(1),
+                columns: 5,
+                square: true,
+                cells,
+            }],
+        );
+        let laid_out = screen.layout_with(&CLARA_BW_METRICS, &Chrome::default());
+        let assigned = laid_out
+            .nodes
+            .iter()
+            .filter(|node| matches!(node.kind, LayoutKind::Cell(_, CellStyle::Pad, _)))
+            .count();
+        let places = laid_out
+            .nodes
+            .iter()
+            .filter(|node| matches!(node.kind, LayoutKind::Cell(_, CellStyle::EmptyPad, _)))
+            .count();
+        assert_eq!((assigned, places), (3, 12));
+    }
+
+    #[test]
+    fn a_button_is_as_tall_as_the_words_on_it() {
+        // Two secondary actions side by side give each label half the panel,
+        // and at the larger reader text settings "Clear finished" needs two
+        // lines of it. Drawn in a box one line tall, the renderer refuses the
+        // whole screen, so a list that had a finished item on it went blank.
+        let metrics = DisplayMetrics {
+            text_scale: TextScale::Larger,
+            ..CLARA_BW_METRICS
+        };
+        with_text_scale(TextScale::Larger, || {
+            let screen = Screen::new(
+                1,
+                vec![Node::Band {
+                    id: NodeId(1),
+                    align: BandAlign::Middle,
+                    slots: vec![
+                        BandSlot {
+                            width: SlotWidth::Fill,
+                            nodes: vec![Node::Button {
+                                id: NodeId(2),
+                                action: ActionId(2),
+                                label: "Add".to_owned(),
+                                state: ControlState::Enabled,
+                                emphasis: Emphasis::Normal,
+                            }],
+                        },
+                        BandSlot {
+                            width: SlotWidth::Fill,
+                            nodes: vec![Node::Button {
+                                id: NodeId(3),
+                                action: ActionId(3),
+                                label: "Clear finished".to_owned(),
+                                state: ControlState::Enabled,
+                                emphasis: Emphasis::Normal,
+                            }],
+                        },
+                    ],
+                }],
+            );
+            let laid_out = screen.layout_with(&metrics, &Chrome::default());
+            let button = laid_out
+                .nodes
+                .iter()
+                .find(|node| {
+                    node.kind
+                        == LayoutKind::Button(ActionId(3), ControlState::Enabled, Emphasis::Normal)
+                })
+                .expect("the second button");
+            let needed =
+                i32::try_from(button.text_lines.len()).unwrap_or(1) * FontSize::Body.line_height();
+            assert!(
+                button.rect.height >= needed,
+                "{} lines of label in {} pixels",
+                button.text_lines.len(),
+                button.rect.height
+            );
+            assert!(
+                screen
+                    .diagnostics(&metrics, &Chrome::default())
+                    .issues
+                    .iter()
+                    .all(|issue| issue.severity != DiagnosticSeverity::Error),
+                "the renderer would refuse this screen"
+            );
+        });
+    }
+
+    #[test]
+    fn a_dialogue_asks_its_whole_question_however_large_the_type_is() {
+        // At 170% "Download Mrs Dalloway?" reached the reader as
+        // "Download Mrs", because an overlay title was cut to one line
+        // whatever it said. A menu header is a label and still is; a
+        // dialogue's title is the question it exists to ask.
+        let metrics = DisplayMetrics {
+            text_scale: TextScale::Larger,
+            ..CLARA_BW_METRICS
+        };
+        with_text_scale(TextScale::Larger, || {
+            let mut screen = with_an_overlay(OverlayKind::Modal);
+            screen.overlay.as_mut().expect("an overlay").title =
+                "Download Mrs Dalloway?".to_owned();
+            let lines = screen
+                .layout_with(&metrics, &Chrome::default())
+                .nodes
+                .iter()
+                .find(|node| node.kind == LayoutKind::OverlayTitle)
+                .expect("the title")
+                .text_lines
+                .join(" ");
+            assert_eq!(lines, "Download Mrs Dalloway?");
+        });
+    }
+
+    #[test]
+    fn a_menu_of_buttons_is_wide_enough_for_the_words_on_them() {
+        // At the largest reader text setting a menu was measured with a
+        // narrower padding than the buttons in it were drawn with, so the
+        // label of every item wrapped inside a box built to hold it.
+        with_text_scale(TextScale::Largest, || {
+            let mut screen = with_an_overlay(OverlayKind::Popover {
+                anchor: ActionId(5),
+            });
+            let overlay = screen.overlay.as_mut().expect("an overlay");
+            overlay.title = String::new();
+            overlay.nodes = vec![Node::Button {
+                id: NodeId(41),
+                action: ActionId(6),
+                label: "Rename".to_owned(),
+                state: ControlState::Enabled,
+                emphasis: Emphasis::Normal,
+            }];
+            let metrics = DisplayMetrics {
+                text_scale: TextScale::Largest,
+                ..CLARA_BW_METRICS
+            };
+            let lines = screen
+                .layout_with(&metrics, &Chrome::default())
+                .nodes
+                .iter()
+                .find(|node| {
+                    node.kind
+                        == LayoutKind::Button(ActionId(6), ControlState::Enabled, Emphasis::Normal)
+                })
+                .expect("the menu item")
+                .text_lines
+                .clone();
+            assert_eq!(lines, vec!["Rename".to_owned()], "the label was broken up");
+        });
     }
 
     #[test]

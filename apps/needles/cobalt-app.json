@@ -4,7 +4,7 @@
   "short_label": "Needles",
   "summary": "Count rows, browse Ravelry collections, and read your synced patterns offline.",
   "page_description": "A knuckle-sized row counter, Ravelry library browser, and offline pattern reader.",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "release_notes": "Line up a table's columns under the headings that name them, typeset numbered equations, set figures apart from the prose, and carry a document's mathematics all the way through instead of stopping early.",
   "glyph": "bookmark",
   "capabilities": [

@@ -614,7 +614,7 @@ confirm = {confirm}
         assert!(first.contains("\"label\":\"Test\""), "{first}");
         assert!(second.contains("\"label\":\"Test\""), "{second}");
         assert!(second.contains("\"error\":"), "{second}");
-        fs::remove_dir_all(directory).unwrap();
+        let _ = fs::remove_dir_all(directory);
     }
 
     #[test]
@@ -636,17 +636,21 @@ confirm = {confirm}
             deck.press(&id, true, Duration::from_secs(2), Duration::ZERO),
             PressOutcome::Busy
         );
-        for _ in 0..100 {
+        // The command sleeps for a fifth of a second; the wait is generous
+        // because a machine running the whole suite at once is not idle, and a
+        // test that fails when the fans are on teaches everyone to ignore it.
+        let deadline = std::time::Instant::now() + Duration::from_secs(15);
+        while std::time::Instant::now() < deadline {
             if let Some(result) = deck.result(&id) {
                 if result.contains("\"status\":\"failed\"") {
                     assert!(result.contains("secret"), "{result}");
-                    fs::remove_dir_all(directory).unwrap();
+                    let _ = fs::remove_dir_all(directory);
                     return;
                 }
             }
             std::thread::sleep(Duration::from_millis(10));
         }
-        panic!("command did not finish");
+        panic!("command did not finish within fifteen seconds");
     }
 
     #[test]
@@ -674,7 +678,7 @@ confirm = {confirm}
             if let Some(result) = deck.result(&id) {
                 if result.contains("\"status\":\"failed\"") {
                     assert!(result.contains("Killed after 10 minutes."), "{result}");
-                    fs::remove_dir_all(directory).unwrap();
+                    let _ = fs::remove_dir_all(directory);
                     return;
                 }
             }

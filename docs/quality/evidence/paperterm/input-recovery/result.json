@@ -1,0 +1,37 @@
+{
+  "status": "passed",
+  "profile": "clara-bw-391",
+  "scale": "extra-large",
+  "orientation": "portrait",
+  "negotiated_grids": [
+    [
+      54,
+      35
+    ],
+    [
+      54,
+      19
+    ]
+  ],
+  "source_head": "6437cc020faf88db7d12aa589b20362c552f8ec6",
+  "source_dirty": true,
+  "basis": "real-host-pty-and-sdk-simulator-over-trusted-tls",
+  "pairing": "private seeded fixture",
+  "checks": [
+    "failed input pauses without replay",
+    "explicit input resume",
+    "portrait captures",
+    "measured grid on keyboard toggle",
+    "prompt without newline",
+    "laptop raw mode",
+    "trusted TLS",
+    "reader input to host",
+    "laptop input before Enter",
+    "same-session output",
+    "PTY grid negotiation",
+    "wide output",
+    "reader Ctrl-C",
+    "retained final screen",
+    "laptop terminal restoration"
+  ]
+}

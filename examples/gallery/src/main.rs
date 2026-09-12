@@ -6,9 +6,10 @@
 
 use kobo_sdk::keyboard::{TextEntry, Typing};
 use kobo_sdk::{
-    action_id, ActionId, BandAlign, BannerLevel, Context, Glyph, KoboApp, LogLevel, PictureHandle,
-    RowLead, Screen, ScreenBuilder, SlotWidth, Task, TaskId, TaskOutcome, Tile, TilePicture,
-    TileShape, TileState,
+    action_id, ActionId, BandAlign, BannerLevel, Chrome, Context, ControlState, DisplayMetrics,
+    Glyph, KoboApp, LayoutIssueKind, LogLevel, ParagraphPresentation, PictureHandle, QuoteRole,
+    RichTextSpan, RowLead, Screen, ScreenBuilder, SlotWidth, Space, TableRow, Task, TaskId,
+    TaskOutcome, TextPresentation, Tile, TilePicture, TileShape, TileState,
 };
 use std::process::ExitCode;
 
@@ -88,7 +89,7 @@ enum Tab {
     Lists,
     Input,
     States,
-    V2,
+    Panel,
 }
 
 impl Tab {
@@ -102,7 +103,7 @@ impl Tab {
         (Self::Lists, "tab-lists", "Lists"),
         (Self::Input, "tab-input", "Input"),
         (Self::States, "tab-states", "States"),
-        (Self::V2, "tab-v2", "V2"),
+        (Self::Panel, "tab-panel", "Panel"),
     ];
 
     fn index(self) -> usize {
@@ -112,26 +113,39 @@ impl Tab {
             .unwrap_or(0)
     }
 
+    /// The mark beside each destination. Five words on a six inch bar are five
+    /// words; five marks are findable without reading them.
+    const fn glyph(self) -> Glyph {
+        match self {
+            Self::Text => Glyph::Note,
+            Self::Lists => Glyph::Book,
+            Self::Input => Glyph::Search,
+            Self::States => Glyph::Circle,
+            Self::Panel => Glyph::Reader,
+        }
+    }
+
     /// The pages inside this tab, when one panel will not hold it.
     fn pages(self) -> &'static [(&'static str, &'static str)] {
         match self {
             Self::Text => &[
                 ("page-type", "Type"),
                 ("page-quotes", "Quotes"),
+                ("page-marks", "Marks"),
                 ("page-tone", "Tone"),
             ],
             Self::Lists => &[
                 ("page-rows", "Rows"),
                 ("page-tiles", "Tiles"),
-                ("page-covers", "Covers"),
+                ("page-boards", "Boards"),
                 ("page-icons", "Icons"),
             ],
             // Four, and four is the ceiling: `MAX_TABS` is 4, and a strip that
             // drops its fifth entry leaves a page with no way to reach it.
             Self::Input => &[
+                ("page-buttons", "Buttons"),
                 ("page-groups", "Groups"),
                 ("page-input", "Fields"),
-                ("page-choice", "Choice"),
                 ("page-over", "Overlays"),
             ],
             Self::States => &[
@@ -143,7 +157,7 @@ impl Tab {
             // One state per page, because a standard state is a splash and a
             // splash centres itself in the whole of what is left. Two of them
             // on one panel is two half-pages, which is neither.
-            Self::V2 => &[
+            Self::Panel => &[
                 ("page-folio", "Folio"),
                 ("page-ghosting", "Ghosting"),
                 ("page-transfer", "Transfer"),
@@ -151,6 +165,40 @@ impl Tab {
             ],
         }
     }
+}
+
+/// One part of a page: the controls it draws, added to whatever is already
+/// on the panel.
+type Part = fn(&Gallery, ScreenBuilder) -> ScreenBuilder;
+
+/// Where the reader is in the one job this gallery carries out end to end.
+///
+/// A reference application made only of pages showing controls teaches how
+/// each control is drawn and nothing about how they follow one another. This
+/// is the other half: choosing something, being asked to confirm it, watching
+/// it happen, being told it is done, and then using what arrived. Each step
+/// is drawn with the same controls the pages show, so nothing here is a
+/// special case the toolkit does not offer everybody.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Step {
+    /// A book has been chosen and not yet asked for.
+    Chosen,
+    /// The question before anything is downloaded.
+    Asked,
+    /// It is arriving, and can still be stopped.
+    Arriving,
+    /// It arrived.
+    Arrived,
+    /// It is open, which is where a job about a book ends.
+    Reading,
+}
+
+/// Where a tap inside the worked example leads.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Move {
+    To(Step),
+    /// Out of the job altogether, back to the reference.
+    Out,
 }
 
 /// What is floating above the screen, when something is.
@@ -184,6 +232,13 @@ struct Gallery {
     answer: Option<String>,
     /// Which page of the icon sheet is showing.
     icon_page: usize,
+    /// Which panel of a page that takes more than one is showing.
+    ///
+    /// Several of these pages hold more controls than one panel of a Clara BW
+    /// will take. Rather than thin the reference out until the worst case
+    /// fits, they turn: the point of this application is that every control
+    /// the toolkit draws is on the device somewhere.
+    shown: usize,
     /// Which of the three checklist rows have been ticked.
     ticked: [bool; 2],
     /// Which filter chip is on.
@@ -202,6 +257,8 @@ struct Gallery {
     loading: bool,
     task: Option<TaskId>,
     outcome: Option<String>,
+    /// Where the worked example has got to, when it is running.
+    step: Option<Step>,
 }
 
 impl Default for Gallery {
@@ -217,6 +274,7 @@ impl Default for Gallery {
             entry: TextEntry::new().opened_by("file-other"),
             answer: None,
             icon_page: 0,
+            shown: 0,
             ticked: [true, false],
             chip: 0,
             detail: false,
@@ -226,11 +284,244 @@ impl Default for Gallery {
             loading: false,
             task: None,
             outcome: None,
+            step: None,
         }
     }
 }
 
 impl Gallery {
+    /// Everything one page of the reference has to show, in the order it
+    /// shows it.
+    ///
+    /// A page is a list of parts rather than one long method because how many
+    /// of them fit on a panel is not known here: it depends on the device and
+    /// on how large the reader has asked for the type to be, and the only
+    /// honest answer to "does this fit" is to measure it.
+    fn parts(tab: Tab, page: usize) -> &'static [Part] {
+        match (tab, page) {
+            (Tab::Text, 0) => &[Gallery::type_page, Gallery::facts_page],
+            (Tab::Text, 1) => &[Gallery::quotes_page],
+            (Tab::Text, 2) => &[
+                Gallery::marks_page,
+                Gallery::quoted_page,
+                Gallery::linked_text_page,
+            ],
+            (Tab::Text, _) => &[
+                Gallery::banners_page,
+                Gallery::tone_page,
+                Gallery::waiting_page,
+            ],
+            (Tab::Lists, 0) => &[
+                Gallery::rows_page,
+                Gallery::checklist_page,
+                Gallery::long_labels_page,
+            ],
+            (Tab::Lists, 1) => &[
+                Gallery::covers_page,
+                Gallery::marked_tiles,
+                Gallery::tiles_page,
+            ],
+            (Tab::Lists, 2) => &[
+                Gallery::boards_page,
+                Gallery::pads_page,
+                Gallery::crossword_page,
+                Gallery::pencil_page,
+            ],
+            (Tab::Lists, _) => &[Gallery::icons_page],
+            (Tab::Input, 0) => &[Gallery::buttons_page, Gallery::stepper_page],
+            (Tab::Input, 1) => &[Gallery::groups_page, Gallery::section_rows_page],
+            (Tab::Input, 2) => &[
+                Gallery::input_page,
+                Gallery::asking_page,
+                Gallery::choice_page,
+            ],
+            (Tab::Input, _) => &[Gallery::overlay_page],
+            (Tab::States, 0) => &[Gallery::nothing_page],
+            (Tab::States, 1) => &[Gallery::offline_page],
+            (Tab::States, 2) => &[
+                Gallery::denied_page,
+                Gallery::offline_state_page,
+                Gallery::faulted_page,
+            ],
+            (Tab::States, _) => &[Gallery::trouble_page],
+            (Tab::Panel, 0) => &[Gallery::folio_page, Gallery::folio_tiles],
+            (Tab::Panel, 1) => &[Gallery::ghosting_page],
+            (Tab::Panel, 2) => &[Gallery::transfer_page, Gallery::unsized_transfer_page],
+            (Tab::Panel, _) => &[Gallery::request_page],
+        }
+    }
+
+    /// The page's parts, dealt out into panels that fit the device in hand.
+    ///
+    /// Greedy and measured: parts are added to a panel until the runtime's own
+    /// diagnostics say something has been pushed off it, and then a new panel
+    /// starts. This is what lets the same reference hold every control the
+    /// toolkit draws on a six inch panel at 300% type without either thinning
+    /// the reference out or drawing half of it through the navigation bar.
+    fn panels(&self, metrics: DisplayMetrics, page: usize) -> Vec<Vec<Part>> {
+        let parts = Self::parts(self.tab, page);
+        let mut panels: Vec<Vec<Part>> = Vec::new();
+        let mut current: Vec<Part> = Vec::new();
+        for part in parts {
+            current.push(*part);
+            // Measured against the largest the page turns can make the
+            // position line, because "9 of 9" is wider than "1 of 1" and a
+            // page that fits only while it is the only page is not fitting.
+            if current.len() > 1
+                && Self::overflows(self.frame(page, &current, parts.len()), metrics)
+            {
+                current.pop();
+                panels.push(std::mem::take(&mut current));
+                current.push(*part);
+            }
+        }
+        if !current.is_empty() || panels.is_empty() {
+            panels.push(current);
+        }
+        panels
+    }
+
+    /// Whether anything on this screen was pushed off the panel, or squeezed
+    /// until it no longer fits what it says.
+    ///
+    /// A label counts as well as a rectangle: a deck of keys sized from what
+    /// is left of a page does not overflow anything, it just shrinks until the
+    /// words on the keys are unreadable, and the page turn is the fix for both.
+    fn overflows(screen: ScreenBuilder, metrics: DisplayMetrics) -> bool {
+        screen
+            .build()
+            .diagnostics(&metrics, &Chrome::measuring(false))
+            .issues
+            .iter()
+            .any(|issue| {
+                matches!(
+                    issue.kind,
+                    LayoutIssueKind::ContentOverflow { .. }
+                        | LayoutIssueKind::Clipped
+                        | LayoutIssueKind::InteractiveOffscreen
+                        | LayoutIssueKind::TextOverflow
+                )
+            })
+    }
+
+    /// One panel of the reference, whole: the bars, the strip, the parts that
+    /// landed on this panel, and the page turns between panels.
+    fn frame(&self, page: usize, parts: &[Part], total: usize) -> ScreenBuilder {
+        let screen = ScreenBuilder::new("gallery")
+            .top_bar_action("about-gallery", "About")
+            .top_bar(match self.tab {
+                Tab::Text => "Type and tone",
+                Tab::Lists => "Lists, rows and tiles",
+                Tab::Input => "Groups, fields and asking",
+                Tab::States => "Nothing to show",
+                Tab::Panel => "Folio",
+            });
+
+        // The sub-tab strip is drawn by the tab in the SDK rather than by a
+        // row of buttons, so the selected page is a state the renderer knows
+        // about and can draw as selected, rather than a mark someone wrote
+        // into a label.
+        let screen = screen.tabs(page, self.tab.pages().iter().copied());
+        // Every state on this tab is a drawing of a failure rather than a
+        // failure. Without the line, a reference application that says "the
+        // catalogue came back malformed" reads as a reference application
+        // that has just failed, and somebody files it. Said by the panel
+        // rather than by each state, because two states that land on the same
+        // panel would say it twice.
+        let screen = if self.tab == Tab::States {
+            screen.secondary("A drawing of this state. Nothing here has gone wrong.")
+        } else {
+            screen
+        };
+        let screen = parts.iter().fold(screen, |screen, part| part(self, screen));
+        let screen = if total > 1 {
+            screen.page_turns("panel-back", "panel-next").page_position(
+                u16::try_from(self.shown.min(total - 1) + 1).unwrap_or(1),
+                u16::try_from(total).unwrap_or(1),
+            )
+        } else {
+            screen
+        };
+
+        // The same five destinations, marked on four tabs and plain on the
+        // first, because the two bars are the same bar and the only way to
+        // judge whether the marks earn their height is to see both.
+        if self.tab == Tab::Text {
+            screen.nav_bar(
+                self.tab.index(),
+                Tab::ALL.map(|(_, name, label)| (name, label)),
+            )
+        } else {
+            screen.nav_bar_marked(
+                self.tab.index(),
+                Tab::ALL.map(|(tab, name, label)| (name, label, tab.glyph())),
+            )
+        }
+    }
+
+    /// One step of the worked example, drawn whole.
+    ///
+    /// Every step keeps a way back out. A job that can only be finished is a
+    /// job a reader is trapped in, and on a device whose only hardware button
+    /// turns the light on, being trapped means holding the power key.
+    fn step_screen(step: Step) -> kobo_sdk::Screen {
+        let screen = ScreenBuilder::new("gallery").owns_back(true).top_bar(
+            // The bar says where the reader is, which stops being "getting a
+            // book" the moment they have one open.
+            match step {
+                Step::Reading => "Mrs Dalloway",
+                _ => "Downloading a book",
+            },
+        );
+        let screen = match step {
+            Step::Chosen | Step::Asked => screen
+                .section("Chosen")
+                .rows_with_trailing([(
+                    "flow-chosen",
+                    "Mrs Dalloway",
+                    "Virginia Woolf",
+                    RowLead::from(Glyph::Book),
+                    "1.1 MB",
+                )])
+                .secondary("Nothing has been downloaded yet.")
+                .button("flow-ask", "Download it")
+                .compose(|screen| {
+                    if step == Step::Asked {
+                        screen.confirm(
+                            "Download Mrs Dalloway?",
+                            "1.1 MB over Wi-Fi. It lands on this device and stays there.",
+                            ("flow-yes", "Download"),
+                            ("flow-no", "Not now"),
+                        )
+                    } else {
+                        screen
+                    }
+                }),
+            Step::Arriving => screen
+                .section("Arriving")
+                .transfer("Mrs Dalloway", 640_000, Some(1_100_000))
+                .cancellable("flow-cancel", "Stop")
+                // Nothing is really downloading, and a progress bar that
+                // never reaches the end would leave the last two steps of the
+                // job unreachable. The same admission the transfer page
+                // makes with its "Pretend it fails" button.
+                .button("flow-finish", "Let it finish"),
+            Step::Arrived => screen
+                .banner(BannerLevel::Info, "Mrs Dalloway is on this device.")
+                .section("Ready")
+                .rows_with_trailing([(
+                    "flow-open",
+                    "Mrs Dalloway",
+                    "Virginia Woolf",
+                    RowLead::from(Glyph::Book),
+                    "1.1 MB",
+                )])
+                .button("flow-open", "Open it"),
+            Step::Reading => Self::reading_demonstration(screen),
+        };
+        screen.build()
+    }
+
     /// Which sub-page of the tab showing is open, clamped to what that tab has.
     fn page(&self) -> usize {
         let pages = self.tab.pages().len();
@@ -249,6 +540,14 @@ impl Gallery {
             return;
         }
 
+        // The worked example is a job rather than a page, so it takes the
+        // whole panel: the tab bar underneath belongs to the reference, and
+        // a reader part way through a download is not reading the reference.
+        if let Some(step) = self.step {
+            context.set_screen(Self::step_screen(step));
+            return;
+        }
+
         // A pushed screen replaces the panel the same way: it is a whole
         // screen with its own bar, not a panel drawn inside the last one.
         if self.detail {
@@ -257,54 +556,14 @@ impl Gallery {
         }
 
         let page = self.page();
-        let screen = ScreenBuilder::new("gallery").top_bar(match self.tab {
-            Tab::Text => "Type and tone",
-            Tab::Lists => "Lists, rows and tiles",
-            Tab::Input => "Groups, fields and asking",
-            Tab::States => "Nothing to show",
-            Tab::V2 => "Folio",
-        });
-
-        // The sub-tab strip is drawn by the tab in the SDK rather than by a
-        // row of buttons, so the selected page is a state the renderer knows
-        // about and can draw as selected, rather than a mark someone wrote
-        // into a label.
-        let screen = screen.tabs(page, self.tab.pages().iter().copied());
-
-        let screen = match (self.tab, page) {
-            (Tab::Text, 0) => Self::type_page(screen),
-            (Tab::Text, 1) => Self::quotes_page(screen),
-            (Tab::Text, _) => self.tone_page(screen),
-            (Tab::Lists, 0) => self.rows_page(screen),
-            (Tab::Lists, 1) => self.tiles_page(screen),
-            (Tab::Lists, 2) => self.covers_page(screen),
-            (Tab::Lists, _) => self.icons_page(screen),
-            (Tab::Input, 0) => self.groups_page(screen),
-            (Tab::Input, 1) => self.input_page(screen),
-            (Tab::Input, 2) => self.choice_page(screen),
-            (Tab::Input, _) => self.overlay_page(screen),
-            (Tab::States, 0) => Self::nothing_page(screen),
-            (Tab::States, 1) => Self::offline_page(screen),
-            (Tab::States, 2) => Self::denied_page(screen),
-            (Tab::States, _) => Self::trouble_page(screen),
-            (Tab::V2, 0) => self.folio_page(screen),
-            (Tab::V2, 1) => Self::ghosting_page(screen),
-            (Tab::V2, 2) => self.transfer_page(screen),
-            (Tab::V2, _) => self.request_page(screen),
-        };
-
-        let screen = screen
-            .nav_bar(
-                self.tab.index(),
-                Tab::ALL.map(|(_, name, label)| (name, label)),
-            )
-            .build();
-        context.set_screen(screen);
+        let panels = self.panels(context.metrics(), page);
+        let panel = self.shown.min(panels.len().saturating_sub(1));
+        context.set_screen(self.frame(page, &panels[panel], panels.len()).build());
     }
 
     /// Every way the system sets words: the roles, the groupings and the
     /// facts, with no spacers, because the spacing is the component's job.
-    fn type_page(screen: ScreenBuilder) -> ScreenBuilder {
+    fn type_page(_: &Self, screen: ScreenBuilder) -> ScreenBuilder {
         screen
             .heading("Heading")
             .text(
@@ -312,6 +571,11 @@ impl Gallery {
                  not its pixel count.",
             )
             .secondary("Secondary, for the sentence under the sentence.")
+    }
+
+    /// A section, and the block of facts a section is usually there to head.
+    fn facts_page(_: &Self, screen: ScreenBuilder) -> ScreenBuilder {
+        screen
             .section("A section title")
             .text("A section is a title with the space around it already decided.")
             .section_with_value("With a value", "42")
@@ -323,9 +587,265 @@ impl Gallery {
             ])
     }
 
-    /// Nesting, and the two rules that separate things.
-    fn quotes_page(screen: ScreenBuilder) -> ScreenBuilder {
+    /// The marks a document makes: heading levels, bylines, quoted roles, a
+    /// table and text that carries links.
+    fn marks_page(_: &Self, screen: ScreenBuilder) -> ScreenBuilder {
         screen
+            .heading_at_level(2, "A second-level heading")
+            .heading_at_level(3, "and a third under it")
+            .byline(0, "Set by the byline, which is who said this and when")
+            .folding_byline(0, "Three replies, folded away", "fold-replies", true, 3)
+    }
+
+    /// A quotation with its own byline, and the table under it.
+    fn quoted_page(_: &Self, screen: ScreenBuilder) -> ScreenBuilder {
+        screen
+            .quote_as(1, QuoteRole::Body, "A quoted body, one level in.")
+            .quote_as(1, QuoteRole::Byline, "and who wrote it, smaller.")
+            .spacer(Space::Small)
+            .table(
+                vec![
+                    TableRow {
+                        header: true,
+                        cells: vec!["Size".into(), "Space it takes".into()],
+                    },
+                    TableRow {
+                        header: false,
+                        cells: vec!["Tiny".into(), "2½ by 2½ ft".into()],
+                    },
+                    TableRow {
+                        header: false,
+                        cells: vec!["Small".into(), "5 by 5 ft".into()],
+                    },
+                ],
+                // Empty rather than a pair of ratios: the weights are the
+                // widths each column asks for in pixels, and a table given
+                // "1, 1" is a table of two one pixel columns. Left empty,
+                // every column asks for the width of its widest cell.
+                Vec::new(),
+            )
+    }
+
+    /// Text that carries a link, and the hold that marks a passage.
+    fn linked_text_page(_: &Self, screen: ScreenBuilder) -> ScreenBuilder {
+        screen
+            .rich_text_linking(
+                "Rich text can carry a link as well as emphasis.",
+                vec![RichTextSpan {
+                    start: 0,
+                    end: 9,
+                    presentation: TextPresentation {
+                        emphasis: true,
+                        ..TextPresentation::default()
+                    },
+                }],
+                ParagraphPresentation::default(),
+                [("link-rich", 27, 31)],
+            )
+            .selectable_rich_text_linking(
+                "A paragraph the reader can hold to mark.",
+                Vec::new(),
+                ParagraphPresentation::default(),
+                1,
+                0,
+                [("link-selectable", 2, 11)],
+            )
+            .rich_text(
+                "Rich text carries its own emphasis.",
+                vec![RichTextSpan {
+                    start: 0,
+                    end: 9,
+                    presentation: TextPresentation {
+                        strong: true,
+                        ..TextPresentation::default()
+                    },
+                }],
+                ParagraphPresentation::default(),
+            )
+            .text_linking(
+                "Plain text can carry a link to somewhere else in the same document.",
+                [("link-target", 32, 41)],
+            )
+            .spacer(Space::Small)
+            // A hold is not drawn; it is the gesture that opens the marking
+            // list in the reader, and it is named here so the route can use it.
+            .hold("hold-here")
+    }
+
+    /// The grids: what a keypad, a board, a deck of pads and the two puzzle
+    /// boards are all made of.
+    fn boards_page(_: &Self, screen: ScreenBuilder) -> ScreenBuilder {
+        screen
+            .section("A grid, and a grid that knows what is chosen")
+            .grid(
+                3,
+                false,
+                [("grid-a", "One"), ("grid-b", "Two"), ("grid-c", "Three")],
+            )
+            .grid_with_selection(
+                3,
+                false,
+                [
+                    ("grid-x", "Chosen", true),
+                    ("grid-y", "Not", false),
+                    ("grid-z", "Not", false),
+                ],
+            )
+            .section("A board, and a board with a square in hand")
+            .board(
+                3,
+                [
+                    ("board-a", " ", Some(Glyph::Circle)),
+                    ("board-b", " ", Some(Glyph::Close)),
+                    ("board-c", " ", None),
+                ],
+            )
+            .board_with_selection(
+                3,
+                [
+                    ("board-d", " ", Some(Glyph::Circle), true),
+                    ("board-e", " ", None, false),
+                    ("board-f", " ", None, false),
+                ],
+            )
+    }
+
+    /// A deck of pads and a crossword.
+    ///
+    /// Their own panel because both are squares sized from what is left of
+    /// the page: put them under the plain grids and the pad labels are drawn
+    /// wider than the keys they name.
+    fn pads_page(_: &Self, screen: ScreenBuilder) -> ScreenBuilder {
+        screen.section("A deck of pads").pads([
+            ("pad-one", "Todo", Some(Glyph::Check)),
+            ("pad-two", "Shelf", Some(Glyph::Book)),
+            ("pad-three", "", None),
+        ])
+    }
+
+    /// A crossword, which is the other grid that carries letters.
+    fn crossword_page(_: &Self, screen: ScreenBuilder) -> ScreenBuilder {
+        screen.section("A crossword").crossword_board(
+            3,
+            [
+                ("cw-a", 'C', Some(1), false),
+                ("cw-b", 'A', None, true),
+                ("cw-c", 'T', None, false),
+            ],
+        )
+    }
+
+    /// The grids that carry their own meaning: a pencilled square and a
+    /// terminal.
+    fn pencil_page(_: &Self, screen: ScreenBuilder) -> ScreenBuilder {
+        let pencil = kobo_sdk::PencilBoard {
+            columns: 3,
+            rows: 2,
+            cell_tenth_mm: 120,
+            marks: vec![
+                kobo_sdk::PencilMark {
+                    column: 0,
+                    row: 0,
+                    kind: kobo_sdk::PencilMarkKind::Digit {
+                        value: 7,
+                        given: true,
+                    },
+                    action: None,
+                    selected: false,
+                },
+                kobo_sdk::PencilMark {
+                    column: 1,
+                    row: 0,
+                    kind: kobo_sdk::PencilMarkKind::Digit {
+                        value: 4,
+                        given: false,
+                    },
+                    // A square in hand has to be a square somebody chose, so
+                    // a selected mark with no action of its own is rejected
+                    // before it reaches the panel.
+                    action: Some(action_id("pencil-four")),
+                    selected: true,
+                },
+                kobo_sdk::PencilMark {
+                    column: 2,
+                    row: 0,
+                    kind: kobo_sdk::PencilMarkKind::Block,
+                    action: None,
+                    selected: false,
+                },
+                kobo_sdk::PencilMark {
+                    column: 0,
+                    row: 1,
+                    kind: kobo_sdk::PencilMarkKind::Clue(3),
+                    action: None,
+                    selected: false,
+                },
+                kobo_sdk::PencilMark {
+                    column: 1,
+                    row: 1,
+                    kind: kobo_sdk::PencilMarkKind::Dot,
+                    action: None,
+                    selected: false,
+                },
+                kobo_sdk::PencilMark {
+                    column: 2,
+                    row: 1,
+                    kind: kobo_sdk::PencilMarkKind::Island(2),
+                    action: Some(action_id("pencil-island")),
+                    selected: false,
+                },
+            ],
+            edges: Vec::new(),
+        };
+        screen
+            .section("Pencil marks, and a terminal")
+            .pencil_board(pencil)
+            .terminal(
+                ["$ kobo doctor", "profile: clara-bw", "battery: 72%"],
+                Some(kobo_sdk::Caret { row: 2, column: 12 }),
+            )
+    }
+
+    /// Every way the toolkit offers a verb, including the ones that say no.
+    fn buttons_page(_: &Self, screen: ScreenBuilder) -> ScreenBuilder {
+        screen
+            .section("One dominant verb, and the rest")
+            .primary_button("button-primary", "Download")
+            // The same verb, refused: a control that cannot act says so by
+            // being drawn as unavailable rather than by doing nothing.
+            .primary_button_with_state("button-primary-off", "Download", ControlState::Disabled)
+            .buttons([("button-one", "Keep"), ("button-two", "Discard")])
+            .button_with_state("button-second", "Keep both", ControlState::Enabled)
+            .disabled_button("button-off", "Nothing to save")
+    }
+
+    /// A stepper, and the bar that pins two verbs to the foot of a panel.
+    fn stepper_page(&self, screen: ScreenBuilder) -> ScreenBuilder {
+        screen
+            .section("A stepper, which is one number and two ends")
+            .stepper(
+                format!("Brightness {}", self.chip),
+                "step-less",
+                Glyph::Minus,
+                "step-more",
+                Glyph::Plus,
+            )
+            .stepper_ends(self.chip > 0, self.chip < 2)
+            .stepper_track(u8::try_from(self.chip * 50).unwrap_or(100))
+            .action_bar([("bar-one", "First"), ("bar-two", "Second")])
+    }
+
+    /// Nesting, and the two rules that separate things.
+    fn quotes_page(_: &Self, screen: ScreenBuilder) -> ScreenBuilder {
+        screen
+            .paged_list(
+                2,
+                [
+                    "A numbered list, drawn by the toolkit",
+                    "so that the numbers line up",
+                    "however long the lines are",
+                ],
+            )
             .section("Quoting")
             .quote(1, "A reply, set in from what it answers.")
             .quote(2, "A reply to the reply, one level further in.")
@@ -337,25 +857,64 @@ impl Gallery {
 
     /// Tone: the greys the panel resolves, the banners, and the two ways of
     /// showing that something is happening without saying how far along.
-    fn tone_page(&self, screen: ScreenBuilder) -> ScreenBuilder {
-        let screen = screen
+    /// A splash: a mark, a line and a sentence, centred in what is left.
+    fn splash_demonstration(screen: ScreenBuilder) -> ScreenBuilder {
+        screen.splash(
+            Some(Glyph::News),
+            "A splash",
+            "A mark, a title and a sentence, centred in whatever is left of the panel.",
+        )
+    }
+
+    /// A page of a book, with the two gestures a reader has: the middle column
+    /// for the controls, and a hold for marking. Neither draws anything; both
+    /// are named here because a gesture nobody is told about is a gesture
+    /// nobody has.
+    fn reading_demonstration(screen: ScreenBuilder) -> ScreenBuilder {
+        screen
+            .heading("Mrs Dalloway")
+            .text(
+                "Mrs Dalloway said she would buy the flowers herself. For Lucy had \
+                 her work cut out for her.",
+            )
+            .reading_menu("reading-controls")
+            .page_position(1, 214)
+            .bottom_action("reading-close", "Close the book")
+    }
+
+    /// The two banners, which are the loudest thing the toolkit will draw.
+    fn banners_page(_: &Self, screen: ScreenBuilder) -> ScreenBuilder {
+        screen
             .banner(BannerLevel::Info, "An informational banner.")
             .banner(
                 BannerLevel::Attention,
                 "An attention banner, drawn inverted. This is what replaces flashing \
                  the frontlight.",
             )
+    }
+
+    fn tone_page(&self, screen: ScreenBuilder) -> ScreenBuilder {
+        let screen = screen
+            .secondary(
+                "Sixteen bands of grey, drawn as a picture. The panel resolves all of \
+                 them; what it does not resolve is five of them used as five meanings \
+                 on one screen, which is what the tone budget counts.",
+            )
             .section("Sixteen greys, one flat band each");
-        let screen = match self.card {
+        match self.card {
             Some(card) => screen.picture(card, 40),
             None => screen.skeleton(2),
-        };
+        }
+    }
+
+    /// The two ways of saying that something is happening: one that knows how
+    /// far along it is, and one that does not.
+    fn waiting_page(_: &Self, screen: ScreenBuilder) -> ScreenBuilder {
         screen
             .section_with_value("Determinate", "65%")
             .progress(65)
             .section("Not yet known")
             .skeleton(2)
-            .page_position(3, 3)
     }
 
     /// A picture beside its metadata, and two columns that stay lined up.
@@ -387,6 +946,11 @@ impl Gallery {
                     ),
                 ],
             )
+    }
+
+    /// A section that owns the rows under it, and says how many there are.
+    fn section_rows_page(_: &Self, screen: ScreenBuilder) -> ScreenBuilder {
+        screen
             // Two rows, not three. A third fitted the panel this test used to
             // measure against and was drawn through the navigation bar on the
             // device, and the count in the section header has to be the count
@@ -413,8 +977,8 @@ impl Gallery {
 
     /// Folio's visual acceptance surface: display hierarchy, feature cards,
     /// a section destination, page rail and the selected navigation notch.
-    fn folio_page(&self, screen: ScreenBuilder) -> ScreenBuilder {
-        let screen = screen
+    fn folio_page(_: &Self, screen: ScreenBuilder) -> ScreenBuilder {
+        screen
             .heading("COBALT")
             .secondary("Tuesday, September 1 · Folio")
             .divider()
@@ -422,40 +986,47 @@ impl Gallery {
             .section_link("folio-details", "Reader details")
             .button("folio-button", "Content-width action")
             .page_rail(0, 3)
-            .tile_grid(
-                TileShape::Card,
-                [
-                    (
-                        "grp-one",
-                        "Reader",
-                        Glyph::Reader,
-                        (|tile: Tile| {
-                            tile.with_caption("Left open")
-                                .with_value("Now")
-                                .with_menu(action_id("folio-details"))
-                        }) as fn(Tile) -> Tile,
-                    ),
-                    (
-                        "folio-store",
-                        "App Store",
-                        Glyph::Download,
-                        (|tile: Tile| tile.with_caption("Updates").with_value("3"))
-                            as fn(Tile) -> Tile,
-                    ),
-                    (
-                        "folio-settings",
-                        "Settings",
-                        Glyph::Settings,
-                        (|tile: Tile| tile.with_caption("Wi-Fi · Bluetooth")) as fn(Tile) -> Tile,
-                    ),
-                    (
-                        "folio-terminal",
-                        "Terminal",
-                        Glyph::Terminal,
-                        (|tile: Tile| tile.with_caption("Local shell")) as fn(Tile) -> Tile,
-                    ),
-                ],
-            );
+    }
+
+    /// The shelf of cards, and the menu one of them carries.
+    ///
+    /// The menu is drawn with the shelf rather than beside it: a popover is
+    /// anchored to the control that raised it, and a popover whose anchor is
+    /// on the panel before this one has nothing to point at.
+    fn folio_tiles(&self, screen: ScreenBuilder) -> ScreenBuilder {
+        let screen = screen.tile_grid(
+            TileShape::Card,
+            [
+                (
+                    "grp-one",
+                    "Reader",
+                    Glyph::Reader,
+                    (|tile: Tile| {
+                        tile.with_caption("Left open")
+                            .with_value("Now")
+                            .with_menu(action_id("folio-details"))
+                    }) as fn(Tile) -> Tile,
+                ),
+                (
+                    "folio-store",
+                    "App Store",
+                    Glyph::Download,
+                    (|tile: Tile| tile.with_caption("Updates").with_value("3")) as fn(Tile) -> Tile,
+                ),
+                (
+                    "folio-settings",
+                    "Settings",
+                    Glyph::Settings,
+                    (|tile: Tile| tile.with_caption("Wi-Fi · Bluetooth")) as fn(Tile) -> Tile,
+                ),
+                (
+                    "folio-terminal",
+                    "Terminal",
+                    Glyph::Terminal,
+                    (|tile: Tile| tile.with_caption("Local shell")) as fn(Tile) -> Tile,
+                ),
+            ],
+        );
         if self.floating == Some(Floating::FolioMenu) {
             screen.popover("grp-one", |menu| {
                 menu.rows([
@@ -480,7 +1051,7 @@ impl Gallery {
 
     /// Alternating state marks make retained-image residue visible during a
     /// physical-device acceptance pass without any animation or timer.
-    fn ghosting_page(screen: ScreenBuilder) -> ScreenBuilder {
+    fn ghosting_page(_: &Self, screen: ScreenBuilder) -> ScreenBuilder {
         screen
             .heading("Ghosting")
             .secondary("Turn between Folio and this page on a physical panel.")
@@ -512,6 +1083,8 @@ impl Gallery {
     /// The panel has one bottom band. A screen that navigates cannot also act,
     /// which is not a limitation so much as the shape of the hardware, and it
     /// is why an action bar only ever appears on a screen you arrived at.
+    /// The pushed screen, which keeps the plain bar: a screen reached from one
+    /// place has one way back and nothing to mark.
     fn detail_page() -> Screen {
         ScreenBuilder::new("gallery")
             .top_bar("First")
@@ -613,10 +1186,67 @@ impl Gallery {
                     "3,914",
                 ),
             ])
-            .section("A checklist")
-            .checklist([
-                ("tick-0", "Downloaded", "on this device", self.ticked[0]),
-                ("tick-1", "Read", "finished last month", self.ticked[1]),
+    }
+
+    /// What the toolkit does with a label longer than the panel is wide.
+    ///
+    /// Every one of these is a real label somebody will eventually write: a
+    /// book with a subtitle, a feed named after a sentence, a filter someone
+    /// translated into German. A row cuts its title and keeps its trailing
+    /// value; a tile wraps under its picture; a chip keeps its whole word.
+    /// None of them is allowed to push anything off the panel, which is what
+    /// the sweep across every panel and text size actually checks.
+    fn long_labels_page(_: &Self, screen: ScreenBuilder) -> ScreenBuilder {
+        screen
+            .section("Labels longer than the panel")
+            .rows_with_trailing([(
+                "long-row",
+                "Mrs Dalloway, and the Hours that were cut from it before publication",
+                "Virginia Woolf, with an introduction by somebody else entirely",
+                RowLead::from(Glyph::Book),
+                "1,204",
+            )])
+            .chips([(
+                "long-chip".to_owned(),
+                "Everything downloaded and not yet read",
+                false,
+            )])
+    }
+
+    /// A checklist, which is a row whose value is whether it is done.
+    fn checklist_page(&self, screen: ScreenBuilder) -> ScreenBuilder {
+        screen.section("A checklist").checklist([
+            ("tick-0", "Downloaded", "on this device", self.ticked[0]),
+            ("tick-1", "Read", "finished last month", self.ticked[1]),
+        ])
+    }
+
+    /// The tiles that carry a mark of their own, which opens a menu about the
+    /// tile rather than following the tile.
+    fn marked_tiles(_: &Self, screen: ScreenBuilder) -> ScreenBuilder {
+        screen
+            .section("Tiles that carry a mark of their own")
+            .contextual_tiles(
+                TileShape::Square,
+                [
+                    ("ctx-one", "Shelf", Glyph::Book, "ctx-one-menu"),
+                    ("ctx-two", "Feeds", Glyph::Rss, "ctx-two-menu"),
+                ],
+            )
+            .section("The shelf of applications, as the launcher draws it")
+            .apps([
+                kobo_sdk::AppMetadata::new(
+                    "todo",
+                    "Todo",
+                    "What is left to do",
+                    kobo_sdk::AppIcon::Glyph(Glyph::Check),
+                ),
+                kobo_sdk::AppMetadata::new(
+                    "rss",
+                    "Feeds",
+                    "Articles, read offline",
+                    kobo_sdk::AppIcon::Glyph(Glyph::Rss),
+                ),
             ])
     }
 
@@ -679,9 +1309,19 @@ impl Gallery {
     /// tall: put it under the square grid and the last row of covers falls off
     /// the bottom of the panel, which is exactly what the conformance test
     /// caught the first time this page was written.
+    /// The covers, which used to have a page of their own. Two tiles are not
+    /// a page; they are the end of the page about tiles.
     fn covers_page(&self, screen: ScreenBuilder) -> ScreenBuilder {
+        let screen = match self.swatch {
+            // The same picture, framed by the tile beside it and unframed
+            // below: a plate in a book has no border, and a cover does.
+            Some(swatch) => screen
+                .section("The same picture, with no frame around it")
+                .unframed_picture(swatch, 30),
+            None => screen,
+        };
         screen
-            .secondary("One tile with artwork, one still waiting for it.")
+            .section("Artwork, and artwork still arriving")
             .picture_tiles(
                 TileShape::Portrait,
                 [
@@ -720,6 +1360,16 @@ impl Gallery {
                 u16::try_from(page + 1).unwrap_or(u16::MAX),
                 u16::try_from(pages).unwrap_or(u16::MAX),
             )
+    }
+
+    /// The same question the overlay asks, drawn in the page instead.
+    fn asking_page(_: &Self, screen: ScreenBuilder) -> ScreenBuilder {
+        screen.confirmation(
+            "Asked in the page",
+            "The same question, drawn inline rather than over the panel.",
+            kobo_sdk::DialogAction::new("inline-yes", "Delete"),
+            kobo_sdk::DialogAction::new("inline-no", "Keep"),
+        )
     }
 
     fn choice_page(&self, screen: ScreenBuilder) -> ScreenBuilder {
@@ -790,18 +1440,23 @@ impl Gallery {
 
     /// A download, in all four of the states a download is ever in.
     fn transfer_page(&self, screen: ScreenBuilder) -> ScreenBuilder {
-        let screen = screen.section("A download");
-        let screen = if self.stalled {
+        let screen =
             screen
-                .transfer("Mrs Dalloway", self.received, Some(2_400_000))
+                .section("A download")
+                .transfer("Mrs Dalloway", self.received, Some(2_400_000));
+        if self.stalled {
+            screen
                 .transfer_failed("the connection dropped", true)
                 .transfer_retry("xfer-retry", "Resume")
         } else {
             screen
-                .transfer("Mrs Dalloway", self.received, Some(2_400_000))
                 .cancellable("xfer-cancel", "Cancel")
                 .button("xfer-fail", "Pretend it fails")
-        };
+        }
+    }
+
+    /// The same control, for work whose size the server never sent.
+    fn unsized_transfer_page(_: &Self, screen: ScreenBuilder) -> ScreenBuilder {
         screen
             .section("Size not sent by the server")
             .transfer("The Waves", 412_000, None)
@@ -813,6 +1468,11 @@ impl Gallery {
     /// one panel the last button was drawn through the navigation bar on the
     /// device, and a conformance screen that overflows teaches the overflow.
     fn request_page(&self, screen: ScreenBuilder) -> ScreenBuilder {
+        if !self.loading && self.outcome.is_none() {
+            // Nothing has been asked for yet, which is a splash rather than a
+            // section with an empty line under it.
+            return Self::splash_demonstration(screen).button("start-fetch", "Start a request");
+        }
         let screen = screen.section("Work with no bytes at all");
         if self.loading {
             screen
@@ -827,7 +1487,7 @@ impl Gallery {
 
     /// The four ways a screen has nothing to show, each of which says
     /// something different about whose problem it is.
-    fn nothing_page(screen: ScreenBuilder) -> ScreenBuilder {
+    fn nothing_page(_: &Self, screen: ScreenBuilder) -> ScreenBuilder {
         screen
             .empty_state("No books on this shelf. Anything you download lands here.")
             .button("state-browse", "Browse the catalogue")
@@ -838,7 +1498,7 @@ impl Gallery {
     /// Built through `failure_state` rather than by hand, because being
     /// offline is the one failure the reader can fix without leaving the
     /// device and the SDK adds the route to the Wi-Fi screen itself.
-    fn offline_page(screen: ScreenBuilder) -> ScreenBuilder {
+    fn offline_page(_: &Self, screen: ScreenBuilder) -> ScreenBuilder {
         screen.failure_state(
             kobo_sdk::Failure::of(kobo_sdk::TaskError::Offline),
             "state-retry",
@@ -846,18 +1506,37 @@ impl Gallery {
     }
 
     /// A state nobody can recover from by tapping, so nothing is chained on.
-    fn denied_page(screen: ScreenBuilder) -> ScreenBuilder {
+    fn denied_page(_: &Self, screen: ScreenBuilder) -> ScreenBuilder {
         screen.permission_denied_state("This app cannot read the library folder.")
+    }
+
+    /// The same denial, said the second of the three ways the SDK offers.
+    ///
+    /// Each of these is a splash that takes the whole panel, which is why the
+    /// three of them are three panels rather than one crowded page.
+    fn offline_state_page(_: &Self, screen: ScreenBuilder) -> ScreenBuilder {
+        screen.offline_state("Nothing to show until the radio is on.")
+    }
+
+    /// And the third way, for the failure that is somebody's fault.
+    fn faulted_page(_: &Self, screen: ScreenBuilder) -> ScreenBuilder {
+        screen.error_state("And the one that is somebody's fault.")
     }
 
     /// The two states that are somebody's fault, as opposed to merely empty.
     ///
     /// On their own page because each carries an attention banner, and a panel
     /// with four inverted bars on it teaches readers to ignore all of them.
-    fn trouble_page(screen: ScreenBuilder) -> ScreenBuilder {
+    fn trouble_page(_: &Self, screen: ScreenBuilder) -> ScreenBuilder {
         screen
-            .error_state("The catalogue came back malformed. Nothing was changed.")
+            // The same four states the SDK names, drawn through the one call
+            // that takes the state as an argument rather than four of its own.
+            .standard_state(
+                kobo_sdk::StandardState::Error,
+                "The catalogue came back malformed. Nothing was changed.",
+            )
             .button("state-retry", "Try again")
+            .bottom_action_marked("state-report", "Report it", Glyph::Note)
     }
 
     /// Raises and lowers the two things that float above a screen.
@@ -923,6 +1602,85 @@ impl Gallery {
         self.swatch = context.put_picture(PictureHandle(2), CARD_WIDTH, CARD_HEIGHT, card());
     }
 
+    /// The whole of the worked example's wiring, in one place.
+    ///
+    /// `None` is a tap that has nothing to do with the job, which is every
+    /// tap while the job is not running.
+    fn next_step(step: Option<Step>, action: ActionId) -> Option<Move> {
+        if action == action_id("folio-store") {
+            return Some(Move::To(Step::Chosen));
+        }
+        let step = step?;
+        for (name, next) in [
+            ("flow-ask", Step::Asked),
+            ("flow-yes", Step::Arriving),
+            ("flow-no", Step::Chosen),
+            ("flow-finish", Step::Arrived),
+            ("flow-open", Step::Reading),
+            ("flow-cancel", Step::Chosen),
+        ] {
+            if action == action_id(name) {
+                return Some(Move::To(next));
+            }
+        }
+        // Backing out of the first step leaves the job; backing out of any
+        // other goes back a step, which is what the bar promises.
+        if action == ActionId::BACK || action == action_id("reading-close") {
+            return Some(match step {
+                Step::Chosen => Move::Out,
+                Step::Asked | Step::Arriving | Step::Arrived => Move::To(Step::Chosen),
+                Step::Reading => Move::To(Step::Arrived),
+            });
+        }
+        None
+    }
+
+    /// The taps that move about the reference rather than change anything:
+    /// the page strip, the panel a page spread onto, and the icon sheets.
+    ///
+    /// Returns whether it took the tap.
+    fn navigated(&mut self, context: &mut Context, action: ActionId) -> bool {
+        for (index, (name, _)) in self.tab.pages().iter().enumerate() {
+            if action == action_id(name) {
+                let tab = self.tab.index();
+                self.page[tab] = index;
+                // Back to the first panel: the page that was open two pages
+                // ago has no third panel to be on.
+                self.shown = 0;
+                self.show(context);
+                return true;
+            }
+        }
+
+        if action == action_id("panel-next") || action == action_id("panel-back") {
+            let page = self.page();
+            let last = self.panels(context.metrics(), page).len().saturating_sub(1);
+            let panel = self.shown.min(last);
+            self.shown = if action == action_id("panel-next") {
+                (panel + 1).min(last)
+            } else {
+                panel.saturating_sub(1)
+            };
+            self.show(context);
+            return true;
+        }
+
+        if action == action_id("icons-next") {
+            let sheets = icons().len().div_ceil(Self::ICONS_PER_PAGE);
+            self.icon_page = (self.icon_page + 1).min(sheets.saturating_sub(1));
+            self.show(context);
+            return true;
+        }
+
+        if action == action_id("icons-back") {
+            self.icon_page = self.icon_page.saturating_sub(1);
+            self.show(context);
+            return true;
+        }
+
+        false
+    }
+
     fn open_group(&mut self, context: &mut Context) {
         self.floating = None;
         self.detail = true;
@@ -937,6 +1695,20 @@ impl KoboApp for Gallery {
     }
 
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
+        // The worked example is answered first. While it is running it owns
+        // the panel, including the back the runtime sends: handled further
+        // down, back would be swallowed by the rule that closes overlays and
+        // the reader would be left in a job with no way out of it.
+        if let Some(moved) = Self::next_step(self.step, action) {
+            self.step = match moved {
+                Move::To(step) => Some(step),
+                Move::Out => None,
+            };
+            self.floating = None;
+            self.show(context);
+            return;
+        }
+
         for (tab, name, _) in Tab::ALL {
             if action == action_id(name) {
                 self.tab = tab;
@@ -958,18 +1730,13 @@ impl KoboApp for Gallery {
             return;
         }
         if action == action_id("folio-button") {
-            self.page[Tab::V2.index()] = 1;
+            self.page[Tab::Panel.index()] = 1;
             self.show(context);
             return;
         }
 
-        for (index, (name, _)) in self.tab.pages().iter().enumerate() {
-            if action == action_id(name) {
-                let tab = self.tab.index();
-                self.page[tab] = index;
-                self.show(context);
-                return;
-            }
+        if self.navigated(context, action) {
+            return;
         }
 
         // The typed row is handled first, because while the keyboard is up it
@@ -990,19 +1757,6 @@ impl KoboApp for Gallery {
                 self.show(context);
                 return;
             }
-        }
-
-        if action == action_id("icons-next") {
-            let pages = icons().len().div_ceil(Self::ICONS_PER_PAGE);
-            self.icon_page = (self.icon_page + 1).min(pages - 1);
-            self.show(context);
-            return;
-        }
-
-        if action == action_id("icons-back") {
-            self.icon_page = self.icon_page.saturating_sub(1);
-            self.show(context);
-            return;
         }
 
         for index in 0..self.ticked.len() {
@@ -1089,8 +1843,8 @@ mod tests {
         card, icons, wedge, Gallery, Tab, CARD_HEIGHT, CARD_WIDTH, WEDGE_HEIGHT, WEDGE_WIDTH,
     };
     use kobo_sdk::{
-        action_id, Command, Context, DiagnosticSeverity, Glyph, KoboApp, Node, Screen,
-        CLARA_BW_METRICS,
+        action_id, Chrome, Command, Context, DiagnosticSeverity, DisplayMetrics, Glyph, KoboApp,
+        Node, Screen, CLARA_BW_METRICS,
     };
 
     /// Paints one page and hands back what was drawn.
@@ -1099,8 +1853,16 @@ mod tests {
     /// so a test that asserts "the tap drew a screen" has to go through the
     /// app's own `show` rather than through an action, or it will occasionally
     /// find nothing and be right to.
-    fn painted(gallery: &Gallery) -> Screen {
-        let mut context = Context::default();
+    fn painted(gallery: &Gallery, metrics: DisplayMetrics) -> Screen {
+        // A runner built for this panel installs the same typeface the
+        // runtime lays out with and hands back a context that knows how large
+        // the panel is. Without it every measurement here comes from the
+        // built-in fallback bitmap, whose lines are about two thirds the
+        // height of the real ones -- which is how the first version of this
+        // test passed on a page whose last three nodes were off the bottom of
+        // the panel.
+        let runner = kobo_sdk::AppRunner::with_metrics(Gallery::default(), metrics);
+        let mut context = runner.context();
         gallery.show(&mut context);
         context
             .take_commands()
@@ -1113,22 +1875,38 @@ mod tests {
             .expect("a screen was painted")
     }
 
-    fn every_page() -> Vec<(String, Screen)> {
-        // Building a runner installs the same typeface the runtime lays out
-        // with. Without it every measurement here comes from the built-in
-        // fallback bitmap, whose lines are about two thirds the height of the
-        // real ones -- which is how the first version of this test passed on a
-        // page whose last three nodes were off the bottom of the panel.
-        let _ = kobo_sdk::AppRunner::new(Gallery::default());
+    fn every_page(metrics: DisplayMetrics) -> Vec<(String, Screen)> {
+        // One runner for the whole sweep. Building one discovers and parses
+        // the system typeface, which is slow enough that doing it per page
+        // turns a three second test into a three minute one.
+        let runner = kobo_sdk::AppRunner::with_metrics(Gallery::default(), metrics);
+        let painted = |gallery: &Gallery| {
+            let mut context = runner.context();
+            gallery.show(&mut context);
+            context
+                .take_commands()
+                .into_iter()
+                .rev()
+                .find_map(|command| match command {
+                    Command::SetScreen(screen) => Some(screen),
+                    _ => None,
+                })
+                .expect("a screen was painted")
+        };
         let mut screens = Vec::new();
         for (tab, _, _) in Tab::ALL {
             for (index, (name, _)) in tab.pages().iter().enumerate() {
                 let mut gallery = Gallery::default();
-                let mut context = Context::default();
+                let mut context = runner.context();
                 gallery.on_start(&mut context);
                 gallery.tab = tab;
                 gallery.page[tab.index()] = index;
                 screens.push(((*name).to_owned(), painted(&gallery)));
+                for panel in 1..gallery.panels(metrics, index).len() {
+                    gallery.shown = panel;
+                    screens.push((format!("{name}-panel-{panel}"), painted(&gallery)));
+                }
+                gallery.shown = 0;
                 // The states that only exist after a tap are pages too: an
                 // overlay nobody opens and a failure nobody provokes are two
                 // more screens that have never been laid out.
@@ -1148,7 +1926,7 @@ mod tests {
                     gallery.floating = Some(super::Floating::Sheet);
                     screens.push(("page-over-sheet".to_owned(), painted(&gallery)));
                 }
-                if tab == Tab::V2 && index == 0 {
+                if tab == Tab::Panel && index == 0 {
                     gallery.stalled = true;
                     screens.push(("page-transfer-failed".to_owned(), painted(&gallery)));
                     gallery.stalled = false;
@@ -1164,7 +1942,114 @@ mod tests {
                 }
             }
         }
+        // Every step of the worked example is a screen too, and the step a
+        // reader spends the longest on is the one in the middle of a job.
+        for step in [
+            super::Step::Chosen,
+            super::Step::Asked,
+            super::Step::Arriving,
+            super::Step::Arrived,
+            super::Step::Reading,
+        ] {
+            let mut gallery = Gallery::default();
+            let mut context = runner.context();
+            gallery.on_start(&mut context);
+            gallery.step = Some(step);
+            screens.push((format!("flow-{step:?}").to_lowercase(), painted(&gallery)));
+        }
         screens
+    }
+
+    /// Every panel the runtime supports, portrait, at every size a reader can
+    /// choose the type to be.
+    ///
+    /// A page that fits a Clara BW at the default size is not a page that
+    /// fits: the smallest supported panel is shorter, and 170% type on it
+    /// takes nearly twice the room. Both ends are checked because a reference
+    /// that overflows anywhere is a reference somebody copies into an
+    /// application that overflows there too.
+    fn supported_panels() -> Vec<(String, DisplayMetrics)> {
+        kobo_profile::SUPPORTED_PROFILES
+            .iter()
+            .flat_map(|profile| {
+                kobo_ui::TextScale::STEPS.into_iter().map(move |scale| {
+                    (
+                        format!("{} at {scale:?}", profile.id),
+                        DisplayMetrics {
+                            width: i32::try_from(profile.width).expect("a panel fits a layout"),
+                            height: i32::try_from(profile.height).expect("a panel fits a layout"),
+                            pixels_per_inch: i32::from(profile.pixels_per_inch),
+                            text_scale: scale,
+                        },
+                    )
+                })
+            })
+            .collect()
+    }
+
+    /// Every warning the reference provokes, and what provokes it.
+    ///
+    /// A developer diagnostic nobody has accounted for is a diagnostic
+    /// everybody learns to scroll past, and this application is where people
+    /// come to learn what the diagnostics mean. These two are drawn on
+    /// purpose. Anything else is new, and the test below says so.
+    const WARNINGS: [(&str, &str); 2] = [
+        (
+            "ToneBudget",
+            "a shelf of tiles is a surface, the marked navigation bar under it is \
+             inverted, and with a rule, a subtitle and a word of prose that is all \
+             five inks on one panel. Every page here that shows tiles, cards or \
+             an overlay spends them all, which is worth seeing: it is also what \
+             a launcher home screen costs.",
+        ),
+        (
+            "MultiplePrimaryActions",
+            "the buttons page draws the same dominant verb twice, once refused. \
+             A page cannot show a state and its opposite without showing both.",
+        ),
+    ];
+
+    /// No page provokes a warning that is not one of the two above, and the
+    /// one that belongs to a single page stays on it.
+    #[test]
+    fn every_warning_this_reference_provokes_is_one_it_means_to() {
+        let mut unaccounted = Vec::new();
+        for (name, screen) in every_page(CLARA_BW_METRICS) {
+            for issue in screen
+                .diagnostics(&CLARA_BW_METRICS, &Chrome::measuring(false))
+                .issues
+                .iter()
+                .filter(|issue| issue.severity != DiagnosticSeverity::Error)
+            {
+                let kind = format!("{:?}", issue.kind);
+                if !WARNINGS.iter().any(|(known, _)| kind.starts_with(known)) {
+                    unaccounted.push(format!("{name}: {kind}"));
+                } else if kind.starts_with("MultiplePrimaryActions") && name != "page-buttons" {
+                    unaccounted.push(format!("{name}: {kind} belongs to the buttons page"));
+                }
+            }
+        }
+        assert!(unaccounted.is_empty(), "{unaccounted:#?}");
+    }
+
+    #[test]
+    fn every_page_fits_every_supported_panel_at_every_text_size() {
+        let mut failures = Vec::new();
+        for (panel, metrics) in supported_panels() {
+            for (name, screen) in every_page(metrics) {
+                let errors = screen
+                    .diagnostics(&metrics, &Chrome::measuring(false))
+                    .issues
+                    .into_iter()
+                    .filter(|issue| issue.severity == DiagnosticSeverity::Error)
+                    .map(|issue| format!("{:?}", issue.kind))
+                    .collect::<Vec<_>>();
+                if !errors.is_empty() {
+                    failures.push(format!("{panel}: {name}: {errors:?}"));
+                }
+            }
+        }
+        assert!(failures.is_empty(), "{failures:#?}");
     }
 
     /// The gallery is the conformance screen: if a page of it lays out with an
@@ -1182,13 +2067,36 @@ mod tests {
     #[test]
     fn every_page_lays_out_without_an_error() {
         let mut failures = Vec::new();
-        for (name, screen) in every_page() {
+        for (name, screen) in every_page(CLARA_BW_METRICS) {
+            let chrome = Chrome::measuring(false);
+            // Laid out as well as diagnosed so a failure names the control
+            // that overflowed. "TextOverflow" six times over says a page is
+            // too full; it does not say which six lines to move.
+            let laid_out = screen.layout_with(&CLARA_BW_METRICS, &chrome);
             let errors = screen
-                .diagnostics(&CLARA_BW_METRICS, &kobo_sdk::Chrome::measuring(false))
+                .diagnostics(&CLARA_BW_METRICS, &chrome)
                 .issues
                 .into_iter()
                 .filter(|issue| issue.severity == DiagnosticSeverity::Error)
-                .map(|issue| format!("{:?}", issue.kind))
+                .map(|issue| {
+                    // Matched on the rectangle as well as the identifier: a
+                    // table's cells all carry the identifier of the table, so
+                    // the first node with that identifier is rarely the one
+                    // that overflowed.
+                    let drawn = laid_out
+                        .nodes
+                        .iter()
+                        .find(|node| Some(node.id) == issue.node && Some(node.rect) == issue.rect)
+                        .map(|node| {
+                            format!(
+                                "{:?} {:?} {:?}",
+                                node.kind,
+                                node.rect,
+                                node.text_lines.first().map(ToString::to_string)
+                            )
+                        });
+                    format!("{:?} at {}", issue.kind, drawn.unwrap_or_default())
+                })
                 .collect::<Vec<_>>();
             if !errors.is_empty() {
                 failures.push(format!("{name}: {errors:?}"));
@@ -1204,7 +2112,7 @@ mod tests {
     /// and the layout tests only prove that its rectangle is the right size.
     #[test]
     fn every_node_the_system_has_is_drawn_somewhere() {
-        let drawn = every_page()
+        let drawn = every_page(CLARA_BW_METRICS)
             .into_iter()
             .flat_map(|(_, screen)| {
                 let mut kinds: Vec<String> = screen
@@ -1257,7 +2165,7 @@ mod tests {
         // A checklist is `Node::Rows` whose rows carry `done`, not a node of
         // its own, so the only way to prove it is drawn is to find a ticked
         // row and an unticked one.
-        let rows = every_page()
+        let rows = every_page(CLARA_BW_METRICS)
             .into_iter()
             .flat_map(|(_, screen)| screen.nodes)
             .filter_map(|node| match node {
@@ -1316,10 +2224,13 @@ mod tests {
             Some(super::Floating::Menu),
             "the three dots opened nothing"
         );
-        assert!(painted(&gallery).overlay.is_some(), "no overlay was raised");
+        assert!(
+            painted(&gallery, CLARA_BW_METRICS).overlay.is_some(),
+            "no overlay was raised"
+        );
         gallery.on_action(&mut context, kobo_sdk::ActionId::BACK);
         assert_eq!(gallery.floating, None, "the menu stayed up");
-        assert!(painted(&gallery).overlay.is_none());
+        assert!(painted(&gallery, CLARA_BW_METRICS).overlay.is_none());
     }
 
     #[test]
@@ -1328,9 +2239,11 @@ mod tests {
         let mut context = Context::default();
         gallery.on_start(&mut context);
         gallery.on_action(&mut context, action_id("tab-input"));
-        gallery.on_action(&mut context, action_id("page-choice"));
+        gallery.on_action(&mut context, action_id("page-input"));
+        gallery.on_action(&mut context, action_id("panel-next"));
+        gallery.on_action(&mut context, action_id("panel-next"));
         gallery.on_action(&mut context, action_id("file-archive"));
-        let choice = painted(&gallery)
+        let choice = painted(&gallery, CLARA_BW_METRICS)
             .nodes
             .iter()
             .find_map(|node| match node {
@@ -1427,7 +2340,7 @@ mod tests {
         assert_eq!(given, 2, "the pictures were not handed over on start");
 
         gallery.tab = Tab::Input;
-        let screen = painted(&gallery);
+        let screen = painted(&gallery, CLARA_BW_METRICS);
         let mut context = Context::default();
         gallery.show(&mut context);
         assert!(
@@ -1443,6 +2356,62 @@ mod tests {
                 .iter()
                 .any(|node| matches!(node, Node::Band { .. })),
             "the hero drew no band"
+        );
+    }
+
+    /// Every control the toolkit draws is shown here, or is named below with
+    /// the reason it is not a control.
+    ///
+    /// Read off the SDK rather than written out, for the same reason the icon
+    /// table is: a hand-kept list drifts, and a reference that is missing
+    /// eleven of the things it is the reference for is worse than no reference.
+    #[test]
+    fn every_control_the_toolkit_draws_is_somewhere_in_this_gallery() {
+        const SOURCE: &str = include_str!("main.rs");
+        const BUILDER: &str = include_str!("../../../crates/kobo-sdk/src/builder.rs");
+        // Not controls: they build, inspect or arrange, and there is nothing
+        // for an eye to check.
+        const NOT_DRAWN: [(&str, &str); 8] = [
+            ("new", "starts a screen"),
+            ("build", "ends one"),
+            (
+                "build_checked",
+                "ends one and reports what the layout thought",
+            ),
+            ("action", "looks an identifier up"),
+            ("warnings", "reports what the builder noticed"),
+            ("fill", "spreads what is already there down the panel"),
+            (
+                "with_formulae",
+                "attaches typeset mathematics to text already shown",
+            ),
+            ("text_scale", "sets the size of prose already shown"),
+        ];
+        let drawn: String = SOURCE
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let mut missing = Vec::new();
+        for line in BUILDER.lines() {
+            let Some(name) = line
+                .strip_prefix("    pub fn ")
+                .and_then(|rest| rest.split(['(', '<']).next())
+            else {
+                continue;
+            };
+            if NOT_DRAWN.iter().any(|(excused, _)| *excused == name) {
+                continue;
+            }
+            if !drawn.contains(&format!(".{name}(")) {
+                missing.push(name.to_owned());
+            }
+        }
+        assert!(
+            missing.is_empty(),
+            "{} controls are not shown anywhere in the gallery: {}",
+            missing.len(),
+            missing.join(", ")
         );
     }
 }

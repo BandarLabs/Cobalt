@@ -1,0 +1,41 @@
+{
+  "source_sha": "a83c2f5c35069e5ac4a857dad80c1089f4607fba",
+  "dirty": true,
+  "results": [
+    {
+      "app": "crossword",
+      "launched": true,
+      "status": "fail",
+      "route": "apps/crossword/drive.kobo",
+      "exit_code": 1
+    },
+    {
+      "app": "logicpack",
+      "launched": true,
+      "status": "fail",
+      "route": "apps/logicpack/drive.kobo",
+      "exit_code": 1
+    },
+    {
+      "app": "nonograms",
+      "launched": true,
+      "status": "fail",
+      "route": "apps/nonograms/drive.kobo",
+      "exit_code": 1
+    },
+    {
+      "app": "parlor",
+      "launched": true,
+      "status": "pass",
+      "route": "apps/parlor/drive.kobo",
+      "exit_code": 0
+    },
+    {
+      "app": "tictactoe",
+      "launched": true,
+      "status": "pass",
+      "route": "examples/tictactoe/drive.txt",
+      "exit_code": 0
+    }
+  ]
+}

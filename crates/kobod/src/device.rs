@@ -3605,6 +3605,7 @@ fn start_application(
     let tasks = TaskRunner::simulated(&app_data_root)
         .with_fetch(Arc::new(kobo_net::fetch_from_controlled))
         .with_post(Arc::new(kobo_net::post_controlled))
+        .with_updates(Arc::new(kobo_net::write_controlled))
         .with_line_streams(Arc::new(kobo_net::LineStreams::default()))
         .with_app_secrets(SECRETS, &name)
         .with_credential_policy(Arc::new(
@@ -5069,6 +5070,7 @@ mod tests {
         let mut runner = TaskRunner::simulated(root.join("data"))
             .with_fetch(Arc::new(kobo_net::fetch_from_controlled))
             .with_post(Arc::new(kobo_net::post_controlled))
+            .with_updates(Arc::new(kobo_net::write_controlled))
             .with_line_streams(Arc::new(kobo_net::LineStreams::default()))
             .with_app_secrets(&root, "lichess")
             .with_credential_policy(Arc::new(
@@ -5083,6 +5085,7 @@ mod tests {
                                     && body == Some(SEEK_BODY)
                                     && content_type == Some(FORM)
                             }
+                            CredentialUse::Put | CredentialUse::Patch => false,
                         }
                 },
             ))

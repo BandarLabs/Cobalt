@@ -3,8 +3,8 @@
   "display_name": "Todo",
   "short_label": "Todo",
   "summary": "Keep a simple to-do list that stays on your Kobo.",
-  "version": "1.0.8",
+  "version": "1.0.9",
   "glyph": "check",
   "capabilities": [],
-  "release_notes": "Update shared controls and page layout for Cobalt 0.3.12."
+  "release_notes": "Edit a list and date it, and take a copy off the reader onto a paired computer without emptying the list in the process."
 }
