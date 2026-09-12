@@ -97,3 +97,9 @@ using the same acquisition choice as the downloader. Common language codes
 are expanded; regional/script tags are retained beside the name, and unknown
 codes are shown unchanged. This describes the selected download; it does not
 add an edition chooser.
+
+
+Entries with the same title remain separate when their language, authors,
+publisher or edition date differ. A missing language is not assumed to match
+a known language. This keeps distinct catalog choices available rather than
+silently opening the first matching title.

@@ -2399,3 +2399,18 @@ The runtime-font fixture captures were refreshed and inspected. Existing
 pagination checks cover profiles, orientations and text scales. Manifest
 1.0.12 and generated catalog page are updated. This is selected-edition
 visibility, not an edition chooser; GUTEN-02 remains open for that work.
+
+
+### Gutenbird distinct catalog editions (partial GUTEN-02)
+
+Entry resolution formerly collapsed publications sharing only a title. It now
+also requires matching authors, language, publisher and issued date before
+selecting a representative edition. Distinct or unspecified language values
+are not treated as equivalent. Entries failing this comparison remain in the
+normal catalog browsing path.
+
+All 89 app tests and strict all-target Clippy passed. The new regression covers
+different languages/authors/publishers/dates and a missing language; prior
+illustrated/plain variant tests still pass. Manifest 1.0.13 and generated
+catalog page are updated. This preserves available entries; the full edition
+chooser remains open under GUTEN-02.

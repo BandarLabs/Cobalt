@@ -973,12 +973,14 @@ impl Gutenbird {
             0 => None,
             1 => Some(feed.publications[0].clone()),
             _ => {
-                let mut titles = feed
-                    .publications
-                    .iter()
-                    .map(|publication| publication.title.as_str());
-                let first = titles.next()?;
-                if !titles.all(|title| title == first) {
+                let first = feed.publications.first()?;
+                if !feed.publications.iter().all(|publication| {
+                    publication.title == first.title
+                        && publication.authors == first.authors
+                        && publication.language == first.language
+                        && publication.publisher == first.publisher
+                        && publication.issued == first.issued
+                }) {
                     return None;
                 }
                 // The illustrated edition, now that an illustration reaches
@@ -4037,6 +4039,38 @@ Please read this before you distribute or use this work.\n";
             ..Feed::default()
         };
         assert!(Gutenbird::resolve_entry(&feed).is_none());
+    }
+
+    #[test]
+    fn same_title_does_not_hide_a_different_language_author_or_edition() {
+        let mut first = publication(
+            "Selected poems",
+            vec![epub_acquisition("https://x/one.epub")],
+        );
+        first.language = Some("en".into());
+        first.authors = vec!["First author".into()];
+        let mut other = first.clone();
+        other.language = Some("fr".into());
+        let separate = |other| {
+            Gutenbird::resolve_entry(&Feed {
+                publications: vec![first.clone(), other],
+                ..Feed::default()
+            })
+            .is_none()
+        };
+        assert!(separate(other));
+        let mut other = first.clone();
+        other.authors = vec!["Second author".into()];
+        assert!(separate(other));
+        let mut other = first.clone();
+        other.publisher = Some("Another publisher".into());
+        assert!(separate(other));
+        let mut other = first.clone();
+        other.issued = Some("2020".into());
+        assert!(separate(other));
+        let mut other = first.clone();
+        other.language = None;
+        assert!(separate(other));
     }
 
     #[test]
