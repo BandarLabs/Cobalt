@@ -58,6 +58,19 @@ pub fn parse(bytes: &[u8]) -> Result<Import, &'static str> {
         return Err("This OPML file is too large.");
     }
     let text = std::str::from_utf8(bytes).map_err(|_| "This OPML file is not valid UTF-8.")?;
+    // A document that stops inside a tag, a comment or a character section is
+    // a half-copied file, and the scanner is built to stop there quietly so a
+    // feed can still be read from what did arrive. A subscription list is the
+    // one thing that must not be read that way: the reader would be told it
+    // imported nothing, which is what an empty list looks like too, and would
+    // copy the file again for nothing. The last angle bracket with no closing
+    // one after it is exactly where the scanner gave up.
+    if text
+        .rsplit_once('<')
+        .is_some_and(|(_, tail)| !tail.contains('>'))
+    {
+        return Err("This OPML file is incomplete or damaged.");
+    }
     let mut scratch = Vec::new();
     let mut events = Vec::new();
     scan(text, &mut scratch, |event| events.push(event));
@@ -131,6 +144,35 @@ pub fn parse(bytes: &[u8]) -> Result<Import, &'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_file_that_stops_inside_a_tag_is_damaged_rather_than_empty() {
+        // Each of these parsed as a successful import of whatever had arrived
+        // before the truncation, which tells a reader their subscription list
+        // held nothing when it in fact held an unknown amount more.
+        for truncated in [
+            &b"<opml></opml><"[..],
+            &br#"<opml><body><outline xmlUrl="https://a.test/f"/></body></opml><out"#[..],
+            &br#"<opml><body><outline xmlUrl="https://a.test/f"/></body></opml><!-- "#[..],
+            &b"<opml><body></body></opml><![CDATA[x"[..],
+        ] {
+            assert_eq!(
+                parse(truncated),
+                Err("This OPML file is incomplete or damaged."),
+                "{}",
+                std::str::from_utf8(truncated).expect("probe text")
+            );
+        }
+    }
+
+    #[test]
+    fn an_angle_bracket_inside_a_character_section_is_not_a_truncation() {
+        let import = parse(
+            br#"<opml><body><outline text="a &lt; b" xmlUrl="https://a.test/f"/><note><![CDATA[a < b]]></note></body></opml>"#,
+        )
+        .expect("a complete document");
+        assert_eq!(import.feeds.len(), 1);
+    }
 
     #[test]
     fn nested_outlines_preserve_titles_and_decode_urls() {
