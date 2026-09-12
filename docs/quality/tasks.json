@@ -3324,8 +3324,11 @@
     "pr": 3,
     "group": "Verses (APP-8)",
     "task": "Make favorites usable",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "apps/verses/src/main.rs",
+      "docs/quality/evidence/verses/"
+    ]
   },
   {
     "id": "VERSE-06",

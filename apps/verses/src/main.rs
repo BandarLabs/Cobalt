@@ -15,6 +15,13 @@ const USER_AGENT: &str = "Cobalt Verses/0.1";
 
 #[derive(Clone, Copy)]
 struct Poem {
+    /// What a favourite is recorded against.
+    ///
+    /// Favourites used to be the poem's position in this list, so adding a
+    /// poem or changing the order silently moved every favourite onto a
+    /// different poem. A name is what the reader chose; a position is an
+    /// accident of how the shelf is written down.
+    id: &'static str,
     title: &'static str,
     author: &'static str,
     year: u16,
@@ -45,6 +52,7 @@ impl Poem {
 
 const CORPUS: &[Poem] = &[
     Poem {
+        id: "dickinson-hope",
         title: "Hope",
         author: "Emily Dickinson",
         year: 1891,
@@ -72,6 +80,7 @@ const CORPUS: &[Poem] = &[
         ],
     },
     Poem {
+        id: "blake-tiger",
         title: "The Tiger",
         author: "William Blake",
         year: 1794,
@@ -117,6 +126,7 @@ const CORPUS: &[Poem] = &[
         ],
     },
     Poem {
+        id: "shelley-ozymandias",
         title: "Ozymandias",
         author: "Percy Bysshe Shelley",
         year: 1818,
@@ -140,6 +150,7 @@ const CORPUS: &[Poem] = &[
         ]],
     },
     Poem {
+        id: "dickinson-chariot",
         title: "The Chariot",
         author: "Emily Dickinson",
         year: 1890,
@@ -192,8 +203,25 @@ struct OnlinePoem {
 
 #[derive(Default, Deserialize, Serialize)]
 struct Saved {
-    favorites: BTreeSet<usize>,
+    /// Poems from the shelf, by name.
+    #[serde(default)]
+    favorites: BTreeSet<String>,
     online_favorites: Vec<OnlinePoem>,
+    sleep: bool,
+}
+
+/// What the shelf wrote before poems had names: favourites as positions.
+///
+/// Read only when the current form will not decode, which is exactly when the
+/// stored favourites are numbers. Written back by name, so this is read once
+/// per reader and then never again.
+#[derive(Default, Deserialize)]
+struct LegacySaved {
+    #[serde(default)]
+    favorites: BTreeSet<usize>,
+    #[serde(default)]
+    online_favorites: Vec<OnlinePoem>,
+    #[serde(default)]
     sleep: bool,
 }
 
@@ -239,6 +267,12 @@ struct Verses {
     loaded: bool,
     /// Which page of the poem is open. A long poem is more than one panel.
     poem_page: usize,
+    /// Whether a favourite is still waiting for storage to confirm it.
+    ///
+    /// Marking a poem used to write and walk away. A write that failed took
+    /// the favourite with it and said nothing, so a reader found their poem
+    /// unmarked the next time they opened the shelf and had no idea why.
+    saving: bool,
 }
 
 impl Default for Verses {
@@ -255,6 +289,7 @@ impl Default for Verses {
             notice: None,
             loaded: false,
             poem_page: 0,
+            saving: false,
         }
     }
 }
@@ -328,7 +363,7 @@ impl Verses {
         }
         screen = screen.top_bar_glyph(
             "favorite",
-            if self.saved.favorites.contains(&self.poem) {
+            if self.saved.favorites.contains(CORPUS[self.poem].id) {
                 "Remove favorite"
             } else {
                 "Favorite"
@@ -501,15 +536,19 @@ impl Verses {
                 .saved
                 .favorites
                 .iter()
-                .filter_map(|index| {
-                    CORPUS.get(*index).map(|poem| {
-                        (
-                            format!("poem-{index}"),
-                            poem.title.to_owned(),
-                            poem.author.to_owned(),
-                            Glyph::Heart,
-                        )
-                    })
+                .filter_map(|id| {
+                    CORPUS
+                        .iter()
+                        .position(|poem| poem.id == id.as_str())
+                        .map(|index| {
+                            let poem = CORPUS[index];
+                            (
+                                format!("poem-{index}"),
+                                poem.title.to_owned(),
+                                poem.author.to_owned(),
+                                Glyph::Heart,
+                            )
+                        })
                 })
                 .collect::<Vec<_>>();
             favorites.extend(self.saved.online_favorites.iter().enumerate().map(
@@ -621,9 +660,15 @@ impl Verses {
         }
     }
 
-    fn save(&self, context: &mut Context) {
-        if let Ok(bytes) = serde_json::to_vec(&self.saved) {
-            context.store().save(SETTINGS, bytes);
+    fn save(&mut self, context: &mut Context) {
+        match serde_json::to_vec(&self.saved) {
+            Ok(bytes) => {
+                self.saving = true;
+                context.store().save(SETTINGS, bytes);
+            }
+            Err(_) => {
+                self.notice = Some("This favourite could not be written. Try again.".to_owned());
+            }
         }
     }
 
@@ -662,8 +707,11 @@ impl Verses {
             } else {
                 self.saved.online_favorites.push(poem);
             }
-        } else if !self.saved.favorites.remove(&self.poem) {
-            self.saved.favorites.insert(self.poem);
+        } else {
+            let id = CORPUS[self.poem].id;
+            if !self.saved.favorites.remove(id) {
+                self.saved.favorites.insert(id.to_owned());
+            }
         }
     }
 }
@@ -675,12 +723,46 @@ impl KoboApp for Verses {
     }
 
     fn on_store(&mut self, context: &mut Context, result: StoreResult) {
+        // Storage answers every write, and a refusal is the one answer that
+        // has to reach the reader: the favourite is not kept.
+        match &result {
+            StoreResult::Saved { .. } => {
+                self.saving = false;
+                if self
+                    .notice
+                    .as_deref()
+                    .is_some_and(|notice| notice.contains("favourite"))
+                {
+                    self.notice = None;
+                }
+            }
+            StoreResult::Denied(_) => {
+                self.saving = false;
+                self.notice = Some(
+                    "This reader would not keep that favourite. Try marking it again.".to_owned(),
+                );
+            }
+            _ => {}
+        }
         if let StoreResult::Loaded {
             value: Some(bytes), ..
         } = result
         {
-            if let Ok(saved) = serde_json::from_slice(&bytes) {
+            if let Ok(saved) = serde_json::from_slice::<Saved>(&bytes) {
                 self.saved = saved;
+            } else if let Ok(legacy) = serde_json::from_slice::<LegacySaved>(&bytes) {
+                // Positions in the shelf as it was then: Hope, The Tiger,
+                // Ozymandias, in that order.
+                const WAS: [&str; 3] = ["dickinson-hope", "blake-tiger", "shelley-ozymandias"];
+                self.saved = Saved {
+                    favorites: legacy
+                        .favorites
+                        .iter()
+                        .filter_map(|position| WAS.get(*position).map(|id| (*id).to_owned()))
+                        .collect(),
+                    online_favorites: legacy.online_favorites,
+                    sleep: legacy.sleep,
+                };
             }
         }
         self.loaded = true;
@@ -977,6 +1059,62 @@ mod tests {
             url,
             "https://poetrydb.org/author,title,lines/hope%20%26%20spring/author,title,linecount"
         );
+    }
+
+    #[test]
+    fn a_favourite_survives_the_shelf_being_rewritten() {
+        // Favourites were positions in the corpus, so adding a poem or
+        // changing the order moved every one of them onto a different poem.
+        let mut app = Verses::default();
+        let mut runner = AppRunner::new(Verses::default());
+        app.poem = CORPUS
+            .iter()
+            .position(|poem| poem.id == "shelley-ozymandias")
+            .expect("a poem to mark");
+        app.toggle_favorite();
+        assert!(app.saved.favorites.contains("shelley-ozymandias"));
+        assert!(
+            !app.saved
+                .favorites
+                .iter()
+                .any(|id| id.parse::<usize>().is_ok()),
+            "a favourite is a name rather than a position"
+        );
+        app.save(&mut runner.context());
+        assert!(app.saving, "a write is outstanding until storage answers");
+    }
+
+    #[test]
+    fn favourites_written_before_poems_had_names_are_still_the_same_poems() {
+        let mut app = Verses::default();
+        let mut runner = AppRunner::new(Verses::default());
+        // What the old shelf wrote: positions of Hope, The Tiger, Ozymandias.
+        let legacy = br#"{"favorites":[0,2],"online_favorites":[],"sleep":false}"#;
+        app.on_store(
+            &mut runner.context(),
+            StoreResult::Loaded {
+                key: SETTINGS.to_owned(),
+                value: Some(legacy.to_vec()),
+            },
+        );
+        assert!(app.saved.favorites.contains("dickinson-hope"));
+        assert!(app.saved.favorites.contains("shelley-ozymandias"));
+        assert!(!app.saved.favorites.contains("blake-tiger"));
+    }
+
+    #[test]
+    fn a_favourite_the_reader_cannot_keep_says_so() {
+        let mut app = Verses::default();
+        let mut runner = AppRunner::new(Verses::default());
+        app.toggle_favorite();
+        app.save(&mut runner.context());
+        app.on_store(
+            &mut runner.context(),
+            StoreResult::Denied(kobo_sdk::StoreError::Unwritable),
+        );
+        assert!(!app.saving);
+        let notice = app.notice.clone().unwrap_or_default();
+        assert!(notice.to_lowercase().contains("favourite"), "{notice}");
     }
 
     #[test]
