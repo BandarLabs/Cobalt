@@ -2533,3 +2533,29 @@ All 165 SDK tests and strict all-target Clippy pass. SDK.md documents usage.
 Gutenbird has not yet adopted this mode: OPDS response validation before saving,
 app integration and corresponding setup screenshots remain under GUTEN-05.
 No checklist item was closed by this prerequisite change.
+
+
+### Gutenbird shared catalog setup (GUTEN-05 complete)
+
+Gutenbird 1.0.20 uses the SDK's public provider flow for Add catalog. Addresses
+are not persisted on entry; only a parsed OPDS response can complete setup.
+The checked response is used directly, and an existing URL reuses its catalog.
+Opening setup cancels unrelated foreground/hydration requests; leaving setup
+cancels its check. Tests verify that invalid HTML and late cancelled replies
+cannot alter the registry.
+
+The actual simulator journey types the custom URL, checks that it is not yet
+stored, checks the connection, and verifies one custom-catalog fetch and a saved
+registry. It then downloads, reads and restarts completely offline at the same
+position. Default and 170% runs pass; setup and address screenshots inspected.
+All 98 app tests and strict Clippy pass. SDK and app docs include the shared UI.
+
+- [Default setup result](evidence/gutenbird-setup/default/result.json)
+- [170% setup result](evidence/gutenbird-setup/170/result.json)
+- [Address entry](evidence/gutenbird-setup/default/00-address.png)
+- [Connection check](evidence/gutenbird-setup/default/00-ready-to-check.png)
+
+All six Gutenbird quality tasks are now complete. The overall project and
+separate hardware acceptance remain open.
+
+**496 tasks: 249 completed, 246 open, one deferred.**

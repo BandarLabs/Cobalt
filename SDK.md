@@ -1041,6 +1041,12 @@ Call `setup.invalid_response()` for an HTML page or a malformed catalog. An
 HTTP success alone does not verify a library. Cancelled or superseded check
 responses are ignored by the shared flow.
 
+Gutenbird uses this flow and validates the response as OPDS before saving the
+address. Its simulator journey exercises address entry, the connection check,
+a single catalog fetch, download and an offline restart.
+
+![Public provider check in Gutenbird](docs/quality/evidence/gutenbird-setup/default/00-ready-to-check.png)
+
 ### Owner trust roots
 
 Every request is HTTPS, verified against the public roots every browser

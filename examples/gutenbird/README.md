@@ -165,3 +165,25 @@ disabled and compares the reopened text with the saved page. Default and 170%
 text-scale runs passed; physical-reader acceptance remains separate.
 
 ![Reading after an offline simulator restart](../../docs/quality/evidence/gutenbird-offline/default/03-offline-reopened.png)
+
+
+## Add a public catalog
+
+Open **Catalogs**, tap **Add a catalog**, then enter the library's HTTPS catalog
+address. Choose **Use address**, then **Check connection**. Gutenbird saves the
+address only after the response is a valid OPDS catalog, then opens the checked
+content without fetching it again. A website page, failed check or cancelled
+check does not add a catalog. Adding an address already listed opens the existing
+catalog rather than making a duplicate. Public catalog setup does not ask for
+account details.
+
+![Shared catalog connection check in the simulator](../../docs/quality/evidence/gutenbird-setup/default/00-ready-to-check.png)
+
+Run the setup, download and offline-reopen fixture journey with:
+
+```sh
+python3 scripts/quality/check-gutenbird-offline-sim.py --setup --output /tmp/gutenbird-setup
+```
+
+The screenshots use a private local HTTPS fixture, including the illustrated
+catalog address; they do not document a live service URL.

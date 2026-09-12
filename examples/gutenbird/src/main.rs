@@ -40,6 +40,7 @@ use kobo_bookview::{BookView, Step};
 use kobo_opds::{AcquisitionKind, Category, Feed, ImageSource, Link, Publication, SearchTemplate};
 use kobo_read::{Memory, Outcome, Reader};
 use kobo_sdk::keyboard::{Keyboard, Pressed};
+use kobo_sdk::provider::{Event as ProviderEvent, ProviderSetup};
 use kobo_sdk::{
     action_id, ActionId, BannerLevel, Chrome, Context, DiagnosticSeverity, Failure, FontHandle,
     Glyph, Header, KoboApp, LogLevel, PictureHandle, RowLead, ScreenBuilder, ShelfDownload,
@@ -654,7 +655,7 @@ struct Gutenbird {
     failed: Option<String>,
     retryable: bool,
 
-    add_catalog_problem: Option<String>,
+    catalog_setup: ProviderSetup,
 }
 
 impl Default for Gutenbird {
@@ -707,7 +708,7 @@ impl Default for Gutenbird {
             stored: BTreeMap::new(),
             failed: None,
             retryable: false,
-            add_catalog_problem: None,
+            catalog_setup: ProviderSetup::public("catalog").expect("static catalog setup"),
         }
     }
 }
@@ -837,18 +838,45 @@ impl Gutenbird {
     }
 
     fn add_catalog_screen(&self) -> kobo_sdk::Screen {
-        let mut screen = ScreenBuilder::new("gutenbird-add-catalog")
-            .top_bar("Add a catalog")
-            .field(
-                "catalog-url",
-                self.keyboard.text(),
-                "https://example.org/opds",
-            )
-            .field_clear("catalog-url-clear");
-        if let Some(problem) = &self.add_catalog_problem {
-            screen = screen.banner(BannerLevel::Attention, problem.clone());
+        self.catalog_setup.screen()
+    }
+
+    fn finish_catalog_setup(&mut self, context: &mut Context, bytes: &[u8]) {
+        let url = self.catalog_setup.address().to_owned();
+        if kobo_opds::parse(bytes, &url).is_err() {
+            self.catalog_setup.invalid_response();
+            return;
         }
-        screen.keyboard(&self.keyboard, "Add").build()
+        if !self.catalog_setup.verified() {
+            return;
+        }
+        self.current =
+            if let Some(index) = self.catalogs.iter().position(|catalog| catalog.root == url) {
+                index
+            } else {
+                self.catalogs
+                    .push(Catalog::new(catalog_display_name(&url), url.clone(), true));
+                self.save_registry(context);
+                self.catalogs.len() - 1
+            };
+        self.save_last_open(context);
+        if bytes.len() <= MAX_STORE_VALUE {
+            context
+                .store()
+                .save(format!("catalog-{:08x}", stamp(&url)), bytes.to_vec());
+        }
+        self.stop_federating();
+        self.stack.clear();
+        self.back_to(View::Catalogs);
+        self.go(View::Shelf);
+        self.took_feed(
+            context,
+            bytes,
+            FeedPurpose::Root {
+                catalog: self.current,
+            },
+            url,
+        );
     }
 
     /// Whether a reader-typed address is worth trying at all.
@@ -863,30 +891,6 @@ impl Gutenbird {
         text.len() > "https://".len()
             && text.to_ascii_lowercase().starts_with("https://")
             && !text.contains(char::is_whitespace)
-    }
-
-    fn submit_catalog(&mut self, context: &mut Context) {
-        let url = self.keyboard.take();
-        self.add_catalog(context, url.trim());
-    }
-
-    /// Validates and stores a catalog address, then opens it. Kept apart
-    /// from [`Self::submit_catalog`] so the validation and storage this
-    /// answers for can be exercised directly, without having to type an
-    /// address key by key through the keyboard grid.
-    fn add_catalog(&mut self, context: &mut Context, url: &str) {
-        if !Self::looks_like_a_catalog_url(url) {
-            self.add_catalog_problem =
-                Some("That does not look like a catalog address.".to_owned());
-            self.show(context);
-            return;
-        }
-        self.add_catalog_problem = None;
-        let name = catalog_display_name(url);
-        self.catalogs.push(Catalog::new(name, url.to_owned(), true));
-        self.save_registry(context);
-        self.current = self.catalogs.len() - 1;
-        self.open_catalog(context);
     }
 
     fn open_catalog(&mut self, context: &mut Context) {
@@ -3462,6 +3466,17 @@ impl KoboApp for Gutenbird {
 
     #[allow(clippy::too_many_lines)]
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
+        if self.view == View::AddCatalog {
+            if let Some(event) = self.catalog_setup.on_action(context, action) {
+                if event == ProviderEvent::Closed {
+                    if let Some(previous) = self.step_back() {
+                        self.view = previous;
+                    }
+                }
+                self.show(context);
+                return;
+            }
+        }
         if action == ActionId::BACK {
             if self.view == View::Reading {
                 let metrics = context.metrics();
@@ -3582,20 +3597,6 @@ impl KoboApp for Gutenbird {
                 None => {}
             }
         }
-        if self.view == View::AddCatalog {
-            match self.keyboard.press(action) {
-                Some(Pressed::Submitted) => {
-                    self.submit_catalog(context);
-                    return;
-                }
-                Some(Pressed::Edited | Pressed::Shifted) => {
-                    self.show(context);
-                    return;
-                }
-                None => {}
-            }
-        }
-
         if action == action_id("catalogs") {
             self.stop_federating();
             self.go(View::Catalogs);
@@ -3603,8 +3604,12 @@ impl KoboApp for Gutenbird {
             return;
         }
         if action == action_id("add-catalog") {
-            self.keyboard.clear();
-            self.add_catalog_problem = None;
+            if let Some((task, _)) = self.task.take() {
+                context.cancel(task);
+            }
+            self.cached_feed = None;
+            self.abandon_hydration(context);
+            self.catalog_setup = ProviderSetup::public("catalog").expect("static catalog setup");
             self.go(View::AddCatalog);
             self.show(context);
             return;
@@ -3729,6 +3734,13 @@ impl KoboApp for Gutenbird {
 
     #[allow(clippy::too_many_lines)]
     fn on_task(&mut self, context: &mut Context, task: TaskId, outcome: TaskOutcome) {
+        if let Some(event) = self.catalog_setup.on_task(task, &outcome) {
+            if let ProviderEvent::Response(bytes) = event {
+                self.finish_catalog_setup(context, &bytes);
+            }
+            self.show(context);
+            return;
+        }
         if let Some(stage) = self.finish_filling(task) {
             context.log(
                 LogLevel::Debug,
@@ -5337,31 +5349,94 @@ Please read this before you distribute or use this work.\n";
     // -----------------------------------------------------------------
 
     #[test]
-    fn adding_a_catalog_by_url_keeps_it_and_a_malformed_url_is_refused_before_it_is_stored() {
-        let mut app = Gutenbird {
+    fn adding_a_catalog_requires_a_valid_opds_response() {
+        let mut runner = AppRunner::new(Gutenbird {
             view: View::AddCatalog,
             ..Gutenbird::default()
-        };
-        let before = app.catalogs.len();
+        });
+        let before = runner.app().catalogs.len();
+        runner
+            .app_mut()
+            .catalog_setup
+            .restore_address("https://example.org/opds/")
+            .unwrap();
+        for valid in [false, true] {
+            let commands = runner.action(action_id(kobo_sdk::provider::TEST));
+            let task = commands
+                .iter()
+                .find_map(|command| match command {
+                    Command::Spawn {
+                        task,
+                        work:
+                            Task::Fetch {
+                                credential: None, ..
+                            },
+                        ..
+                    } => Some(*task),
+                    _ => None,
+                })
+                .unwrap();
+            assert_eq!(runner.app().catalogs.len(), before);
+            let bytes = if valid {
+                ENTRY_DOCUMENT.as_bytes()
+            } else {
+                b"<html>A website</html>"
+            };
+            let commands = runner.task_outcome(task, TaskOutcome::Completed(bytes.to_vec()));
+            if valid {
+                assert_eq!(runner.app().catalogs.len(), before + 1);
+                assert_eq!(
+                    runner.app().catalogs.last().unwrap().root,
+                    "https://example.org/opds/"
+                );
+                assert_eq!(runner.app().view, View::Details);
+                assert!(commands.iter().any(|command| matches!(command,
+                    Command::Store(StoreRequest::Save { key, .. }) if key == super::REGISTRY_KEY)));
+            } else {
+                assert_eq!(runner.app().catalogs.len(), before);
+                assert_eq!(runner.app().view, View::AddCatalog);
+                assert!(!commands.iter().any(|command| matches!(command,
+                    Command::Store(StoreRequest::Save { key, .. }) if key == super::REGISTRY_KEY)));
+            }
+        }
+    }
 
-        // A malformed address.
-        app.add_catalog(&mut Context::default(), "not a url");
-        assert_eq!(
-            app.catalogs.len(),
-            before,
-            "a malformed url was stored anyway"
+    #[test]
+    fn cancelling_catalog_setup_discards_a_late_valid_response() {
+        let mut runner = AppRunner::new(Gutenbird::default());
+        let count = runner.app().catalogs.len();
+        runner.action(action_id("add-catalog"));
+        runner
+            .app_mut()
+            .catalog_setup
+            .restore_address("https://example.org/opds/")
+            .unwrap();
+        let commands = runner.action(action_id(kobo_sdk::provider::TEST));
+        let task = commands
+            .iter()
+            .find_map(|command| match command {
+                Command::Spawn {
+                    task,
+                    work: Task::Fetch { .. },
+                    ..
+                } => Some(*task),
+                _ => None,
+            })
+            .unwrap();
+        let commands = runner.action(kobo_sdk::ActionId::BACK);
+        assert!(commands
+            .iter()
+            .any(|command| matches!(command, Command::Cancel(id) if *id == task)));
+        assert_eq!(runner.app().view, View::Catalogs);
+        let commands = runner.task_outcome(
+            task,
+            TaskOutcome::Completed(ENTRY_DOCUMENT.as_bytes().to_vec()),
         );
-        assert!(app.add_catalog_problem.is_some());
-
-        // A well formed one.
-        app.add_catalog(&mut Context::default(), "https://example.org/opds");
-        assert_eq!(app.catalogs.len(), before + 1);
-        assert_eq!(
-            app.catalogs.last().unwrap().root,
-            "https://example.org/opds"
-        );
-        assert!(app.catalogs.last().unwrap().added);
-        assert!(app.add_catalog_problem.is_none());
+        assert_eq!(runner.app().catalogs.len(), count);
+        assert_eq!(runner.app().view, View::Catalogs);
+        assert!(!commands
+            .iter()
+            .any(|command| matches!(command, Command::Store(StoreRequest::Save { .. }))));
     }
 
     #[test]

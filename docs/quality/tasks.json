@@ -1727,9 +1727,10 @@
     "pr": 3,
     "group": "Gutenbird",
     "task": "Reuse shared provider setup",
-    "status": "todo",
+    "status": "done",
     "evidence": [
-      "Added ProviderSetup::public to the SDK as the required public-catalog setup mode. It retains the exact HTTPS endpoint path/trailing slash/query, hides account entry, sends no credential and keeps response validation/cancellation shared. All 165 SDK tests and strict Clippy pass. SDK.md documents the API. Gutenbird integration, OPDS validation before saving and simulator setup screenshots remain open."
+      "Added ProviderSetup::public to the SDK as the required public-catalog setup mode. It retains the exact HTTPS endpoint path/trailing slash/query, hides account entry, sends no credential and keeps response validation/cancellation shared. All 165 SDK tests and strict Clippy pass. SDK.md documents the API. Gutenbird integration, OPDS validation before saving and simulator setup screenshots remain open.",
+      "Completed in Gutenbird 1.0.20: Add catalog delegates to ProviderSetup::public, parses OPDS before acknowledging verification or saving, and uses the checked response directly. A cancelled setup cannot save a late response; invalid HTML cannot modify the catalog registry. The actual simulator setup/download/offline-reopen journey passes at default and 170% text, verifies no early save and exactly one custom-catalog request, and has inspected setup screenshots in docs/quality/evidence/gutenbird-setup. All 98 app tests and strict Clippy pass."
     ]
   },
   {

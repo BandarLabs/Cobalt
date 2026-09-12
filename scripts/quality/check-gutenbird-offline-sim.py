@@ -51,6 +51,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--scale", default="default")
+    parser.add_argument("--setup", action="store_true", help="Add and validate a catalog through shared provider setup first")
     args = parser.parse_args()
     out = args.output.resolve()
     out.mkdir(parents=True, exist_ok=True)
@@ -66,7 +67,7 @@ def main():
 
         def do_GET(self):
             requests.append(self.path)
-            if self.path not in ("/ebooks.opds/", "/walking.epub"):
+            if self.path not in ("/ebooks.opds/", "/library/", "/walking.epub"):
                 self.send_error(404)
                 return
             body = book if self.path == "/walking.epub" else catalog
@@ -137,7 +138,30 @@ def main():
 
             try:
                 start()
-                drive("wait-for-id read", "tap-id read", "wait-for Note 1.")
+                drive("wait-for-id read")
+                if args.setup:
+                    drive("tap Back", "tap Back", "tap-id add-catalog")
+                    capture("00-setup")
+                    drive("tap-id provider.address")
+                    steps = []
+                    layer = "letters"
+                    for character in f"https://{HOST}/library/":
+                        wanted = "letters" if character.isalpha() else "symbols"
+                        if wanted != layer:
+                            steps.append("tap ?123" if wanted == "symbols" else "tap abc")
+                            layer = wanted
+                        steps.append("type " + character)
+                    drive(*steps)
+                    capture("00-address")
+                    drive("tap Use address")
+                    capture("00-ready-to-check")
+                    registry = private / "cobalt-sim-state/gutenbird/catalogs"
+                    assert not registry.exists(), "Catalog saved before validation"
+                    drive("tap-id provider.test", "wait-for-id read")
+                    assert f"https://{HOST}/library/" in registry.read_text()
+                    assert requests.count("/library/") == 1, "Checked catalog was fetched twice"
+                    result["checks"].append("catalog saved only after shared setup check and reused without refetch")
+                drive("tap-id read", "wait-for Note 1.")
                 initial = capture("01-reading")
                 next_button = next(node for node in initial["nodes"] if node["kind"].startswith("PageNext("))
                 point = next_button["centre"]
