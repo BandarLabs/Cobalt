@@ -3283,8 +3283,10 @@
     "pr": 3,
     "group": "Verses (APP-8)",
     "task": "Use real injectable calendar date and advance across midnight",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "apps/verses/src/main.rs"
+    ]
   },
   {
     "id": "VERSE-02",

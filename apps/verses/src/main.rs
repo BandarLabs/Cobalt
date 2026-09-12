@@ -1,4 +1,5 @@
 //! Daily public-domain poetry with an offline shelf and `PoetryDB` search.
+use kobo_sdk::clock::{Clock, ManualClock, Snapshot, SystemClock};
 use kobo_sdk::keyboard::{Keyboard, Pressed};
 use kobo_sdk::{
     action_id, ActionId, BannerLevel, Context, Glyph, Header, KoboApp, Screen, ScreenBuilder,
@@ -267,6 +268,12 @@ struct Verses {
     loaded: bool,
     /// Which page of the poem is open. A long poem is more than one panel.
     poem_page: usize,
+    /// The reader's own day, as the poem on the Today screen was chosen for.
+    ///
+    /// Kept so that crossing midnight with the application open moves the
+    /// Today screen on to the next day's poem rather than leaving yesterday's
+    /// there until it is restarted.
+    day: Option<(u16, u8, u8)>,
     /// Whether a favourite is still waiting for storage to confirm it.
     ///
     /// Marking a poem used to write and walk away. A write that failed took
@@ -279,7 +286,7 @@ impl Default for Verses {
     fn default() -> Self {
         Self {
             view: View::Today,
-            poem: daily_index(2026, 9, 1),
+            poem: poem_for_today(reader_clock().as_ref()),
             online: None,
             saved: Saved::default(),
             keyboard: Keyboard::new(),
@@ -289,6 +296,11 @@ impl Default for Verses {
             notice: None,
             loaded: false,
             poem_page: 0,
+            day: reader_clock()
+                .now()
+                .ok()
+                .and_then(Snapshot::date)
+                .map(|date| (date.year, date.month, date.day)),
             saving: false,
         }
     }
@@ -297,6 +309,42 @@ impl Default for Verses {
 fn daily_index(year: u16, month: u8, day: u8) -> usize {
     ((year as usize * 372) + (month as usize * 31) + day as usize) % CORPUS.len()
 }
+
+/// The poem for the day the reader is actually holding the device on.
+///
+/// This was the first of September 2026, written into the default state, so an
+/// application called "daily poetry" offered the same poem for ever. The
+/// platform's clock is injectable and carries an explicit offset rather than a
+/// guessed time zone, so the day here is the reader's own day and a test can
+/// put the device on either side of midnight.
+fn poem_for_today(clock: &dyn Clock) -> usize {
+    clock
+        .now()
+        .ok()
+        .and_then(Snapshot::date)
+        .map_or(0, |date| daily_index(date.year, date.month, date.day))
+}
+
+/// The reader's clock, at the offset the runtime was started with.
+fn reader_clock() -> Box<dyn Clock> {
+    let minutes = std::env::var("KOBO_UTC_OFFSET_MINUTES")
+        .ok()
+        .and_then(|value| value.parse::<i16>().ok())
+        .unwrap_or(0);
+    SystemClock::new(minutes)
+        .or_else(|_| SystemClock::new(0))
+        .map_or_else(
+            |_| Box::new(ManualClock::new(EPOCH).expect("a valid fixed clock")) as Box<dyn Clock>,
+            |clock| Box::new(clock) as Box<dyn Clock>,
+        )
+}
+
+/// A clock that cannot be read is not a reason to refuse to draw a poem.
+const EPOCH: Snapshot = Snapshot {
+    unix_millis: 0,
+    monotonic_millis: 0,
+    utc_offset_minutes: 0,
+};
 
 fn escape(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
@@ -693,6 +741,22 @@ impl Verses {
         }
     }
 
+    /// Moves the Today screen on if the reader's day has changed.
+    fn advance_day(&mut self, clock: &dyn Clock) {
+        let Some(date) = clock.now().ok().and_then(Snapshot::date) else {
+            return;
+        };
+        let today = (date.year, date.month, date.day);
+        if self.day == Some(today) {
+            return;
+        }
+        self.day = Some(today);
+        if self.view == View::Today {
+            self.poem = daily_index(date.year, date.month, date.day);
+            self.poem_page = 0;
+        }
+    }
+
     fn toggle_favorite(&mut self) {
         if self.view == View::Online {
             let Some(index) = self.online else { return };
@@ -770,6 +834,7 @@ impl KoboApp for Verses {
     }
 
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
+        self.advance_day(reader_clock().as_ref());
         if self.view == View::Search {
             if let Some(Pressed::Submitted) = self.keyboard.press(action) {
                 let query = self.keyboard.take();
@@ -944,6 +1009,79 @@ mod tests {
     fn daily_choice_is_deterministic_and_leap_day_safe() {
         assert_eq!(daily_index(2028, 2, 29), daily_index(2028, 2, 29));
         assert_ne!(daily_index(2026, 9, 1), CORPUS.len());
+    }
+
+    /// A clock stopped at a given civil day, at UTC.
+    fn clock_on(year: u16, month: u8, day: u8) -> ManualClock {
+        // Days from 1970 to the date asked for, the long way round, because a
+        // test that computes the answer with the code under test proves
+        // nothing.
+        let mut days: u64 = 0;
+        for past in 1970..year {
+            days += if past % 4 == 0 && (past % 100 != 0 || past % 400 == 0) {
+                366
+            } else {
+                365
+            };
+        }
+        let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+        let lengths = [
+            31,
+            if leap { 29 } else { 28 },
+            31,
+            30,
+            31,
+            30,
+            31,
+            31,
+            30,
+            31,
+            30,
+            31,
+        ];
+        days += lengths.iter().take(usize::from(month - 1)).sum::<u64>();
+        days += u64::from(day) - 1;
+        ManualClock::new(Snapshot {
+            unix_millis: days * 86_400_000 + 12 * 3_600_000,
+            monotonic_millis: 0,
+            utc_offset_minutes: 0,
+        })
+        .expect("a valid clock")
+    }
+
+    #[test]
+    fn the_daily_poem_is_the_readers_day_and_moves_at_midnight() {
+        // The day was written into the default state as the first of September
+        // 2026, so an application called daily poetry offered one poem for
+        // ever.
+        let clock = clock_on(2026, 9, 1);
+        assert_eq!(poem_for_today(&clock), daily_index(2026, 9, 1));
+        let later = clock_on(2027, 3, 14);
+        assert_eq!(poem_for_today(&later), daily_index(2027, 3, 14));
+
+        // Crossing midnight with the application open moves the Today screen
+        // on rather than leaving yesterday's poem there.
+        let mut app = Verses {
+            view: View::Today,
+            poem: daily_index(2026, 9, 1),
+            day: Some((2026, 9, 1)),
+            ..Verses::default()
+        };
+        let midnight = clock_on(2026, 9, 2);
+        app.advance_day(&midnight);
+        assert_eq!(app.day, Some((2026, 9, 2)));
+        assert_eq!(app.poem, daily_index(2026, 9, 2));
+
+        // A poem the reader opened themselves is not replaced under them.
+        let mut reading = Verses {
+            view: View::Reading,
+            poem: 1,
+            day: Some((2026, 9, 1)),
+            ..Verses::default()
+        };
+        reading.advance_day(&midnight);
+        assert_eq!(reading.poem, 1, "the poem being read was replaced");
+        assert_eq!(reading.day, Some((2026, 9, 2)));
     }
 
     #[test]
