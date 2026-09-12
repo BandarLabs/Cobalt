@@ -90,3 +90,10 @@ remain in their own **Edition** section. Summary provenance is retained, and
 ordinary descriptions are unchanged.
 
 ![Book description and edition notice](../../docs/quality/evidence/gutenbird-summary/detail-1.png)
+
+
+The detail header shows the language and the format selected for **Read**,
+using the same acquisition choice as the downloader. Common language codes
+are expanded; regional/script tags are retained beside the name, and unknown
+codes are shown unchanged. This describes the selected download; it does not
+add an edition chooser.

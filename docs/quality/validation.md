@@ -2384,3 +2384,18 @@ This is a rendered fixture check, not a live download/offline-reopen journey.
 GUTEN-02 through GUTEN-06 remain open. Manifest 1.0.11 and generated app page
 are updated. Evidence: `evidence/gutenbird-summary/detail-1.png` and subsequent
 pages. The font dependency is test-only.
+
+
+### Gutenbird selected language and format (partial GUTEN-02)
+
+The first detail page now shows the selected format and language beside Read.
+It calls the same best-acquisition selection used by downloading. Common
+language codes have readable names; region/script tags and unknown codes are
+preserved. Details uses the same language formatter.
+
+All 88 app tests and strict all-target Clippy passed, including EPUB preference,
+plain-text fallback, regional tags, unknown codes and absence of a download.
+The runtime-font fixture captures were refreshed and inspected. Existing
+pagination checks cover profiles, orientations and text scales. Manifest
+1.0.12 and generated catalog page are updated. This is selected-edition
+visibility, not an edition chooser; GUTEN-02 remains open for that work.

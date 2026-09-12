@@ -1692,7 +1692,10 @@
     "group": "Gutenbird",
     "task": "Clarify edition and language choices",
     "status": "todo",
-    "evidence": []
+    "evidence": [
+      "Detail header now shows the selected download format and readable language name, preserving region/script tags and unknown codes. Selection uses Publication::best_acquisition, matching the downloader.",
+      "88 app tests and strict Clippy pass; runtime-font detail captures refreshed and inspected. Explicit edition/language selection remains to be completed, so this task stays open."
+    ]
   },
   {
     "id": "GUTEN-03",

@@ -1823,6 +1823,10 @@ impl Gutenbird {
             subtitle,
             Vec::<(String, String)>::new(),
         );
+        let screen = match selected_edition(publication) {
+            Some(edition) => screen.secondary(edition),
+            None => screen,
+        };
         let screen = match &self.problem {
             Some(problem) => screen.banner(BannerLevel::Attention, problem.clone()),
             None => screen,
@@ -2863,10 +2867,56 @@ fn decode_registry(bytes: &[u8]) -> Vec<Catalog> {
 /// The flat facts for the details page, said only when the catalog actually
 /// stated them. No invented reading time, no identifier relabelled as though
 /// it belonged to one catalog when the field is generic across all of them.
+fn language_name(code: &str) -> String {
+    let base = code
+        .split(['-', '_'])
+        .next()
+        .unwrap_or(code)
+        .to_ascii_lowercase();
+    let name = match base.as_str() {
+        "en" => "English",
+        "fr" => "French",
+        "de" => "German",
+        "es" => "Spanish",
+        "it" => "Italian",
+        "pt" => "Portuguese",
+        "nl" => "Dutch",
+        "pl" => "Polish",
+        "ru" => "Russian",
+        "uk" => "Ukrainian",
+        "ja" => "Japanese",
+        "zh" => "Chinese",
+        "ko" => "Korean",
+        "ar" => "Arabic",
+        "hi" => "Hindi",
+        "la" => "Latin",
+        _ => return code.to_owned(),
+    };
+    if code.contains(['-', '_']) {
+        format!("{name} ({code})")
+    } else {
+        name.to_owned()
+    }
+}
+
+fn selected_edition(publication: &Publication) -> Option<String> {
+    let acquisition = publication.best_acquisition()?;
+    let format = match download_kind(acquisition.media_type.as_deref()) {
+        DownloadKind::Epub => "EPUB",
+        DownloadKind::Text => "Plain text",
+    };
+    Some(match publication.language.as_deref() {
+        Some(language) if !language.trim().is_empty() => {
+            format!("{} · {format}", language_name(language))
+        }
+        _ => format.to_owned(),
+    })
+}
+
 fn detail_facts(publication: &Publication) -> Vec<(String, String)> {
     let mut facts = Vec::new();
     if let Some(language) = &publication.language {
-        facts.push(("Language".to_owned(), language.clone()));
+        facts.push(("Language".to_owned(), language_name(language)));
     }
     if let Some(issued) = publication
         .issued
@@ -5819,6 +5869,35 @@ Please read this before you distribute or use this work.\n";
     // -----------------------------------------------------------------
     // Parity: the same catalog, twice
     // -----------------------------------------------------------------
+
+    #[test]
+    fn edition_label_matches_the_download_and_preserves_language_variants() {
+        let mut book = publication(
+            "Example",
+            vec![
+                text_acquisition("https://x/book.txt"),
+                epub_acquisition("https://x/book.epub"),
+            ],
+        );
+        book.language = Some("en".into());
+        assert_eq!(
+            super::selected_edition(&book).as_deref(),
+            Some("English · EPUB")
+        );
+        book.language = Some("pt-BR".into());
+        assert_eq!(
+            super::selected_edition(&book).as_deref(),
+            Some("Portuguese (pt-BR) · EPUB")
+        );
+        book.acquisition = vec![text_acquisition("https://x/book.txt")];
+        book.language = Some("qaa".into());
+        assert_eq!(
+            super::selected_edition(&book).as_deref(),
+            Some("qaa · Plain text")
+        );
+        book.acquisition.clear();
+        assert!(super::selected_edition(&book).is_none());
+    }
 
     #[test]
     fn catalog_metadata_is_not_presented_as_the_book_summary() {
