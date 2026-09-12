@@ -1,0 +1,27 @@
+{
+  "source_sha": "5590c64d53ce4999d780fc81fa684ff5951ed28d",
+  "dirty": true,
+  "results": [
+    {
+      "app": "crossword",
+      "launched": true,
+      "status": "pass",
+      "route": "apps/crossword/drive.kobo",
+      "exit_code": 0
+    },
+    {
+      "app": "logicpack",
+      "launched": true,
+      "status": "pass",
+      "route": "apps/logicpack/drive.kobo",
+      "exit_code": 0
+    },
+    {
+      "app": "nonograms",
+      "launched": true,
+      "status": "pass",
+      "route": "apps/nonograms/drive.kobo",
+      "exit_code": 0
+    }
+  ]
+}
