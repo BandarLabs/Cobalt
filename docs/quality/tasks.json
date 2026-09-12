@@ -2024,8 +2024,10 @@
     "pr": 3,
     "group": "Lichess",
     "task": "Show active side, clock and connection status clearly",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "PR #181: real TLS simulator fixtures verify the active clock switches after each acknowledged move, both clocks become unconfirmed while a board stream is disconnected, no move is submitted during disconnection, and reconnect restores authoritative clocks and piece positions with no stale banner. Normal and 170% runs pass. Finished-state regression removes misleading Paused/Reconnect controls. 111 app tests and strict Clippy pass. Evidence: docs/quality/evidence/lichess-connection on beta-quality-apps-2. Physical display acceptance remains separate."
+    ]
   },
   {
     "id": "LICHESS-03",
