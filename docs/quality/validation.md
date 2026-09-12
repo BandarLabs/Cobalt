@@ -2313,3 +2313,17 @@ The fixture exposed and verified fixes for account polling occupying the move
 task slot and duplicate confirmation copy clipping the clock at 170%.
 No public Lichess requests or moves were made. Physical acceptance remains
 separate. Tracker totals: 230 complete, 265 open, one deferred.
+
+LICHESS-06 is complete: local TLS fixtures omit all gameStart events and still
+open the matched board at normal and 170% text sizes without a duplicate seek
+or account recheck. Full move acknowledgement, restart, draw and post-game
+polling checks pass. Evidence: `evidence/lichess-missed-start`. The fixture
+exposed background account polling starving the ten-second recovery timer;
+Lichess 1.0.9 pauses that polling during pairing and schedules the recovery
+check after cancellation releases capacity. All 110 app tests and strict
+Clippy pass. Tracker: 231 complete, 264 open, one deferred.
+
+PR #181 host job 103551595707 failed because generated Crossword and Lichess
+pages contained old app versions. Regenerated `docs/apps` from the current
+manifests and verified a second generation makes no changes. This repairs the
+observed generated-page failure; the new CI run must still complete.

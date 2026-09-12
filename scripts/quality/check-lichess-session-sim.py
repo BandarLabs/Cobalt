@@ -23,7 +23,10 @@ TOKEN = "fixture-only-not-a-live-token"
 
 
 class Match:
-    def __init__(self):
+    def __init__(self, drop_start_event=False):
+        self.drop_start_event = drop_start_event
+        self.start_events_sent = 0
+        self.matched_at = None
         self.lock = threading.RLock()
         self.active = False
         self.moves = ""
@@ -149,8 +152,11 @@ def handler(match):
                 assert body == b"rated=true&time=10&increment=0&variant=standard&color=random", body
                 with match.lock:
                     match.active = True
-                    for events in match.events:
-                        events.put(dict(type="gameStart", game=match.summary()))
+                    match.matched_at = time.monotonic()
+                    if not match.drop_start_event:
+                        for events in match.events:
+                            events.put(dict(type="gameStart", game=match.summary()))
+                            match.start_events_sent += 1
                 self.stream(queue.Queue(), [])
             elif self.path == f"/api/board/game/{GAME}/move/e2e4":
                 assert not body
@@ -221,12 +227,14 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--scale", default="default")
+    parser.add_argument("--drop-start-event", action="store_true",
+                        help="Match the seek but omit its event-stream notification")
     args = parser.parse_args()
     out = args.output.resolve()
     out.mkdir(parents=True, exist_ok=True)
     target = Path(os.environ.get("CARGO_TARGET_DIR", str(ROOT / "target"))).resolve()
     cli, provenance = build_cli(ROOT, target)
-    match = Match()
+    match = Match(drop_start_event=args.drop_start_event)
     simulator = None
     with tempfile.TemporaryDirectory(prefix="cobalt-lichess-session-", dir="/tmp") as temporary:
         private = Path(temporary)
@@ -303,7 +311,21 @@ def main():
             try:
                 start()
                 drive("wait-for-id play", "tap-id play", "wait-for Owner", "tap Back", "wait-for-id seek-10-0",
-                      "tap-id seek-10-0", "wait-for Other", "wait-for-id square-e2")
+                      "tap-id seek-10-0")
+                if args.drop_start_event:
+                    capture("00-waiting-for-match")
+                wait_until(lambda: len(pieces(layout())) == 32, "Matched game did not open", 35)
+                drive("wait-for Other", "wait-for-id square-e2")
+                matched_board_seconds = time.monotonic() - match.matched_at
+                if args.drop_start_event:
+                    assert match.start_events_sent == 0
+                    paths = [request["path"] for request in match.requests]
+                    seek = paths.index("/api/board/seek")
+                    board = paths.index(f"/api/board/game/stream/{GAME}")
+                    assert "/api/account/playing" in paths[seek + 1:board], "No matched-game reconciliation request"
+                    assert "/api/account" not in paths[seek + 1:board], "Recovery depended on account polling"
+                    assert matched_board_seconds < 15, "The ten-second pairing check was delayed"
+
                 initial = pieces(capture("01-matched"))
                 assert len(initial) == 32
                 drive("tap-id square-e2", "expect e2 →", "tap-id square-e4")
@@ -344,7 +366,9 @@ def main():
                 verify_cli(cli, provenance)
                 (out / "result.json").write_text(json.dumps(dict(status="pass", build=provenance,
                     scale=args.scale, profile="clara-bw-391", requests=match.requests,
-                    checks=["pair through event stream", "single move submission", "POST success does not move the board", "board stream acknowledgement",
+                    dropped_start_event=args.drop_start_event, start_events_sent=match.start_events_sent,
+                    matched_board_seconds=round(matched_board_seconds, 3),
+                    checks=[("recover matched seek without a start event" if args.drop_start_event else "pair through event stream"), "single move submission", "POST success does not move the board", "board stream acknowledgement",
                             "saved session survives process restart", "fresh board stream opened", "restored rendered piece positions", "draw completion clears store", "account polling resumes after completion"],
                     scope="Actual SDK app and simulator with private TLS fixture; no public Lichess requests or hardware validation"), indent=2) + "\n")
             finally:

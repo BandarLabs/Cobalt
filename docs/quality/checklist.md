@@ -12,7 +12,7 @@ Four PRs rooted in `beta`. Reconciled against GitHub on 12 September 2026 after 
 | --- | --- | --- | ---: | ---: | ---: |
 | 1 · Foundation, SDK, simulator and comic contracts | [#167](https://github.com/BandarLabs/Cobalt/pull/167), `beta-quality-foundation` | Merged 8 September | 92 | 0 | 1 |
 | 2 · First catalog batch, including Feeds and Miniflux | [#168](https://github.com/BandarLabs/Cobalt/pull/168), `beta-quality-apps` | Merged 12 September; `beta-v0.3.14` published | 113 | 0 | 0 |
-| 3 · Remaining catalog and release gates | [#181](https://github.com/BandarLabs/Cobalt/pull/181), `beta-quality-apps-2` | Open | 3 | 154 | 0 |
+| 3 · Remaining catalog and release gates | [#181](https://github.com/BandarLabs/Cobalt/pull/181), `beta-quality-apps-2` | Open | 4 | 153 | 0 |
 | 4 · Main CLI, companions and integrated acceptance | [#182](https://github.com/BandarLabs/Cobalt/pull/182), `beta-quality-companion` | Open | 22 | 111 | 0 |
 
 PR 2 contains twenty app groups plus the comic catalog integration group. PR 3 contains twenty-three app groups plus catalog-wide gates. Its order is Gutenbird, arXiv, Verses, Read Later, Frame, Sync, Lichess, Music Stand, then the remaining groups. Live-service and reader-reported failures remain priorities within that work. PR 4 retains the original companion scope: onboarding, imports, credentials, recovery, consistent commands and integrated acceptance scripts.
@@ -25,7 +25,7 @@ A checked task requires implementation plus recorded validation. Physical measur
 
 The PR 1 implementation checklist is complete; CBR is deferred and COMIC-18 belongs to catalog integration in PR 2. This does not certify hardware accuracy: native sleep hands ownership back to the stock reader, and no generic kernel suspend, RTC wake or automatic cover-sleep backend is enabled. PR 2 is merged and published as `beta-v0.3.14` and a signed beta Store catalogue of thirty-six app versions, which is the build physical acceptance now runs against. Physical acceptance moves ahead of PR 3: twenty app groups are validated as far as a simulator can speak for them, and panel latency, ghosting, touch accuracy and the live services each application talks to are not among those things.
 
-496 tracked tasks: 230 completed, 1 deferred by the owner, 265 open. Implementation in progress. Evidence is recorded per task in `tasks.json` and in [the validation log](validation.md). See the [12 September reconciliation](reconciliation-2026-09-12.md) for the remaining groups and PR mapping.
+496 tracked tasks: 231 completed, 1 deferred by the owner, 264 open. Implementation in progress. Evidence is recorded per task in `tasks.json` and in [the validation log](validation.md). See the [12 September reconciliation](reconciliation-2026-09-12.md) for the remaining groups and PR mapping.
 
 Design direction: the bar is a well-made iPad application, built for a panel that cannot animate. Familiar visual conventions per app, restrained controls, plain copy, full repaints and page turns rather than scrolling, and controls that do not move under a finger. Crossword follows printed crossword typography and grids. PR 3 takes the reading applications first, in the owner's order: Gutenbird, arXiv, Verses, Read Later, Frame, Sync, Lichess, Music Stand. Each pulls real data wherever the source permits it, and Lichess is the application the catalog is shown with, so it has to work against the live service rather than a fixture. Paperterm defaults to portrait with a physically scaled, denser terminal font; the measured grid takes precedence over forcing 80 columns.
 
@@ -322,7 +322,7 @@ Design direction: the bar is a well-made iPad application, built for a panel tha
 - [x] **LICHESS-03** Keep legal moves and selected squares legible.
 - [x] **LICHESS-04** Validate move acknowledgement, stale connection and reconnect.
 - [x] **LICHESS-05** Test complete fixture match and retained session state.
-- [ ] **LICHESS-06** Notice on the panel when a seek has already been matched.
+- [x] **LICHESS-06** Notice on the panel when a seek has already been matched.
 
 ## PR 2 · Logic Pack
 

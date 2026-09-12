@@ -171,3 +171,9 @@ layout, request methods/paths and build fingerprints. Private keys, certificates
 and token stores are removed with the temporary directory. No live account or
 service is used. Python 3.9+, OpenSSL and the normal simulator dependencies are
 required.
+
+Use `--drop-start-event` with the Lichess session fixture to omit every match
+notification. It verifies the app opens the matched board from its current-games
+check without account polling or a second seek. The measured host recovery is
+bounded to 15 seconds for the ten-second check; this is not device latency
+calibration. The remainder of the match and restart checks still run.

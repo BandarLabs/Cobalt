@@ -1209,7 +1209,8 @@ impl Lichess {
     fn schedule_account_retry(&mut self, context: &mut Context) {
         // Two stream reads plus the game clock leave one slot for the owner.
         // Credential polling would consume that slot for fifteen seconds.
-        if (self.session.is_some() && matches!(self.account, AccountState::Ready(_)))
+        if ((self.session.is_some() || self.seek_waiting)
+            && matches!(self.account, AccountState::Ready(_)))
             || self.suspended
             || self
                 .has_pending(|pending| matches!(pending, Pending::Account | Pending::AccountRetry))
@@ -1817,6 +1818,7 @@ impl Lichess {
             .chain(self.game.iter().map(|game| game.id.clone()))
             .collect();
         self.seek_waiting = true;
+        self.cancel_account_retry(context);
         self.selected_preset = Some(preset);
         self.seek_candidate = None;
         if let Some(task) = self.spawn(
@@ -1830,19 +1832,37 @@ impl Lichess {
             self.notice = None;
             self.reset_clock(context, true);
             Self::keep_live(context);
-            // The seek connection can outlive a missed account-stream event.
-            // Read current games while it is open; never replay the seek.
-            let _ = self.spawn(
-                context,
-                Pending::SeekGrace { generation },
-                Task::Sleep { seconds: 10 },
-                false,
-            );
+            self.schedule_live_seek_check(context);
         } else {
             self.seek_waiting = false;
             self.selected_preset = None;
             self.seek_baseline.clear();
         }
+    }
+
+    fn schedule_live_seek_check(&mut self, context: &mut Context) {
+        if self.suspended
+            || !self.seek_waiting
+            || self.seek_task.is_none()
+            || self.has_pending(|pending| {
+                matches!(
+                    pending,
+                    Pending::SeekGrace { .. } | Pending::SeekReconcile { .. }
+                )
+            })
+        {
+            return;
+        }
+        // Cancellation frees capacity asynchronously. Retry scheduling when a
+        // retired task settles, without ever submitting another seek.
+        let _ = self.spawn(
+            context,
+            Pending::SeekGrace {
+                generation: self.seek_generation,
+            },
+            Task::Sleep { seconds: 10 },
+            false,
+        );
     }
 
     fn cancel_seek(&mut self, context: &mut Context) {
@@ -4318,6 +4338,7 @@ impl KoboApp for Lichess {
                 self.flush_deferred_stream_closes(context);
                 self.retry_deferred_board(context);
                 self.retry_deferred_event(context);
+                self.schedule_live_seek_check(context);
             }
             return;
         };
@@ -4329,6 +4350,7 @@ impl KoboApp for Lichess {
         self.flush_deferred_stream_closes(context);
         self.retry_deferred_board(context);
         self.retry_deferred_event(context);
+        self.schedule_live_seek_check(context);
         self.show(context);
     }
 
@@ -6650,6 +6672,70 @@ mod tests {
                     Command::Spawn { work: kobo_sdk::Task::Post { url, .. }, .. }
                         if url == "https://lichess.org/api/board/seek"
                 ))
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn live_seek_check_waits_for_cancelled_account_poll_to_release_its_slot() {
+        let mut app = ready_app();
+        app.event_open = false;
+        let mut runner = AppRunner::new(app);
+        runner.action(action_id("play"));
+        let account = runner
+            .app()
+            .tasks
+            .iter()
+            .find_map(|(task, pending)| matches!(pending, Pending::Account).then_some(*task))
+            .expect("account request");
+        runner.task_outcome(
+            account,
+            TaskOutcome::Completed(br#"{"id":"owner123","username":"Owner"}"#.to_vec()),
+        );
+        let playing = runner
+            .app()
+            .tasks
+            .iter()
+            .find_map(|(task, pending)| matches!(pending, Pending::Playing).then_some(*task))
+            .expect("playing request");
+        runner.task_outcome(
+            playing,
+            TaskOutcome::Completed(br#"{"nowPlaying":[]}"#.to_vec()),
+        );
+        let event = runner
+            .app()
+            .tasks
+            .iter()
+            .find_map(|(task, pending)| matches!(pending, Pending::EventOpen).then_some(*task))
+            .expect("event open");
+        runner.task_outcome(event, TaskOutcome::Completed(Vec::new()));
+        let retry = runner
+            .app()
+            .tasks
+            .iter()
+            .find_map(|(task, pending)| matches!(pending, Pending::AccountRetry).then_some(*task))
+            .expect("account retry");
+        let mut commands = runner.action(action_id("seek-10-0"));
+        assert!(commands
+            .iter()
+            .any(|command| matches!(command, Command::Cancel(task) if *task == retry)));
+        assert!(!runner
+            .app()
+            .has_pending(|pending| matches!(pending, Pending::SeekGrace { .. })));
+        commands.extend(runner.task_outcome(retry, TaskOutcome::Cancelled));
+        assert!(runner
+            .app()
+            .has_pending(|pending| matches!(pending, Pending::SeekGrace { .. })));
+        assert!(!runner
+            .app()
+            .has_pending(|pending| matches!(pending, Pending::AccountRetry)));
+        assert_eq!(
+            commands
+                .iter()
+                .filter(|command| matches!(command,
+            Command::Spawn { work: kobo_sdk::Task::Post { url, .. }, .. }
+                if url == "https://lichess.org/api/board/seek"))
                 .count(),
             1
         );

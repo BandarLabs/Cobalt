@@ -149,3 +149,15 @@ it uses no live token and does not validate physical Kobo behavior.
 ![Restored fixture game](screenshots/session-resumed.png)
 
 ![Move confirmation at 170% text size](screenshots/move-confirmation-large.png)
+
+If a match starts without its notification reaching the reader, Lichess checks
+current games every ten seconds and opens the matching board. Account polling
+pauses during pairing so the recovery check has room to run. Cancelling an old
+poll frees capacity asynchronously; the check is scheduled when that slot is
+released. The original seek is never resubmitted.
+
+Add `--drop-start-event` to the session fixture command to exercise this case.
+It asserts recovery without an account recheck or a duplicate seek, then runs
+the same move, restart and draw checks.
+
+![Board opened after a missed match notification](screenshots/match-recovered.png)

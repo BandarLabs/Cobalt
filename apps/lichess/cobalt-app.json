@@ -3,8 +3,8 @@
   "display_name": "Lichess",
   "short_label": "Lichess",
   "summary": "Play Lichess games, challenge players, solve puzzles, or play offline.",
-  "version": "1.0.8",
-  "release_notes": "Keeps a task slot available for moves during online games by pausing background account polling. Verified local TLS fixture pairing, move acknowledgement, process restart and draw completion.",
+  "version": "1.0.9",
+  "release_notes": "Recovers a matched game when its start notification is missed. Keeps the ten-second pairing check available while background account polling pauses; never resubmits the seek.",
   "minimum_cobalt_version": "0.3.5",
   "glyph": "grid",
   "capabilities": [
