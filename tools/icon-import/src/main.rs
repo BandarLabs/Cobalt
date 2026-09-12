@@ -216,7 +216,10 @@ fn render(entries: &[Entry], glyphs: &str) -> String {
          | Glyph::BlackDraughtsMan\n\
          | Glyph::WhiteDraughtsMan\n\
          | Glyph::BoardPoint\n\
-         | Glyph::LegalPoint => &[],\n",
+         | Glyph::Mill\n\
+         | Glyph::LegalPoint\n\
+         | Glyph::Backspace\n\
+         | Glyph::Shift => &[],\n",
     );
     let _ = writeln!(out, "    }}");
     let _ = writeln!(out, "}}\n");
@@ -256,7 +259,45 @@ use crate::Glyph;
 
 #[cfg(test)]
 mod tests {
-    use super::{outlines_of, read_manifest, shout, Entry, Step};
+    use super::{outlines_of, read_manifest, render, shout, Entry, Step};
+
+    /// The file this tool writes, as it stands in the repository.
+    const CHECKED_IN: &str = include_str!("../../../crates/kobo-ui/src/vector/tabler.rs");
+
+    #[test]
+    fn every_hand_drawn_glyph_in_the_checked_in_file_is_one_this_tool_still_writes() {
+        // The glyphs with no Tabler outline are named in a string here and
+        // drawn by hand in the renderer, so the two lists drift apart in
+        // silence: a glyph added to the renderer and not to this one turns the
+        // next regeneration into a match that does not compile, which is found
+        // by whoever runs the script rather than by whoever caused it.
+        let arm = CHECKED_IN
+            .split_once("=> &[],")
+            .expect("the checked-in file has a fallback arm")
+            .0;
+        let hand_drawn: Vec<&str> = arm
+            .rsplit("Glyph::ChessBlackPawn => CHESS_BLACK_PAWN,")
+            .next()
+            .expect("the fallback arm follows the outlined glyphs")
+            .split("Glyph::")
+            .skip(1)
+            .map(|name| {
+                name.trim_end_matches(|character: char| !character.is_alphanumeric())
+                    .trim()
+            })
+            .collect();
+        assert!(
+            hand_drawn.len() >= 2,
+            "read no hand-drawn glyphs from the checked-in file"
+        );
+        let written = render(&[], "");
+        for glyph in hand_drawn {
+            assert!(
+                written.contains(&format!("Glyph::{glyph}")),
+                "{glyph} is drawn by hand in the renderer and this tool would not write it"
+            );
+        }
+    }
 
     #[test]
     fn a_manifest_line_is_a_glyph_and_an_icon() {
