@@ -2052,9 +2052,9 @@
     "pr": 3,
     "group": "Lichess",
     "task": "Test complete fixture match and retained session state",
-    "status": "todo",
+    "status": "done",
     "evidence": [
-      "Partial PR #181 evidence: saved-online-session restart regression loads SDK store-save bytes into a fresh app, opens the board stream, restores authoritative moves and clears the saved record after the final board result. 108 app tests and strict Clippy pass. Full restarted simulator transport acceptance remains open. Evidence: lichess-todo-review/resume-result.json on beta-quality-apps-2."
+      "PR #181: real SDK app and simulator use a private TLS fixture to pair, send exactly one move, retain the initial board until stream acknowledgement, restore the acknowledged piece positions after process restart, accept a draw, clear the saved session and resume account polling. Normal and 170% text-size runs pass; 109 app tests and strict Clippy pass. Evidence: docs/quality/evidence/lichess-session on beta-quality-apps-2. No live requests or hardware validation."
     ]
   },
   {
