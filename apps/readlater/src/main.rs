@@ -34,6 +34,8 @@ struct ReadLater {
     credential: String,
     depth: u16,
     entries: Vec<Entry>,
+    entries_origin: Option<(String, String)>,
+    task_origin: Option<(String, String)>,
     open: Option<usize>,
     view: Option<View>,
     pending: Vec<u64>,
@@ -75,8 +77,8 @@ impl ReadLater {
                 .build(),
             View::Queue => {
                 let mut page = ScreenBuilder::new("readlater")
-                    .top_bar_action("sync", "Sync")
                     .top_bar("Read Later")
+                    .top_bar_action("sync", "Sync")
                     .tabs(
                         0,
                         [
@@ -159,6 +161,7 @@ impl ReadLater {
             headers: Vec::new(),
         }) {
             self.task = Some((id, PendingTask::Queue));
+            self.task_origin = Some((self.server.clone(), self.credential.clone()));
         }
     }
     fn open_article(&mut self, context: &mut Context, index: usize) {
@@ -178,6 +181,7 @@ impl ReadLater {
             headers: Vec::new(),
         }) {
             self.task = Some((id, PendingTask::Article(index)));
+            self.task_origin = Some((self.server.clone(), self.credential.clone()));
         }
     }
     fn persist_actions(&self, context: &mut Context) {
@@ -300,10 +304,34 @@ impl KoboApp for ReadLater {
             return;
         }
         self.task = None;
+        let origin = (self.server.clone(), self.credential.clone());
+        if self
+            .task_origin
+            .take()
+            .is_some_and(|requested| requested != origin)
+        {
+            return;
+        }
         match (kind, outcome) {
             (PendingTask::Queue, TaskOutcome::Completed(bytes)) => {
-                self.entries = wallabag::parse_entries(&bytes);
-                self.notice = Some(format!("Synced {} articles.", self.entries.len()));
+                if let Some(mut entries) = wallabag::parse_entries(&bytes) {
+                    if self.entries_origin.as_ref() == Some(&origin) {
+                        for entry in &mut entries {
+                            if entry.content.is_empty() {
+                                if let Some(previous) =
+                                    self.entries.iter_mut().find(|old| old.id == entry.id)
+                                {
+                                    entry.content = std::mem::take(&mut previous.content);
+                                }
+                            }
+                        }
+                    }
+                    self.entries = entries;
+                    self.entries_origin = Some(origin);
+                    self.notice = Some(format!("Synced {} articles.", self.entries.len()));
+                } else {
+                    self.notice = Some("The reading list could not be loaded. Your current articles are unchanged. Try syncing again.".into());
+                }
             }
             (PendingTask::Article(index), TaskOutcome::Completed(bytes)) => {
                 if let Some(entry) = wallabag::parse_entry_document(&bytes) {
@@ -339,6 +367,104 @@ fn main() -> ExitCode {
 mod tests {
     use super::*;
     use kobo_ui::{Chrome, CLARA_BW_METRICS};
+    #[test]
+    fn refresh_keeps_fetched_bodies_and_rejects_invalid_lists() {
+        let origin = ("https://bag.example".to_owned(), "wallabag".to_owned());
+        let mut app = ReadLater {
+            server: origin.0.clone(),
+            credential: origin.1.clone(),
+            entries_origin: Some(origin.clone()),
+            entries: vec![Entry {
+                id: 7,
+                title: "Old title".into(),
+                site: "example.org".into(),
+                reading_time: 2,
+                content: "An original saved article body.".into(),
+            }],
+            ..ReadLater::default()
+        };
+        let metadata = br#"{"items":[{"id":7,"title":"Updated title"}]}"#;
+        let mut context = Context::default();
+        app.task = Some((TaskId(1), PendingTask::Queue));
+        app.task_origin = Some(origin.clone());
+        app.on_task(
+            &mut context,
+            TaskId(1),
+            TaskOutcome::Completed(metadata.to_vec()),
+        );
+        assert_eq!(app.entries[0].title, "Updated title");
+        assert_eq!(app.entries[0].content, "An original saved article body.");
+        app.task = Some((TaskId(2), PendingTask::Queue));
+        app.task_origin = Some(origin.clone());
+        app.on_task(
+            &mut context,
+            TaskId(2),
+            TaskOutcome::Completed(b"not JSON".to_vec()),
+        );
+        assert_eq!(app.entries[0].content, "An original saved article body.");
+        assert!(app.notice.as_deref().unwrap().contains("unchanged"));
+        capture_refresh_failure(&app);
+        app.server = "https://another.example".into();
+        app.task = Some((TaskId(3), PendingTask::Queue));
+        app.task_origin = Some(origin);
+        app.on_task(
+            &mut context,
+            TaskId(3),
+            TaskOutcome::Completed(br#"{"items":[]}"#.to_vec()),
+        );
+        assert_eq!(
+            app.entries.len(),
+            1,
+            "late old-server reply replaced the list"
+        );
+        app.task = Some((TaskId(4), PendingTask::Queue));
+        app.task_origin = Some((app.server.clone(), app.credential.clone()));
+        app.on_task(
+            &mut context,
+            TaskId(4),
+            TaskOutcome::Completed(metadata.to_vec()),
+        );
+        assert!(
+            app.entries[0].content.is_empty(),
+            "old-server content crossed into a new library"
+        );
+    }
+
+    fn capture_refresh_failure(app: &ReadLater) {
+        let Ok(directory) = std::env::var("KOBO_QUALITY_CAPTURE_DIR") else {
+            return;
+        };
+        kobo_text::install(CLARA_BW_METRICS).unwrap();
+        let mut context = Context::default();
+        app.show(&mut context);
+        let screen = context
+            .commands()
+            .iter()
+            .find_map(|command| match command {
+                kobo_sdk::Command::SetScreen(screen) => Some(screen),
+                _ => None,
+            })
+            .unwrap();
+        let metrics = context.metrics();
+        let mut surface = kobo_ui::Surface::new(
+            usize::try_from(metrics.width).unwrap(),
+            usize::try_from(metrics.height).unwrap(),
+        );
+        kobo_ui::render(screen, &mut surface, None);
+        let png = kobo_image::encode_png_grey(
+            u32::try_from(metrics.width).unwrap(),
+            u32::try_from(metrics.height).unwrap(),
+            &surface.pixels,
+        )
+        .unwrap();
+        std::fs::create_dir_all(&directory).unwrap();
+        std::fs::write(
+            std::path::Path::new(&directory).join("refresh-failed.png"),
+            png,
+        )
+        .unwrap();
+    }
+
     #[test]
     fn setup_and_queue_fit_the_clara_panel() {
         for app in [

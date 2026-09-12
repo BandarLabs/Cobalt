@@ -2559,3 +2559,22 @@ All six Gutenbird quality tasks are now complete. The overall project and
 separate hardware acceptance remain open.
 
 **496 tasks: 249 completed, 246 open, one deferred.**
+
+
+### Read Later refresh retention and retry control (partial LATER-01/03/05)
+
+Read Later 0.1.3 retains fetched article bodies when refreshing metadata from
+the same server and credential. An unreadable or malformed response no longer
+becomes an empty queue. Parsing rejects invalid UTF-8, malformed entries and
+duplicate IDs, while accepting an explicit empty list. Requests retain their
+origin so a reply after a server/credential change cannot replace the current
+list; content is not merged across origins.
+
+The queue's Sync action was being replaced by a later title-bar call. Reordering
+those calls restores the visible retry control. Nine app/parser tests and strict
+Clippy pass. The local render uses an original article fixture and runtime fonts;
+the retained queue and Sync button were inspected. README now accurately states
+that durable storage, acknowledged action replay and complete controls remain
+unfinished. No checklist items were closed.
+
+![Retained queue after refresh failure](evidence/readlater-refresh/refresh-failed.png)

@@ -2768,7 +2768,9 @@
     "group": "Read Later (APP-5/6)",
     "task": "Persist fetched full article bodies",
     "status": "todo",
-    "evidence": []
+    "evidence": [
+      "Read Later 0.1.3 preserves fetched full bodies across same-server/credential metadata refreshes. Malformed, invalid-UTF-8, missing-list, invalid-entry and duplicate-ID responses are distinct from a valid empty list and cannot wipe current articles. Request origins reject replies after server/credential changes; body reuse is scoped to the same origin. Nine app/parser tests and strict Clippy pass. Durable disk storage remains open."
+    ]
   },
   {
     "id": "LATER-02",
@@ -2784,7 +2786,9 @@
     "group": "Read Later (APP-5/6)",
     "task": "Wire all visible tabs and action controls",
     "status": "todo",
-    "evidence": []
+    "evidence": [
+      "Restored the visible queue Sync action by setting the title before its action. The actual queue render in docs/quality/evidence/readlater-refresh/refresh-failed.png was inspected. Other tabs and article controls remain open."
+    ]
   },
   {
     "id": "LATER-04",
@@ -2800,7 +2804,9 @@
     "group": "Read Later (APP-5/6)",
     "task": "Show pending/retry/offline state",
     "status": "todo",
-    "evidence": []
+    "evidence": [
+      "Unreadable list responses now retain the current queue and explain that articles are unchanged, with a visible Sync control for retry. Local runtime-font fixture screenshot inspected; nine tests and strict Clippy pass. Full outbox/retry/offline state remains open."
+    ]
   },
   {
     "id": "LATER-06",
