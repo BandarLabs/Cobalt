@@ -796,6 +796,8 @@ impl KoboApp for Verses {
                 }
                 None => {}
             },
+            // A 404 from this service is its way of saying nothing matched, so
+            // it is the one failure that is really an empty result.
             TaskOutcome::Failed(TaskError::NotFound) => {
                 if matches!(pending, Some(Pending::Open(_))) {
                     self.notice = Some("That poem isn't available right now.".into());
@@ -806,13 +808,29 @@ impl KoboApp for Verses {
                     self.view = View::Results;
                 }
             }
-            TaskOutcome::Failed(_) => {
+            // Anything else is the service, not the search. This used to land
+            // with the empty result above, so a poetry service that was down
+            // told readers there were no poems matching what they asked for.
+            TaskOutcome::Failed(error) => {
                 if matches!(pending, Some(Pending::Open(_))) {
                     self.notice = Some("That poem couldn't be opened.".into());
                     self.view = View::Results;
                 } else {
-                    self.notice =
-                        Some("Online search is unavailable. Your shelf is still ready.".into());
+                    self.notice = Some(
+                        match error {
+                            TaskError::Offline => {
+                                "This reader is offline. Your shelf is still here."
+                            }
+                            TaskError::Unauthorized | TaskError::NoCredential => {
+                                "The poetry service would not answer this reader."
+                            }
+                            TaskError::RateLimited(_) => {
+                                "The poetry service asked us to wait. Your shelf is still here."
+                            }
+                            _ => "The poetry service is not answering. Your shelf is still here.",
+                        }
+                        .to_owned(),
+                    );
                     self.view = View::Browse;
                 }
             }
@@ -959,6 +977,54 @@ mod tests {
             url,
             "https://poetrydb.org/author,title,lines/hope%20%26%20spring/author,title,linecount"
         );
+    }
+
+    #[test]
+    fn a_service_that_is_down_is_not_reported_as_an_empty_search() {
+        // The poetry service answered with its framework's error page for a
+        // while, and the application told readers there were no poems matching
+        // their search: a server fault dressed as an answer about their words.
+        for (error, expected) in [
+            (TaskError::Unreachable, "not answering"),
+            (TaskError::TimedOut, "not answering"),
+            (TaskError::Offline, "offline"),
+            (TaskError::Unauthorized, "would not answer"),
+        ] {
+            let mut app = Verses {
+                view: View::Search,
+                task: Some(TaskId(1)),
+                pending: Some(Pending::Search),
+                ..Verses::default()
+            };
+            let mut runner = AppRunner::new(Verses::default());
+            app.on_task(&mut runner.context(), TaskId(1), TaskOutcome::Failed(error));
+            let notice = app.notice.clone().unwrap_or_default();
+            assert!(
+                notice.to_lowercase().contains(expected),
+                "{error:?} became {notice:?}"
+            );
+            assert!(
+                !notice.to_lowercase().contains("no poems"),
+                "{error:?} blamed the search"
+            );
+        }
+
+        // The one failure that really is an empty result: this service answers
+        // a search that matched nothing with a 404.
+        let mut app = Verses {
+            view: View::Search,
+            task: Some(TaskId(1)),
+            pending: Some(Pending::Search),
+            ..Verses::default()
+        };
+        let mut runner = AppRunner::new(Verses::default());
+        app.on_task(
+            &mut runner.context(),
+            TaskId(1),
+            TaskOutcome::Failed(TaskError::NotFound),
+        );
+        assert_eq!(app.notice, None);
+        assert!(app.results.is_empty());
     }
 
     #[test]

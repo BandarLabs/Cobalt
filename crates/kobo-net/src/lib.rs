@@ -280,7 +280,8 @@ fn rate_limit(response: &[u8]) -> Result<RateLimit, TaskError> {
 /// # Errors
 ///
 /// Returns [`TaskError::Unreachable`] if the response is not recognisable
-/// HTTP, and [`TaskError::NotFound`] for a 4xx or 5xx status.
+/// HTTP, [`TaskError::NotFound`] for a 4xx status, and
+/// [`TaskError::Unreachable`] for a 5xx one.
 pub fn split_response(response: &[u8], max_bytes: u32) -> Result<Response<'_>, TaskError> {
     let mut headers = [httparse::EMPTY_HEADER; MAX_RESPONSE_HEADERS];
     let mut parsed = httparse::Response::new(&mut headers);
@@ -336,7 +337,16 @@ pub fn split_response(response: &[u8], max_bytes: u32) -> Result<Response<'_>, T
         // a book rather than for a login.
         401 | 403 => Err(TaskError::Unauthorized),
         429 => Err(TaskError::RateLimited(retry_after_seconds(headers))),
-        400..=599 => Err(TaskError::NotFound),
+        // A server that has broken is not a host answering "no". NotFound is
+        // documented as a real answer from a host that is working, and every
+        // 5xx used to land there: when the poetry service started returning
+        // its framework's error page, the poetry application told readers
+        // there were no poems matching their search. The reader was blamed for
+        // the query, and the one thing worth doing about it, trying again
+        // later, is what Unreachable already says.
+        400..=499 => Err(TaskError::NotFound),
+        // 5xx lands here with everything else this runtime does not recognise,
+        // which is what Unreachable is for: the host did not answer usefully.
         _ => Err(TaskError::Unreachable),
     }
 }
@@ -1003,7 +1013,10 @@ fn post_until_cancelled(
         (429, Some(delay), _) if options.report_rate_limit => {
             return Ok(rate_limit_envelope(delay));
         }
-        (301..=303 | 307 | 308 | 400..=599, _, _) => return Err(TaskError::NotFound),
+        // The same distinction the fetch path draws: a 4xx is the host
+        // refusing this request, and a 5xx is a server that has broken, which
+        // falls through to Unreachable below.
+        (301..=303 | 307 | 308 | 400..=499, _, _) => return Err(TaskError::NotFound),
         _ => return Err(TaskError::Unreachable),
     }
 
@@ -2541,6 +2554,37 @@ mod tests {
     fn a_server_refusal_is_reported_as_such() {
         let response = b"HTTP/1.1 404 Not Found\r\n\r\nmissing";
         assert_eq!(split_response(response, CEILING), Err(TaskError::NotFound));
+    }
+
+    #[test]
+    fn a_broken_server_is_not_reported_as_a_host_saying_no() {
+        // The poetry service answered searches with its framework's error page
+        // for a while, and every 5xx arrived at the application as NotFound:
+        // the poetry application told readers there were no poems matching
+        // their search, which blamed them for the query. Unreachable is the
+        // code that says the host did not answer usefully, and it is the one
+        // worth retrying.
+        for status in [
+            "500 Internal Server Error",
+            "502 Bad Gateway",
+            "503 Service Unavailable",
+        ] {
+            let response = format!("HTTP/1.1 {status}\r\n\r\nbroken").into_bytes();
+            assert_eq!(
+                split_response(&response, CEILING),
+                Err(TaskError::Unreachable),
+                "{status}"
+            );
+        }
+        // A 4xx is still the host answering, and still worth telling apart.
+        for status in ["400 Bad Request", "404 Not Found", "410 Gone"] {
+            let response = format!("HTTP/1.1 {status}\r\n\r\ngone").into_bytes();
+            assert_eq!(
+                split_response(&response, CEILING),
+                Err(TaskError::NotFound),
+                "{status}"
+            );
+        }
     }
 
     #[test]
