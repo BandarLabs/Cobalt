@@ -4,10 +4,14 @@ mod saved;
 use game::{Progress, PUZZLES};
 use kobo_sdk::keyboard::{Keyboard, Pressed};
 use kobo_sdk::{
-    action_id, ActionId, Context, DialogAction, KoboApp, Screen, ScreenBuilder, StoreResult,
+    action_id, ActionId, Context, DialogAction, Glyph, KoboApp, Screen, ScreenBuilder, StoreResult,
 };
 use kobo_state::draft::{Draft, Status};
 use std::process::ExitCode;
+
+/// The order the shelf offers the puzzles in, easiest first, which is not the
+/// order they are stored in.
+const PUZZLE_ORDER: [usize; 4] = [3, 0, 1, 2];
 
 const HELP: &str = "Fill the white squares\n\nRead an Across or Down clue and tap a square to enter its answer. Small corner numbers match the clue list. The shaded row or column is the active word.\n\nEnter one letter or the whole word. One letter advances within the word; a whole word fills from its first square. The outlined square above the keyboard is your target. Tap another square in that word to move. The arrow changes between Across and Down.\n\nUse More for Undo, Clear square, Check word, Reveal square and Restart. Checking reports incorrect and empty letters without changing them. Reveal and Restart ask first and can be undone. Assistance counts are retained.\n\nPuzzles keeps separate progress for all four puzzles. Starter, Easy and Medium are editorial guides based on size and vocabulary. Answers read across and down; the clues differ. Odds and ends has black squares; the other three are word squares.\n\nSaves are confirmed by storage. If a save fails, keep the app open and choose Retry save. Unreadable records are kept intact. Completed means you have solved that puzzle at least once; undo can reopen it.";
 #[derive(Clone, Copy, Default, Eq, PartialEq)]
@@ -101,7 +105,7 @@ impl Crossword {
                 .bottom_action("retry-save", "Retry save").build();
         }
         match self.view {
-            View::Puzzles => self.puzzles_screen(b),
+            View::Puzzles => self.puzzles_screen(b, context),
             View::Board => self.board_screen(b),
             View::Entry => self.entry_screen(b),
             View::Clues => self.clues_screen(b),
@@ -142,37 +146,92 @@ impl Crossword {
             }
         }
     }
-    fn puzzles_screen(&self, mut b: ScreenBuilder) -> Screen {
-        b = b.top_bar_action("help", "Help");
-        for index in [3, 0, 1, 2].into_iter().skip(self.puzzle_page * 2).take(2) {
-            let p = &PUZZLES[index];
-            let game = &self.games[index];
-            let filled = game
-                .position
-                .letters
-                .iter()
-                .filter(|b| **b != b'.' && **b != b'#')
-                .count();
-            b = b
-                .button(format!("puzzle-{index}"), p.title)
-                .secondary(format!(
-                    "{} · {}×{} · {}",
-                    p.level,
-                    p.side,
-                    p.side,
-                    if game.solved_once {
-                        "Completed".into()
-                    } else {
-                        format!(
-                            "{filled}/{} squares",
-                            p.answer.iter().filter(|b| **b != b'#').count()
-                        )
-                    }
-                ));
-        }
-        b.action_bar([("puzzles-previous", "Previous"), ("puzzles-next", "Next")])
-            .build()
+    /// What each puzzle is, on one row: its name, and how far it has got.
+    ///
+    /// The list drew a half-width button per puzzle with its details hanging
+    /// off to the left of it, two to a page, on a panel with room for every
+    /// puzzle at once. A list of things to open is a list of rows on this
+    /// device, and how many fit is measured rather than assumed.
+    fn puzzle_rows(&self) -> Vec<(String, String)> {
+        // The order the shelf offers them in, easiest first.
+        PUZZLE_ORDER
+            .iter()
+            .map(|index| {
+                let puzzle = &PUZZLES[*index];
+                let game = &self.games[*index];
+                let filled = game
+                    .position
+                    .letters
+                    .iter()
+                    .filter(|letter| **letter != b'.' && **letter != b'#')
+                    .count();
+                let squares = puzzle.answer.iter().filter(|cell| **cell != b'#').count();
+                (
+                    puzzle.title.to_owned(),
+                    format!(
+                        "{} · {}×{} · {}",
+                        puzzle.level,
+                        puzzle.side,
+                        puzzle.side,
+                        if game.solved_once {
+                            "Completed".to_owned()
+                        } else {
+                            format!("{filled}/{squares} squares")
+                        }
+                    ),
+                )
+            })
+            .collect()
     }
+
+    fn puzzle_pages(&self, context: &Context) -> Vec<Vec<usize>> {
+        let rows = self.puzzle_rows();
+        let borrowed: Vec<(&str, &str)> = rows
+            .iter()
+            .map(|(title, detail)| (title.as_str(), detail.as_str()))
+            .collect();
+        let prefix = ScreenBuilder::new("crossword")
+            .top_bar("Crossword")
+            .top_bar_action("help", "Help")
+            .build();
+        let pages =
+            context.paginate_rows_under(&borrowed, true, kobo_sdk::Position::AtTheFoot, &prefix);
+        if pages.is_empty() {
+            vec![Vec::new()]
+        } else {
+            pages
+        }
+    }
+
+    fn puzzles_screen(&self, mut b: ScreenBuilder, context: &Context) -> Screen {
+        b = b.top_bar_action("help", "Help");
+        let rows = self.puzzle_rows();
+        let pages = self.puzzle_pages(context);
+        let page = self.puzzle_page.min(pages.len().saturating_sub(1));
+        for index in &pages[page] {
+            let (title, detail) = &rows[*index];
+            b = b.rows([(
+                format!("puzzle-{}", PUZZLE_ORDER[*index]),
+                title.as_str(),
+                detail.as_str(),
+                if self.games[PUZZLE_ORDER[*index]].solved_once {
+                    Glyph::Check
+                } else {
+                    Glyph::Grid
+                },
+            )]);
+        }
+        if pages.len() > 1 {
+            b = b
+                .page_position(
+                    u16::try_from(page + 1).unwrap_or(1),
+                    u16::try_from(pages.len()).unwrap_or(1),
+                )
+                .action_bar([("puzzles-previous", "Previous"), ("puzzles-next", "Next")]);
+        }
+        b.build()
+    }
+
     fn board_screen(&self, mut b: ScreenBuilder) -> Screen {
         let p = &PUZZLES[self.current];
         let g = self.game();
@@ -500,7 +559,8 @@ impl KoboApp for Crossword {
                     } else if is("puzzles-previous") {
                         self.puzzle_page = self.puzzle_page.saturating_sub(1);
                     } else if is("puzzles-next") {
-                        self.puzzle_page = (self.puzzle_page + 1).min(1);
+                        self.puzzle_page = (self.puzzle_page + 1)
+                            .min(self.puzzle_pages(context).len().saturating_sub(1));
                     }
                 }
                 View::Board => {

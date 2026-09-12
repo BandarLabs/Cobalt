@@ -3,65 +3,128 @@ use kobo_sdk::{AppRunner, Command, StoreError, StoreRequest};
 use kobo_ui::{Chrome, DisplayMetrics, TextScale};
 
 #[test]
-fn corpus_crossings_numbering_and_all_answers_are_consistent() {
-    for p in PUZZLES {
-        assert_eq!(p.answer.len(), p.side * p.side);
-        assert_eq!(p.across.len(), p.side);
-        assert_eq!(p.down.len(), p.side);
-        if p.answer.contains(&b'#') {
-            let mut words = std::collections::BTreeSet::new();
+fn the_clue_above_the_grid_names_the_word_the_grid_highlights() {
+    // The line said "1 Down" while the top row was shaded, because the
+    // direction was recomputed from itself and came out true whenever the
+    // square had any entry at all.
+    for puzzle in PUZZLES {
+        for cell in 0..puzzle.answer.len() {
+            if puzzle.answer[cell] == b'#' {
+                continue;
+            }
             for down in [false, true] {
-                for n in 0..p.side {
-                    let first = if down { n } else { n * p.side };
-                    let word = p
-                        .word(first, down)
-                        .iter()
-                        .map(|c| p.answer[*c])
-                        .collect::<Vec<_>>();
-                    assert!(
-                        word.len() >= 3 && words.insert(word),
-                        "no short or repeated entries"
-                    );
-                }
-            }
-            let down = (0..p.side)
-                .map(|n| {
-                    String::from_utf8(p.word(n, true).iter().map(|c| p.answer[*c]).collect())
-                        .unwrap()
-                })
-                .collect::<Vec<_>>();
-            assert_eq!(down, ["COW", "ARE", "TEDDY", "GOO", "EMU"]);
-        } else {
-            for row in 0..p.side {
-                for column in 0..p.side {
-                    assert_eq!(
-                        p.answer[row * p.side + column],
-                        p.answer[column * p.side + row]
-                    );
-                }
+                let word = puzzle.word(cell, down);
+                let (label, clue) = puzzle.clue(cell, down);
+                assert!(
+                    !label.is_empty() && !clue.is_empty(),
+                    "{}: {cell}",
+                    puzzle.id
+                );
+                let reads_down = label.ends_with("Down");
+                assert_eq!(
+                    word,
+                    puzzle.run(cell, reads_down),
+                    "{}: square {cell} is highlighted as {label}",
+                    puzzle.id
+                );
+                let number: usize = label
+                    .split_whitespace()
+                    .next()
+                    .and_then(|first| first.parse().ok())
+                    .expect("a numbered clue");
+                assert_eq!(
+                    puzzle.number(word[0]),
+                    Some(number),
+                    "{}: {label} does not start at its own number",
+                    puzzle.id
+                );
             }
         }
-        let mut g = Progress::new(p);
-        for row in 0..p.side {
-            g.position.selected = (row * p.side..(row + 1) * p.side)
-                .find(|c| p.answer[*c] != b'#')
-                .unwrap();
-            g.enter(
-                p,
-                std::str::from_utf8(&p.answer[row * p.side..(row + 1) * p.side])
-                    .unwrap()
-                    .trim_matches('#'),
-            )
-            .unwrap();
-        }
-        assert!(g.solved(p));
-        assert!(g.solved_once);
-        assert_eq!(
-            p.clue(p.side, false).0,
-            format!("{} Across", p.number(p.side).unwrap())
-        );
     }
 }
+
+#[test]
+fn every_puzzle_is_ruled_the_way_a_printed_grid_is() {
+    // What a newspaper will print: no entry shorter than three squares, no
+    // answer twice in one puzzle, a clue for every entry, and black squares
+    // placed in pairs that read the same upside down. The grid that broke
+    // these rules had two by two slabs in its corners, which no paper sets.
+    for puzzle in PUZZLES {
+        assert_eq!(puzzle.answer.len(), puzzle.side * puzzle.side);
+        let entries = puzzle.entries();
+        assert!(!entries.is_empty(), "{}: no entries", puzzle.id);
+
+        // A word square is every row and every column a word, so it repeats
+        // its answers by construction and is clued twice over. It is a
+        // legitimate puzzle and says so on its row in the library; the rule
+        // against a repeated answer belongs to the grids that call themselves
+        // crosswords.
+        let square = !puzzle.answer.contains(&b'#');
+        let mut answers = std::collections::BTreeSet::new();
+        for entry in &entries {
+            let cells = puzzle.run(entry.first, entry.down);
+            assert!(
+                cells.len() >= 3,
+                "{}: {} {} is only {} squares",
+                puzzle.id,
+                entry.number,
+                if entry.down { "down" } else { "across" },
+                cells.len()
+            );
+            let word: Vec<u8> = cells.iter().map(|cell| puzzle.answer[*cell]).collect();
+            assert!(
+                answers.insert(word.clone()) || square,
+                "{}: {} appears twice",
+                puzzle.id,
+                String::from_utf8_lossy(&word)
+            );
+            assert!(
+                !puzzle.clue_of(entry).is_empty(),
+                "{}: {} {} has no clue",
+                puzzle.id,
+                entry.number,
+                if entry.down { "down" } else { "across" }
+            );
+        }
+
+        // Every white square belongs to an across entry and a down entry, so
+        // no letter is unchecked and no square is unreachable.
+        for cell in 0..puzzle.answer.len() {
+            if puzzle.answer[cell] == b'#' {
+                continue;
+            }
+            assert!(
+                puzzle.run(cell, false).len() >= 3 || puzzle.run(cell, true).len() >= 3,
+                "{}: square {cell} is in no entry",
+                puzzle.id
+            );
+        }
+
+        // Black squares in pairs about the centre, and never four in a block.
+        let side = puzzle.side;
+        for cell in 0..puzzle.answer.len() {
+            if puzzle.answer[cell] != b'#' {
+                continue;
+            }
+            let opposite = puzzle.answer.len() - 1 - cell;
+            assert_eq!(
+                puzzle.answer[opposite], b'#',
+                "{}: the black square at {cell} has no partner",
+                puzzle.id
+            );
+            let (row, column) = (cell / side, cell % side);
+            if row + 1 < side && column + 1 < side {
+                let block = [cell, cell + 1, cell + side, cell + side + 1];
+                assert!(
+                    !block.iter().all(|square| puzzle.answer[*square] == b'#'),
+                    "{}: four black squares meet at {cell}",
+                    puzzle.id
+                );
+            }
+        }
+    }
+}
+
 #[test]
 fn edits_check_reveal_and_restart_history_round_trip() {
     let p = &PUZZLES[0];
@@ -298,12 +361,20 @@ fn all_histories_fit_the_record_bound_and_undo_stays_bounded() {
 fn revealing_a_correct_guess_still_counts_as_assistance() {
     let p = &PUZZLES[3];
     let mut game = Progress::new(p);
-    game.position.letters[0] = p.answer[0];
+    // The first white square of the grid, which is not square zero now that
+    // the corners are black.
+    let first = p
+        .answer
+        .iter()
+        .position(|square| *square != b'#')
+        .expect("a white square");
+    game.position.selected = first;
+    game.position.letters[first] = p.answer[first];
     game.reveal(p);
     assert_eq!(game.reveals, 1);
     game.position = game.undo.pop_back().unwrap();
     assert_eq!(game.reveals, 1);
-    assert_eq!(game.position.letters[0], b'C');
+    assert_eq!(game.position.letters[first], p.answer[first]);
 }
 
 #[test]

@@ -5757,6 +5757,10 @@ pub enum LayoutKind {
     PencilNumber(bool),
     /// The three nested squares and four connectors behind a Morris board.
     MorrisBoard,
+    /// The rule around a crossword grid. Its squares draw the lines they share
+    /// with the neighbours above and to the left of them; this closes the two
+    /// sides nothing else has drawn.
+    CrosswordBoard,
     /// One cell of a table, drawn in the body face.
     TableCell,
     /// One cell of a table's heading row, drawn muted so the rule under it
@@ -8143,6 +8147,7 @@ fn layout_node(
             } else {
                 (x, width, tight)
             };
+            let crossword_squares = *square && cells.iter().any(|cell| cell.corner.is_some());
             let block_extra =
                 if *square && columns == 9 && cells.len() >= 27 && cells.len() % 27 == 0 {
                     gutter
@@ -8161,6 +8166,16 @@ fn layout_node(
                 let vertical_gaps = gutter * (rows - 1) + ((rows - 1) / 3) * block_extra;
                 let fits_height = bottom.saturating_sub(y).saturating_sub(vertical_gaps) / rows;
                 cell_width = cell_width.min(fits_height.max(metrics.touch_target_minimum()));
+                // A printed crossword square is about a centimetre across
+                // whether the puzzle is a five square mini or a fifteen square
+                // daily. Given the whole panel a small grid stretched every
+                // square to two centimetres and read as a toy; the cap is what
+                // makes a mini look like a mini. A large grid is still bound by
+                // the panel, so nothing here shrinks below what fits.
+                if crossword_squares {
+                    cell_width =
+                        cell_width.min(metrics.tenth_mm(110).max(metrics.touch_target_minimum()));
+                }
                 let board_width = cell_width * columns + gutter * (columns - 1) + block_extra * 2;
                 x = x.saturating_add((width - board_width).max(0) / 2);
                 width = board_width;
@@ -8193,6 +8208,7 @@ fn layout_node(
                 && cells
                     .iter()
                     .any(|cell| matches!(cell.glyph, Some(Glyph::BoardPoint | Glyph::LegalPoint)));
+            let crossword_board = crossword_squares;
             let index = layout.nodes.len();
             layout.nodes.push(LayoutNode {
                 id: *id,
@@ -8206,6 +8222,8 @@ fn layout_node(
                     LayoutKind::BackgammonBoard
                 } else if morris_board {
                     LayoutKind::MorrisBoard
+                } else if crossword_board {
+                    LayoutKind::CrosswordBoard
                 } else {
                     LayoutKind::Spacer
                 },
@@ -8238,9 +8256,9 @@ fn layout_node(
                     } else {
                         CellStyle::BackgammonBottom
                     }
-                } else if *square && cells.iter().any(|c| c.corner.is_some()) && cell.label == "#" {
+                } else if crossword_board && cell.label == "#" {
                     CellStyle::CrosswordBlock
-                } else if *square && cells.iter().any(|c| c.corner.is_some()) {
+                } else if crossword_board {
                     CellStyle::Crossword
                 } else if morris_board {
                     CellStyle::Plain
@@ -8365,9 +8383,26 @@ fn layout_node(
                         }
                         None if style == CellStyle::CrosswordBlock => (),
                         None => {
+                            // A letter in a crossword square is set the size a
+                            // newspaper sets it: a little over half the square,
+                            // leaving the corner number its own air. Given the
+                            // whole square it took the largest size that fit,
+                            // which is a headline in a box and left the grid
+                            // looking like a toy rather than a puzzle.
+                            let letter = if style == CellStyle::Crossword {
+                                let inset = rect.height / 5;
+                                Rect {
+                                    x: rect.x,
+                                    y: rect.y.saturating_add(inset),
+                                    width: rect.width,
+                                    height: rect.height.saturating_sub(inset * 2).max(1),
+                                }
+                            } else {
+                                rect
+                            };
                             layout.nodes.push(LayoutNode {
                                 id: *id,
-                                rect,
+                                rect: letter,
                                 kind: LayoutKind::CellLabel(matches!(
                                     style,
                                     CellStyle::Board | CellStyle::BoardDark | CellStyle::Crossword
@@ -14109,6 +14144,34 @@ fn render_all_with_selected_font(
                 if selected {
                     fill_clipped(surface, node.rect, tone::SURFACE, clip);
                 }
+                // Two edges rather than four. Crossword squares are drawn
+                // touching, so a box around each one puts two rules along
+                // every line the grid shares and one around the outside: the
+                // inside of the grid came out twice as heavy as its border,
+                // which is the opposite of how a printed grid is ruled. The
+                // board draws the outside, and each square draws the two edges
+                // no neighbour above or to its left has drawn already.
+                let rule = metrics.rule_thickness();
+                fill_clipped(
+                    surface,
+                    Rect {
+                        height: rule,
+                        ..node.rect
+                    },
+                    tone::INK,
+                    clip,
+                );
+                fill_clipped(
+                    surface,
+                    Rect {
+                        width: rule,
+                        ..node.rect
+                    },
+                    tone::INK,
+                    clip,
+                );
+            }
+            LayoutKind::CrosswordBoard => {
                 stroke_clipped(
                     surface,
                     node.rect,
