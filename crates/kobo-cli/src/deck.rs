@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 const USAGE: &str = "usage: kobo deck init [--preset build|home] [--home DIR]\n\
                      \x20      kobo deck set PAD [--page NAME] --label LABEL [--detail TEXT] \
-                     (--run CMD | --url URL | --launch APP) [--confirm] [--home DIR]\n\
+                     (--run CMD | --url URL | --launch APP) [--confirm | --no-confirm] [--home DIR]\n\
                      \x20      kobo deck ls [--home DIR]\n\
                      \x20      kobo deck show [--json] [--home DIR]\n\
                      \x20      kobo deck push (--sim | --device IP | --out PATH) [--home DIR]\n\
@@ -229,7 +229,9 @@ fn set(arguments: &[String]) -> Result<(), String> {
             label: assignment.label,
             detail: assignment.detail,
             run: assignment.run,
-            confirm: assignment.confirm,
+            confirm: assignment
+                .confirm
+                .unwrap_or_else(|| page.keys.get(pad - 1).is_some_and(|key| key.confirm)),
         };
         if pad == page.keys.len() + 1 {
             page.keys.push(key);
@@ -345,8 +347,16 @@ struct Assignment<'a> {
     label: String,
     detail: String,
     run: String,
-    confirm: bool,
+    confirm: Option<bool>,
     home: Option<&'a str>,
+}
+
+fn confirmation_flag(previous: Option<bool>, flag: &str) -> Result<bool, String> {
+    if previous.is_some() {
+        Err("Choose --confirm or --no-confirm once.".to_owned())
+    } else {
+        Ok(flag == "--confirm")
+    }
 }
 
 fn parse_set(arguments: &[String]) -> Result<Assignment<'_>, String> {
@@ -364,7 +374,7 @@ fn parse_set(arguments: &[String]) -> Result<Assignment<'_>, String> {
     let mut run = None;
     let mut url = None;
     let mut launch = None;
-    let mut confirm = false;
+    let mut confirm = None;
     let mut home = None;
     let mut index = 1;
     while index < arguments.len() {
@@ -393,8 +403,8 @@ fn parse_set(arguments: &[String]) -> Result<Assignment<'_>, String> {
                 launch = Some(owned_flag(arguments, index, "--launch")?);
                 index += 2;
             }
-            "--confirm" => {
-                confirm = true;
+            "--confirm" | "--no-confirm" => {
+                confirm = Some(confirmation_flag(confirm, &arguments[index])?);
                 index += 1;
             }
             "--home" => {
@@ -1182,6 +1192,43 @@ mod tests {
         assert_eq!(parse_toml(&config).unwrap().pad_count(), 15);
         config.push_str("[[page.key]]\nlabel = \"Pad 16\"\nrun = \"true\"\n");
         assert!(parse_toml(&config).unwrap_err().contains("1 and 15"));
+    }
+
+    #[test]
+    fn editing_a_pad_preserves_confirmation_until_explicitly_changed() {
+        let root = home();
+        let owner = root.to_str().unwrap();
+        let set = |flag: Option<&str>| {
+            let mut arguments = args(&[
+                "set", "1", "--run", "true", "--label", "Sample", "--home", owner,
+            ]);
+            if let Some(flag) = flag {
+                arguments.push(flag.into());
+            }
+            command(&arguments)
+        };
+        set(Some("--confirm")).unwrap();
+        set(None).unwrap();
+        let path = config_path(Some(owner)).unwrap();
+        assert!(load(&path).unwrap().pages[0].keys[0].confirm);
+        let previous = fs::read(&path).unwrap();
+        assert!(command(&args(&[
+            "set",
+            "1",
+            "--run",
+            "true",
+            "--home",
+            owner,
+            "--confirm",
+            "--no-confirm"
+        ]))
+        .is_err());
+        assert_eq!(fs::read(&path).unwrap(), previous);
+        set(Some("--no-confirm")).unwrap();
+        assert!(!load(&path).unwrap().pages[0].keys[0].confirm);
+        set(None).unwrap();
+        assert!(!load(&path).unwrap().pages[0].keys[0].confirm);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

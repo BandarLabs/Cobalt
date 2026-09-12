@@ -3781,8 +3781,12 @@
     "pr": 4,
     "group": "Deck companion",
     "task": "Keep per-action confirmation configurable",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Each pad supports explicit --confirm and --no-confirm. Editing without either retains the existing setting; new pads default false. Conflicting/repeated flags are rejected before writing.",
+      "Nine CLI Deck tests and strict all-target Clippy passed. Actual executable set/show checks preserve true and false on edits, switch explicitly and retain bytes on conflicting flags: docs/quality/evidence/deck-confirmation/result.json.",
+      "Existing helper confirmation execution tests remain passing in the 53-test helper run recorded for DECKCLI-03; no physical command execution is claimed."
+    ]
   },
   {
     "id": "FLASHCLI-01",

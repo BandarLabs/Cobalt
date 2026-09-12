@@ -2366,3 +2366,19 @@ including 15 accepted / 16 rejected boundaries. Strict CLI/helper all-target
 Clippy passed. The actual CLI assigned all 15 pads and staged a preview;
 170% simulator capture shows Pad 15 and has no layout errors. Screenshot
 inspected and documented. Evidence: `evidence/deck-fifteen-pads`.
+
+
+### Deck confirmation preference (DECKCLI-07)
+
+Editing a pad previously reset its confirmation to false unless --confirm was
+repeated. Edits now preserve the current setting by default; --confirm and
+--no-confirm explicitly enable and disable it. Conflicting/repeated flags
+return an error before configuration is touched. New pads retain the existing
+false default.
+
+Nine CLI Deck tests and strict all-target Clippy passed. Actual built CLI
+set/show calls enabled confirmation, preserved it on edit, disabled it,
+preserved that value on another edit, and refused conflicting flags without
+changing configuration bytes. Evidence: `evidence/deck-confirmation/result.json`.
+The helper confirmation runtime tests passed in the preceding full 53-test
+run. Documentation includes explicit preference semantics.

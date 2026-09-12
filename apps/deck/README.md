@@ -103,3 +103,9 @@ outside that range, including hand-edited configuration. Use another page
 for additional actions, up to six pages.
 
 ![All 15 pads at larger text size](../../docs/quality/evidence/deck-fifteen-pads/preview.png)
+
+
+For each Deck pad, `kobo deck set ... --confirm` enables confirmation and
+`--no-confirm` disables it. Editing an existing pad without either flag keeps
+its current setting. A new pad defaults to no confirmation. Supplying both
+flags is an error and leaves configuration unchanged.

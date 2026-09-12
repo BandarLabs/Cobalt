@@ -115,3 +115,9 @@ that they cannot run commands; choose **Pair** to connect to the computer.
 A device push updates the cached grid and never substitutes preview pairing
 for a real computer connection. See the [Deck guide](../apps/deck/README.md)
 for preview screenshots.
+
+
+For each Deck pad, `kobo deck set ... --confirm` enables confirmation and
+`--no-confirm` disables it. Editing an existing pad without either flag keeps
+its current setting. A new pad defaults to no confirmation. Supplying both
+flags is an error and leaves configuration unchanged.
