@@ -3,8 +3,8 @@
   "display_name": "Lichess",
   "short_label": "Lichess",
   "summary": "Play Lichess games, challenge players, solve puzzles, or play offline.",
-  "version": "1.0.6",
-  "release_notes": "Recovers matched games after a missed start event. Adds a joined chessboard with legal-move hints, highlights the active clock, and resumes offline games after leaving the board.",
+  "version": "1.0.7",
+  "release_notes": "Reopens the authoritative board when resuming a saved online session without an in-memory board. Retains matched-game recovery, legal-move hints and offline game resume.",
   "minimum_cobalt_version": "0.3.5",
   "glyph": "grid",
   "capabilities": [

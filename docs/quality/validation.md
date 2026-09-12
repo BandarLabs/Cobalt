@@ -2264,3 +2264,10 @@ LICHESS-03/04 are complete; remaining Lichess items stay open. No live API calls
 or moves were made in this check. PR 3 evidence:
 https://github.com/BandarLabs/Cobalt/tree/beta-quality-apps-2/docs/quality/evidence/lichess-todo-review
 Cross-PR tracker totals reconciled: 229 done, 266 open, one deferred.
+
+Lichess 1.0.7 fixes Resume current when only a stored session exists. The fresh
+app now opens the board stream rather than merely switching screens. A new
+regression loads actual SDK store-save bytes, restores the authoritative
+position and verifies cleanup on confirmed completion. All 108 app tests and
+strict all-target Clippy pass. Full restarted simulator transport acceptance
+remains open under LICHESS-05; no live requests or moves were made.

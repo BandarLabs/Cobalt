@@ -4152,7 +4152,7 @@ impl KoboApp for Lichess {
                 } else if self
                     .game
                     .as_ref()
-                    .is_some_and(|game| !self.board_is_live(&game.id))
+                    .is_none_or(|game| !self.board_is_live(&game.id))
                 {
                     self.open_board(context, session);
                 } else {
@@ -5378,6 +5378,59 @@ mod tests {
         assert_eq!(app.board_open.as_deref(), Some("computer"));
         assert!(app.board_ready);
         assert!(app.clock.is_running());
+    }
+
+    #[test]
+    fn saved_online_session_reopens_authoritative_board_in_a_fresh_app() {
+        let original = app_with_game(&["e2e4", "e7e5"], Color::White);
+        let mut saved = Context::default();
+        original.persist_session(&mut saved);
+        let bytes = saved
+            .commands()
+            .iter()
+            .find_map(|command| match command {
+                Command::Store(StoreRequest::Save { key, value }) if key == super::SESSION_KEY => {
+                    Some(value.clone())
+                }
+                _ => None,
+            })
+            .expect("session persisted through SDK store");
+        let mut fresh = ready_app();
+        let mut context = Context::default();
+        fresh.on_store(
+            &mut context,
+            kobo_sdk::StoreResult::Loaded {
+                key: super::SESSION_KEY.into(),
+                value: Some(bytes),
+            },
+        );
+        assert!(
+            fresh.game.is_none(),
+            "a stored session must not invent board state"
+        );
+        fresh.on_action(&mut context, action_id("resume-current"));
+        assert!(
+            fresh
+                .tasks
+                .values()
+                .any(|pending| matches!(pending, Pending::BoardOpen(id) if id == "abcdEF12")),
+            "resume must open a stream even without an in-memory board"
+        );
+        let full = api::parse_board(br#"{"type":"gameFull","id":"abcdEF12","rated":true,"speed":"rapid","variant":{"key":"standard"},"initialFen":"startpos","white":{"id":"owner123","name":"Owner"},"black":{"id":"other123","name":"Other"},"state":{"type":"gameState","moves":"e2e4 e7e5","wtime":599000,"btime":598000,"winc":0,"binc":0,"status":"started"}}"#, "abcdEF12").unwrap();
+        fresh.handle_completed(&mut context, Pending::BoardOpen("abcdEF12".into()), &[]);
+        fresh.handle_board(&mut context, "abcdEF12", full);
+        assert_eq!(fresh.game.as_ref().unwrap().state.moves, ["e2e4", "e7e5"]);
+        assert_eq!(
+            fresh.game.as_ref().unwrap().fen,
+            original.game.as_ref().unwrap().fen
+        );
+        assert!(fresh.pending_move.is_none());
+        assert!(fresh.pending_action.is_none());
+        let finished = api::parse_board(br#"{"type":"gameState","moves":"e2e4 e7e5","wtime":599000,"btime":598000,"winc":0,"binc":0,"status":"draw"}"#, "abcdEF12").unwrap();
+        fresh.handle_board(&mut context, "abcdEF12", finished);
+        assert!(fresh.session.is_none());
+        assert!(context.commands().iter().any(|command| matches!(command,
+            Command::Store(StoreRequest::Forget { key }) if key == super::SESSION_KEY)));
     }
 
     #[test]

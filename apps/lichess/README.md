@@ -122,3 +122,9 @@ python3 scripts/quality/check-lichess-computer-sim.py --output /tmp/lichess-comp
 
 This checks move selection, the computer reply, leaving and resuming the
 game, and resignation at normal and 170% text size without credentials.
+
+When a saved online session has no board in memory, **Resume current** opens
+the board stream and waits for authoritative moves and clocks. The saved
+record contains only the game identity and labels, so a restart does not
+invent a board position or replay a move. A confirmed final board result
+clears the resumable record.
