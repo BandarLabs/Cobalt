@@ -143,3 +143,25 @@ Reading positions belong to the selected download URL. Saving updates both the
 stored position and the position held for reopening during the same session.
 A delayed storage response for a different book or format is ignored, so it
 cannot move the book currently being read.
+
+
+## Offline reopening
+
+After visiting a catalog page, Gutenbird saves a local copy when the response
+fits the 256 KiB store limit. If that page cannot be fetched later, the saved
+copy keeps its books and navigation accessible. A fresh successful response
+always wins over a delayed saved copy. Downloaded books open from the local
+shelf at their saved position, including after restarting Cobalt offline.
+Unvisited pages and books that have not been downloaded still need a connection.
+
+The simulator check uses an original EPUB and a private local HTTPS fixture:
+
+```sh
+python3 scripts/quality/check-gutenbird-offline-sim.py --output /tmp/gutenbird-offline
+```
+
+It downloads, turns two pages, stops the process, restarts with networking
+disabled and compares the reopened text with the saved page. Default and 170%
+text-scale runs passed; physical-reader acceptance remains separate.
+
+![Reading after an offline simulator restart](../../docs/quality/evidence/gutenbird-offline/default/03-offline-reopened.png)

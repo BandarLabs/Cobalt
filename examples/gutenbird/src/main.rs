@@ -369,6 +369,14 @@ enum FeedPurpose {
     Federated { catalog: usize },
 }
 
+struct CachedFeed {
+    key: String,
+    url: String,
+    purpose: FeedPurpose,
+    bytes: Option<Vec<u8>>,
+    failed: bool,
+}
+
 /// What one of the shelf's own background requests is for.
 ///
 /// Kept apart from [`Awaiting`], which is the single request a reader is
@@ -606,6 +614,7 @@ struct Gutenbird {
     federating: bool,
 
     task: Option<(TaskId, Awaiting)>,
+    cached_feed: Option<CachedFeed>,
     problem: Option<String>,
     trouble: Option<Failure>,
 
@@ -679,6 +688,7 @@ impl Default for Gutenbird {
             federated_query: None,
             federating: false,
             task: None,
+            cached_feed: None,
             problem: None,
             trouble: None,
             wanted: Vec::new(),
@@ -926,6 +936,15 @@ impl Gutenbird {
         // slot this needs, but a page the reader has left is not worth
         // finishing, so its pictures are dropped rather than waited for.
         self.abandon_hydration(context);
+        let key = format!("catalog-{:08x}", stamp(&url));
+        context.store().load(key.clone());
+        self.cached_feed = Some(CachedFeed {
+            key,
+            url: url.clone(),
+            purpose,
+            bytes: None,
+            failed: false,
+        });
         let headers = vec![Header::new("Accept", kobo_opds::ACCEPT)];
         if let Some(task) = context.spawn_retrying(Task::Fetch {
             url: url.clone(),
@@ -940,6 +959,26 @@ impl Gutenbird {
             context.log(LogLevel::Warn, format!("feed refused, lanes full: {url}"));
             self.problem = Some("Too much is already in flight.".to_owned());
         }
+    }
+
+    fn restore_cached_feed(&mut self, context: &mut Context) {
+        if !self
+            .cached_feed
+            .as_ref()
+            .is_some_and(|cache| cache.failed && cache.bytes.is_some())
+        {
+            return;
+        }
+        let cache = self.cached_feed.take().expect("cached response ready");
+        self.problem = None;
+        self.trouble = None;
+        self.took_feed(
+            context,
+            &cache.bytes.unwrap_or_default(),
+            cache.purpose,
+            cache.url,
+        );
+        self.show(context);
     }
 
     /// Follows a navigation row, or the current catalog's own root: fetches
@@ -3243,6 +3282,15 @@ impl KoboApp for Gutenbird {
 
     #[allow(clippy::too_many_lines)]
     fn on_store(&mut self, context: &mut Context, result: StoreResult) {
+        if let StoreResult::Loaded { key, value } = &result {
+            if let Some(cache) = self.cached_feed.as_mut().filter(|cache| cache.key == *key) {
+                cache.bytes = value.clone().filter(|bytes| {
+                    bytes.len() <= MAX_STORE_VALUE && kobo_opds::parse(bytes, &cache.url).is_ok()
+                });
+                self.restore_cached_feed(context);
+                return;
+            }
+        }
         if let Some(upload) = &mut self.keeping {
             match upload.advance(context, &result) {
                 ShelfProgress::Done => {
@@ -3788,7 +3836,15 @@ impl KoboApp for Gutenbird {
         );
         match outcome {
             TaskOutcome::Completed(bytes) => match awaiting {
-                Awaiting::Feed(purpose, base) => self.took_feed(context, &bytes, purpose, base),
+                Awaiting::Feed(purpose, base) => {
+                    self.cached_feed = None;
+                    if bytes.len() <= MAX_STORE_VALUE && kobo_opds::parse(&bytes, &base).is_ok() {
+                        context
+                            .store()
+                            .save(format!("catalog-{:08x}", stamp(&base)), bytes.clone());
+                    }
+                    self.took_feed(context, &bytes, purpose, base);
+                }
                 Awaiting::DiscoverRoot {
                     catalog,
                     query,
@@ -3848,6 +3904,10 @@ impl KoboApp for Gutenbird {
                     let failure = Failure::of(error);
                     self.trouble = Some(failure);
                     self.problem = Some(failure.advice.to_owned());
+                    if let Some(cache) = &mut self.cached_feed {
+                        cache.failed = true;
+                    }
+                    self.restore_cached_feed(context);
                 }
             },
             TaskOutcome::Cancelled => {
@@ -5878,6 +5938,64 @@ Please read this before you distribute or use this work.\n";
             )),
             "a finished book was not kept"
         );
+    }
+
+    #[test]
+    fn cached_catalog_recovers_before_or_after_network_failure() {
+        for cache_first in [true, false] {
+            let mut app = Gutenbird::default();
+            app.spawn_feed(
+                &mut Context::default(),
+                BASE.into(),
+                FeedPurpose::Root { catalog: 0 },
+            );
+            let task = app.task.as_ref().unwrap().0;
+            let key = app.cached_feed.as_ref().unwrap().key.clone();
+            let cached = StoreResult::Loaded {
+                key,
+                value: Some(ENTRY_DOCUMENT.as_bytes().to_vec()),
+            };
+            let mut runner = AppRunner::new(app);
+            if cache_first {
+                runner.store_result(cached.clone());
+                assert!(runner.app().open.is_none());
+            }
+            runner.task_outcome(task, TaskOutcome::Failed(TaskError::Unreachable));
+            if !cache_first {
+                runner.store_result(cached);
+            }
+            assert_eq!(runner.app().view, View::Details);
+            assert_eq!(
+                runner.app().open.as_ref().unwrap().title,
+                "Pride and Prejudice"
+            );
+            assert!(runner.app().cached_feed.is_none());
+        }
+    }
+
+    #[test]
+    fn late_cached_catalog_cannot_replace_a_fresh_response() {
+        let mut app = Gutenbird::default();
+        app.spawn_feed(
+            &mut Context::default(),
+            BASE.into(),
+            FeedPurpose::Root { catalog: 0 },
+        );
+        let task = app.task.as_ref().unwrap().0;
+        let key = app.cached_feed.as_ref().unwrap().key.clone();
+        let mut runner = AppRunner::new(app);
+        runner.task_outcome(
+            task,
+            TaskOutcome::Completed(two_publication_feed_json().into_bytes()),
+        );
+        assert_eq!(runner.app().stack[0].feed.publications.len(), 2);
+        runner.store_result(StoreResult::Loaded {
+            key,
+            value: Some(ENTRY_DOCUMENT.as_bytes().to_vec()),
+        });
+        assert!(runner.app().open.is_none());
+        assert_eq!(runner.app().stack[0].feed.publications.len(), 2);
+        assert!(runner.app().place.is_none());
     }
 
     #[test]

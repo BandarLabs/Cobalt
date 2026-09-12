@@ -1716,9 +1716,10 @@
     "pr": 3,
     "group": "Gutenbird",
     "task": "Persist shelf reading progress",
-    "status": "todo",
+    "status": "done",
     "evidence": [
-      "Gutenbird 1.0.18 accepts saved reading-position responses only for the currently selected download key. Saving also refreshes the in-memory position used when reopening in the same session. The existing restoration test now checks rejection of a delayed response from another download and equality of stored/current saved memory. All 95 tests and strict Clippy pass. Full restart/offline-reopen validation remains open."
+      "Gutenbird 1.0.18 accepts saved reading-position responses only for the currently selected download key. Saving also refreshes the in-memory position used when reopening in the same session. The existing restoration test now checks rejection of a delayed response from another download and equality of stored/current saved memory. All 95 tests and strict Clippy pass. Full restart/offline-reopen validation remains open.",
+      "Completed with the actual simulator and an original EPUB served through private local HTTPS. Downloaded and turned two pages, verified saved position, stopped the entire process and restarted with networking denied. Reopened rich text exactly matches the pre-shutdown page and differs from page one; fixture request count does not increase offline. Default and 170% runs pass. Catalog fallback saves bounded valid responses and handles cache-before-failure/cache-after-failure ordering; late cache cannot replace fresh data. All 97 app tests and strict Clippy pass. See scripts/quality/check-gutenbird-offline-sim.py and docs/quality/evidence/gutenbird-offline. Physical-reader acceptance remains a separate gate."
     ]
   },
   {
@@ -1734,8 +1735,10 @@
     "pr": 3,
     "group": "Gutenbird",
     "task": "Verify fixture download, reading and offline reopen",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Completed with the actual simulator and an original EPUB served through private local HTTPS. Downloaded and turned two pages, verified saved position, stopped the entire process and restarted with networking denied. Reopened rich text exactly matches the pre-shutdown page and differs from page one; fixture request count does not increase offline. Default and 170% runs pass. Catalog fallback saves bounded valid responses and handles cache-before-failure/cache-after-failure ordering; late cache cannot replace fresh data. All 97 app tests and strict Clippy pass. See scripts/quality/check-gutenbird-offline-sim.py and docs/quality/evidence/gutenbird-offline. Physical-reader acceptance remains a separate gate."
+    ]
   },
   {
     "id": "HABIT-01",

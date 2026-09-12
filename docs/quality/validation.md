@@ -2489,3 +2489,31 @@ that a foreign key cannot change a restored position and that saving refreshes
 memory with the same bytes sent to storage. No visual layout or copy changed;
 existing screenshots remain applicable. GUTEN-04 remains open for the full
 restart/offline-reopen flow alongside GUTEN-06.
+
+
+### Gutenbird download, saved progress and offline restart (GUTEN-04 / GUTEN-06 complete)
+
+The new real-simulator harness first exposed that an offline restart could not
+reach downloaded books: the app kept their files but fetched the catalog anew.
+Gutenbird 1.0.19 saves valid catalog responses up to the store's 256 KiB value
+limit and restores them when the corresponding fetch fails. Unit tests cover
+both cache/failure response orders and ensure a late cached response cannot
+replace a fresh catalog.
+
+`check-gutenbird-offline-sim.py` builds this checkout's CLI, serves an original
+EPUB and OPDS catalog through a private verified HTTPS fixture, and drives the
+actual app. It downloads the book, turns two pages, checks saved state, stops
+the entire simulator process, and restarts with networking disabled. Reopened
+rich-text lines match the saved page exactly and differ from page one. The
+fixture receives no requests after restart. Private files and processes are
+cleaned up on success and failure. No live website is contacted.
+
+Default and 170% text-scale runs pass. Screenshots were inspected; all 97 app
+tests and strict Clippy pass. This completes the local fixture tasks, while
+Clara BW hardware acceptance remains a separate gate.
+
+- [Default result](evidence/gutenbird-offline/default/result.json)
+- [170% result](evidence/gutenbird-offline/170/result.json)
+- [Offline reopened page](evidence/gutenbird-offline/default/03-offline-reopened.png)
+
+**496 tasks: 248 completed, 247 open, one deferred.**
