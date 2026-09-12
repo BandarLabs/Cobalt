@@ -358,6 +358,14 @@ reconnect path while Cobalt owns the panel, removes only Cobalt-started owners
 before Nickel returns, then waits for Nickel's association and default route
 to remain healthy for ten seconds.
 
+On the N605 Elipsa 2E, Wi-Fi must have been enabled once in the stock reader
+before Cobalt can use its firmware-owned `wpa_cli` backend. Cobalt does not
+initialize the MediaTek radio directly. If `wlan0` is absent while the known
+firmware tool is present, Settings reports that exact action instead of the
+misleading generic “unsupported” refusal. During hand-back, the measured N605
+profile stops the captured detached supplicant before Nickel starts its
+replacement; it does not stop an unverified process or alter saved networks.
+
 That immediate gate is not evidence that the handoff stays healthy minutes
 later. For the N365 investigation, the owner-attended
 [`KOBO_WIFI_HANDOFF_TRACE`](WIFI_HANDOFF_TRACE.md) mode records the process and
