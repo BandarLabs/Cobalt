@@ -65,3 +65,32 @@ are bracketed, and a setup made before address storage explains how to add an
 address. The expanded simulator check compares identity files before and after
 reading pairing details and checks the selected port. Stream tests now total
 22 passing tests; strict CLI/stream Clippy also passes.
+
+
+## Flashcards helper connection
+
+The CLI now delegates import, verify, stage and review-log export to the
+existing standalone `flashcards-import` program. It finds a sibling helper,
+then PATH; `KOBO_FLASHCARDS_IMPORT` can select a source-built executable.
+`status` displays the helper's own notice and `--licenses` its bundled
+license/source documents. No study-engine dependency was added to the CLI.
+The old APKG `--out` spelling maps to merge; COLPKG replacement remains explicit.
+
+Four routing/error tests and strict CLI Clippy pass on Rust 1.85.1. The real
+helper and an original three-card fixture generator were built with Rust 1.88.
+The CLI then imported, verified and staged the fixture; destination bytes
+matched the prepared bundle. Corrupt verification/staging failed and preserved
+the installed collection. Evidence is in `evidence/flashcards-companion`.
+This validates a temporary mounted-directory fixture, not a physical reader.
+Reader review, review-log round-trip, distribution and the remaining Flashcards
+companion checklist are still open.
+
+Reproduce with the built CLI, helper and fixture generator:
+
+```sh
+cargo +1.88.0 build --locked --manifest-path crates/kobo-flashcards-import/Cargo.toml \
+  --example quality_fixture
+python3 scripts/quality/check-flashcards-companion.py --cli /path/to/kobo \
+  --helper /path/to/flashcards-import --fixture-generator /path/to/quality_fixture \
+  --output /tmp/flashcards-companion
+```

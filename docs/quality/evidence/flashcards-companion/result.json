@@ -1,0 +1,13 @@
+{
+  "status": "passed",
+  "basis": "real-helper-and-original-three-card-package",
+  "physical_hardware": false,
+  "checks": [
+    "helper notice",
+    "import with spaces in path",
+    "bundle verification",
+    "staged bytes match prepared bundle",
+    "helper failures reach CLI",
+    "corrupt stage preserves installed collection"
+  ]
+}

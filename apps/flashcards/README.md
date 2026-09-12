@@ -14,10 +14,10 @@ Prepare and stage a collection on the host, with the Kobo USB volume mounted
 at `MOUNT` and Flashcards closed:
 
 ```sh
-cargo run --manifest-path crates/kobo-flashcards-import/Cargo.toml -- \
-  import deck.apkg --merge collection.cobfc
-cargo run --manifest-path crates/kobo-flashcards-import/Cargo.toml -- \
-  stage collection.cobfc --kobo-root MOUNT
+kobo flashcards status
+kobo flashcards import deck.apkg --merge collection.cobfc
+kobo flashcards verify collection.cobfc
+kobo flashcards stage collection.cobfc --kobo-root MOUNT
 ```
 
 The staging command copies only to the fixed private shelf entry
@@ -73,3 +73,30 @@ State-by-state 1072×1448 golden captures are under `screenshots/states/`.
 
 The standalone importer requires Rust 1.88 or newer and `protoc`. The device
 workspace continues to support Rust 1.85.1.
+
+## Install the separate host helper
+
+The main CLI starts `flashcards-import` as a separate program; it does not
+link the importer's study-engine dependency. Install that helper beside
+`kobo`, or put it on your PATH. For a source build, install Rust 1.88 and
+`protoc`, then run from the repository:
+
+```sh
+cargo +1.88.0 build --locked --manifest-path crates/kobo-flashcards-import/Cargo.toml
+```
+
+The binary is in `crates/kobo-flashcards-import/target/debug/flashcards-import`
+unless `CARGO_TARGET_DIR` overrides the build directory. Advanced setups can
+set `KOBO_FLASHCARDS_IMPORT` to its absolute path. `kobo flashcards status`
+prints the helper's own notice; `kobo flashcards --licenses` shows its bundled
+license and source information. Distribution must retain the existing host
+artifact notices and corresponding-source requirements.
+
+To replace from a COLPKG, use the explicit `--replace` form. To preserve an
+existing bundle while importing an APKG, use `--merge NEW.cobfc --merge-into
+EXISTING.cobfc`. Preparation does not install cards on the reader: run `stage`
+after verification, with Flashcards closed. To copy the separate review log:
+
+```sh
+kobo flashcards export-review-log --kobo-root MOUNT reviews.ndjson
+```
