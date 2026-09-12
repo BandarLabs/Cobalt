@@ -40,7 +40,38 @@ pub const SUPPLICANT_EXECUTABLE: &str = "/bin/wpa_supplicant";
 pub const DHCP_EXECUTABLE: &str = "/sbin/dhcpcd";
 
 /// The interface the device connects with.
-pub const WIRELESS_LINK: &str = "wlan0";
+///
+/// Detected rather than assumed. Most Kobos name it `wlan0`, but the Libra
+/// H2O's older Realtek driver names it `eth0` -- assuming `wlan0` there made
+/// every caller of this conclude Wi-Fi was simply absent, on a device that was
+/// connected to it at the time. Whichever interface under `/sys/class/net`
+/// carries a `wireless` subdirectory is the radio: that is the kernel's own
+/// marker for it, not a name any driver gets to choose, and there is exactly
+/// one such interface on any of these devices. Falls back to `wlan0` when
+/// nothing can be read, which matches every device this was measured against
+/// before it was detected instead of hardcoded.
+#[must_use]
+pub fn wireless_link() -> &'static str {
+    static LINK: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    LINK.get_or_init(|| {
+        detect_wireless_link(Path::new("/sys/class/net")).unwrap_or_else(|| "wlan0".to_owned())
+    })
+}
+
+/// The pure half of [`wireless_link`], taking the root so it can be tested
+/// without `/sys`.
+fn detect_wireless_link(root: &Path) -> Option<String> {
+    let mut entries: Vec<_> = fs::read_dir(root).ok()?.filter_map(Result::ok).collect();
+    // Sorted so that a root with more than one match (never expected on real
+    // hardware, but not something a directory read can rule out) picks the
+    // same interface every time rather than whichever the filesystem
+    // happened to list first.
+    entries.sort_by_key(std::fs::DirEntry::file_name);
+    entries.into_iter().find_map(|entry| {
+        let name = entry.file_name().to_str()?.to_owned();
+        entry.path().join("wireless").is_dir().then_some(name)
+    })
+}
 
 const POLL_INTERVAL: Duration = Duration::from_millis(250);
 
@@ -145,7 +176,7 @@ impl Connection {
         Self {
             daemons,
             uncertain,
-            was_online: is_online(WIRELESS_LINK),
+            was_online: is_online(wireless_link()),
         }
     }
 
@@ -201,7 +232,7 @@ impl Connection {
         if !self.was_online {
             return Ok(Restored::Unaffected);
         }
-        if !went_offline(WIRELESS_LINK, SETTLE) {
+        if !went_offline(wireless_link(), SETTLE) {
             return Ok(Restored::Unaffected);
         }
         for daemon in &self.daemons {
@@ -210,7 +241,7 @@ impl Connection {
             }
             daemon.start(within)?;
         }
-        Ok(if wait_until_online(WIRELESS_LINK, within) {
+        Ok(if wait_until_online(wireless_link(), within) {
             Restored::Restarted
         } else {
             Restored::StillDown
@@ -232,7 +263,7 @@ impl Connection {
                 uncertain_executables,
             };
         }
-        if !went_offline(WIRELESS_LINK, SETTLE) {
+        if !went_offline(wireless_link(), SETTLE) {
             return SessionConnection {
                 outcome: Restored::Unaffected,
                 started: Vec::new(),
@@ -272,7 +303,7 @@ impl Connection {
                 Err(error) => start_errors.push(error),
             }
         }
-        let outcome = if wait_until_online(WIRELESS_LINK, within) {
+        let outcome = if wait_until_online(wireless_link(), within) {
             Restored::Restarted
         } else {
             Restored::StillDown
@@ -404,6 +435,64 @@ pub fn signal_dbm_in(table: &str, link: &str) -> Option<i32> {
 
 #[cfg(test)]
 mod tests {
+    use super::detect_wireless_link;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+
+    fn root(name: &str) -> PathBuf {
+        let path =
+            std::env::temp_dir().join(format!("kobo-wireless-link-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&path);
+        fs::create_dir_all(&path).expect("a test directory");
+        path
+    }
+
+    fn interface(root: &Path, name: &str, wireless: bool) {
+        let path = root.join(name);
+        fs::create_dir_all(&path).expect("an interface directory");
+        if wireless {
+            fs::create_dir_all(path.join("wireless")).expect("a wireless directory");
+        }
+    }
+
+    #[test]
+    fn the_interface_with_a_wireless_directory_is_found_regardless_of_its_name() {
+        // The bug this pins: a Libra H2O names its radio eth0, not wlan0, so
+        // a caller that assumed the name concluded Wi-Fi was simply absent on
+        // a device that was connected to it at the time.
+        let root = root("eth0-named-radio");
+        interface(&root, "lo", false);
+        interface(&root, "eth0", true);
+        assert_eq!(detect_wireless_link(&root), Some("eth0".to_owned()));
+    }
+
+    #[test]
+    fn the_conventional_name_is_still_found() {
+        let root = root("wlan0-named-radio");
+        interface(&root, "lo", false);
+        interface(&root, "wlan0", true);
+        assert_eq!(detect_wireless_link(&root), Some("wlan0".to_owned()));
+    }
+
+    #[test]
+    fn nothing_wireless_is_reported_as_nothing_found() {
+        let root = root("no-radio-present");
+        interface(&root, "lo", false);
+        interface(&root, "eth0", false);
+        assert_eq!(detect_wireless_link(&root), None);
+    }
+
+    #[test]
+    fn a_root_that_cannot_be_read_is_reported_as_nothing_found() {
+        let missing = std::env::temp_dir().join(format!(
+            "kobo-wireless-link-missing-{}-{}",
+            std::process::id(),
+            "root"
+        ));
+        let _ = fs::remove_dir_all(&missing);
+        assert_eq!(detect_wireless_link(&missing), None);
+    }
+
     #[test]
     fn a_signal_is_read_from_the_row_for_the_interface_asked_for() {
         let table = "Inter-| sta-|   Quality        |   Discarded packets\n \
