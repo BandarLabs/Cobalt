@@ -154,3 +154,20 @@ It runs real TLS GET, authenticated POST and retained NDJSON requests, checks
 the original Host header and TLS server name, and verifies that unlisted
 hosts and ports are denied. This is infrastructure for complete app fixtures;
 it does not by itself prove a Lichess match or saved-session restart.
+
+The complete Lichess fixture now uses this transport:
+
+```sh
+python3 scripts/quality/check-lichess-session-sim.py --output /tmp/lichess-session
+python3 scripts/quality/check-lichess-session-sim.py --scale 170 --output /tmp/lichess-session-large
+```
+
+It creates a temporary CA, server and synthetic token, follows the visible
+pairing controls, verifies the distinction between POST success and board
+acknowledgement, kills and restarts the simulator with the same private store,
+checks restored piece positions and completes by an agreed draw. It verifies
+saved-session cleanup and resumed account polling. Output includes screenshots,
+layout, request methods/paths and build fingerprints. Private keys, certificates
+and token stores are removed with the temporary directory. No live account or
+service is used. Python 3.9+, OpenSSL and the normal simulator dependencies are
+required.

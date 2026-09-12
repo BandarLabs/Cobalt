@@ -2301,3 +2301,15 @@ All 104 kobo-net tests pass (91 unit, 13 integration); strict all-target
 Clippy and release-profile checks pass for kobo-net and kobo-sim.
 LICHESS-05 stays open until the actual
 app completes and resumes a fixture game through this transport.
+
+Lichess session acceptance is complete for LICHESS-05. The actual SDK app and
+simulator pair against a private TLS fixture, send exactly one move, retain the
+initial board after POST success, render the acknowledged e4/e5 position,
+restart with the same private store, restore that position from a fresh board
+stream, accept a draw, remove the saved session and resume account polling.
+Normal and 170% runs pass; screenshots and request receipts are in
+`evidence/lichess-session`. All 109 app tests and strict Clippy pass.
+The fixture exposed and verified fixes for account polling occupying the move
+task slot and duplicate confirmation copy clipping the clock at 170%.
+No public Lichess requests or moves were made. Physical acceptance remains
+separate. Tracker totals: 230 complete, 265 open, one deferred.

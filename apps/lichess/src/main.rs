@@ -1142,7 +1142,9 @@ impl Lichess {
             screen = screen.modal(action.label(), |builder| builder.secondary("Sending"));
         } else if let Some(movement) = &self.pending_move {
             screen = screen.modal("Move sent", |builder| {
-                builder.heading(movement.movement.clone())
+                builder
+                    .heading(movement.movement.clone())
+                    .secondary("Waiting for confirmation")
             });
         }
         screen.build()
@@ -1173,13 +1175,7 @@ impl Lichess {
             return;
         }
         let revalidating = matches!(self.account, AccountState::Ready(_));
-        for (task, pending) in self.tasks.clone() {
-            if matches!(pending, Pending::AccountRetry) {
-                context.cancel(task);
-                self.tasks.remove(&task);
-                self.retired_tasks.insert(task, pending);
-            }
-        }
+        self.cancel_account_retry(context);
         if !revalidating {
             self.account = AccountState::Checking;
             self.playing_ready = false;
@@ -1200,8 +1196,21 @@ impl Lichess {
         }
     }
 
+    fn cancel_account_retry(&mut self, context: &mut Context) {
+        for (task, pending) in self.tasks.clone() {
+            if matches!(pending, Pending::AccountRetry) {
+                context.cancel(task);
+                self.tasks.remove(&task);
+                self.retired_tasks.insert(task, pending);
+            }
+        }
+    }
+
     fn schedule_account_retry(&mut self, context: &mut Context) {
-        if self.suspended
+        // Two stream reads plus the game clock leave one slot for the owner.
+        // Credential polling would consume that slot for fifteen seconds.
+        if (self.session.is_some() && matches!(self.account, AccountState::Ready(_)))
+            || self.suspended
             || self
                 .has_pending(|pending| matches!(pending, Pending::Account | Pending::AccountRetry))
         {
@@ -1490,6 +1499,7 @@ impl Lichess {
             self.clock.stop(context);
         }
         self.session = Some(session);
+        self.cancel_account_retry(context);
         self.persist_session(context);
         if let Some(remaining) = self.board_rate_remaining(&id) {
             if remaining > 0 {
@@ -2905,6 +2915,7 @@ impl Lichess {
         self.close_board(context, &id);
         self.clear_board_rate_limit(context, &id);
         self.clear_session(context);
+        self.schedule_account_retry(context);
         self.summaries.retain(|summary| summary.id != id);
         self.route = Route::Game;
     }
@@ -3356,10 +3367,10 @@ impl Lichess {
                     | GameAction::DeclineDraw
                     | GameAction::ClaimVictory => self.clear_pending_action(),
                 }
-                self.notice = Some(
-                    "Lichess accepted the request; waiting for the stream to confirm it."
-                        .to_owned(),
-                );
+                self.notice = self
+                    .pending_move
+                    .is_none()
+                    .then(|| "Waiting for Lichess.".to_owned());
             }
         }
     }
@@ -7435,6 +7446,30 @@ mod tests {
     }
 
     #[test]
+    fn active_board_releases_account_polling_capacity_for_moves() {
+        let mut app = ready_app();
+        let mut context = Context::default();
+        app.schedule_account_retry(&mut context);
+        let retry = app
+            .tasks
+            .iter()
+            .find_map(|(task, pending)| matches!(pending, Pending::AccountRetry).then_some(*task))
+            .expect("account retry");
+        let game = app_with_game(&[], Color::White);
+        app.open_board(&mut context, game.session.clone().expect("session"));
+        assert!(context
+            .commands()
+            .iter()
+            .any(|command| matches!(command, Command::Cancel(task) if *task == retry)));
+        assert!(!app.has_pending(|pending| matches!(pending, Pending::AccountRetry)));
+        app.schedule_account_retry(&mut context);
+        assert!(!app.has_pending(|pending| matches!(pending, Pending::AccountRetry)));
+        app.clear_session(&mut context);
+        app.schedule_account_retry(&mut Context::default());
+        assert!(app.has_pending(|pending| matches!(pending, Pending::AccountRetry)));
+    }
+
+    #[test]
     fn valid_credential_is_rechecked_without_hiding_ready_state() {
         let mut app = ready_app();
         let mut context = Context::default();
@@ -7508,7 +7543,7 @@ mod tests {
             "a successful POST must not invent local draw acceptance"
         );
         assert!(format!("{:?}", accepting.game_screen(&Context::default()))
-            .contains("Lichess accepted the request; waiting for the stream"));
+            .contains("Waiting for Lichess."));
         let accepted = api::parse_board(
             br#"{"type":"gameState","moves":"e2e4 e7e5","wtime":599000,"btime":598000,"winc":0,"binc":0,"status":"draw"}"#,
             "abcdEF12",

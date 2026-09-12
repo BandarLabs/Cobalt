@@ -3,8 +3,8 @@
   "display_name": "Lichess",
   "short_label": "Lichess",
   "summary": "Play Lichess games, challenge players, solve puzzles, or play offline.",
-  "version": "1.0.7",
-  "release_notes": "Reopens the authoritative board when resuming a saved online session without an in-memory board. Retains matched-game recovery, legal-move hints and offline game resume.",
+  "version": "1.0.8",
+  "release_notes": "Keeps a task slot available for moves during online games by pausing background account polling. Verified local TLS fixture pairing, move acknowledgement, process restart and draw completion.",
   "minimum_cobalt_version": "0.3.5",
   "glyph": "grid",
   "capabilities": [

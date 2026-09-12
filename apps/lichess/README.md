@@ -128,3 +128,24 @@ the board stream and waits for authoritative moves and clocks. The saved
 record contains only the game identity and labels, so a restart does not
 invent a board position or replay a move. A confirmed final board result
 clears the resumable record.
+
+Online games reserve task capacity for moves: background account polling pauses
+while a ready account has a saved game session. Each board request still uses
+runtime credential checks. Polling resumes after the game finishes; explicit
+account refresh and recovery from missing credentials remain available.
+
+The local TLS acceptance fixture drives the real app through pairing, one move,
+a process restart with the same private store, and an agreed draw. It verifies
+that POST success alone does not change the displayed position and that restart
+restores the acknowledged board. Run from the repository root:
+
+```sh
+python3 scripts/quality/check-lichess-session-sim.py --output /tmp/lichess-session
+```
+
+Use `--scale 170` for enlarged text. This creates only synthetic local requests;
+it uses no live token and does not validate physical Kobo behavior.
+
+![Restored fixture game](screenshots/session-resumed.png)
+
+![Move confirmation at 170% text size](screenshots/move-confirmation-large.png)
