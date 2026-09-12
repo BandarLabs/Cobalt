@@ -6098,10 +6098,11 @@ const fn encode_glyph(glyph: Glyph) -> u8 {
         Glyph::WhiteDraughtsKing => 61,
         Glyph::BlackDraughtsMan => 62,
         Glyph::WhiteDraughtsMan => 63,
-        Glyph::MorrisPoint => 64,
-        Glyph::MorrisLegalPoint => 65,
+        Glyph::BoardPoint => 64,
+        Glyph::LegalPoint => 65,
         Glyph::Backspace => 66,
         Glyph::Shift => 67,
+        Glyph::Mill => 68,
     }
 }
 
@@ -6171,10 +6172,11 @@ const fn decode_glyph(tag: u8) -> Option<Glyph> {
         61 => Glyph::WhiteDraughtsKing,
         62 => Glyph::BlackDraughtsMan,
         63 => Glyph::WhiteDraughtsMan,
-        64 => Glyph::MorrisPoint,
-        65 => Glyph::MorrisLegalPoint,
+        64 => Glyph::BoardPoint,
+        65 => Glyph::LegalPoint,
         66 => Glyph::Backspace,
         67 => Glyph::Shift,
+        68 => Glyph::Mill,
 
         _ => return None,
     })

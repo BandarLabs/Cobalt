@@ -390,11 +390,11 @@ Design direction: use the familiar visual conventions of each app, restrained co
 
 ## PR 2 · Parlor
 
-- [ ] **PARLOR-01** Distinguish boards and pieces.
-- [ ] **PARLOR-02** Show current player and last move.
-- [ ] **PARLOR-03** Improve legal-target contrast.
-- [ ] **PARLOR-04** Complete game/resume checks for all four rulesets.
-- [ ] **PARLOR-05** Keep unavailable board sizes honest until navigable.
+- [x] **PARLOR-01** Distinguish boards and pieces.
+- [x] **PARLOR-02** Show current player and last move.
+- [x] **PARLOR-03** Improve legal-target contrast.
+- [x] **PARLOR-04** Complete game/resume checks for all four rulesets.
+- [x] **PARLOR-05** Keep unavailable board sizes honest until navigable.
 
 ## PR 2 · Parser
 

@@ -2153,3 +2153,54 @@ private HTTPS fixture daemon, answers a question, takes two at once, leaves one
 for the terminal and finds that an answer the daemon no longer holds is not
 reported as a decision, at the default size and at 170%. Captures are in
 `evidence/sidekick/` and `evidence/sidekick-large/`.
+
+## Parlor: four games on one panel
+
+**A shelf rather than a list.** The table used to be four rows, each carrying a
+sentence about its game, and at the larger text settings the fourth row was
+drawn through the bottom edge and the renderer refused the screen. Four games
+are now four cards on one shelf, each with its own mark and three words saying
+what the game is: bracket and flip, captures are forced, mills then flying, sow
+and capture. Nothing pages, because nothing has to: a shelf of four fits at
+every text size the reader offers, and what a game is in full belongs on the
+screen the card opens.
+
+**A mark for each game.** Reversi wears a disc, draughts a crowned man, Kalah a
+grid. Nine Men's Morris wore a single board point, which is a full stop at card
+size, so the renderer now draws a mill: three points on a rule, the one shape
+the game is played for. It is a platform glyph rather than a picture in one
+application, because the next board game to want it should not draw its own.
+
+**Whose move it is.** The top bar carried the game and the turn together, and
+on a six inch panel at 170% it cut the turn off mid-word: two people passing a
+reader between them lost the one line they have to read. The bar carries the
+game; the turn is the first line under it, with the match score at the end of
+the same rule, and what to do next sits under that.
+
+**A board this panel cannot draw.** International draughts needs a hundred
+touch cells and this panel holds eighty-one. Choosing it used to raise the full
+error panel, cross and "Something went wrong" and all, which reads as a broken
+application rather than an option that is not on offer, and which was itself
+drawn through the bottom edge at 170%. The row says it plainly, a line under it
+says why, and no button offers to start what cannot be drawn.
+
+**Leaving a game.** The board offered Undo, Moves, New game and Games, and the
+fourth wrapped onto a second row that was drawn off the panel at the larger
+sizes. Leaving is the chevron in the bar, as everywhere else on the reader.
+
+**Two defects found by this work.** A capture chain in Anglo-American draughts
+was rejected by the position's own validity check, so the game could be played
+but never saved: a reader who put the panel down mid-chain lost the game.
+And Nine Men's Morris had no way to end: two players shuffling between the same
+points could slide forever. There is a fifty-move quiet rule now, and the draw
+it produces is a result the match score records.
+
+**Verification.** Twenty-two Parlor tests pass, including a sweep that lays the
+shelf out in both its states, every setup screen including the refused ruleset,
+every board and the move record, at all nine text sizes on the smallest panel.
+`scripts/check-apps-sim.py parlor` passes against the committed route, and
+`scripts/quality/check-parlor-sim.py` opens all four games, reads what the panel
+says about each, takes a real turn found from the marked legal squares rather
+than from a fixed coordinate, closes the application and picks the game up where
+it was left, at the default size and at 170%. Captures are in `evidence/parlor/`
+and `evidence/parlor-large/`.

@@ -215,8 +215,8 @@ fn render(entries: &[Entry], glyphs: &str) -> String {
          | Glyph::WhiteDraughtsKing\n\
          | Glyph::BlackDraughtsMan\n\
          | Glyph::WhiteDraughtsMan\n\
-         | Glyph::MorrisPoint\n\
-         | Glyph::MorrisLegalPoint => &[],\n",
+         | Glyph::BoardPoint\n\
+         | Glyph::LegalPoint => &[],\n",
     );
     let _ = writeln!(out, "    }}");
     let _ = writeln!(out, "}}\n");

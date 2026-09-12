@@ -5359,14 +5359,30 @@ pub enum Glyph {
     BlackDraughtsMan,
     /// An outlined man on a conventional draughts board.
     WhiteDraughtsMan,
-    /// An unoccupied intersection on a Nine Men's Morris board.
-    MorrisPoint,
-    /// A legal destination on a Nine Men's Morris board.
-    MorrisLegalPoint,
+    /// An unoccupied point on a board: a small solid dot.
+    ///
+    /// Named for what it is rather than for the first game that wanted it.
+    /// An intersection on a Nine Men's Morris board and an empty square on
+    /// any other board are the same mark, and a glyph called
+    /// `MorrisPoint` is one that nobody else reaches for.
+    BoardPoint,
+    /// A legal destination: a thin ring, large enough to read at arm's length.
+    ///
+    /// Every board game on this device has to say where a piece may go, and
+    /// they were saying it with whatever dotted circle their typeface
+    /// happened to carry. This is the mark the renderer draws.
+    LegalPoint,
     /// Remove the character before the typing position.
     Backspace,
     /// Capitalize the next typed letter.
     Shift,
+    /// Three points in a line joined by a rule: a mill.
+    ///
+    /// The one shape Nine Men's Morris is played for, and the only mark that
+    /// says which game a shelf card opens. The card wore [`Self::BoardPoint`]
+    /// before this existed, and a single dot the width of a full stop is not
+    /// an emblem anyone reads at arm's length.
+    Mill,
 }
 
 impl Glyph {
@@ -5377,7 +5393,7 @@ impl Glyph {
     /// the set was twenty-one: `Light` and `Close` were authored, shipped, and
     /// covered by none of the tests that walk every glyph. A glyph nobody
     /// rasterises in a test is a blank space beside a label on the panel.
-    pub const ALL: [Self; 68] = [
+    pub const ALL: [Self; 69] = [
         Self::App,
         Self::Book,
         Self::Note,
@@ -5442,10 +5458,11 @@ impl Glyph {
         Self::WhiteDraughtsKing,
         Self::BlackDraughtsMan,
         Self::WhiteDraughtsMan,
-        Self::MorrisPoint,
-        Self::MorrisLegalPoint,
+        Self::BoardPoint,
+        Self::LegalPoint,
         Self::Backspace,
         Self::Shift,
+        Self::Mill,
     ];
 }
 
@@ -8151,12 +8168,9 @@ fn layout_node(
             let morris_board = *square
                 && columns == 7
                 && cells.len() == 49
-                && cells.iter().any(|cell| {
-                    matches!(
-                        cell.glyph,
-                        Some(Glyph::MorrisPoint | Glyph::MorrisLegalPoint)
-                    )
-                });
+                && cells
+                    .iter()
+                    .any(|cell| matches!(cell.glyph, Some(Glyph::BoardPoint | Glyph::LegalPoint)));
             let index = layout.nodes.len();
             layout.nodes.push(LayoutNode {
                 id: *id,
