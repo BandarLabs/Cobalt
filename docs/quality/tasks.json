@@ -1695,7 +1695,8 @@
     "evidence": [
       "Detail header now shows the selected download format and readable language name, preserving region/script tags and unknown codes. Selection uses Publication::best_acquisition, matching the downloader.",
       "88 app tests and strict Clippy pass; runtime-font detail captures refreshed and inspected. Explicit edition/language selection remains to be completed, so this task stays open.",
-      "Entry resolution no longer collapses same-title publications with different authors, languages, publishers or issued dates. Unknown and known language are kept distinct. All 89 app tests and strict Clippy pass, including existing illustrated/plain edition behavior."
+      "Entry resolution no longer collapses same-title publications with different authors, languages, publishers or issued dates. Unknown and known language are kept distinct. All 89 app tests and strict Clippy pass, including existing illustrated/plain edition behavior.",
+      "Same-title shelf captions now lead with differing language, publisher or issued date, including explicit missing metadata. Ordinary author/source captions remain unchanged. All 90 tests and strict Clippy pass; runtime-font two-language fixture captured and inspected in docs/quality/evidence/gutenbird-editions/language-choices.png."
     ]
   },
   {

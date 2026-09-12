@@ -103,3 +103,10 @@ Entries with the same title remain separate when their language, authors,
 publisher or edition date differ. A missing language is not assumed to match
 a known language. This keeps distinct catalog choices available rather than
 silently opening the first matching title.
+
+
+When same-title entries differ, shelf captions lead with the language,
+publisher or edition date that distinguishes them. Missing metadata is stated
+rather than guessed. Ordinary titles keep their author/source caption.
+
+![Language choices in an original shelf fixture](../../docs/quality/evidence/gutenbird-editions/language-choices.png)

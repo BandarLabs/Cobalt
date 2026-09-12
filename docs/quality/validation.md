@@ -2414,3 +2414,19 @@ different languages/authors/publishers/dates and a missing language; prior
 illustrated/plain variant tests still pass. Manifest 1.0.13 and generated
 catalog page are updated. This preserves available entries; the full edition
 chooser remains open under GUTEN-02.
+
+
+### Gutenbird edition captions (partial GUTEN-02)
+
+Same-title shelf entries now lead with the language, publisher or edition date
+that distinguishes them. Missing metadata is explicit. Unique titles retain
+the usual author and source caption. This makes the distinct entries retained
+by the previous grouping fix recognizable before opening their detail pages.
+
+All 90 tests and strict all-target Clippy passed. Regressions cover differing
+languages, missing language, edition dates and unchanged ordinary captions.
+A runtime-font original two-language shelf fixture passes layout diagnostics
+and was visually inspected: `evidence/gutenbird-editions/language-choices.png`.
+Reproduce with KOBO_QUALITY_CAPTURE_DIR and the
+`same_title_shelf_captions` test. Manifest 1.0.14 and generated app page are
+updated. Explicit selection of otherwise-grouped format variants remains open.

@@ -1444,21 +1444,17 @@ impl Gutenbird {
                 } else {
                     TileState::Normal
                 };
-                let author = publication.authors.first().cloned().unwrap_or_default();
+                let subtitle = publication_caption(
+                    publication,
+                    &entry.feed.publications,
+                    entry.sources.get(index).map(String::as_str),
+                );
                 let picture = *picture;
-                let source = entry.sources.get(index).cloned();
                 (
                     format!("book-{index}"),
                     publication.title.clone(),
                     Glyph::Book,
                     move |tile: Tile| {
-                        let subtitle = match source {
-                            Some(source) if !author.is_empty() => {
-                                format!("{author} \u{00b7} {source}")
-                            }
-                            Some(source) => source,
-                            None => author,
-                        };
                         let tile = tile.with_state(state).with_subtitle(subtitle);
                         match picture {
                             Some(picture) => tile.with_picture(picture),
@@ -2869,6 +2865,59 @@ fn decode_registry(bytes: &[u8]) -> Vec<Catalog> {
 /// The flat facts for the details page, said only when the catalog actually
 /// stated them. No invented reading time, no identifier relabelled as though
 /// it belonged to one catalog when the field is generic across all of them.
+fn publication_caption(
+    publication: &Publication,
+    books: &[Publication],
+    source: Option<&str>,
+) -> String {
+    let peers: Vec<_> = books
+        .iter()
+        .filter(|book| book.title == publication.title)
+        .collect();
+    let mut parts = Vec::new();
+    if peers
+        .iter()
+        .any(|book| book.language != publication.language)
+    {
+        parts.push(
+            publication
+                .language
+                .as_deref()
+                .map_or_else(|| "Language not listed".to_owned(), language_name),
+        );
+    }
+    if peers
+        .iter()
+        .any(|book| book.publisher != publication.publisher)
+    {
+        parts.push(
+            publication
+                .publisher
+                .clone()
+                .unwrap_or_else(|| "Publisher not listed".to_owned()),
+        );
+    }
+    if peers.iter().any(|book| book.issued != publication.issued) {
+        parts.push(
+            publication
+                .issued
+                .clone()
+                .unwrap_or_else(|| "Date not listed".to_owned()),
+        );
+    }
+    if let Some(author) = publication
+        .authors
+        .first()
+        .filter(|author| !author.is_empty())
+    {
+        parts.push(author.clone());
+    }
+    if let Some(source) = source.filter(|source| !source.is_empty()) {
+        parts.push(source.to_owned());
+    }
+    parts.join(" · ")
+}
+
 fn language_name(code: &str) -> String {
     let base = code
         .split(['-', '_'])
@@ -5903,6 +5952,69 @@ Please read this before you distribute or use this work.\n";
     // -----------------------------------------------------------------
     // Parity: the same catalog, twice
     // -----------------------------------------------------------------
+
+    #[test]
+    fn same_title_shelf_captions_lead_with_the_distinguishing_edition() {
+        let mut english = publication("Poems", vec![]);
+        english.language = Some("en".into());
+        english.authors = vec!["An author".into()];
+        let mut french = english.clone();
+        french.language = Some("fr".into());
+        let books = vec![english.clone(), french.clone()];
+        if let Ok(directory) = std::env::var("KOBO_QUALITY_CAPTURE_DIR") {
+            kobo_text::install(CLARA_BW_METRICS).unwrap();
+            let app = app_with_stack(Feed {
+                publications: books.clone(),
+                ..Feed::default()
+            });
+            let context = kobo_sdk::Context::default();
+            let screen = app.shelf_screen(&context);
+            let metrics = context.metrics();
+            let diagnostics = screen.diagnostics(&metrics, &Chrome::with_back(true));
+            assert!(!diagnostics
+                .issues
+                .iter()
+                .any(|issue| issue.severity == DiagnosticSeverity::Error));
+            let mut surface = kobo_ui::Surface::new(
+                usize::try_from(metrics.width).unwrap(),
+                usize::try_from(metrics.height).unwrap(),
+            );
+            kobo_ui::render(&screen, &mut surface, None);
+            let png = kobo_image::encode_png_grey(
+                u32::try_from(metrics.width).unwrap(),
+                u32::try_from(metrics.height).unwrap(),
+                &surface.pixels,
+            )
+            .unwrap();
+            std::fs::create_dir_all(&directory).unwrap();
+            std::fs::write(
+                std::path::Path::new(&directory).join("language-choices.png"),
+                png,
+            )
+            .unwrap();
+        }
+        assert_eq!(
+            super::publication_caption(&english, &books, Some("Library")),
+            "English · An author · Library"
+        );
+        assert_eq!(
+            super::publication_caption(&french, &books, None),
+            "French · An author"
+        );
+        assert_eq!(
+            super::publication_caption(&english, &[english.clone()], None),
+            "An author"
+        );
+        french.language = None;
+        let books = vec![english.clone(), french.clone()];
+        assert!(
+            super::publication_caption(&french, &books, None).starts_with("Language not listed")
+        );
+        let mut later = english.clone();
+        later.issued = Some("2020".into());
+        let books = vec![english, later.clone()];
+        assert!(super::publication_caption(&later, &books, None).starts_with("2020"));
+    }
 
     #[test]
     fn edition_label_matches_the_download_and_preserves_language_variants() {
