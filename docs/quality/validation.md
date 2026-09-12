@@ -2256,3 +2256,11 @@ are not mistakenly painted in a larger font. Its real-title regression now
 passes. This supersedes the earlier note excluding that unfinished patch.
 
 Strict Clippy for all Lichess and UI targets also passes on Rust 1.85.1.
+
+Lichess checklist reconciliation: 107 app tests pass on e33fe681. Normal and
+170% screenshots show legible selected-square borders and legal-move dots.
+Authoritative acknowledgement and stale-state/reconnect fixture tests pass.
+LICHESS-03/04 are complete; remaining Lichess items stay open. No live API calls
+or moves were made in this check. PR 3 evidence:
+https://github.com/BandarLabs/Cobalt/tree/beta-quality-apps-2/docs/quality/evidence/lichess-todo-review
+Cross-PR tracker totals reconciled: 229 done, 266 open, one deferred.

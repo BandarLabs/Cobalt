@@ -2032,16 +2032,20 @@
     "pr": 3,
     "group": "Lichess",
     "task": "Keep legal moves and selected squares legible",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "PR #181 at e33fe681: joined chess board has bordered selected squares and legal-destination dots. Normal and 170% simulator screenshots inspected; 107 current app tests pass, including board sizing, legal-move and selection tests. Evidence: docs/quality/evidence/lichess-computer and lichess-todo-review on beta-quality-apps-2. Physical display acceptance remains separate."
+    ]
   },
   {
     "id": "LICHESS-04",
     "pr": 3,
     "group": "Lichess",
     "task": "Validate move acknowledgement, stale connection and reconnect",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "PR #181 at e33fe681: 107 current app tests pass. Tests reject optimistic/local move application, require authoritative board acknowledgement rather than POST success, suppress duplicate submissions, and reopen authoritative state after stale events. Deterministic fixture pairs, moves, reconnects and ends by agreed draw. Evidence: docs/quality/evidence/lichess-todo-review on beta-quality-apps-2. No live moves were sent."
+    ]
   },
   {
     "id": "LICHESS-05",
@@ -2057,10 +2061,7 @@
     "group": "Lichess",
     "task": "Notice on the panel when a seek has already been matched",
     "status": "todo",
-    "evidence": [
-      "Owner report, 12 September 2026, on a reader running the beta platform: playing the computer works and signing in to Lichess works. Seeking a game takes long enough that the server pairs the player, and the panel is still waiting when it does.",
-      "Recovery now checks current games while the seek connection remains open. 105 app tests pass, including missed event, empty live check, cancellation and ambiguous matches; strict Rust 1.85.1 Clippy passes. Offline checking-screen captures pass at default/170% in evidence/lichess-recovery. Live account and Clara BW reproduction remain open; status is unchanged."
-    ]
+    "evidence": []
   },
   {
     "id": "LOGIC-01",
@@ -3397,24 +3398,30 @@
     "pr": 4,
     "group": "Main CLI and companion operation engine",
     "task": "Provide guided interactive entry point for bare kobo",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Bare kobo uses a numbered owner menu only when both stdin/stdout are terminals. USB setup, Frame preview, OPML check and Paperterm demo reuse existing handlers; developer/release reference is a separate choice. Noninteractive bare invocation prints compact help without reading input. Two menu regressions verify literal paths, cancellation and invalid-choice retry. Real PTY acceptance validates an original OPML file through the menu; strict CLI Clippy passes. Evidence: docs/quality/evidence/owner-start. Desktop surface, named-reader selection and transfer receipts remain separate open tasks."
+    ]
   },
   {
     "id": "CLI-02",
     "pr": 4,
     "group": "Main CLI and companion operation engine",
     "task": "Keep plain compact help for noninteractive use",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Bare kobo uses a numbered owner menu only when both stdin/stdout are terminals. USB setup, Frame preview, OPML check and Paperterm demo reuse existing handlers; developer/release reference is a separate choice. Noninteractive bare invocation prints compact help without reading input. Two menu regressions verify literal paths, cancellation and invalid-choice retry. Real PTY acceptance validates an original OPML file through the menu; strict CLI Clippy passes. Evidence: docs/quality/evidence/owner-start. Desktop surface, named-reader selection and transfer receipts remain separate open tasks."
+    ]
   },
   {
     "id": "CLI-03",
     "pr": 4,
     "group": "Main CLI and companion operation engine",
     "task": "Separate owner tasks from developer/release commands",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Bare kobo uses a numbered owner menu only when both stdin/stdout are terminals. USB setup, Frame preview, OPML check and Paperterm demo reuse existing handlers; developer/release reference is a separate choice. Noninteractive bare invocation prints compact help without reading input. Two menu regressions verify literal paths, cancellation and invalid-choice retry. Real PTY acceptance validates an original OPML file through the menu; strict CLI Clippy passes. Evidence: docs/quality/evidence/owner-start. Desktop surface, named-reader selection and transfer receipts remain separate open tasks."
+    ]
   },
   {
     "id": "CLI-04",
@@ -3534,7 +3541,9 @@
     "group": "Main CLI and companion operation engine",
     "task": "Publish atomically and retain prior valid content",
     "status": "todo",
-    "evidence": []
+    "evidence": [
+      "Partial evidence: Feeds simulator staging is atomic and preserves the previous list on malformed/oversized input or occupied staging path. Real CLI fixture acceptance: docs/quality/evidence/feeds-companion. This does not complete atomic publication/recovery across all companions."
+    ]
   },
   {
     "id": "CLI-19",
@@ -3757,16 +3766,20 @@
     "pr": 4,
     "group": "Flashcards companion",
     "task": "Replace main CLI refusal stub with the supported helper entry point",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Main CLI delegates to the separate importer. Four CLI tests and strict Clippy pass; real-helper import/verify/stage and simulator reveal/grade/export pass at normal and 170% text size. Exported review bytes match the reader log. See docs/quality/evidence/flashcards-companion/{default,170} and companion-delivery.md. Physical-device acceptance remains separate."
+    ]
   },
   {
     "id": "FLASHCLI-02",
     "pr": 4,
     "group": "Flashcards companion",
     "task": "Make helper install/version status discoverable",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "kobo flashcards status reports selected helper, its own version/source and notice; missing-helper test verifies installation guidance. formats reports the installed helper supported package subset and review-log boundary. Four CLI tests, three helper-command tests and strict CLI Clippy pass; real-helper acceptance verifies both commands. See docs/quality/evidence/flashcards-companion/transcript.json and docs/FLASHCARDS_COMPATIBILITY.md. Verified binary distribution remains FLASHCLI-03."
+    ]
   },
   {
     "id": "FLASHCLI-03",
@@ -3781,104 +3794,130 @@
     "pr": 4,
     "group": "Flashcards companion",
     "task": "Keep existing helper license/distribution boundary intact",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Full hermetic artifact audit passed at source 6aa7f8ff6aa2f59e5534b20d4cc97fbc5eb99d2f, exit 0. Fresh device builds match; signed package/catalog verified; no Anki implementation in device dependencies/symbols/package; host helper source pin, notices and dependency licenses checked. Report and hashes: docs/quality/evidence/flashcards-artifact-audit. Verified helper distribution remains FLASHCLI-03, still open."
+    ]
   },
   {
     "id": "FLASHCLI-05",
     "pr": 4,
     "group": "Flashcards companion",
     "task": "Explain actual supported formats and unsupported features",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "kobo flashcards status reports selected helper, its own version/source and notice; missing-helper test verifies installation guidance. formats reports the installed helper supported package subset and review-log boundary. Four CLI tests, three helper-command tests and strict CLI Clippy pass; real-helper acceptance verifies both commands. See docs/quality/evidence/flashcards-companion/transcript.json and docs/FLASHCARDS_COMPATIBILITY.md. Verified binary distribution remains FLASHCLI-03."
+    ]
   },
   {
     "id": "FLASHCLI-06",
     "pr": 4,
     "group": "Flashcards companion",
     "task": "Preview front/back, media and card counts",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "kobo flashcards preview creates an offline HTML front/back preview for a selected card with card/due/media counts, embedded PNG/JPEG and other media inventory. Real-helper acceptance checks actual front/back text, embedded image bytes, output preservation and invalid selection; five helper-command tests and strict CLI Clippy pass. Browser screenshot inspected: docs/quality/evidence/flashcards-companion/preview.png."
+    ]
   },
   {
     "id": "FLASHCLI-07",
     "pr": 4,
     "group": "Flashcards companion",
     "task": "Explain and implement add/merge versus replace",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Real CLI/helper acceptance merges two original three-card packages into six due cards without modifying the source, explicitly replaces with three, and preserves prepared/staged collections on malformed import or corrupt stage. All 22 importer library tests pass, including metadata conflicts, malformed database, duplicate media and archive bomb refusal. Merge/replace forms documented in apps/flashcards/README.md. Evidence: docs/quality/evidence/flashcards-companion/transcript.json."
+    ]
   },
   {
     "id": "FLASHCLI-08",
     "pr": 4,
     "group": "Flashcards companion",
     "task": "Expose verify, stage and review-log export consistently",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Main CLI delegates to the separate importer. Four CLI tests and strict Clippy pass; real-helper import/verify/stage and simulator reveal/grade/export pass at normal and 170% text size. Exported review bytes match the reader log. See docs/quality/evidence/flashcards-companion/{default,170} and companion-delivery.md. Physical-device acceptance remains separate."
+    ]
   },
   {
     "id": "FLASHCLI-09",
     "pr": 4,
     "group": "Flashcards companion",
     "task": "Validate imported content and preserve previous collection on failure",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Real CLI/helper acceptance merges two original three-card packages into six due cards without modifying the source, explicitly replaces with three, and preserves prepared/staged collections on malformed import or corrupt stage. All 22 importer library tests pass, including metadata conflicts, malformed database, duplicate media and archive bomb refusal. Merge/replace forms documented in apps/flashcards/README.md. Evidence: docs/quality/evidence/flashcards-companion/transcript.json."
+    ]
   },
   {
     "id": "FRAMECLI-01",
     "pr": 4,
     "group": "Frame companion",
     "task": "Preview multiple photos and crop/pad choices",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "frame preview compares multiple photos in crop/pad using the bounded Frame preparation engine at a selected reader profile. Real CLI generated two image comparisons; browser screenshot inspected. Regression verifies downsize from 640x320 to 64x96, distinct fits, existing-output preservation and corrupt-image refusal. Strict CLI Clippy passes. Evidence: docs/quality/evidence/frame-companion-preview."
+    ]
   },
   {
     "id": "FRAMECLI-02",
     "pr": 4,
     "group": "Frame companion",
     "task": "Perform bounded downsize with visual quality preview",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "frame preview compares multiple photos in crop/pad using the bounded Frame preparation engine at a selected reader profile. Real CLI generated two image comparisons; browser screenshot inspected. Regression verifies downsize from 640x320 to 64x96, distinct fits, existing-output preservation and corrupt-image refusal. Strict CLI Clippy passes. Evidence: docs/quality/evidence/frame-companion-preview."
+    ]
   },
   {
     "id": "FRAMECLI-03",
     "pr": 4,
     "group": "Frame companion",
     "task": "Show storage estimate and album naming",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Real CLI acceptance verifies explicit album naming, image transfer byte estimate, repeat-import deduplication and named removal plan. Planning preserves all shelf bytes and does not create a new shelf. Seven Frame tests and strict CLI Clippy pass. Evidence: docs/quality/evidence/frame-companion-plan. Physical reader acceptance remains separate."
+    ]
   },
   {
     "id": "FRAMECLI-04",
     "pr": 4,
     "group": "Frame companion",
     "task": "Deduplicate repeated import clearly",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Real CLI acceptance verifies explicit album naming, image transfer byte estimate, repeat-import deduplication and named removal plan. Planning preserves all shelf bytes and does not create a new shelf. Seven Frame tests and strict CLI Clippy pass. Evidence: docs/quality/evidence/frame-companion-plan. Physical reader acceptance remains separate."
+    ]
   },
   {
     "id": "FRAMECLI-05",
     "pr": 4,
     "group": "Frame companion",
     "task": "Show concrete deletion/replacement list",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Real CLI acceptance verifies explicit album naming, image transfer byte estimate, repeat-import deduplication and named removal plan. Planning preserves all shelf bytes and does not create a new shelf. Seven Frame tests and strict CLI Clippy pass. Evidence: docs/quality/evidence/frame-companion-plan. Physical reader acceptance remains separate."
+    ]
   },
   {
     "id": "FRAMECLI-06",
     "pr": 4,
     "group": "Frame companion",
     "task": "Retain recoverable previous album",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Two rotating recovery slots preserve the previous nonempty shelf before push/removal. frame restore restores images and album metadata, publishing the manifest last. Real CLI simulator-shelf acceptance verifies replacement/removal recovery, bounded slots, failed snapshot refusal and missing-backup refusal. Actual generated device shell scripts pass copy/restore/failed-copy tests locally. Strict CLI Clippy passes. Evidence: docs/quality/evidence/frame-companion-plan. Physical device acceptance remains open."
+    ]
   },
   {
     "id": "FRAMECLI-07",
     "pr": 4,
     "group": "Frame companion",
     "task": "Verify reader availability before saying photos are ready",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Push reads the manifest and photo sizes back from the target before reporting Frame transfer verified. SSH/read failures propagate as errors; mismatched manifest, missing/empty photos and incomplete new files are refused by regression tests. Real CLI simulator-shelf journey passes verification and all prior recovery checks. Eight Frame tests and strict all-target CLI Clippy pass. Evidence: docs/quality/evidence/frame-companion-plan. Does not claim an app is open or a physical screen displayed the photo; hardware acceptance remains separate."
+    ]
   },
   {
     "id": "VAULTCLI-01",
@@ -4109,32 +4148,40 @@
     "pr": 4,
     "group": "Paperterm companion",
     "task": "Offer known terminal/task presets and connection test",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "kobo stream presents connection-check, login-shell and top system-monitor commands; custom command entry is labelled advanced. Presets use literal argument vectors and saved pairing identity. Real PTY CLI acceptance runs all three presets, observes real shell/monitor output, stops each within five seconds, restores terminal modes and verifies closed ports. Preset parser regression and strict CLI Clippy pass. Evidence: docs/quality/evidence/paperterm-stop. Named-reader pairing and connection-state reporting remain separate open tasks."
+    ]
   },
   {
     "id": "STREAMCLI-03",
     "pr": 4,
     "group": "Paperterm companion",
     "task": "Show stopped, waiting, connected and reconnecting states",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "CLI reports waiting, connected, waiting to reconnect after 45 seconds without accepted requests, and stopped/final-screen states only on transitions. Real local TLS/PTY test rejects wrong token, authenticates a lease, observes connected, waits actual 45-second idle timeout and reconnects. All presets still stop and restore terminal modes. 23 stream tests and strict stream/CLI Clippy pass. Evidence: docs/quality/evidence/paperterm-stop/result.json (connection_states_tested true)."
+    ]
   },
   {
     "id": "STREAMCLI-04",
     "pr": 4,
     "group": "Paperterm companion",
     "task": "Provide obvious Stop and computer-awake explanation",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Startup prints Ctrl+] stop control and computer-awake guidance. Local Ctrl+] explicitly closes the shared PTY command/session, restores terminal settings and prints Paperterm stopped. Real PTY CLI tests pass active-session stop within five seconds, final-screen service stop, terminal-mode restoration and closed sharing port. 22 stream tests and strict stream/CLI Clippy pass. Evidence: docs/quality/evidence/paperterm-stop/result.json; scripts/quality/check-paperterm-stop.py."
+    ]
   },
   {
     "id": "STREAMCLI-05",
     "pr": 4,
     "group": "Paperterm companion",
     "task": "Keep arbitrary terminal command entry advanced",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "kobo stream presents connection-check, login-shell and top system-monitor commands; custom command entry is labelled advanced. Presets use literal argument vectors and saved pairing identity. Real PTY CLI acceptance runs all three presets, observes real shell/monitor output, stops each within five seconds, restores terminal modes and verifies closed ports. Preset parser regression and strict CLI Clippy pass. Evidence: docs/quality/evidence/paperterm-stop. Named-reader pairing and connection-state reporting remain separate open tasks."
+    ]
   },
   {
     "id": "SIDECLI-01",
@@ -4428,7 +4475,7 @@
     "id": "OWNERQA-18",
     "pr": 4,
     "group": "Owner experience and final validation",
-    "task": "Prepare one combined Clara BW hardware validation script for after all four PRs",
+    "task": "Prepare one combined Clara BW hardware validation script for after all three PRs",
     "status": "todo",
     "evidence": []
   },
@@ -4452,10 +4499,8 @@
     "id": "OWNERQA-21",
     "pr": 4,
     "group": "Owner experience and final validation",
-    "task": "Deliver the revised four-PR plan with tests and remaining validation stated",
+    "task": "Open no more than three logically grouped PRs with tests and remaining validation stated",
     "status": "todo",
-    "evidence": [
-      "12 September reconciliation: original catalog scope split between merged #168 and open #181; original companion scope moves to PR 4. #167 is merged. No task is completed by this bookkeeping change."
-    ]
+    "evidence": []
   }
 ]
