@@ -49,8 +49,12 @@ commands without changing configuration.
 
 `setup AGENT --dry-run` previews the change. `setup --dry-run` retains the
 preview of all detected integrations. `setup AGENT --print` prints manual
-configuration. Explicit setup preserves the existing merge and backup
-behavior. Help (`--help`, `-h`, or `help`) returns success; subcommand help is
+configuration. Explicit setup merges the selected hooks with the existing configuration.
+Before replacement it saves the previous file as `.json.bak`, then
+`.json.bak.1`, `.json.bak.2` and so on, without overwriting earlier backups.
+New configuration is written and synced to a staging file before publication.
+An occupied staging file or invalid existing JSON stops setup and preserves
+the original. Repeating an already completed setup creates no extra backup. Help (`--help`, `-h`, or `help`) returns success; subcommand help is
 also available without initializing pairing, starting listeners or installing
 hooks.
 

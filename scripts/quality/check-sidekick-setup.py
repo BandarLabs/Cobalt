@@ -20,6 +20,11 @@ for suffix in (['--help'], ['-h'], ['help'], ['setup', '--help'], ['init', '-h']
                ['run', '--help'], ['hook', '--help'], ['agents', '-h']):
     result = subprocess.run([helper, *suffix], capture_output=True, text=True, timeout=5)
     assert result.returncode == 0 and 'usage:' in result.stdout and not result.stderr
+for integration in ('claude', 'codex'):
+    printed = subprocess.run([helper, 'setup', integration, '--print'],
+                             capture_output=True, text=True, timeout=5)
+    assert printed.returncode == 0 and 'PermissionRequest' in printed.stdout
+    assert 'Add to ~/' in printed.stdout and not printed.stderr
 missing = subprocess.run([helper], capture_output=True, text=True, timeout=5)
 assert missing.returncode != 0
 plain = subprocess.run([helper, 'setup'], input='', capture_output=True, text=True, timeout=5)
@@ -55,7 +60,7 @@ args.output.mkdir(parents=True, exist_ok=True)
     'checks': ['eight help invocations exit successfully', 'missing arguments remain an error',
                'redirected setup shows status and leaves configuration unchanged',
                'real terminal displays integrations, retries invalid number and cancels'],
-    'hook_installation_tested': False}, indent=2)+'\n')
+    'printed_configuration_checked': ['claude', 'codex'], 'hook_installation_tested': False}, indent=2)+'\n')
 
 lines = transcript.decode().splitlines()
 svg = '<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="%d"><rect width="100%%" height="100%%" fill="#fafafa"/><g font-family="monospace" font-size="14" fill="#171717">' % (len(lines)*24+48)

@@ -4220,8 +4220,12 @@
     "pr": 4,
     "group": "Sidekick companion",
     "task": "Preserve dry-run, printed configuration and backups",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Dry-run and manual printed configuration retained. Setup stages and syncs merged configuration before rename and creates exclusively named backups without overwriting prior copies.",
+      "52 helper tests and strict all-target Clippy passed. Fixture lifecycle verifies dry-run leaves files untouched, occupied staging preserves original, idempotent setup makes no backup, later setup retains both historical backups, and malformed JSON is unchanged.",
+      "docs/quality/evidence/sidekick-setup/result.json: actual helper prints manual configuration for both integrations; real terminal and help acceptance remain passing. User hook installation was not performed."
+    ]
   },
   {
     "id": "SIDECLI-04",

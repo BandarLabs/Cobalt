@@ -2282,3 +2282,21 @@ checked eight help forms and the noninteractive setup behavior, and retained
 missing-argument errors. No user hook configuration was written. Evidence:
 `evidence/sidekick-setup/result.json`, terminal transcript and rendered chooser.
 The full helper lifecycle, sample event and reader acceptance remain open.
+
+
+### Sidekick configuration recovery (SIDECLI-03)
+
+Setup retains dry-run and printed configuration. Publication now stages and
+syncs the new file, saves the exact previous bytes to a newly reserved backup,
+and renames the stage over the destination. Numbered backups preserve prior
+copies. An occupied staging file is refused; repeat setup already containing
+the hook remains a no-op.
+
+All 52 helper tests and strict all-target Clippy passed. The private fixture
+lifecycle covers unchanged dry-run, staging collision and retry, repeated
+setup, retained older backups, preserved owner settings and malformed JSON.
+Actual helper acceptance checks printed configuration for both supported
+integrations and repeats the terminal/help checks. Evidence:
+`evidence/sidekick-setup/result.json`; filesystem regression:
+`setup_preview_backup_retry_and_invalid_config_preserve_owner_files`.
+No user's integration configuration was modified during validation.
