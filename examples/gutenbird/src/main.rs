@@ -48,6 +48,7 @@ use kobo_sdk::{
     TileShape, TileState, MAX_STORE_VALUE,
 };
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::fmt::Write as _;
 use std::process::ExitCode;
 
 /// The catalogs built in, and the only place any of them is named.
@@ -1842,7 +1843,7 @@ impl Gutenbird {
                 label.push_str(" · Sample");
             }
             if let Some(length) = acquisition.length {
-                label.push_str(&format!(" · {} KB", length.div_ceil(1024)));
+                let _ = write!(label, " · {} KB", length.div_ceil(1024));
             }
             if self
                 .open

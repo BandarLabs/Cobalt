@@ -996,7 +996,7 @@ mod tests {
                 pending: Some(Pending::Search),
                 ..Verses::default()
             };
-            let mut runner = AppRunner::new(Verses::default());
+            let runner = AppRunner::new(Verses::default());
             app.on_task(&mut runner.context(), TaskId(1), TaskOutcome::Failed(error));
             let notice = app.notice.clone().unwrap_or_default();
             assert!(
@@ -1017,7 +1017,7 @@ mod tests {
             pending: Some(Pending::Search),
             ..Verses::default()
         };
-        let mut runner = AppRunner::new(Verses::default());
+        let runner = AppRunner::new(Verses::default());
         app.on_task(
             &mut runner.context(),
             TaskId(1),
