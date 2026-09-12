@@ -2057,7 +2057,9 @@
     "group": "Lichess",
     "task": "Notice on the panel when a seek has already been matched",
     "status": "todo",
-    "evidence": []
+    "evidence": [
+      "Owner report, 12 September 2026, on a reader running the beta platform: playing the computer works and signing in to Lichess works. Seeking a game takes long enough that the server pairs the player, and the panel is still waiting when it does."
+    ]
   },
   {
     "id": "LOGIC-01",
