@@ -1,0 +1,257 @@
+{
+  "paints": 10,
+  "nodes": [
+    {
+      "kind": "StatusBand",
+      "x": 0,
+      "y": 0,
+      "width": 1072,
+      "height": 59,
+      "centre": {
+        "x": 536,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusClock",
+      "x": 47,
+      "y": 0,
+      "width": 78,
+      "height": 59,
+      "centre": {
+        "x": 86,
+        "y": 29
+      },
+      "action": null,
+      "lines": [
+        "23:09"
+      ]
+    },
+    {
+      "kind": "StatusBattery(Some(Percent(72)), false)",
+      "x": 955,
+      "y": 12,
+      "width": 70,
+      "height": 35,
+      "centre": {
+        "x": 990,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusSignal(Off)",
+      "x": 896,
+      "y": 12,
+      "width": 35,
+      "height": 35,
+      "centre": {
+        "x": 913,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusBluetooth",
+      "x": 837,
+      "y": 12,
+      "width": 35,
+      "height": 35,
+      "centre": {
+        "x": 854,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "TopBar",
+      "x": 0,
+      "y": 59,
+      "width": 1072,
+      "height": 100,
+      "centre": {
+        "x": 536,
+        "y": 109
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Back",
+      "x": 47,
+      "y": 59,
+      "width": 100,
+      "height": 100,
+      "centre": {
+        "x": 97,
+        "y": 109
+      },
+      "action": 4294967295,
+      "lines": []
+    },
+    {
+      "kind": "BarAction(ActionId(693242804))",
+      "x": 862,
+      "y": 59,
+      "width": 163,
+      "height": 100,
+      "centre": {
+        "x": 943,
+        "y": 109
+      },
+      "action": 693242804,
+      "lines": [
+        "Pairing"
+      ]
+    },
+    {
+      "kind": "BarAction(ActionId(503208485))",
+      "x": 638,
+      "y": 59,
+      "width": 200,
+      "height": 100,
+      "centre": {
+        "x": 738,
+        "y": 109
+      },
+      "action": 503208485,
+      "lines": [
+        "Keyboard"
+      ]
+    },
+    {
+      "kind": "TopBarTitle",
+      "x": 171,
+      "y": 86,
+      "width": 443,
+      "height": 46,
+      "centre": {
+        "x": 392,
+        "y": 109
+      },
+      "action": null,
+      "lines": [
+        "Paperterm"
+      ]
+    },
+    {
+      "kind": "Divider",
+      "x": 0,
+      "y": 159,
+      "width": 1072,
+      "height": 4,
+      "centre": {
+        "x": 536,
+        "y": 161
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Secondary",
+      "x": 47,
+      "y": 175,
+      "width": 978,
+      "height": 35,
+      "centre": {
+        "x": 536,
+        "y": 192
+      },
+      "action": null,
+      "lines": [
+        "Reconnecting \u00b7 Keyboard"
+      ]
+    },
+    {
+      "kind": "Banner(Attention)",
+      "x": 47,
+      "y": 222,
+      "width": 978,
+      "height": 94,
+      "centre": {
+        "x": 536,
+        "y": 269
+      },
+      "action": null,
+      "lines": [
+        "Connection lost. Reconnecting."
+      ]
+    },
+    {
+      "kind": "TerminalGrid",
+      "x": 47,
+      "y": 328,
+      "width": 975,
+      "height": 1050,
+      "centre": {
+        "x": 534,
+        "y": 853
+      },
+      "action": null,
+      "lines": [
+        "PTY True True",
+        "READY> SIZE 75 47",
+        "SIZE 75 25",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        ""
+      ]
+    },
+    {
+      "kind": "TerminalCursor",
+      "x": 47,
+      "y": 403,
+      "width": 13,
+      "height": 25,
+      "centre": {
+        "x": 53,
+        "y": 415
+      },
+      "action": null,
+      "lines": [
+        " "
+      ]
+    }
+  ]
+}

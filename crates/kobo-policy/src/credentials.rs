@@ -11,6 +11,8 @@ use std::fs;
 use std::io::Write;
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 
+#[path = "miniflux_credentials.rs"]
+mod miniflux;
 #[path = "credential_servers.rs"]
 pub mod servers;
 use std::path::{Path, PathBuf};
@@ -243,7 +245,13 @@ pub fn allowed_request_with_server(
 ) -> bool {
     server.map_or_else(
         || allowed_request(app, credential, url, usage, body, content_type),
-        |server| servers::allowed(app, credential, server, url, usage),
+        |server| {
+            if app == "rss-miniflux" {
+                miniflux::allowed(credential, server, url, usage, body, content_type)
+            } else {
+                servers::allowed(app, credential, server, url, usage)
+            }
+        },
     )
 }
 
@@ -269,6 +277,11 @@ pub fn allowed_request(
     }
     if let Some(allowed) = store_app_credential_allowed(app, credential, url, usage) {
         return allowed;
+    }
+    // Historical fixed-provider policies predate update tasks. None grants
+    // PUT/PATCH; never inherit their existing GET/POST destination authority.
+    if matches!(usage, CredentialUse::Put | CredentialUse::Patch) {
+        return false;
     }
     if app == "audiobook" {
         return match (&*credential.secret, &credential.header) {
@@ -360,6 +373,7 @@ fn lichess_credential_allowed(
             content_type == Some("application/x-www-form-urlencoded")
                 && body.is_some_and(|body| lichess_post(&target.path, body))
         }
+        CredentialUse::Put | CredentialUse::Patch => false,
     }
 }
 
@@ -448,6 +462,7 @@ fn store_app_credential_allowed(
                         CredentialUse::Post => {
                             path.ends_with("/api/template") || path.contains("/api/services/")
                         }
+                        CredentialUse::Put | CredentialUse::Patch => false,
                     }
                 })
         }
@@ -483,6 +498,7 @@ fn store_app_credential_allowed(
                 && parsed_path(url).is_some_and(|path| match usage {
                     CredentialUse::Fetch => clean_path(&path).ends_with("/letters"),
                     CredentialUse::Post => clean_path(&path).ends_with("/replies"),
+                    CredentialUse::Put | CredentialUse::Patch => false,
                 })
         }
         "readlater" => {
@@ -495,6 +511,7 @@ fn store_app_credential_allowed(
                             || wallabag_entry_document(&path)
                     }
                     CredentialUse::Post => wallabag_entry_document(&path),
+                    CredentialUse::Put | CredentialUse::Patch => false,
                 })
         }
         "rss-miniflux" => {
@@ -507,7 +524,7 @@ fn store_app_credential_allowed(
                     CredentialUse::Fetch => {
                         clean_path(&path).ends_with("/v1/entries") && path.contains("status=unread")
                     }
-                    CredentialUse::Post => clean_path(&path).ends_with("/v1/entries"),
+                    CredentialUse::Post | CredentialUse::Put | CredentialUse::Patch => false,
                 })
         }
         _ => return None,
@@ -1122,6 +1139,60 @@ mod tests {
                 url,
                 CredentialUse::Fetch
             ), "accepted {url}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod update_method_tests {
+    use super::*;
+
+    #[test]
+    fn existing_provider_grants_do_not_authorize_update_methods() {
+        for (app, credential, url) in [
+            (
+                "chat",
+                Credential::bearer("openai"),
+                "https://api.openai.com/v1/chat/completions",
+            ),
+            (
+                "chat",
+                Credential::in_header("anthropic", "x-api-key"),
+                "https://api.anthropic.com/v1/messages",
+            ),
+            (
+                "audiobook",
+                Credential::bearer("openai"),
+                "https://api.openai.com/v1/responses",
+            ),
+            (
+                "readlater",
+                Credential::bearer("wallabag"),
+                "https://wallabag.example/api/entries/7.json",
+            ),
+            (
+                "homepanel",
+                Credential::bearer("homeassistant"),
+                "https://home.example/api/services/light/turn_on",
+            ),
+        ] {
+            assert!(
+                allowed(app, &credential, url, CredentialUse::Post),
+                "existing grant for {app}"
+            );
+            for usage in [CredentialUse::Put, CredentialUse::Patch] {
+                assert!(
+                    !allowed_request(
+                        app,
+                        &credential,
+                        url,
+                        usage,
+                        Some("{}"),
+                        Some("application/json")
+                    ),
+                    "inherited {usage:?} grant for {app}"
+                );
+            }
         }
     }
 }

@@ -57,6 +57,18 @@ const MAX_REPLY: u32 = 16 * 1024;
 /// is noticed before anyone walks over to check.
 const NAP_SECONDS: u32 = 10;
 
+/// How long to wait after an answer that was not a question before asking
+/// again.
+///
+/// The daemon holds a poll open for [`POLL_WAIT`] seconds when nothing is
+/// waiting, so this costs nothing in the ordinary case. It matters in the two
+/// where the daemon answers straight away: an older daemon that does not hold
+/// the request, and a board of questions, which the daemon can answer as fast
+/// as it is asked. Either way the loop ran flat out -- three hundred and sixty
+/// requests in ten seconds with the panel sitting still -- on a device whose
+/// radio is the largest single draw on its battery.
+const BETWEEN_POLLS: u32 = 2;
+
 /// The most characters of a command drawn on the panel. Enough to read
 /// almost any real command whole; past this the reader should be at the
 /// terminal anyway, and the tail is marked rather than silently missing.
@@ -163,7 +175,14 @@ impl Sidekick {
         let mut screen = ScreenBuilder::new("sidekick-address")
             .top_bar(TITLE)
             .heading("Pair with your computer")
-            .text("Open Sidekick in the Cobalt desktop app, then enter the address shown.");
+            // The command, by name. "Open Sidekick in the Cobalt desktop app"
+            // is true and useless: the thing that has to happen is that a
+            // daemon is running on the computer, and this is what starts it
+            // and prints the two things this screen is about to ask for.
+            .text(
+                "On your computer, run kobo-sidekickd init. It prints an address and a \
+                 six-character code.",
+            );
         if let Some(trouble) = &self.trouble {
             screen = screen.banner(BannerLevel::Attention, trouble.clone());
         }
@@ -179,11 +198,11 @@ impl Sidekick {
         let mut screen = ScreenBuilder::new("sidekick-code")
             .top_bar(TITLE)
             .heading("Now the pairing code")
-            .text(format!(
-                "Enter the six-character code shown beside {}. This keeps \
-                 your answers private.",
-                self.address
-            ));
+            // Short on purpose. The address is as long as somebody's network
+            // makes it, and a sentence built around it ran off the panel at
+            // the larger text sizes with a keyboard already taking the bottom
+            // half: the renderer refused the screen and pairing stopped dead.
+            .text("The six characters shown beside the address.");
         if let Some(trouble) = &self.trouble {
             screen = screen.banner(BannerLevel::Attention, trouble.clone());
         }
@@ -203,13 +222,21 @@ impl Sidekick {
 
     /// Paired and quiet. Painted when the state changes, never per poll.
     fn watching(&self) -> Screen {
+        // The splash carries its sentence only while it is the whole screen.
+        // With a last answer and a pairing under it as well, the four lines
+        // of subtitle at 170% left the rest of the panel with less room than
+        // its own words needed, and the renderer refused the screen: a reader
+        // who had just answered a question saw nothing at all.
         let mut screen = ScreenBuilder::new("sidekick-watching")
             .top_bar(TITLE)
             .splash(
                 Some(Glyph::Circle),
                 "Watching",
-                "Questions from your coding agents appear here the moment \
-                 they ask.",
+                if self.last.is_some() {
+                    String::new()
+                } else {
+                    "Questions from your coding agents appear here the moment they ask.".to_owned()
+                },
             );
         if let Some(trouble) = &self.trouble {
             screen = screen.banner(BannerLevel::Attention, trouble.clone());
@@ -256,7 +283,11 @@ impl Sidekick {
         let mut screen = ScreenBuilder::new("sidekick-asking")
             .top_bar(TITLE)
             .heading(format!("{} asks", agent_name(&ask.source)))
-            .byline(0, ask.tool.clone())
+            // Which terminal, on which computer. With a fleet of agents the
+            // question "who is asking" is the first one a reader has, and the
+            // board says it on every row while the question itself used to
+            // say only what tool was being run.
+            .byline(0, self.asked_by(ask))
             .quote(0, trimmed(&ask.detail));
         if let Some(trouble) = &self.trouble {
             screen = screen.banner(BannerLevel::Attention, trouble.clone());
@@ -301,6 +332,21 @@ impl Sidekick {
             screen = screen.button(ALLOW, "Allow").button(DENY, "Deny");
         }
         screen.button(IGNORE, "Leave it for the terminal").build()
+    }
+
+    /// Who is asking: the tool, the terminal it is running in, and the
+    /// computer this reader is paired with.
+    fn asked_by(&self, ask: &Ask) -> String {
+        let mut line = ask.tool.clone();
+        let session = session_suffix(ask);
+        if !session.is_empty() {
+            line.push_str(&session);
+        }
+        if !self.address.is_empty() {
+            line.push_str(" \u{b7} ");
+            line.push_str(&self.address);
+        }
+        line
     }
 
     /// Starts the next long poll. One in flight at a time, always.
@@ -372,12 +418,18 @@ impl Sidekick {
         };
         if let Some(task) = context.spawn(work) {
             self.answer = Some(task);
-            self.last = Some(format!(
+            // Cut to what the panel will actually hold rather than to a
+            // character count: sixty characters is a line and a half at the
+            // default text size and four lines at 170%, where the renderer
+            // refused the whole screen and a reader who had just answered
+            // saw nothing at all.
+            let sentence = format!(
                 "{} {} for {}.",
                 decided(choice),
                 trimmed_to(&ask.detail, 60),
                 agent_name(&ask.source)
-            ));
+            );
+            self.last = Some(context.clamped_row(&sentence, 2, false));
             self.view = View::Sending;
             self.trouble = None;
             self.show(context);
@@ -413,13 +465,22 @@ impl Sidekick {
                     self.board = asks;
                     self.view = View::Board;
                     self.show(context);
-                    self.poll(context);
+                    // The board is refreshed, not watched: the daemon answers
+                    // at once while questions are waiting, so asking again
+                    // immediately is a loop with a picture of a list on it.
+                    self.nap = context.spawn(Task::Sleep {
+                        seconds: BETWEEN_POLLS,
+                    });
                     return;
                 }
                 if repaint {
                     self.show(context);
                 }
-                self.poll(context);
+                // Nothing waiting. Asking again is right; asking again this
+                // instant is a loop.
+                self.nap = context.spawn(Task::Sleep {
+                    seconds: BETWEEN_POLLS,
+                });
             }
             TaskOutcome::Failed(error) => {
                 self.trouble = Some(Failure::of(error).advice.to_owned());
@@ -796,7 +857,7 @@ impl KoboApp for Sidekick {
             self.on_answer(context, &outcome);
         } else if self.nap == Some(task) {
             self.nap = None;
-            if self.view == View::Watching {
+            if matches!(self.view, View::Watching | View::Board) {
                 self.poll(context);
             }
         }
@@ -829,7 +890,72 @@ mod tests {
         action_id, ActionId, Command, Context, KoboApp, Screen, StoreRequest, StoreResult, Task,
         TaskId, TaskOutcome,
     };
-    use kobo_ui::{Chrome, CLARA_BW_METRICS};
+    use kobo_ui::{Chrome, DiagnosticSeverity, DisplayMetrics, TextScale, CLARA_BW_METRICS};
+
+    /// Every screen this application draws, with something on each of them.
+    fn every_screen() -> Vec<(String, Screen)> {
+        let (mut app, _) = paired();
+        let mut screens = vec![("watching".to_owned(), app.screen())];
+        // And the same screen after an answer, which is the one that has
+        // something under the splash as well as beside it.
+        app.last = Some("Allowed rm -rf target && cargo build --release for Claude Code.".into());
+        screens.push(("watching-after-an-answer".to_owned(), app.screen()));
+        // As long as somebody's network makes it. A screen built around a
+        // short address in a test is a screen that fits only in the test.
+        app.address = "192.168.100.199:29331".to_owned();
+        app.view = View::Address;
+        screens.push(("address".to_owned(), app.screen()));
+        app.view = View::Code;
+        screens.push(("code".to_owned(), app.screen()));
+        app.view = View::Sending;
+        screens.push(("sending".to_owned(), app.screen()));
+        let mut asking = paired().0;
+        asking.on_task(
+            &mut Context::default(),
+            asking.poll.expect("a poll"),
+            question(
+                1,
+                "rm -rf ~/src/project/target && cargo build --release --locked",
+            ),
+        );
+        screens.push(("asking".to_owned(), asking.screen()));
+        let mut board = paired().0;
+        board.on_task(
+            &mut Context::default(),
+            board.poll.expect("a poll"),
+            fleet(),
+        );
+        screens.push(("board".to_owned(), board.screen()));
+        screens
+    }
+
+    #[test]
+    fn every_screen_fits_the_panel_at_every_text_size() {
+        // The pairing screens are the ones at risk: a heading, a paragraph and
+        // a raised keyboard fit at the default size and are refused outright
+        // at the largest, which leaves a reader who has turned the type up
+        // with a blank panel and no way to pair at all.
+        let mut failures = Vec::new();
+        for scale in TextScale::STEPS {
+            let metrics = DisplayMetrics {
+                text_scale: scale,
+                ..CLARA_BW_METRICS
+            };
+            for (name, screen) in every_screen() {
+                let errors = screen
+                    .diagnostics(&metrics, &Chrome::measuring(false))
+                    .issues
+                    .into_iter()
+                    .filter(|issue| issue.severity == DiagnosticSeverity::Error)
+                    .map(|issue| format!("{:?}", issue.kind))
+                    .collect::<Vec<_>>();
+                if !errors.is_empty() {
+                    failures.push(format!("{scale:?} {name}: {errors:?}"));
+                }
+            }
+        }
+        assert!(failures.is_empty(), "{failures:#?}");
+    }
 
     fn act(app: &mut Sidekick, action: ActionId) -> Vec<Command> {
         let mut context = Context::default();
@@ -901,6 +1027,28 @@ mod tests {
             .iter()
             .flat_map(|node| node.text_lines.clone())
             .collect()
+    }
+
+    /// Two terminals asking at once, which is what a fleet looks like.
+    fn fleet() -> TaskOutcome {
+        TaskOutcome::Completed(
+            r#"{"version":"4","asks":[
+                {"id":1,"source":"claude","session":"cobalt ab12","tool":"Bash","detail":"cargo test --workspace"},
+                {"id":2,"source":"codex","session":"notes cd34","tool":"shell","detail":"git push --force-with-lease"}
+            ]}"#
+            .as_bytes()
+            .to_vec(),
+        )
+    }
+
+    /// One question from a terminal that names itself.
+    fn one_of_the_fleet() -> TaskOutcome {
+        TaskOutcome::Completed(
+            r#"{"ask":{"id":1,"source":"claude","session":"cobalt ab12","tool":"Bash",
+                "detail":"cargo test --workspace"}}"#
+                .as_bytes()
+                .to_vec(),
+        )
     }
 
     fn question(id: u32, detail: &str) -> TaskOutcome {
@@ -1108,8 +1256,10 @@ mod tests {
         assert!(fetched(&commands).is_none(), "polled before pairing");
         let lines = shown(&painted(&commands).expect("a screen"));
         assert!(
-            lines.iter().any(|line| line.contains("Cobalt desktop app")),
-            "the screen never says where the address comes from: {lines:?}"
+            lines
+                .iter()
+                .any(|line| line.contains("kobo-sidekickd init")),
+            "the screen never says what to run to get an address: {lines:?}"
         );
     }
 
@@ -1278,10 +1428,18 @@ mod tests {
         let mut context = Context::default();
         app.on_task(&mut context, poll, TaskOutcome::Completed(b"{}".to_vec()));
         let commands = context.take_commands();
-        assert!(fetched(&commands).is_some(), "the loop stopped");
+        // A breath first. The daemon holds a poll open when nothing is
+        // waiting, so an empty answer means it answered early, and asking
+        // again the same instant is a loop rather than a watch.
+        let nap = slept(&commands).expect("the loop stopped");
         assert!(
             painted(&commands).is_none(),
             "an empty poll repainted an unchanged screen"
+        );
+        app.on_task(&mut context, nap, TaskOutcome::Completed(Vec::new()));
+        assert!(
+            fetched(&context.take_commands()).is_some(),
+            "the loop did not start again after the nap"
         );
     }
 
@@ -1493,6 +1651,45 @@ mod tests {
                 .any(|line| line.contains("Left at the terminal")),
             "{lines:?}"
         );
+    }
+
+    #[test]
+    fn a_question_says_which_terminal_on_which_computer_is_asking() {
+        // With one agent the tool was enough. With three of them on two
+        // machines, "shell asks" is not a question anybody can answer.
+        let (mut app, poll) = paired();
+        let mut context = Context::default();
+        app.on_task(&mut context, poll, one_of_the_fleet());
+        let lines = shown(&painted(&context.take_commands()).expect("a screen"));
+        let byline = lines
+            .iter()
+            .find(|line| line.contains("Bash"))
+            .unwrap_or_else(|| panic!("no byline in {lines:?}"));
+        assert!(byline.contains("cobalt ab12"), "{byline}");
+        assert!(byline.contains("192.168.1.5:9331"), "{byline}");
+    }
+
+    #[test]
+    fn two_terminals_asking_at_once_are_both_on_the_board_with_their_own_answers() {
+        let (mut app, poll) = paired();
+        let mut context = Context::default();
+        app.on_task(&mut context, poll, fleet());
+        assert_eq!(app.view, View::Board);
+        let lines = shown(&painted(&context.take_commands()).expect("a screen"));
+        let said = lines.join(" | ");
+        assert!(said.contains("cobalt ab12"), "{said}");
+        assert!(said.contains("notes cd34"), "{said}");
+        assert!(said.contains("cargo test --workspace"), "{said}");
+        assert!(said.contains("git push --force-with-lease"), "{said}");
+
+        // Opening one of them answers that one and nothing else: the other
+        // terminal is still waiting on the daemon.
+        let commands = act(&mut app, action_id(&super::board_action(1)));
+        assert_eq!(app.view, View::Asking);
+        assert_eq!(app.ask.as_ref().map(|ask| ask.id), Some(2));
+        let drawn = shown(&painted(&commands).expect("a screen")).join(" | ");
+        assert!(drawn.contains("git push --force-with-lease"), "{drawn}");
+        assert!(!drawn.contains("cargo test --workspace"), "{drawn}");
     }
 
     #[test]

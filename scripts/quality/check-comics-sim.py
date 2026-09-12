@@ -2,6 +2,7 @@
 """Drive Panels against original local fixtures in isolated simulator storage."""
 import argparse
 import io
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -42,23 +43,41 @@ def main():
     parser.add_argument('--scale', default='default')
     parser.add_argument('--profile', default='clara-bw-391')
     parser.add_argument('--reader-tools', action='store_true', help='Exercise shared controls, RTL, spreads and process restart')
+    parser.add_argument('--server-setup', action='store_true', help='Check address save recovery and private account entry without contacting a server')
+    parser.add_argument('--onboarding', action='store_true', help='Exercise USB help and the bundled sample, including restart')
+    parser.add_argument('--shelf-previews', action='store_true', help='Check saved shelf progress and cover-cache eviction with the original sample; requires --onboarding')
+    parser.add_argument('--download-recovery', action='store_true', help='Recover a completed original CBZ checkpoint offline, including storage failure')
     parser.add_argument('--cbr', action='store_true', help='Check explicit CBR refusal')
     parser.add_argument('--colour', action='store_true', help='Inspect original RGB artwork on color and grayscale profiles')
     args = parser.parse_args()
+    if args.shelf_previews and not args.onboarding:
+        parser.error('--shelf-previews requires --onboarding')
     args.output.mkdir(parents=True, exist_ok=True)
-    binary = ROOT / 'target/debug/kobo'
+    target = Path(os.environ.get('CARGO_TARGET_DIR', str(ROOT / 'target'))).resolve()
+    binary = target / 'debug/kobo'
     if not binary.is_file():
         parser.error('Build kobo-cli before running this check.')
     process = None
     with tempfile.TemporaryDirectory(prefix='cq-comic-', dir='/tmp') as private:
-        env = dict(os.environ, TMPDIR=private, CARGO_TARGET_DIR=str(ROOT/'target'),
+        env = dict(os.environ, TMPDIR=private, CARGO_TARGET_DIR=str(target),
                    CARGO_PROFILE_DEV_DEBUG='0', CARGO_INCREMENTAL='0',
                    KOBO_SIM_PROFILE=args.profile, KOBO_TEXT_SCALE=args.scale,
                    KOBO_SIM_FIXTURE="original-geometric-comic", KOBO_SIM_SEED="0",
                    KOBO_SIM_CLOCK_MILLIS="1788850860000", KOBO_SIM_UTC_OFFSET_MINUTES="0")
         storage = Path(private)/'cobalt-sim-data/panels'
         storage.mkdir(parents=True)
-        (storage/'volume.cbz').write_bytes(b'Rar!\x1a\x07\x01\x00' if args.cbr else comic_bytes(args.colour))
+        fixture = b'Rar!\x1a\x07\x01\x00' if args.cbr else comic_bytes(args.colour)
+        (storage/'volume.cbz').write_bytes(fixture)
+        comic_key = hashlib.sha256(fixture).hexdigest()
+        if args.download_recovery:
+            completed = (ROOT/'apps/panels/assets/a-small-garden.cbz').read_bytes()
+            completed_key = hashlib.sha256(completed).hexdigest()
+            (storage/'partial-a.cbz').write_bytes(completed)
+            state = Path(private)/'cobalt-sim-state/panels'
+            state.mkdir(parents=True)
+            (state/'partial').write_text(json.dumps(dict(schema='panels.download', version=1, payload=dict(
+                key='garden.cbz', title='A small garden', url='https://example.com/garden.cbz',
+                slot='0', bytes=str(len(completed)), digest=completed_key, complete=True))))
         log_path = args.output/'simulator.log'
         with log_path.open('w') as log:
             try:
@@ -106,7 +125,8 @@ def main():
                 def capture(label):
                     # Await application responses, then check frame reads themselves do not mutate history.
                     drive('wait-idle')
-                    drive('expect-state /activity#/effects/post 0')
+                    for method in ('post', 'put', 'patch'):
+                        drive(f'expect-state /activity#/effects/{method} 0')
                     drive('expect-state /activity#/effects/fetch 0')
                     before = json.loads(get('simulation'))
                     for _ in range(8):
@@ -131,11 +151,147 @@ def main():
                     (args.output/(label+'.json')).write_text(json.dumps(data, indent=2)+'\n')
                     errors = [issue for issue in diagnostics['issues'] if issue['severity'] == 'error']
                     assert not errors, f'{label}: {errors}'
-                    return json.dumps(layout)
+                    return '\n'.join(' '.join(node.get('lines', [])) for node in layout['nodes'])
 
-                wait_for('Open added comic')
+                if args.download_recovery:
+                    drive('wait-for-id retry')
+                    wait_for('Download complete')
+                    capture('40-completed-download')
+                    drive('scenario storage-full')
+                    drive('tap-id retry')
+                    drive('wait-for-id import-retry')
+                    capture('41-download-save-failed')
+                    assert (state/'partial').read_bytes(), 'Failed copy erased the completed checkpoint'
+                    drive('scenario normal')
+                    drive('tap-id import-retry')
+                    wait_for('Available on this reader')
+                    capture('42-download-receipt')
+                    assert (storage/completed_key).read_bytes() == completed
+                    assert not (state/'partial').read_bytes(), 'Acknowledged import left an active checkpoint'
+                    assert not (storage/'partial-a.cbz').exists()
+                    drive('tap Back')
+                    drive('wait-for-id kept-' + completed_key)
+                    capture('43-recovered-library')
+                    os.killpg(process.pid, signal.SIGKILL)
+                    process.wait(timeout=5)
+                    address = start()
+                    drive('wait-for-id kept-' + completed_key)
+                    drive('tap-id kept-' + completed_key)
+                    wait_for('Page 1 of 4')
+                    capture('44-recovered-after-restart')
+                    (args.output/'result.json').write_text(json.dumps(dict(status='passed', profile=args.profile,
+                        scale=args.scale, download_recovery=True, original_fixture=True,
+                        fetched=0, posted=0, completed_sha256=completed_key), indent=2)+'\n')
+                    return
+                wait_for('Add comic')
                 drive('wait-for-id load-sideload')
                 drive('wait-idle')
+                if args.server_setup:
+                    drive('tap-id browse-komga')
+                    drive('wait-for-id provider.address')
+                    capture('20-server-setup')
+                    drive('tap-id provider.address')
+                    drive('type https')
+                    drive('tap-id kb.layer')
+                    drive('type ://')
+                    drive('tap-id kb.layer')
+                    drive('type library')
+                    drive('tap-id kb.layer')
+                    drive('type .')
+                    drive('tap-id kb.layer')
+                    drive('type example')
+                    drive('scenario storage-full')
+                    drive('tap-id kb.enter')
+                    wait_for('Address not saved')
+                    capture('21-server-save-failed')
+                    drive('scenario normal')
+                    drive('tap-id server-retry')
+                    drive('wait-for-id provider.account')
+                    drive('expect https://library.example')
+                    drive('tap-id provider.account')
+                    drive('tap-id credential.enter')
+                    drive('type reader')
+                    capture('22-account-username')
+                    drive('tap-id kb.enter')
+                    drive('type fixture password')
+                    assert 'fixture password' not in capture('23-account-password')
+                    drive('tap-id kb.enter')
+                    wait_for('Account details saved')
+                    capture('24-account-saved')
+                    os.killpg(process.pid, signal.SIGKILL)
+                    process.wait(timeout=5)
+                    address = start()
+                    wait_for('Add comic')
+                    drive('tap-id browse-komga')
+                    drive('wait-for-id provider.account')
+                    drive('expect https://library.example')
+                    capture('25-server-reopened')
+                    drive('tap Back')
+                    wait_for('Add comic')
+                if args.onboarding:
+                    (storage/'volume.cbz').unlink()
+                    drive('tap-id load-sideload')
+                    wait_for('Connect by USB')
+                    capture('30-import-guide-connect')
+                    drive('tap-id import-help-next')
+                    wait_for('Open this folder')
+                    capture('31-import-guide-folder')
+                    drive('tap-id import-help-next')
+                    wait_for('Copy your CBZ file')
+                    capture('31-import-guide-copy')
+                    drive('tap-id import-help-next')
+                    wait_for('Return to Panels')
+                    capture('32-import-guide-return')
+                    drive('tap-id load-sideload')
+                    wait_for('Connect by USB')
+                    drive('tap-id sample-comic')
+                    wait_for('Keep a copy')
+                    capture('33-sample-preview')
+                    drive('scenario storage-full')
+                    drive('tap-id import-confirm')
+                    drive('wait-idle')
+                    capture('34-sample-save-failed')
+                    drive('scenario normal')
+                    drive('tap-id import-retry')
+                    wait_for('Available on this reader')
+                    drive('tap-id import-open')
+                    wait_for('Page 1 of 4')
+                    capture('35-sample-first-page')
+                    profile = json.loads(get('simulation'))['profile']
+                    drive(f'tap-at {profile["width"]*9//10},{profile["height"]//2}')
+                    wait_for('Page 2 of 4')
+                    drive('wait-idle')
+                    os.killpg(process.pid, signal.SIGKILL)
+                    process.wait(timeout=5)
+                    address = start()
+                    wait_for('Add comic')
+                    sample_key = hashlib.sha256((ROOT/'apps/panels/assets/a-small-garden.cbz').read_bytes()).hexdigest()
+                    if args.shelf_previews:
+                        wait_for('Saved page 2 of 4')
+                        capture('37-shelf-position-restored')
+                        leads = [node['kind'] for node in json.loads(get('layout'))['nodes'] if node['kind'].startswith('RowLead(')]
+                        assert any('Picture' in lead and '4294967295' not in lead for lead in leads), 'Saved cover did not load'
+                        os.killpg(process.pid, signal.SIGKILL)
+                        process.wait(timeout=5)
+                        state = Path(private)/'cobalt-sim-state/panels'
+                        cache_name = 'cache.t-' + hashlib.sha256(('panels.cover.v1\0'+sample_key).encode()).hexdigest()[:56]
+                        (state/cache_name).unlink()
+                        address = start()
+                        wait_for('Saved page 2 of 4')
+                        capture('38-shelf-cover-evicted')
+                        leads = [node['kind'] for node in json.loads(get('layout'))['nodes'] if node['kind'].startswith('RowLead(')]
+                        assert any('4294967295' in lead for lead in leads), 'Missing cover did not use fallback'
+                    drive('tap-id kept-' + sample_key)
+                    wait_for('Page 2 of 4')
+                    capture('36-sample-reopened')
+                    drive('tap Back')
+                    wait_for('Add comic')
+                    if args.shelf_previews:
+                        wait_for('Saved page 2 of 4')
+                        capture('39-shelf-cover-regenerated')
+                        leads = [node['kind'] for node in json.loads(get('layout'))['nodes'] if node['kind'].startswith('RowLead(')]
+                        assert any('Picture' in lead and '4294967295' not in lead for lead in leads), 'Opening did not rebuild the cover'
+                    (storage/'volume.cbz').write_bytes(fixture)
                 drive('expect-state /clock#/mode "manual"')
                 drive('clock advance 60000')
                 drive('expect-state /clock#/monotonicMillis "60000"')
@@ -188,6 +344,13 @@ def main():
                 drive('expect-state /input#/quiescent true')
                 capture('01-library')
                 drive('tap-id load-sideload')
+                if not args.cbr:
+                    wait_for('Keep a copy')
+                    capture('01-import-preview')
+                    drive('tap-id import-confirm')
+                    wait_for('Available on this reader')
+                    capture('01-import-receipt')
+                    drive('tap-id import-open')
                 wait_for('CBR is not supported yet' if args.cbr else 'Page 1 of 3')
                 text = capture('02-opened')
                 if args.cbr:
@@ -290,8 +453,8 @@ def main():
                         os.killpg(process.pid, signal.SIGKILL)
                         process.wait(timeout=5)
                         address = start()
-                        wait_for('Open added comic')
-                        drive('tap-id load-sideload')
+                        wait_for('Add comic')
+                        drive('tap-id kept-' + comic_key)
                         wait_for('Page 2 of 3')
                         capture('12-reopened')
                         drive('tap-id comic-controls')
@@ -302,10 +465,10 @@ def main():
                         drive('tap-id comic-read')
                     back = next(node for node in json.loads(get('layout'))['nodes'] if node['kind'] == 'Back')
                     drive(f'tap-at {back["centre"]["x"]},{back["centre"]["y"]}')
-                    wait_for('Open added comic')
-                    assert 'On this reader' in capture('05-library-return') or 'Open added comic' in get('layout').decode(), 'Back did not return to library'
+                    wait_for('Add comic')
+                    assert 'On this reader' in capture('05-library-return') or 'Add comic' in get('layout').decode(), 'Back did not return to library'
                 (args.output/'result.json').write_text(json.dumps(dict(status='passed', profile=args.profile,
-                    scale=args.scale, cbr=args.cbr, colour=args.colour, reader_tools=args.reader_tools, original_fixture=True), indent=2)+'\n')
+                    scale=args.scale, cbr=args.cbr, colour=args.colour, reader_tools=args.reader_tools, server_setup=args.server_setup, onboarding=args.onboarding, shelf_previews=args.shelf_previews, original_fixture=True), indent=2)+'\n')
             finally:
                 if process is not None and process.poll() is None:
                     os.killpg(process.pid, signal.SIGTERM)

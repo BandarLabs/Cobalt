@@ -15,6 +15,7 @@ kobo-sdk = { path = "../kobo-sdk", default-features = false }
 kobo-catalog = { path = "../kobo-catalog" }
 kobo-ui = { path = "../kobo-ui" }
 kobo-app-store = { path = "../kobo-app-store" }
+kobo-opml = { path = "../kobo-opml" }
 kobo-sim = { path = "../kobo-sim" }
 kobo-image = { path = "../kobo-image" }
 kobo-json = { path = "../kobo-json" }

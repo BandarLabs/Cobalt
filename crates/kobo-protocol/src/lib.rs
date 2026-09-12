@@ -58,6 +58,9 @@ pub const MAGIC: [u8; 4] = *b"KOBO";
 /// Version 14 adds the bounded board viewport on a new node tag. Versions
 /// 11, 12 and 13 remain readable; board nodes require version 14.
 /// Version 14 also adds generation-scoped suspend barriers on new message tags.
+/// Its beta numbered-grid tag 33 carries corner clue numbers; tag 15 stays byte-compatible.
+/// Beta tag 34 adds bounded pencil-puzzle marks and orthogonal strokes.
+/// Beta task tag 4 adds explicit PUT/PATCH updates; older task tags are unchanged.
 ///
 /// A colour picture travels the same way: a grey picture still uses the tags it
 /// always did, byte for byte, and a colour one uses tags of its own that an
@@ -65,9 +68,12 @@ pub const MAGIC: [u8; 4] = *b"KOBO";
 pub const VERSION: u8 = 14;
 /// Version introducing server-bound account records.
 pub const SERVER_ACCOUNT_VERSION: u8 = 14;
+/// Beta wire version introducing explicit update tasks.
+pub const UPDATE_TASK_VERSION: u8 = 14;
 /// Version with persistent selected grid cells, retained for installed apps.
 pub const SELECTED_GRID_VERSION: u8 = 13;
 mod board;
+mod pencil;
 
 /// Opt-in simulator callback boundary carried in an ordinary debug log frame.
 /// It does not add a wire tag or authorize any runtime operation.
@@ -332,6 +338,16 @@ pub struct Credential {
 pub enum CredentialUse {
     Fetch,
     Post,
+    Put,
+    Patch,
+}
+
+/// Explicit HTTP methods for changing an existing resource. A runtime must
+/// authorize each method independently from POST before resolving credentials.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum UpdateMethod {
+    Put,
+    Patch,
 }
 
 impl Credential {
@@ -441,6 +457,18 @@ pub enum Task {
         headers: Vec<Header>,
         max_bytes: u32,
     },
+    /// Updates a resource using PUT or PATCH. The runtime sends the request
+    /// once, without following redirects or replaying uncertain delivery.
+    /// The application must reconcile server state before retrying a change.
+    Update {
+        method: UpdateMethod,
+        url: String,
+        body: String,
+        content_type: String,
+        credential: Option<Credential>,
+        headers: Vec<Header>,
+        max_bytes: u32,
+    },
     /// Reads a file from the application's own directory.
     ReadFile { path: String },
     /// Waits, without holding a wake lock.
@@ -468,6 +496,14 @@ impl Task {
                     && credential.as_ref().is_none_or(Credential::is_well_formed)
             }
             Self::Post {
+                url,
+                body,
+                content_type,
+                credential,
+                headers,
+                ..
+            }
+            | Self::Update {
                 url,
                 body,
                 content_type,
@@ -2149,8 +2185,25 @@ fn encode_task_message(payload: &mut Vec<u8>, message: &Message) -> Result<(), P
                     credential,
                     headers,
                     max_bytes,
+                }
+                | Task::Update {
+                    url,
+                    body,
+                    content_type,
+                    credential,
+                    headers,
+                    max_bytes,
+                    ..
                 } => {
-                    payload.push(3);
+                    if let Task::Update { method, .. } = work {
+                        payload.push(4);
+                        payload.push(match method {
+                            UpdateMethod::Put => 0,
+                            UpdateMethod::Patch => 1,
+                        });
+                    } else {
+                        payload.push(3);
+                    }
                     push_string(payload, url)?;
                     push_long_string(payload, body)?;
                     push_string(payload, content_type)?;
@@ -2426,6 +2479,9 @@ fn encoded_task_len(work: &Task) -> Result<usize, ProtocolError> {
     // application asked for a download, so no application that fetches
     // anything could be opened in the simulator at all.
     let mut length = 5;
+    if matches!(work, Task::Update { .. }) {
+        add_encoded_len(&mut length, 1)?;
+    }
     match work {
         Task::Fetch {
             url,
@@ -2467,6 +2523,14 @@ fn encoded_task_len(work: &Task) -> Result<usize, ProtocolError> {
         }
         Task::Sleep { .. } => add_encoded_len(&mut length, 4)?,
         Task::Post {
+            url,
+            body,
+            content_type,
+            credential,
+            headers,
+            ..
+        }
+        | Task::Update {
             url,
             body,
             content_type,
@@ -2566,7 +2630,12 @@ fn encoded_message_layout(message: &Message, version: u8) -> Result<(u8, usize),
         }
         Message::DeviceRequest(request) => Ok((7, device_request_len(request, version)?)),
         Message::DeviceResult(result) => Ok((8, device_result_len(result)?)),
-        Message::Spawn { work, .. } => Ok((9, encoded_task_len(work)?)),
+        Message::Spawn { work, .. } => {
+            if matches!(work, Task::Update { .. }) && version < UPDATE_TASK_VERSION {
+                return Err(ProtocolError::UnsupportedVersion(version));
+            }
+            Ok((9, encoded_task_len(work)?))
+        }
         Message::Cancel { .. } => Ok((10, 4)),
         Message::TaskOutcome { outcome, .. } => Ok((11, task_outcome_len(outcome)?)),
         Message::StoreRequest(request) => Ok((13, store_request_len(request)?)),
@@ -4229,8 +4298,19 @@ fn encoded_node_len(
             }
             length
         }
+        Node::PencilBoard { board, .. } => pencil::encoded_len(board, version)?,
         Node::Board { surface, .. } => board::encoded_len(surface, version)?,
-        Node::Grid { cells, .. } => {
+        Node::Grid { cells, square, .. } => {
+            let numbered = cells.iter().any(|cell| cell.corner.is_some());
+            if numbered
+                && (version < 14
+                    || !square
+                    || cells
+                        .iter()
+                        .any(|c| c.corner.is_some_and(|n| n == 0 || n > 99)))
+            {
+                return Err(ProtocolError::InvalidValue("numbered board"));
+            }
             if cells.len() > u8::MAX as usize {
                 return Err(ProtocolError::TooManyNodes);
             }
@@ -4241,6 +4321,9 @@ fn encoded_node_len(
                 add_encoded_len(&mut length, encoded_string_len(&cell.label)?)?;
                 add_encoded_len(&mut length, if cell.glyph.is_some() { 2 } else { 1 })?;
                 if version >= 13 {
+                    add_encoded_len(&mut length, 1)?;
+                }
+                if numbered {
                     add_encoded_len(&mut length, 1)?;
                 }
             }
@@ -4569,7 +4652,19 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, ProtocolError> {
                 2 => Task::Sleep {
                     seconds: reader.u32()?,
                 },
-                3 => {
+                kind @ (3 | 4) => {
+                    let method = if kind == 4 {
+                        if version < UPDATE_TASK_VERSION {
+                            return Err(ProtocolError::InvalidValue("task kind"));
+                        }
+                        Some(match reader.u8()? {
+                            0 => UpdateMethod::Put,
+                            1 => UpdateMethod::Patch,
+                            _ => return Err(ProtocolError::InvalidValue("update method")),
+                        })
+                    } else {
+                        None
+                    };
                     let url = reader.string()?;
                     if url.len() > MAX_URL_LEN {
                         return Err(ProtocolError::StringTooLarge);
@@ -4589,13 +4684,26 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, ProtocolError> {
                         }
                         headers.push(header);
                     }
-                    Task::Post {
-                        url,
-                        body,
-                        content_type,
-                        credential,
-                        headers,
-                        max_bytes: min(reader.u32()?, MAX_TASK_BYTES_U32),
+                    let max_bytes = min(reader.u32()?, MAX_TASK_BYTES_U32);
+                    if let Some(method) = method {
+                        Task::Update {
+                            method,
+                            url,
+                            body,
+                            content_type,
+                            credential,
+                            headers,
+                            max_bytes,
+                        }
+                    } else {
+                        Task::Post {
+                            url,
+                            body,
+                            content_type,
+                            credential,
+                            headers,
+                            max_bytes,
+                        }
                     }
                 }
                 _ => return Err(ProtocolError::InvalidValue("task kind")),
@@ -5510,6 +5618,7 @@ fn encode_node(
                 push_string(output, item)?;
             }
         }
+        Node::PencilBoard { id, board } => pencil::push(output, *id, board, version)?,
         Node::Board { id, surface } => board::push(output, *id, surface, version)?,
         Node::Grid {
             id,
@@ -5517,7 +5626,13 @@ fn encode_node(
             square,
             cells,
         } => {
-            output.push(15);
+            let numbered = cells.iter().any(|cell| cell.corner.is_some());
+            if numbered && (version < 14 || !square) {
+                return Err(ProtocolError::InvalidValue(
+                    "numbered board requires protocol 14",
+                ));
+            }
+            output.push(if numbered { 33 } else { 15 });
             push_u32(output, id.0);
             output.push(*columns);
             output.push(u8::from(*square));
@@ -5534,6 +5649,13 @@ fn encode_node(
                 }
                 if version >= 13 {
                     output.push(u8::from(cell.selected));
+                }
+                if numbered {
+                    let number = cell.corner.unwrap_or(0);
+                    if number > 99 {
+                        return Err(ProtocolError::InvalidValue("clue number"));
+                    }
+                    output.push(number);
                 }
             }
         }
@@ -5989,10 +6111,11 @@ const fn encode_glyph(glyph: Glyph) -> u8 {
         Glyph::WhiteDraughtsKing => 61,
         Glyph::BlackDraughtsMan => 62,
         Glyph::WhiteDraughtsMan => 63,
-        Glyph::MorrisPoint => 64,
-        Glyph::MorrisLegalPoint => 65,
+        Glyph::BoardPoint => 64,
+        Glyph::LegalPoint => 65,
         Glyph::Backspace => 66,
         Glyph::Shift => 67,
+        Glyph::Mill => 68,
     }
 }
 
@@ -6062,10 +6185,11 @@ const fn decode_glyph(tag: u8) -> Option<Glyph> {
         61 => Glyph::WhiteDraughtsKing,
         62 => Glyph::BlackDraughtsMan,
         63 => Glyph::WhiteDraughtsMan,
-        64 => Glyph::MorrisPoint,
-        65 => Glyph::MorrisLegalPoint,
+        64 => Glyph::BoardPoint,
+        65 => Glyph::LegalPoint,
         66 => Glyph::Backspace,
         67 => Glyph::Shift,
+        68 => Glyph::Mill,
 
         _ => return None,
     })
@@ -6901,7 +7025,8 @@ fn decode_node(
             Ok(Node::Terminal { id, rows, cursor })
         }
         32 if version >= 14 => board::read(reader, id),
-        15 => {
+        34 if version >= 14 => pencil::read(reader, id),
+        tag @ (15 | 33) if tag == 15 || version >= 14 => {
             let columns = reader.u8()?;
             if columns == 0 || columns > kobo_ui::MAX_COLUMNS {
                 return Err(ProtocolError::InvalidValue("grid columns"));
@@ -6930,7 +7055,7 @@ fn decode_node(
                     ),
                     _ => return Err(ProtocolError::InvalidValue("cell glyph flag")),
                 };
-                cells.push(if version >= 13 {
+                let mut cell = if version >= 13 {
                     cell.with_selected(match reader.u8()? {
                         0 => false,
                         1 => true,
@@ -6938,7 +7063,18 @@ fn decode_node(
                     })
                 } else {
                     cell
-                });
+                };
+                if tag == 33 {
+                    if !square {
+                        return Err(ProtocolError::InvalidValue("numbered board must be square"));
+                    }
+                    cell.corner = match reader.u8()? {
+                        0 => None,
+                        n @ 1..=99 => Some(n),
+                        _ => return Err(ProtocolError::InvalidValue("clue number")),
+                    };
+                }
+                cells.push(cell);
             }
             Ok(Node::Grid {
                 id,
@@ -8948,6 +9084,40 @@ mod node_coverage_tests {
     }
 
     #[test]
+    fn numbered_boards_round_trip_without_changing_installed_grid_frames() {
+        let mut cell = Cell::new(ActionId(11), "H").with_selected(true);
+        cell.corner = Some(12);
+        let screen = Screen::new(
+            1,
+            vec![Node::Grid {
+                id: NodeId(1),
+                columns: 1,
+                square: true,
+                cells: vec![cell],
+            }],
+        );
+        assert_eq!(round_trip(screen.clone()), screen);
+        let mut frame = Frame {
+            version: VERSION,
+            request_id: 1,
+            message: Message::SetScreen(screen),
+        };
+        let bytes = encode(&frame).unwrap();
+        for end in 0..bytes.len() {
+            assert!(decode(&bytes[..end]).is_err());
+        }
+        frame.version = SELECTED_GRID_VERSION;
+        assert!(encode(&frame).is_err());
+        frame.version = VERSION;
+        if let Message::SetScreen(s) = &mut frame.message {
+            if let Node::Grid { cells, .. } = &mut s.nodes[0] {
+                cells[0].corner = Some(100);
+            }
+        }
+        assert!(encode(&frame).is_err());
+    }
+
+    #[test]
     fn a_grid_cell_carries_its_glyph_across_the_wire() {
         // The cell payload gained a flag byte after its label. An encoder that
         // wrote it and a decoder that did not would read the flag as the top
@@ -10403,3 +10573,68 @@ mod picture_tests {
 
 #[cfg(test)]
 mod suspend_tests;
+
+#[cfg(test)]
+mod update_task_tests {
+    use super::*;
+
+    fn update(method: UpdateMethod) -> Task {
+        Task::Update {
+            method,
+            url: "https://reader.test/v1/entries".into(),
+            body: "{\"title\":\"Café\"}".into(),
+            content_type: "application/json".into(),
+            credential: Some(Credential::in_header("miniflux", "X-Auth-Token")),
+            headers: vec![Header::new("Accept", "application/json")],
+            max_bytes: 1024,
+        }
+    }
+
+    #[test]
+    fn update_wire_round_trips_and_refuses_unknown_methods_and_old_versions() {
+        for method in [UpdateMethod::Put, UpdateMethod::Patch] {
+            let frame = Frame {
+                version: VERSION,
+                request_id: 7,
+                message: Message::Spawn {
+                    task: TaskId(9),
+                    work: update(method),
+                },
+            };
+            let bytes = encode(&frame).unwrap();
+            assert_eq!(decode(&bytes).unwrap(), frame);
+            assert_eq!(bytes[HEADER_LEN + 4], 4, "new task tag");
+            let mut unknown = bytes.clone();
+            unknown[HEADER_LEN + 5] = 2;
+            assert!(decode(&unknown).is_err());
+            for version in [LEGACY_VERSION, FOLIO_VERSION, SELECTED_GRID_VERSION] {
+                let mut older = frame.clone();
+                older.version = version;
+                assert!(encode(&older).is_err());
+                let mut older_wire = bytes.clone();
+                older_wire[4] = version;
+                assert!(decode(&older_wire).is_err());
+            }
+            for end in HEADER_LEN..bytes.len() {
+                assert!(decode(&bytes[..end]).is_err(), "truncation {end}");
+            }
+        }
+    }
+
+    #[test]
+    fn update_tasks_enforce_existing_body_and_header_bounds() {
+        let mut work = update(UpdateMethod::Put);
+        assert!(work.is_sendable());
+        if let Task::Update { body, .. } = &mut work {
+            *body = "x".repeat(MAX_POST_BODY_LEN + 1);
+        }
+        assert!(!work.is_sendable());
+        assert!(encoded_task_len(&work).is_err());
+        let mut work = update(UpdateMethod::Patch);
+        if let Task::Update { headers, .. } = &mut work {
+            headers.push(Header::new("Bad\r\nHeader", "value"));
+        }
+        assert!(!work.is_sendable());
+        assert!(encoded_task_len(&work).is_err());
+    }
+}

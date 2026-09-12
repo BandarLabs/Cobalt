@@ -1,0 +1,227 @@
+{
+  "app": "crossword",
+  "fonts": [
+    {
+      "role": "interface",
+      "source": "AtkinsonHyperlegible-Regular.ttf"
+    },
+    {
+      "role": "display-title",
+      "source": "AtkinsonHyperlegible-Bold.ttf"
+    },
+    {
+      "role": "display-heading",
+      "source": "AtkinsonHyperlegible-Bold.ttf"
+    },
+    {
+      "role": "display-bold",
+      "source": "AtkinsonHyperlegible-Bold.ttf"
+    },
+    {
+      "role": "reading",
+      "source": "AtkinsonHyperlegible-Regular.ttf"
+    },
+    {
+      "role": "mono",
+      "source": "DejaVuSansMono.ttf"
+    }
+  ],
+  "frame": {
+    "colourAppearance": "luminance",
+    "format": "grey8",
+    "sha256": "a007146e305e0656f4152cf55df1b35ba99e93421f0d67c3aab4df62415ff48e",
+    "view": "ideal"
+  },
+  "interfaceScalePercent": 140,
+  "mode": "single-app",
+  "orientation": "portrait",
+  "paints": "13",
+  "publisherFontHandle": null,
+  "readingScalePercent": 100,
+  "runtimeVersion": "0.3.12",
+  "schema": "cobalt.simulator-capture",
+  "simulation": {
+    "appStore": {
+      "mode": "catalog-preview",
+      "signedTransactions": false
+    },
+    "backends": [
+      "network",
+      "battery-read",
+      "frontlight-control",
+      "wifi-control",
+      "library",
+      "cover-sensor"
+    ],
+    "clock": {
+      "date": "2026-09-08",
+      "mode": "manual",
+      "monotonicMillis": "0",
+      "unixMillis": "1788850860000",
+      "utcOffsetMinutes": 0
+    },
+    "dirtyPixelsSinceClean": 5752669,
+    "hardware": {
+      "batteryPercent": 72,
+      "charging": false,
+      "coverClosed": false,
+      "frontlightAppearanceCalibrated": false,
+      "frontlightPercent": 20,
+      "orientation": "portrait",
+      "orientationControl": "display-composition"
+    },
+    "input": {
+      "forwardKey": 194,
+      "needsResynchronization": false,
+      "quiescent": true,
+      "rawEvents": "84",
+      "source": "synthetic evdev replay"
+    },
+    "lifecycle": "foreground",
+    "navigation": {
+      "app": "crossword",
+      "hosted": [],
+      "mode": "single-app",
+      "processId": null
+    },
+    "observation": null,
+    "panel": {
+      "completed": "14",
+      "contentsKnown": true,
+      "failures": "0",
+      "finishedAtMillis": "3543",
+      "mode": "automatic",
+      "queued": false,
+      "status": "idle",
+      "submissionMarker": null,
+      "submitted": "14",
+      "submittedAtMillis": "3542",
+      "timing": "host control observations; not hardware calibration",
+      "visibleFrame": "last confirmed completion with approximate residue"
+    },
+    "panelApproximation": true,
+    "power": null,
+    "profile": {
+      "colourPanel": false,
+      "height": 1448,
+      "id": "clara-bw-391",
+      "model": "Kobo Clara BW",
+      "pixelsPerInch": 300,
+      "rotation": 3,
+      "touch": {
+        "name": "cyttsp5_mt",
+        "xMax": 1447,
+        "xMin": 0,
+        "yMax": 1071,
+        "yMin": 0
+      },
+      "width": 1072
+    },
+    "refreshCount": 14,
+    "scenario": "normal",
+    "touch": {
+      "display": {
+        "x": 536,
+        "y": 1377
+      },
+      "raw": {
+        "x": 1377,
+        "y": 535
+      }
+    },
+    "transition": {
+      "dirty": 5752669,
+      "full": false,
+      "refresh": 14,
+      "region": {
+        "height": 408,
+        "width": 720,
+        "x": 40,
+        "y": 168
+      },
+      "regions": [
+        {
+          "region": {
+            "height": 128,
+            "width": 24,
+            "x": 384,
+            "y": 168
+          },
+          "waveform": "DU"
+        },
+        {
+          "region": {
+            "height": 128,
+            "width": 16,
+            "x": 664,
+            "y": 168
+          },
+          "waveform": "DU"
+        },
+        {
+          "region": {
+            "height": 48,
+            "width": 192,
+            "x": 440,
+            "y": 208
+          },
+          "waveform": "GL16"
+        },
+        {
+          "region": {
+            "height": 56,
+            "width": 720,
+            "x": 40,
+            "y": 312
+          },
+          "waveform": "GL16"
+        },
+        {
+          "region": {
+            "height": 48,
+            "width": 40,
+            "x": 432,
+            "y": 416
+          },
+          "waveform": "GL16"
+        },
+        {
+          "region": {
+            "height": 40,
+            "width": 152,
+            "x": 48,
+            "y": 520
+          },
+          "waveform": "GL16"
+        },
+        {
+          "region": {
+            "height": 56,
+            "width": 376,
+            "x": 224,
+            "y": 520
+          },
+          "waveform": "GL16"
+        },
+        {
+          "region": {
+            "height": 40,
+            "width": 128,
+            "x": 616,
+            "y": 520
+          },
+          "waveform": "GL16"
+        }
+      ],
+      "waveform": "GL16"
+    }
+  },
+  "source": {
+    "binarySha256": "54a1753088924ab561d74e9c4e3410a30eec1c31caf68aea49cc00c2a8129cc7",
+    "dirty": true,
+    "fixture": "original-crossword-pack",
+    "requestedSeed": "0",
+    "revision": "bdbd4056b64db6841b5836e607be0e14713f3ce5"
+  },
+  "version": 1
+}

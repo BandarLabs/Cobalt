@@ -1,7 +1,15 @@
-# Run from this directory after `kobo dev` serves localhost:8787.
-clean
+expect Logic Pack
 tap Minesweeper
-tap ?
-tap Check
-expect contradiction
+tap Small field
+wait-for-id more
+tap Help
+expect Reveal every safe square
+clean
+shot logicpack-help
+tap Play
+tap-id mine-0
+tap More
+tap Check puzzle
+expect Not solved yet
+clean
 shot logicpack-mines

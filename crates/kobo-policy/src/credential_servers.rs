@@ -6,7 +6,9 @@ const MAGIC: &str = "cobalt-server-account-v1";
 
 #[must_use]
 pub fn may_set(app: &str, name: &str) -> bool {
-    app == "panels" && name == "komga"
+    (app == "panels" && name == "komga")
+        || (app == "calibre-web" && name == "calibre")
+        || (app == "rss-miniflux" && name == "miniflux")
 }
 
 pub(crate) fn path(root: &Path, app: &str, name: &str) -> Option<PathBuf> {
@@ -55,8 +57,9 @@ pub fn contains(server: &str, url: &str) -> bool {
                 .is_some_and(|tail| tail.starts_with('/')))
 }
 
-/// The reviewed provider policy; a saved server cannot grant another method,
-/// credential name, header convention or application's account.
+/// Reviewed read-only Basic providers. Token providers with writes use the
+/// body-aware `allowed_request_with_server` boundary in the parent module;
+/// this narrower helper must never grant them Basic access by association.
 #[must_use]
 pub fn allowed(
     app: &str,
@@ -65,8 +68,10 @@ pub fn allowed(
     url: &str,
     usage: CredentialUse,
 ) -> bool {
-    may_set(app, &credential.secret)
-        && credential.header == SecretHeader::Basic
+    matches!(
+        (app, credential.secret.as_str()),
+        ("panels", "komga") | ("calibre-web", "calibre")
+    ) && credential.header == SecretHeader::Basic
         && usage == CredentialUse::Fetch
         && contains(server, url)
 }
@@ -124,6 +129,52 @@ mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
 
+    #[test]
+    fn calibre_account_follows_catalog_and_book_links_only_within_saved_server() {
+        let credential = Credential::basic("calibre");
+        let server = "https://library.test:8443/books";
+        for path in [
+            "/books/opds",
+            "/books/opds/authors",
+            "/books/download/1.epub",
+        ] {
+            assert!(allowed(
+                "calibre-web",
+                &credential,
+                server,
+                &format!("https://library.test:8443{path}"),
+                CredentialUse::Fetch
+            ));
+        }
+        for target in [
+            "https://other.test:8443/books",
+            "https://library.test/books",
+            "https://library.test:8443/private",
+            "https://library.test:8443/books/../private",
+        ] {
+            assert!(!allowed(
+                "calibre-web",
+                &credential,
+                server,
+                target,
+                CredentialUse::Fetch
+            ));
+        }
+        assert!(!allowed(
+            "calibre-web",
+            &credential,
+            server,
+            server,
+            CredentialUse::Post
+        ));
+        assert!(!allowed(
+            "calibre-web",
+            &Credential::basic("komga"),
+            server,
+            server,
+            CredentialUse::Fetch
+        ));
+    }
     #[test]
     fn server_scope_rejects_origin_path_and_header_escape() {
         let base = "https://books.example:8443/library";

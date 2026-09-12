@@ -1,0 +1,189 @@
+{
+  "paints": 2,
+  "nodes": [
+    {
+      "kind": "StatusBand",
+      "x": 0,
+      "y": 0,
+      "width": 1072,
+      "height": 59,
+      "centre": {
+        "x": 536,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusClock",
+      "x": 47,
+      "y": 0,
+      "width": 112,
+      "height": 59,
+      "centre": {
+        "x": 103,
+        "y": 29
+      },
+      "action": null,
+      "lines": [
+        "23:29"
+      ]
+    },
+    {
+      "kind": "StatusBattery(Some(Percent(72)), false)",
+      "x": 955,
+      "y": 12,
+      "width": 70,
+      "height": 35,
+      "centre": {
+        "x": 990,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusSignal(Strong)",
+      "x": 896,
+      "y": 12,
+      "width": 35,
+      "height": 35,
+      "centre": {
+        "x": 913,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusBluetooth",
+      "x": 837,
+      "y": 12,
+      "width": 35,
+      "height": 35,
+      "centre": {
+        "x": 854,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "TopBar",
+      "x": 0,
+      "y": 59,
+      "width": 1072,
+      "height": 100,
+      "centre": {
+        "x": 536,
+        "y": 109
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Back",
+      "x": 47,
+      "y": 59,
+      "width": 100,
+      "height": 100,
+      "centre": {
+        "x": 97,
+        "y": 109
+      },
+      "action": 4294967295,
+      "lines": []
+    },
+    {
+      "kind": "TopBarTitle",
+      "x": 171,
+      "y": 77,
+      "width": 854,
+      "height": 64,
+      "centre": {
+        "x": 598,
+        "y": 109
+      },
+      "action": null,
+      "lines": [
+        "Paperterm"
+      ]
+    },
+    {
+      "kind": "Divider",
+      "x": 0,
+      "y": 159,
+      "width": 1072,
+      "height": 4,
+      "centre": {
+        "x": 536,
+        "y": 161
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Heading(1)",
+      "x": 47,
+      "y": 175,
+      "width": 978,
+      "height": 224,
+      "centre": {
+        "x": 536,
+        "y": 287
+      },
+      "action": null,
+      "lines": [
+        "Pairing could not be",
+        "read"
+      ]
+    },
+    {
+      "kind": "Text",
+      "x": 47,
+      "y": 411,
+      "width": 978,
+      "height": 192,
+      "centre": {
+        "x": 536,
+        "y": 507
+      },
+      "action": null,
+      "lines": [
+        "Your saved pairing has not been changed.",
+        "Retry, or continue without saving a",
+        "connection."
+      ]
+    },
+    {
+      "kind": "Button(ActionId(1091967943), Enabled, Normal)",
+      "x": 339,
+      "y": 615,
+      "width": 394,
+      "height": 118,
+      "centre": {
+        "x": 536,
+        "y": 674
+      },
+      "action": 1091967943,
+      "lines": [
+        "Retry reading"
+      ]
+    },
+    {
+      "kind": "Button(ActionId(2991161525), Enabled, Normal)",
+      "x": 219,
+      "y": 745,
+      "width": 633,
+      "height": 118,
+      "centre": {
+        "x": 535,
+        "y": 804
+      },
+      "action": 2991161525,
+      "lines": [
+        "Continue without saving"
+      ]
+    }
+  ]
+}

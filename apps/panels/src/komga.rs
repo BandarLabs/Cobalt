@@ -3,7 +3,8 @@
 use kobo_opds::{Feed, Publication};
 use kobo_sdk::{Credential, Task};
 
-pub const CATALOG: &str = "https://komga.local/opds/v1.2/catalog";
+#[cfg(test)]
+const CATALOG: &str = "https://library.example/opds/v1.2/catalog";
 pub const MAX_FEED_BYTES: u32 = 256 * 1024;
 
 pub fn fetch(url: String) -> Task {

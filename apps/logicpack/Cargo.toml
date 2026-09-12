@@ -1,6 +1,6 @@
 [package]
 name = "kobo-logicpack"
-version = "0.1.0"
+version = "0.1.5"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -8,6 +8,9 @@ publish = false
 
 [dependencies]
 kobo-sdk = { path = "../../crates/kobo-sdk" }
+
+kobo-state = { path = "../../crates/kobo-state" }
+kobo-json = { path = "../../crates/kobo-json" }
 
 [dev-dependencies]
 kobo-ui = { path = "../../crates/kobo-ui" }

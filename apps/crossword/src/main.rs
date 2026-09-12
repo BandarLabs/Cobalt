@@ -1,394 +1,556 @@
-//! A compact, touch-first crossword with defensive `.puz` header parsing.
+//! Offline crossword play with an acknowledged, bounded save record.
+mod game;
+mod saved;
+use game::{Progress, PUZZLES};
 use kobo_sdk::keyboard::{Keyboard, Pressed};
-use kobo_sdk::{action_id, ActionId, Context, KoboApp, Screen, ScreenBuilder, StoreResult};
+use kobo_sdk::{
+    action_id, ActionId, Context, DialogAction, KoboApp, Screen, ScreenBuilder, StoreResult,
+};
+use kobo_state::draft::{Draft, Status};
 use std::process::ExitCode;
 
-const STATE: &str = "crossword-state-v1";
-const WIDTH: u8 = 5;
-const GRID: &[u8] = b"HEARTEMBERABUSERESINTREND";
-const CLUES: &[&str] = &[
-    "1 Across: Organ that pumps blood",
-    "2 Across: A glowing coal",
-    "3 Across: Treat badly",
-    "4 Across: Fragrant tree secretion",
-    "5 Across: General direction of change",
-    "1 Down: Organ that pumps blood",
-    "2 Down: A glowing coal",
-    "3 Down: Treat badly",
-    "4 Down: Fragrant tree secretion",
-    "5 Down: General direction of change",
-];
-
-#[cfg(test)]
-#[derive(Debug, Eq, PartialEq)]
-struct PuzHeader {
-    width: u8,
-    height: u8,
-    clues: u16,
-}
-
-/// Reads only the bounded `.puz` header before an importer accepts a payload.
-#[cfg(test)]
-fn parse_puz_header(bytes: &[u8]) -> Result<PuzHeader, &'static str> {
-    const HEADER: usize = 0x34;
-    if bytes.len() < HEADER {
-        return Err("puzzle is shorter than its header");
-    }
-    if &bytes[2..14] != b"ACROSS&DOWN\0" {
-        return Err("not a .puz file");
-    }
-    let width = bytes[0x2c];
-    let height = bytes[0x2d];
-    if width == 0 || height == 0 || width > 25 || height > 25 {
-        return Err("grid must be 1 to 25 cells per side");
-    }
-    let cells = usize::from(width) * usize::from(height);
-    if bytes.len() < HEADER + cells * 2 {
-        return Err("puzzle grid is incomplete");
-    }
-    Ok(PuzHeader {
-        width,
-        height,
-        clues: u16::from_le_bytes([bytes[0x2e], bytes[0x2f]]),
-    })
-}
-fn cell_name(cell: usize) -> String {
-    format!("cell-{cell}")
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+const HELP: &str = "Fill the white squares\n\nRead an Across or Down clue and tap a square to enter its answer. Small corner numbers match the clue list. The shaded row or column is the active word.\n\nEnter one letter or the whole word. One letter advances within the word; a whole word fills from its first square. The outlined square above the keyboard is your target. Tap another square in that word to move. The arrow changes between Across and Down.\n\nUse More for Undo, Clear square, Check word, Reveal square and Restart. Checking reports incorrect and empty letters without changing them. Reveal and Restart ask first and can be undone. Assistance counts are retained.\n\nPuzzles keeps separate progress for all four puzzles. Starter, Easy and Medium are editorial guides based on size and vocabulary. Answers read across and down; the clues differ. Odds and ends has black squares; the other three are word squares.\n\nSaves are confirmed by storage. If a save fails, keep the app open and choose Retry save. Unreadable records are kept intact. Completed means you have solved that puzzle at least once; undo can reopen it.";
+#[derive(Clone, Copy, Default, Eq, PartialEq)]
 enum View {
     #[default]
+    Puzzles,
     Board,
-    Help,
-    Clues,
     Entry,
+    Clues,
+    More,
+    Reveal,
+    Restart,
+    Help,
+    Result,
 }
-
-struct Game {
-    letters: Vec<char>,
-    selected: Option<usize>,
-    down: bool,
-    clue: usize,
-    completed: bool,
+struct Crossword {
+    games: Vec<Progress>,
+    current: usize,
     view: View,
     keyboard: Keyboard,
+    loaded: bool,
+    load_error: Option<String>,
+    draft: Draft,
+    active: Option<u64>,
     notice: Option<String>,
-    edited: bool,
+    help_page: usize,
+    clue_page: usize,
+    puzzle_page: usize,
+    help_from_puzzles: bool,
 }
-impl Default for Game {
+impl Default for Crossword {
     fn default() -> Self {
         Self {
-            letters: GRID
-                .iter()
-                .map(|byte| if *byte == b'#' { '#' } else { ' ' })
-                .collect(),
-            selected: None,
-            down: false,
-            clue: 0,
-            completed: false,
-            view: View::Board,
+            games: PUZZLES.iter().map(Progress::new).collect(),
+            current: 0,
+            view: View::Puzzles,
             keyboard: Keyboard::new(),
+            loaded: false,
+            load_error: None,
+            draft: Draft::restored(Vec::new(), saved::LIMIT).expect("empty draft"),
+            active: None,
             notice: None,
-            edited: false,
+            help_page: 0,
+            clue_page: 0,
+            puzzle_page: 0,
+            help_from_puzzles: false,
         }
     }
 }
-impl Game {
-    fn select(&mut self, cell: usize) -> bool {
-        if cell >= GRID.len() || GRID[cell] == b'#' {
-            return false;
-        }
-        if self.selected == Some(cell) {
-            self.down = !self.down;
-        } else {
-            self.selected = Some(cell);
-        }
-        let side = usize::from(WIDTH);
-        self.clue = if self.down {
-            side + cell % side
-        } else {
-            cell / side
-        };
-        true
+impl Crossword {
+    fn game(&self) -> &Progress {
+        &self.games[self.current]
     }
-    fn enter(&mut self, letter: char) -> bool {
-        let Some(selected) = self.selected else {
-            return false;
-        };
-        if self.completed || GRID[selected] == b'#' {
-            return false;
-        }
-        self.letters[selected] = letter;
-        self.completed = GRID
-            .iter()
-            .enumerate()
-            .filter(|(_, byte)| **byte != b'#')
-            .all(|(i, byte)| self.letters[i] == char::from(*byte));
-        self.notice = self.completed.then(|| "Solved.".to_owned());
-        true
+    fn game_mut(&mut self) -> &mut Progress {
+        &mut self.games[self.current]
     }
-    fn status(&self) -> String {
-        if self.completed {
-            "Solved.".into()
-        } else {
-            CLUES[self.clue].to_owned()
+    fn show(&self, context: &mut Context) {
+        context.set_screen(self.screen(context));
+    }
+    fn save(&mut self, context: &mut Context) {
+        self.draft
+            .replace(saved::encode(&self.games, self.current))
+            .expect("bounded draft");
+        self.pump(context);
+    }
+    fn pump(&mut self, context: &mut Context) {
+        if let Some(write) = self.draft.begin() {
+            self.active = Some(write.revision);
+            context.store().save(saved::KEY, write.bytes);
         }
     }
-
-    fn encode(&self) -> Vec<u8> {
-        let letters = self
-            .letters
-            .iter()
-            .map(|letter| if *letter == ' ' { '.' } else { *letter })
-            .collect::<String>();
-        format!(
-            "{letters};{};{}",
-            self.selected
-                .map_or_else(|| "-".to_owned(), |cell| cell.to_string()),
-            u8::from(self.down)
-        )
-        .into_bytes()
-    }
-
-    fn restore(&mut self, value: &[u8]) -> bool {
-        let Ok(text) = std::str::from_utf8(value) else {
-            return false;
-        };
-        let mut fields = text.split(';');
-        let (Some(letters), Some(selected), Some(down), None) =
-            (fields.next(), fields.next(), fields.next(), fields.next())
-        else {
-            return false;
-        };
-        if letters.chars().count() != GRID.len() {
-            return false;
-        }
-        let restored = letters
-            .chars()
-            .enumerate()
-            .map(|(index, letter)| {
-                if GRID[index] == b'#' {
-                    (letter == '#').then_some('#')
-                } else if letter == '.' {
-                    Some(' ')
-                } else {
-                    letter.is_ascii_uppercase().then_some(letter)
-                }
-            })
-            .collect::<Option<Vec<_>>>();
-        let Some(restored) = restored else {
-            return false;
-        };
-        let selected = if selected == "-" {
-            None
-        } else {
-            selected
-                .parse::<usize>()
-                .ok()
-                .filter(|cell| *cell < GRID.len() && GRID[*cell] != b'#')
-        };
-        if selected.is_none() && text.split(';').nth(1) != Some("-") {
-            return false;
-        }
-        let down = match down {
-            "0" => false,
-            "1" => true,
-            _ => return false,
-        };
-        self.letters = restored;
-        self.selected = selected;
-        self.down = down;
-        self.completed = GRID
-            .iter()
-            .enumerate()
-            .all(|(index, byte)| self.letters[index] == char::from(*byte));
-        if let Some(cell) = selected {
-            let side = usize::from(WIDTH);
-            self.clue = if down {
-                side + cell % side
+    fn screen(&self, context: &Context) -> Screen {
+        let mut b = ScreenBuilder::new("crossword").top_bar("Crossword");
+        if !self.loaded {
+            return if let Some(error) = &self.load_error {
+                b.heading("Cannot open progress")
+                    .text(error)
+                    .text("Your saved game has been kept.")
+                    .bottom_action("retry-load", "Retry")
+                    .build()
             } else {
-                cell / side
+                b.text("Opening puzzles…").build()
             };
         }
+        b = b.owns_back(self.view != View::Puzzles);
+        let p = &PUZZLES[self.current];
+        let g = self.game();
+        let (label, _) = p.clue(g.position.selected, g.position.down);
+        if matches!(self.draft.status(), Status::Failed(_)) {
+            return b.heading("Progress is not saved").text("Your latest letters are still here. Keep the app open while you make room on your reader, then retry.")
+                .bottom_action("retry-save", "Retry save").build();
+        }
+        match self.view {
+            View::Puzzles => self.puzzles_screen(b),
+            View::Board => self.board_screen(b),
+            View::Entry => self.entry_screen(b),
+            View::Clues => self.clues_screen(b),
+            View::More => self.more_screen(b),
+            View::Reveal => b
+                .confirmation(
+                    "Reveal square?",
+                    "Adds one reveal.",
+                    DialogAction::new("confirm-reveal", "Reveal"),
+                    DialogAction::new("board", "Keep playing"),
+                )
+                .build(),
+            View::Restart => b
+                .confirmation(
+                    "Restart puzzle?",
+                    "Clear the letters.",
+                    DialogAction::new("confirm-restart", "Restart"),
+                    DialogAction::new("board", "Keep playing"),
+                )
+                .build(),
+            View::Result => b
+                .top_bar(label)
+                .text(self.notice.as_deref().unwrap_or("Puzzle complete."))
+                .bottom_action("board", "Back to puzzle")
+                .build(),
+            View::Help => {
+                let pages = context.paginate(HELP, true);
+                let page = self.help_page.min(pages.len().saturating_sub(1));
+                for paragraph in &pages[page] {
+                    b = b.text(paragraph);
+                }
+                b.page_position(
+                    u16::try_from(page + 1).expect("bounded help"),
+                    u16::try_from(pages.len()).expect("bounded help"),
+                )
+                .action_bar([("help-previous", "Previous"), ("help-next", "Next")])
+                .build()
+            }
+        }
+    }
+    fn puzzles_screen(&self, mut b: ScreenBuilder) -> Screen {
+        b = b.top_bar_action("help", "Help");
+        for index in [3, 0, 1, 2].into_iter().skip(self.puzzle_page * 2).take(2) {
+            let p = &PUZZLES[index];
+            let game = &self.games[index];
+            let filled = game
+                .position
+                .letters
+                .iter()
+                .filter(|b| **b != b'.' && **b != b'#')
+                .count();
+            b = b
+                .button(format!("puzzle-{index}"), p.title)
+                .secondary(format!(
+                    "{} · {}×{} · {}",
+                    p.level,
+                    p.side,
+                    p.side,
+                    if game.solved_once {
+                        "Completed".into()
+                    } else {
+                        format!(
+                            "{filled}/{} squares",
+                            p.answer.iter().filter(|b| **b != b'#').count()
+                        )
+                    }
+                ));
+        }
+        b.action_bar([("puzzles-previous", "Previous"), ("puzzles-next", "Next")])
+            .build()
+    }
+    fn board_screen(&self, mut b: ScreenBuilder) -> Screen {
+        let p = &PUZZLES[self.current];
+        let g = self.game();
+        let (label, clue) = p.clue(g.position.selected, g.position.down);
+
+        let word = p.word(g.position.selected, g.position.down);
+        b = b.top_bar(p.title).secondary(if g.solved(p) {
+            "Puzzle complete".into()
+        } else {
+            format!("{label}: {clue}")
+        });
+        // Footer controls reserve their band before the square grid is measured.
+        b.crossword_board(
+            u8::try_from(p.side).expect("small puzzle"),
+            (0..p.answer.len()).map(|cell| {
+                (
+                    format!("cell-{cell}"),
+                    if g.position.letters[cell] == b'.' {
+                        ' '
+                    } else {
+                        char::from(g.position.letters[cell])
+                    },
+                    p.number(cell).and_then(|n| u8::try_from(n).ok()),
+                    word.contains(&cell),
+                )
+            }),
+        )
+        .action_bar([("clues", "Clues"), ("more", "More")])
+        .build()
+    }
+    fn entry_screen(&self, b: ScreenBuilder) -> Screen {
+        let p = &PUZZLES[self.current];
+        let g = self.game();
+        let (label, clue) = p.clue(g.position.selected, g.position.down);
+
+        let word = p.word(g.position.selected, g.position.down);
+        let mut entry = b
+            .top_bar(label)
+            .top_bar_action("direction", if g.position.down { "→" } else { "↓" })
+            .text(clue)
+            .grid_with_selection(
+                u8::try_from(word.len()).expect("small word"),
+                false,
+                word.iter().map(|cell| {
+                    (
+                        format!("entry-{cell}"),
+                        if g.position.letters[*cell] == b'.' {
+                            " ".into()
+                        } else {
+                            char::from(g.position.letters[*cell]).to_string()
+                        },
+                        *cell == g.position.selected,
+                    )
+                }),
+            )
+            .typed(&self.keyboard, "Letter or whole word");
+        if let Some(notice) = &self.notice {
+            entry = entry.secondary(notice);
+        }
+        entry.keyboard(&self.keyboard, "Enter").build()
+    }
+    fn clues_screen(&self, mut b: ScreenBuilder) -> Screen {
+        let p = &PUZZLES[self.current];
+        let g = self.game();
+
+        let offset = self.clue_page * 2;
+        b = b
+            .top_bar(if g.position.down { "Down" } else { "Across" })
+            .top_bar_action("direction", if g.position.down { "→" } else { "↓" });
+        for n in offset..(offset + 2).min(p.side) {
+            let cell = if g.position.down { n } else { n * p.side };
+            let (title, text) = p.clue(cell, g.position.down);
+            b = b.button(format!("clue-{n}"), title).text(text);
+        }
+        b.action_bar([("clues-previous", "Previous"), ("clues-next", "Next")])
+            .build()
+    }
+    fn entry_action(&mut self, action: ActionId) {
+        let p = &PUZZLES[self.current];
+        let is = |name: &str| action == action_id(name);
+
+        if is("direction") {
+            self.game_mut().position.down = !self.game().position.down;
+            self.keyboard.clear();
+        } else if let Some(cell) = p
+            .word(self.game().position.selected, self.game().position.down)
+            .into_iter()
+            .find(|c| is(&format!("entry-{c}")))
+        {
+            self.game_mut().position.selected = cell;
+            self.keyboard.clear();
+        } else if let Some(pressed) = self.keyboard.press(action) {
+            self.notice = None;
+            if pressed == Pressed::Submitted {
+                let text = self.keyboard.text().to_owned();
+                match self.game_mut().enter(p, &text) {
+                    Ok(()) => {
+                        self.keyboard.clear();
+                        self.notice = None;
+                        if text.len() > 1 || self.game().solved(p) {
+                            self.view = View::Board;
+                        }
+                    }
+                    Err(message) => self.notice = Some(message.into()),
+                }
+            }
+        }
+    }
+    fn clues_action(&mut self, action: ActionId) {
+        let p = &PUZZLES[self.current];
+        let is = |name: &str| action == action_id(name);
+
+        if is("direction") {
+            self.game_mut().position.down = !self.game().position.down;
+            self.clue_page = 0;
+        } else if is("clues-previous") {
+            self.clue_page = self.clue_page.saturating_sub(1);
+        } else if is("clues-next") {
+            self.clue_page = (self.clue_page + 1).min((p.side - 1) / 2);
+        } else if let Some(n) = (self.clue_page * 2..(self.clue_page * 2 + 2).min(p.side))
+            .find(|n| is(&format!("clue-{n}")))
+        {
+            let first = if self.game().position.down {
+                n
+            } else {
+                n * p.side
+            };
+            self.game_mut().position.selected = p.word(first, self.game().position.down)[0];
+            self.keyboard.clear();
+            self.view = View::Entry;
+        }
+    }
+    fn more_action(&mut self, action: ActionId) {
+        let p = &PUZZLES[self.current];
+        let is = |name: &str| action == action_id(name);
+
+        if is("undo") {
+            if let Some(previous) = self.game_mut().undo.pop_back() {
+                self.game_mut().position = previous;
+            }
+            self.view = View::Board;
+        } else if is("clear") {
+            let g = self.game_mut();
+            if g.position.letters[g.position.selected] != b'.' {
+                g.remember();
+                g.position.letters[g.position.selected] = b'.';
+            }
+            self.view = View::Board;
+        } else if is("check") {
+            self.notice = Some(self.game_mut().check(p));
+            self.view = View::Result;
+        } else if is("reveal") {
+            self.view = View::Reveal;
+        } else if is("restart") {
+            self.view = View::Restart;
+        } else if is("puzzles") {
+            self.view = View::Puzzles;
+        } else if is("help") {
+            self.help_page = 0;
+            self.help_from_puzzles = false;
+            self.view = View::Help;
+        }
+    }
+    fn accept_key(&mut self, action: ActionId) -> bool {
+        let p = &PUZZLES[self.current];
+        let is = |name: &str| action == action_id(name);
+
+        if let Some(ch) = self
+            .keyboard
+            .resolves(action)
+            .or_else(|| is("kb.space").then_some(' '))
+        {
+            let length = p
+                .word(self.game().position.selected, self.game().position.down)
+                .len();
+            if !ch.is_ascii_alphabetic() || self.keyboard.text().len() >= length {
+                self.notice = Some(
+                    if ch.is_ascii_alphabetic() {
+                        "Use Delete to change the answer."
+                    } else {
+                        "Use letters A–Z."
+                    }
+                    .into(),
+                );
+                return false;
+            }
+        }
         true
     }
-}
-fn screen(game: &Game) -> Screen {
-    if game.view == View::Help {
-        return ScreenBuilder::new("crossword-help")
-            .top_bar("How to play")
-            .owns_back(true)
-            .heading("Fill the white squares")
-            .text("Read the clue, choose a square, then pick and enter a letter.")
-            .text("Tap the same square again to switch between Across and Down.")
-            .text("Open Clues to choose a clue. Clear cell erases one letter.")
-            .bottom_action("close-help", "Play")
-            .build();
-    }
-    if game.view == View::Clues {
-        let offset = if game.down { 5 } else { 0 };
-        return ScreenBuilder::new("crossword-clues")
-            .top_bar(if game.down {
-                "Down clues"
+    fn more_screen(&self, b: ScreenBuilder) -> Screen {
+        let g = self.game();
+        let mut b = b.top_bar("Puzzle options").secondary(format!(
+            "{} checks · {} reveals · {}",
+            g.checks,
+            g.reveals,
+            if matches!(self.draft.status(), Status::Saved) {
+                "Saved"
             } else {
-                "Across clues"
-            })
-            .owns_back(true)
-            .rows((0..5).map(|index| {
-                (
-                    format!("clue-{index}"),
-                    format!("{}", index + 1),
-                    CLUES[offset + index]
-                        .split_once(": ")
-                        .map_or(CLUES[offset + index], |(_, clue)| clue),
-                    kobo_sdk::Glyph::Note,
-                )
-            }))
-            .buttons([("clue-direction", "Switch direction"), ("board", "Board")])
-            .build();
-    }
-    if game.view == View::Entry {
-        return ScreenBuilder::new("crossword-entry")
-            .top_bar("Crossword")
-            .owns_back(true)
-            .heading(game.status())
-            .typed(&game.keyboard, "One letter")
-            .keyboard(&game.keyboard, "Enter letter")
-            .bottom_action("cancel", "Cancel")
-            .build();
-    }
-    let cells = (0..GRID.len()).map(|cell| {
-        let label = if GRID[cell] == b'#' {
-            "■".to_owned()
+                "Saving…"
+            }
+        ));
+        b = if g.undo.is_empty() {
+            b.disabled_button("undo", "Undo")
         } else {
-            game.letters[cell].to_string()
+            b.button("undo", "Undo")
         };
-        (cell_name(cell), label, None)
-    });
-    let screen = ScreenBuilder::new("crossword")
-        .top_bar("Crossword")
-        .secondary(game.notice.clone().unwrap_or_else(|| game.status()));
-    screen
-        .board(WIDTH, cells)
-        .grid(
-            3,
+        b = if g.position.letters[g.position.selected] == b'.' {
+            b.disabled_button("clear", "Clear square")
+        } else {
+            b.button("clear", "Clear square")
+        };
+        b.grid(
+            2,
             false,
             [
-                ("clues", "Clues"),
-                ("clear", "Clear cell"),
-                ("how-to-play", "How to play"),
+                ("check", "Check word"),
+                ("reveal", "Reveal"),
+                ("restart", "Restart"),
+                ("puzzles", "Puzzles"),
             ],
         )
+        .bottom_action("help", "How to play")
         .build()
-}
-impl KoboApp for Game {
-    fn on_start(&mut self, context: &mut Context) {
-        context.store().load(STATE);
-        context.set_screen(screen(self));
     }
-    fn on_store(&mut self, context: &mut Context, result: StoreResult) {
-        if let StoreResult::Loaded { key, value } = result {
-            if key == STATE && !self.edited {
-                if let Some(value) = value {
-                    if !self.restore(&value) {
-                        self.notice =
-                            Some("Saved progress was damaged and was ignored.".to_owned());
-                    }
-                }
-                context.set_screen(screen(self));
-            }
+}
+impl KoboApp for Crossword {
+    fn on_start(&mut self, context: &mut Context) {
+        context.set_orientation(kobo_sdk::Orientation::Portrait);
+        context.store().load(saved::KEY);
+        self.show(context);
+    }
+    fn on_load(&mut self, context: &mut Context, key: &str, result: StoreResult) {
+        if key != saved::KEY || self.loaded {
+            return;
         }
+        match result {
+            StoreResult::Loaded {
+                value: Some(bytes), ..
+            } => match saved::decode(&bytes) {
+                Ok((games, current)) => {
+                    self.games = games;
+                    self.current = current;
+                    self.view = View::Board;
+                    self.draft = Draft::restored(bytes, saved::LIMIT).expect("validated record");
+                    self.loaded = true;
+                    self.load_error = None;
+                }
+                Err(error) => self.load_error = Some(error.to_string()),
+            },
+            StoreResult::Loaded { value: None, .. } => {
+                self.loaded = true;
+                self.load_error = None;
+            }
+            _ => self.load_error = Some("Storage could not be read.".into()),
+        }
+        self.show(context);
+    }
+    fn on_save(&mut self, context: &mut Context, key: &str, result: StoreResult) {
+        if key != saved::KEY {
+            return;
+        }
+        if let Some(revision) = self.active.take() {
+            self.draft.finish(
+                revision,
+                if matches!(result, StoreResult::Saved { .. }) {
+                    Ok(())
+                } else {
+                    Err("Storage could not be written.".into())
+                },
+            );
+            self.pump(context);
+            self.show(context);
+        }
+    }
+    fn on_background(&mut self, context: &mut Context) {
+        self.pump(context);
+    }
+    fn can_suspend(&self) -> bool {
+        !self.loaded || matches!(self.draft.status(), Status::Saved)
     }
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
-        let mut save = false;
-        let changed = if self.view == View::Help {
-            if action == action_id("close-help") || action == ActionId::BACK {
-                self.view = View::Board;
-                true
-            } else {
-                false
+        let is = |s: &str| action == action_id(s);
+        if !self.loaded {
+            if is("retry-load") && self.load_error.take().is_some() {
+                context.store().load(saved::KEY);
+                self.show(context);
             }
-        } else if action == action_id("how-to-play") {
-            self.view = View::Help;
-            true
-        } else if self.view == View::Clues {
-            if action == action_id("board") || action == ActionId::BACK {
-                self.view = View::Board;
-                true
-            } else if action == action_id("clue-direction") {
-                self.down = !self.down;
-                true
-            } else if let Some(index) =
-                (0..5).find(|index| action == action_id(&format!("clue-{index}")))
+            return;
+        }
+        if matches!(self.draft.status(), Status::Failed(_)) {
+            if is("retry-save") {
+                self.draft.retry();
+                self.pump(context);
+                self.show(context);
+            }
+            return;
+        }
+        let before = self.games.clone();
+        let old_current = self.current;
+        let p = &PUZZLES[self.current];
+        if self.view == View::Entry && !self.accept_key(action) {
+            self.show(context);
+            return;
+        }
+        if action == ActionId::BACK || is("board") {
+            self.keyboard.clear();
+            self.notice = None;
+            self.view = if self.view == View::Board
+                || (self.view == View::Help && self.help_from_puzzles)
             {
-                self.selected = Some(if self.down {
-                    index
-                } else {
-                    index * usize::from(WIDTH)
-                });
-                self.clue = if self.down { 5 + index } else { index };
-                self.view = View::Board;
-                true
+                View::Puzzles
             } else {
-                false
-            }
-        } else if self.view == View::Entry {
-            if action == action_id("cancel") || action == ActionId::BACK {
-                self.keyboard.clear();
-                self.view = View::Board;
-                true
-            } else if let Some(pressed) = self.keyboard.press(action) {
-                if pressed == Pressed::Submitted {
-                    let entered = self.keyboard.take();
-                    let mut letters = entered.chars().filter(char::is_ascii_alphabetic);
-                    if let (Some(letter), None) = (letters.next(), letters.next()) {
-                        save = self.enter(letter.to_ascii_uppercase());
+                View::Board
+            };
+        } else {
+            match self.view {
+                View::Puzzles => {
+                    if let Some(index) = (0..PUZZLES.len()).find(|i| is(&format!("puzzle-{i}"))) {
+                        self.current = index;
                         self.view = View::Board;
-                    } else {
-                        self.notice = Some("Enter one letter.".to_owned());
+                    } else if is("help") {
+                        self.help_page = 0;
+                        self.help_from_puzzles = true;
+                        self.view = View::Help;
+                    } else if is("puzzles-previous") {
+                        self.puzzle_page = self.puzzle_page.saturating_sub(1);
+                    } else if is("puzzles-next") {
+                        self.puzzle_page = (self.puzzle_page + 1).min(1);
                     }
                 }
-                true
-            } else {
-                false
+                View::Board => {
+                    if let Some(cell) = (0..p.answer.len())
+                        .filter(|i| p.answer[*i] != b'#')
+                        .find(|i| is(&format!("cell-{i}")))
+                    {
+                        self.game_mut().position.selected = cell;
+                        self.keyboard.clear();
+                        self.notice = None;
+                        self.view = View::Entry;
+                    } else if is("clues") {
+                        self.clue_page = 0;
+                        self.view = View::Clues;
+                    } else if is("more") {
+                        self.view = View::More;
+                    }
+                }
+                View::Entry => self.entry_action(action),
+                View::Clues => self.clues_action(action),
+                View::More => self.more_action(action),
+                View::Reveal if is("confirm-reveal") => {
+                    self.game_mut().reveal(p);
+                    self.view = View::Board;
+                }
+                View::Restart if is("confirm-restart") => {
+                    let g = self.game_mut();
+                    g.remember();
+                    g.position.letters = Progress::new(p).position.letters;
+                    self.view = View::Board;
+                }
+                View::Help => {
+                    if is("help-previous") {
+                        self.help_page = self.help_page.saturating_sub(1);
+                    } else if is("help-next") {
+                        self.help_page = (self.help_page + 1)
+                            .min(context.paginate(HELP, true).len().saturating_sub(1));
+                    }
+                }
+                View::Reveal | View::Restart | View::Result => (),
             }
-        } else if action == action_id("clues") {
-            self.view = View::Clues;
-            true
-        } else if action == action_id("clear") {
-            if let Some(selected) = self.selected {
-                self.letters[selected] = ' ';
-                self.completed = false;
-                self.notice = None;
-                save = true;
-                true
-            } else {
-                false
-            }
-        } else if let Some(cell) =
-            (0..GRID.len()).find(|cell| action == action_id(&cell_name(*cell)))
-        {
-            let selected = self.select(cell);
-            if selected {
-                self.keyboard.clear();
-                self.view = View::Entry;
-            }
-            selected
-        } else {
-            false
-        };
-        if save {
-            self.edited = true;
-            context.store().save(STATE, self.encode());
         }
-        if changed {
-            context.set_screen(screen(self));
+        if before != self.games || old_current != self.current {
+            self.save(context);
         }
+        self.show(context);
     }
 }
 fn main() -> ExitCode {
-    match kobo_sdk::run("crossword", Game::default()) {
+    match kobo_sdk::run("crossword", Crossword::default()) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("crossword: {error}");
@@ -397,150 +559,4 @@ fn main() -> ExitCode {
     }
 }
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use kobo_ui::{Chrome, CLARA_BW_METRICS};
-    fn header(width: u8, height: u8) -> Vec<u8> {
-        let mut bytes = vec![0; 0x34 + usize::from(width) * usize::from(height) * 2];
-        bytes[2..14].copy_from_slice(b"ACROSS&DOWN\0");
-        bytes[0x2c] = width;
-        bytes[0x2d] = height;
-        bytes
-    }
-    #[test]
-    fn puz_header_refuses_truncated_and_oversize_inputs() {
-        assert_eq!(
-            parse_puz_header(&[]),
-            Err("puzzle is shorter than its header")
-        );
-        assert_eq!(
-            parse_puz_header(&header(26, 1)),
-            Err("grid must be 1 to 25 cells per side")
-        );
-        assert_eq!(parse_puz_header(&header(7, 7)).unwrap().width, 7);
-    }
-    #[test]
-    fn second_tap_changes_direction_and_letters_persist() {
-        let mut game = Game::default();
-        assert!(game.select(0));
-        assert!(game.select(0));
-        assert!(game.down);
-        assert!(game.enter('C'));
-        assert_eq!(game.letters[0], 'C');
-    }
-    #[test]
-    fn board_and_clue_controls_fit_clara_panel() {
-        let layout = screen(&Game::default()).layout_with(&CLARA_BW_METRICS, &Chrome::default());
-        assert!(layout.rect_of_action(action_id("cell-0")).is_some());
-        assert!(layout.rect_of_action(action_id("clues")).is_some());
-        let diagnostics =
-            screen(&Game::default()).diagnostics(&CLARA_BW_METRICS, &Chrome::default());
-        assert!(diagnostics.issues.is_empty(), "{:?}", diagnostics.issues);
-    }
-
-    #[test]
-    fn how_to_play_is_short_and_reachable() {
-        let mut game = Game::default();
-        assert!(screen(&game)
-            .layout_with(&CLARA_BW_METRICS, &Chrome::default())
-            .rect_of_action(action_id("how-to-play"))
-            .is_some());
-        game.view = View::Help;
-        assert!(screen(&game)
-            .diagnostics(&CLARA_BW_METRICS, &Chrome::measuring(true))
-            .issues
-            .is_empty());
-    }
-
-    #[test]
-    fn board_cells_show_only_entered_letters() {
-        let mut game = Game::default();
-        game.select(0);
-        game.enter('C');
-        let screen = screen(&game);
-        let labels = screen
-            .nodes
-            .iter()
-            .find_map(|node| match node {
-                kobo_ui::Node::Grid {
-                    square: true,
-                    cells,
-                    ..
-                } => Some(
-                    cells
-                        .iter()
-                        .map(|cell| cell.label.as_str())
-                        .collect::<Vec<_>>(),
-                ),
-                _ => None,
-            })
-            .expect("crossword board");
-
-        assert_eq!(labels[0], "C");
-        assert!(labels.iter().all(|label| !label.contains('[')));
-        assert!(labels.iter().all(|label| !label.contains("00")));
-    }
-
-    #[test]
-    fn progress_round_trips_and_refuses_malformed_state() {
-        let mut game = Game::default();
-        game.select(0);
-        game.enter('H');
-        game.down = true;
-        let encoded = game.encode();
-        let mut restored = Game::default();
-        assert!(restored.restore(&encoded));
-        assert_eq!(restored.letters, game.letters);
-        assert_eq!(restored.selected, game.selected);
-        assert!(restored.down);
-        assert!(!restored.restore(b"too-short;0;1"));
-    }
-
-    #[test]
-    fn bundled_grid_can_be_solved_with_letters() {
-        let mut game = Game::default();
-        for (cell, letter) in GRID.iter().copied().enumerate() {
-            game.selected = Some(cell);
-            assert!(game.enter(char::from(letter)));
-        }
-        assert!(game.completed);
-    }
-}
-
-#[cfg(test)]
-mod help_layout_tests {
-    use super::*;
-    #[test]
-    fn help_fits_supported_text_scales_and_geometries() {
-        let game = Game {
-            view: View::Help,
-            ..Game::default()
-        };
-        let screens = [screen(&game)];
-        for screen in screens {
-            for (width, height, pixels_per_inch) in
-                [(1072, 1448, 300), (758, 1024, 212), (1448, 1072, 300)]
-            {
-                for text_scale in kobo_ui::TextScale::STEPS {
-                    let metrics = kobo_sdk::DisplayMetrics {
-                        width,
-                        height,
-                        pixels_per_inch,
-                        text_scale,
-                    };
-                    let chrome = kobo_ui::Chrome::measuring(true);
-                    let diagnostics = screen.diagnostics(&metrics, &chrome);
-                    assert!(
-                        diagnostics.issues.is_empty(),
-                        "{metrics:?}: {:?}",
-                        diagnostics.issues
-                    );
-                    assert!(screen
-                        .layout_with(&metrics, &chrome)
-                        .rect_of_action(action_id("close-help"))
-                        .is_some());
-                }
-            }
-        }
-    }
-}
+mod tests;

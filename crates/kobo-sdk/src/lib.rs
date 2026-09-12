@@ -20,10 +20,10 @@ pub use kobo_protocol::{
     DeviceRequest, DeviceResult, DictionaryEntry, Frame, Header, LibraryEntry, Lifecycle, LogLevel,
     Message, RemoteInstallOutcome, SecretHeader, ShellError, ShellEvent, ShellRequest, StoreError,
     StoreRequest, StoreResult, StreamError, Task, TaskError, TaskId, TaskOutcome, UpdateChannel,
-    WifiNetwork, CACHE_PREFIX, MAX_CACHE_KEYS, MAX_FONT_BYTES, MAX_HEADERS, MAX_HEADER_NAME,
-    MAX_HEADER_VALUE, MAX_INLINE_PICTURE_BYTES, MAX_LOOKUP_WORD_BYTES, MAX_PICTURE_BYTES,
-    MAX_PICTURE_CHUNK_BYTES, MAX_RADIO_DEVICES, MAX_RADIO_NAME, MAX_SHELF_CHUNK, MAX_SHELL_CHUNK,
-    MAX_STORE_KEYS, MAX_STORE_VALUE, MAX_TASK_BYTES, MAX_URL_LEN,
+    UpdateMethod, WifiNetwork, CACHE_PREFIX, MAX_CACHE_KEYS, MAX_FONT_BYTES, MAX_HEADERS,
+    MAX_HEADER_NAME, MAX_HEADER_VALUE, MAX_INLINE_PICTURE_BYTES, MAX_LOOKUP_WORD_BYTES,
+    MAX_PICTURE_BYTES, MAX_PICTURE_CHUNK_BYTES, MAX_RADIO_DEVICES, MAX_RADIO_NAME, MAX_SHELF_CHUNK,
+    MAX_SHELL_CHUNK, MAX_STORE_KEYS, MAX_STORE_VALUE, MAX_TASK_BYTES, MAX_URL_LEN,
 };
 pub use kobo_ui::QuoteRole;
 pub use kobo_ui::{
@@ -33,11 +33,12 @@ pub use kobo_ui::{
     Freeform, Glyph, InlineFormula, LayoutIssue, LayoutIssueKind, NavBar, Node, NodeId,
     Orientation, Overlay, OverlayKind, ParagraphAlignment, ParagraphPresentation, Percent,
     PictureFormat, PictureHandle, ProseArea, RichTextSpan, Row, RowLead, RowState, Screen,
-    SlotWidth, Space, TextHit, TextPresentation, TextSelection, Tile, TilePicture, TileShape,
-    TileState, TopBar, TransferFailure, CLARA_BW_METRICS, MAX_BAND_SLOTS, MAX_CELLS, MAX_CHIPS,
-    MAX_CHOICE_OPTIONS, MAX_COLUMNS, MAX_INLINE_FORMULAE, MAX_QUOTE_DEPTH, MAX_ROWS, MAX_TABS,
-    MAX_TERMINAL_COLUMNS, MAX_TERMINAL_ROWS, TILE_BADGE_LIMIT,
+    SlotWidth, Space, TableRow, TextHit, TextPresentation, TextSelection, Tile, TilePicture,
+    TileShape, TileState, TopBar, TransferFailure, CLARA_BW_METRICS, MAX_BAND_SLOTS, MAX_CELLS,
+    MAX_CHIPS, MAX_CHOICE_OPTIONS, MAX_COLUMNS, MAX_INLINE_FORMULAE, MAX_QUOTE_DEPTH, MAX_ROWS,
+    MAX_TABS, MAX_TERMINAL_COLUMNS, MAX_TERMINAL_ROWS, TILE_BADGE_LIMIT,
 };
+pub use kobo_ui::{PencilBoard, PencilEdge, PencilMark, PencilMarkKind};
 use std::collections::BTreeMap;
 use std::collections::VecDeque;
 use std::fmt;
@@ -63,6 +64,7 @@ pub mod imports;
 pub mod keyboard;
 pub mod provider;
 pub mod samples;
+pub mod snapshot;
 pub mod terminal;
 pub mod validation;
 
@@ -679,6 +681,32 @@ impl Context {
         })
     }
 
+    /// The same, for a screen that draws a block of its own above the first
+    /// page of the prose and nothing above the rest.
+    ///
+    /// `placed` is that block, built as a screen and measured here. A detail
+    /// screen is usually this shape: facts, a picture or a byline at the head
+    /// of something long, and only at the head of it.
+    #[must_use]
+    pub fn paginate_tagged_under(
+        &self,
+        paragraphs: &[(u32, u8, QuoteRole, &str)],
+        nav_bar: bool,
+        placed: &Screen,
+    ) -> Vec<Vec<(u32, u8, QuoteRole, String)>> {
+        kobo_ui::with_text_scale(self.metrics.text_scale, || {
+            let used = placed
+                .layout_with(&self.metrics, &Chrome::measuring(true))
+                .content_used();
+            kobo_ui::paginate_tagged_below(
+                paragraphs,
+                &self.metrics,
+                self.paged_area(nav_bar),
+                used,
+            )
+        })
+    }
+
     /// `text` cut to the single line a list row can show, ellipsised if it
     /// did not fit.
     ///
@@ -754,13 +782,19 @@ impl Context {
     /// a title clamped at the full row width runs under the dots.
     #[must_use]
     pub fn one_line_row_with_menu(&self, text: &str, nav_bar: bool) -> String {
+        self.clamped_row_with_menu(text, 1, nav_bar)
+    }
+
+    /// Clamps a row against the width left by its overflow menu.
+    #[must_use]
+    pub fn clamped_row_with_menu(&self, text: &str, lines: usize, nav_bar: bool) -> String {
         kobo_ui::with_text_scale(self.metrics.text_scale, || {
             let area = self.metrics.prose_area(true, nav_bar);
             kobo_ui::clamp_lines(
                 text,
                 kobo_ui::row_title_width(&self.metrics, area, "", true),
                 kobo_ui::FontSize::Body,
-                1,
+                lines,
             )
         })
     }
@@ -804,6 +838,49 @@ impl Context {
     pub fn paginate_rows(&self, rows: &[(&str, &str)], nav_bar: bool) -> Vec<Vec<usize>> {
         kobo_ui::with_text_scale(self.metrics.text_scale, || {
             kobo_ui::paginate_rows(rows, &self.metrics, self.paged_area(nav_bar))
+        })
+    }
+
+    /// Paginates rows below an attention banner, reserving its measured height.
+    /// Use `nav_bar` when a fixed bottom action is also present.
+    #[must_use]
+    pub fn paginate_rows_below_notice(
+        &self,
+        rows: &[(&str, &str)],
+        nav_bar: bool,
+        notice: Option<&str>,
+    ) -> Vec<Vec<usize>> {
+        kobo_ui::with_text_scale(self.metrics.text_scale, || {
+            let mut area = self.paged_area(nav_bar);
+            if let Some(notice) = notice {
+                area.height = area
+                    .height
+                    .saturating_sub(kobo_ui::banner_height(notice, area.width, &self.metrics))
+                    .saturating_sub(area.gap)
+                    .max(1);
+            }
+            kobo_ui::paginate_rows(rows, &self.metrics, area)
+        })
+    }
+
+    /// Paginates rows with overflow menus beneath a measured notice.
+    #[must_use]
+    pub fn paginate_rows_with_menu_below_notice(
+        &self,
+        rows: &[(&str, &str)],
+        nav_bar: bool,
+        notice: Option<&str>,
+    ) -> Vec<Vec<usize>> {
+        kobo_ui::with_text_scale(self.metrics.text_scale, || {
+            let mut area = self.paged_area(nav_bar);
+            if let Some(notice) = notice {
+                area.height = area
+                    .height
+                    .saturating_sub(kobo_ui::banner_height(notice, area.width, &self.metrics))
+                    .saturating_sub(area.gap)
+                    .max(1);
+            }
+            kobo_ui::paginate_rows_with_menu(rows, &self.metrics, area)
         })
     }
 
@@ -989,6 +1066,64 @@ impl Context {
         })
     }
 
+    /// The same, for rows that carry an overflow mark against their right edge.
+    ///
+    /// Separate from [`Self::paginate_rows_under`] because the mark takes a
+    /// column out of the title, and a list measured as though it did not
+    /// comes back with rows that wrap when they are drawn: the last row of
+    /// every page then falls under the position strip.
+    #[must_use]
+    pub fn paginate_rows_with_menu_under(
+        &self,
+        rows: &[(&str, &str)],
+        nav_bar: bool,
+        position: Position,
+        placed: &Screen,
+    ) -> Vec<Vec<usize>> {
+        kobo_ui::with_text_scale(self.metrics.text_scale, || {
+            let used = placed
+                .layout_with(&self.metrics, &Chrome::measuring(true))
+                .content_used();
+            let mut area = self.area_for(nav_bar, position);
+            area.height = area
+                .height
+                .saturating_sub(used.saturating_add(area.gap))
+                .max(0);
+            kobo_ui::paginate_rows_with_menu(rows, &self.metrics, area)
+        })
+    }
+
+    /// The same, for rows that lead with a rank rather than a mark.
+    ///
+    /// The lead column is as wide as the highest number it has to hold, so a
+    /// list measured as though it led with a mark hands every title the wrong
+    /// width and comes back a row short.
+    #[must_use]
+    pub fn paginate_ranked_rows_under(
+        &self,
+        rows: &[(&str, &str)],
+        nav_bar: bool,
+        highest: u16,
+        position: Position,
+        placed: &Screen,
+    ) -> Vec<Vec<usize>> {
+        kobo_ui::with_text_scale(self.metrics.text_scale, || {
+            let used = placed
+                .layout_with(&self.metrics, &Chrome::measuring(true))
+                .content_used();
+            let mut area = self.area_for(nav_bar, position);
+            area.height = area
+                .height
+                .saturating_sub(used.saturating_add(area.gap))
+                .max(0);
+            let rows: Vec<(&str, &str, &str)> = rows
+                .iter()
+                .map(|(title, summary)| (*title, *summary, ""))
+                .collect();
+            kobo_ui::paginate_ranked_rows_with_trailing(&rows, &self.metrics, area, highest)
+        })
+    }
+
     /// The page a list gets, given where it says which page that is.
     fn area_for(&self, nav_bar: bool, position: Position) -> kobo_ui::ProseArea {
         match position {
@@ -1018,6 +1153,35 @@ impl Context {
     ) -> Vec<Vec<usize>> {
         kobo_ui::with_text_scale(self.metrics.text_scale, || {
             kobo_ui::paginate_rows_in_sections(rows, &self.metrics, self.paged_area(nav_bar))
+        })
+    }
+
+    /// The same, for a list in labelled groups drawn under and over something
+    /// of the application's own.
+    ///
+    /// `placed` is everything on the screen that is not the list: a row of
+    /// filter chips above it, the buttons under it. Measured rather than
+    /// guessed, because both of those change size with the reader's text
+    /// setting and a list paginated as though they were not there puts its
+    /// last row through them.
+    #[must_use]
+    pub fn paginate_rows_in_sections_under(
+        &self,
+        rows: &[(Option<&str>, &str, &str)],
+        nav_bar: bool,
+        position: Position,
+        placed: &Screen,
+    ) -> Vec<Vec<usize>> {
+        kobo_ui::with_text_scale(self.metrics.text_scale, || {
+            let used = placed
+                .layout_with(&self.metrics, &Chrome::measuring(true))
+                .content_used();
+            let mut area = self.area_for(nav_bar, position);
+            area.height = area
+                .height
+                .saturating_sub(used.saturating_add(area.gap))
+                .max(0);
+            kobo_ui::paginate_rows_in_sections(rows, &self.metrics, area)
         })
     }
 
@@ -1302,7 +1466,12 @@ impl Context {
     /// Only [`TaskError::worth_retrying`] failures are tried again, and only
     /// once. A refused permission or a body too large is not going to change,
     /// and a reader watching a spinner is owed an answer rather than a loop.
+    /// `Task::Update` is always sent once, even through this helper: a lost
+    /// reply can follow an applied change. Reconcile state before retrying it.
     pub fn spawn_retrying(&mut self, work: Task) -> Option<TaskId> {
+        if matches!(work, Task::Update { .. }) {
+            return self.spawn(work);
+        }
         let task = self.spawn(work.clone())?;
         self.retrying.push((task, work));
         Some(task)
@@ -4499,6 +4668,41 @@ mod task_tests {
             .collect()
     }
 
+    #[test]
+    fn update_failure_is_reported_without_an_invisible_retry() {
+        struct Updater {
+            method: UpdateMethod,
+            outcomes: Vec<TaskOutcome>,
+        }
+        impl KoboApp for Updater {
+            fn on_start(&mut self, context: &mut Context) {
+                context.spawn_retrying(Task::Update {
+                    method: self.method,
+                    url: "https://example.invalid/entry/7".into(),
+                    body: "{}".into(),
+                    content_type: "application/json".into(),
+                    credential: None,
+                    headers: Vec::new(),
+                    max_bytes: 1024,
+                });
+            }
+            fn on_action(&mut self, _: &mut Context, _: ActionId) {}
+            fn on_task(&mut self, _: &mut Context, _: TaskId, outcome: TaskOutcome) {
+                self.outcomes.push(outcome);
+            }
+        }
+        for method in [UpdateMethod::Put, UpdateMethod::Patch] {
+            let mut runner = AppRunner::new(Updater {
+                method,
+                outcomes: Vec::new(),
+            });
+            let first = spawned_work(&runner.start());
+            assert_eq!(first.len(), 1);
+            let outcome = TaskOutcome::Failed(TaskError::Unreachable);
+            assert!(spawned_work(&runner.task_outcome(first[0].0, outcome.clone())).is_empty());
+            assert_eq!(runner.app().outcomes, vec![outcome]);
+        }
+    }
     #[test]
     fn a_retryable_failure_naps_and_tries_again_without_telling_the_application() {
         // The radio powers down when idle. The first request after a while

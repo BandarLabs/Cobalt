@@ -1,0 +1,17 @@
+{
+  "status": "passed",
+  "scale": "default",
+  "fixture": "a-list-of-things-to-do",
+  "checks": [
+    "an empty list says so and offers the one thing to do about it",
+    "three items, one of them longer than the panel, and their tags",
+    "tapping an item finishes it, and says how to undo that",
+    "clearing the finished items can be undone once, and only once",
+    "the list can be edited without the list itself carrying controls",
+    "an item takes a date and a place in the list, on its own screen",
+    "renaming starts from the words already written, and keeps the item where it was",
+    "the whole list is offered to a paired computer as plain text",
+    "every screen has a way back to the list",
+    "the list, its dates and its order survive a restart"
+  ]
+}

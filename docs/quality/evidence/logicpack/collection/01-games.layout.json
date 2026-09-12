@@ -1,0 +1,404 @@
+{
+  "paints": 2,
+  "nodes": [
+    {
+      "kind": "StatusBand",
+      "x": 0,
+      "y": 0,
+      "width": 1072,
+      "height": 59,
+      "centre": {
+        "x": 536,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusClock",
+      "x": 47,
+      "y": 0,
+      "width": 112,
+      "height": 59,
+      "centre": {
+        "x": 103,
+        "y": 29
+      },
+      "action": null,
+      "lines": [
+        "07:01"
+      ]
+    },
+    {
+      "kind": "StatusBattery(Some(Percent(72)), false)",
+      "x": 955,
+      "y": 12,
+      "width": 70,
+      "height": 35,
+      "centre": {
+        "x": 990,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusSignal(Strong)",
+      "x": 896,
+      "y": 12,
+      "width": 35,
+      "height": 35,
+      "centre": {
+        "x": 913,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusBluetooth",
+      "x": 837,
+      "y": 12,
+      "width": 35,
+      "height": 35,
+      "centre": {
+        "x": 854,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "TopBar",
+      "x": 0,
+      "y": 59,
+      "width": 1072,
+      "height": 100,
+      "centre": {
+        "x": 536,
+        "y": 109
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Back",
+      "x": 47,
+      "y": 59,
+      "width": 100,
+      "height": 100,
+      "centre": {
+        "x": 97,
+        "y": 109
+      },
+      "action": 4294967295,
+      "lines": []
+    },
+    {
+      "kind": "BarAction(ActionId(1524496950))",
+      "x": 874,
+      "y": 59,
+      "width": 151,
+      "height": 100,
+      "centre": {
+        "x": 949,
+        "y": 109
+      },
+      "action": 1524496950,
+      "lines": [
+        "Help"
+      ]
+    },
+    {
+      "kind": "TopBarTitle",
+      "x": 171,
+      "y": 77,
+      "width": 679,
+      "height": 64,
+      "centre": {
+        "x": 510,
+        "y": 109
+      },
+      "action": null,
+      "lines": [
+        "Logic Pack"
+      ]
+    },
+    {
+      "kind": "Divider",
+      "x": 0,
+      "y": 159,
+      "width": 1072,
+      "height": 4,
+      "centre": {
+        "x": 536,
+        "y": 161
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Row(ActionId(829427006))",
+      "x": 47,
+      "y": 175,
+      "width": 978,
+      "height": 162,
+      "centre": {
+        "x": 536,
+        "y": 256
+      },
+      "action": 829427006,
+      "lines": []
+    },
+    {
+      "kind": "RowLead(Icon(Grid))",
+      "x": 47,
+      "y": 209,
+      "width": 44,
+      "height": 44,
+      "centre": {
+        "x": 69,
+        "y": 231
+      },
+      "action": 829427006,
+      "lines": []
+    },
+    {
+      "kind": "RowTitle",
+      "x": 115,
+      "y": 199,
+      "width": 886,
+      "height": 64,
+      "centre": {
+        "x": 558,
+        "y": 231
+      },
+      "action": 829427006,
+      "lines": [
+        "Slitherlink"
+      ]
+    },
+    {
+      "kind": "RowSummary",
+      "x": 115,
+      "y": 263,
+      "width": 886,
+      "height": 50,
+      "centre": {
+        "x": 558,
+        "y": 288
+      },
+      "action": 829427006,
+      "lines": [
+        "One loop"
+      ]
+    },
+    {
+      "kind": "RowRule",
+      "x": 115,
+      "y": 349,
+      "width": 910,
+      "height": 4,
+      "centre": {
+        "x": 570,
+        "y": 351
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Row(ActionId(953906856))",
+      "x": 47,
+      "y": 361,
+      "width": 978,
+      "height": 162,
+      "centre": {
+        "x": 536,
+        "y": 442
+      },
+      "action": 953906856,
+      "lines": []
+    },
+    {
+      "kind": "RowLead(Icon(Grid))",
+      "x": 47,
+      "y": 395,
+      "width": 44,
+      "height": 44,
+      "centre": {
+        "x": 69,
+        "y": 417
+      },
+      "action": 953906856,
+      "lines": []
+    },
+    {
+      "kind": "RowTitle",
+      "x": 115,
+      "y": 385,
+      "width": 886,
+      "height": 64,
+      "centre": {
+        "x": 558,
+        "y": 417
+      },
+      "action": 953906856,
+      "lines": [
+        "Hashi"
+      ]
+    },
+    {
+      "kind": "RowSummary",
+      "x": 115,
+      "y": 449,
+      "width": 886,
+      "height": 50,
+      "centre": {
+        "x": 558,
+        "y": 474
+      },
+      "action": 953906856,
+      "lines": [
+        "Connect islands"
+      ]
+    },
+    {
+      "kind": "RowRule",
+      "x": 115,
+      "y": 535,
+      "width": 910,
+      "height": 4,
+      "centre": {
+        "x": 570,
+        "y": 537
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Row(ActionId(3301948914))",
+      "x": 47,
+      "y": 547,
+      "width": 978,
+      "height": 162,
+      "centre": {
+        "x": 536,
+        "y": 628
+      },
+      "action": 3301948914,
+      "lines": []
+    },
+    {
+      "kind": "RowLead(Icon(Grid))",
+      "x": 47,
+      "y": 581,
+      "width": 44,
+      "height": 44,
+      "centre": {
+        "x": 69,
+        "y": 603
+      },
+      "action": 3301948914,
+      "lines": []
+    },
+    {
+      "kind": "RowTitle",
+      "x": 115,
+      "y": 571,
+      "width": 886,
+      "height": 64,
+      "centre": {
+        "x": 558,
+        "y": 603
+      },
+      "action": 3301948914,
+      "lines": [
+        "Kakuro"
+      ]
+    },
+    {
+      "kind": "RowSummary",
+      "x": 115,
+      "y": 635,
+      "width": 886,
+      "height": 50,
+      "centre": {
+        "x": 558,
+        "y": 660
+      },
+      "action": 3301948914,
+      "lines": [
+        "Cross sums"
+      ]
+    },
+    {
+      "kind": "RowRule",
+      "x": 115,
+      "y": 721,
+      "width": 910,
+      "height": 4,
+      "centre": {
+        "x": 570,
+        "y": 723
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Row(ActionId(4162931999))",
+      "x": 47,
+      "y": 733,
+      "width": 978,
+      "height": 162,
+      "centre": {
+        "x": 536,
+        "y": 814
+      },
+      "action": 4162931999,
+      "lines": []
+    },
+    {
+      "kind": "RowLead(Icon(Grid))",
+      "x": 47,
+      "y": 767,
+      "width": 44,
+      "height": 44,
+      "centre": {
+        "x": 69,
+        "y": 789
+      },
+      "action": 4162931999,
+      "lines": []
+    },
+    {
+      "kind": "RowTitle",
+      "x": 115,
+      "y": 757,
+      "width": 886,
+      "height": 64,
+      "centre": {
+        "x": 558,
+        "y": 789
+      },
+      "action": 4162931999,
+      "lines": [
+        "Minesweeper"
+      ]
+    },
+    {
+      "kind": "RowSummary",
+      "x": 115,
+      "y": 821,
+      "width": 886,
+      "height": 50,
+      "centre": {
+        "x": 558,
+        "y": 846
+      },
+      "action": 4162931999,
+      "lines": [
+        "Clear the field"
+      ]
+    }
+  ]
+}

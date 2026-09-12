@@ -1,6 +1,6 @@
 [package]
 name = "kobo-calibre-web"
-version = "0.1.0"
+version = "0.1.3"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -8,6 +8,13 @@ publish = false
 
 [dependencies]
 kobo-sdk = { path = "../../crates/kobo-sdk" }
+kobo-opds = { path = "../../crates/kobo-opds" }
+
+kobo-json = { path = "../../crates/kobo-json" }
+kobo-state = { path = "../../crates/kobo-state" }
+kobo-net = { path = "../../crates/kobo-net" }
+kobo-bookview = { path = "../../crates/kobo-bookview" }
+kobo-read = { path = "../../crates/kobo-read" }
 
 [dev-dependencies]
 kobo-ui = { path = "../../crates/kobo-ui" }

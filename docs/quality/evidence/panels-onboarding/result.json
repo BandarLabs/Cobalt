@@ -1,0 +1,11 @@
+{
+  "status": "passed",
+  "profile": "clara-bw-391",
+  "scale": "extra-large",
+  "cbr": false,
+  "colour": false,
+  "reader_tools": true,
+  "server_setup": true,
+  "onboarding": true,
+  "original_fixture": true
+}
