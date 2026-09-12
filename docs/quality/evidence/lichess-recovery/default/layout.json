@@ -26,7 +26,7 @@
       },
       "action": null,
       "lines": [
-        "11:50"
+        "12:32"
       ]
     },
     {
@@ -134,33 +134,48 @@
       },
       "action": null,
       "lines": [
-        "10+5 Rapid \u00b7 Rated"
-      ]
-    },
-    {
-      "kind": "ActivityLabel",
-      "x": 47,
-      "y": 267,
-      "width": 978,
-      "height": 46,
-      "centre": {
-        "x": 536,
-        "y": 290
-      },
-      "action": null,
-      "lines": [
-        "Checking"
+        "10+5"
       ]
     },
     {
       "kind": "Secondary",
       "x": 47,
-      "y": 325,
+      "y": 267,
       "width": 978,
       "height": 35,
       "centre": {
         "x": 536,
-        "y": 342
+        "y": 284
+      },
+      "action": null,
+      "lines": [
+        "Rapid \u00b7 Rated"
+      ]
+    },
+    {
+      "kind": "ActivityLabel",
+      "x": 47,
+      "y": 314,
+      "width": 978,
+      "height": 46,
+      "centre": {
+        "x": 536,
+        "y": 337
+      },
+      "action": null,
+      "lines": [
+        "Checking games"
+      ]
+    },
+    {
+      "kind": "Secondary",
+      "x": 47,
+      "y": 372,
+      "width": 978,
+      "height": 35,
+      "centre": {
+        "x": 536,
+        "y": 389
       },
       "action": null,
       "lines": [
@@ -168,29 +183,14 @@
       ]
     },
     {
-      "kind": "Banner(Attention)",
-      "x": 47,
-      "y": 372,
-      "width": 978,
-      "height": 94,
-      "centre": {
-        "x": 536,
-        "y": 419
-      },
-      "action": null,
-      "lines": [
-        "Checking games."
-      ]
-    },
-    {
       "kind": "Button(ActionId(3461147258), Enabled, Normal)",
       "x": 371,
-      "y": 478,
+      "y": 419,
       "width": 330,
       "height": 118,
       "centre": {
         "x": 536,
-        "y": 537
+        "y": 478
       },
       "action": 3461147258,
       "lines": [

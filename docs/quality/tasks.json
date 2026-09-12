@@ -2017,7 +2017,9 @@
     "group": "Lichess",
     "task": "Polish pairing and reconnection guidance",
     "status": "todo",
-    "evidence": []
+    "evidence": [
+      "Partial PR #181 evidence: simplified pairing/recovery copy, removed the duplicated checking banner and separated clock settings from game type. Normal and 170% checking-screen captures pass; 111 app tests and strict Clippy pass. Incorrect rate-limit copy no longer claims the seek was cancelled. Remaining guidance review stays open. Evidence: docs/quality/evidence/lichess-recovery on beta-quality-apps-2."
+    ]
   },
   {
     "id": "LICHESS-02",

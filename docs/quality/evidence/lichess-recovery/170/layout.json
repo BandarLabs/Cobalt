@@ -26,7 +26,7 @@
       },
       "action": null,
       "lines": [
-        "11:50"
+        "12:32"
       ]
     },
     {
@@ -127,41 +127,55 @@
       "x": 47,
       "y": 175,
       "width": 978,
-      "height": 272,
+      "height": 136,
       "centre": {
         "x": 536,
-        "y": 311
+        "y": 243
       },
       "action": null,
       "lines": [
-        "10+5 Rapid \u00b7",
-        "Rated"
-      ]
-    },
-    {
-      "kind": "ActivityLabel",
-      "x": 47,
-      "y": 459,
-      "width": 978,
-      "height": 79,
-      "centre": {
-        "x": 536,
-        "y": 498
-      },
-      "action": null,
-      "lines": [
-        "Checking"
+        "10+5"
       ]
     },
     {
       "kind": "Secondary",
       "x": 47,
-      "y": 550,
+      "y": 323,
       "width": 978,
       "height": 60,
       "centre": {
         "x": 536,
-        "y": 580
+        "y": 353
+      },
+      "action": null,
+      "lines": [
+        "Rapid \u00b7 Rated"
+      ]
+    },
+    {
+      "kind": "ActivityLabel",
+      "x": 47,
+      "y": 395,
+      "width": 978,
+      "height": 79,
+      "centre": {
+        "x": 536,
+        "y": 434
+      },
+      "action": null,
+      "lines": [
+        "Checking games"
+      ]
+    },
+    {
+      "kind": "Secondary",
+      "x": 47,
+      "y": 486,
+      "width": 978,
+      "height": 60,
+      "centre": {
+        "x": 536,
+        "y": 516
       },
       "action": null,
       "lines": [
@@ -169,29 +183,14 @@
       ]
     },
     {
-      "kind": "Banner(Attention)",
-      "x": 47,
-      "y": 622,
-      "width": 978,
-      "height": 127,
-      "centre": {
-        "x": 536,
-        "y": 685
-      },
-      "action": null,
-      "lines": [
-        "Checking games."
-      ]
-    },
-    {
       "kind": "Button(ActionId(3461147258), Enabled, Normal)",
       "x": 288,
-      "y": 761,
+      "y": 558,
       "width": 496,
       "height": 118,
       "centre": {
         "x": 536,
-        "y": 820
+        "y": 617
       },
       "action": 3461147258,
       "lines": [

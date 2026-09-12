@@ -175,3 +175,11 @@ blocked moves and recovery. It also checks active-side clocks after each move.
 ![Reconnecting board](screenshots/reconnecting.png)
 
 ![Reconnecting board at 170% text size](screenshots/reconnecting-large.png)
+
+Pairing shows the clock setting separately from the game type, including at
+enlarged text sizes. “Finding an opponent” changes to “Checking games” while
+recovering a possible missed match. Recovery messages explain what is happening
+without exposing protocol event names; rate-limit guidance does not claim the
+seek was cancelled when only the next check is delayed.
+
+![Checking for a matched game at 170% text size](screenshots/reconciling-large.png)

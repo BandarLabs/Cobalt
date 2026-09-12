@@ -2338,3 +2338,11 @@ layouts: `evidence/lichess-connection`. Lichess 1.0.10 uses short reconnect copy
 and full-width clock placeholders to preserve touch targets and large-text
 layout. Generated app pages were updated. No live service was used.
 Tracker: 232 complete, 263 open, one deferred.
+
+Lichess 1.0.11 simplifies pairing and recovery guidance, removes the duplicate
+checking banner and separates clock settings from the game type to avoid an
+awkward enlarged heading wrap. Rate-limit guidance no longer incorrectly says
+pairing was cancelled. Normal and 170% checking-screen captures pass; all 111
+app tests and strict Clippy pass. Updated screenshot evidence is in
+`evidence/lichess-recovery`. LICHESS-01 remains open for the rest of its guidance
+review; counts remain 232 complete, 263 open, one deferred.

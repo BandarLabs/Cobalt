@@ -29,7 +29,7 @@
   "frame": {
     "colourAppearance": "luminance",
     "format": "grey8",
-    "sha256": "409e60fea777046b3a8dbecd3188ed5107c0fd668a070def7c758424f50877d3",
+    "sha256": "f5da8dbbe6c4ed3be66df5438b17f859d0ec1919864424c5169912d6a0c1034a",
     "view": "ideal"
   },
   "interfaceScalePercent": 170,
@@ -56,11 +56,11 @@
     "clock": {
       "date": "2026-09-12",
       "mode": "real",
-      "monotonicMillis": "862",
-      "unixMillis": "1789213855741",
+      "monotonicMillis": "849",
+      "unixMillis": "1789216324542",
       "utcOffsetMinutes": 0
     },
-    "dirtyPixelsSinceClean": 183958,
+    "dirtyPixelsSinceClean": 41356,
     "hardware": {
       "batteryPercent": 72,
       "charging": false,
@@ -89,13 +89,13 @@
       "completed": "2",
       "contentsKnown": true,
       "failures": "0",
-      "finishedAtMillis": "347",
+      "finishedAtMillis": "320",
       "mode": "automatic",
       "queued": false,
       "status": "idle",
       "submissionMarker": null,
       "submitted": "2",
-      "submittedAtMillis": "337",
+      "submittedAtMillis": "315",
       "timing": "host control observations; not hardware calibration",
       "visibleFrame": "last confirmed completion with approximate residue"
     },
@@ -121,11 +121,11 @@
     "scenario": "normal",
     "touch": null,
     "transition": {
-      "dirty": 183958,
+      "dirty": 41356,
       "full": false,
       "refresh": 2,
       "region": {
-        "height": 872,
+        "height": 672,
         "width": 1072,
         "x": 0,
         "y": 8
@@ -160,28 +160,37 @@
         },
         {
           "region": {
-            "height": 112,
-            "width": 648,
+            "height": 88,
+            "width": 248,
             "x": 48,
-            "y": 192
+            "y": 200
           },
           "waveform": "GL16"
         },
         {
           "region": {
-            "height": 200,
-            "width": 296,
+            "height": 56,
+            "width": 288,
             "x": 48,
-            "y": 336
+            "y": 328
           },
           "waveform": "GL16"
         },
         {
           "region": {
-            "height": 264,
-            "width": 992,
-            "x": 40,
-            "y": 616
+            "height": 64,
+            "width": 464,
+            "x": 48,
+            "y": 408
+          },
+          "waveform": "GL16"
+        },
+        {
+          "region": {
+            "height": 128,
+            "width": 496,
+            "x": 288,
+            "y": 552
           },
           "waveform": "GL16"
         }
@@ -190,11 +199,11 @@
     }
   },
   "source": {
-    "binarySha256": "8e8b739cb687833133835cd3e927343c387cc90d5d4804f17fd4b1b116216eab",
+    "binarySha256": "03e5d56e569d70b34de735e15ef9a5177185110f6603ce91a5016e0500dbdc4f",
     "dirty": true,
     "fixture": null,
     "requestedSeed": null,
-    "revision": "79e943387000682dcaa74c2f7d40b9f4c03361a3"
+    "revision": "b13628118bf8aa7c0697ffdd0185454966e47836"
   },
   "version": 1
 }

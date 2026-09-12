@@ -878,10 +878,22 @@ impl Lichess {
             self.has_pending(|pending| matches!(pending, Pending::SeekReconcile { .. }));
         let mut screen = ScreenBuilder::new("lichess-pairing")
             .top_bar("Pairing")
-            .heading(format!("{clock} {} · Rated", preset.speed_label()))
-            .activity(if reconciling { "Checking" } else { "Waiting" }, None)
+            .heading(clock)
+            .secondary(format!("{} · Rated", preset.speed_label()))
+            .activity(
+                if reconciling {
+                    "Checking games"
+                } else {
+                    "Finding an opponent"
+                },
+                None,
+            )
             .secondary(self.clock.waited_words());
-        if let Some(notice) = &self.notice {
+        if let Some(notice) = self
+            .notice
+            .as_ref()
+            .filter(|notice| !reconciling || notice.as_str() != "Checking games.")
+        {
             screen = screen.banner(BannerLevel::Attention, notice);
         }
         screen
@@ -2839,14 +2851,12 @@ impl Lichess {
                 self.notice = None;
                 self.reconcile_pending_move();
                 if pending.is_some() && self.pending_move.is_none() {
-                    self.notice = Some("The board reconciled the pending move.".to_owned());
+                    self.notice = Some("Board updated.".to_owned());
                 } else if pending.is_some() {
                     self.pending_move = None;
                     self.selected = None;
-                    self.notice = Some(
-                        "The move was absent from the authoritative reconnect state and was not replayed."
-                            .to_owned(),
-                    );
+                    self.notice =
+                        Some("The move was not confirmed. Choose your move again.".to_owned());
                 }
                 self.reset_clock(context, self.game.as_ref().is_some_and(Game::active));
                 self.finish_if_needed(context);
@@ -2872,10 +2882,8 @@ impl Lichess {
                         self.board_ready = true;
                     }
                     Some(ApplyState::Reopen) => {
-                        self.notice = Some(
-                            "Board history moved backward or diverged; reopening authoritative state."
-                                .to_owned(),
-                        );
+                        self.notice =
+                            Some("The board changed. Refreshing the position.".to_owned());
                         self.close_board(context, id);
                         self.schedule_board_reconnect(context, id);
                     }
@@ -2927,10 +2935,7 @@ impl Lichess {
         } else {
             self.pending_move = None;
             self.selected = None;
-            self.notice = Some(
-                "The server advanced without that move; the displayed board is authoritative."
-                    .to_owned(),
-            );
+            self.notice = Some("The position changed before your move was confirmed.".to_owned());
         }
     }
 
@@ -3124,7 +3129,7 @@ impl Lichess {
                         context,
                         generation,
                         format!(
-                            "Current games are rate-limited for {seconds}s. Pairing remains cancelled server-side; reconciliation will retry."
+                            "Lichess asked us to wait {seconds}s. We will check for your game again."
                         ),
                         seconds,
                     );
@@ -3276,7 +3281,7 @@ impl Lichess {
                         self.finish_seek_reconciliation(context, generation, games);
                     } else {
                         self.notice = Some(
-                            "The current-game response could not be read. Pairing was not replayed; cancel or wait for another check."
+                            "Could not check your game. Wait for another check or cancel pairing."
                                 .to_owned(),
                         );
                         let _ = self.spawn(
@@ -3324,10 +3329,7 @@ impl Lichess {
                         self.next_board(context, &id);
                     }
                 } else {
-                    self.notice = Some(
-                        "The board stream record was malformed; reopening authoritative state."
-                            .to_owned(),
-                    );
+                    self.notice = Some("Could not read the board update. Reconnecting.".to_owned());
                     self.close_board(context, &id);
                     self.schedule_board_reconnect(context, &id);
                 }
@@ -3464,7 +3466,7 @@ impl Lichess {
                         generation,
                         preset,
                         format!(
-                            "{} Waiting briefly for gameStart; the seek was not replayed.",
+                            "{} Checking whether your game started.",
                             Failure::of(error).naming(api::SECRET)
                         ),
                     );
@@ -3479,7 +3481,7 @@ impl Lichess {
                     context,
                     generation,
                     format!(
-                        "{} Pairing was not replayed; current-game reconciliation will retry.",
+                        "{} We will check for your game again.",
                         Failure::of(error).naming(api::SECRET)
                     ),
                     10,
@@ -3502,7 +3504,7 @@ impl Lichess {
                     self.accepted_challenge = None;
                 }
                 self.notice = Some(format!(
-                    "{} The action was not replayed; the board is being reconciled.",
+                    "{} Checking whether the action completed.",
                     Failure::of(error).naming(api::SECRET)
                 ));
                 if !matches!(action, GameAction::Move(_)) || !current {
@@ -7804,7 +7806,7 @@ mod tests {
             .notice
             .as_deref()
             .unwrap_or_default()
-            .contains("reopening authoritative"));
+            .contains("Refreshing the position"));
 
         let reconnected = api::parse_board(
             br#"{"type":"gameFull","id":"abcdEF12","rated":true,"speed":"rapid","variant":{"key":"standard"},"initialFen":"startpos","white":{"id":"owner123","name":"Owner","rating":1500},"black":{"id":"other123","name":"Other","rating":1510},"state":{"type":"gameState","moves":"e2e4 e7e5","wtime":599000,"btime":598000,"winc":0,"binc":0,"status":"started","bdraw":true}}"#,
