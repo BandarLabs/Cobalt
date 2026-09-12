@@ -3291,24 +3291,33 @@
     "pr": 3,
     "group": "Verses (APP-8)",
     "task": "Provide complete permitted poems or label excerpts explicitly",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "apps/verses/src/main.rs",
+      "docs/quality/evidence/verses/"
+    ]
   },
   {
     "id": "VERSE-03",
     "pr": 3,
     "group": "Verses (APP-8)",
     "task": "Paginate long poems",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "apps/verses/src/main.rs",
+      "docs/quality/evidence/verses/"
+    ]
   },
   {
     "id": "VERSE-04",
     "pr": 3,
     "group": "Verses (APP-8)",
     "task": "Show author and source context",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "apps/verses/src/main.rs",
+      "docs/quality/evidence/verses/"
+    ]
   },
   {
     "id": "VERSE-05",
@@ -3776,7 +3785,7 @@
     "task": "Unify 15-pad configuration and UI limits",
     "status": "done",
     "evidence": [
-      "Helper validation now accepts 1–15 pads per page, matching the CLI and reader. CLI import validation rejects oversized hand-edited pages instead of accepting invisible extra pads.",
+      "Helper validation now accepts 1\u201315 pads per page, matching the CLI and reader. CLI import validation rejects oversized hand-edited pages instead of accepting invisible extra pads.",
       "Eight CLI Deck tests and all 53 helper tests passed, including explicit 15/16-pad boundaries. Strict all-target CLI/helper Clippy passed.",
       "docs/quality/evidence/deck-fifteen-pads/result.json and preview.png: actual CLI assigns all 15 pads; 170% simulator screenshot visibly includes Pad 15 and passes layout diagnostics."
     ]

@@ -514,9 +514,9 @@ Design direction: the bar is a well-made iPad application, built for a panel tha
 ## PR 3 · Verses (APP-8)
 
 - [ ] **VERSE-01** Use real injectable calendar date and advance across midnight.
-- [ ] **VERSE-02** Provide complete permitted poems or label excerpts explicitly.
-- [ ] **VERSE-03** Paginate long poems.
-- [ ] **VERSE-04** Show author and source context.
+- [x] **VERSE-02** Provide complete permitted poems or label excerpts explicitly.
+- [x] **VERSE-03** Paginate long poems.
+- [x] **VERSE-04** Show author and source context.
 - [ ] **VERSE-05** Make favorites usable.
 - [ ] **VERSE-06** Export attributed quote cards.
 
