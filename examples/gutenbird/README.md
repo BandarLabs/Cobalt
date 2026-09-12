@@ -34,8 +34,8 @@ italics, headings and table of contents -- everything the plain text path
 threw away in exchange for a first page a few seconds sooner. So an EPUB is
 preferred whenever a catalog offers one: fetched in pieces into a shelf blob
 with real progress on screen, parsed once whole, and only then handed to the
-reader. Plain text remains a fallback, chosen only when a catalog -- and there
-are real ones -- publishes nothing else.
+reader. Plain text remains the fallback. When a catalog offers more than one readable
+download, **Choose download** lets you select the format before reading.
 
 ## Why the interface never says which version of OPDS answered
 
@@ -95,8 +95,17 @@ ordinary descriptions are unchanged.
 The detail header shows the language and the format selected for **Read**,
 using the same acquisition choice as the downloader. Common language codes
 are expanded; regional/script tags are retained beside the name, and unknown
-codes are shown unchanged. This describes the selected download; it does not
-add an edition chooser.
+codes are shown unchanged.
+
+**Choose download** lists the available EPUB and plain-text links, with sample
+labels, catalog-provided titles and sizes where supplied. Selecting a link
+returns to the book details; **Read** uses that download's offline copy and
+saved position. Switching formats does not overwrite the other copy. Downloads
+that exceed the device limit, require purchase or are unavailable are excluded.
+This picker chooses formats within an entry; illustrated/plain entries that
+are collapsed by catalog entry resolution still need a separate edition choice.
+
+![Download choices rendered from an original fixture with runtime fonts](../../docs/quality/evidence/gutenbird-formats/download-choices.png)
 
 
 Entries with the same title remain separate when their language, authors,

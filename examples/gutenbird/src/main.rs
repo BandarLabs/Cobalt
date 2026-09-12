@@ -347,6 +347,7 @@ enum View {
     Shelf,
     Search,
     Details,
+    Formats,
     Reading,
     Lookup,
     Note,
@@ -589,6 +590,8 @@ struct Gutenbird {
 
     /// The book on the details or reading screen, if any.
     open: Option<Publication>,
+    formats: Vec<kobo_opds::Acquisition>,
+    format_page: usize,
     open_cover: Option<TilePicture>,
     open_cover_task: Option<(TaskId, u8)>,
 
@@ -667,6 +670,8 @@ impl Default for Gutenbird {
             current: 0,
             stack: Vec::new(),
             open: None,
+            formats: Vec::new(),
+            format_page: 0,
             open_cover: None,
             open_cover_task: None,
             search_all: false,
@@ -725,6 +730,7 @@ impl Gutenbird {
             View::Shelf => self.shelf_screen(context),
             View::Search => self.search_screen(),
             View::Details => self.details_screen(context),
+            View::Formats => self.formats_screen(),
             View::Reading => self.reading_screen(context),
             View::Lookup => self.lookup_screen(),
             View::Note => self.note_screen(),
@@ -1106,6 +1112,17 @@ impl Gutenbird {
     }
 
     fn open_publication(&mut self, context: &mut Context, publication: Publication) {
+        self.formats = publication
+            .acquisition
+            .iter()
+            .filter(|acquisition| {
+                let mut candidate = publication.clone();
+                candidate.acquisition = vec![(*acquisition).clone()];
+                candidate.best_acquisition().is_some() && affordable(acquisition)
+            })
+            .cloned()
+            .collect();
+        self.format_page = 0;
         self.open = Some(publication);
         // Given back, not merely forgotten. Every book's cover is held against
         // the same handle, and the frame this page reserves names that handle
@@ -1808,6 +1825,93 @@ impl Gutenbird {
             .all(|issue| issue.severity != DiagnosticSeverity::Error)
     }
 
+    fn formats_screen(&self) -> kobo_sdk::Screen {
+        let pages = self.formats.len().div_ceil(4).max(1);
+        let page = self.format_page.min(pages - 1);
+        let mut screen = ScreenBuilder::new("gutenbird-formats")
+            .top_bar("Choose download")
+            .secondary("Each download keeps its own reading position.");
+        let mut rows = Vec::new();
+        for (index, acquisition) in self.formats.iter().enumerate().skip(page * 4).take(4) {
+            let mut label = match download_kind(acquisition.media_type.as_deref()) {
+                DownloadKind::Epub => "EPUB".to_owned(),
+                DownloadKind::Text => "Plain text".to_owned(),
+            };
+            if acquisition.kind == AcquisitionKind::Sample {
+                label.push_str(" · Sample");
+            }
+            if let Some(length) = acquisition.length {
+                label.push_str(&format!(" · {} KB", length.div_ceil(1024)));
+            }
+            if self
+                .open
+                .as_ref()
+                .and_then(Publication::best_acquisition)
+                .is_some_and(|selected| selected.href == acquisition.href)
+            {
+                label.push_str(" · Selected");
+            }
+            rows.push((
+                format!("format-{index}"),
+                label,
+                acquisition.title.clone().unwrap_or_default(),
+                RowLead::Number(u16::try_from(index + 1).unwrap_or(u16::MAX)),
+            ));
+        }
+        screen = screen.rows(rows);
+        if pages > 1 {
+            screen = screen
+                .page_turns("formats-back", "formats-next")
+                .page_position(
+                    u16::try_from(page + 1).unwrap_or(u16::MAX),
+                    u16::try_from(pages).unwrap_or(u16::MAX),
+                );
+        }
+        screen.build()
+    }
+
+    fn format_action(&mut self, context: &mut Context, action: ActionId) -> bool {
+        if self.view == View::Details
+            && action == action_id("formats")
+            && self.formats.len() > 1
+            && self.task.is_none()
+            && self.loading.is_none()
+        {
+            self.go(View::Formats);
+        } else if self.view == View::Formats {
+            if action == action_id("formats-next") {
+                self.format_page =
+                    (self.format_page + 1).min(self.formats.len().saturating_sub(1) / 4);
+            } else if action == action_id("formats-back") {
+                self.format_page = self.format_page.saturating_sub(1);
+            } else if let Some(acquisition) = self
+                .formats
+                .iter()
+                .enumerate()
+                .find(|(index, _)| action == action_id(&format!("format-{index}")))
+                .map(|(_, acquisition)| acquisition.clone())
+            {
+                let Some(mut publication) = self.open.clone() else {
+                    return false;
+                };
+                let formats = self.formats.clone();
+                publication.acquisition = vec![acquisition];
+                self.back_to(View::Details);
+                if let Some((task, _)) = self.open_cover_task.take() {
+                    context.cancel(task);
+                }
+                self.open_publication(context, publication);
+                self.formats = formats;
+            } else {
+                return false;
+            }
+        } else {
+            return false;
+        }
+        self.show(context);
+        true
+    }
+
     fn detail_head(&self, publication: &Publication, first_page: bool) -> ScreenBuilder {
         let screen = ScreenBuilder::new("gutenbird-book").top_bar(publication.title.clone());
         if !first_page {
@@ -1831,6 +1935,11 @@ impl Gutenbird {
         };
         let screen = if self.is_kept(publication) {
             screen.secondary("Already on this device.")
+        } else {
+            screen
+        };
+        let screen = if self.formats.len() > 1 {
+            screen.button("formats", "Choose download")
         } else {
             screen
         };
@@ -3475,6 +3584,9 @@ impl KoboApp for Gutenbird {
             self.show(context);
             return;
         }
+        if self.format_action(context, action) {
+            return;
+        }
         if action == action_id("read") {
             self.get_book(context);
             self.show(context);
@@ -4397,6 +4509,132 @@ Please read this before you distribute or use this work.\n";
             }],
         )
         .expect("a small synthetic EPUB")
+    }
+
+    #[test]
+    fn download_choices_exclude_unavailable_formats_and_page_without_losing_links() {
+        let mut choices: Vec<_> = (0..5)
+            .map(|index| epub_acquisition(&format!("https://x/{index}.epub")))
+            .collect();
+        choices[4].kind = AcquisitionKind::Sample;
+        let mut unavailable = epub_acquisition("https://x/unavailable.epub");
+        unavailable.available = false;
+        choices.extend([
+            unavailable,
+            acquisition(
+                AcquisitionKind::Buy,
+                "https://x/buy.epub",
+                "application/epub+zip",
+            ),
+            acquisition(
+                AcquisitionKind::OpenAccess,
+                "https://x/book.pdf",
+                "application/pdf",
+            ),
+            sized_epub("https://x/huge.epub", super::MAX_BOOK_BYTES + 1),
+        ]);
+        let mut app = Gutenbird::default();
+        app.open_publication(
+            &mut Context::default(),
+            publication("Format choices", choices),
+        );
+        assert_eq!(app.formats.len(), 5);
+        let mut runner = AppRunner::new(app);
+        runner.action(action_id("formats"));
+        runner.action(action_id("formats-next"));
+        runner.action(action_id("formats-next"));
+        assert_eq!(runner.app().format_page, 1);
+        runner.action(action_id("format-4"));
+        assert_eq!(
+            read_offer(runner.app().open.as_ref().unwrap()),
+            ReadOffer::Sample
+        );
+        assert_eq!(
+            runner
+                .app()
+                .open
+                .as_ref()
+                .unwrap()
+                .best_acquisition()
+                .unwrap()
+                .href,
+            "https://x/4.epub"
+        );
+        runner.action(action_id("formats"));
+        runner.action(kobo_sdk::ActionId::BACK);
+        assert_eq!(runner.app().view, View::Details);
+        assert_eq!(runner.app().formats.len(), 5);
+    }
+
+    #[test]
+    fn choosing_a_format_uses_its_own_download_and_saved_position() {
+        let epub = epub_acquisition("https://x/book.epub");
+        let text = text_acquisition("https://x/book.txt");
+        let book = publication("A Test Book", vec![epub, text]);
+        let epub_keys = book_keys(&book).unwrap();
+        let mut app = Gutenbird::default();
+        app.open_publication(&mut Context::default(), book);
+        let mut runner = AppRunner::new(app);
+        runner.action(action_id("formats"));
+        assert_eq!(runner.app().view, View::Formats);
+        let screen = runner.app().formats_screen();
+        let context = Context::default();
+        assert!(!screen
+            .diagnostics(&context.metrics(), &Chrome::with_back(true))
+            .issues
+            .iter()
+            .any(|issue| issue.severity == DiagnosticSeverity::Error));
+        if let Ok(directory) = std::env::var("KOBO_QUALITY_CAPTURE_DIR") {
+            kobo_text::install(CLARA_BW_METRICS).unwrap();
+            let screen = runner.app().formats_screen();
+            let metrics = context.metrics();
+            let mut surface = kobo_ui::Surface::new(
+                usize::try_from(metrics.width).unwrap(),
+                usize::try_from(metrics.height).unwrap(),
+            );
+            kobo_ui::render(&screen, &mut surface, None);
+            let png = kobo_image::encode_png_grey(
+                u32::try_from(metrics.width).unwrap(),
+                u32::try_from(metrics.height).unwrap(),
+                &surface.pixels,
+            )
+            .unwrap();
+            std::fs::create_dir_all(&directory).unwrap();
+            std::fs::write(
+                std::path::Path::new(&directory).join("download-choices.png"),
+                png,
+            )
+            .unwrap();
+        }
+        let commands = runner.action(action_id("format-1"));
+        assert_eq!(runner.app().view, View::Details);
+        let text_keys = runner.app().open_keys().unwrap();
+        assert_ne!(epub_keys, text_keys);
+        assert!(commands.iter().any(|command| matches!(command,
+            Command::Store(StoreRequest::Load { key }) if *key == text_keys.1)));
+        assert_eq!(runner.app().formats.len(), 2);
+        let commands = runner.action(action_id("read"));
+        assert!(commands.iter().any(|command| matches!(command,
+            Command::Spawn { work: Task::Fetch { url, offset: 0, .. }, .. } if url == "https://x/book.txt")));
+        assert_eq!(
+            runner.app().download.as_ref().unwrap().kind,
+            super::DownloadKind::Text
+        );
+        // The picker cannot replace an in-flight download.
+        runner.action(action_id("formats"));
+        assert_eq!(runner.app().view, View::Details);
+        runner.app_mut().task = None;
+        runner.app_mut().stored.insert(epub_keys.0.clone(), 4096);
+        runner.action(action_id("formats"));
+        runner.action(action_id("format-0"));
+        assert_eq!(runner.app().open_keys().unwrap(), epub_keys);
+        assert!(runner.app().download.is_none());
+        let commands = runner.action(action_id("read"));
+        assert!(!commands
+            .iter()
+            .any(|command| matches!(command, Command::Spawn { .. })));
+        assert!(commands.iter().any(|command| matches!(command,
+            Command::Store(StoreRequest::ShelfRead { name, .. }) if *name == epub_keys.0)));
     }
 
     #[test]
