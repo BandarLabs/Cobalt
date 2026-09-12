@@ -82,3 +82,20 @@ changed command, one key cannot overlap itself, and no more than four commands
 run at once. Commands receive ten minutes, then their whole process group gets
 `SIGTERM` followed by `SIGKILL` after ten seconds. The daemon strips terminal
 escape sequences and retains only the last 2 KB of output.
+
+## Try a sample
+
+Run `kobo-sidekickd init` once to create pairing, then stop any running
+Sidekick daemon and run `kobo-sidekickd sample`. Open Sidekick on your paired
+reader and choose **Received**. The computer reports when the acknowledgement
+arrives. Press Ctrl-C to stop; run the sample again to repeat it.
+
+The sample supplies its own question, opens only the authenticated reader
+listener, and does not load Deck or connect to an agent. It runs no command
+when you answer. An unanswered question expires after five minutes. Pairing
+and certificate installation are the same as normal Sidekick use.
+
+For isolated local testing, `KOBO_SIDEKICK_CONFIG_DIR` overrides the root
+containing `sidekick/` identity and `trust/` certificates. It does not change
+agent integration configuration paths. Leave it unset for normal owner use;
+a custom root's certificate must be installed explicitly if pairing a reader.

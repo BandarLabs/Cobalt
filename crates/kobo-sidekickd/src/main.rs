@@ -31,6 +31,7 @@ use std::process::ExitCode;
 
 const USAGE: &str = "usage: kobo-sidekickd init [--host ADDRESS ...]\n\
                      \x20      kobo-sidekickd run\n\
+                     \x20      kobo-sidekickd sample\n\
                      \x20      kobo-sidekickd setup [AGENT] [--dry-run]\n\
                      \x20      kobo-sidekickd setup AGENT --print\n\
                      \x20      kobo-sidekickd agents\n\
@@ -64,7 +65,7 @@ fn main() -> ExitCode {
                 println!("{USAGE}");
                 Ok(())
             }
-            ("init" | "run" | "setup" | "agents" | "hook", [flag])
+            ("init" | "run" | "sample" | "setup" | "agents" | "hook", [flag])
                 if matches!(flag.as_str(), "--help" | "-h") =>
             {
                 println!("{USAGE}");
@@ -72,6 +73,7 @@ fn main() -> ExitCode {
             }
             ("init", extra) => state::init(extra),
             ("run", []) => server::run(),
+            ("sample", []) => server::sample(),
             ("hook", [agent]) => hooks::run_hook(agent),
             ("agents", []) => hooks::list(),
             ("setup", [agent, flag]) if flag == "--print" => hooks::print_setup(agent),

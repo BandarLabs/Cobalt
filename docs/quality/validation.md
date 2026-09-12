@@ -2300,3 +2300,22 @@ integrations and repeats the terminal/help checks. Evidence:
 `evidence/sidekick-setup/result.json`; filesystem regression:
 `setup_preview_backup_retry_and_invalid_config_preserve_owner_files`.
 No user's integration configuration was modified during validation.
+
+
+### Sidekick built-in sample (partial SIDECLI-06)
+
+`kobo-sidekickd sample` publishes its own non-permission Received question,
+using the normal identity and reader authentication. It does not open the
+hook listener or load Deck. The acknowledgement clears the question and is
+reported on the computer; lack of acknowledgement expires after five minutes.
+Ctrl-C stops the sample server. Pairing is initialized through the usual init
+command. An optional dedicated configuration root isolates identity/trust
+files for tests without changing user integration paths.
+
+The actual helper passed local TLS acceptance using a temporary authority:
+wrong pairing rejected, question delivered and acknowledged, pending state
+cleared, and Deck unavailable even with a configuration file present. A guard
+held the hook port throughout, proving the sample did not require it.
+Evidence: `evidence/sidekick-sample/result.json` and terminal transcript.
+This is protocol evidence; simulator and physical reader acceptance remain
+outstanding, and SIDECLI-04/06 remain open.
