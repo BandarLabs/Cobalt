@@ -2246,3 +2246,22 @@ The installed synthetic value was verified and never appeared in command
 output. Strict all-target CLI Clippy passed. No real token, reader or service
 was used. Evidence: `evidence/provider-help/result.json` and help transcripts;
 reproduce with `scripts/quality/check-provider-help.py`.
+
+
+### Credential replacement recovery (partial CLI-18)
+
+Credential source reads are bounded to the 4 KB limit plus one byte and
+reject non-regular files. Local volume publication writes a new private
+staging file, syncs it and renames it over the destination. Network publication
+uses an exclusively created staging file and a cleanup trap before rename.
+An occupied staging file is preserved and causes refusal. Staging names are
+excluded from the credential list.
+
+Two focused Rust tests passed, including executing the generated shell script
+with a failing `cat`: prior value retained, partial removed, retry successful.
+The same script refuses an occupied stage without deleting it. Real CLI volume
+checks cover empty, oversized and invalid UTF-8 input, occupied staging,
+replacement retry and private file permissions on the local test filesystem.
+Strict all-target CLI Clippy passed. The provider acceptance result was
+refreshed against the newly built CLI. Hardware filesystem and power-loss
+acceptance remain outstanding; CLI-18 stays open for the wider transfer scope.

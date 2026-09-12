@@ -79,3 +79,11 @@ destinations are refused. Use `--from PATH` once with `set`; it is not accepted
 with `list` or `remove`. Credential values belong in a private file, not in the
 command line. For the app's required token scope and provider link, open its
 setup guide, for example `kobo apps setup lichess`.
+
+Credential replacement first writes a temporary file beside the existing
+credential, then publishes it. Invalid input and failed writes preserve the
+previous value. If another attempt already owns the staging file, the command
+refuses to overwrite it. Local input is limited to 4 KB and must be a regular
+text file. New staging files request private permissions; permission support
+depends on the USB volume's filesystem. This does not certify power-loss
+recovery on a physical reader.

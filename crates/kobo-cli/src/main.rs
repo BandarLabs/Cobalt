@@ -6174,12 +6174,22 @@ fn find_secret_source(name: &str) -> Result<PathBuf, String> {
 
 /// Reads a credential off this machine and checks the runtime could read it back.
 fn read_secret_file(path: &Path) -> Result<String, String> {
-    let bytes = std::fs::read(path).map_err(|error| format!("read {}: {error}", path.display()))?;
+    let metadata = fs::metadata(path)
+        .map_err(|error| format!("Read credential file {}: {error}", path.display()))?;
+    if !metadata.is_file() {
+        return Err("Choose a regular file containing the credential.".to_owned());
+    }
+    let mut bytes = Vec::new();
+    fs::File::open(path)
+        .and_then(|file| {
+            file.take((SECRET_MAXIMUM_BYTES + 1) as u64)
+                .read_to_end(&mut bytes)
+        })
+        .map_err(|error| format!("Read credential file {}: {error}", path.display()))?;
     if bytes.len() > SECRET_MAXIMUM_BYTES {
         return Err(format!(
-            "{} holds {} bytes; the runtime refuses anything over {SECRET_MAXIMUM_BYTES}",
-            path.display(),
-            bytes.len()
+            "{} is too large; choose a credential file of at most {SECRET_MAXIMUM_BYTES} bytes",
+            path.display()
         ));
     }
     let value = String::from_utf8(bytes).map_err(|_| format!("{} is not text", path.display()))?;
@@ -6319,6 +6329,52 @@ fn select_secret_target(
     Ok(())
 }
 
+fn secret_install_script(name: &str, value: &str) -> String {
+    format!(
+        "set -e\numask 077\n\
+         mkdir -p {DEVICE_SECRETS_DIRECTORY}\n\
+         chmod 700 {DEVICE_SECRETS_DIRECTORY}\n\
+         cd {DEVICE_SECRETS_DIRECTORY}\n\
+         (set -C; : > .{name}.writing) || exit 1\n\
+         trap 'rm -f .{name}.writing' EXIT\n\
+         trap 'exit 1' HUP INT TERM\n\
+         cat > .{name}.writing <<'{SECRET_DELIMITER}'\n\
+         {value}\n\
+         {SECRET_DELIMITER}\n\
+         chmod 600 .{name}.writing\n\
+         mv -f .{name}.writing {name}\n\
+         trap - EXIT HUP INT TERM\n"
+    )
+}
+
+fn publish_secret(path: &Path, value: &str) -> Result<(), String> {
+    use std::os::unix::fs::OpenOptionsExt;
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or("Invalid credential name")?;
+    let partial = path.with_file_name(format!(".{name}.writing"));
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&partial)
+        .map_err(|error| format!("Prepare credential (previous value unchanged): {error}"))?;
+    let result = writeln!(file, "{value}")
+        .and_then(|()| file.sync_all())
+        .and_then(|()| {
+            drop(file);
+            fs::rename(&partial, path)
+        });
+    if let Err(error) = result {
+        let _ = fs::remove_file(&partial);
+        return Err(format!(
+            "Could not publish credential; previous value unchanged: {error}"
+        ));
+    }
+    Ok(())
+}
+
 fn secret_command(arguments: &[String]) -> Result<(), String> {
     if provider_help_requested(arguments) {
         println!("{SECRET_USAGE}");
@@ -6334,15 +6390,7 @@ fn secret_command(arguments: &[String]) -> Result<(), String> {
             let bytes = value.len();
             match &target {
                 SecretTarget::Device(host) => {
-                    let script = format!(
-                        "set -e\n\
-                         mkdir -p {DEVICE_SECRETS_DIRECTORY}\n\
-                         chmod 700 {DEVICE_SECRETS_DIRECTORY}\n\
-                         cat > {DEVICE_SECRETS_DIRECTORY}/{name} <<'{SECRET_DELIMITER}'\n\
-                         {value}\n\
-                         {SECRET_DELIMITER}\n\
-                         chmod 600 {DEVICE_SECRETS_DIRECTORY}/{name}\n"
-                    );
+                    let script = secret_install_script(name, &value);
                     let output =
                         run_remote_shell(&format!("root@{host}"), &script, DEVICE_PROBE_TIMEOUT)?;
                     if !output.status.success() {
@@ -6359,8 +6407,7 @@ fn secret_command(arguments: &[String]) -> Result<(), String> {
                     std::fs::create_dir_all(&directory)
                         .map_err(|error| format!("create {}: {error}", directory.display()))?;
                     let path = directory.join(name);
-                    std::fs::write(&path, format!("{value}\n"))
-                        .map_err(|error| format!("write {}: {error}", path.display()))?;
+                    publish_secret(&path, &value)?;
                     println!("Installed '{name}' ({bytes} bytes) at {}.", path.display());
                 }
             }
@@ -6430,7 +6477,7 @@ fn secret_command(arguments: &[String]) -> Result<(), String> {
 fn report_secret_names<'a>(names: impl Iterator<Item = &'a str>) {
     let names: Vec<&str> = names
         .map(str::trim)
-        .filter(|name| !name.is_empty())
+        .filter(|name| valid_secret_name(name))
         .collect();
     if names.is_empty() {
         println!("No credentials are installed.");
@@ -7247,6 +7294,51 @@ mod tests {
     use std::path::PathBuf;
     use std::process::Command;
     use std::time::Duration;
+
+    #[test]
+    fn secret_remote_publish_preserves_old_value_on_failed_or_occupied_stage() {
+        use std::os::unix::fs::PermissionsExt;
+        let directory = std::env::temp_dir().join(format!(
+            "cobalt-secret-script-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let script = super::secret_install_script("fixture", "new-value")
+            .replace(super::DEVICE_SECRETS_DIRECTORY, directory.to_str().unwrap());
+        let destination = directory.join("fixture");
+        let partial = directory.join(".fixture.writing");
+        fs::write(&destination, "old-value").unwrap();
+        fs::write(&partial, "other-attempt").unwrap();
+        let run = || Command::new("sh").arg("-c").arg(&script).output().unwrap();
+        assert!(!run().status.success());
+        assert_eq!(fs::read_to_string(&destination).unwrap(), "old-value");
+        assert_eq!(fs::read_to_string(&partial).unwrap(), "other-attempt");
+        fs::remove_file(&partial).unwrap();
+        let bin = directory.join("bin");
+        fs::create_dir(&bin).unwrap();
+        fs::write(bin.join("cat"), "#!/bin/sh\nprintf partial\nexit 42\n").unwrap();
+        fs::set_permissions(bin.join("cat"), fs::Permissions::from_mode(0o700)).unwrap();
+        let failed = Command::new("sh")
+            .arg("-c")
+            .arg(&script)
+            .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
+            .output()
+            .unwrap();
+        assert!(!failed.status.success());
+        assert_eq!(fs::read_to_string(&destination).unwrap(), "old-value");
+        assert!(!partial.exists());
+        assert!(run().status.success());
+        assert_eq!(fs::read_to_string(&destination).unwrap(), "new-value\n");
+        assert_eq!(
+            fs::metadata(&destination).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
 
     #[test]
     fn secret_files_accept_raw_and_assignment_forms() {

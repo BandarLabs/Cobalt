@@ -1,6 +1,6 @@
 {
   "status": "passed",
-  "cli_sha256": "48475213c631aeab257b96033c1435af9aa5d5ae73d54d11226b1a08da472710",
+  "cli_sha256": "b04bc5d20f4f0f6526807ef17633442e74cff573d5c19ead3dba1e6ce215fdc4",
   "checks": [
     {
       "args": [
@@ -131,6 +131,15 @@
     {
       "command": "trust",
       "refused": "kobo: Use --from once, with set only."
+    },
+    {
+      "preserved_previous": [
+        "empty",
+        "oversized",
+        "invalid UTF-8",
+        "occupied staging file"
+      ],
+      "retry": "replacement published with mode 0600"
     },
     {
       "synthetic_volume_lifecycle": "set/list/remove passed without printing value"

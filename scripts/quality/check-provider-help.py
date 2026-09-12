@@ -51,6 +51,26 @@ with tempfile.TemporaryDirectory(prefix='cobalt-provider-help-') as temp:
     assert source.read_text() not in result.stdout + result.stderr
     installed = reader/'.adds/cobalt/secrets/fixture'
     assert installed.read_text().strip() == source.read_text()
+    previous = installed.read_bytes()
+    for value in (b'', b'x' * 4097, b'\xff\xfe'):
+        source.write_bytes(value)
+        result = subprocess.run([cli, 'secret', 'set', 'fixture', '--from', str(source),
+                                 '--volume', str(reader)], capture_output=True, text=True, timeout=5)
+        assert result.returncode != 0 and installed.read_bytes() == previous
+    source.write_text('replacement-fixture-value')
+    partial = installed.with_name('.fixture.writing')
+    partial.write_text('another attempt')
+    result = subprocess.run([cli, 'secret', 'set', 'fixture', '--from', str(source),
+                             '--volume', str(reader)], capture_output=True, text=True, timeout=5)
+    assert result.returncode != 0 and installed.read_bytes() == previous
+    assert partial.read_text() == 'another attempt'
+    partial.unlink()
+    result = subprocess.run([cli, 'secret', 'set', 'fixture', '--from', str(source),
+                             '--volume', str(reader)], capture_output=True, text=True, timeout=5)
+    assert result.returncode == 0 and installed.read_text().strip() == source.read_text()
+    assert installed.stat().st_mode & 0o777 == 0o600
+    checks.append({'preserved_previous': ['empty', 'oversized', 'invalid UTF-8', 'occupied staging file'],
+                   'retry': 'replacement published with mode 0600'})
     result = subprocess.run([cli, 'secret', 'list', '--volume', str(reader)],
                             capture_output=True, text=True, timeout=5)
     assert result.returncode == 0 and 'fixture' in result.stdout

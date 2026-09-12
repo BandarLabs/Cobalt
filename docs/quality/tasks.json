@@ -3554,7 +3554,8 @@
     "task": "Publish atomically and retain prior valid content",
     "status": "todo",
     "evidence": [
-      "Partial evidence: Feeds simulator staging is atomic and preserves the previous list on malformed/oversized input or occupied staging path. Real CLI fixture acceptance: docs/quality/evidence/feeds-companion. This does not complete atomic publication/recovery across all companions."
+      "Partial evidence: Feeds simulator staging is atomic and preserves the previous list on malformed/oversized input or occupied staging path. Real CLI fixture acceptance: docs/quality/evidence/feeds-companion. This does not complete atomic publication/recovery across all companions.",
+      "Credential imports now stage then rename for network and volume destinations; bounded regular-file input rejects invalid/oversized values before transfer. Shell failed-write and occupied-stage regressions preserve the previous credential; real CLI volume validation/retry passes. Evidence: docs/quality/evidence/provider-help/result.json. Other transfer workflows remain open."
     ]
   },
   {
