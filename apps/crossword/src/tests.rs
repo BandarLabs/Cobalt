@@ -305,3 +305,34 @@ fn revealing_a_correct_guess_still_counts_as_assistance() {
     assert_eq!(game.reveals, 1);
     assert_eq!(game.position.letters[0], b'C');
 }
+
+#[test]
+fn completed_board_clears_active_word_highlighting() {
+    let mut app = Crossword {
+        loaded: true,
+        view: View::Board,
+        ..Crossword::default()
+    };
+    let context = AppRunner::new(Crossword::default()).context();
+    let selected = |screen: Screen| {
+        screen
+            .nodes
+            .iter()
+            .filter_map(|node| match node {
+                kobo_sdk::Node::Grid { cells, .. } => {
+                    Some(cells.iter().filter(|cell| cell.selected).count())
+                }
+                _ => None,
+            })
+            .sum::<usize>()
+    };
+    assert!(selected(app.screen(&context)) > 0);
+    app.game_mut().position.letters = PUZZLES[app.current].answer.to_vec();
+    assert!(app.game().solved(&PUZZLES[app.current]));
+    assert_eq!(selected(app.screen(&context)), 0);
+    app.game_mut().position.letters[0] = b'.';
+    assert!(
+        selected(app.screen(&context)) > 0,
+        "reopening an answer restores its highlight"
+    );
+}

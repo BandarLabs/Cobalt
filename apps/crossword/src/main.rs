@@ -196,7 +196,7 @@ impl Crossword {
                         char::from(g.position.letters[cell])
                     },
                     p.number(cell).and_then(|n| u8::try_from(n).ok()),
-                    word.contains(&cell),
+                    !g.solved(p) && word.contains(&cell),
                 )
             }),
         )

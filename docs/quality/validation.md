@@ -2271,3 +2271,12 @@ regression loads actual SDK store-save bytes, restores the authoritative
 position and verifies cleanup on confirmed completion. All 108 app tests and
 strict all-target Clippy pass. Full restarted simulator transport acceptance
 remains open under LICHESS-05; no live requests or moves were made.
+
+Crossword completion: clear active-word shading once solved and restore it
+when edited. All 12 app tests and strict Clippy pass. The blocked 5x5 puzzle
+was solved by typed answers in the offline simulator at normal and 170% text
+size; screenshots and diagnostics are in `evidence/crossword-completed`.
+The capture harness builds the CLI from the app checkout to avoid sibling
+branch renderer mismatches. Failed preliminary captures are not acceptance
+evidence. Lichess restart transport acceptance remains open: existing static
+demos and error scenarios do not supply an offline HTTP line-stream fixture.
