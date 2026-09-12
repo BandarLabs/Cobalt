@@ -270,11 +270,46 @@ impl Terminal {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ConnectionState {
+    Waiting,
+    Connected,
+    Reconnecting,
+    Stopped,
+}
+
+fn connection_state(last: Option<Instant>, now: Instant, ended: bool) -> ConnectionState {
+    if ended {
+        return ConnectionState::Stopped;
+    }
+    match last {
+        None => ConnectionState::Waiting,
+        Some(last) if now.saturating_duration_since(last) <= Duration::from_secs(45) => {
+            ConnectionState::Connected
+        }
+        Some(_) => ConnectionState::Reconnecting,
+    }
+}
+
+impl ConnectionState {
+    const fn message(self) -> &'static str {
+        match self {
+            Self::Waiting => "Paperterm: waiting for a reader to connect.",
+            Self::Connected => "Paperterm: reader connected.",
+            Self::Reconnecting => {
+                "Paperterm: waiting for the reader to reconnect (no requests for 45 seconds)."
+            }
+            Self::Stopped => "Paperterm: command stopped. Final screen available for one minute.",
+        }
+    }
+}
+
 /// Host-owned live screen. It is synchronised so a long poll never races a
 /// terminal reader or sees half an escape sequence.
 pub struct Session {
     terminal: Mutex<Terminal>,
     changed: Condvar,
+    last_reader_request: Mutex<Option<Instant>>,
 }
 
 impl Session {
@@ -283,7 +318,23 @@ impl Session {
         Self {
             terminal: Mutex::new(Terminal::new(grid)),
             changed: Condvar::new(),
+            last_reader_request: Mutex::new(None),
         }
+    }
+
+    fn reader_seen(&self) {
+        if let Ok(mut last) = self.last_reader_request.lock() {
+            *last = Some(Instant::now());
+        }
+    }
+
+    fn connection_state(&self, now: Instant, ended: bool) -> ConnectionState {
+        let last = self
+            .last_reader_request
+            .lock()
+            .ok()
+            .and_then(|value| *value);
+        connection_state(last, now, ended)
     }
 
     pub fn feed(&self, bytes: &[u8]) {
@@ -450,6 +501,7 @@ pub fn run_with_title(options: Options, title: &str) -> Result<i32, String> {
     let mut exit_code = None;
     let mut ended_at = None;
     let readers = Arc::new(AtomicUsize::new(0));
+    let mut reported_state = None;
     loop {
         if stop.load(Ordering::Acquire) {
             input
@@ -478,6 +530,11 @@ pub fn run_with_title(options: Options, title: &str) -> Result<i32, String> {
                 session.finish(code);
                 ended_at = Some(Instant::now());
             }
+        }
+        let state = session.connection_state(Instant::now(), ended_at.is_some());
+        if reported_state != Some(state) {
+            eprintln!("\r\n{}\r", state.message());
+            reported_state = Some(state);
         }
         if ended_at.is_some_and(|when| when.elapsed() >= FINAL_SCREEN_FOR) {
             break;
@@ -912,6 +969,7 @@ fn route(
             if !accepted {
                 return respond(stream, 409, r#"{"stale":true}"#);
             }
+            session.reader_seen();
             respond(
                 stream,
                 200,
@@ -941,6 +999,7 @@ fn route(
             let Some(mut screen) = session.screen_for(since, lease, generation) else {
                 return respond(stream, 409, r#"{"stale":true}"#);
             };
+            session.reader_seen();
             while screen.rows.is_empty() && !screen.ended && started.elapsed() < LONGEST_POLL {
                 std::thread::sleep(Duration::from_millis(100));
                 let Some(current) = session.screen_for(since, lease, generation) else {
@@ -977,6 +1036,7 @@ fn route(
             if !accepted {
                 return respond(stream, 409, r#"{"stale":true}"#);
             }
+            session.reader_seen();
             respond(stream, 200, r#"{"accepted":true}"#)
         }
         _ => respond(stream, 404, "{}"),
@@ -1161,6 +1221,37 @@ fn decode_base64(text: &str) -> Option<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn connection_states_follow_accepted_requests_and_command_exit() {
+        let now = std::time::Instant::now();
+        assert_eq!(
+            super::connection_state(None, now, false),
+            super::ConnectionState::Waiting
+        );
+        assert_eq!(
+            super::connection_state(Some(now), now, false),
+            super::ConnectionState::Connected
+        );
+        assert_eq!(
+            super::connection_state(Some(now), now + std::time::Duration::from_secs(46), false),
+            super::ConnectionState::Reconnecting
+        );
+        assert_eq!(
+            super::connection_state(Some(now), now, true),
+            super::ConnectionState::Stopped
+        );
+        let session = super::Session::new(super::Grid::fallback());
+        assert_eq!(
+            session.connection_state(now, false),
+            super::ConnectionState::Waiting
+        );
+        session.reader_seen();
+        assert_eq!(
+            session.connection_state(std::time::Instant::now(), false),
+            super::ConnectionState::Connected
+        );
+    }
 
     #[test]
     fn pairing_details_use_the_selected_port_and_saved_addresses() {

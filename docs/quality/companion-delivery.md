@@ -226,3 +226,17 @@ then verify Stop within five seconds, restored terminal modes and closed
 ports. The monitor harness consumes redraw output throughout stopping, as a
 terminal emulator does. Preset regression and strict CLI Clippy pass.
 STREAMCLI-02/05 complete; named-reader setup and state reporting remain open.
+
+Paperterm states: accepted hello/screen/input requests update connection
+activity; unauthorized and stale requests do not. The CLI reports waiting,
+connected, waiting to reconnect after 45 seconds of silence, and stopped.
+Live TLS acceptance checks wrong-token refusal, lease negotiation, the actual
+idle interval, reconnect and final-screen state. 23 stream tests and strict
+Clippy pass. STREAMCLI-03 complete; named-reader pairing remains open.
+
+Flashcards full artifact audit: exit 0 at source
+6aa7f8ff6aa2f59e5534b20d4cc97fbc5eb99d2f. Report and artifact hashes retained in
+`evidence/flashcards-artifact-audit`. The current follow-on changes concern
+Paperterm; Flashcards sources are unchanged since that audited commit.
+FLASHCLI-04 complete. FLASHCLI-03 remains open for verified distribution.
+Overall: 224 done, 271 open, one deferred.

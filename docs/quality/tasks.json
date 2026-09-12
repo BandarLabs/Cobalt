@@ -3782,8 +3782,10 @@
     "pr": 4,
     "group": "Flashcards companion",
     "task": "Keep existing helper license/distribution boundary intact",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Full hermetic artifact audit passed at source 6aa7f8ff6aa2f59e5534b20d4cc97fbc5eb99d2f, exit 0. Fresh device builds match; signed package/catalog verified; no Anki implementation in device dependencies/symbols/package; host helper source pin, notices and dependency licenses checked. Report and hashes: docs/quality/evidence/flashcards-artifact-audit. Verified helper distribution remains FLASHCLI-03, still open."
+    ]
   },
   {
     "id": "FLASHCLI-05",
@@ -4144,8 +4146,10 @@
     "pr": 4,
     "group": "Paperterm companion",
     "task": "Show stopped, waiting, connected and reconnecting states",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "CLI reports waiting, connected, waiting to reconnect after 45 seconds without accepted requests, and stopped/final-screen states only on transitions. Real local TLS/PTY test rejects wrong token, authenticates a lease, observes connected, waits actual 45-second idle timeout and reconnects. All presets still stop and restore terminal modes. 23 stream tests and strict stream/CLI Clippy pass. Evidence: docs/quality/evidence/paperterm-stop/result.json (connection_states_tested true)."
+    ]
   },
   {
     "id": "STREAMCLI-04",

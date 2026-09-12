@@ -1,0 +1,6 @@
+{
+  "status": "passed",
+  "source_commit": "6aa7f8ff6aa2f59e5534b20d4cc97fbc5eb99d2f",
+  "audit_exit_code": 0,
+  "scope": "Fresh-source Flashcards device, package, catalog, host helper and license boundary. Validation artifacts only; no release publication."
+}

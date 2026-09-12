@@ -158,3 +158,15 @@ Both accept `--port PORT` and use the saved pairing identity. They start only
 when explicitly requested. Custom commands remain available under
 `kobo stream --help`; you do not need to enter one for the connection check
 or either preset. Named reader selection is not yet available in this flow.
+
+## Connection messages
+
+The computer reports **waiting for a reader** until an authenticated reader
+establishes its session. **Reader connected** means the reader has sent an
+accepted session or screen request. After 45 seconds without an accepted
+request, it reports **waiting for the reader to reconnect**. This timeout
+does not diagnose Wi-Fi or sleep; keep both devices connected and the
+computer awake. Accepted requests return the status to connected.
+
+When the command finishes, the message says **command stopped** and explains
+the one-minute final-screen window. Status is printed only when it changes.

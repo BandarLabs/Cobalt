@@ -7,6 +7,10 @@ from pathlib import Path
 import pty
 import select
 import socket
+import ssl
+import urllib.request
+import urllib.error
+import urllib.parse
 import subprocess
 import sys
 import tempfile
@@ -18,6 +22,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--cli', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--connection-states', action='store_true')
     args = parser.parse_args()
     cli = str(args.cli.resolve())
     with tempfile.TemporaryDirectory(prefix='paperterm-stop-', dir='/tmp') as private:
@@ -56,9 +61,38 @@ def main():
                     await_text(b'TERMINAL_READY')
                 else:
                     await_text(b'Processes:' if sys.platform == 'darwin' else b'top -')
+                if args.connection_states and preset == 'demo' and not finished:
+                    await_text(b'waiting for a reader')
+                    context = ssl.create_default_context(cafile=str(Path(private)/'stream/cert.pem'))
+                    token = (Path(private)/'stream/pairing').read_text().strip()
+                    def get(path):
+                        url = f'https://127.0.0.1:{port}'+path
+                        with urllib.request.urlopen(url, context=context, timeout=5) as response:
+                            return json.load(response)
+                    try:
+                        get('/lease?token=incorrect')
+                        raise AssertionError('Incorrect token was accepted')
+                    except urllib.error.HTTPError as error:
+                        assert error.code == 403
+                    assert b'reader connected.' not in output
+                    query = urllib.parse.urlencode({'token': token})
+                    lease = get('/lease?'+query)['lease']
+                    hello = '/hello?'+query+f'&lease={lease}&generation=0&grid=80x24'
+                    get(hello)
+                    await_text(b'reader connected.')
+                    output.clear()
+                    deadline = time.monotonic() + 50
+                    while b'waiting for the reader to reconnect' not in output:
+                        assert time.monotonic() < deadline, 'Missing reconnect state'
+                        if select.select([master], [], [], .1)[0]:
+                            output.extend(os.read(master, 65536))
+                    output.clear()
+                    get(hello)
+                    await_text(b'reader connected.')
                 if finished:
                     os.write(master, b'exit\r')
                     await_text(b'Connection check finished.')
+                    await_text(b'command stopped. Final screen')
                     deadline = time.monotonic() + 5
                     while terminal_settings() != original:
                         assert time.monotonic() < deadline, 'Terminal was not restored after child exit'
@@ -85,7 +119,7 @@ def main():
                 os.close(master)
                 os.close(slave)
     args.output.mkdir(parents=True, exist_ok=True)
-    (args.output/'result.json').write_text(json.dumps({'status': 'passed', 'physical_hardware': False,
+    (args.output/'result.json').write_text(json.dumps({'status': 'passed', 'physical_hardware': False, 'connection_states_tested': args.connection_states,
         'checks': ['connection check, login shell and system monitor run in real PTYs',
                    'Ctrl+] stops each preset within five seconds',
                    'Ctrl+] then Enter closes the final-screen service',
