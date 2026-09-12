@@ -4,12 +4,18 @@ Source: the 8 September 2026 app/SDK/simulator/companion review. The ten new app
 
 ## Delivery plan
 
-Four PRs rooted in `beta`. The initial base was `7f1a543`; PR 1 is merged as `c22c946` and PR 2 targets beta directly. PR 2 grew large enough that its remaining app groups are better validated on hardware than stacked on top of it, so it ships the twenty app groups it has finished and the rest move to PR 3; the companion work it would have shared a branch with moves to PR 4:
+Completion counts track all four PRs. PR 3 evidence lives on `beta-quality-apps-2`; PR 4 evidence lives on `beta-quality-companion`. A completed task does not imply its implementation is present in every sibling branch.
 
-1. **Foundation:** simulator/runtime parity, shared SDK/document/board contracts, platform test interfaces and comic decoding/reading. Includes catalog integration fixes exposed by the stricter shared layout checks. Branch `beta-quality-foundation`, base `beta`.
-2. **Catalog:** complete and polish the 43 existing app journeys using those contracts. Branch `beta-quality-apps`, initially based on PR 1.
-3. **Remaining catalog:** the app groups PR 2 did not reach, reading applications first, each pulling real data wherever the source permits it. Branch `beta-quality-apps-2`, base `beta`.
-4. **Companion:** owner onboarding, imports, credentials, recovery and CLI consistency, plus integrated acceptance scripts. Branch `beta-quality-companion`, base `beta`.
+Four PRs rooted in `beta`. Reconciled against GitHub on 12 September 2026 after fetching beta and `beta-quality-apps-2`. The original three-part plan now has two catalog PRs; companion scope moves from PR 3 to PR 4 without duplicating tasks.
+
+| Delivery | GitHub PR / branch | State | Completed | Open | Deferred |
+| --- | --- | --- | ---: | ---: | ---: |
+| 1 · Foundation, SDK, simulator and comic contracts | [#167](https://github.com/BandarLabs/Cobalt/pull/167), `beta-quality-foundation` | Merged 8 September | 92 | 0 | 1 |
+| 2 · First catalog batch, including Feeds and Miniflux | [#168](https://github.com/BandarLabs/Cobalt/pull/168), `beta-quality-apps` | Merged 12 September; `beta-v0.3.14` published | 113 | 0 | 0 |
+| 3 · Remaining catalog and release gates | [#181](https://github.com/BandarLabs/Cobalt/pull/181), `beta-quality-apps-2` | Open | 6 | 151 | 0 |
+| 4 · Main CLI, companions and integrated acceptance | [#182](https://github.com/BandarLabs/Cobalt/pull/182), `beta-quality-companion` | Open | 22 | 111 | 0 |
+
+PR 2 contains twenty app groups plus the comic catalog integration group. PR 3 contains twenty-three app groups plus catalog-wide gates. Its order is Gutenbird, arXiv, Verses, Read Later, Frame, Sync, Lichess, Music Stand, then the remaining groups. Live-service and reader-reported failures remain priorities within that work. PR 4 retains the original companion scope: onboarding, imports, credentials, recovery, consistent commands and integrated acceptance scripts.
 
 After predecessors merge, later PRs can target beta without duplicating earlier diffs. No merge or deployment is implied by creating the PRs.
 
@@ -17,9 +23,9 @@ A checked task requires implementation plus recorded validation. Physical measur
 
 ## Status
 
-The PR 1 implementation checklist is complete; CBR is deferred and COMIC-18 belongs to catalog integration in PR 2. This does not certify hardware accuracy: native sleep hands ownership back to the stock reader, and no generic kernel suspend, RTC wake or automatic cover-sleep backend is enabled. Physical acceptance moves ahead of PR 3: twenty app groups are validated as far as a simulator can speak for them, and panel latency, ghosting, touch accuracy and the live services each application talks to are not among those things.
+The PR 1 implementation checklist is complete; CBR is deferred and COMIC-18 belongs to catalog integration in PR 2. This does not certify hardware accuracy: native sleep hands ownership back to the stock reader, and no generic kernel suspend, RTC wake or automatic cover-sleep backend is enabled. PR 2 is merged and published as `beta-v0.3.14` and a signed beta Store catalogue of thirty-six app versions, which is the build physical acceptance now runs against. Physical acceptance moves ahead of PR 3: twenty app groups are validated as far as a simulator can speak for them, and panel latency, ghosting, touch accuracy and the live services each application talks to are not among those things.
 
-496 tracked tasks: 205 completed, 1 deferred by the owner, 290 open. Implementation in progress. Evidence is recorded per task in `tasks.json` and in [the validation log](validation.md).
+496 tracked tasks: 249 completed, 1 deferred by the owner, 246 open. Implementation in progress. Evidence is recorded per task in `tasks.json` and in [the validation log](validation.md). See the [12 September reconciliation](reconciliation-2026-09-12.md) for the remaining groups and PR mapping.
 
 Design direction: the bar is a well-made iPad application, built for a panel that cannot animate. Familiar visual conventions per app, restrained controls, plain copy, full repaints and page turns rather than scrolling, and controls that do not move under a finger. Crossword follows printed crossword typography and grids. PR 3 takes the reading applications first, in the owner's order: Gutenbird, arXiv, Verses, Read Later, Frame, Sync, Lichess, Music Stand. Each pulls real data wherever the source permits it, and Lichess is the application the catalog is shown with, so it has to work against the live service rather than a fixture. Paperterm defaults to portrait with a physically scaled, denser terminal font; the measured grid takes precedence over forcing 80 columns.
 
@@ -253,12 +259,12 @@ Design direction: the bar is a well-made iPad application, built for a panel tha
 
 ## PR 3 · Gutenbird
 
-- [ ] **GUTEN-01** Remove catalog boilerplate from summaries.
-- [ ] **GUTEN-02** Clarify edition and language choices.
-- [ ] **GUTEN-03** Improve cover fallbacks.
-- [ ] **GUTEN-04** Persist shelf reading progress.
-- [ ] **GUTEN-05** Reuse shared provider setup.
-- [ ] **GUTEN-06** Verify fixture download, reading and offline reopen.
+- [x] **GUTEN-01** Remove catalog boilerplate from summaries.
+- [x] **GUTEN-02** Clarify edition and language choices.
+- [x] **GUTEN-03** Improve cover fallbacks.
+- [x] **GUTEN-04** Persist shelf reading progress.
+- [x] **GUTEN-05** Reuse shared provider setup.
+- [x] **GUTEN-06** Verify fixture download, reading and offline reopen.
 
 ## PR 3 · Habits
 
@@ -311,12 +317,12 @@ Design direction: the bar is a well-made iPad application, built for a panel tha
 
 ## PR 3 · Lichess
 
-- [ ] **LICHESS-01** Polish pairing and reconnection guidance.
-- [ ] **LICHESS-02** Show active side, clock and connection status clearly.
-- [ ] **LICHESS-03** Keep legal moves and selected squares legible.
-- [ ] **LICHESS-04** Validate move acknowledgement, stale connection and reconnect.
-- [ ] **LICHESS-05** Test complete fixture match and retained session state.
-- [ ] **LICHESS-06** Notice on the panel when a seek has already been matched.
+- [x] **LICHESS-01** Polish pairing and reconnection guidance.
+- [x] **LICHESS-02** Show active side, clock and connection status clearly.
+- [x] **LICHESS-03** Keep legal moves and selected squares legible.
+- [x] **LICHESS-04** Validate move acknowledgement, stale connection and reconnect.
+- [x] **LICHESS-05** Test complete fixture match and retained session state.
+- [x] **LICHESS-06** Notice on the panel when a seek has already been matched.
 
 ## PR 2 · Logic Pack
 
@@ -507,12 +513,12 @@ Design direction: the bar is a well-made iPad application, built for a panel tha
 
 ## PR 3 · Verses (APP-8)
 
-- [ ] **VERSE-01** Use real injectable calendar date and advance across midnight.
-- [ ] **VERSE-02** Provide complete permitted poems or label excerpts explicitly.
-- [ ] **VERSE-03** Paginate long poems.
-- [ ] **VERSE-04** Show author and source context.
-- [ ] **VERSE-05** Make favorites usable.
-- [ ] **VERSE-06** Export attributed quote cards.
+- [x] **VERSE-01** Use real injectable calendar date and advance across midnight.
+- [x] **VERSE-02** Provide complete permitted poems or label excerpts explicitly.
+- [x] **VERSE-03** Paginate long poems.
+- [x] **VERSE-04** Show author and source context.
+- [x] **VERSE-05** Make favorites usable.
+- [x] **VERSE-06** Export attributed quote cards.
 
 ## PR 3 · Catalog-wide release gates
 
@@ -532,9 +538,9 @@ Design direction: the bar is a well-made iPad application, built for a panel tha
 
 ## PR 4 · Main CLI and companion operation engine
 
-- [ ] **CLI-01** Provide guided interactive entry point for bare kobo.
-- [ ] **CLI-02** Keep plain compact help for noninteractive use.
-- [ ] **CLI-03** Separate owner tasks from developer/release commands.
+- [x] **CLI-01** Provide guided interactive entry point for bare kobo.
+- [x] **CLI-02** Keep plain compact help for noninteractive use.
+- [x] **CLI-03** Separate owner tasks from developer/release commands.
 - [ ] **CLI-04** Provide a desktop/local companion surface using the same operations.
 - [ ] **CLI-05** Name readers by stable identity and owner nickname.
 - [ ] **CLI-06** Select among multiple USB/Wi-Fi readers without first-device fallback.
@@ -542,7 +548,7 @@ Design direction: the bar is a well-made iPad application, built for a panel tha
 - [ ] **CLI-08** Preserve verified USB setup, eject, reboot and reconnect steps.
 - [ ] **CLI-09** Send and open an original sample for first success.
 - [ ] **CLI-10** Describe installation changes before approval.
-- [ ] **CLI-11** Provide one app setup card generated from capabilities.
+- [x] **CLI-11** Provide one app setup card generated from capabilities.
 - [ ] **CLI-12** Persist completed setup steps.
 - [ ] **CLI-13** Choose files/folders through picker or explicit CLI path.
 - [ ] **CLI-14** Detect suitable target apps and resolve ambiguity.
@@ -573,35 +579,35 @@ Design direction: the bar is a well-made iPad application, built for a panel tha
 
 ## PR 4 · Deck companion
 
-- [ ] **DECKCLI-01** Preserve real pairing when pushing layouts.
-- [ ] **DECKCLI-02** Separate static simulator preview from executable pairing.
-- [ ] **DECKCLI-03** Unify 15-pad configuration and UI limits.
+- [x] **DECKCLI-01** Preserve real pairing when pushing layouts.
+- [x] **DECKCLI-02** Separate static simulator preview from executable pairing.
+- [x] **DECKCLI-03** Unify 15-pad configuration and UI limits.
 - [ ] **DECKCLI-04** Provide app/URL/action picker and grid preview.
 - [ ] **DECKCLI-05** Offer practical original presets.
 - [ ] **DECKCLI-06** Test a harmless action and show its acknowledgement.
-- [ ] **DECKCLI-07** Keep per-action confirmation configurable.
+- [x] **DECKCLI-07** Keep per-action confirmation configurable.
 
 ## PR 4 · Flashcards companion
 
-- [ ] **FLASHCLI-01** Replace main CLI refusal stub with the supported helper entry point.
-- [ ] **FLASHCLI-02** Make helper install/version status discoverable.
+- [x] **FLASHCLI-01** Replace main CLI refusal stub with the supported helper entry point.
+- [x] **FLASHCLI-02** Make helper install/version status discoverable.
 - [ ] **FLASHCLI-03** Distribute verified host helper without requiring a toolchain.
-- [ ] **FLASHCLI-04** Keep existing helper license/distribution boundary intact.
-- [ ] **FLASHCLI-05** Explain actual supported formats and unsupported features.
-- [ ] **FLASHCLI-06** Preview front/back, media and card counts.
-- [ ] **FLASHCLI-07** Explain and implement add/merge versus replace.
-- [ ] **FLASHCLI-08** Expose verify, stage and review-log export consistently.
-- [ ] **FLASHCLI-09** Validate imported content and preserve previous collection on failure.
+- [x] **FLASHCLI-04** Keep existing helper license/distribution boundary intact.
+- [x] **FLASHCLI-05** Explain actual supported formats and unsupported features.
+- [x] **FLASHCLI-06** Preview front/back, media and card counts.
+- [x] **FLASHCLI-07** Explain and implement add/merge versus replace.
+- [x] **FLASHCLI-08** Expose verify, stage and review-log export consistently.
+- [x] **FLASHCLI-09** Validate imported content and preserve previous collection on failure.
 
 ## PR 4 · Frame companion
 
-- [ ] **FRAMECLI-01** Preview multiple photos and crop/pad choices.
-- [ ] **FRAMECLI-02** Perform bounded downsize with visual quality preview.
-- [ ] **FRAMECLI-03** Show storage estimate and album naming.
-- [ ] **FRAMECLI-04** Deduplicate repeated import clearly.
-- [ ] **FRAMECLI-05** Show concrete deletion/replacement list.
-- [ ] **FRAMECLI-06** Retain recoverable previous album.
-- [ ] **FRAMECLI-07** Verify reader availability before saying photos are ready.
+- [x] **FRAMECLI-01** Preview multiple photos and crop/pad choices.
+- [x] **FRAMECLI-02** Perform bounded downsize with visual quality preview.
+- [x] **FRAMECLI-03** Show storage estimate and album naming.
+- [x] **FRAMECLI-04** Deduplicate repeated import clearly.
+- [x] **FRAMECLI-05** Show concrete deletion/replacement list.
+- [x] **FRAMECLI-06** Retain recoverable previous album.
+- [x] **FRAMECLI-07** Verify reader availability before saying photos are ready.
 
 ## PR 4 · Vault companion
 
@@ -647,24 +653,24 @@ Design direction: the bar is a well-made iPad application, built for a panel tha
 
 ## PR 4 · Paperterm companion
 
-- [ ] **STREAMCLI-01** Guide pairing through named reader choice.
-- [ ] **STREAMCLI-02** Offer known terminal/task presets and connection test.
-- [ ] **STREAMCLI-03** Show stopped, waiting, connected and reconnecting states.
-- [ ] **STREAMCLI-04** Provide obvious Stop and computer-awake explanation.
-- [ ] **STREAMCLI-05** Keep arbitrary terminal command entry advanced.
+- [x] **STREAMCLI-01** Guide pairing through named reader choice.
+- [x] **STREAMCLI-02** Offer known terminal/task presets and connection test.
+- [x] **STREAMCLI-03** Show stopped, waiting, connected and reconnecting states.
+- [x] **STREAMCLI-04** Provide obvious Stop and computer-awake explanation.
+- [x] **STREAMCLI-05** Keep arbitrary terminal command entry advanced.
 
 ## PR 4 · Sidekick companion
 
-- [ ] **SIDECLI-01** Unify helper install/start/status/stop in companion.
-- [ ] **SIDECLI-02** Show and select agent integrations before configuration.
-- [ ] **SIDECLI-03** Preserve dry-run, printed configuration and backups.
-- [ ] **SIDECLI-04** Verify a harmless sample event on the reader.
-- [ ] **SIDECLI-05** Return success from help.
-- [ ] **SIDECLI-06** Provide self-contained sample mode.
+- [x] **SIDECLI-01** Unify helper install/start/status/stop in companion.
+- [x] **SIDECLI-02** Show and select agent integrations before configuration.
+- [x] **SIDECLI-03** Preserve dry-run, printed configuration and backups.
+- [x] **SIDECLI-04** Verify a harmless sample event on the reader.
+- [x] **SIDECLI-05** Return success from help.
+- [x] **SIDECLI-06** Provide self-contained sample mode.
 
 ## PR 4 · Provider connections
 
-- [ ] **SERVICECLI-01** Fix secret/trust help exit status.
+- [x] **SERVICECLI-01** Fix secret/trust help exit status.
 - [ ] **SERVICECLI-02** Provide per-app Connect service form.
 - [ ] **SERVICECLI-03** Use discovery and browser authentication where supported.
 - [ ] **SERVICECLI-04** Use labeled masked tokens with direct provider guidance otherwise.
@@ -700,7 +706,7 @@ Design direction: the bar is a well-made iPad application, built for a panel tha
 - [ ] **OWNERQA-15** Validate understanding of prepared/sent/offline distinctions.
 - [ ] **OWNERQA-16** Prepare one-week repeated-use follow-up protocol.
 - [ ] **OWNERQA-17** Run all automated simulator and integration gates.
-- [ ] **OWNERQA-18** Prepare one combined Clara BW hardware validation script for after all three PRs.
+- [ ] **OWNERQA-18** Prepare one combined Clara BW hardware validation script for after all four PRs.
 - [ ] **OWNERQA-19** Record unperformed physical/user-study checks honestly.
 - [ ] **OWNERQA-20** Verify licenses and absence of copied local-reference source.
-- [ ] **OWNERQA-21** Open no more than three logically grouped PRs with tests and remaining validation stated.
+- [ ] **OWNERQA-21** Deliver the revised four-PR plan with tests and remaining validation stated.

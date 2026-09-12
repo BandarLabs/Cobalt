@@ -1087,6 +1087,7 @@ dependencies = [
  "kobo-profile",
  "kobo-read",
  "kobo-sdk",
+ "kobo-text",
  "kobo-ui",
 ]
 
@@ -1394,8 +1395,10 @@ name = "kobo-readlater"
 version = "0.1.0"
 dependencies = [
  "kobo-html",
+ "kobo-image",
  "kobo-json",
  "kobo-sdk",
+ "kobo-text",
  "kobo-ui",
 ]
 
@@ -1636,6 +1639,7 @@ dependencies = [
 name = "kobo-verses"
 version = "0.1.0"
 dependencies = [
+ "kobo-image",
  "kobo-sdk",
  "kobo-ui",
  "serde",

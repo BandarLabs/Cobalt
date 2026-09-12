@@ -432,7 +432,7 @@ impl Lichess {
             Route::ChallengePlayer => self.challenge_player_screen(),
             Route::ChallengeSetup => self.challenge_setup_screen(),
             Route::Challenge => self.challenge_screen(),
-            Route::Game => self.game_screen(),
+            Route::Game => self.game_screen(context),
         };
         context.set_screen(screen.with_own_back(self.route != Route::Home));
     }
@@ -878,10 +878,24 @@ impl Lichess {
             self.has_pending(|pending| matches!(pending, Pending::SeekReconcile { .. }));
         let mut screen = ScreenBuilder::new("lichess-pairing")
             .top_bar("Pairing")
-            .heading(format!("{clock} {} · Rated", preset.speed_label()))
-            .activity(if reconciling { "Checking" } else { "Waiting" }, None)
+            .heading(clock)
+            .secondary(format!("{} · Rated", preset.speed_label()))
+            .activity(
+                if reconciling {
+                    "Checking games"
+                } else if self.seek_task.is_some() {
+                    "Finding an opponent"
+                } else {
+                    "Waiting to check again"
+                },
+                None,
+            )
             .secondary(self.clock.waited_words());
-        if let Some(notice) = &self.notice {
+        if let Some(notice) = self
+            .notice
+            .as_ref()
+            .filter(|notice| !reconciling || notice.as_str() != "Checking games.")
+        {
             screen = screen.banner(BannerLevel::Attention, notice);
         }
         screen
@@ -940,16 +954,24 @@ impl Lichess {
         clippy::too_many_lines,
         reason = "the board, clocks, result, promotion, confirmation, and pending overlays form one screen"
     )]
-    fn game_screen(&self) -> Screen {
+    fn game_screen(&self, context: &Context) -> Screen {
         let Some(game) = &self.game else {
             return ScreenBuilder::new("lichess-game")
                 .top_bar("Game")
-                .activity("Opening the board stream", None)
+                .activity("Opening your game", None)
                 .build();
         };
         let elapsed = self.clock.waited().as_secs();
-        let white = clock(game.clock_ms(Color::White, elapsed));
-        let black = clock(game.clock_ms(Color::Black, elapsed));
+        let clocks_confirmed = self.board_is_live(&game.id) || !game.active();
+        let displayed_clock = |color| {
+            if clocks_confirmed {
+                clock(game.clock_ms(color, elapsed))
+            } else {
+                "--:--".to_owned()
+            }
+        };
+        let white = displayed_clock(Color::White);
+        let black = displayed_clock(Color::Black);
         let (you_name, you_color, you_clock, opponent_name, opponent_color, opponent_clock) =
             match game.my_color {
                 Color::White => (
@@ -969,6 +991,17 @@ impl Lichess {
                     white,
                 ),
             };
+        let metrics = context.metrics();
+        let name_width = metrics.prose_area(true, false).width
+            - metrics.tenth_mm(220)
+            - metrics.space(kobo_ui::Space::Small);
+        let player_name = |name: String| {
+            kobo_ui::with_text_scale(metrics.text_scale, || {
+                kobo_ui::clamp_lines(&name, name_width.max(1), kobo_ui::FontSize::Body, 1)
+            })
+        };
+        let you_name = player_name(you_name);
+        let opponent_name = player_name(opponent_name);
         let last = game
             .last_san
             .as_deref()
@@ -981,7 +1014,7 @@ impl Lichess {
         let live = self.board_is_live(&game.id);
         let blocked = !live || self.pending_action.is_some() || self.pending_move.is_some();
         let mut menu = Vec::new();
-        if !blocked {
+        if game.active() && !blocked {
             if game.draw_offer_from_opponent() {
                 menu.push(("accept-draw".to_owned(), "Accept draw".to_owned()));
                 menu.push(("decline-draw".to_owned(), "Decline draw".to_owned()));
@@ -995,26 +1028,36 @@ impl Lichess {
             if game.can_abort() {
                 menu.push(("confirm-abort".to_owned(), "Abort".to_owned()));
             }
-        } else if !live && self.pending_action.is_none() && self.pending_move.is_none() {
+        } else if game.active()
+            && !live
+            && self.pending_action.is_none()
+            && self.pending_move.is_none()
+        {
             menu.push(("reconnect-board".to_owned(), "Reconnect".to_owned()));
         }
-        let turn = if !live {
-            "Paused"
+        let turn = if !game.active() {
+            "Finished"
+        } else if !live {
+            "Reconnecting"
         } else if game.my_turn() {
-            "You"
+            "Your move"
         } else {
-            "Opponent"
+            "Opponent's move"
         };
+        let your_active = live && game.active() && game.my_turn();
+        let opponent_active = live && game.active() && !game.my_turn();
         let game_kind = if game.rated { "Rated" } else { "Casual" };
         let check = if game.check { " · Check" } else { "" };
         let opponent_slots: Vec<BuilderSlot> = vec![
             (
                 SlotWidth::Fill,
-                Box::new(move |slot| slot.heading(opponent_name).secondary(opponent_color)),
+                Box::new(move |slot| slot.text(opponent_name).secondary(opponent_color)),
             ),
             (
                 SlotWidth::Fixed(220),
-                Box::new(move |slot| slot.chips([("opponent-clock", opponent_clock, true)])),
+                Box::new(move |slot| {
+                    slot.chips([("opponent-clock", opponent_clock, opponent_active)])
+                }),
             ),
         ];
         let mut screen = ScreenBuilder::new("lichess-game")
@@ -1027,7 +1070,7 @@ impl Lichess {
         if game.takeback_pending() {
             screen = screen.banner(
                 BannerLevel::Attention,
-                "Takeback controls are not supported. External board changes are reconciled by reopening the stream.",
+                "Takebacks are unavailable here. The board updates if moves change on Lichess.",
             );
         }
         if game.opponent_gone {
@@ -1053,24 +1096,21 @@ impl Lichess {
                 .as_deref()
                 .filter(|_| self.total_ticks < self.invalid_until_tick),
         );
-        screen = screen.band(
-            BandAlign::Top,
-            [(SlotWidth::Fixed(820), move |slot: ScreenBuilder| {
-                slot.board_with_selection(8, board)
-            })],
-        );
+        // The shared root grid reserves room for both player bars. A fixed
+        // width inside a band bypasses that fit and clips controls at 170%.
+        screen = screen.board_with_selection(8, board);
         let you_slots: Vec<BuilderSlot> = vec![
             (
                 SlotWidth::Fill,
                 Box::new(move |slot| {
-                    slot.heading(you_name).secondary(format!(
+                    slot.text(you_name).secondary(format!(
                         "{you_color} · {turn} · {game_kind} · {move_status}{check}"
                     ))
                 }),
             ),
             (
                 SlotWidth::Fixed(220),
-                Box::new(move |slot| slot.chips([("your-clock", you_clock, true)])),
+                Box::new(move |slot| slot.chips([("your-clock", you_clock, your_active)])),
             ),
         ];
         screen = screen.band(BandAlign::Top, you_slots);
@@ -1130,7 +1170,9 @@ impl Lichess {
             screen = screen.modal(action.label(), |builder| builder.secondary("Sending"));
         } else if let Some(movement) = &self.pending_move {
             screen = screen.modal("Move sent", |builder| {
-                builder.heading(movement.movement.clone())
+                builder
+                    .heading(movement.movement.clone())
+                    .secondary("Waiting for confirmation")
             });
         }
         screen.build()
@@ -1161,13 +1203,7 @@ impl Lichess {
             return;
         }
         let revalidating = matches!(self.account, AccountState::Ready(_));
-        for (task, pending) in self.tasks.clone() {
-            if matches!(pending, Pending::AccountRetry) {
-                context.cancel(task);
-                self.tasks.remove(&task);
-                self.retired_tasks.insert(task, pending);
-            }
-        }
+        self.cancel_account_retry(context);
         if !revalidating {
             self.account = AccountState::Checking;
             self.playing_ready = false;
@@ -1188,8 +1224,22 @@ impl Lichess {
         }
     }
 
+    fn cancel_account_retry(&mut self, context: &mut Context) {
+        for (task, pending) in self.tasks.clone() {
+            if matches!(pending, Pending::AccountRetry) {
+                context.cancel(task);
+                self.tasks.remove(&task);
+                self.retired_tasks.insert(task, pending);
+            }
+        }
+    }
+
     fn schedule_account_retry(&mut self, context: &mut Context) {
-        if self.suspended
+        // Two stream reads plus the game clock leave one slot for the owner.
+        // Credential polling would consume that slot for fifteen seconds.
+        if ((self.session.is_some() || self.seek_waiting)
+            && matches!(self.account, AccountState::Ready(_)))
+            || self.suspended
             || self
                 .has_pending(|pending| matches!(pending, Pending::Account | Pending::AccountRetry))
         {
@@ -1478,6 +1528,7 @@ impl Lichess {
             self.clock.stop(context);
         }
         self.session = Some(session);
+        self.cancel_account_retry(context);
         self.persist_session(context);
         if let Some(remaining) = self.board_rate_remaining(&id) {
             if remaining > 0 {
@@ -1532,7 +1583,7 @@ impl Lichess {
             Self::keep_live(context);
         } else {
             self.deferred_board_open = self.session.clone();
-            self.notice = Some("Waiting for a task slot before reopening the board.".to_owned());
+            self.notice = Some("Opening your game. Please wait.".to_owned());
         }
     }
 
@@ -1795,6 +1846,7 @@ impl Lichess {
             .chain(self.game.iter().map(|game| game.id.clone()))
             .collect();
         self.seek_waiting = true;
+        self.cancel_account_retry(context);
         self.selected_preset = Some(preset);
         self.seek_candidate = None;
         if let Some(task) = self.spawn(
@@ -1808,11 +1860,37 @@ impl Lichess {
             self.notice = None;
             self.reset_clock(context, true);
             Self::keep_live(context);
+            self.schedule_live_seek_check(context);
         } else {
             self.seek_waiting = false;
             self.selected_preset = None;
             self.seek_baseline.clear();
         }
+    }
+
+    fn schedule_live_seek_check(&mut self, context: &mut Context) {
+        if self.suspended
+            || !self.seek_waiting
+            || self.seek_task.is_none()
+            || self.has_pending(|pending| {
+                matches!(
+                    pending,
+                    Pending::SeekGrace { .. } | Pending::SeekReconcile { .. }
+                )
+            })
+        {
+            return;
+        }
+        // Cancellation frees capacity asynchronously. Retry scheduling when a
+        // retired task settles, without ever submitting another seek.
+        let _ = self.spawn(
+            context,
+            Pending::SeekGrace {
+                generation: self.seek_generation,
+            },
+            Task::Sleep { seconds: 10 },
+            false,
+        );
     }
 
     fn cancel_seek(&mut self, context: &mut Context) {
@@ -1887,6 +1965,8 @@ impl Lichess {
                 pending,
                 Pending::SeekGrace {
                     generation: pending_generation
+                } | Pending::SeekReconcile {
+                    generation: pending_generation
                 } if *pending_generation == generation
             )
         }) {
@@ -1899,7 +1979,7 @@ impl Lichess {
         }
     }
 
-    fn reconcile_ended_seek(&mut self, context: &mut Context, generation: u64) {
+    fn reconcile_seek(&mut self, context: &mut Context, generation: u64) {
         if !self.seek_waiting
             || self.seek_generation != generation
             || self.selected_preset.is_none()
@@ -1950,6 +2030,9 @@ impl Lichess {
                 self.seek_candidate = first;
             }
             if ambiguous {
+                if let Some(task) = self.seek_task.take() {
+                    context.cancel(task);
+                }
                 self.seek_waiting = false;
                 self.selected_preset = None;
                 self.seek_baseline.clear();
@@ -1964,6 +2047,14 @@ impl Lichess {
         }
         if self.seek_candidate.is_some() {
             self.open_seek_candidate(context);
+        } else if self.seek_task.is_some() {
+            self.notice = None;
+            let _ = self.spawn(
+                context,
+                Pending::SeekGrace { generation },
+                Task::Sleep { seconds: 10 },
+                false,
+            );
         } else {
             self.seek_waiting = false;
             self.selected_preset = None;
@@ -2121,7 +2212,7 @@ impl Lichess {
                     return;
                 };
                 if !self.board_is_live(&game.id) {
-                    self.notice = Some("Reconnect the board before sending an action.".to_owned());
+                    self.notice = Some("Reconnecting to Lichess.".to_owned());
                     return;
                 }
                 ActionScope::Game(game.id.clone())
@@ -2211,7 +2302,7 @@ impl Lichess {
             return;
         };
         if !self.board_is_live(&game.id) {
-            self.notice = Some("Reconnect the board before making a move.".to_owned());
+            self.notice = Some("Reconnecting to Lichess.".to_owned());
             return;
         }
         if !game.active() {
@@ -2668,8 +2759,7 @@ impl Lichess {
                     .as_ref()
                     .is_some_and(|session| session.game_id == id);
                 if current && !self.board_is_live(&id) {
-                    self.notice =
-                        Some("The game finished while its board stream was paused.".to_owned());
+                    self.notice = Some("This game finished while you were away.".to_owned());
                     self.discard_game(context, &id);
                 } else if self.game.as_ref().is_some_and(|game| game.id == id) {
                     self.notice = None;
@@ -2750,7 +2840,7 @@ impl Lichess {
                 }
                 let pending = self.pending_move.clone();
                 let Some(game) = Game::from_full(full, color) else {
-                    self.notice = Some("The server board could not be reconstructed.".to_owned());
+                    self.notice = Some("Could not load the position. Reconnecting.".to_owned());
                     self.close_board(context, id);
                     self.schedule_board_reconnect(context, id);
                     return;
@@ -2759,16 +2849,15 @@ impl Lichess {
                 self.result_dismissed = false;
                 self.board_ready = true;
                 self.board_backoff = 1;
+                self.notice = None;
                 self.reconcile_pending_move();
                 if pending.is_some() && self.pending_move.is_none() {
-                    self.notice = Some("The board reconciled the pending move.".to_owned());
+                    self.notice = Some("Board updated.".to_owned());
                 } else if pending.is_some() {
                     self.pending_move = None;
                     self.selected = None;
-                    self.notice = Some(
-                        "The move was absent from the authoritative reconnect state and was not replayed."
-                            .to_owned(),
-                    );
+                    self.notice =
+                        Some("The move was not confirmed. Choose your move again.".to_owned());
                 }
                 self.reset_clock(context, self.game.as_ref().is_some_and(Game::active));
                 self.finish_if_needed(context);
@@ -2794,10 +2883,8 @@ impl Lichess {
                         self.board_ready = true;
                     }
                     Some(ApplyState::Reopen) => {
-                        self.notice = Some(
-                            "Board history moved backward or diverged; reopening authoritative state."
-                                .to_owned(),
-                        );
+                        self.notice =
+                            Some("The board changed. Refreshing the position.".to_owned());
                         self.close_board(context, id);
                         self.schedule_board_reconnect(context, id);
                     }
@@ -2821,7 +2908,7 @@ impl Lichess {
             }
             BoardRecord::Unsupported(variant) => {
                 self.notice = Some(format!(
-                    "The {variant} variant is not supported; its reconnect state was cleared."
+                    "The {variant} variant is not supported. Choose a standard game."
                 ));
                 self.discard_game(context, id);
             }
@@ -2849,10 +2936,7 @@ impl Lichess {
         } else {
             self.pending_move = None;
             self.selected = None;
-            self.notice = Some(
-                "The server advanced without that move; the displayed board is authoritative."
-                    .to_owned(),
-            );
+            self.notice = Some("The position changed before your move was confirmed.".to_owned());
         }
     }
 
@@ -2872,6 +2956,7 @@ impl Lichess {
         self.close_board(context, &id);
         self.clear_board_rate_limit(context, &id);
         self.clear_session(context);
+        self.schedule_account_retry(context);
         self.summaries.retain(|summary| summary.id != id);
         self.route = Route::Game;
     }
@@ -2920,8 +3005,7 @@ impl Lichess {
             self.clear_pending_action();
         }
         if let Some(summary) = recovered {
-            self.notice =
-                Some("Recovered the accepted challenge from the current-game snapshot.".to_owned());
+            self.notice = Some("Your challenge started. Opening the game.".to_owned());
             self.open_board(context, summary.session());
             true
         } else {
@@ -2929,11 +3013,9 @@ impl Lichess {
                 self.route = Route::Play;
             }
             self.notice = Some(if ambiguous {
-                "Several games matched the accepted challenge; choose the correct one from Ongoing games."
-                    .to_owned()
+                "Several games found. Choose from Ongoing games.".to_owned()
             } else {
-                "The accepted challenge was not active after reconnect; the wait was cleared."
-                    .to_owned()
+                "That challenge is no longer active. You can choose another game.".to_owned()
             });
             false
         }
@@ -3045,7 +3127,7 @@ impl Lichess {
                         context,
                         generation,
                         format!(
-                            "Current games are rate-limited for {seconds}s. Pairing remains cancelled server-side; reconciliation will retry."
+                            "Lichess asked us to wait {seconds}s. We will check for your game again."
                         ),
                         seconds,
                     );
@@ -3155,7 +3237,7 @@ impl Lichess {
                     self.event_backoff = 1;
                     self.next_event(context);
                 } else {
-                    self.notice = Some("The event stream did not open cleanly.".to_owned());
+                    self.notice = Some("Could not connect to Lichess. Trying again.".to_owned());
                 }
             }
             Pending::EventNext => {
@@ -3163,10 +3245,7 @@ impl Lichess {
                     self.handle_event(context, event);
                     self.next_event(context);
                 } else {
-                    self.notice = Some(
-                        "The event stream record was malformed; reopening without replay."
-                            .to_owned(),
-                    );
+                    self.notice = Some("Could not read the game update. Reconnecting.".to_owned());
                     self.recover_accepted_challenge(context);
                     self.close_event(context);
                 }
@@ -3189,7 +3268,7 @@ impl Lichess {
                 }
             }
             Pending::SeekGrace { generation } => {
-                self.reconcile_ended_seek(context, generation);
+                self.reconcile_seek(context, generation);
             }
             Pending::SeekReconcile { generation } => {
                 if self.seek_waiting && self.seek_generation == generation {
@@ -3197,7 +3276,7 @@ impl Lichess {
                         self.finish_seek_reconciliation(context, generation, games);
                     } else {
                         self.notice = Some(
-                            "The current-game response could not be read. Pairing was not replayed; cancel or wait for another check."
+                            "Could not check your game. Wait for another check or cancel pairing."
                                 .to_owned(),
                         );
                         let _ = self.spawn(
@@ -3227,7 +3306,7 @@ impl Lichess {
                     self.board_backoff = 1;
                     self.next_board(context, &id);
                 } else {
-                    self.notice = Some("The board stream did not open cleanly.".to_owned());
+                    self.notice = Some("Could not open your game. Trying again.".to_owned());
                 }
             }
             Pending::BoardNext(id) => {
@@ -3245,10 +3324,7 @@ impl Lichess {
                         self.next_board(context, &id);
                     }
                 } else {
-                    self.notice = Some(
-                        "The board stream record was malformed; reopening authoritative state."
-                            .to_owned(),
-                    );
+                    self.notice = Some("Could not read the board update. Reconnecting.".to_owned());
                     self.close_board(context, &id);
                     self.schedule_board_reconnect(context, &id);
                 }
@@ -3323,10 +3399,10 @@ impl Lichess {
                     | GameAction::DeclineDraw
                     | GameAction::ClaimVictory => self.clear_pending_action(),
                 }
-                self.notice = Some(
-                    "Lichess accepted the request; waiting for the stream to confirm it."
-                        .to_owned(),
-                );
+                self.notice = self
+                    .pending_move
+                    .is_none()
+                    .then(|| "Waiting for Lichess.".to_owned());
             }
         }
     }
@@ -3360,12 +3436,21 @@ impl Lichess {
                 }
                 if error == TaskError::NotFound {
                     self.notice = Some(
-                        "The saved game is no longer available; reconnect state was cleared."
+                        "That game is no longer available. Choose another from Ongoing games."
                             .to_owned(),
                     );
                     self.discard_game(context, &id);
                 } else {
-                    self.notice = Some(Failure::of(error).naming(api::SECRET));
+                    self.notice = Some(
+                        if matches!(
+                            error,
+                            TaskError::Unreachable | TaskError::TimedOut | TaskError::Offline
+                        ) {
+                            "Reconnecting to Lichess.".to_owned()
+                        } else {
+                            Failure::of(error).naming(api::SECRET)
+                        },
+                    );
                     self.schedule_board_reconnect(context, &id);
                 }
             }
@@ -3376,7 +3461,7 @@ impl Lichess {
                         generation,
                         preset,
                         format!(
-                            "{} Waiting briefly for gameStart; the seek was not replayed.",
+                            "{} Checking whether your game started.",
                             Failure::of(error).naming(api::SECRET)
                         ),
                     );
@@ -3391,7 +3476,7 @@ impl Lichess {
                     context,
                     generation,
                     format!(
-                        "{} Pairing was not replayed; current-game reconciliation will retry.",
+                        "{} We will check for your game again.",
                         Failure::of(error).naming(api::SECRET)
                     ),
                     10,
@@ -3414,7 +3499,7 @@ impl Lichess {
                     self.accepted_challenge = None;
                 }
                 self.notice = Some(format!(
-                    "{} The action was not replayed; the board is being reconciled.",
+                    "{} Checking whether the action completed.",
                     Failure::of(error).naming(api::SECRET)
                 ));
                 if !matches!(action, GameAction::Move(_)) || !current {
@@ -3823,6 +3908,18 @@ impl Lichess {
                 self.notice = Some("Checking games.".to_owned());
                 self.route = Route::Pairing;
             }
+            "pairing-error" => {
+                if !self.install_demo("reconciling") {
+                    return false;
+                }
+                self.tasks.clear();
+                self.tasks
+                    .insert(TaskId(998), Pending::SeekGrace { generation: 1 });
+                self.notice = Some(
+                    "Could not check your game. Wait for another check or cancel pairing."
+                        .to_owned(),
+                );
+            }
             "challenge" => {
                 self.account = AccountState::Ready(Account {
                     id: "demo-owner".to_owned(),
@@ -3913,14 +4010,16 @@ impl KoboApp for Lichess {
                 if value.is_some() && self.session.is_none() {
                     context.store().forget(SESSION_KEY);
                     self.notice =
-                        Some("Corrupted reconnect state was discarded safely.".to_owned());
+                        Some("Could not restore your last game. Check Ongoing games.".to_owned());
                 }
             } else if key == PUZZLE_KEY {
                 self.loaded_puzzles = true;
                 if let Some(bytes) = value {
                     if !self.decode_puzzles(&bytes) {
                         context.store().forget(PUZZLE_KEY);
-                        self.notice = Some("Corrupted puzzle state was discarded.".to_owned());
+                        self.notice = Some(
+                            "Saved puzzles could not be read. Download them again.".to_owned(),
+                        );
                     }
                 }
             } else if key == BOARD_RATE_KEY {
@@ -3931,7 +4030,7 @@ impl KoboApp for Lichess {
                     } else {
                         context.store().forget(BOARD_RATE_KEY);
                         self.notice =
-                            Some("Corrupted board retry metadata was discarded.".to_owned());
+                            Some("Saved connection settings could not be read. Checking your game again.".to_owned());
                     }
                 }
             } else if key == EVENT_RATE_KEY {
@@ -3941,8 +4040,10 @@ impl KoboApp for Lichess {
                         self.event_rate_limit = Some(not_before);
                     } else {
                         context.store().forget(EVENT_RATE_KEY);
-                        self.notice =
-                            Some("Corrupted event retry metadata was discarded.".to_owned());
+                        self.notice = Some(
+                            "Saved connection settings could not be read. Connecting again."
+                                .to_owned(),
+                        );
                     }
                 }
             } else if key == SEEK_RATE_KEY {
@@ -3953,7 +4054,7 @@ impl KoboApp for Lichess {
                     } else {
                         context.store().forget(SEEK_RATE_KEY);
                         self.notice =
-                            Some("Corrupted pairing retry metadata was discarded.".to_owned());
+                            Some("Saved pairing settings could not be read. Check your account before pairing.".to_owned());
                     }
                 }
             }
@@ -3996,6 +4097,7 @@ impl KoboApp for Lichess {
                 self.selected = None;
                 self.route = match self.route {
                     Route::Solve | Route::PuzzleResult => Route::Puzzles,
+                    Route::Game if self.local_game => Route::Home,
                     Route::Game
                     | Route::Pairing
                     | Route::ChallengePlayer
@@ -4041,7 +4143,12 @@ impl KoboApp for Lichess {
             self.route = Route::Play;
             self.validate_account(context);
         } else if action == action_id("play-computer") {
-            self.start_computer_game(context);
+            if self.local_game && self.game.as_ref().is_some_and(Game::active) {
+                self.route = Route::Game;
+                self.reset_clock(context, true);
+            } else {
+                self.start_computer_game(context);
+            }
         } else if action == action_id("home-next") || action == action_id("home-previous") {
             let pages = self.home_pages(context).len();
             self.home_page = if action == action_id("home-next") {
@@ -4113,7 +4220,7 @@ impl KoboApp for Lichess {
                 } else if self
                     .game
                     .as_ref()
-                    .is_some_and(|game| !self.board_is_live(&game.id))
+                    .is_none_or(|game| !self.board_is_live(&game.id))
                 {
                     self.open_board(context, session);
                 } else {
@@ -4268,6 +4375,7 @@ impl KoboApp for Lichess {
                 self.flush_deferred_stream_closes(context);
                 self.retry_deferred_board(context);
                 self.retry_deferred_event(context);
+                self.schedule_live_seek_check(context);
             }
             return;
         };
@@ -4279,6 +4387,7 @@ impl KoboApp for Lichess {
         self.flush_deferred_stream_closes(context);
         self.retry_deferred_board(context);
         self.retry_deferred_event(context);
+        self.schedule_live_seek_check(context);
         self.show(context);
     }
 
@@ -4337,6 +4446,9 @@ fn board_cells(
         Color::White => (b'a'..=b'h').collect(),
         Color::Black => (b'a'..=b'h').rev().collect(),
     };
+    let destinations = selected_square
+        .map(|from| chess::destinations(fen, from))
+        .unwrap_or_default();
     let mut cells = Vec::with_capacity(64);
     for rank in ranks {
         for file in &files {
@@ -4344,6 +4456,8 @@ fn board_cells(
             let piece = chess::piece_at(fen, &square);
             let (label, glyph) = if invalid_square == Some(square.as_str()) {
                 ("×".to_owned(), None)
+            } else if piece.is_none() && destinations.contains(&square) {
+                ("·".to_owned(), None)
             } else {
                 (" ".to_owned(), piece.and_then(piece_glyph))
             };
@@ -4351,7 +4465,8 @@ fn board_cells(
                 format!("square-{square}"),
                 label,
                 glyph,
-                selected_square == Some(square.as_str()),
+                selected_square == Some(square.as_str())
+                    || (piece.is_some() && destinations.contains(&square)),
             ));
         }
     }
@@ -4741,7 +4856,7 @@ mod tests {
     #[test]
     fn black_orientation_and_live_controls_fit_clara_bw() {
         let app = app_with_game(&["e2e4", "c7c5", "g1f3"], Color::Black);
-        let screen = app.game_screen();
+        let screen = app.game_screen(&Context::default());
         let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::default());
         for square in ["a1", "e4", "h8"] {
             assert!(layout
@@ -5166,6 +5281,77 @@ mod tests {
     }
 
     #[test]
+    fn chess_board_is_joined_and_keeps_controls_visible_at_every_text_size() {
+        for text_scale in TextScale::STEPS {
+            let metrics = DisplayMetrics {
+                text_scale,
+                ..CLARA_BW_METRICS
+            };
+            let mut runner = AppRunner::with_metrics(ready_app(), metrics);
+            let screen = painted(runner.action(action_id("play-computer"))).expect("board screen");
+            let diagnostics = screen.diagnostics(&metrics, &Chrome::default());
+            assert!(
+                !diagnostics.has_errors(),
+                "{text_scale:?}: {:?}",
+                diagnostics.issues
+            );
+            let cells: Vec<_> = diagnostics
+                .layout
+                .nodes
+                .iter()
+                .filter(|node| matches!(node.kind, LayoutKind::Cell(..)))
+                .collect();
+            assert_eq!(cells.len(), 64);
+            assert_eq!(
+                cells
+                    .iter()
+                    .filter(|node| matches!(
+                        node.kind,
+                        LayoutKind::Cell(_, kobo_ui::CellStyle::BoardDark, _)
+                    ))
+                    .count(),
+                32
+            );
+            assert_eq!(cells[0].rect.x + cells[0].rect.width, cells[1].rect.x);
+            assert_eq!(cells[0].rect.y + cells[0].rect.height, cells[8].rect.y);
+            let moves = board_cells(super::chess::START, Color::White, Some("e2"), None);
+            assert_eq!(moves.iter().filter(|cell| cell.1 == "·").count(), 2);
+        }
+    }
+
+    #[test]
+    fn leaving_and_reopening_a_computer_game_preserves_the_position() {
+        let mut runner = AppRunner::new(ready_app());
+        runner.action(action_id("play-computer"));
+        runner.action(action_id("square-e2"));
+        runner.action(action_id("square-e4"));
+        let moves = runner
+            .app()
+            .game
+            .as_ref()
+            .expect("computer game")
+            .state
+            .moves
+            .clone();
+        assert_eq!(moves.len(), 2);
+        runner.action(ActionId::BACK);
+        assert_eq!(runner.app().route, Route::Home);
+        let commands = runner.action(action_id("play-computer"));
+        assert_eq!(runner.app().route, Route::Game);
+        assert_eq!(
+            runner.app().game.as_ref().expect("same game").state.moves,
+            moves
+        );
+        assert!(!commands.iter().any(|command| matches!(
+            command,
+            Command::Spawn {
+                work: kobo_sdk::Task::Fetch { .. } | kobo_sdk::Task::Post { .. },
+                ..
+            }
+        )));
+    }
+
+    #[test]
     fn computer_game_uses_you_without_a_lichess_account() {
         let mut app = Lichess {
             account: AccountState::Missing,
@@ -5265,6 +5451,59 @@ mod tests {
     }
 
     #[test]
+    fn saved_online_session_reopens_authoritative_board_in_a_fresh_app() {
+        let original = app_with_game(&["e2e4", "e7e5"], Color::White);
+        let mut saved = Context::default();
+        original.persist_session(&mut saved);
+        let bytes = saved
+            .commands()
+            .iter()
+            .find_map(|command| match command {
+                Command::Store(StoreRequest::Save { key, value }) if key == super::SESSION_KEY => {
+                    Some(value.clone())
+                }
+                _ => None,
+            })
+            .expect("session persisted through SDK store");
+        let mut fresh = ready_app();
+        let mut context = Context::default();
+        fresh.on_store(
+            &mut context,
+            kobo_sdk::StoreResult::Loaded {
+                key: super::SESSION_KEY.into(),
+                value: Some(bytes),
+            },
+        );
+        assert!(
+            fresh.game.is_none(),
+            "a stored session must not invent board state"
+        );
+        fresh.on_action(&mut context, action_id("resume-current"));
+        assert!(
+            fresh
+                .tasks
+                .values()
+                .any(|pending| matches!(pending, Pending::BoardOpen(id) if id == "abcdEF12")),
+            "resume must open a stream even without an in-memory board"
+        );
+        let full = api::parse_board(br#"{"type":"gameFull","id":"abcdEF12","rated":true,"speed":"rapid","variant":{"key":"standard"},"initialFen":"startpos","white":{"id":"owner123","name":"Owner"},"black":{"id":"other123","name":"Other"},"state":{"type":"gameState","moves":"e2e4 e7e5","wtime":599000,"btime":598000,"winc":0,"binc":0,"status":"started"}}"#, "abcdEF12").unwrap();
+        fresh.handle_completed(&mut context, Pending::BoardOpen("abcdEF12".into()), &[]);
+        fresh.handle_board(&mut context, "abcdEF12", full);
+        assert_eq!(fresh.game.as_ref().unwrap().state.moves, ["e2e4", "e7e5"]);
+        assert_eq!(
+            fresh.game.as_ref().unwrap().fen,
+            original.game.as_ref().unwrap().fen
+        );
+        assert!(fresh.pending_move.is_none());
+        assert!(fresh.pending_action.is_none());
+        let finished = api::parse_board(br#"{"type":"gameState","moves":"e2e4 e7e5","wtime":599000,"btime":598000,"winc":0,"binc":0,"status":"draw"}"#, "abcdEF12").unwrap();
+        fresh.handle_board(&mut context, "abcdEF12", finished);
+        assert!(fresh.session.is_none());
+        assert!(context.commands().iter().any(|command| matches!(command,
+            Command::Store(StoreRequest::Forget { key }) if key == super::SESSION_KEY)));
+    }
+
+    #[test]
     fn resume_current_restores_an_offline_board_without_network() {
         let mut app = ready_app();
         let mut context = Context::default();
@@ -5347,11 +5586,11 @@ mod tests {
         let mut context = Context::default();
         app.start_computer_game(&mut context);
         app.on_action(&mut context, action_id("offer-draw"));
-        assert!(app.game_screen().overlay.is_some());
+        assert!(app.game_screen(&Context::default()).overlay.is_some());
         app.on_action(&mut context, action_id("dismiss-result"));
         assert_eq!(app.route, Route::Game);
         assert!(app.game.is_some());
-        assert!(app.game_screen().overlay.is_none());
+        assert!(app.game_screen(&Context::default()).overlay.is_none());
     }
 
     #[test]
@@ -5369,7 +5608,7 @@ mod tests {
     }
 
     #[test]
-    fn game_clocks_use_selected_dark_chips() {
+    fn the_active_game_clock_is_the_dark_chip() {
         fn selected(nodes: &[Node], action: ActionId) -> bool {
             nodes.iter().any(|node| match node {
                 Node::Chips { chips, .. } => chips
@@ -5381,9 +5620,29 @@ mod tests {
         }
 
         let app = app_with_game(&["e2e4"], Color::Black);
-        let screen = app.game_screen();
-        assert!(selected(&screen.nodes, action_id("opponent-clock")));
+        let screen = app.game_screen(&Context::default());
+        assert!(!selected(&screen.nodes, action_id("opponent-clock")));
         assert!(selected(&screen.nodes, action_id("your-clock")));
+        let other_side = app_with_game(&["e2e4"], Color::White).game_screen(&Context::default());
+        assert!(selected(&other_side.nodes, action_id("opponent-clock")));
+        assert!(!selected(&other_side.nodes, action_id("your-clock")));
+    }
+
+    #[test]
+    fn disconnected_and_finished_boards_do_not_claim_the_game_is_paused() {
+        let mut app = app_with_game(&["e2e4", "e7e5"], Color::White);
+        app.board_open = None;
+        app.board_ready = false;
+        let disconnected = format!("{:?}", app.game_screen(&Context::default()));
+        assert!(disconnected.contains("Reconnecting"));
+        assert!(!disconnected.contains("Paused"));
+        assert!(disconnected.contains("--:--"));
+        app.game.as_mut().unwrap().state.status = "draw".to_owned();
+        app.result_dismissed = true;
+        let finished = format!("{:?}", app.game_screen(&Context::default()));
+        assert!(finished.contains("Finished"));
+        assert!(!finished.contains("Reconnect"));
+        assert!(!finished.contains("--:--"));
     }
 
     #[test]
@@ -5394,14 +5653,14 @@ mod tests {
         };
         let app = app_with_game(&["e2e4"], Color::Black);
         let layout = app
-            .game_screen()
+            .game_screen(&Context::default())
             .layout_with(&metrics, &Chrome::with_back(true));
         for action in [action_id("opponent-clock"), action_id("your-clock")] {
             let clock = layout
                 .nodes
                 .iter()
-                .find(|node| node.kind == LayoutKind::Chip(action, true))
-                .expect("dark clock");
+                .find(|node| matches!(node.kind, LayoutKind::Chip(id, _) if id == action))
+                .expect("clock");
             assert!(
                 clock.rect.y + clock.rect.height <= metrics.height,
                 "clock was clipped below the physical app viewport"
@@ -6112,7 +6371,7 @@ mod tests {
             .notice
             .as_deref()
             .unwrap_or_default()
-            .contains("Several games matched"));
+            .contains("Several games found"));
     }
 
     #[test]
@@ -6424,6 +6683,191 @@ mod tests {
             app.session.as_ref().map(|session| session.game_id.as_str()),
             Some("abcdEF12")
         );
+    }
+
+    #[test]
+    fn live_seek_checks_for_a_missed_start_without_replaying_the_seek() {
+        let mut runner = AppRunner::new(ready_app());
+        let mut commands = runner.action(action_id(api::SeekPreset::Rapid10_5.action()));
+        let seek = runner.app().seek_task.expect("live seek");
+        let grace = runner
+            .app()
+            .tasks
+            .iter()
+            .find_map(|(task, pending)| {
+                matches!(pending, Pending::SeekGrace { generation: 1 }).then_some(*task)
+            })
+            .expect("check scheduled before seek ends");
+        commands.extend(runner.task_outcome(grace, TaskOutcome::Completed(Vec::new())));
+        let reconcile = runner
+            .app()
+            .tasks
+            .iter()
+            .find_map(|(task, pending)| {
+                matches!(pending, Pending::SeekReconcile { generation: 1 }).then_some(*task)
+            })
+            .expect("current games request");
+        commands.extend(runner.task_outcome(reconcile, TaskOutcome::Completed(
+            br#"{"nowPlaying":[{"gameId":"newGame2","color":"black","rated":true,"source":"lobby","speed":"rapid","variant":{"key":"standard"},"secondsLeft":600,"opponent":{"username":"NewOpponent"}}]}"#.to_vec()
+        )));
+        assert_eq!(runner.app().route, Route::Game);
+        assert!(!runner.app().seek_waiting);
+        assert!(commands
+            .iter()
+            .any(|command| matches!(command, Command::Cancel(task) if *task == seek)));
+        assert!(!runner.app().has_pending(|pending| matches!(
+            pending,
+            Pending::SeekGrace { .. } | Pending::SeekReconcile { .. }
+        )));
+        assert_eq!(
+            commands
+                .iter()
+                .filter(|command| matches!(command,
+                    Command::Spawn { work: kobo_sdk::Task::Post { url, .. }, .. }
+                        if url == "https://lichess.org/api/board/seek"
+                ))
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn live_seek_check_waits_for_cancelled_account_poll_to_release_its_slot() {
+        let mut app = ready_app();
+        app.event_open = false;
+        let mut runner = AppRunner::new(app);
+        runner.action(action_id("play"));
+        let account = runner
+            .app()
+            .tasks
+            .iter()
+            .find_map(|(task, pending)| matches!(pending, Pending::Account).then_some(*task))
+            .expect("account request");
+        runner.task_outcome(
+            account,
+            TaskOutcome::Completed(br#"{"id":"owner123","username":"Owner"}"#.to_vec()),
+        );
+        let playing = runner
+            .app()
+            .tasks
+            .iter()
+            .find_map(|(task, pending)| matches!(pending, Pending::Playing).then_some(*task))
+            .expect("playing request");
+        runner.task_outcome(
+            playing,
+            TaskOutcome::Completed(br#"{"nowPlaying":[]}"#.to_vec()),
+        );
+        let event = runner
+            .app()
+            .tasks
+            .iter()
+            .find_map(|(task, pending)| matches!(pending, Pending::EventOpen).then_some(*task))
+            .expect("event open");
+        runner.task_outcome(event, TaskOutcome::Completed(Vec::new()));
+        let retry = runner
+            .app()
+            .tasks
+            .iter()
+            .find_map(|(task, pending)| matches!(pending, Pending::AccountRetry).then_some(*task))
+            .expect("account retry");
+        let mut commands = runner.action(action_id("seek-10-0"));
+        assert!(commands
+            .iter()
+            .any(|command| matches!(command, Command::Cancel(task) if *task == retry)));
+        assert!(!runner
+            .app()
+            .has_pending(|pending| matches!(pending, Pending::SeekGrace { .. })));
+        commands.extend(runner.task_outcome(retry, TaskOutcome::Cancelled));
+        assert!(runner
+            .app()
+            .has_pending(|pending| matches!(pending, Pending::SeekGrace { .. })));
+        assert!(!runner
+            .app()
+            .has_pending(|pending| matches!(pending, Pending::AccountRetry)));
+        assert_eq!(
+            commands
+                .iter()
+                .filter(|command| matches!(command,
+            Command::Spawn { work: kobo_sdk::Task::Post { url, .. }, .. }
+                if url == "https://lichess.org/api/board/seek"))
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn an_empty_live_seek_check_keeps_waiting_and_cancel_stops_checks() {
+        let mut runner = AppRunner::new(ready_app());
+        runner.action(action_id(api::SeekPreset::Rapid10_0.action()));
+        let seek = runner.app().seek_task;
+        let grace = runner
+            .app()
+            .tasks
+            .iter()
+            .find_map(|(task, pending)| {
+                matches!(pending, Pending::SeekGrace { generation: 1 }).then_some(*task)
+            })
+            .expect("scheduled check");
+        runner.task_outcome(grace, TaskOutcome::Completed(Vec::new()));
+        let reconcile = runner
+            .app()
+            .tasks
+            .iter()
+            .find_map(|(task, pending)| {
+                matches!(pending, Pending::SeekReconcile { generation: 1 }).then_some(*task)
+            })
+            .expect("current games request");
+        runner.task_outcome(
+            reconcile,
+            TaskOutcome::Completed(br#"{"nowPlaying":[]}"#.to_vec()),
+        );
+        assert_eq!(
+            runner
+                .app()
+                .tasks
+                .values()
+                .filter(|pending| matches!(pending, Pending::SeekGrace { generation: 1 }))
+                .count(),
+            1
+        );
+        assert_eq!(runner.app().route, Route::Pairing);
+        assert!(runner.app().seek_waiting);
+        assert_eq!(runner.app().seek_task, seek);
+        runner.action(action_id("cancel-seek"));
+        assert!(!runner.app().has_pending(|pending| matches!(
+            pending,
+            Pending::SeekGrace { .. } | Pending::SeekReconcile { .. }
+        )));
+        // A late response must not reopen a cancelled pairing.
+        runner.task_outcome(
+            reconcile,
+            TaskOutcome::Completed(br#"{"nowPlaying":[]}"#.to_vec()),
+        );
+        assert!(runner.app().session.is_none());
+    }
+
+    #[test]
+    fn ambiguous_live_matches_cancel_the_seek_without_choosing_a_game() {
+        let mut app = ready_app();
+        let mut context = Context::default();
+        app.start_seek(&mut context, api::SeekPreset::Rapid10_0);
+        let seek = app.seek_task.expect("live seek");
+        app.finish_seek_reconciliation(
+            &mut context,
+            1,
+            vec![
+                summary("firstGame", api::SeekPreset::Rapid10_0),
+                summary("otherGame", api::SeekPreset::Rapid10_0),
+            ],
+        );
+        assert_eq!(app.route, Route::Play);
+        assert!(!app.seek_waiting);
+        assert!(app.seek_task.is_none());
+        assert!(app.session.is_none());
+        assert!(context
+            .commands()
+            .iter()
+            .any(|command| matches!(command, Command::Cancel(task) if *task == seek)));
     }
 
     #[test]
@@ -6934,7 +7378,7 @@ mod tests {
             )
         }));
         app.menu_open = true;
-        let screen = format!("{:?}", app.game_screen());
+        let screen = format!("{:?}", app.game_screen(&Context::default()));
         assert!(screen.contains("Reconnect"));
         assert!(!screen.contains("Offer draw"));
         app.set_board_rate_limit(&mut context, "other123", 31);
@@ -7142,6 +7586,30 @@ mod tests {
     }
 
     #[test]
+    fn active_board_releases_account_polling_capacity_for_moves() {
+        let mut app = ready_app();
+        let mut context = Context::default();
+        app.schedule_account_retry(&mut context);
+        let retry = app
+            .tasks
+            .iter()
+            .find_map(|(task, pending)| matches!(pending, Pending::AccountRetry).then_some(*task))
+            .expect("account retry");
+        let game = app_with_game(&[], Color::White);
+        app.open_board(&mut context, game.session.clone().expect("session"));
+        assert!(context
+            .commands()
+            .iter()
+            .any(|command| matches!(command, Command::Cancel(task) if *task == retry)));
+        assert!(!app.has_pending(|pending| matches!(pending, Pending::AccountRetry)));
+        app.schedule_account_retry(&mut context);
+        assert!(!app.has_pending(|pending| matches!(pending, Pending::AccountRetry)));
+        app.clear_session(&mut context);
+        app.schedule_account_retry(&mut Context::default());
+        assert!(app.has_pending(|pending| matches!(pending, Pending::AccountRetry)));
+    }
+
+    #[test]
     fn valid_credential_is_rechecked_without_hiding_ready_state() {
         let mut app = ready_app();
         let mut context = Context::default();
@@ -7181,7 +7649,7 @@ mod tests {
     fn post_opening_actions_hide_abort_and_keep_resign_and_draw_controls() {
         let mut app = app_with_game(&["e2e4", "e7e5"], Color::White);
         app.menu_open = true;
-        let rendered = format!("{:?}", app.game_screen());
+        let rendered = format!("{:?}", app.game_screen(&Context::default()));
         assert!(!rendered.contains("Abort"));
         assert!(rendered.contains("Resign"));
         assert!(rendered.contains("Offer draw"));
@@ -7192,7 +7660,7 @@ mod tests {
         let mut accepting = app_with_game(&["e2e4", "e7e5"], Color::White);
         accepting.game.as_mut().expect("game").state.black_draw = true;
         accepting.menu_open = true;
-        let offered = format!("{:?}", accepting.game_screen());
+        let offered = format!("{:?}", accepting.game_screen(&Context::default()));
         assert!(offered.contains("Accept draw"));
         assert!(offered.contains("Decline draw"));
         let mut accept_context = Context::default();
@@ -7214,15 +7682,15 @@ mod tests {
                 .draw_offer_from_opponent(),
             "a successful POST must not invent local draw acceptance"
         );
-        assert!(format!("{:?}", accepting.game_screen())
-            .contains("Lichess accepted the request; waiting for the stream"));
+        assert!(format!("{:?}", accepting.game_screen(&Context::default()))
+            .contains("Waiting for Lichess."));
         let accepted = api::parse_board(
             br#"{"type":"gameState","moves":"e2e4 e7e5","wtime":599000,"btime":598000,"winc":0,"binc":0,"status":"draw"}"#,
             "abcdEF12",
         )
         .expect("accepted draw");
         accepting.handle_board(&mut accept_context, "abcdEF12", accepted);
-        assert!(format!("{:?}", accepting.game_screen()).contains("Draw agreed"));
+        assert!(format!("{:?}", accepting.game_screen(&Context::default())).contains("Draw agreed"));
 
         let mut declining = app_with_game(&["e2e4", "e7e5"], Color::White);
         declining.game.as_mut().expect("game").state.black_draw = true;
@@ -7252,7 +7720,7 @@ mod tests {
         .expect("declined draw");
         declining.handle_board(&mut decline_context, "abcdEF12", declined);
         declining.menu_open = true;
-        let cleared = format!("{:?}", declining.game_screen());
+        let cleared = format!("{:?}", declining.game_screen(&Context::default()));
         assert!(cleared.contains("Offer draw"));
         assert!(!cleared.contains("Accept draw"));
         assert!(!cleared.contains("Decline draw"));
@@ -7349,7 +7817,7 @@ mod tests {
             .notice
             .as_deref()
             .unwrap_or_default()
-            .contains("reopening authoritative"));
+            .contains("Refreshing the position"));
 
         let reconnected = api::parse_board(
             br#"{"type":"gameFull","id":"abcdEF12","rated":true,"speed":"rapid","variant":{"key":"standard"},"initialFen":"startpos","white":{"id":"owner123","name":"Owner","rating":1500},"black":{"id":"other123","name":"Other","rating":1510},"state":{"type":"gameState","moves":"e2e4 e7e5","wtime":599000,"btime":598000,"winc":0,"binc":0,"status":"started","bdraw":true}}"#,
@@ -7460,7 +7928,9 @@ mod tests {
             assert!(!game.active());
             assert_eq!(app.selected, None);
             assert!(!app.result_dismissed);
-            assert!(format!("{:?}", app.game_screen()).contains("Black won by time"));
+            assert!(
+                format!("{:?}", app.game_screen(&Context::default())).contains("Black won by time")
+            );
         }
     }
 }

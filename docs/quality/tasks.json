@@ -1680,48 +1680,68 @@
     "pr": 3,
     "group": "Gutenbird",
     "task": "Remove catalog boilerplate from summaries",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Gutenbird extracts a labeled Summary only from a recognized Title/EBook No. metadata record. Ordinary descriptions and provenance text remain untouched; edition notices remain in a separate section.",
+      "All 87 app tests passed. Saved Gutenberg entry-564 fixture verifies extraction, provenance, edition warning and ordinary-prose preservation. Detail pagination has no layout errors; runtime-font captures inspected in docs/quality/evidence/gutenbird-summary. Strict Clippy passed."
+    ]
   },
   {
     "id": "GUTEN-02",
     "pr": 3,
     "group": "Gutenbird",
     "task": "Clarify edition and language choices",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Detail header now shows the selected download format and readable language name, preserving region/script tags and unknown codes. Selection uses Publication::best_acquisition, matching the downloader.",
+      "88 app tests and strict Clippy pass; runtime-font detail captures refreshed and inspected. Explicit edition/language selection remains to be completed, so this task stays open.",
+      "Entry resolution no longer collapses same-title publications with different authors, languages, publishers or issued dates. Unknown and known language are kept distinct. All 89 app tests and strict Clippy pass, including existing illustrated/plain edition behavior.",
+      "Same-title shelf captions now lead with differing language, publisher or issued date, including explicit missing metadata. Ordinary author/source captions remain unchanged. All 90 tests and strict Clippy pass; runtime-font two-language fixture captured and inspected in docs/quality/evidence/gutenbird-editions/language-choices.png.",
+      "Added an explicit paged download picker for readable, available EPUB/plain-text links within an entry. URL-specific saved positions and offline copies are retained when switching; sample labels, stated sizes and link titles are shown. All 92 app tests and strict Clippy pass, including correct fetch URL, offline reuse, busy-state protection, filtering and pagination. Runtime-font fixture screenshot inspected in docs/quality/evidence/gutenbird-formats/download-choices.png. Illustrated/plain entry resolution still needs an explicit choice; task remains open.",
+      "Completed edition selection: only single-publication documents open directly; multiple editions remain selectable on the shelf. Catalog image notices supply No images/With images labels; other choices use stated download titles or edition numbers. Saved Gutenberg entry fixture verifies both choices and their requested URLs. Oversized selected downloads are rejected before spawning a fetch. All 93 app tests and strict Clippy pass; runtime-font edition-choices.png inspected. Together with the language shelf and format-picker evidence above, this completes GUTEN-02."
+    ]
   },
   {
     "id": "GUTEN-03",
     "pr": 3,
     "group": "Gutenbird",
     "task": "Improve cover fallbacks",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Gutenbird 1.0.17 supplies a title-and-author cover after exhausted fetch retries and for tiny artwork, extending the existing missing/invalid-image fallback. Navigation hydration can use a cover shared by same-title editions without selecting an edition; different covers or titles are not conflated. All 95 app tests and strict Clippy pass. Tests verify fallback picture commands, tiny-image replacement pixels, shared-cover hydration and rejection of differing covers. The actual app screen and emitted fallback pixels were rendered and inspected in docs/quality/evidence/gutenbird-covers/failed-cover.png."
+    ]
   },
   {
     "id": "GUTEN-04",
     "pr": 3,
     "group": "Gutenbird",
     "task": "Persist shelf reading progress",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Gutenbird 1.0.18 accepts saved reading-position responses only for the currently selected download key. Saving also refreshes the in-memory position used when reopening in the same session. The existing restoration test now checks rejection of a delayed response from another download and equality of stored/current saved memory. All 95 tests and strict Clippy pass. Full restart/offline-reopen validation remains open.",
+      "Completed with the actual simulator and an original EPUB served through private local HTTPS. Downloaded and turned two pages, verified saved position, stopped the entire process and restarted with networking denied. Reopened rich text exactly matches the pre-shutdown page and differs from page one; fixture request count does not increase offline. Default and 170% runs pass. Catalog fallback saves bounded valid responses and handles cache-before-failure/cache-after-failure ordering; late cache cannot replace fresh data. All 97 app tests and strict Clippy pass. See scripts/quality/check-gutenbird-offline-sim.py and docs/quality/evidence/gutenbird-offline. Physical-reader acceptance remains a separate gate."
+    ]
   },
   {
     "id": "GUTEN-05",
     "pr": 3,
     "group": "Gutenbird",
     "task": "Reuse shared provider setup",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Added ProviderSetup::public to the SDK as the required public-catalog setup mode. It retains the exact HTTPS endpoint path/trailing slash/query, hides account entry, sends no credential and keeps response validation/cancellation shared. All 165 SDK tests and strict Clippy pass. SDK.md documents the API. Gutenbird integration, OPDS validation before saving and simulator setup screenshots remain open.",
+      "Completed in Gutenbird 1.0.20: Add catalog delegates to ProviderSetup::public, parses OPDS before acknowledging verification or saving, and uses the checked response directly. A cancelled setup cannot save a late response; invalid HTML cannot modify the catalog registry. The actual simulator setup/download/offline-reopen journey passes at default and 170% text, verifies no early save and exactly one custom-catalog request, and has inspected setup screenshots in docs/quality/evidence/gutenbird-setup. All 98 app tests and strict Clippy pass."
+    ]
   },
   {
     "id": "GUTEN-06",
     "pr": 3,
     "group": "Gutenbird",
     "task": "Verify fixture download, reading and offline reopen",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Completed with the actual simulator and an original EPUB served through private local HTTPS. Downloaded and turned two pages, verified saved position, stopped the entire process and restarted with networking denied. Reopened rich text exactly matches the pre-shutdown page and differs from page one; fixture request count does not increase offline. Default and 170% runs pass. Catalog fallback saves bounded valid responses and handles cache-before-failure/cache-after-failure ordering; late cache cannot replace fresh data. All 97 app tests and strict Clippy pass. See scripts/quality/check-gutenbird-offline-sim.py and docs/quality/evidence/gutenbird-offline. Physical-reader acceptance remains a separate gate."
+    ]
   },
   {
     "id": "HABIT-01",
@@ -2016,48 +2036,60 @@
     "pr": 3,
     "group": "Lichess",
     "task": "Polish pairing and reconnection guidance",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "PR #181: reviewed and simplified pairing, challenge, saved-game and connection-recovery guidance. Checking and retry screens use plain language and avoid duplicate status messages. Normal and 170% checking/error captures and explicit cancellation pass; prior real TLS session and disconnect fixtures cover recovery behavior. 111 app tests and strict Clippy pass. Evidence: docs/quality/evidence/lichess-pairing-guidance, lichess-recovery and lichess-connection on beta-quality-apps-2. Physical acceptance remains separate."
+    ]
   },
   {
     "id": "LICHESS-02",
     "pr": 3,
     "group": "Lichess",
     "task": "Show active side, clock and connection status clearly",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "PR #181: real TLS simulator fixtures verify the active clock switches after each acknowledged move, both clocks become unconfirmed while a board stream is disconnected, no move is submitted during disconnection, and reconnect restores authoritative clocks and piece positions with no stale banner. Normal and 170% runs pass. Finished-state regression removes misleading Paused/Reconnect controls. 111 app tests and strict Clippy pass. Evidence: docs/quality/evidence/lichess-connection on beta-quality-apps-2. Physical display acceptance remains separate."
+    ]
   },
   {
     "id": "LICHESS-03",
     "pr": 3,
     "group": "Lichess",
     "task": "Keep legal moves and selected squares legible",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "PR #181 at e33fe681: joined chess board has bordered selected squares and legal-destination dots. Normal and 170% simulator screenshots inspected; 107 current app tests pass, including board sizing, legal-move and selection tests. Evidence: docs/quality/evidence/lichess-computer and lichess-todo-review on beta-quality-apps-2. Physical display acceptance remains separate."
+    ]
   },
   {
     "id": "LICHESS-04",
     "pr": 3,
     "group": "Lichess",
     "task": "Validate move acknowledgement, stale connection and reconnect",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "PR #181 at e33fe681: 107 current app tests pass. Tests reject optimistic/local move application, require authoritative board acknowledgement rather than POST success, suppress duplicate submissions, and reopen authoritative state after stale events. Deterministic fixture pairs, moves, reconnects and ends by agreed draw. Evidence: docs/quality/evidence/lichess-todo-review on beta-quality-apps-2. No live moves were sent."
+    ]
   },
   {
     "id": "LICHESS-05",
     "pr": 3,
     "group": "Lichess",
     "task": "Test complete fixture match and retained session state",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "PR #181: real SDK app and simulator use a private TLS fixture to pair, send exactly one move, retain the initial board until stream acknowledgement, restore the acknowledged piece positions after process restart, accept a draw, clear the saved session and resume account polling. Normal and 170% text-size runs pass; 109 app tests and strict Clippy pass. Evidence: docs/quality/evidence/lichess-session on beta-quality-apps-2. No live requests or hardware validation."
+    ]
   },
   {
     "id": "LICHESS-06",
     "pr": 3,
     "group": "Lichess",
     "task": "Notice on the panel when a seek has already been matched",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "PR #181: the local TLS fixture drops every gameStart notification while matching the seek. At normal and 170% text sizes, the actual simulator app opens the matched board using its ten-second current-games check, with no account recheck and exactly one seek. The complete move, restart and draw flow also passes. 110 app tests and strict Clippy pass. Evidence: docs/quality/evidence/lichess-missed-start on beta-quality-apps-2. No public service or physical hardware was used."
+    ]
   },
   {
     "id": "LOGIC-01",
@@ -2736,7 +2768,10 @@
     "group": "Read Later (APP-5/6)",
     "task": "Persist fetched full article bodies",
     "status": "todo",
-    "evidence": []
+    "evidence": [
+      "Read Later 0.1.3 preserves fetched full bodies across same-server/credential metadata refreshes. Malformed, invalid-UTF-8, missing-list, invalid-entry and duplicate-ID responses are distinct from a valid empty list and cannot wipe current articles. Request origins reject replies after server/credential changes; body reuse is scoped to the same origin. Nine app/parser tests and strict Clippy pass. Durable disk storage remains open.",
+      "Read Later 0.1.4 writes full extracted article bodies through the shared acknowledged two-slot Snapshot, scoped to server and credential name and bounded to 8 MiB. Its versioned codec preserves literal markup, Unicode and paragraphs. Unit coverage verifies publication only after content/pointer acknowledgements, restore in a fresh app instance, previous-copy retention after a full-disk failure, and merging a late snapshot with fresh metadata. All 12 tests and strict Clippy pass. Complete simulator restart/recovery validation remains open."
+    ]
   },
   {
     "id": "LATER-02",
@@ -2752,7 +2787,10 @@
     "group": "Read Later (APP-5/6)",
     "task": "Wire all visible tabs and action controls",
     "status": "todo",
-    "evidence": []
+    "evidence": [
+      "Restored the visible queue Sync action by setting the title before its action. The actual queue render in docs/quality/evidence/readlater-refresh/refresh-failed.png was inspected. Other tabs and article controls remain open.",
+      "Added Settings to the configured reading-list header alongside Sync, making the article-depth controls reachable. Other tab and article actions remain open."
+    ]
   },
   {
     "id": "LATER-04",
@@ -2768,7 +2806,10 @@
     "group": "Read Later (APP-5/6)",
     "task": "Show pending/retry/offline state",
     "status": "todo",
-    "evidence": []
+    "evidence": [
+      "Unreadable list responses now retain the current queue and explain that articles are unchanged, with a visible Sync control for retry. Local runtime-font fixture screenshot inspected; nine tests and strict Clippy pass. Full outbox/retry/offline state remains open.",
+      "Save failures retain the prior snapshot and expose Retry saving; changing server configuration waits for outstanding/failed snapshot writes to finish. Inspected the actual queue render with runtime fonts in docs/quality/evidence/readlater-cache/save-failed.png. Full recovery and action-outbox state remain open."
+    ]
   },
   {
     "id": "LATER-06",
@@ -3242,48 +3283,65 @@
     "pr": 3,
     "group": "Verses (APP-8)",
     "task": "Use real injectable calendar date and advance across midnight",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "apps/verses/src/main.rs"
+    ]
   },
   {
     "id": "VERSE-02",
     "pr": 3,
     "group": "Verses (APP-8)",
     "task": "Provide complete permitted poems or label excerpts explicitly",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "apps/verses/src/main.rs",
+      "docs/quality/evidence/verses/"
+    ]
   },
   {
     "id": "VERSE-03",
     "pr": 3,
     "group": "Verses (APP-8)",
     "task": "Paginate long poems",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "apps/verses/src/main.rs",
+      "docs/quality/evidence/verses/"
+    ]
   },
   {
     "id": "VERSE-04",
     "pr": 3,
     "group": "Verses (APP-8)",
     "task": "Show author and source context",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "apps/verses/src/main.rs",
+      "docs/quality/evidence/verses/"
+    ]
   },
   {
     "id": "VERSE-05",
     "pr": 3,
     "group": "Verses (APP-8)",
     "task": "Make favorites usable",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "apps/verses/src/main.rs",
+      "docs/quality/evidence/verses/"
+    ]
   },
   {
     "id": "VERSE-06",
     "pr": 3,
     "group": "Verses (APP-8)",
     "task": "Export attributed quote cards",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "apps/verses/src/main.rs",
+      "docs/quality/evidence/verses/quote-card.png"
+    ]
   },
   {
     "id": "APPQA-01",
@@ -3394,24 +3452,30 @@
     "pr": 4,
     "group": "Main CLI and companion operation engine",
     "task": "Provide guided interactive entry point for bare kobo",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Bare kobo uses a numbered owner menu only when both stdin/stdout are terminals. USB setup, Frame preview, OPML check and Paperterm demo reuse existing handlers; developer/release reference is a separate choice. Noninteractive bare invocation prints compact help without reading input. Two menu regressions verify literal paths, cancellation and invalid-choice retry. Real PTY acceptance validates an original OPML file through the menu; strict CLI Clippy passes. Evidence: docs/quality/evidence/owner-start. Desktop surface, named-reader selection and transfer receipts remain separate open tasks."
+    ]
   },
   {
     "id": "CLI-02",
     "pr": 4,
     "group": "Main CLI and companion operation engine",
     "task": "Keep plain compact help for noninteractive use",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Bare kobo uses a numbered owner menu only when both stdin/stdout are terminals. USB setup, Frame preview, OPML check and Paperterm demo reuse existing handlers; developer/release reference is a separate choice. Noninteractive bare invocation prints compact help without reading input. Two menu regressions verify literal paths, cancellation and invalid-choice retry. Real PTY acceptance validates an original OPML file through the menu; strict CLI Clippy passes. Evidence: docs/quality/evidence/owner-start. Desktop surface, named-reader selection and transfer receipts remain separate open tasks."
+    ]
   },
   {
     "id": "CLI-03",
     "pr": 4,
     "group": "Main CLI and companion operation engine",
     "task": "Separate owner tasks from developer/release commands",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Bare kobo uses a numbered owner menu only when both stdin/stdout are terminals. USB setup, Frame preview, OPML check and Paperterm demo reuse existing handlers; developer/release reference is a separate choice. Noninteractive bare invocation prints compact help without reading input. Two menu regressions verify literal paths, cancellation and invalid-choice retry. Real PTY acceptance validates an original OPML file through the menu; strict CLI Clippy passes. Evidence: docs/quality/evidence/owner-start. Desktop surface, named-reader selection and transfer receipts remain separate open tasks."
+    ]
   },
   {
     "id": "CLI-04",
@@ -3474,8 +3538,12 @@
     "pr": 4,
     "group": "Main CLI and companion operation engine",
     "task": "Provide one app setup card generated from capabilities",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "crates/kobo-cli/src/apps.rs: bundled manifest setup steps and plain-language capabilities; offline search and numbered owner menu.",
+      "docs/quality/evidence/app-guides/result.json: 44 guides checked, case-insensitive search, unknown app refusal and real PTY Lichess selection after invalid input.",
+      "Five focused guide/menu tests and strict all-target CLI Clippy passed."
+    ]
   },
   {
     "id": "CLI-12",
@@ -3531,7 +3599,10 @@
     "group": "Main CLI and companion operation engine",
     "task": "Publish atomically and retain prior valid content",
     "status": "todo",
-    "evidence": []
+    "evidence": [
+      "Partial evidence: Feeds simulator staging is atomic and preserves the previous list on malformed/oversized input or occupied staging path. Real CLI fixture acceptance: docs/quality/evidence/feeds-companion. This does not complete atomic publication/recovery across all companions.",
+      "Credential imports now stage then rename for network and volume destinations; bounded regular-file input rejects invalid/oversized values before transfer. Shell failed-write and occupied-stage regressions preserve the previous credential; real CLI volume validation/retry passes. Evidence: docs/quality/evidence/provider-help/result.json. Other transfer workflows remain open."
+    ]
   },
   {
     "id": "CLI-19",
@@ -3698,24 +3769,34 @@
     "pr": 4,
     "group": "Deck companion",
     "task": "Preserve real pairing when pushing layouts",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Device layout pushes no longer write the pairing key. Simulator pushes create a preview marker only when pairing is absent; existing pairing bytes remain unchanged.",
+      "Seven CLI Deck tests pass, including executing the generated transfer shell against paired and unpaired temporary stores. Actual CLI simulator staging preservation is recorded in docs/quality/evidence/deck-preview/{default,170}/result.json."
+    ]
   },
   {
     "id": "DECKCLI-02",
     "pr": 4,
     "group": "Deck companion",
     "task": "Separate static simulator preview from executable pairing",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Static Deck preview is labeled Preview only and pad taps dispatch no network task or running state. Pair action opens normal computer pairing.",
+      "Default and 170% simulator journeys stage via actual CLI, tap a preview pad, check clean layout and open Pair. Screenshots inspected; 16 app tests and strict app/CLI Clippy passed. Evidence: docs/quality/evidence/deck-preview."
+    ]
   },
   {
     "id": "DECKCLI-03",
     "pr": 4,
     "group": "Deck companion",
     "task": "Unify 15-pad configuration and UI limits",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Helper validation now accepts 1\u201315 pads per page, matching the CLI and reader. CLI import validation rejects oversized hand-edited pages instead of accepting invisible extra pads.",
+      "Eight CLI Deck tests and all 53 helper tests passed, including explicit 15/16-pad boundaries. Strict all-target CLI/helper Clippy passed.",
+      "docs/quality/evidence/deck-fifteen-pads/result.json and preview.png: actual CLI assigns all 15 pads; 170% simulator screenshot visibly includes Pad 15 and passes layout diagnostics."
+    ]
   },
   {
     "id": "DECKCLI-04",
@@ -3746,24 +3827,32 @@
     "pr": 4,
     "group": "Deck companion",
     "task": "Keep per-action confirmation configurable",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Each pad supports explicit --confirm and --no-confirm. Editing without either retains the existing setting; new pads default false. Conflicting/repeated flags are rejected before writing.",
+      "Nine CLI Deck tests and strict all-target Clippy passed. Actual executable set/show checks preserve true and false on edits, switch explicitly and retain bytes on conflicting flags: docs/quality/evidence/deck-confirmation/result.json.",
+      "Existing helper confirmation execution tests remain passing in the 53-test helper run recorded for DECKCLI-03; no physical command execution is claimed."
+    ]
   },
   {
     "id": "FLASHCLI-01",
     "pr": 4,
     "group": "Flashcards companion",
     "task": "Replace main CLI refusal stub with the supported helper entry point",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Main CLI delegates to the separate importer. Four CLI tests and strict Clippy pass; real-helper import/verify/stage and simulator reveal/grade/export pass at normal and 170% text size. Exported review bytes match the reader log. See docs/quality/evidence/flashcards-companion/{default,170} and companion-delivery.md. Physical-device acceptance remains separate."
+    ]
   },
   {
     "id": "FLASHCLI-02",
     "pr": 4,
     "group": "Flashcards companion",
     "task": "Make helper install/version status discoverable",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "kobo flashcards status reports selected helper, its own version/source and notice; missing-helper test verifies installation guidance. formats reports the installed helper supported package subset and review-log boundary. Four CLI tests, three helper-command tests and strict CLI Clippy pass; real-helper acceptance verifies both commands. See docs/quality/evidence/flashcards-companion/transcript.json and docs/FLASHCARDS_COMPATIBILITY.md. Verified binary distribution remains FLASHCLI-03."
+    ]
   },
   {
     "id": "FLASHCLI-03",
@@ -3778,104 +3867,130 @@
     "pr": 4,
     "group": "Flashcards companion",
     "task": "Keep existing helper license/distribution boundary intact",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Full hermetic artifact audit passed at source 6aa7f8ff6aa2f59e5534b20d4cc97fbc5eb99d2f, exit 0. Fresh device builds match; signed package/catalog verified; no Anki implementation in device dependencies/symbols/package; host helper source pin, notices and dependency licenses checked. Report and hashes: docs/quality/evidence/flashcards-artifact-audit. Verified helper distribution remains FLASHCLI-03, still open."
+    ]
   },
   {
     "id": "FLASHCLI-05",
     "pr": 4,
     "group": "Flashcards companion",
     "task": "Explain actual supported formats and unsupported features",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "kobo flashcards status reports selected helper, its own version/source and notice; missing-helper test verifies installation guidance. formats reports the installed helper supported package subset and review-log boundary. Four CLI tests, three helper-command tests and strict CLI Clippy pass; real-helper acceptance verifies both commands. See docs/quality/evidence/flashcards-companion/transcript.json and docs/FLASHCARDS_COMPATIBILITY.md. Verified binary distribution remains FLASHCLI-03."
+    ]
   },
   {
     "id": "FLASHCLI-06",
     "pr": 4,
     "group": "Flashcards companion",
     "task": "Preview front/back, media and card counts",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "kobo flashcards preview creates an offline HTML front/back preview for a selected card with card/due/media counts, embedded PNG/JPEG and other media inventory. Real-helper acceptance checks actual front/back text, embedded image bytes, output preservation and invalid selection; five helper-command tests and strict CLI Clippy pass. Browser screenshot inspected: docs/quality/evidence/flashcards-companion/preview.png."
+    ]
   },
   {
     "id": "FLASHCLI-07",
     "pr": 4,
     "group": "Flashcards companion",
     "task": "Explain and implement add/merge versus replace",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Real CLI/helper acceptance merges two original three-card packages into six due cards without modifying the source, explicitly replaces with three, and preserves prepared/staged collections on malformed import or corrupt stage. All 22 importer library tests pass, including metadata conflicts, malformed database, duplicate media and archive bomb refusal. Merge/replace forms documented in apps/flashcards/README.md. Evidence: docs/quality/evidence/flashcards-companion/transcript.json."
+    ]
   },
   {
     "id": "FLASHCLI-08",
     "pr": 4,
     "group": "Flashcards companion",
     "task": "Expose verify, stage and review-log export consistently",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Main CLI delegates to the separate importer. Four CLI tests and strict Clippy pass; real-helper import/verify/stage and simulator reveal/grade/export pass at normal and 170% text size. Exported review bytes match the reader log. See docs/quality/evidence/flashcards-companion/{default,170} and companion-delivery.md. Physical-device acceptance remains separate."
+    ]
   },
   {
     "id": "FLASHCLI-09",
     "pr": 4,
     "group": "Flashcards companion",
     "task": "Validate imported content and preserve previous collection on failure",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Real CLI/helper acceptance merges two original three-card packages into six due cards without modifying the source, explicitly replaces with three, and preserves prepared/staged collections on malformed import or corrupt stage. All 22 importer library tests pass, including metadata conflicts, malformed database, duplicate media and archive bomb refusal. Merge/replace forms documented in apps/flashcards/README.md. Evidence: docs/quality/evidence/flashcards-companion/transcript.json."
+    ]
   },
   {
     "id": "FRAMECLI-01",
     "pr": 4,
     "group": "Frame companion",
     "task": "Preview multiple photos and crop/pad choices",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "frame preview compares multiple photos in crop/pad using the bounded Frame preparation engine at a selected reader profile. Real CLI generated two image comparisons; browser screenshot inspected. Regression verifies downsize from 640x320 to 64x96, distinct fits, existing-output preservation and corrupt-image refusal. Strict CLI Clippy passes. Evidence: docs/quality/evidence/frame-companion-preview."
+    ]
   },
   {
     "id": "FRAMECLI-02",
     "pr": 4,
     "group": "Frame companion",
     "task": "Perform bounded downsize with visual quality preview",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "frame preview compares multiple photos in crop/pad using the bounded Frame preparation engine at a selected reader profile. Real CLI generated two image comparisons; browser screenshot inspected. Regression verifies downsize from 640x320 to 64x96, distinct fits, existing-output preservation and corrupt-image refusal. Strict CLI Clippy passes. Evidence: docs/quality/evidence/frame-companion-preview."
+    ]
   },
   {
     "id": "FRAMECLI-03",
     "pr": 4,
     "group": "Frame companion",
     "task": "Show storage estimate and album naming",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Real CLI acceptance verifies explicit album naming, image transfer byte estimate, repeat-import deduplication and named removal plan. Planning preserves all shelf bytes and does not create a new shelf. Seven Frame tests and strict CLI Clippy pass. Evidence: docs/quality/evidence/frame-companion-plan. Physical reader acceptance remains separate."
+    ]
   },
   {
     "id": "FRAMECLI-04",
     "pr": 4,
     "group": "Frame companion",
     "task": "Deduplicate repeated import clearly",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Real CLI acceptance verifies explicit album naming, image transfer byte estimate, repeat-import deduplication and named removal plan. Planning preserves all shelf bytes and does not create a new shelf. Seven Frame tests and strict CLI Clippy pass. Evidence: docs/quality/evidence/frame-companion-plan. Physical reader acceptance remains separate."
+    ]
   },
   {
     "id": "FRAMECLI-05",
     "pr": 4,
     "group": "Frame companion",
     "task": "Show concrete deletion/replacement list",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Real CLI acceptance verifies explicit album naming, image transfer byte estimate, repeat-import deduplication and named removal plan. Planning preserves all shelf bytes and does not create a new shelf. Seven Frame tests and strict CLI Clippy pass. Evidence: docs/quality/evidence/frame-companion-plan. Physical reader acceptance remains separate."
+    ]
   },
   {
     "id": "FRAMECLI-06",
     "pr": 4,
     "group": "Frame companion",
     "task": "Retain recoverable previous album",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Two rotating recovery slots preserve the previous nonempty shelf before push/removal. frame restore restores images and album metadata, publishing the manifest last. Real CLI simulator-shelf acceptance verifies replacement/removal recovery, bounded slots, failed snapshot refusal and missing-backup refusal. Actual generated device shell scripts pass copy/restore/failed-copy tests locally. Strict CLI Clippy passes. Evidence: docs/quality/evidence/frame-companion-plan. Physical device acceptance remains open."
+    ]
   },
   {
     "id": "FRAMECLI-07",
     "pr": 4,
     "group": "Frame companion",
     "task": "Verify reader availability before saying photos are ready",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Push reads the manifest and photo sizes back from the target before reporting Frame transfer verified. SSH/read failures propagate as errors; mismatched manifest, missing/empty photos and incomplete new files are refused by regression tests. Real CLI simulator-shelf journey passes verification and all prior recovery checks. Eight Frame tests and strict all-target CLI Clippy pass. Evidence: docs/quality/evidence/frame-companion-plan. Does not claim an app is open or a physical screen displayed the photo; hardware acceptance remains separate."
+    ]
   },
   {
     "id": "VAULTCLI-01",
@@ -4098,96 +4213,129 @@
     "pr": 4,
     "group": "Paperterm companion",
     "task": "Guide pairing through named reader choice",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "crates/kobo-cli/src/main.rs",
+      "docs/quality/evidence/paperterm-companion/"
+    ]
   },
   {
     "id": "STREAMCLI-02",
     "pr": 4,
     "group": "Paperterm companion",
     "task": "Offer known terminal/task presets and connection test",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "kobo stream presents connection-check, login-shell and top system-monitor commands; custom command entry is labelled advanced. Presets use literal argument vectors and saved pairing identity. Real PTY CLI acceptance runs all three presets, observes real shell/monitor output, stops each within five seconds, restores terminal modes and verifies closed ports. Preset parser regression and strict CLI Clippy pass. Evidence: docs/quality/evidence/paperterm-stop. Named-reader pairing and connection-state reporting remain separate open tasks."
+    ]
   },
   {
     "id": "STREAMCLI-03",
     "pr": 4,
     "group": "Paperterm companion",
     "task": "Show stopped, waiting, connected and reconnecting states",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "CLI reports waiting, connected, waiting to reconnect after 45 seconds without accepted requests, and stopped/final-screen states only on transitions. Real local TLS/PTY test rejects wrong token, authenticates a lease, observes connected, waits actual 45-second idle timeout and reconnects. All presets still stop and restore terminal modes. 23 stream tests and strict stream/CLI Clippy pass. Evidence: docs/quality/evidence/paperterm-stop/result.json (connection_states_tested true)."
+    ]
   },
   {
     "id": "STREAMCLI-04",
     "pr": 4,
     "group": "Paperterm companion",
     "task": "Provide obvious Stop and computer-awake explanation",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Startup prints Ctrl+] stop control and computer-awake guidance. Local Ctrl+] explicitly closes the shared PTY command/session, restores terminal settings and prints Paperterm stopped. Real PTY CLI tests pass active-session stop within five seconds, final-screen service stop, terminal-mode restoration and closed sharing port. 22 stream tests and strict stream/CLI Clippy pass. Evidence: docs/quality/evidence/paperterm-stop/result.json; scripts/quality/check-paperterm-stop.py."
+    ]
   },
   {
     "id": "STREAMCLI-05",
     "pr": 4,
     "group": "Paperterm companion",
     "task": "Keep arbitrary terminal command entry advanced",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "kobo stream presents connection-check, login-shell and top system-monitor commands; custom command entry is labelled advanced. Presets use literal argument vectors and saved pairing identity. Real PTY CLI acceptance runs all three presets, observes real shell/monitor output, stops each within five seconds, restores terminal modes and verifies closed ports. Preset parser regression and strict CLI Clippy pass. Evidence: docs/quality/evidence/paperterm-stop. Named-reader pairing and connection-state reporting remain separate open tasks."
+    ]
   },
   {
     "id": "SIDECLI-01",
     "pr": 4,
     "group": "Sidekick companion",
     "task": "Unify helper install/start/status/stop in companion",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "crates/kobo-cli/src/sidekick.rs",
+      "docs/quality/evidence/sidekick-companion/"
+    ]
   },
   {
     "id": "SIDECLI-02",
     "pr": 4,
     "group": "Sidekick companion",
     "task": "Show and select agent integrations before configuration",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Sidekick setup displays supported integrations, detection and config paths; numbered terminal selection installs only the selected integration. Redirected setup is read-only; explicit named setup and dry-run/print are retained.",
+      "51 helper tests and strict all-target Clippy passed; docs/quality/evidence/sidekick-setup/result.json records real terminal invalid-choice/cancellation acceptance. No user hooks were installed during acceptance."
+    ]
   },
   {
     "id": "SIDECLI-03",
     "pr": 4,
     "group": "Sidekick companion",
     "task": "Preserve dry-run, printed configuration and backups",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Dry-run and manual printed configuration retained. Setup stages and syncs merged configuration before rename and creates exclusively named backups without overwriting prior copies.",
+      "52 helper tests and strict all-target Clippy passed. Fixture lifecycle verifies dry-run leaves files untouched, occupied staging preserves original, idempotent setup makes no backup, later setup retains both historical backups, and malformed JSON is unchanged.",
+      "docs/quality/evidence/sidekick-setup/result.json: actual helper prints manual configuration for both integrations; real terminal and help acceptance remain passing. User hook installation was not performed."
+    ]
   },
   {
     "id": "SIDECLI-04",
     "pr": 4,
     "group": "Sidekick companion",
     "task": "Verify a harmless sample event on the reader",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "crates/kobo-cli/src/sidekick.rs",
+      "docs/quality/evidence/sidekick-companion/"
+    ]
   },
   {
     "id": "SIDECLI-05",
     "pr": 4,
     "group": "Sidekick companion",
     "task": "Return success from help",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Eight actual helper help invocations return success, including subcommands; missing arguments remain errors. Evidence: docs/quality/evidence/sidekick-setup/result.json."
+    ]
   },
   {
     "id": "SIDECLI-06",
     "pr": 4,
     "group": "Sidekick companion",
     "task": "Provide self-contained sample mode",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "kobo-sidekickd sample provides its own non-permission Received question, uses normal pairing, and starts without agent hooks or Deck commands.",
+      "docs/quality/evidence/sidekick-sample/default/result.json and 170/result.json: actual helper and simulator pair through on-screen keyboard over verified TLS, show sample, tap Received, acknowledge on computer, clear pending state and render without layout errors.",
+      "Screenshots inspected at default and 170% text. Fixed choice-answer history incorrectly saying Left at the terminal; all 30 app tests and strict Clippy passed. Physical reader acceptance remains SIDECLI-04."
+    ]
   },
   {
     "id": "SERVICECLI-01",
     "pr": 4,
     "group": "Provider connections",
     "task": "Fix secret/trust help exit status",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Secret/trust help and subcommand help return success without source discovery or reader access. Missing required arguments remain errors.",
+      "docs/quality/evidence/provider-help/result.json: 12 help invocations, 10 ambiguous/invalid argument refusals, missing-argument checks, and synthetic volume secret set/list/remove passed; strict all-target CLI Clippy passed."
+    ]
   },
   {
     "id": "SERVICECLI-02",

@@ -1021,6 +1021,32 @@ A save acknowledgement confirms storage, not a successful connection. Validate
 the provider response before showing Connected. See
 [Panels' server flow](apps/panels/src/server.rs).
 
+### Public library setup
+
+Use `ProviderSetup::public("catalog")` for a public HTTPS catalog or library
+endpoint. It reuses the address editor, connection check, cancellation and
+response-validation flow without offering account entry or sending a credential.
+Unlike an authenticated provider's base address, a public endpoint is fetched
+exactly as entered, preserving its path, trailing slash and query. The response
+is bounded to 256 KiB. HTTP, user information in the URL and fragments are refused.
+
+```rust
+let mut setup = kobo_sdk::provider::ProviderSetup::public("catalog")?;
+setup.restore_address("https://library.example/opds/?language=en")?;
+```
+
+Handle `provider::Event::Response(bytes)` by parsing the expected catalog format.
+Only call `setup.verified()` and persist the address after that validation.
+Call `setup.invalid_response()` for an HTML page or a malformed catalog. An
+HTTP success alone does not verify a library. Cancelled or superseded check
+responses are ignored by the shared flow.
+
+Gutenbird uses this flow and validates the response as OPDS before saving the
+address. Its simulator journey exercises address entry, the connection check,
+a single catalog fetch, download and an offline restart.
+
+![Public provider check in Gutenbird](docs/quality/evidence/gutenbird-setup/default/00-ready-to-check.png)
+
 ### Owner trust roots
 
 Every request is HTTPS, verified against the public roots every browser
@@ -1793,3 +1819,13 @@ until retry. `save` returns false for a busy snapshot, an oversized candidate or
 a retained candidate awaiting retry; do not report it as saved. An app should
 serialize refreshes with active saves. Releasing an idle snapshot from memory
 does not remove its files. Disk retention and cleanup remain the app's policy.
+
+
+### Chess boards
+
+An eight-by-eight square grid containing chess-piece glyphs renders as a joined
+checkerboard. Keep it at the screen root so the shared layout can reserve space
+for player names, clocks and controls below it. Wrapping a board in a fixed-width
+band prevents that height adjustment and can clip controls at large text sizes.
+Selected dark squares retain a visible border. Apps remain responsible for legal
+move hints and for accepting only acknowledged game state.
