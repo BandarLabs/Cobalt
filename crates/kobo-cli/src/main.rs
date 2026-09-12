@@ -548,6 +548,8 @@ fn run(arguments: &[String]) -> Result<(), String> {
         "package" => build_package(&arguments[1..]),
         "app-key" => app_key(&arguments[1..]),
         "app-bundle" => app_bundle(&arguments[1..]),
+        "app-verify" => app_verify(&arguments[1..]),
+        "app-catalog-verify" => app_catalog_verify(&arguments[1..]),
         "app-catalog" => app_catalog(&arguments[1..]),
         "app-list" => app_list(&arguments[1..]),
         "app-check" => app_check(&arguments[1..]),
@@ -1018,6 +1020,76 @@ fn app_bundle(arguments: &[String]) -> Result<(), String> {
         .map_err(|error| format!("build app bundle: {error}"))?;
     fs::write(&output, bundle).map_err(|error| format!("write {}: {error}", output.display()))?;
     println!("created {}", output.display());
+    Ok(())
+}
+
+fn verification_bytes(path: &Path) -> Result<Vec<u8>, String> {
+    fs::read(path).map_err(|error| format!("read {}: {error}", path.display()))
+}
+
+fn verification_key(path: &Path) -> Result<kobo_app_store::Ed25519PublicKey, String> {
+    let text = String::from_utf8(verification_bytes(path)?)
+        .map_err(|_| "Public key must be UTF-8 hexadecimal")?;
+    kobo_app_store::Ed25519PublicKey::from_hex(text.trim()).map_err(|error| error.to_string())
+}
+
+fn app_verify(arguments: &[String]) -> Result<(), String> {
+    const USAGE: &str =
+        "usage: kobo app-verify --package PATH --public-key PATH --manifest PATH --binary PATH";
+    ensure_only_flags(
+        arguments,
+        &["--package", "--public-key", "--manifest", "--binary"],
+        USAGE,
+    )?;
+    let package = verification_bytes(&single_path_flag(arguments, "--package", USAGE)?)?;
+    let key = verification_key(&single_path_flag(arguments, "--public-key", USAGE)?)?;
+    let manifest = verification_bytes(&single_path_flag(arguments, "--manifest", USAGE)?)?;
+    let binary = verification_bytes(&single_path_flag(arguments, "--binary", USAGE)?)?;
+    let parsed = kobo_app_store::parse_public_bundle(&package, &key)
+        .map_err(|e| format!("Package verification failed: {e}"))?;
+    let expected = kobo_app_store::Manifest::parse_public(&manifest)
+        .map_err(|e| format!("Invalid expected manifest: {e}"))?;
+    if parsed.manifest().to_canonical_bytes() != expected.to_canonical_bytes()
+        || parsed.binary() != binary
+    {
+        return Err("Verified package differs from the supplied manifest or binary".into());
+    }
+    verify_arm_elf_bytes(&binary, true)?;
+    println!("Verified package signature, manifest and binary.");
+    Ok(())
+}
+
+fn app_catalog_verify(arguments: &[String]) -> Result<(), String> {
+    const USAGE: &str = "usage: kobo app-catalog-verify --catalog PATH --signature PATH --public-key PATH --package PATH";
+    ensure_only_flags(
+        arguments,
+        &["--catalog", "--signature", "--public-key", "--package"],
+        USAGE,
+    )?;
+    let catalog = verification_bytes(&single_path_flag(arguments, "--catalog", USAGE)?)?;
+    let signature = verification_bytes(&single_path_flag(arguments, "--signature", USAGE)?)?;
+    let signature =
+        std::str::from_utf8(&signature).map_err(|_| "Signature must be UTF-8 hexadecimal")?;
+    let signature =
+        kobo_app_store::DetachedSignature::from_hex(signature.trim()).map_err(|e| e.to_string())?;
+    let key = verification_key(&single_path_flag(arguments, "--public-key", USAGE)?)?;
+    kobo_app_store::verify(&catalog, &signature, &key)
+        .map_err(|e| format!("Catalog signature verification failed: {e}"))?;
+    let catalog = kobo_app_store::Catalog::parse_public(&catalog).map_err(|e| e.to_string())?;
+    let package = verification_bytes(&single_path_flag(arguments, "--package", USAGE)?)?;
+    let parsed = kobo_app_store::parse_public_bundle(&package, &key).map_err(|e| e.to_string())?;
+    let entry = catalog
+        .entries()
+        .iter()
+        .find(|entry| entry.manifest().id() == parsed.manifest().id())
+        .ok_or("Verified catalog does not contain the supplied package")?;
+    if entry.manifest().to_canonical_bytes() != parsed.manifest().to_canonical_bytes()
+        || entry.package_bytes() != package.len() as u64
+        || entry.package_sha256().as_str() != kobo_net::sha256::hex_digest(&package)
+    {
+        return Err("Catalog entry differs from the supplied package".into());
+    }
+    println!("Verified catalog signature and package entry.");
     Ok(())
 }
 
@@ -6732,6 +6804,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::too_many_lines)] // One signed fixture exercises creation and tampering together.
     fn app_bundle_and_catalog_commands_produce_verified_assets() {
         let root = std::env::temp_dir().join(format!("kobo-app-assets-{}", std::process::id()));
         fs::create_dir_all(&root).expect("create fixture");
@@ -6828,6 +6901,77 @@ mod tests {
         kobo_app_store::verify(&catalog_bytes, &signature, &public).expect("verify catalog");
         let catalog = kobo_app_store::Catalog::parse_public(&catalog_bytes).expect("parse catalog");
         assert_eq!(catalog.entries().len(), 1);
+        let public_path = root.join("public-key");
+        fs::write(&public_path, public.to_string()).unwrap();
+        let verify_package = vec![
+            "--package".into(),
+            bundle_path.display().to_string(),
+            "--public-key".into(),
+            public_path.display().to_string(),
+            "--manifest".into(),
+            manifest_path.display().to_string(),
+            "--binary".into(),
+            binary_path.display().to_string(),
+        ];
+        let verify_catalog = vec![
+            "--catalog".into(),
+            catalog_path.display().to_string(),
+            "--signature".into(),
+            signature_path.display().to_string(),
+            "--public-key".into(),
+            public_path.display().to_string(),
+            "--package".into(),
+            bundle_path.display().to_string(),
+        ];
+        super::app_verify(&verify_package).expect("verify matching package");
+        super::app_catalog_verify(&verify_catalog).expect("verify matching catalog");
+        fs::write(&binary_path, b"different binary").unwrap();
+        assert!(super::app_verify(&verify_package).is_err());
+        fs::write(&binary_path, &binary).unwrap();
+        fs::write(
+            &public_path,
+            kobo_app_store::derive_public_key(&[8; 32])
+                .unwrap()
+                .to_string(),
+        )
+        .unwrap();
+        assert!(super::app_verify(&verify_package).is_err());
+        assert!(super::app_catalog_verify(&verify_catalog).is_err());
+        fs::write(&public_path, public.to_string()).unwrap();
+        let mut changed_catalog = catalog_bytes.clone();
+        changed_catalog.push(b' ');
+        fs::write(&catalog_path, changed_catalog).unwrap();
+        assert!(super::app_catalog_verify(&verify_catalog).is_err());
+        fs::write(&catalog_path, &catalog_bytes).unwrap();
+        let wrong_entry = kobo_app_store::CatalogEntry::new(kobo_app_store::CatalogEntryInput {
+            manifest: manifest.clone(),
+            package_url: "https://example.test/wrong.cobalt-app".into(),
+            package_sha256: kobo_net::sha256::hex_digest(&bundle),
+            package_bytes: bundle.len() as u64 + 1,
+        })
+        .unwrap();
+        let wrong_catalog = kobo_app_store::Catalog::new(vec![wrong_entry])
+            .unwrap()
+            .to_canonical_bytes();
+        fs::write(&catalog_path, &wrong_catalog).unwrap();
+        fs::write(
+            &signature_path,
+            kobo_app_store::sign(&wrong_catalog, &seed)
+                .unwrap()
+                .to_string(),
+        )
+        .unwrap();
+        assert!(
+            super::app_catalog_verify(&verify_catalog).is_err(),
+            "valid signature must not hide incorrect package length"
+        );
+        fs::write(&catalog_path, &catalog_bytes).unwrap();
+        fs::write(&signature_path, signature.to_string()).unwrap();
+        let mut changed_package = bundle.clone();
+        *changed_package.last_mut().unwrap() ^= 1;
+        fs::write(&bundle_path, changed_package).unwrap();
+        assert!(super::app_verify(&verify_package).is_err());
+        assert!(super::app_catalog_verify(&verify_catalog).is_err());
         fs::remove_dir_all(root).expect("remove fixture");
     }
 

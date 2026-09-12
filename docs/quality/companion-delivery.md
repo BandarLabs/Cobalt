@@ -201,3 +201,19 @@ Flashcards audit at ea937dc1 passed the generated license notice check, then
 stopped because `app-verify` and `app-catalog-verify` are absent from the CLI.
 The complete boundary task stays open pending real verification commands and
 a full passing audit. The audit process has exited; no audit is running.
+
+Artifact verification commands (in progress): `kobo app-verify --package PATH
+--public-key PATH --manifest PATH --binary PATH` verifies the existing Store
+signature format and exact manifest/binary identity, including ARM ELF checks.
+`kobo app-catalog-verify --catalog PATH --signature PATH --public-key PATH
+--package PATH` verifies both signatures and the matching catalog entry's
+manifest, package digest and length. The public-key and signature paths contain
+hexadecimal text. These commands do not install or publish anything. The
+complete Flashcards audit remains open until rerun successfully.
+
+Verification command validation: the signed-fixture regression passes altered
+package bytes, wrong key, altered catalog, mismatched binary and a correctly
+signed wrong-length catalog entry. Strict CLI Clippy passes. Both commands
+also pass against the existing ea937dc1 ARM validation package and signed
+catalog; evidence is `evidence/flashcards-verification-commands/result.json`.
+This is not a substitute for the complete fresh-source artifact audit.
