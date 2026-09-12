@@ -121,3 +121,10 @@ awake while sharing. Once the check works, use `kobo stream --interactive --
 COMMAND` to share a terminal program you choose.
 
 ![The same connection check receiving reader and laptop input](screenshots/connection-check.png)
+
+To see the saved address and pairing code again, use `kobo stream pairing`.
+This reads the existing identity without replacing its keys or code. If you
+choose another port, use `kobo stream pairing --port 9123` and
+`kobo stream demo --port 9123` so the displayed address matches the service.
+The demo also displays these details when it starts. An older setup without
+a saved address explains how to add the computer address with `stream init`.

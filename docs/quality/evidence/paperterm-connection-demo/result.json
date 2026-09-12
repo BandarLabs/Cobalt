@@ -5,6 +5,7 @@
   "basis": "built-in-connection-demo-and-real-sdk-simulator-over-TLS",
   "physical_hardware": false,
   "checks": [
+    "saved pairing details use selected port without changing identity",
     "reader input reaches laptop",
     "laptop input reaches reader",
     "input remains unsubmitted until Enter",

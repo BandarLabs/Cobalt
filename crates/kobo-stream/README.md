@@ -59,3 +59,10 @@ is already in use. Use the existing `-- COMMAND` form only when you want to
 share a particular terminal program.
 
 ![Reader and laptop messages in the same session](../../apps/paperterm/screenshots/connection-check.png)
+
+To see the saved address and pairing code again, use `kobo stream pairing`.
+This reads the existing identity without replacing its keys or code. If you
+choose another port, use `kobo stream pairing --port 9123` and
+`kobo stream demo --port 9123` so the displayed address matches the service.
+The demo also displays these details when it starts. An older setup without
+a saved address explains how to add the computer address with `stream init`.

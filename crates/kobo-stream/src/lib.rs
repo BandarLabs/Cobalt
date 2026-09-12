@@ -793,12 +793,42 @@ pub fn init(hosts: &[String]) -> Result<(), String> {
         .map_err(|error| format!("create {}: {error}", trust.display()))?;
     std::fs::copy(&ca, trust.join("stream.pem"))
         .map_err(|error| format!("install stream trust root: {error}"))?;
-    let address = requested_hosts
-        .first()
-        .cloned()
-        .unwrap_or_else(|| "your-computer".to_owned());
-    println!("Paperterm is initialised.\n\n  address       {address}:{DEFAULT_PORT}\n  pairing code  {}\n\nNext: kobo trust set stream --device READER_IP", std::fs::read_to_string(pairing_path).unwrap_or_default().trim());
+    if !requested_hosts.is_empty() {
+        std::fs::write(directory.join("hosts"), requested_hosts.join("\n"))
+            .map_err(|error| format!("save computer addresses: {error}"))?;
+    }
+    println!(
+        "Paperterm is ready to pair.\n{}",
+        pairing_instructions(DEFAULT_PORT)?
+    );
     Ok(())
+}
+
+/// Shows saved connection details without replacing the identity or pairing code.
+pub fn pairing_instructions(port: u16) -> Result<String, String> {
+    let identity = Identity::load()?;
+    let hosts = std::fs::read_to_string(identity_dir()?.join("hosts")).unwrap_or_default();
+    Ok(format_pairing(&hosts, &identity.pairing, port))
+}
+
+fn format_pairing(hosts: &str, code: &str, port: u16) -> String {
+    let addresses = hosts
+        .lines()
+        .filter(|host| !host.trim().is_empty())
+        .map(|host| {
+            if host.parse::<std::net::Ipv6Addr>().is_ok() {
+                format!("  [{host}]:{port}")
+            } else {
+                format!("  {host}:{port}")
+            }
+        })
+        .collect::<Vec<_>>();
+    let address_help = if addresses.is_empty() {
+        "No network address saved. Run kobo stream init --host COMPUTER_IP first.".to_owned()
+    } else {
+        format!("Computer address:\n{}", addresses.join("\n"))
+    };
+    format!("{address_help}\nPairing code: {code}\n\nFirst time: run kobo trust set stream --device READER_IP.\nThen open Paperterm and enter the computer address and pairing code.\nKeep both devices on the same network and the computer awake.")
 }
 
 fn config_dir() -> Result<PathBuf, String> {
@@ -1114,6 +1144,22 @@ fn decode_base64(text: &str) -> Option<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn pairing_details_use_the_selected_port_and_saved_addresses() {
+        let details = super::format_pairing("192.0.2.10\n2001:db8::1\n", "ABC123", 9123);
+        assert!(details.contains("192.0.2.10:9123"));
+        assert!(details.contains("[2001:db8::1]:9123"));
+        assert!(details.contains("Pairing code: ABC123"));
+        assert!(!details.contains("your-computer"));
+    }
+
+    #[test]
+    fn missing_saved_address_explains_how_to_finish_setup() {
+        let details = super::format_pairing("", "ABC123", 9123);
+        assert!(details.contains("kobo stream init --host COMPUTER_IP"));
+        assert!(details.contains("kobo trust set stream --device READER_IP"));
+    }
     use super::*;
 
     #[test]

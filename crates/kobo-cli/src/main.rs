@@ -726,9 +726,46 @@ fn wifi_trace_command(arguments: &[String]) -> Result<(), String> {
     }
 }
 
+fn stream_companion(arguments: &[String]) -> Result<(), String> {
+    let port = match &arguments[1..] {
+        [] => kobo_stream::DEFAULT_PORT,
+        [flag, value] if flag == "--port" => value
+            .parse::<u16>()
+            .ok()
+            .filter(|port| *port > 0)
+            .ok_or("--port must be 1 through 65535")?,
+        _ => return Err("usage: kobo stream demo|pairing [--port PORT]".to_owned()),
+    };
+    let pairing = kobo_stream::pairing_instructions(port)?;
+    if arguments[0] == "pairing" {
+        println!("{pairing}");
+        return Ok(());
+    }
+    eprintln!("{pairing}\n");
+    let executable = std::env::current_exe().map_err(|error| format!("find this CLI: {error}"))?;
+    let executable = executable.to_str().ok_or("CLI path must be UTF-8")?;
+    eprintln!("Open Paperterm on your reader and connect to this computer. Keep the computer awake.\nThis check echoes text; it does not run commands. Type exit to finish.");
+    kobo_stream::run_with_title(
+        kobo_stream::Options {
+            grid: kobo_stream::Grid::fallback(),
+            controls: true,
+            interactive: true,
+            port,
+            command: vec![
+                executable.to_owned(),
+                "stream".to_owned(),
+                "__connection-check".to_owned(),
+            ],
+        },
+        "Connection check",
+    )
+    .map(|_| ())
+}
+
 fn stream_command(arguments: &[String]) -> Result<(), String> {
     const USAGE: &str = "usage: kobo stream init [--host ADDRESS ...]\n\
                          \x20      kobo stream demo [--port PORT]\n\
+                         \x20      kobo stream pairing [--port PORT]\n\
                          \x20      kobo stream [--grid COLSxROWS] [--controls | --interactive] \
                          [--read-only] [--port PORT] -- COMMAND [ARG ...]\n\
                          Host-only. The reader never opens a shell; it paints rows this command serves.";
@@ -741,35 +778,11 @@ fn stream_command(arguments: &[String]) -> Result<(), String> {
     if arguments.first().is_some_and(|argument| argument == "init") {
         return kobo_stream::init(&arguments[1..]);
     }
-    if arguments.first().is_some_and(|argument| argument == "demo") {
-        let port = match &arguments[1..] {
-            [] => kobo_stream::DEFAULT_PORT,
-            [flag, value] if flag == "--port" => value
-                .parse::<u16>()
-                .ok()
-                .filter(|port| *port > 0)
-                .ok_or("--port must be 1 through 65535")?,
-            _ => return Err(USAGE.to_owned()),
-        };
-        let executable =
-            std::env::current_exe().map_err(|error| format!("find this CLI: {error}"))?;
-        let executable = executable.to_str().ok_or("CLI path must be UTF-8")?;
-        eprintln!("Open Paperterm on your reader and connect to this computer. Keep the computer awake.\nThis check echoes text; it does not run commands. Type exit to finish.");
-        return kobo_stream::run_with_title(
-            kobo_stream::Options {
-                grid: kobo_stream::Grid::fallback(),
-                controls: true,
-                interactive: true,
-                port,
-                command: vec![
-                    executable.to_owned(),
-                    "stream".to_owned(),
-                    "__connection-check".to_owned(),
-                ],
-            },
-            "Connection check",
-        )
-        .map(|_| ());
+    if arguments
+        .first()
+        .is_some_and(|argument| argument == "demo" || argument == "pairing")
+    {
+        return stream_companion(arguments);
     }
     let separator = arguments
         .iter()

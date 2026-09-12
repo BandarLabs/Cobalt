@@ -54,6 +54,16 @@ def main():
         with socket.socket() as port_socket:
             port_socket.bind(('127.0.0.1', 0))
             port = port_socket.getsockname()[1]
+        if args.connection_demo:
+            identity_files = ['cert.pem', 'key.pem', 'pairing', 'hosts']
+            before = {name: (config/'stream'/name).read_bytes() for name in identity_files}
+            details = subprocess.run([str(cli), 'stream', 'pairing', '--port', str(port)],
+                                     env=env, cwd=ROOT, capture_output=True, text=True, timeout=10)
+            assert details.returncode == 0, 'Saved pairing details could not be read'
+            assert f'127.0.0.1:{port}' in details.stdout, 'Selected port missing from pairing details'
+            assert before['pairing'].decode().strip() in details.stdout, 'Pairing code missing'
+            assert before == {name: (config/'stream'/name).read_bytes() for name in identity_files}, \
+                'Reading pairing details changed the identity'
         fixture = private/'terminal_fixture.py'
         fixture.write_text('''import os, signal, time
 def resized(*_):
@@ -189,7 +199,7 @@ print("DONE", flush=True)
                     result = dict(status='passed', profile=args.profile, scale=args.scale,
                                   basis='built-in-connection-demo-and-real-sdk-simulator-over-TLS',
                                   physical_hardware=False,
-                                  checks=['reader input reaches laptop', 'laptop input reaches reader',
+                                  checks=['saved pairing details use selected port without changing identity', 'reader input reaches laptop', 'laptop input reaches reader',
                                           'input remains unsubmitted until Enter', 'portrait layout',
                                           'exit finishes child', 'final screen remains served',
                                           'laptop terminal settings restored'])
@@ -279,8 +289,11 @@ print("DONE", flush=True)
                     os.close(slave)
                 if master is not None:
                     os.close(master)
-                # Only synthetic terminal output; pairing credentials are not included.
-                (args.output/'host-terminal.log').write_bytes(host_bytes)
+                # Startup now displays the private pairing code: redact it from local logs too.
+                pairing_path = config/'stream/pairing'
+                code_bytes = pairing_path.read_bytes().strip() if pairing_path.exists() else b''
+                safe_output = bytes(host_bytes).replace(code_bytes, b'[pairing code]') if code_bytes else bytes(host_bytes)
+                (args.output/'host-terminal.log').write_bytes(safe_output)
 
 
 if __name__ == '__main__':

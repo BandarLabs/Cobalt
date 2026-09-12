@@ -56,3 +56,12 @@ Validation: two connection-check tests and all 20 stream tests pass on Rust
 1.85.1. Strict Clippy passes for all CLI and stream targets. The final driven
 simulator capture passes after shortening instructions to fit the portrait
 screen with the keyboard open. Evidence is in `evidence/paperterm-connection-demo`.
+
+
+`kobo stream pairing [--port PORT]` redisplays the saved computer addresses and
+pairing code without regenerating credentials. Initialization saves the chosen
+addresses, and demo startup repeats the connection instructions. IPv6 addresses
+are bracketed, and a setup made before address storage explains how to add an
+address. The expanded simulator check compares identity files before and after
+reading pairing details and checks the selected port. Stream tests now total
+22 passing tests; strict CLI/stream Clippy also passes.

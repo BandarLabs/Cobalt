@@ -9,10 +9,7 @@ pub fn run() -> Result<(), String> {
 
 fn conversation(input: &mut impl BufRead, output: &mut impl Write) -> std::io::Result<()> {
     writeln!(output, "Paperterm connection check")?;
-    writeln!(
-        output,
-        "Type here or on your reader.\nPress Enter to send."
-    )?;
+    writeln!(output, "Type here or on your reader.\nPress Enter to send.")?;
     writeln!(
         output,
         "Both screens show the same session.\nType exit to finish."
