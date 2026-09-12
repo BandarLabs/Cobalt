@@ -15,6 +15,8 @@ Run `kobo` in a terminal to choose an owner task by number:
    your saved pairing identity. For first-time configuration, run `kobo stream`
    to see the pairing instructions.
 5. Open the developer and release command reference.
+6. Read an app setup guide. Choose an app by number to see its setup steps,
+   links and the reader capabilities it requests.
 
 Choose **0** or press Enter at a blank prompt to cancel. Paths can contain
 spaces; enter the path itself without shell quotes. The menu passes it
@@ -45,3 +47,21 @@ list, then download the articles you want to keep.
 The [Feeds validation transcript](quality/evidence/feeds-companion/transcript.json)
 shows an original sample import and failure recovery using an isolated
 simulator shelf. No feed URLs are fetched during this check.
+
+## App setup guides
+
+Run `kobo apps` to list the bundled apps, or narrow the list with
+`kobo apps search chess`. Open a guide with `kobo apps setup lichess`.
+The same guides are available through option **6** in the numbered menu.
+
+Each guide uses the app's published manifest for its setup instructions,
+account links and commands. Requested capabilities are explained in plain
+language, including Wi-Fi, frontlight control and keeping the reader awake.
+Apps without extra setup steps show the Store installation instruction.
+
+These guides work offline and describe the catalog bundled with your CLI.
+They do not inspect your reader, verify an account, run the displayed commands
+or mark setup steps complete. Replace placeholders such as `<address>` before
+running a command yourself.
+
+![Lichess setup guide, rendered from the verified CLI output](quality/evidence/app-guides/lichess-guide.svg)

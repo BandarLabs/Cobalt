@@ -1,0 +1,133 @@
+arXiv (arxiv)
+  Browse and search arXiv, keep preprints, and read their HTML versions on your Kobo.
+
+Audiobook Studio (audiobook)
+  Turn a topic into an original narrated audiobook and listen on your Kobo.
+
+Backgammon (backgammon)
+  Play complete solo or pass-and-play backgammon on one Kobo.
+
+Daily Brief (brief)
+  Build a daily news brief in the background while you use other apps.
+
+calibre-web (calibre-web)
+  Browse and read books from your calibre-web library.
+
+AI Command Center (chat)
+  Ask a question, then read and navigate the answer with touch controls.
+
+Crossword (crossword)
+  Solve a compact touch-first crossword with clue navigation.
+
+Deck (deck)
+  Turn your Kobo into a remote control for your computer.
+
+Fanshelf (fanshelf)
+  Save public AO3 works to a shelf made for offline reading.
+
+Fieldbook (fieldbook)
+  Log bird sightings anywhere and build your life list.
+
+Flashcards (flashcards)
+  Review flashcards anywhere, even without Wi-Fi.
+
+Frame (frame)
+  Show computer-pushed monochrome photos in awake or scheduled slideshow modes.
+
+Components (gallery)
+  See every Cobalt UI component on the device in one reference app.
+
+Grimoire (grimoire)
+  Browse offline SRD references and manage tabletop combat.
+
+Gutenbird (gutenbird)
+  Browse OPDS libraries and read their books on your Kobo.
+
+Habits (habits)
+  Track daily and weekday habits with local streaks.
+
+Hacker News (hn)
+  Read Top, New, Ask, and Show stories with complete comment threads.
+
+Home Panel (homepanel)
+  Control saved Home Assistant tiles from a low-power panel.
+
+Inkling (inkling)
+  Solve a fresh five-letter puzzle each day.
+
+Kitchen Card (kitchencard)
+  Keep Mealie recipes handy in a counter-friendly cooking view.
+
+Lichess (lichess)
+  Play Lichess games, challenge players, solve puzzles, or play offline.
+
+Logic Pack (logicpack)
+  Play four familiar logic games offline.
+
+Magnet (magnet)
+  Find the hall sensor behind the bezel and watch it respond to a magnet.
+
+Morse (morse)
+  Type a message and send it in Morse code with the front light.
+
+Music Stand (musicstand)
+  Read music scores with setlists and half-page turns.
+
+Needles (needles)
+  Count rows, browse Ravelry collections, and read your synced patterns offline.
+
+Nonograms (nonograms)
+  Solve 18 original picture puzzles with attached clues, saved undo and larger grids.
+
+Panels (panels)
+  Read comics added from your computer or Komga library.
+
+Paperterm (paperterm)
+  Pair with a computer to mirror a terminal session on e-ink.
+
+Parlor (parlor)
+  Play touch-first Reversi together on one Kobo.
+
+Parser (parser)
+  Play an original interactive story without Wi-Fi.
+
+Post (post)
+  Read and reply to letters from Hermes.
+
+Pub Quiz (pubquiz)
+  Play offline solo or pass-around trivia rounds.
+
+Read Later (readlater)
+  Read your Wallabag articles anywhere.
+
+Feeds (rss)
+  Follow feeds, search saved articles and read offline with images.
+
+RSS Reader — Miniflux (rss-miniflux)
+  Read your Miniflux feeds anywhere.
+
+Sidekick (sidekick)
+  Answer coding-agent permission prompts from your Kobo.
+
+Sudoku (sudoku)
+  Play 36 original Sudoku puzzles with pencil notes, undo and saved games.
+
+Sync (syncthing)
+  Choose folders and a battery-friendly sync schedule.
+
+Tic-tac-toe (tictactoe)
+  Play tic-tac-toe together on one Kobo.
+
+Todo (todo)
+  Keep a simple to-do list that stays on your Kobo.
+
+Vault (vault)
+  Browse your notes by folder, tag, link, and backlink.
+
+Verses (verses)
+  Read a public-domain poem each day.
+
+Zotero Reader (zotero-reader)
+  Browse Zotero collections, read metadata and indexed paper text, and keep papers available offline.
+
+Setup instructions: kobo apps setup APP

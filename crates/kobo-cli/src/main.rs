@@ -10,6 +10,7 @@ use std::process::{Child, Command, ExitCode, ExitStatus, Stdio};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+mod apps;
 mod authorize;
 mod beta_store_smoke;
 mod bootstrap;
@@ -486,19 +487,23 @@ fn canonical(command: &str) -> &str {
         .unwrap_or(command)
 }
 
+fn run_owner_menu() -> Result<(), String> {
+    use std::io::IsTerminal;
+    if std::io::stdin().is_terminal() && std::io::stdout().is_terminal() {
+        let selected =
+            owner_start::choose(&mut std::io::stdin().lock(), &mut std::io::stdout().lock())?;
+        if let Some(selected) = selected {
+            return run(&selected);
+        }
+    } else {
+        println!("{}", owner_start::COMPACT_HELP);
+    }
+    Ok(())
+}
+
 fn run(arguments: &[String]) -> Result<(), String> {
     let Some(command) = arguments.first().map(String::as_str) else {
-        use std::io::IsTerminal;
-        if std::io::stdin().is_terminal() && std::io::stdout().is_terminal() {
-            let selected =
-                owner_start::choose(&mut std::io::stdin().lock(), &mut std::io::stdout().lock())?;
-            if let Some(selected) = selected {
-                return run(&selected);
-            }
-        } else {
-            println!("{}", owner_start::COMPACT_HELP);
-        }
-        return Ok(());
+        return run_owner_menu();
     };
     match canonical(command) {
         "new" => create_app(arguments.get(1).ok_or("usage: kobo new <name>")?),
@@ -569,6 +574,7 @@ fn run(arguments: &[String]) -> Result<(), String> {
         "host-release-verify" => host_release_verify(&arguments[1..]),
         "update" => update_host(&arguments[1..]),
         "setup" => setup_device(&arguments[1..]),
+        "apps" => apps::command(&arguments[1..]),
         "deploy" => deploy_package(&arguments[1..]),
         "secret" => secret_command(&arguments[1..]),
         "trust" => trust_command(&arguments[1..]),
@@ -6669,6 +6675,7 @@ fn print_help() {
         "Kobo application SDK\n\n\
          Usage: kobo <command>\n\n\
          Commands:\n\
+           apps [search WORD | setup APP]  Find apps and read offline setup guides\n\
            new <name>             Create a Rust application\n\
            dev [--builtin] [address]  Run this SDK app in the browser simulator\n\
            dev --runtime [address] [--apps IDs]  Run launcher and selected local apps\n\

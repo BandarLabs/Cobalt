@@ -1,0 +1,18 @@
+Frame
+Show computer-pushed monochrome photos in awake or scheduled slideshow modes.
+
+Bundled guide: version 1.0.3
+
+What the app can use:
+  - Can keep the reader awake while in use
+  - Can request scheduled wake-ups where supported
+
+Setup:
+1. Enable Cobalt's owner-attended SSH path and install this computer's public key.
+   kobo setup --enable-ssh
+2. Create Frame's private shelf through the established SSH connection.
+   kobo frame init --device <address>
+3. Prepare and atomically push a photo or folder from this computer.
+   kobo frame push ~/Pictures/family --device <address>
+
+This guide does not check installation or account access.

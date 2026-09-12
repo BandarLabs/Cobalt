@@ -3492,8 +3492,12 @@
     "pr": 4,
     "group": "Main CLI and companion operation engine",
     "task": "Provide one app setup card generated from capabilities",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "crates/kobo-cli/src/apps.rs: bundled manifest setup steps and plain-language capabilities; offline search and numbered owner menu.",
+      "docs/quality/evidence/app-guides/result.json: 44 guides checked, case-insensitive search, unknown app refusal and real PTY Lichess selection after invalid input.",
+      "Five focused guide/menu tests and strict all-target CLI Clippy passed."
+    ]
   },
   {
     "id": "CLI-12",

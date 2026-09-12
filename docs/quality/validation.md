@@ -2212,3 +2212,21 @@ LICHESS-03/04 are complete; remaining Lichess items stay open. No live API calls
 or moves were made in this check. PR 3 evidence:
 https://github.com/BandarLabs/Cobalt/tree/beta-quality-apps-2/docs/quality/evidence/lichess-todo-review
 Cross-PR tracker totals reconciled: 229 done, 266 open, one deferred.
+
+
+### CLI app setup guides (CLI-11)
+
+`kobo apps`, `kobo apps search WORD` and `kobo apps setup APP` expose the
+bundled Store catalog as offline owner guides. Numbered menu option 6 opens
+the same cards. Each card explains requested capabilities and retains the
+manifest's setup links and literal commands. The displayed catalog version
+belongs to this CLI; installation and account access are explicitly unchecked.
+
+All 44 bundled cards rendered through the built executable. The acceptance
+script checked case-insensitive search, an unknown app failure, and real PTY
+selection of Lichess after an invalid number. The existing real PTY feed-file
+menu acceptance also passed. Two guide tests, three menu tests and strict
+all-target CLI Clippy passed. Evidence: `evidence/app-guides/result.json` and
+`terminal.txt`; reproduce with `scripts/quality/check-app-guides.py`.
+
+Setup persistence, named readers and account verification remain open.
