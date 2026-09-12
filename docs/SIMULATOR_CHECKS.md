@@ -177,3 +177,10 @@ notification. It verifies the app opens the matched board from its current-games
 check without account polling or a second seek. The measured host recovery is
 bounded to 15 seconds for the ten-second check; this is not device latency
 calibration. The remainder of the match and restart checks still run.
+
+Use `--disconnect-board` to close the retained TLS board stream mid-game and
+hold its replacement open until the driver has checked the disconnected UI.
+The test verifies unchanged piece positions, `--:--` clock placeholders,
+blocked move submissions, restored active-side clocks, and removal of stale
+reconnect guidance. It continues through process restart and game completion.
+Both normal and 170% text-size routes validate rendering and touch diagnostics.

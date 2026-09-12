@@ -161,3 +161,17 @@ It asserts recovery without an account recheck or a duplicate seek, then runs
 the same move, restart and draw checks.
 
 ![Board opened after a missed match notification](screenshots/match-recovered.png)
+
+The filled clock marks the active side. If the board connection drops, the app
+keeps the last confirmed position, shows “Reconnecting” and replaces both clock
+values with `--:--`. The game continues on Lichess; moves stay unavailable until
+a fresh board update restores the position and clocks. Reconnection clears the
+old message. Finished games keep their final clock values and show “Finished”
+without reconnect or game-action controls.
+
+Use `--disconnect-board` with the session fixture to test the real stream drop,
+blocked moves and recovery. It also checks active-side clocks after each move.
+
+![Reconnecting board](screenshots/reconnecting.png)
+
+![Reconnecting board at 170% text size](screenshots/reconnecting-large.png)

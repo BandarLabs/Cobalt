@@ -3,8 +3,8 @@
   "display_name": "Lichess",
   "short_label": "Lichess",
   "summary": "Play Lichess games, challenge players, solve puzzles, or play offline.",
-  "version": "1.0.9",
-  "release_notes": "Recovers a matched game when its start notification is missed. Keeps the ten-second pairing check available while background account polling pauses; never resubmits the seek.",
+  "version": "1.0.10",
+  "release_notes": "Shows reconnection explicitly and hides unconfirmed clocks until the board returns. Finished games retain final clocks without offering Reconnect. Verified active-side clocks and connection recovery at normal and enlarged text sizes.",
   "minimum_cobalt_version": "0.3.5",
   "glyph": "grid",
   "capabilities": [

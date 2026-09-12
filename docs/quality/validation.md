@@ -2327,3 +2327,14 @@ PR #181 host job 103551595707 failed because generated Crossword and Lichess
 pages contained old app versions. Regenerated `docs/apps` from the current
 manifests and verified a second generation makes no changes. This repairs the
 observed generated-page failure; the new CI run must still complete.
+
+LICHESS-02 is complete. The real TLS fixture now checks active-side clock
+selection after each acknowledged move, disconnects the board stream, verifies
+retained piece positions and unconfirmed clocks, attempts moves while offline,
+and verifies restored clocks and cleared guidance after reconnect. Normal and
+170% runs pass. A regression verifies finished boards do not say “Paused” or
+offer Reconnect; all 111 app tests and strict Clippy pass. Evidence and captured
+layouts: `evidence/lichess-connection`. Lichess 1.0.10 uses short reconnect copy
+and full-width clock placeholders to preserve touch targets and large-text
+layout. Generated app pages were updated. No live service was used.
+Tracker: 232 complete, 263 open, one deferred.

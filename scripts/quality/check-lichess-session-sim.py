@@ -27,6 +27,8 @@ class Match:
         self.drop_start_event = drop_start_event
         self.start_events_sent = 0
         self.matched_at = None
+        self.board_available = threading.Event()
+        self.board_available.set()
         self.lock = threading.RLock()
         self.active = False
         self.moves = ""
@@ -53,6 +55,12 @@ class Match:
                     variant=dict(key="standard"), initialFen="startpos",
                     white=dict(id="owner123", name="Owner", rating=1500),
                     black=dict(id="other123", name="Other", rating=1510), state=self.state())
+
+    def disconnect_board(self):
+        with self.lock:
+            self.board_available.clear()
+            for events in self.boards:
+                events.put(None)
 
     def publish(self, moves=None, draw=False, finished=False):
         with self.lock:
@@ -91,6 +99,8 @@ def handler(match):
                 while not match.stopping.is_set():
                     try:
                         record = events.get(timeout=.25)
+                        if record is None:
+                            return
                         body = json.dumps(record).encode() + b"\n"
                     except queue.Empty:
                         body = b"\n"
@@ -132,6 +142,15 @@ def handler(match):
                     match.events.append(events)
                 self.stream(events, match.events)
             elif self.path == "/api/board/game/stream/" + GAME:
+                deadline = time.monotonic() + 30
+                while not match.board_available.wait(.1):
+                    if match.stopping.is_set():
+                        self.close_connection = True
+                        return
+                    if time.monotonic() > deadline:
+                        match.errors.append("Fixture board was not released")
+                        self.close_connection = True
+                        return
                 events = queue.Queue()
                 with match.lock:
                     match.boards.append(events)
@@ -198,6 +217,15 @@ def action_id(name):
     return value
 
 
+def assert_clock(layout, name, active, text=None):
+    prefix = f"Chip(ActionId({action_id(name)}), "
+    chips = [node for node in layout["nodes"] if node["kind"].startswith(prefix)]
+    assert len(chips) == 1, (name, chips)
+    assert chips[0]["kind"] == prefix + str(active).lower() + ")", chips[0]
+    if text is not None:
+        assert chips[0]["lines"] == [text], chips[0]
+
+
 def pieces(layout):
     # Modal overlays disable actions, but the cell's stable ID stays in its
     # layout kind. Pair glyphs with their containing cells instead of relying
@@ -229,6 +257,8 @@ def main():
     parser.add_argument("--scale", default="default")
     parser.add_argument("--drop-start-event", action="store_true",
                         help="Match the seek but omit its event-stream notification")
+    parser.add_argument("--disconnect-board", action="store_true",
+                        help="Drop the live board stream and verify reconnect presentation")
     args = parser.parse_args()
     out = args.output.resolve()
     out.mkdir(parents=True, exist_ok=True)
@@ -326,18 +356,46 @@ def main():
                     assert "/api/account" not in paths[seek + 1:board], "Recovery depended on account polling"
                     assert matched_board_seconds < 15, "The ten-second pairing check was delayed"
 
-                initial = pieces(capture("01-matched"))
+                initial_layout = capture("01-matched")
+                assert_clock(initial_layout, "your-clock", True)
+                assert_clock(initial_layout, "opponent-clock", False)
+                initial = pieces(initial_layout)
                 assert len(initial) == 32
                 drive("tap-id square-e2", "expect e2 →", "tap-id square-e4")
                 wait_until(lambda: count(f"/api/board/game/{GAME}/move/e2e4") == 1, "Move was not posted")
                 drive("wait-for Move sent")
                 assert pieces(capture("02-awaiting-ack")) == initial, "POST reply changed the board before stream acknowledgement"
-                match.publish(moves="e2e4 e7e5")
+                match.publish(moves="e2e4")
                 expected = initial.copy()
                 expected[action_id("square-e4")] = expected.pop(action_id("square-e2"))
+                wait_until(lambda: pieces(layout()) == expected, "White move was not acknowledged")
+                opponent_turn = capture("03-opponent-turn")
+                assert_clock(opponent_turn, "your-clock", False)
+                assert_clock(opponent_turn, "opponent-clock", True)
+                match.publish(moves="e2e4 e7e5")
                 expected[action_id("square-e5")] = expected.pop(action_id("square-e7"))
                 wait_until(lambda: pieces(layout()) == expected, "Acknowledged board position was not rendered")
-                capture("03-acknowledged")
+                acknowledged = capture("03-acknowledged")
+                assert_clock(acknowledged, "your-clock", True)
+                assert_clock(acknowledged, "opponent-clock", False)
+                if args.disconnect_board:
+                    opens = count(f"/api/board/game/stream/{GAME}", "GET")
+                    match.disconnect_board()
+                    wait_until(lambda: "Reconnecting" in json.dumps(layout()), "Reconnect status was not shown")
+                    disconnected = capture("03-disconnected")
+                    assert pieces(disconnected) == expected
+                    assert_clock(disconnected, "your-clock", False, "--:--")
+                    assert_clock(disconnected, "opponent-clock", False, "--:--")
+                    drive("tap-id square-g1", "tap-id square-f3")
+                    assert count(f"/api/board/game/{GAME}/move/g1f3") == 0
+                    match.board_available.set()
+                    wait_until(lambda: count(f"/api/board/game/stream/{GAME}", "GET") > opens
+                               and "Reconnecting" not in json.dumps(layout()), "Board did not reconnect")
+                    reconnected = capture("03-reconnected")
+                    assert "Reconnect" not in json.dumps(reconnected), "Stale reconnect guidance remains"
+                    assert pieces(reconnected) == expected
+                    assert_clock(reconnected, "your-clock", True)
+                    assert_clock(reconnected, "opponent-clock", False)
                 stored = private / "cobalt-sim-state/lichess/lichess.session.v1"
                 wait_until(stored.is_file, "Session was not saved")
                 saved = stored.read_bytes()
@@ -366,10 +424,13 @@ def main():
                 verify_cli(cli, provenance)
                 (out / "result.json").write_text(json.dumps(dict(status="pass", build=provenance,
                     scale=args.scale, profile="clara-bw-391", requests=match.requests,
-                    dropped_start_event=args.drop_start_event, start_events_sent=match.start_events_sent,
+                    dropped_start_event=args.drop_start_event, disconnected_board=args.disconnect_board,
+                    start_events_sent=match.start_events_sent,
                     matched_board_seconds=round(matched_board_seconds, 3),
                     checks=[("recover matched seek without a start event" if args.drop_start_event else "pair through event stream"), "single move submission", "POST success does not move the board", "board stream acknowledgement",
-                            "saved session survives process restart", "fresh board stream opened", "restored rendered piece positions", "draw completion clears store", "account polling resumes after completion"],
+                            "saved session survives process restart", "fresh board stream opened", "restored rendered piece positions", "draw completion clears store", "account polling resumes after completion", "active clock follows side to move"] +
+                           (["disconnect retains board and hides unconfirmed clocks", "no moves while disconnected",
+                             "reconnect restores clocks and position"] if args.disconnect_board else []),
                     scope="Actual SDK app and simulator with private TLS fixture; no public Lichess requests or hardware validation"), indent=2) + "\n")
             finally:
                 (out / "requests.json").write_text(json.dumps(dict(requests=match.requests, errors=match.errors), indent=2) + "\n")

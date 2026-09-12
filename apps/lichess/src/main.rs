@@ -948,8 +948,16 @@ impl Lichess {
                 .build();
         };
         let elapsed = self.clock.waited().as_secs();
-        let white = clock(game.clock_ms(Color::White, elapsed));
-        let black = clock(game.clock_ms(Color::Black, elapsed));
+        let clocks_confirmed = self.board_is_live(&game.id) || !game.active();
+        let displayed_clock = |color| {
+            if clocks_confirmed {
+                clock(game.clock_ms(color, elapsed))
+            } else {
+                "--:--".to_owned()
+            }
+        };
+        let white = displayed_clock(Color::White);
+        let black = displayed_clock(Color::Black);
         let (you_name, you_color, you_clock, opponent_name, opponent_color, opponent_clock) =
             match game.my_color {
                 Color::White => (
@@ -992,7 +1000,7 @@ impl Lichess {
         let live = self.board_is_live(&game.id);
         let blocked = !live || self.pending_action.is_some() || self.pending_move.is_some();
         let mut menu = Vec::new();
-        if !blocked {
+        if game.active() && !blocked {
             if game.draw_offer_from_opponent() {
                 menu.push(("accept-draw".to_owned(), "Accept draw".to_owned()));
                 menu.push(("decline-draw".to_owned(), "Decline draw".to_owned()));
@@ -1006,11 +1014,17 @@ impl Lichess {
             if game.can_abort() {
                 menu.push(("confirm-abort".to_owned(), "Abort".to_owned()));
             }
-        } else if !live && self.pending_action.is_none() && self.pending_move.is_none() {
+        } else if game.active()
+            && !live
+            && self.pending_action.is_none()
+            && self.pending_move.is_none()
+        {
             menu.push(("reconnect-board".to_owned(), "Reconnect".to_owned()));
         }
-        let turn = if !live {
-            "Paused"
+        let turn = if !game.active() {
+            "Finished"
+        } else if !live {
+            "Reconnecting"
         } else if game.my_turn() {
             "Your move"
         } else {
@@ -2184,7 +2198,7 @@ impl Lichess {
                     return;
                 };
                 if !self.board_is_live(&game.id) {
-                    self.notice = Some("Reconnect the board before sending an action.".to_owned());
+                    self.notice = Some("Reconnecting to Lichess.".to_owned());
                     return;
                 }
                 ActionScope::Game(game.id.clone())
@@ -2274,7 +2288,7 @@ impl Lichess {
             return;
         };
         if !self.board_is_live(&game.id) {
-            self.notice = Some("Reconnect the board before making a move.".to_owned());
+            self.notice = Some("Reconnecting to Lichess.".to_owned());
             return;
         }
         if !game.active() {
@@ -2822,6 +2836,7 @@ impl Lichess {
                 self.result_dismissed = false;
                 self.board_ready = true;
                 self.board_backoff = 1;
+                self.notice = None;
                 self.reconcile_pending_move();
                 if pending.is_some() && self.pending_move.is_none() {
                     self.notice = Some("The board reconciled the pending move.".to_owned());
@@ -3429,7 +3444,16 @@ impl Lichess {
                     );
                     self.discard_game(context, &id);
                 } else {
-                    self.notice = Some(Failure::of(error).naming(api::SECRET));
+                    self.notice = Some(
+                        if matches!(
+                            error,
+                            TaskError::Unreachable | TaskError::TimedOut | TaskError::Offline
+                        ) {
+                            "Reconnecting to Lichess.".to_owned()
+                        } else {
+                            Failure::of(error).naming(api::SECRET)
+                        },
+                    );
                     self.schedule_board_reconnect(context, &id);
                 }
             }
@@ -5589,6 +5613,23 @@ mod tests {
         let other_side = app_with_game(&["e2e4"], Color::White).game_screen(&Context::default());
         assert!(selected(&other_side.nodes, action_id("opponent-clock")));
         assert!(!selected(&other_side.nodes, action_id("your-clock")));
+    }
+
+    #[test]
+    fn disconnected_and_finished_boards_do_not_claim_the_game_is_paused() {
+        let mut app = app_with_game(&["e2e4", "e7e5"], Color::White);
+        app.board_open = None;
+        app.board_ready = false;
+        let disconnected = format!("{:?}", app.game_screen(&Context::default()));
+        assert!(disconnected.contains("Reconnecting"));
+        assert!(!disconnected.contains("Paused"));
+        assert!(disconnected.contains("--:--"));
+        app.game.as_mut().unwrap().state.status = "draw".to_owned();
+        app.result_dismissed = true;
+        let finished = format!("{:?}", app.game_screen(&Context::default()));
+        assert!(finished.contains("Finished"));
+        assert!(!finished.contains("Reconnect"));
+        assert!(!finished.contains("--:--"));
     }
 
     #[test]
