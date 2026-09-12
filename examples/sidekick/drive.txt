@@ -1,5 +1,9 @@
 # Fresh simulator state exercises the pairing screen without a live daemon.
+#
+# The screen names the command that starts the daemon, because "open Sidekick
+# on your computer" is true and useless: what has to happen is that something
+# is running there, and this is what starts it and prints what to type here.
 wait-for Pair with your computer
-expect address shown
+expect sidekickd init
 clean
 shot pairing

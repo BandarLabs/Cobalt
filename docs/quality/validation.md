@@ -2106,3 +2106,50 @@ route, and `scripts/quality/check-deck-sim.py` pairs with a private HTTPS
 fixture, presses a key, answers the one that asks, reads what it said and finds
 the deck again after a restart, at the default size and at 170%. Captures are
 in `evidence/deck/` and `evidence/deck-large/`.
+
+### Answering an agent from the armchair, with its name on it (12 September 2026)
+
+SIDE-01 to SIDE-05 are closed, which completes the Sidekick group.
+
+**What to run, by name.** The first screen said "Open Sidekick in the Cobalt
+desktop app", which is true and useless: what has to happen is that a daemon is
+running on the computer, so the screen names `kobo-sidekickd init`, which is
+the command that starts it and prints the two things the screen then asks for.
+
+**Who is asking.** A question now says which terminal, on which computer, as
+well as which tool. With one agent the tool was enough; with three of them on
+two machines, "shell asks" is not a question anybody can answer. The board
+already carried the session on every row, and the question itself did not.
+
+**Two at once.** Two terminals asking at the same time are both on the board,
+each named, and answering one answers that one: the other is still on the
+daemon and comes up next. The journey drives exactly that, and a test holds the
+same shape.
+
+**An answer that arrived too late.** The daemon acknowledges an answer only
+when it still had the question. Without that acknowledgement the panel says the
+question was gone before the answer arrived rather than claiming a decision
+nobody received, and the journey provokes it by taking the question away
+between the tap and the post.
+
+**Two defects found by this work.** The poll loop had no floor: against a
+daemon that answers immediately rather than holding the request open, and while
+a board of questions was showing, the reader asked again the instant each
+answer landed. Three hundred and sixty requests went out in ten seconds with
+the panel sitting still. There is a two second floor now, which costs nothing
+against a daemon that long-polls properly. And at 170% the watching screen was
+refused outright by the renderer once it had an answer to report, because a
+four line splash subtitle plus two sections plus a button is more than a six
+inch panel holds: the splash keeps its sentence only while it is the whole
+screen, and the last answer is cut to what the panel will actually hold rather
+than to a character count.
+
+**Verification.** Thirty Sidekick tests pass, including a new sweep that lays
+every screen out at all nine text sizes, the question naming its terminal and
+computer, two terminals answered independently, and the empty poll taking a
+breath before asking again. `scripts/check-apps-sim.py sidekick` passes against
+the committed route, and `scripts/quality/check-sidekick-sim.py` pairs with a
+private HTTPS fixture daemon, answers a question, takes two at once, leaves one
+for the terminal and finds that an answer the daemon no longer holds is not
+reported as a decision, at the default size and at 170%. Captures are in
+`evidence/sidekick/` and `evidence/sidekick-large/`.

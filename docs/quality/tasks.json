@@ -2865,40 +2865,54 @@
     "pr": 2,
     "group": "Sidekick app",
     "task": "Guide desktop connection setup",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "examples/sidekick/src/main.rs",
+      "docs/quality/evidence/sidekick/"
+    ]
   },
   {
     "id": "SIDE-02",
     "pr": 2,
     "group": "Sidekick app",
     "task": "Show paired host and session identity",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "examples/sidekick/src/main.rs",
+      "docs/quality/evidence/sidekick/"
+    ]
   },
   {
     "id": "SIDE-03",
     "pr": 2,
     "group": "Sidekick app",
     "task": "Handle reconnect and stale requests",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "examples/sidekick/src/main.rs"
+    ]
   },
   {
     "id": "SIDE-04",
     "pr": 2,
     "group": "Sidekick app",
     "task": "Test simultaneous fixture prompts",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "scripts/quality/check-sidekick-sim.py",
+      "docs/quality/evidence/sidekick/"
+    ]
   },
   {
     "id": "SIDE-05",
     "pr": 2,
     "group": "Sidekick app",
     "task": "Require response acknowledgement before completion",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "examples/sidekick/src/main.rs",
+      "scripts/quality/check-sidekick-sim.py"
+    ]
   },
   {
     "id": "SUDOKU-01",
