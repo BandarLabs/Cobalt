@@ -41,3 +41,7 @@ both that file and the existing subscription list. Device transfers already
 publish through a temporary file. Neither operation claims the subscriptions
 or article content are available offline: open Feeds and import the staged
 list, then download the articles you want to keep.
+
+The [Feeds validation transcript](quality/evidence/feeds-companion/transcript.json)
+shows an original sample import and failure recovery using an isolated
+simulator shelf. No feed URLs are fetched during this check.

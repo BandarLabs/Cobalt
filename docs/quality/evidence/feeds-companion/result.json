@@ -1,0 +1,13 @@
+{
+  "status": "passed",
+  "physical_hardware": false,
+  "checks": [
+    "duplicate and unsupported addresses reported",
+    "source bytes preserved",
+    "repeat staging preserves bytes",
+    "malformed and oversized input preserve existing list",
+    "occupied temporary file preserves both files",
+    "valid replacement published completely"
+  ],
+  "scope": "OPML staging only; does not assert reader import or offline article downloads"
+}

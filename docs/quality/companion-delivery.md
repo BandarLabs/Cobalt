@@ -256,3 +256,10 @@ An occupied staging path preserves both the current list and the other staged
 file. Six Feeds regression tests and strict CLI Clippy pass. This advances the
 shared transfer reliability work but does not close the broader CLI-18 task.
 Checklist totals remain 227 done, 268 open, one deferred.
+
+Feeds real CLI acceptance passes: reports duplicate/unsupported feed URLs,
+preserves source bytes, repeats staging unchanged, refuses malformed and
+oversized input without changing the valid shelf, preserves an occupied
+staging file, and publishes valid replacement bytes. Transcript/result:
+`evidence/feeds-companion`. This tests OPML staging, not device import or
+offline article downloads. CLI-18 remains open for the broader operation engine.
