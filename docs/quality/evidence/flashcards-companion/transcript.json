@@ -21,7 +21,7 @@
       "<fixture>/collection.cobfc"
     ],
     "exit_code": 0,
-    "output": "imported apkg: 3 notes, 3 due cards (3 new, 0 learning, 0 review), 1 decks, 0 media files (0 bytes), 0 image-bearing notes resolved, 0 sound-bearing notes retained\nbundle sha256: 8890ec16db40e6a2d17c4d9488c60b060e23aa83f36e82d132e092c9fa95790f\n"
+    "output": "imported apkg: 3 notes, 3 due cards (3 new, 0 learning, 0 review), 1 decks, 0 media files (0 bytes), 0 image-bearing notes resolved, 0 sound-bearing notes retained\nbundle sha256: e93c1a5f72ab3b9e4c1549aa163f21c8999a1aeecc06626174eefdf3d48e84d1\n"
   },
   {
     "arguments": [
@@ -29,7 +29,7 @@
       "<fixture>/collection.cobfc"
     ],
     "exit_code": 0,
-    "output": "verified: 3 notes, 3 due cards (3 new, 0 learning, 0 review), 0 digest-verified media files; 0 image-bearing notes resolve to bundled bytes; 0 sound-bearing notes are retained\nbundle sha256: 8890ec16db40e6a2d17c4d9488c60b060e23aa83f36e82d132e092c9fa95790f\n"
+    "output": "verified: 3 notes, 3 due cards (3 new, 0 learning, 0 review), 0 digest-verified media files; 0 image-bearing notes resolve to bundled bytes; 0 sound-bearing notes are retained\nbundle sha256: e93c1a5f72ab3b9e4c1549aa163f21c8999a1aeecc06626174eefdf3d48e84d1\n"
   },
   {
     "arguments": [
@@ -39,7 +39,55 @@
       "<fixture>/reader"
     ],
     "exit_code": 0,
-    "output": "staged 3753 digest-verified bytes to <fixture>/reader/.adds/cobalt/data/flashcards/collection.cobfc\nbundle sha256: 8890ec16db40e6a2d17c4d9488c60b060e23aa83f36e82d132e092c9fa95790f\n"
+    "output": "staged 3740 digest-verified bytes to <fixture>/reader/.adds/cobalt/data/flashcards/collection.cobfc\nbundle sha256: e93c1a5f72ab3b9e4c1549aa163f21c8999a1aeecc06626174eefdf3d48e84d1\n"
+  },
+  {
+    "arguments": [
+      "import",
+      "<fixture>/second deck.apkg",
+      "--merge",
+      "<fixture>/merged.cobfc",
+      "--merge-into",
+      "<fixture>/collection.cobfc"
+    ],
+    "exit_code": 0,
+    "output": "imported apkg: 6 notes, 6 due cards (6 new, 0 learning, 0 review), 1 decks, 0 media files (0 bytes), 0 image-bearing notes resolved, 0 sound-bearing notes retained\nbundle sha256: 8b81fc0e52c92fbb9d678cdac7a0760d60340a05eb06ff3fc18ba396a7ac6da3\n"
+  },
+  {
+    "arguments": [
+      "verify",
+      "<fixture>/merged.cobfc"
+    ],
+    "exit_code": 0,
+    "output": "verified: 6 notes, 6 due cards (6 new, 0 learning, 0 review), 0 digest-verified media files; 0 image-bearing notes resolve to bundled bytes; 0 sound-bearing notes are retained\nbundle sha256: 8b81fc0e52c92fbb9d678cdac7a0760d60340a05eb06ff3fc18ba396a7ac6da3\n"
+  },
+  {
+    "arguments": [
+      "import",
+      "<fixture>/replacement.colpkg",
+      "--replace",
+      "<fixture>/merged.cobfc"
+    ],
+    "exit_code": 0,
+    "output": "imported colpkg: 3 notes, 3 due cards (3 new, 0 learning, 0 review), 1 decks, 0 media files (0 bytes), 0 image-bearing notes resolved, 0 sound-bearing notes retained\nbundle sha256: 42e7a4852e2c44923824d4207959300c91ea51e5d04353a3dbc7ab9e5e243559\n"
+  },
+  {
+    "arguments": [
+      "verify",
+      "<fixture>/merged.cobfc"
+    ],
+    "exit_code": 0,
+    "output": "verified: 3 notes, 3 due cards (3 new, 0 learning, 0 review), 0 digest-verified media files; 0 image-bearing notes resolve to bundled bytes; 0 sound-bearing notes are retained\nbundle sha256: 42e7a4852e2c44923824d4207959300c91ea51e5d04353a3dbc7ab9e5e243559\n"
+  },
+  {
+    "arguments": [
+      "import",
+      "<fixture>/broken.apkg",
+      "--merge",
+      "<fixture>/merged.cobfc"
+    ],
+    "exit_code": 1,
+    "output": "flashcards-import: invalid package archive: invalid Zip archive: Could not find EOCD\nkobo: The Flashcards importer did not complete (exit status: 1). Review its message above before retrying.\n"
   },
   {
     "arguments": [

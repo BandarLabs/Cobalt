@@ -7,6 +7,8 @@ import os
 import re
 import shutil
 import signal
+import sqlite3
+import zipfile
 import time
 from pathlib import Path
 import subprocess
@@ -54,6 +56,33 @@ def main():
         destination = mount/'.adds/cobalt/data/flashcards/collection.cobfc'
         assert destination.read_bytes() == bundle.read_bytes()
         digest = hashlib.sha256(destination.read_bytes()).hexdigest()
+        # A second original package with distinct card/note identities exercises real merge.
+        second = root/'second deck.apkg'
+        database_path = root/'second.anki2'
+        with zipfile.ZipFile(package) as archive:
+            database_path.write_bytes(archive.read('collection.anki2'))
+        with sqlite3.connect(database_path) as database:
+            database.execute('UPDATE notes SET id = id + 100000')
+            database.execute('UPDATE cards SET id = id + 100000, nid = nid + 100000')
+            database.execute('UPDATE revlog SET id = id + 100000, cid = cid + 100000')
+        with zipfile.ZipFile(second, 'w') as archive:
+            archive.write(database_path, 'collection.anki2')
+            archive.writestr('media', '{}')
+        merged = root/'merged.cobfc'
+        run('import', second, '--merge', merged, '--merge-into', bundle)
+        merged_report = run('verify', merged)
+        assert '6 due cards' in merged_report.stdout, 'Merge did not preserve both decks of cards'
+        assert hashlib.sha256(bundle.read_bytes()).hexdigest() == digest, 'Merge modified its source'
+        replacement = root/'replacement.colpkg'
+        shutil.copyfile(package, replacement)
+        run('import', replacement, '--replace', merged)
+        replaced_report = run('verify', merged)
+        assert '3 due cards' in replaced_report.stdout, 'Explicit replacement retained unrelated cards'
+        bad_package = root/'broken.apkg'
+        bad_package.write_bytes(b'not a package')
+        before_failure = merged.read_bytes()
+        run('import', bad_package, '--merge', merged, succeeds=False)
+        assert merged.read_bytes() == before_failure, 'Failed import replaced the prepared collection'
         corrupt = root/'corrupt.cobfc'
         corrupt.write_bytes(b'not a collection')
         run('verify', corrupt, succeeds=False)
@@ -79,7 +108,10 @@ def main():
             'text_scale': args.scale if args.reader_sim else None,
             'checks': ['helper version and notice', 'supported formats and review limits', 'import with spaces in path', 'bundle verification',
                        'staged bytes match prepared bundle', 'helper failures reach CLI',
-                       'corrupt stage preserves installed collection'] +
+                       'corrupt stage preserves installed collection',
+                       'merge preserves both card inventories and source bundle',
+                       'explicit replacement replaces card inventory',
+                       'failed import preserves prepared collection'] +
                       (['reader opened staged deck', 'revealed and graded a card',
                         'one saved review exported without changes'] if args.reader_sim else []),
         }, indent=2)+'\n')

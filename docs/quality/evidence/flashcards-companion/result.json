@@ -11,6 +11,9 @@
     "bundle verification",
     "staged bytes match prepared bundle",
     "helper failures reach CLI",
-    "corrupt stage preserves installed collection"
+    "corrupt stage preserves installed collection",
+    "merge preserves both card inventories and source bundle",
+    "explicit replacement replaces card inventory",
+    "failed import preserves prepared collection"
   ]
 }

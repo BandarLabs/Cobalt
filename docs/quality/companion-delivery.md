@@ -113,3 +113,17 @@ and separate-review-log boundary before an import. Four CLI tests, three helper
 command tests and strict CLI Clippy pass. The rebuilt real-helper acceptance
 also verifies status and formats. FLASHCLI-02 and FLASHCLI-05 are complete;
 verified binary distribution (FLASHCLI-03) remains open.
+
+
+The real-helper acceptance now also imports a second original three-card
+package into a new merged bundle: verification reports six due cards and the
+source bundle stays byte-identical. Explicit COLPKG replacement of the merged
+bundle returns to three due cards. Importing a malformed package into an
+existing output fails without changing it; corrupt staging likewise preserves
+the installed collection. The command transcript records each operation and
+its outcome. These checks exercise the public CLI and standalone helper,
+without touching an owner collection.
+
+All 22 importer library tests pass on Rust 1.88, including metadata conflicts,
+malformed databases, duplicate media and archive-bomb refusal. FLASHCLI-07 and
+FLASHCLI-09 are complete on these regressions and the public-CLI acceptance.

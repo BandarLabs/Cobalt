@@ -3808,8 +3808,10 @@
     "pr": 4,
     "group": "Flashcards companion",
     "task": "Explain and implement add/merge versus replace",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Real CLI/helper acceptance merges two original three-card packages into six due cards without modifying the source, explicitly replaces with three, and preserves prepared/staged collections on malformed import or corrupt stage. All 22 importer library tests pass, including metadata conflicts, malformed database, duplicate media and archive bomb refusal. Merge/replace forms documented in apps/flashcards/README.md. Evidence: docs/quality/evidence/flashcards-companion/transcript.json."
+    ]
   },
   {
     "id": "FLASHCLI-08",
@@ -3826,8 +3828,10 @@
     "pr": 4,
     "group": "Flashcards companion",
     "task": "Validate imported content and preserve previous collection on failure",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Real CLI/helper acceptance merges two original three-card packages into six due cards without modifying the source, explicitly replaces with three, and preserves prepared/staged collections on malformed import or corrupt stage. All 22 importer library tests pass, including metadata conflicts, malformed database, duplicate media and archive bomb refusal. Merge/replace forms documented in apps/flashcards/README.md. Evidence: docs/quality/evidence/flashcards-companion/transcript.json."
+    ]
   },
   {
     "id": "FRAMECLI-01",
