@@ -107,3 +107,17 @@ Reconnecting and resizing do not retry a failed save automatically.
 The live fixture supports `--load-failure --save-failure` for explicit recovery,
 or `--load-failure --temporary-pairing` to verify a temporary connection. Both
 require `--pair-on-reader` and exercise the same two-way terminal journey.
+
+## First connection check
+
+After setting up the computer identity and installing its trust certificate,
+run `kobo stream demo` on the computer. Connect from Paperterm, type a short
+message and press Enter. The message appears on both screens. Type a second
+message on the computer to check input in the other direction.
+
+This built-in check does not run typed text as commands. Type `exit` on either
+screen to finish; the final screen remains for one minute. Keep the computer
+awake while sharing. Once the check works, use `kobo stream --interactive --
+COMMAND` to share a terminal program you choose.
+
+![The same connection check receiving reader and laptop input](screenshots/connection-check.png)

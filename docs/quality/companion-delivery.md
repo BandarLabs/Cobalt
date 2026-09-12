@@ -30,3 +30,29 @@ not promote or merge beta into main.
 Remaining companion groups stay in scope. Do not mark a task complete from
 this plan alone, and do not report content as available offline until its
 installation or import has been acknowledged.
+
+## Paperterm connection check
+
+`kobo stream demo` now runs a built-in text conversation through the real
+host PTY and TLS service. It needs the existing identity and reader trust
+setup. It does not interpret typed text as commands. The reader and laptop
+can both submit messages; `exit` ends the child and leaves the final screen
+available for one minute. The laptop's original terminal settings are restored.
+
+Reproduce the real-PTY simulator check with:
+
+```sh
+python3 scripts/quality/check-paperterm-live.py --connection-demo \
+  --output /tmp/paperterm-connection-demo
+```
+
+The check covers both input directions, Enter submission, portrait layout,
+final-screen retention and terminal restoration. Its private generated identity
+and pairing fixture are deleted afterward. This is simulator evidence, not
+physical Clara BW acceptance. Guided first-time setup and the remaining
+Paperterm companion checklist are still open.
+
+Validation: two connection-check tests and all 20 stream tests pass on Rust
+1.85.1. Strict Clippy passes for all CLI and stream targets. The final driven
+simulator capture passes after shortening instructions to fit the portrait
+screen with the keyboard open. Evidence is in `evidence/paperterm-connection-demo`.

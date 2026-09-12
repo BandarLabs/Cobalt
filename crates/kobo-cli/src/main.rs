@@ -27,6 +27,7 @@ mod needles;
 mod nonograms;
 mod package;
 mod runtime_dev;
+mod stream_demo;
 mod vault;
 // Only the `device-write` build dispatches to this, but its tests decide what
 // gets sent to a reader and are worth running on every build. So it compiles
@@ -727,14 +728,48 @@ fn wifi_trace_command(arguments: &[String]) -> Result<(), String> {
 
 fn stream_command(arguments: &[String]) -> Result<(), String> {
     const USAGE: &str = "usage: kobo stream init [--host ADDRESS ...]\n\
+                         \x20      kobo stream demo [--port PORT]\n\
                          \x20      kobo stream [--grid COLSxROWS] [--controls | --interactive] \
                          [--read-only] [--port PORT] -- COMMAND [ARG ...]\n\
                          Host-only. The reader never opens a shell; it paints rows this command serves.";
     if wants_help(arguments) {
         return print_command_help(USAGE);
     }
+    if arguments == ["__connection-check"] {
+        return stream_demo::run();
+    }
     if arguments.first().is_some_and(|argument| argument == "init") {
         return kobo_stream::init(&arguments[1..]);
+    }
+    if arguments.first().is_some_and(|argument| argument == "demo") {
+        let port = match &arguments[1..] {
+            [] => kobo_stream::DEFAULT_PORT,
+            [flag, value] if flag == "--port" => value
+                .parse::<u16>()
+                .ok()
+                .filter(|port| *port > 0)
+                .ok_or("--port must be 1 through 65535")?,
+            _ => return Err(USAGE.to_owned()),
+        };
+        let executable =
+            std::env::current_exe().map_err(|error| format!("find this CLI: {error}"))?;
+        let executable = executable.to_str().ok_or("CLI path must be UTF-8")?;
+        eprintln!("Open Paperterm on your reader and connect to this computer. Keep the computer awake.\nThis check echoes text; it does not run commands. Type exit to finish.");
+        return kobo_stream::run_with_title(
+            kobo_stream::Options {
+                grid: kobo_stream::Grid::fallback(),
+                controls: true,
+                interactive: true,
+                port,
+                command: vec![
+                    executable.to_owned(),
+                    "stream".to_owned(),
+                    "__connection-check".to_owned(),
+                ],
+            },
+            "Connection check",
+        )
+        .map(|_| ());
     }
     let separator = arguments
         .iter()

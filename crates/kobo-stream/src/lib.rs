@@ -407,6 +407,13 @@ impl Options {
 /// The host and reader both attach to the one PTY, so full-screen programs
 /// receive a real controlling terminal, grid, job control, and input bytes.
 pub fn run(options: Options) -> Result<i32, String> {
+    let title = options.command.first().cloned().unwrap_or_default();
+    run_with_title(options, &title)
+}
+
+/// Runs a known companion flow with a reader-facing title.
+/// The title changes presentation only; the command still runs in the same PTY.
+pub fn run_with_title(options: Options, title: &str) -> Result<i32, String> {
     if options.command.is_empty() {
         return Err("kobo stream needs a command after --".to_owned());
     }
@@ -436,7 +443,7 @@ pub fn run(options: Options) -> Result<i32, String> {
     let mut raw_stdin = RawStdin::enable();
     forward_stdin(Arc::clone(&input));
     let session_id = random_session()?;
-    let title = options.command[0].clone();
+    let title = title.to_owned();
     let mode = options.input_mode();
     let mut exit_code = None;
     let mut ended_at = None;

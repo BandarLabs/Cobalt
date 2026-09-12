@@ -38,3 +38,24 @@ Without this override the location remains `~/.config/kobo`. The live fixture
 in `scripts/quality/check-paperterm-live.py` exercises a real laptop TTY, host
 PTY and SDK simulator over trusted TLS without using the owner's identity.
 See [the captured session](../../apps/paperterm/screenshots/terminal.png).
+
+## Check the connection before sharing a terminal
+
+After the one-time `stream init` and reader trust setup above, run:
+
+```sh
+kobo stream demo
+```
+
+Open Paperterm and connect to this computer. Type a short message on the reader
+and press Enter; both screens show it. Type another message on the computer to
+check the other direction. The check echoes text and never treats it as a shell
+command. It is included in the CLI, so no Python, sample project or shell script
+is needed. Keep the computer awake and on the same network.
+
+Type `exit` on either screen to finish. The final screen stays available for
+one minute, then sharing ends. `--port PORT` is available when the default port
+is already in use. Use the existing `-- COMMAND` form only when you want to
+share a particular terminal program.
+
+![Reader and laptop messages in the same session](../../apps/paperterm/screenshots/connection-check.png)

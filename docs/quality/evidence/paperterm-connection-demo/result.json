@@ -1,0 +1,16 @@
+{
+  "status": "passed",
+  "profile": "clara-bw-391",
+  "scale": "extra-large",
+  "basis": "built-in-connection-demo-and-real-sdk-simulator-over-TLS",
+  "physical_hardware": false,
+  "checks": [
+    "reader input reaches laptop",
+    "laptop input reaches reader",
+    "input remains unsubmitted until Enter",
+    "portrait layout",
+    "exit finishes child",
+    "final screen remains served",
+    "laptop terminal settings restored"
+  ]
+}
