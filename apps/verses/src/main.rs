@@ -241,6 +241,8 @@ struct VerseRun {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum View {
     Today,
+    /// The card being written out to a paired computer.
+    Card,
     Browse,
     Reading,
     Search,
@@ -274,6 +276,8 @@ struct Verses {
     /// Today screen on to the next day's poem rather than leaving yesterday's
     /// there until it is restarted.
     day: Option<(u16, u8, u8)>,
+    /// A card on its way to a paired computer.
+    export: Option<kobo_sdk::exports::Export>,
     /// Whether a favourite is still waiting for storage to confirm it.
     ///
     /// Marking a poem used to write and walk away. A write that failed took
@@ -296,6 +300,7 @@ impl Default for Verses {
             notice: None,
             loaded: false,
             poem_page: 0,
+            export: None,
             day: reader_clock()
                 .now()
                 .ok()
@@ -452,13 +457,23 @@ impl Verses {
         if page + 1 == pages.len() {
             screen = screen.secondary(format!("{} · {} · {}", poem.author, poem.year, poem.source));
         }
+        // The card sits at the foot rather than in the bar: the bar holds two
+        // controls at most, for the reason the platform gives, and a card is
+        // something a reader does with a poem they have just read rather than
+        // chrome that belongs beside its title.
         if pages.len() > 1 {
             screen = screen
                 .page_position(
                     u16::try_from(page + 1).unwrap_or(1),
                     u16::try_from(pages.len()).unwrap_or(1),
                 )
-                .action_bar([("poem-previous", "Previous"), ("poem-next", "Next")]);
+                .action_bar([
+                    ("poem-previous", "Previous"),
+                    ("card", "Quote card"),
+                    ("poem-next", "Next"),
+                ]);
+        } else {
+            screen = screen.action_bar([("card", "Quote card")]);
         }
         screen.build()
     }
@@ -700,6 +715,12 @@ impl Verses {
     fn screen(&self, context: &Context) -> Screen {
         match self.view {
             View::Today | View::Reading => self.local_poem(context),
+            // The export's own screen: what is being written, where it goes,
+            // and a way to try again if the computer is not listening.
+            View::Card => self.export.as_ref().map_or_else(
+                || self.local_poem(context),
+                kobo_sdk::exports::Export::screen,
+            ),
             View::Browse => self.browse(),
             View::Search => self.search(),
             View::Results => self.results(),
@@ -738,6 +759,88 @@ impl Verses {
         self.pending = self.task.map(|_| Pending::Search);
         if self.task.is_none() {
             self.notice = Some("Search is busy. Try again in a moment.".into());
+        }
+    }
+
+    /// The card a reader takes away: the poem, its poet, and where the text
+    /// came from, drawn as the panel would draw it.
+    ///
+    /// A quote with no attribution is the thing the internet is already full
+    /// of. Everything here is public domain and says which edition it was
+    /// taken from, so a card can be passed on without stripping the poem of
+    /// its provenance on the way.
+    fn quote_card(&self, context: &Context) -> Screen {
+        let poem = CORPUS[self.poem];
+        let pages = self.poem_pages(context);
+        let page = self.poem_page.min(pages.len().saturating_sub(1));
+        let mut screen = ScreenBuilder::new("verses-card")
+            .top_bar(poem.title)
+            .reading(true);
+        for (index, run) in pages[page].iter().enumerate() {
+            for (line, text) in poem.stanzas[run.stanza][run.from..run.to]
+                .iter()
+                .enumerate()
+            {
+                screen = screen.rich_text(
+                    (*text).to_owned(),
+                    Vec::new(),
+                    kobo_sdk::ParagraphPresentation {
+                        alignment: kobo_sdk::ParagraphAlignment::Center,
+                        margin_before_em: if index > 0 && line == 0 && run.from == 0 {
+                            STANZA_AIR
+                        } else {
+                            0
+                        },
+                        ..kobo_sdk::ParagraphPresentation::default()
+                    },
+                );
+            }
+        }
+        screen
+            .secondary(format!("{} · {}", poem.author, poem.year))
+            .secondary(poem.source.to_owned())
+            .build()
+    }
+
+    /// Draws the card and offers it to a paired computer.
+    fn export_card(&mut self, context: &mut Context) {
+        let metrics = context.metrics();
+        let Ok(width) = usize::try_from(metrics.width) else {
+            return;
+        };
+        let Ok(height) = usize::try_from(metrics.height) else {
+            return;
+        };
+        let card = self.quote_card(context);
+        let mut surface = kobo_ui::Surface::new(width, height);
+        kobo_ui::render(&card, &mut surface, None);
+        let picture = kobo_image::encode_png_grey(
+            u32::try_from(metrics.width).unwrap_or(0),
+            u32::try_from(metrics.height).unwrap_or(0),
+            &surface.pixels,
+        );
+        let poem = CORPUS[self.poem];
+        match picture
+            .map_err(|error| format!("{error:?}"))
+            .and_then(|bytes| {
+                kobo_sdk::exports::Export::new(
+                    &format!("{} by {}", poem.title, poem.author),
+                    kobo_sdk::exports::Format::Png,
+                    bytes,
+                )
+            }) {
+            Ok(mut export) => {
+                export.begin(context);
+                self.export = Some(export);
+                self.view = View::Card;
+            }
+            Err(reason) => {
+                context.log(
+                    kobo_sdk::LogLevel::Warn,
+                    format!("the quote card was refused: {reason}"),
+                );
+                self.notice = Some("This card could not be prepared.".to_owned());
+            }
         }
     }
 
@@ -786,7 +889,31 @@ impl KoboApp for Verses {
         self.show(context);
     }
 
+    /// The blob a card is written into answers here rather than in `on_store`,
+    /// which is where this first looked for it: the card sat on "saving and
+    /// checking" for ever because nothing was listening on this hook.
+    fn on_shelf(&mut self, context: &mut Context, name: &str, result: StoreResult) {
+        if let Some(export) = self.export.as_mut() {
+            if export.on_shelf(context, name, &result) {
+                self.show(context);
+            }
+        }
+    }
+
     fn on_store(&mut self, context: &mut Context, result: StoreResult) {
+        // A card on its way out answers on its own keys. The settings key is
+        // never handed to it: Todo emptied a list once by letting an export
+        // claim the key that held the list.
+        if let Some(export) = self.export.as_mut() {
+            let key = match &result {
+                StoreResult::Loaded { key, .. } | StoreResult::Saved { key } => key.clone(),
+                _ => String::new(),
+            };
+            if key != SETTINGS && export.on_save(context, &key, &result) {
+                self.show(context);
+                return;
+            }
+        }
         // Storage answers every write, and a refusal is the one answer that
         // has to reach the reader: the favourite is not kept.
         match &result {
@@ -847,6 +974,10 @@ impl KoboApp for Verses {
         if action == ActionId::BACK {
             self.view = match self.view {
                 View::Online | View::Results | View::Search => View::Browse,
+                View::Card => {
+                    self.export = None;
+                    View::Reading
+                }
                 _ => View::Today,
             };
         } else if action == action_id("today") {
@@ -864,6 +995,12 @@ impl KoboApp for Verses {
             if let Some(index) = self.online {
                 let author = self.results[index].author.clone();
                 self.begin_search(context, &author, true);
+            }
+        } else if action == action_id("card") {
+            self.export_card(context);
+        } else if action == action_id("export-confirm") || action == action_id("export-retry") {
+            if let Some(export) = self.export.as_mut() {
+                export.begin(context);
             }
         } else if action == action_id("poem-next") {
             let last = self.poem_pages(context).len().saturating_sub(1);
@@ -1197,6 +1334,44 @@ mod tests {
             url,
             "https://poetrydb.org/author,title,lines/hope%20%26%20spring/author,title,linecount"
         );
+    }
+
+    #[test]
+    fn a_quote_card_is_a_picture_of_the_poem_with_its_poet_on_it() {
+        // A quote with no attribution is what the internet is already full of.
+        let runner = AppRunner::new(Verses::default());
+        let context = runner.context();
+        let mut app = Verses {
+            view: View::Reading,
+            poem: CORPUS
+                .iter()
+                .position(|poem| poem.id == "shelley-ozymandias")
+                .expect("a poem"),
+            ..Verses::default()
+        };
+        let card = app.quote_card(&context);
+        let drawn = format!("{card:?}");
+        assert!(drawn.contains("Ozymandias"), "no title: {drawn}");
+        assert!(drawn.contains("Percy Bysshe Shelley"), "no poet");
+        assert!(drawn.contains("1818"), "no year");
+        assert!(drawn.contains("Project Gutenberg"), "no source");
+        assert!(
+            drawn.contains("I met a traveller from an antique land"),
+            "no poem"
+        );
+        assert!(card
+            .diagnostics(&CLARA_BW_METRICS, &Chrome::measuring(true))
+            .issues
+            .is_empty());
+
+        // The card leaves as a picture, which is the thing somebody can pass
+        // on, and the export is what carries it to a paired computer.
+        let second = AppRunner::new(Verses::default());
+        app.export_card(&mut second.context());
+        let export = app.export.as_ref().expect("a card on its way out");
+        assert_eq!(export.offer().format, kobo_sdk::exports::Format::Png);
+        assert!(export.offer().title.contains("Ozymandias"));
+        assert_eq!(app.view, View::Card);
     }
 
     #[test]

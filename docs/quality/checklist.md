@@ -518,7 +518,7 @@ Design direction: the bar is a well-made iPad application, built for a panel tha
 - [x] **VERSE-03** Paginate long poems.
 - [x] **VERSE-04** Show author and source context.
 - [x] **VERSE-05** Make favorites usable.
-- [ ] **VERSE-06** Export attributed quote cards.
+- [x] **VERSE-06** Export attributed quote cards.
 
 ## PR 3 · Catalog-wide release gates
 

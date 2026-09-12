@@ -4,8 +4,8 @@
   "short_label": "Verses",
   "summary": "Read a public-domain poem each day.",
   "page_description": "Discover a daily poem, browse its source, and keep favorites for later.",
-  "version": "0.1.4",
-  "release_notes": "A poem for the day you are actually reading on, which changes at midnight. Complete poems set as verse and paged against the screen. Favourites survive the shelf changing, and a service that is down says so.",
+  "version": "0.1.5",
+  "release_notes": "Take a quote card away: the poem set as verse with its poet, year and edition drawn on it, saved as a picture for a paired computer. A poem for the day you are reading on, complete poems, and durable favourites.",
   "glyph": "note",
   "capabilities": [
     "network"

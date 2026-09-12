@@ -3337,8 +3337,11 @@
     "pr": 3,
     "group": "Verses (APP-8)",
     "task": "Export attributed quote cards",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "apps/verses/src/main.rs",
+      "docs/quality/evidence/verses/quote-card.png"
+    ]
   },
   {
     "id": "APPQA-01",
