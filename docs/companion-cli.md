@@ -27,3 +27,17 @@ full command reference; `kobo frame --help`, `kobo flashcards --help` and
 
 Named-reader selection, a desktop companion window and resumable operation
 receipts remain under development.
+
+## Feed subscription files
+
+`kobo feeds check FILE` and `kobo feeds push FILE --sim` accept OPML files up
+to 256 KB. The CLI reads at most the limit plus one byte before refusing an
+oversized export; export a smaller selection if needed. Validation happens
+before the destination is changed.
+
+Simulator staging writes and syncs a temporary file before publishing it. If
+the temporary filename is already occupied, the operation fails and preserves
+both that file and the existing subscription list. Device transfers already
+publish through a temporary file. Neither operation claims the subscriptions
+or article content are available offline: open Feeds and import the staged
+list, then download the articles you want to keep.

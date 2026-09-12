@@ -249,3 +249,10 @@ original OPML file with a space-containing path through the existing handler.
 Strict CLI Clippy passes. CLI-01/02/03 complete; broader reader selection,
 desktop surface and transfer-operation work remain open. Evidence:
 `evidence/owner-start`. Overall: 227 done, 268 open, one deferred.
+
+Feeds companion hardening: bound file reads to the shared 256 KB OPML limit
+before parsing; publish simulator imports through a synced temporary file.
+An occupied staging path preserves both the current list and the other staged
+file. Six Feeds regression tests and strict CLI Clippy pass. This advances the
+shared transfer reliability work but does not close the broader CLI-18 task.
+Checklist totals remain 227 done, 268 open, one deferred.
