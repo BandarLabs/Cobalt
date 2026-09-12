@@ -37,7 +37,7 @@ The shared tile-label change already in the worktree belongs to the ongoing Gute
 
 ## Remaining companion scope · PR 4
 
-No companion PR is open at this checkpoint. Its 133 tasks remain planned; the branch name is `beta-quality-companion`.
+Companion [PR #182](https://github.com/BandarLabs/Cobalt/pull/182) is now open on `beta-quality-companion`. Its 133 tasks remain open. Lichess and Paperterm are promotion priorities; the companion journeys begin with Paperterm, Frame and Flashcards.
 
 | Group | Open tasks |
 | --- | ---: |

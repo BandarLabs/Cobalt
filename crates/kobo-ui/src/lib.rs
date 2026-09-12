@@ -8100,6 +8100,28 @@ fn layout_node(
                 && cells.len() == 24
                 && cells.iter().all(|cell| cell.label.starts_with("Point "));
             let pad_deck = *square && requested == 5 && cells.len() == 15;
+            let chess_board = *square
+                && requested == 8
+                && cells.len() == 64
+                && cells.iter().any(|cell| {
+                    matches!(
+                        cell.glyph,
+                        Some(
+                            Glyph::ChessWhiteKing
+                                | Glyph::ChessWhiteQueen
+                                | Glyph::ChessWhiteRook
+                                | Glyph::ChessWhiteBishop
+                                | Glyph::ChessWhiteKnight
+                                | Glyph::ChessWhitePawn
+                                | Glyph::ChessBlackKing
+                                | Glyph::ChessBlackQueen
+                                | Glyph::ChessBlackRook
+                                | Glyph::ChessBlackBishop
+                                | Glyph::ChessBlackKnight
+                                | Glyph::ChessBlackPawn
+                        )
+                    )
+                });
             // A board's column count is the board, so narrowing it to the touch
             // target would deal a different game. Only free-form grids shrink.
             let columns = if legacy_typography() || *square {
@@ -8114,7 +8136,7 @@ fn layout_node(
             };
             let (mut x, mut width, gutter) = if backgammon_board {
                 (0, metrics.width, 0)
-            } else if *square && cells.iter().any(|cell| cell.corner.is_some()) {
+            } else if chess_board || (*square && cells.iter().any(|cell| cell.corner.is_some())) {
                 (x, width, 0)
             } else if pad_deck {
                 (x, width, metrics.space(Space::Small))
@@ -8222,7 +8244,7 @@ fn layout_node(
                     CellStyle::Crossword
                 } else if morris_board {
                     CellStyle::Plain
-                } else if draughts_board && (row + column) % 2 == 1 {
+                } else if (draughts_board || chess_board) && (row + column) % 2 == 1 {
                     CellStyle::BoardDark
                 } else {
                     style
@@ -8348,7 +8370,7 @@ fn layout_node(
                                 rect,
                                 kind: LayoutKind::CellLabel(matches!(
                                     style,
-                                    CellStyle::Board | CellStyle::Crossword
+                                    CellStyle::Board | CellStyle::BoardDark | CellStyle::Crossword
                                 )),
                                 text_lines: vec![cell.label.clone()],
                             });
@@ -8803,7 +8825,10 @@ fn layout_node(
                         x: cell_x + inset,
                         y: group_y.saturating_add(mark_height).saturating_add(inset),
                         width: label_width,
-                        height: title_size.line_height() * title_lines,
+                        // Keep the reserved band above, but describe the
+                        // actual text here so painting uses its measured size.
+                        height: title_size.line_height()
+                            * max_i32(1, i32::try_from(label.len()).unwrap_or(1)),
                     },
                     kind: if muted {
                         LayoutKind::TileLabelMuted
@@ -14112,13 +14137,13 @@ fn render_all_with_selected_font(
                 metrics.rule_thickness(),
                 clip,
             ),
-            LayoutKind::Cell(_, CellStyle::BoardDark, _) => {
+            LayoutKind::Cell(_, CellStyle::BoardDark, selected) => {
                 fill_clipped(surface, node.rect, tone::SURFACE, clip);
                 stroke_clipped(
                     surface,
                     node.rect,
-                    tone::RULE,
-                    metrics.rule_thickness(),
+                    if selected { tone::INK } else { tone::RULE },
+                    metrics.rule_thickness() * if selected { 2 } else { 1 },
                     clip,
                 );
             }
@@ -14677,11 +14702,7 @@ fn render_all_with_selected_font(
                 surface,
                 &node.text_lines,
                 node.rect,
-                if !legacy_typography() && node.rect.height > FontSize::Caption.line_height() {
-                    FontSize::Body
-                } else {
-                    FontSize::Caption
-                },
+                tile_label_size(node.rect, node.text_lines.len(), !legacy_typography()),
                 tone::INK,
                 clip,
             ),
@@ -14689,11 +14710,7 @@ fn render_all_with_selected_font(
                 surface,
                 &node.text_lines,
                 node.rect,
-                if node.rect.height > FontSize::Caption.line_height() {
-                    FontSize::Body
-                } else {
-                    FontSize::Caption
-                },
+                tile_label_size(node.rect, node.text_lines.len(), true),
                 tone::MUTED,
                 clip,
             ),
@@ -15066,6 +15083,24 @@ fn render_all_with_selected_font(
                 }
             }
         }
+    }
+}
+
+/// The size a tile's name is drawn at, which has to be the size it was wrapped
+/// at.
+///
+/// A tall label box used to mean a big name, and for a one line label it does.
+/// A two line name in a Caption sized band is also in a box taller than one
+/// Caption line, and it was drawn in Body: every line came out wider than the
+/// width it was wrapped to, so the names of neighbouring books on a shelf ran
+/// into each other. What the band holds per line is what the layout decided,
+/// so that is what this asks.
+fn tile_label_size(rect: Rect, lines: usize, body_allowed: bool) -> FontSize {
+    let per_line = rect.height / max_i32(1, i32::try_from(lines).unwrap_or(1));
+    if body_allowed && per_line >= FontSize::Body.line_height() {
+        FontSize::Body
+    } else {
+        FontSize::Caption
     }
 }
 
@@ -18264,6 +18299,58 @@ mod tile_tests {
                     assert!(
                         rect.intersection(*other).is_none(),
                         "{name}: two tiles overlap"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_tile_name_is_drawn_no_wider_than_the_width_it_was_wrapped_to() {
+        // A shelf of books is a grid of covers with real titles under them,
+        // and a real title takes two lines. Those two lines were wrapped at
+        // caption size and drawn at body size, so each one came out wider than
+        // its cell and ran into the book beside it. Whatever the painter picks
+        // has to be what the text was measured with.
+        for (name, metrics) in PANELS {
+            let screen = Screen::new(
+                1,
+                vec![Node::TileGrid {
+                    shape: TileShape::Portrait,
+                    id: NodeId(1),
+                    tiles: [
+                        "Frankenstein; or, the modern prometheus",
+                        "Alice's Adventures in Wonderland",
+                        "Moby Dick; Or, The Whale",
+                        "Crime and Punishment",
+                    ]
+                    .iter()
+                    .enumerate()
+                    .map(|(index, title)| {
+                        Tile::new(ActionId(index as u32 + 1), (*title).to_owned(), Glyph::Book)
+                    })
+                    .collect(),
+                }],
+            );
+            let layout = screen.layout_for(&metrics);
+            let labels = layout
+                .nodes
+                .iter()
+                .filter(|node| node.kind == LayoutKind::TileLabel)
+                .collect::<Vec<_>>();
+            assert!(!labels.is_empty(), "{name}: no tile carried a name");
+            assert!(
+                labels.iter().any(|node| node.text_lines.len() > 1),
+                "{name}: no name wrapped, so this proves nothing"
+            );
+            for node in labels {
+                let size = tile_label_size(node.rect, node.text_lines.len(), !legacy_typography());
+                for line in &node.text_lines {
+                    let (width, _) = measure_text(line, size);
+                    assert!(
+                        width <= node.rect.width,
+                        "{name}: {line:?} is drawn {width} wide in a {} wide cell",
+                        node.rect.width
                     );
                 }
             }

@@ -289,6 +289,17 @@
           "compatible_blob": "98f10e3c8c1d8c5b6a80b343963179ff91046f4b"
         }
       ]
+    },
+    {
+      "protocol_version": 14,
+      "reason": "Renderer-only improvements using existing wire messages: chess grids use joined alternating squares and visible selection borders; tile titles select the font that matches measured line geometry, preventing long book titles from overflowing. No protocol or action changes. Lichess is versioned separately for its application changes.",
+      "files": [
+        {
+          "path": "crates/kobo-ui/src/lib.rs",
+          "base_blob": "ee95176aef1432bdd0f9374f86eb313ae47a88aa",
+          "compatible_blob": "5e4b0c9a3264883fb77d79333156f6c9eae38d26"
+        }
+      ]
     }
   ]
 }

@@ -11,7 +11,7 @@ Four PRs rooted in `beta`. Reconciled against GitHub on 12 September 2026 after 
 | 1 · Foundation, SDK, simulator and comic contracts | [#167](https://github.com/BandarLabs/Cobalt/pull/167), `beta-quality-foundation` | Merged 8 September | 92 | 0 | 1 |
 | 2 · First catalog batch, including Feeds and Miniflux | [#168](https://github.com/BandarLabs/Cobalt/pull/168), `beta-quality-apps` | Merged 12 September; `beta-v0.3.14` published | 113 | 0 | 0 |
 | 3 · Remaining catalog and release gates | [#181](https://github.com/BandarLabs/Cobalt/pull/181), `beta-quality-apps-2` | Open | 0 | 157 | 0 |
-| 4 · Main CLI, companions and integrated acceptance | `beta-quality-companion` | Planned; no PR open | 0 | 133 | 0 |
+| 4 · Main CLI, companions and integrated acceptance | [#182](https://github.com/BandarLabs/Cobalt/pull/182), `beta-quality-companion` | Open | 0 | 133 | 0 |
 
 PR 2 contains twenty app groups plus the comic catalog integration group. PR 3 contains twenty-three app groups plus catalog-wide gates. Its order is Gutenbird, arXiv, Verses, Read Later, Frame, Sync, Lichess, Music Stand, then the remaining groups. Live-service and reader-reported failures remain priorities within that work. PR 4 retains the original companion scope: onboarding, imports, credentials, recovery, consistent commands and integrated acceptance scripts.
 

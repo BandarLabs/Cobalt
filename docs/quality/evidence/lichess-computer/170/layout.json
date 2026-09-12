@@ -1,0 +1,702 @@
+{
+  "paints": 20,
+  "nodes": [
+    {
+      "kind": "StatusBand",
+      "x": 0,
+      "y": 0,
+      "width": 1072,
+      "height": 59,
+      "centre": {
+        "x": 536,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusClock",
+      "x": 47,
+      "y": 0,
+      "width": 134,
+      "height": 59,
+      "centre": {
+        "x": 114,
+        "y": 29
+      },
+      "action": null,
+      "lines": [
+        "10:05"
+      ]
+    },
+    {
+      "kind": "StatusBattery(Some(Percent(72)), false)",
+      "x": 955,
+      "y": 12,
+      "width": 70,
+      "height": 35,
+      "centre": {
+        "x": 990,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusSignal(Strong)",
+      "x": 896,
+      "y": 12,
+      "width": 35,
+      "height": 35,
+      "centre": {
+        "x": 913,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusBluetooth",
+      "x": 837,
+      "y": 12,
+      "width": 35,
+      "height": 35,
+      "centre": {
+        "x": 854,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "TopBar",
+      "x": 0,
+      "y": 59,
+      "width": 1072,
+      "height": 100,
+      "centre": {
+        "x": 536,
+        "y": 109
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Back",
+      "x": 47,
+      "y": 59,
+      "width": 100,
+      "height": 100,
+      "centre": {
+        "x": 97,
+        "y": 109
+      },
+      "action": 4294967295,
+      "lines": []
+    },
+    {
+      "kind": "TopBarTitle",
+      "x": 171,
+      "y": 69,
+      "width": 854,
+      "height": 79,
+      "centre": {
+        "x": 598,
+        "y": 108
+      },
+      "action": null,
+      "lines": [
+        "Lichess"
+      ]
+    },
+    {
+      "kind": "Divider",
+      "x": 0,
+      "y": 159,
+      "width": 1072,
+      "height": 4,
+      "centre": {
+        "x": 536,
+        "y": 161
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Secondary",
+      "x": 47,
+      "y": 175,
+      "width": 961,
+      "height": 60,
+      "centre": {
+        "x": 527,
+        "y": 205
+      },
+      "action": 1157490980,
+      "lines": [
+        "Account error"
+      ]
+    },
+    {
+      "kind": "PageRail { page: 0, of: 2 }",
+      "x": 1020,
+      "y": 247,
+      "width": 5,
+      "height": 1071,
+      "centre": {
+        "x": 1022,
+        "y": 782
+      },
+      "action": 1157490980,
+      "lines": []
+    },
+    {
+      "kind": "Band",
+      "x": 47,
+      "y": 259,
+      "width": 961,
+      "height": 458,
+      "centre": {
+        "x": 527,
+        "y": 488
+      },
+      "action": 3099498714,
+      "lines": []
+    },
+    {
+      "kind": "Spacer",
+      "x": 47,
+      "y": 259,
+      "width": 304,
+      "height": 458,
+      "centre": {
+        "x": 199,
+        "y": 488
+      },
+      "action": 3268139107,
+      "lines": []
+    },
+    {
+      "kind": "Tile(ActionId(3268139107), Enabled)",
+      "x": 47,
+      "y": 259,
+      "width": 304,
+      "height": 458,
+      "centre": {
+        "x": 199,
+        "y": 488
+      },
+      "action": 3268139107,
+      "lines": []
+    },
+    {
+      "kind": "TileOutline(Enabled)",
+      "x": 47,
+      "y": 259,
+      "width": 304,
+      "height": 458,
+      "centre": {
+        "x": 199,
+        "y": 488
+      },
+      "action": 3268139107,
+      "lines": []
+    },
+    {
+      "kind": "TileGlyph(Settings)",
+      "x": 166,
+      "y": 340,
+      "width": 65,
+      "height": 65,
+      "centre": {
+        "x": 198,
+        "y": 372
+      },
+      "action": 3268139107,
+      "lines": []
+    },
+    {
+      "kind": "TileLabel",
+      "x": 59,
+      "y": 417,
+      "width": 280,
+      "height": 158,
+      "centre": {
+        "x": 199,
+        "y": 496
+      },
+      "action": 3268139107,
+      "lines": [
+        "Account/",
+        "Games"
+      ]
+    },
+    {
+      "kind": "TileSubtitle",
+      "x": 59,
+      "y": 575,
+      "width": 280,
+      "height": 60,
+      "centre": {
+        "x": 199,
+        "y": 605
+      },
+      "action": 3268139107,
+      "lines": [
+        "Challenges\u2026"
+      ]
+    },
+    {
+      "kind": "Spacer",
+      "x": 375,
+      "y": 259,
+      "width": 304,
+      "height": 379,
+      "centre": {
+        "x": 527,
+        "y": 448
+      },
+      "action": 3099498714,
+      "lines": []
+    },
+    {
+      "kind": "Tile(ActionId(3099498714), Enabled)",
+      "x": 375,
+      "y": 259,
+      "width": 304,
+      "height": 379,
+      "centre": {
+        "x": 527,
+        "y": 448
+      },
+      "action": 3099498714,
+      "lines": []
+    },
+    {
+      "kind": "TileOutline(Enabled)",
+      "x": 375,
+      "y": 259,
+      "width": 304,
+      "height": 379,
+      "centre": {
+        "x": 527,
+        "y": 448
+      },
+      "action": 3099498714,
+      "lines": []
+    },
+    {
+      "kind": "TileGlyph(Grid)",
+      "x": 494,
+      "y": 340,
+      "width": 65,
+      "height": 65,
+      "centre": {
+        "x": 526,
+        "y": 372
+      },
+      "action": 3099498714,
+      "lines": []
+    },
+    {
+      "kind": "TileLabel",
+      "x": 387,
+      "y": 417,
+      "width": 280,
+      "height": 79,
+      "centre": {
+        "x": 527,
+        "y": 456
+      },
+      "action": 3099498714,
+      "lines": [
+        "Puzzles"
+      ]
+    },
+    {
+      "kind": "TileSubtitle",
+      "x": 387,
+      "y": 496,
+      "width": 280,
+      "height": 60,
+      "centre": {
+        "x": 527,
+        "y": 526
+      },
+      "action": 3099498714,
+      "lines": [
+        "Offline\u2026"
+      ]
+    },
+    {
+      "kind": "Spacer",
+      "x": 703,
+      "y": 259,
+      "width": 305,
+      "height": 379,
+      "centre": {
+        "x": 855,
+        "y": 448
+      },
+      "action": 2639144423,
+      "lines": []
+    },
+    {
+      "kind": "Tile(ActionId(2639144423), Enabled)",
+      "x": 703,
+      "y": 259,
+      "width": 305,
+      "height": 379,
+      "centre": {
+        "x": 855,
+        "y": 448
+      },
+      "action": 2639144423,
+      "lines": []
+    },
+    {
+      "kind": "TileOutline(Enabled)",
+      "x": 703,
+      "y": 259,
+      "width": 305,
+      "height": 379,
+      "centre": {
+        "x": 855,
+        "y": 448
+      },
+      "action": 2639144423,
+      "lines": []
+    },
+    {
+      "kind": "TileGlyph(ChessBlackKnight)",
+      "x": 823,
+      "y": 340,
+      "width": 65,
+      "height": 65,
+      "centre": {
+        "x": 855,
+        "y": 372
+      },
+      "action": 2639144423,
+      "lines": []
+    },
+    {
+      "kind": "TileLabel",
+      "x": 715,
+      "y": 417,
+      "width": 281,
+      "height": 79,
+      "centre": {
+        "x": 855,
+        "y": 456
+      },
+      "action": 2639144423,
+      "lines": [
+        "Computer"
+      ]
+    },
+    {
+      "kind": "TileSubtitle",
+      "x": 715,
+      "y": 496,
+      "width": 281,
+      "height": 60,
+      "centre": {
+        "x": 855,
+        "y": 526
+      },
+      "action": 2639144423,
+      "lines": [
+        "Offline"
+      ]
+    },
+    {
+      "kind": "Band",
+      "x": 47,
+      "y": 729,
+      "width": 961,
+      "height": 458,
+      "centre": {
+        "x": 527,
+        "y": 958
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Spacer",
+      "x": 47,
+      "y": 729,
+      "width": 304,
+      "height": 458,
+      "centre": {
+        "x": 199,
+        "y": 958
+      },
+      "action": 1524496950,
+      "lines": []
+    },
+    {
+      "kind": "Tile(ActionId(1524496950), Enabled)",
+      "x": 47,
+      "y": 729,
+      "width": 304,
+      "height": 458,
+      "centre": {
+        "x": 199,
+        "y": 958
+      },
+      "action": 1524496950,
+      "lines": []
+    },
+    {
+      "kind": "TileOutline(Enabled)",
+      "x": 47,
+      "y": 729,
+      "width": 304,
+      "height": 458,
+      "centre": {
+        "x": 199,
+        "y": 958
+      },
+      "action": 1524496950,
+      "lines": []
+    },
+    {
+      "kind": "TileGlyph(Note)",
+      "x": 166,
+      "y": 810,
+      "width": 65,
+      "height": 65,
+      "centre": {
+        "x": 198,
+        "y": 842
+      },
+      "action": 1524496950,
+      "lines": []
+    },
+    {
+      "kind": "TileLabel",
+      "x": 59,
+      "y": 887,
+      "width": 280,
+      "height": 158,
+      "centre": {
+        "x": 199,
+        "y": 966
+      },
+      "action": 1524496950,
+      "lines": [
+        "How to",
+        "play"
+      ]
+    },
+    {
+      "kind": "TileSubtitle",
+      "x": 59,
+      "y": 1045,
+      "width": 280,
+      "height": 60,
+      "centre": {
+        "x": 199,
+        "y": 1075
+      },
+      "action": 1524496950,
+      "lines": [
+        "Board \u00b7\u2026"
+      ]
+    },
+    {
+      "kind": "Spacer",
+      "x": 375,
+      "y": 729,
+      "width": 304,
+      "height": 379,
+      "centre": {
+        "x": 527,
+        "y": 918
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Tile(ActionId(488968416), Disabled)",
+      "x": 375,
+      "y": 729,
+      "width": 304,
+      "height": 379,
+      "centre": {
+        "x": 527,
+        "y": 918
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "TileOutline(Disabled)",
+      "x": 375,
+      "y": 729,
+      "width": 304,
+      "height": 379,
+      "centre": {
+        "x": 527,
+        "y": 918
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "TileGlyphMuted(Clock)",
+      "x": 494,
+      "y": 810,
+      "width": 65,
+      "height": 65,
+      "centre": {
+        "x": 526,
+        "y": 842
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "TileLabelMuted",
+      "x": 387,
+      "y": 887,
+      "width": 280,
+      "height": 79,
+      "centre": {
+        "x": 527,
+        "y": 926
+      },
+      "action": null,
+      "lines": [
+        "10+0"
+      ]
+    },
+    {
+      "kind": "TileSubtitle",
+      "x": 387,
+      "y": 966,
+      "width": 280,
+      "height": 60,
+      "centre": {
+        "x": 527,
+        "y": 996
+      },
+      "action": null,
+      "lines": [
+        "Rapid"
+      ]
+    },
+    {
+      "kind": "Spacer",
+      "x": 703,
+      "y": 729,
+      "width": 305,
+      "height": 379,
+      "centre": {
+        "x": 855,
+        "y": 918
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Tile(ActionId(572856511), Disabled)",
+      "x": 703,
+      "y": 729,
+      "width": 305,
+      "height": 379,
+      "centre": {
+        "x": 855,
+        "y": 918
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "TileOutline(Disabled)",
+      "x": 703,
+      "y": 729,
+      "width": 305,
+      "height": 379,
+      "centre": {
+        "x": 855,
+        "y": 918
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "TileGlyphMuted(Clock)",
+      "x": 823,
+      "y": 810,
+      "width": 65,
+      "height": 65,
+      "centre": {
+        "x": 855,
+        "y": 842
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "TileLabelMuted",
+      "x": 715,
+      "y": 887,
+      "width": 281,
+      "height": 79,
+      "centre": {
+        "x": 855,
+        "y": 926
+      },
+      "action": null,
+      "lines": [
+        "10+5"
+      ]
+    },
+    {
+      "kind": "TileSubtitle",
+      "x": 715,
+      "y": 966,
+      "width": 281,
+      "height": 60,
+      "centre": {
+        "x": 855,
+        "y": 996
+      },
+      "action": null,
+      "lines": [
+        "Rapid"
+      ]
+    },
+    {
+      "kind": "PagePosition",
+      "x": 47,
+      "y": 1318,
+      "width": 978,
+      "height": 83,
+      "centre": {
+        "x": 536,
+        "y": 1359
+      },
+      "action": null,
+      "lines": [
+        "1 of 2"
+      ]
+    },
+    {
+      "kind": "PageNext(ActionId(1157490980))",
+      "x": 907,
+      "y": 1318,
+      "width": 118,
+      "height": 83,
+      "centre": {
+        "x": 966,
+        "y": 1359
+      },
+      "action": 1157490980,
+      "lines": []
+    }
+  ]
+}

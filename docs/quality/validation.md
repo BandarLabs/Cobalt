@@ -2227,3 +2227,32 @@ Evidence is under `evidence/lichess-recovery/{default,170}`. These are demo
 captures, not live-service or physical-device proof. LICHESS-06 remains open.
 The existing uncommitted tile-label patch was present during host checks and
 is deliberately excluded from this change.
+
+
+## Lichess board and offline journey — 2026-09-12
+
+The board now uses joined alternating squares, equal-sized legal-move hints,
+and a visible selection border. Only the active clock is filled. Player rows
+fit with the board at enlarged text sizes. Leaving an unfinished computer
+game and choosing Computer again preserves its position.
+
+The complete simulator drive passed on Clara BW metrics at normal and 170%
+text size: select e2, play e4, receive a computer reply, leave and resume,
+inspect the menu, cancel resignation, then resign and dismiss the result.
+Both runs have no diagnostic errors. Evidence: `evidence/lichess-computer`.
+The latest combined unit suite passed 107 Lichess and 279 UI tests (two UI
+tests ignored). All nine text sizes exercise board geometry in runner tests.
+
+One authorized live seek reached a real board, with zero moves sent. The
+application subsequently showed Game aborted; the test did not initiate
+that abort. The server then reported no active games. The original harness
+misidentified the overflow control, so this is not proof of UI abort handling.
+Credential-free results are in `evidence/lichess-live/result.json`. Physical
+Clara BW and further recovery acceptance remain open.
+
+The pre-existing tile-title patch is now completed as part of this renderer
+change: the label node records its actual wrapped line count, so short titles
+are not mistakenly painted in a larger font. Its real-title regression now
+passes. This supersedes the earlier note excluding that unfinished patch.
+
+Strict Clippy for all Lichess and UI targets also passes on Rust 1.85.1.

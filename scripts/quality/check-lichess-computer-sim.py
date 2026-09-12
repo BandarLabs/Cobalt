@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Capture the offline Lichess pairing recovery screen at two text sizes.
+"""Drive an offline computer game and its controls at two text sizes.
 
 This checks presentation only; app tests cover request recovery, and live
 matchmaking and hardware acceptance remain separate.
@@ -37,7 +37,6 @@ for scale in ["default", "170"]:
             CARGO_PROFILE_DEV_DEBUG="0",
             CARGO_INCREMENTAL="0",
             CARGO_BUILD_JOBS="2",
-            KOBO_LICHESS_DEMO="reconciling",
             KOBO_SIM_PROFILE="clara-bw-391",
             KOBO_TEXT_SCALE=scale,
             KOBO_SIM_OFFLINE="1",
@@ -67,13 +66,13 @@ for scale in ["default", "170"]:
                             "http://" + address + "/layout", timeout=2
                         ) as response:
                             layout = json.load(response)
-                        if "Checking games" in json.dumps(layout):
+                        if "Computer" in json.dumps(layout):
                             break
                     except OSError:
                         pass
                 time.sleep(0.3)
             else:
-                raise RuntimeError("no pairing screen")
+                raise RuntimeError("no home screen")
             subprocess.run(
                 [
                     str(cli),
@@ -82,7 +81,7 @@ for scale in ["default", "170"]:
                     address,
                     "--ideal",
                     "--script",
-                    str(root / "apps/lichess/drive/reconciling.kobo"),
+                    str(root / "apps/lichess/drive/computer.kobo"),
                     "--shots",
                     str(out),
                 ],
@@ -113,7 +112,7 @@ for scale in ["default", "170"]:
                         scale=scale,
                         profile="clara-bw-391",
                         status="pass",
-                        scope="Offline demo of the checking screen; not live matchmaking or physical hardware validation",
+                        scope="Offline computer game, with no credentials; not live matchmaking or physical hardware validation",
                     ),
                     indent=2,
                 )

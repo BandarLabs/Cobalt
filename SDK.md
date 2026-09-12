@@ -1793,3 +1793,13 @@ until retry. `save` returns false for a busy snapshot, an oversized candidate or
 a retained candidate awaiting retry; do not report it as saved. An app should
 serialize refreshes with active saves. Releasing an idle snapshot from memory
 does not remove its files. Disk retention and cleanup remain the app's policy.
+
+
+### Chess boards
+
+An eight-by-eight square grid containing chess-piece glyphs renders as a joined
+checkerboard. Keep it at the screen root so the shared layout can reserve space
+for player names, clocks and controls below it. Wrapping a board in a fixed-width
+band prevents that height adjustment and can clip controls at large text sizes.
+Selected dark squares retain a visible border. Apps remain responsible for legal
+move hints and for accepting only acknowledged game state.

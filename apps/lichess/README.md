@@ -100,3 +100,25 @@ validate a live account. The owner-reported delay still needs a live-service
 and Clara BW check before LICHESS-06 is closed.
 
 ![Checking for a matched game](screenshots/reconciling.png)
+
+## Offline computer play
+
+Choose **Computer** from the home screen. Tap a piece to see its legal
+destinations, then tap a destination to move. The filled clock identifies
+whose turn it is. Back returns home; choosing Computer again resumes the
+unfinished game. Use the board menu to resign and finish it.
+
+The board uses joined alternating squares and fits alongside both player
+rows, including at 170% text size. Long player names stay on one line.
+
+![Selecting a piece in an offline game](screenshots/computer-selection.png)
+![Offline board at 170% text size](screenshots/computer-large-text.png)
+
+Run the complete offline simulator journey after building the CLI:
+
+```sh
+python3 scripts/quality/check-lichess-computer-sim.py --output /tmp/lichess-computer
+```
+
+This checks move selection, the computer reply, leaving and resuming the
+game, and resignation at normal and 170% text size without credentials.

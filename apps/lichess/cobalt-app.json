@@ -4,7 +4,7 @@
   "short_label": "Lichess",
   "summary": "Play Lichess games, challenge players, solve puzzles, or play offline.",
   "version": "1.0.6",
-  "release_notes": "Checks for a matched game while pairing is still waiting, so a missed start event can recover without seeking again.",
+  "release_notes": "Recovers matched games after a missed start event. Adds a joined chessboard with legal-move hints, highlights the active clock, and resumes offline games after leaving the board.",
   "minimum_cobalt_version": "0.3.5",
   "glyph": "grid",
   "capabilities": [

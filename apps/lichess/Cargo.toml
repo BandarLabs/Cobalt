@@ -9,11 +9,11 @@ publish = false
 [dependencies]
 kobo-json = { path = "../../crates/kobo-json" }
 kobo-sdk = { path = "../../crates/kobo-sdk" }
+kobo-ui = { path = "../../crates/kobo-ui" }
 shakmaty = "=0.27.3"
 
 [dev-dependencies]
 kobo-profile = { path = "../../crates/kobo-profile" }
-kobo-ui = { path = "../../crates/kobo-ui" }
 
 [lints]
 workspace = true

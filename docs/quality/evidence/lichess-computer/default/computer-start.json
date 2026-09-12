@@ -1,0 +1,173 @@
+{
+  "app": "lichess",
+  "fonts": [
+    {
+      "role": "interface",
+      "source": "AtkinsonHyperlegible-Regular.ttf"
+    },
+    {
+      "role": "display-title",
+      "source": "AtkinsonHyperlegible-Bold.ttf"
+    },
+    {
+      "role": "display-heading",
+      "source": "AtkinsonHyperlegible-Bold.ttf"
+    },
+    {
+      "role": "display-bold",
+      "source": "AtkinsonHyperlegible-Bold.ttf"
+    },
+    {
+      "role": "reading",
+      "source": "AtkinsonHyperlegible-Regular.ttf"
+    },
+    {
+      "role": "mono",
+      "source": "DejaVuSansMono.ttf"
+    }
+  ],
+  "frame": {
+    "colourAppearance": "luminance",
+    "format": "grey8",
+    "sha256": "78c5b7d19b8a77544f045a6adf1b14cb4b42f115ecef57e1364f8e3682236b83",
+    "view": "ideal"
+  },
+  "interfaceScalePercent": 100,
+  "mode": "single-app",
+  "orientation": "portrait",
+  "paints": "4",
+  "publisherFontHandle": null,
+  "readingScalePercent": 100,
+  "runtimeVersion": "0.3.14",
+  "schema": "cobalt.simulator-capture",
+  "simulation": {
+    "appStore": {
+      "mode": "catalog-preview",
+      "signedTransactions": false
+    },
+    "backends": [
+      "network",
+      "battery-read",
+      "frontlight-control",
+      "wifi-control",
+      "library",
+      "cover-sensor"
+    ],
+    "clock": {
+      "date": "2026-09-12",
+      "mode": "real",
+      "monotonicMillis": "3400",
+      "unixMillis": "1789207493299",
+      "utcOffsetMinutes": 0
+    },
+    "dirtyPixelsSinceClean": 693888,
+    "hardware": {
+      "batteryPercent": 72,
+      "charging": false,
+      "coverClosed": false,
+      "frontlightAppearanceCalibrated": false,
+      "frontlightPercent": 20,
+      "orientation": "portrait",
+      "orientationControl": "display-composition"
+    },
+    "input": {
+      "forwardKey": 194,
+      "needsResynchronization": false,
+      "quiescent": true,
+      "rawEvents": "7",
+      "source": "synthetic evdev replay"
+    },
+    "lifecycle": "foreground",
+    "navigation": {
+      "app": "lichess",
+      "hosted": [],
+      "mode": "single-app",
+      "processId": null
+    },
+    "observation": null,
+    "panel": {
+      "completed": "5",
+      "contentsKnown": true,
+      "failures": "0",
+      "finishedAtMillis": "1004",
+      "mode": "automatic",
+      "queued": false,
+      "status": "idle",
+      "submissionMarker": null,
+      "submitted": "5",
+      "submittedAtMillis": "978",
+      "timing": "host control observations; not hardware calibration",
+      "visibleFrame": "last confirmed completion with approximate residue"
+    },
+    "panelApproximation": true,
+    "power": null,
+    "profile": {
+      "colourPanel": false,
+      "height": 1448,
+      "id": "clara-bw-391",
+      "model": "Kobo Clara BW",
+      "pixelsPerInch": 300,
+      "rotation": 3,
+      "touch": {
+        "name": "cyttsp5_mt",
+        "xMax": 1447,
+        "xMin": 0,
+        "yMax": 1071,
+        "yMin": 0
+      },
+      "width": 1072
+    },
+    "refreshCount": 5,
+    "scenario": "normal",
+    "touch": {
+      "display": {
+        "x": 870,
+        "y": 384
+      },
+      "raw": {
+        "x": 384,
+        "y": 201
+      }
+    },
+    "transition": {
+      "dirty": 693888,
+      "full": false,
+      "refresh": 5,
+      "region": {
+        "height": 1296,
+        "width": 992,
+        "x": 40,
+        "y": 104
+      },
+      "regions": [
+        {
+          "region": {
+            "height": 16,
+            "width": 48,
+            "x": 952,
+            "y": 104
+          },
+          "waveform": "GL16"
+        },
+        {
+          "region": {
+            "height": 1232,
+            "width": 992,
+            "x": 40,
+            "y": 168
+          },
+          "waveform": "GL16"
+        }
+      ],
+      "waveform": "GL16"
+    }
+  },
+  "source": {
+    "binarySha256": "66add28b777aaea34a83ee91e521b3cfab1916da62bf2e68184d685f2d8483d3",
+    "dirty": true,
+    "fixture": null,
+    "requestedSeed": null,
+    "revision": "cd23dfd6859736253405c65ac13cd70a38ffac61"
+  },
+  "version": 1
+}

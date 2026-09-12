@@ -432,7 +432,7 @@ impl Lichess {
             Route::ChallengePlayer => self.challenge_player_screen(),
             Route::ChallengeSetup => self.challenge_setup_screen(),
             Route::Challenge => self.challenge_screen(),
-            Route::Game => self.game_screen(),
+            Route::Game => self.game_screen(context),
         };
         context.set_screen(screen.with_own_back(self.route != Route::Home));
     }
@@ -940,7 +940,7 @@ impl Lichess {
         clippy::too_many_lines,
         reason = "the board, clocks, result, promotion, confirmation, and pending overlays form one screen"
     )]
-    fn game_screen(&self) -> Screen {
+    fn game_screen(&self, context: &Context) -> Screen {
         let Some(game) = &self.game else {
             return ScreenBuilder::new("lichess-game")
                 .top_bar("Game")
@@ -969,6 +969,17 @@ impl Lichess {
                     white,
                 ),
             };
+        let metrics = context.metrics();
+        let name_width = metrics.prose_area(true, false).width
+            - metrics.tenth_mm(220)
+            - metrics.space(kobo_ui::Space::Small);
+        let player_name = |name: String| {
+            kobo_ui::with_text_scale(metrics.text_scale, || {
+                kobo_ui::clamp_lines(&name, name_width.max(1), kobo_ui::FontSize::Body, 1)
+            })
+        };
+        let you_name = player_name(you_name);
+        let opponent_name = player_name(opponent_name);
         let last = game
             .last_san
             .as_deref()
@@ -1001,20 +1012,24 @@ impl Lichess {
         let turn = if !live {
             "Paused"
         } else if game.my_turn() {
-            "You"
+            "Your move"
         } else {
-            "Opponent"
+            "Opponent's move"
         };
+        let your_active = live && game.active() && game.my_turn();
+        let opponent_active = live && game.active() && !game.my_turn();
         let game_kind = if game.rated { "Rated" } else { "Casual" };
         let check = if game.check { " · Check" } else { "" };
         let opponent_slots: Vec<BuilderSlot> = vec![
             (
                 SlotWidth::Fill,
-                Box::new(move |slot| slot.heading(opponent_name).secondary(opponent_color)),
+                Box::new(move |slot| slot.text(opponent_name).secondary(opponent_color)),
             ),
             (
                 SlotWidth::Fixed(220),
-                Box::new(move |slot| slot.chips([("opponent-clock", opponent_clock, true)])),
+                Box::new(move |slot| {
+                    slot.chips([("opponent-clock", opponent_clock, opponent_active)])
+                }),
             ),
         ];
         let mut screen = ScreenBuilder::new("lichess-game")
@@ -1053,24 +1068,21 @@ impl Lichess {
                 .as_deref()
                 .filter(|_| self.total_ticks < self.invalid_until_tick),
         );
-        screen = screen.band(
-            BandAlign::Top,
-            [(SlotWidth::Fixed(820), move |slot: ScreenBuilder| {
-                slot.board_with_selection(8, board)
-            })],
-        );
+        // The shared root grid reserves room for both player bars. A fixed
+        // width inside a band bypasses that fit and clips controls at 170%.
+        screen = screen.board_with_selection(8, board);
         let you_slots: Vec<BuilderSlot> = vec![
             (
                 SlotWidth::Fill,
                 Box::new(move |slot| {
-                    slot.heading(you_name).secondary(format!(
+                    slot.text(you_name).secondary(format!(
                         "{you_color} · {turn} · {game_kind} · {move_status}{check}"
                     ))
                 }),
             ),
             (
                 SlotWidth::Fixed(220),
-                Box::new(move |slot| slot.chips([("your-clock", you_clock, true)])),
+                Box::new(move |slot| slot.chips([("your-clock", you_clock, your_active)])),
             ),
         ];
         screen = screen.band(BandAlign::Top, you_slots);
@@ -4017,6 +4029,7 @@ impl KoboApp for Lichess {
                 self.selected = None;
                 self.route = match self.route {
                     Route::Solve | Route::PuzzleResult => Route::Puzzles,
+                    Route::Game if self.local_game => Route::Home,
                     Route::Game
                     | Route::Pairing
                     | Route::ChallengePlayer
@@ -4062,7 +4075,12 @@ impl KoboApp for Lichess {
             self.route = Route::Play;
             self.validate_account(context);
         } else if action == action_id("play-computer") {
-            self.start_computer_game(context);
+            if self.local_game && self.game.as_ref().is_some_and(Game::active) {
+                self.route = Route::Game;
+                self.reset_clock(context, true);
+            } else {
+                self.start_computer_game(context);
+            }
         } else if action == action_id("home-next") || action == action_id("home-previous") {
             let pages = self.home_pages(context).len();
             self.home_page = if action == action_id("home-next") {
@@ -4358,6 +4376,9 @@ fn board_cells(
         Color::White => (b'a'..=b'h').collect(),
         Color::Black => (b'a'..=b'h').rev().collect(),
     };
+    let destinations = selected_square
+        .map(|from| chess::destinations(fen, from))
+        .unwrap_or_default();
     let mut cells = Vec::with_capacity(64);
     for rank in ranks {
         for file in &files {
@@ -4365,6 +4386,8 @@ fn board_cells(
             let piece = chess::piece_at(fen, &square);
             let (label, glyph) = if invalid_square == Some(square.as_str()) {
                 ("×".to_owned(), None)
+            } else if piece.is_none() && destinations.contains(&square) {
+                ("·".to_owned(), None)
             } else {
                 (" ".to_owned(), piece.and_then(piece_glyph))
             };
@@ -4372,7 +4395,8 @@ fn board_cells(
                 format!("square-{square}"),
                 label,
                 glyph,
-                selected_square == Some(square.as_str()),
+                selected_square == Some(square.as_str())
+                    || (piece.is_some() && destinations.contains(&square)),
             ));
         }
     }
@@ -4762,7 +4786,7 @@ mod tests {
     #[test]
     fn black_orientation_and_live_controls_fit_clara_bw() {
         let app = app_with_game(&["e2e4", "c7c5", "g1f3"], Color::Black);
-        let screen = app.game_screen();
+        let screen = app.game_screen(&Context::default());
         let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::default());
         for square in ["a1", "e4", "h8"] {
             assert!(layout
@@ -5187,6 +5211,77 @@ mod tests {
     }
 
     #[test]
+    fn chess_board_is_joined_and_keeps_controls_visible_at_every_text_size() {
+        for text_scale in TextScale::STEPS {
+            let metrics = DisplayMetrics {
+                text_scale,
+                ..CLARA_BW_METRICS
+            };
+            let mut runner = AppRunner::with_metrics(ready_app(), metrics);
+            let screen = painted(runner.action(action_id("play-computer"))).expect("board screen");
+            let diagnostics = screen.diagnostics(&metrics, &Chrome::default());
+            assert!(
+                !diagnostics.has_errors(),
+                "{text_scale:?}: {:?}",
+                diagnostics.issues
+            );
+            let cells: Vec<_> = diagnostics
+                .layout
+                .nodes
+                .iter()
+                .filter(|node| matches!(node.kind, LayoutKind::Cell(..)))
+                .collect();
+            assert_eq!(cells.len(), 64);
+            assert_eq!(
+                cells
+                    .iter()
+                    .filter(|node| matches!(
+                        node.kind,
+                        LayoutKind::Cell(_, kobo_ui::CellStyle::BoardDark, _)
+                    ))
+                    .count(),
+                32
+            );
+            assert_eq!(cells[0].rect.x + cells[0].rect.width, cells[1].rect.x);
+            assert_eq!(cells[0].rect.y + cells[0].rect.height, cells[8].rect.y);
+            let moves = board_cells(super::chess::START, Color::White, Some("e2"), None);
+            assert_eq!(moves.iter().filter(|cell| cell.1 == "·").count(), 2);
+        }
+    }
+
+    #[test]
+    fn leaving_and_reopening_a_computer_game_preserves_the_position() {
+        let mut runner = AppRunner::new(ready_app());
+        runner.action(action_id("play-computer"));
+        runner.action(action_id("square-e2"));
+        runner.action(action_id("square-e4"));
+        let moves = runner
+            .app()
+            .game
+            .as_ref()
+            .expect("computer game")
+            .state
+            .moves
+            .clone();
+        assert_eq!(moves.len(), 2);
+        runner.action(ActionId::BACK);
+        assert_eq!(runner.app().route, Route::Home);
+        let commands = runner.action(action_id("play-computer"));
+        assert_eq!(runner.app().route, Route::Game);
+        assert_eq!(
+            runner.app().game.as_ref().expect("same game").state.moves,
+            moves
+        );
+        assert!(!commands.iter().any(|command| matches!(
+            command,
+            Command::Spawn {
+                work: kobo_sdk::Task::Fetch { .. } | kobo_sdk::Task::Post { .. },
+                ..
+            }
+        )));
+    }
+
+    #[test]
     fn computer_game_uses_you_without_a_lichess_account() {
         let mut app = Lichess {
             account: AccountState::Missing,
@@ -5368,11 +5463,11 @@ mod tests {
         let mut context = Context::default();
         app.start_computer_game(&mut context);
         app.on_action(&mut context, action_id("offer-draw"));
-        assert!(app.game_screen().overlay.is_some());
+        assert!(app.game_screen(&Context::default()).overlay.is_some());
         app.on_action(&mut context, action_id("dismiss-result"));
         assert_eq!(app.route, Route::Game);
         assert!(app.game.is_some());
-        assert!(app.game_screen().overlay.is_none());
+        assert!(app.game_screen(&Context::default()).overlay.is_none());
     }
 
     #[test]
@@ -5390,7 +5485,7 @@ mod tests {
     }
 
     #[test]
-    fn game_clocks_use_selected_dark_chips() {
+    fn the_active_game_clock_is_the_dark_chip() {
         fn selected(nodes: &[Node], action: ActionId) -> bool {
             nodes.iter().any(|node| match node {
                 Node::Chips { chips, .. } => chips
@@ -5402,9 +5497,12 @@ mod tests {
         }
 
         let app = app_with_game(&["e2e4"], Color::Black);
-        let screen = app.game_screen();
-        assert!(selected(&screen.nodes, action_id("opponent-clock")));
+        let screen = app.game_screen(&Context::default());
+        assert!(!selected(&screen.nodes, action_id("opponent-clock")));
         assert!(selected(&screen.nodes, action_id("your-clock")));
+        let other_side = app_with_game(&["e2e4"], Color::White).game_screen(&Context::default());
+        assert!(selected(&other_side.nodes, action_id("opponent-clock")));
+        assert!(!selected(&other_side.nodes, action_id("your-clock")));
     }
 
     #[test]
@@ -5415,14 +5513,14 @@ mod tests {
         };
         let app = app_with_game(&["e2e4"], Color::Black);
         let layout = app
-            .game_screen()
+            .game_screen(&Context::default())
             .layout_with(&metrics, &Chrome::with_back(true));
         for action in [action_id("opponent-clock"), action_id("your-clock")] {
             let clock = layout
                 .nodes
                 .iter()
-                .find(|node| node.kind == LayoutKind::Chip(action, true))
-                .expect("dark clock");
+                .find(|node| matches!(node.kind, LayoutKind::Chip(id, _) if id == action))
+                .expect("clock");
             assert!(
                 clock.rect.y + clock.rect.height <= metrics.height,
                 "clock was clipped below the physical app viewport"
@@ -7076,7 +7174,7 @@ mod tests {
             )
         }));
         app.menu_open = true;
-        let screen = format!("{:?}", app.game_screen());
+        let screen = format!("{:?}", app.game_screen(&Context::default()));
         assert!(screen.contains("Reconnect"));
         assert!(!screen.contains("Offer draw"));
         app.set_board_rate_limit(&mut context, "other123", 31);
@@ -7323,7 +7421,7 @@ mod tests {
     fn post_opening_actions_hide_abort_and_keep_resign_and_draw_controls() {
         let mut app = app_with_game(&["e2e4", "e7e5"], Color::White);
         app.menu_open = true;
-        let rendered = format!("{:?}", app.game_screen());
+        let rendered = format!("{:?}", app.game_screen(&Context::default()));
         assert!(!rendered.contains("Abort"));
         assert!(rendered.contains("Resign"));
         assert!(rendered.contains("Offer draw"));
@@ -7334,7 +7432,7 @@ mod tests {
         let mut accepting = app_with_game(&["e2e4", "e7e5"], Color::White);
         accepting.game.as_mut().expect("game").state.black_draw = true;
         accepting.menu_open = true;
-        let offered = format!("{:?}", accepting.game_screen());
+        let offered = format!("{:?}", accepting.game_screen(&Context::default()));
         assert!(offered.contains("Accept draw"));
         assert!(offered.contains("Decline draw"));
         let mut accept_context = Context::default();
@@ -7356,7 +7454,7 @@ mod tests {
                 .draw_offer_from_opponent(),
             "a successful POST must not invent local draw acceptance"
         );
-        assert!(format!("{:?}", accepting.game_screen())
+        assert!(format!("{:?}", accepting.game_screen(&Context::default()))
             .contains("Lichess accepted the request; waiting for the stream"));
         let accepted = api::parse_board(
             br#"{"type":"gameState","moves":"e2e4 e7e5","wtime":599000,"btime":598000,"winc":0,"binc":0,"status":"draw"}"#,
@@ -7364,7 +7462,7 @@ mod tests {
         )
         .expect("accepted draw");
         accepting.handle_board(&mut accept_context, "abcdEF12", accepted);
-        assert!(format!("{:?}", accepting.game_screen()).contains("Draw agreed"));
+        assert!(format!("{:?}", accepting.game_screen(&Context::default())).contains("Draw agreed"));
 
         let mut declining = app_with_game(&["e2e4", "e7e5"], Color::White);
         declining.game.as_mut().expect("game").state.black_draw = true;
@@ -7394,7 +7492,7 @@ mod tests {
         .expect("declined draw");
         declining.handle_board(&mut decline_context, "abcdEF12", declined);
         declining.menu_open = true;
-        let cleared = format!("{:?}", declining.game_screen());
+        let cleared = format!("{:?}", declining.game_screen(&Context::default()));
         assert!(cleared.contains("Offer draw"));
         assert!(!cleared.contains("Accept draw"));
         assert!(!cleared.contains("Decline draw"));
@@ -7602,7 +7700,9 @@ mod tests {
             assert!(!game.active());
             assert_eq!(app.selected, None);
             assert!(!app.result_dismissed);
-            assert!(format!("{:?}", app.game_screen()).contains("Black won by time"));
+            assert!(
+                format!("{:?}", app.game_screen(&Context::default())).contains("Black won by time")
+            );
         }
     }
 }
