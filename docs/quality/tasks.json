@@ -1706,8 +1706,10 @@
     "pr": 3,
     "group": "Gutenbird",
     "task": "Improve cover fallbacks",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Gutenbird 1.0.17 supplies a title-and-author cover after exhausted fetch retries and for tiny artwork, extending the existing missing/invalid-image fallback. Navigation hydration can use a cover shared by same-title editions without selecting an edition; different covers or titles are not conflated. All 95 app tests and strict Clippy pass. Tests verify fallback picture commands, tiny-image replacement pixels, shared-cover hydration and rejection of differing covers. The actual app screen and emitted fallback pixels were rendered and inspected in docs/quality/evidence/gutenbird-covers/failed-cover.png."
+    ]
   },
   {
     "id": "GUTEN-04",

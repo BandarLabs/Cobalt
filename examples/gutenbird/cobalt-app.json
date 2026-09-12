@@ -3,7 +3,7 @@
   "display_name": "Gutenbird",
   "short_label": "Gutenbird",
   "summary": "Browse OPDS libraries and read their books on your Kobo.",
-  "version": "1.0.16",
+  "version": "1.0.17",
   "glyph": "book",
   "capabilities": [
     "network",

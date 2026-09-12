@@ -124,3 +124,14 @@ publisher or edition date that distinguishes them. Missing metadata is stated
 rather than guessed. Ordinary titles keep their author/source caption.
 
 ![Language choices in an original shelf fixture](../../docs/quality/evidence/gutenbird-editions/language-choices.png)
+
+
+## Missing cover artwork
+
+The shelf uses a title-and-author cover when artwork is missing, too small,
+invalid, or still unavailable after the bounded retry limit. Catalog tiles can
+use a shared cover from a multi-edition entry without choosing an edition for
+the reader; differing covers keep the neutral book icon until an edition is
+opened.
+
+![Lettered cover after a failed download, rendered from an original fixture](../../docs/quality/evidence/gutenbird-covers/failed-cover.png)

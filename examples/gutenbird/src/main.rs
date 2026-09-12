@@ -1995,20 +1995,28 @@ impl Gutenbird {
         Some(self.filling.remove(at).1)
     }
 
-    /// Takes a followed row, and moves it to the shelf if it was a book.
-    ///
-    /// A row that turns out to be another feed is left exactly where it was:
-    /// "Authors" and "Subjects" sit among the books in a Gutenberg search
-    /// answer, and there is nothing in the address to tell them apart, which
-    /// is why this looks rather than guesses.
+    /// A shared cover identifies the navigation tile without choosing one of
+    /// its editions. Lists and entries with conflicting artwork keep a glyph.
+    fn entry_cover(feed: &Feed) -> Option<ImageSource> {
+        if !feed.navigation.is_empty() {
+            return None;
+        }
+        let first = feed.publications.first()?;
+        let cover = first.cover()?;
+        feed.publications
+            .iter()
+            .all(|book| {
+                book.title == first.title
+                    && book.cover().is_some_and(|image| image.href == cover.href)
+            })
+            .then(|| cover.href.clone())
+    }
+
     fn took_hydration(&mut self, context: &mut Context, bytes: &[u8], href: &str) {
         let cover = kobo_opds::parse(bytes, href)
             .ok()
             .as_ref()
-            .and_then(Self::resolve_entry)
-            .as_ref()
-            .and_then(Publication::cover)
-            .map(|image| image.href.clone());
+            .and_then(Self::entry_cover);
         if let Some(kobo_opds::ImageSource::Url(url)) = cover {
             self.ask_nav_cover(context, href.to_owned(), url);
         } else {
@@ -2224,6 +2232,7 @@ impl Gutenbird {
             return false;
         };
         if picture.width() < MIN_COVER_PX || picture.height() < MIN_COVER_PX {
+            self.set_a_cover(context, index, cell_width, cell_height);
             return false;
         }
         let Ok(mut picture) = picture.fit_enlarging(cell_width, cell_height) else {
@@ -3695,7 +3704,13 @@ impl KoboApp for Gutenbird {
         if let Some((index, tries)) = self.finish_cover(task) {
             match outcome {
                 TaskOutcome::Completed(bytes) => self.keep_cover(context, index, &bytes),
-                TaskOutcome::Failed(_) => self.retry_cover(index, tries),
+                TaskOutcome::Failed(_) if tries + 1 < COVER_TRIES => self.retry_cover(index, tries),
+                TaskOutcome::Failed(_) => {
+                    let (width, height) = context.metrics().tile_body(TileShape::Portrait);
+                    if let (Ok(width), Ok(height)) = (u32::try_from(width), u32::try_from(height)) {
+                        self.set_a_cover(context, index, width, height);
+                    }
+                }
                 TaskOutcome::Cancelled => {}
             }
             self.next_cover(context);
@@ -4813,6 +4828,105 @@ Please read this before you distribute or use this work.\n";
     }
 
     #[test]
+    fn failed_cover_downloads_leave_a_lettered_cover() {
+        let mut book = publication("Selected Poems", vec![]);
+        book.authors = vec!["A. Writer".into()];
+        book.images = vec![cover_url("https://x/cover.png")];
+        let mut app = app_with_stack(Feed {
+            publications: vec![book],
+            ..Feed::default()
+        });
+        app.covers = vec![(TaskId(17), 0, COVER_TRIES - 1)];
+        let mut runner = AppRunner::new(app);
+        let commands = runner.task_outcome(TaskId(17), TaskOutcome::Failed(TaskError::Unreachable));
+        assert!(runner.app().stack[0].covers[0].is_some());
+        assert!(runner.app().wanted.is_empty());
+        assert!(commands
+            .iter()
+            .any(|command| matches!(command, Command::PutPicture { .. })));
+        if let Ok(directory) = std::env::var("KOBO_QUALITY_CAPTURE_DIR") {
+            struct CapturedPictures<'a>(&'a [Command]);
+            impl kobo_ui::Pictures for CapturedPictures<'_> {
+                fn get(&self, wanted: PictureHandle) -> Option<kobo_ui::PicturePixels<'_>> {
+                    self.0.iter().find_map(|command| match command {
+                        Command::PutPicture {
+                            handle,
+                            width,
+                            height,
+                            pixels,
+                            ..
+                        } if *handle == wanted => Some(kobo_ui::PicturePixels {
+                            width: *width,
+                            height: *height,
+                            grey: pixels,
+                            colour: None,
+                        }),
+                        _ => None,
+                    })
+                }
+            }
+            kobo_text::install(CLARA_BW_METRICS).unwrap();
+            let context = Context::default();
+            let metrics = context.metrics();
+            let screen = runner.app().shelf_screen(&context);
+            assert!(!screen
+                .diagnostics(&metrics, &Chrome::with_back(true))
+                .issues
+                .iter()
+                .any(|issue| issue.severity == DiagnosticSeverity::Error));
+            let mut surface = kobo_ui::Surface::new(
+                usize::try_from(metrics.width).unwrap(),
+                usize::try_from(metrics.height).unwrap(),
+            );
+            kobo_ui::render_all(
+                &screen,
+                &metrics,
+                &Chrome::with_back(true),
+                &CapturedPictures(&commands),
+                &mut surface,
+                None,
+            );
+            let png = kobo_image::encode_png_grey(
+                u32::try_from(metrics.width).unwrap(),
+                u32::try_from(metrics.height).unwrap(),
+                &surface.pixels,
+            )
+            .unwrap();
+            std::fs::create_dir_all(&directory).unwrap();
+            std::fs::write(
+                std::path::Path::new(&directory).join("failed-cover.png"),
+                png,
+            )
+            .unwrap();
+        }
+    }
+
+    #[test]
+    fn multiple_editions_can_share_a_navigation_cover_without_selecting_an_edition() {
+        let bytes =
+            include_bytes!("../../../crates/kobo-opds/tests/fixtures/gutenberg/entry-564.xml");
+        let mut feed =
+            kobo_opds::parse(bytes, "https://www.gutenberg.org/ebooks/564.opds").unwrap();
+        assert!(Gutenbird::resolve_entry(&feed).is_none());
+        assert!(Gutenbird::entry_cover(&feed).is_some());
+        let mut app = Gutenbird::default();
+        app.took_hydration(
+            &mut Context::default(),
+            bytes,
+            "https://www.gutenberg.org/ebooks/564.opds",
+        );
+        assert!(app
+            .filling
+            .iter()
+            .any(|(_, stage)| matches!(stage, FillStage::Picture { .. })));
+        feed.publications[1].images = vec![cover_url("https://x/different.png")];
+        assert!(Gutenbird::entry_cover(&feed).is_none());
+        feed.publications[1].images = feed.publications[0].images.clone();
+        feed.publications[1].title = "Another book".into();
+        assert!(Gutenbird::entry_cover(&feed).is_none());
+    }
+
+    #[test]
     fn a_cover_that_did_not_arrive_is_asked_for_again_but_not_forever() {
         let mut app = Gutenbird::default();
         app.retry_cover(4, 0);
@@ -4862,9 +4976,12 @@ Please read this before you distribute or use this work.\n";
         let mut context = Context::default();
         app.want_covers(&mut context);
         assert!(
-            app.stack[0].covers[0].is_none(),
-            "a 1x1 icon was enlarged into a cover"
+            app.stack[0].covers[0].is_some(),
+            "a tiny icon should leave a lettered fallback"
         );
+        assert!(context.commands().iter().any(|command| matches!(command,
+            Command::PutPicture { width, height, pixels, .. }
+                if *pixels == kobo_sdk::typographic_cover("Tiny Icon", Some("Some Author"), *width, *height))));
     }
 
     #[test]

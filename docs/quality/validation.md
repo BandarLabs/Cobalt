@@ -2454,3 +2454,22 @@ fixture evidence, not a physical-reader or live download acceptance run. The
 remaining full download/offline-reopen task is GUTEN-06.
 
 **496 tasks: 245 completed, 250 open, one deferred.**
+
+
+### Gutenbird cover fallbacks (GUTEN-03 complete)
+
+Gutenbird 1.0.17 letters a shelf cover after the final failed download attempt
+and when the supplied artwork is too small to be a useful cover. Existing
+missing/corrupt-artwork fallbacks remain in place. Multi-edition navigation
+entries can display a shared cover without collapsing the editions; entries
+with different covers, different titles or navigation links retain their glyph.
+
+All 95 app tests and strict Clippy pass. Regression tests check the terminal
+retry outcome, emitted fallback pixels for a tiny-image fixture and cover
+hydration from the saved Gutenberg multi-edition entry. The fallback capture
+uses the actual app screen and the pixels emitted by its picture command, with
+runtime fonts, at Clara BW default metrics. It is local fixture evidence.
+
+![Failed cover fallback](evidence/gutenbird-covers/failed-cover.png)
+
+**496 tasks: 246 completed, 249 open, one deferred.**
