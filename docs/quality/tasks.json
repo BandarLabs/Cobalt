@@ -1680,48 +1680,68 @@
     "pr": 3,
     "group": "Gutenbird",
     "task": "Remove catalog boilerplate from summaries",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Gutenbird extracts a labeled Summary only from a recognized Title/EBook No. metadata record. Ordinary descriptions and provenance text remain untouched; edition notices remain in a separate section.",
+      "All 87 app tests passed. Saved Gutenberg entry-564 fixture verifies extraction, provenance, edition warning and ordinary-prose preservation. Detail pagination has no layout errors; runtime-font captures inspected in docs/quality/evidence/gutenbird-summary. Strict Clippy passed."
+    ]
   },
   {
     "id": "GUTEN-02",
     "pr": 3,
     "group": "Gutenbird",
     "task": "Clarify edition and language choices",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Detail header now shows the selected download format and readable language name, preserving region/script tags and unknown codes. Selection uses Publication::best_acquisition, matching the downloader.",
+      "88 app tests and strict Clippy pass; runtime-font detail captures refreshed and inspected. Explicit edition/language selection remains to be completed, so this task stays open.",
+      "Entry resolution no longer collapses same-title publications with different authors, languages, publishers or issued dates. Unknown and known language are kept distinct. All 89 app tests and strict Clippy pass, including existing illustrated/plain edition behavior.",
+      "Same-title shelf captions now lead with differing language, publisher or issued date, including explicit missing metadata. Ordinary author/source captions remain unchanged. All 90 tests and strict Clippy pass; runtime-font two-language fixture captured and inspected in docs/quality/evidence/gutenbird-editions/language-choices.png.",
+      "Added an explicit paged download picker for readable, available EPUB/plain-text links within an entry. URL-specific saved positions and offline copies are retained when switching; sample labels, stated sizes and link titles are shown. All 92 app tests and strict Clippy pass, including correct fetch URL, offline reuse, busy-state protection, filtering and pagination. Runtime-font fixture screenshot inspected in docs/quality/evidence/gutenbird-formats/download-choices.png. Illustrated/plain entry resolution still needs an explicit choice; task remains open.",
+      "Completed edition selection: only single-publication documents open directly; multiple editions remain selectable on the shelf. Catalog image notices supply No images/With images labels; other choices use stated download titles or edition numbers. Saved Gutenberg entry fixture verifies both choices and their requested URLs. Oversized selected downloads are rejected before spawning a fetch. All 93 app tests and strict Clippy pass; runtime-font edition-choices.png inspected. Together with the language shelf and format-picker evidence above, this completes GUTEN-02."
+    ]
   },
   {
     "id": "GUTEN-03",
     "pr": 3,
     "group": "Gutenbird",
     "task": "Improve cover fallbacks",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Gutenbird 1.0.17 supplies a title-and-author cover after exhausted fetch retries and for tiny artwork, extending the existing missing/invalid-image fallback. Navigation hydration can use a cover shared by same-title editions without selecting an edition; different covers or titles are not conflated. All 95 app tests and strict Clippy pass. Tests verify fallback picture commands, tiny-image replacement pixels, shared-cover hydration and rejection of differing covers. The actual app screen and emitted fallback pixels were rendered and inspected in docs/quality/evidence/gutenbird-covers/failed-cover.png."
+    ]
   },
   {
     "id": "GUTEN-04",
     "pr": 3,
     "group": "Gutenbird",
     "task": "Persist shelf reading progress",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Gutenbird 1.0.18 accepts saved reading-position responses only for the currently selected download key. Saving also refreshes the in-memory position used when reopening in the same session. The existing restoration test now checks rejection of a delayed response from another download and equality of stored/current saved memory. All 95 tests and strict Clippy pass. Full restart/offline-reopen validation remains open.",
+      "Completed with the actual simulator and an original EPUB served through private local HTTPS. Downloaded and turned two pages, verified saved position, stopped the entire process and restarted with networking denied. Reopened rich text exactly matches the pre-shutdown page and differs from page one; fixture request count does not increase offline. Default and 170% runs pass. Catalog fallback saves bounded valid responses and handles cache-before-failure/cache-after-failure ordering; late cache cannot replace fresh data. All 97 app tests and strict Clippy pass. See scripts/quality/check-gutenbird-offline-sim.py and docs/quality/evidence/gutenbird-offline. Physical-reader acceptance remains a separate gate."
+    ]
   },
   {
     "id": "GUTEN-05",
     "pr": 3,
     "group": "Gutenbird",
     "task": "Reuse shared provider setup",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Added ProviderSetup::public to the SDK as the required public-catalog setup mode. It retains the exact HTTPS endpoint path/trailing slash/query, hides account entry, sends no credential and keeps response validation/cancellation shared. All 165 SDK tests and strict Clippy pass. SDK.md documents the API. Gutenbird integration, OPDS validation before saving and simulator setup screenshots remain open.",
+      "Completed in Gutenbird 1.0.20: Add catalog delegates to ProviderSetup::public, parses OPDS before acknowledging verification or saving, and uses the checked response directly. A cancelled setup cannot save a late response; invalid HTML cannot modify the catalog registry. The actual simulator setup/download/offline-reopen journey passes at default and 170% text, verifies no early save and exactly one custom-catalog request, and has inspected setup screenshots in docs/quality/evidence/gutenbird-setup. All 98 app tests and strict Clippy pass."
+    ]
   },
   {
     "id": "GUTEN-06",
     "pr": 3,
     "group": "Gutenbird",
     "task": "Verify fixture download, reading and offline reopen",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Completed with the actual simulator and an original EPUB served through private local HTTPS. Downloaded and turned two pages, verified saved position, stopped the entire process and restarted with networking denied. Reopened rich text exactly matches the pre-shutdown page and differs from page one; fixture request count does not increase offline. Default and 170% runs pass. Catalog fallback saves bounded valid responses and handles cache-before-failure/cache-after-failure ordering; late cache cannot replace fresh data. All 97 app tests and strict Clippy pass. See scripts/quality/check-gutenbird-offline-sim.py and docs/quality/evidence/gutenbird-offline. Physical-reader acceptance remains a separate gate."
+    ]
   },
   {
     "id": "HABIT-01",
@@ -2748,7 +2768,10 @@
     "group": "Read Later (APP-5/6)",
     "task": "Persist fetched full article bodies",
     "status": "todo",
-    "evidence": []
+    "evidence": [
+      "Read Later 0.1.3 preserves fetched full bodies across same-server/credential metadata refreshes. Malformed, invalid-UTF-8, missing-list, invalid-entry and duplicate-ID responses are distinct from a valid empty list and cannot wipe current articles. Request origins reject replies after server/credential changes; body reuse is scoped to the same origin. Nine app/parser tests and strict Clippy pass. Durable disk storage remains open.",
+      "Read Later 0.1.4 writes full extracted article bodies through the shared acknowledged two-slot Snapshot, scoped to server and credential name and bounded to 8 MiB. Its versioned codec preserves literal markup, Unicode and paragraphs. Unit coverage verifies publication only after content/pointer acknowledgements, restore in a fresh app instance, previous-copy retention after a full-disk failure, and merging a late snapshot with fresh metadata. All 12 tests and strict Clippy pass. Complete simulator restart/recovery validation remains open."
+    ]
   },
   {
     "id": "LATER-02",
@@ -2764,7 +2787,10 @@
     "group": "Read Later (APP-5/6)",
     "task": "Wire all visible tabs and action controls",
     "status": "todo",
-    "evidence": []
+    "evidence": [
+      "Restored the visible queue Sync action by setting the title before its action. The actual queue render in docs/quality/evidence/readlater-refresh/refresh-failed.png was inspected. Other tabs and article controls remain open.",
+      "Added Settings to the configured reading-list header alongside Sync, making the article-depth controls reachable. Other tab and article actions remain open."
+    ]
   },
   {
     "id": "LATER-04",
@@ -2780,7 +2806,10 @@
     "group": "Read Later (APP-5/6)",
     "task": "Show pending/retry/offline state",
     "status": "todo",
-    "evidence": []
+    "evidence": [
+      "Unreadable list responses now retain the current queue and explain that articles are unchanged, with a visible Sync control for retry. Local runtime-font fixture screenshot inspected; nine tests and strict Clippy pass. Full outbox/retry/offline state remains open.",
+      "Save failures retain the prior snapshot and expose Retry saving; changing server configuration waits for outstanding/failed snapshot writes to finish. Inspected the actual queue render with runtime fonts in docs/quality/evidence/readlater-cache/save-failed.png. Full recovery and action-outbox state remain open."
+    ]
   },
   {
     "id": "LATER-06",
@@ -3254,48 +3283,65 @@
     "pr": 3,
     "group": "Verses (APP-8)",
     "task": "Use real injectable calendar date and advance across midnight",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "apps/verses/src/main.rs"
+    ]
   },
   {
     "id": "VERSE-02",
     "pr": 3,
     "group": "Verses (APP-8)",
     "task": "Provide complete permitted poems or label excerpts explicitly",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "apps/verses/src/main.rs",
+      "docs/quality/evidence/verses/"
+    ]
   },
   {
     "id": "VERSE-03",
     "pr": 3,
     "group": "Verses (APP-8)",
     "task": "Paginate long poems",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "apps/verses/src/main.rs",
+      "docs/quality/evidence/verses/"
+    ]
   },
   {
     "id": "VERSE-04",
     "pr": 3,
     "group": "Verses (APP-8)",
     "task": "Show author and source context",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "apps/verses/src/main.rs",
+      "docs/quality/evidence/verses/"
+    ]
   },
   {
     "id": "VERSE-05",
     "pr": 3,
     "group": "Verses (APP-8)",
     "task": "Make favorites usable",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "apps/verses/src/main.rs",
+      "docs/quality/evidence/verses/"
+    ]
   },
   {
     "id": "VERSE-06",
     "pr": 3,
     "group": "Verses (APP-8)",
     "task": "Export attributed quote cards",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "apps/verses/src/main.rs",
+      "docs/quality/evidence/verses/quote-card.png"
+    ]
   },
   {
     "id": "APPQA-01",
@@ -3747,7 +3793,7 @@
     "task": "Unify 15-pad configuration and UI limits",
     "status": "done",
     "evidence": [
-      "Helper validation now accepts 1–15 pads per page, matching the CLI and reader. CLI import validation rejects oversized hand-edited pages instead of accepting invisible extra pads.",
+      "Helper validation now accepts 1\u201315 pads per page, matching the CLI and reader. CLI import validation rejects oversized hand-edited pages instead of accepting invisible extra pads.",
       "Eight CLI Deck tests and all 53 helper tests passed, including explicit 15/16-pad boundaries. Strict all-target CLI/helper Clippy passed.",
       "docs/quality/evidence/deck-fifteen-pads/result.json and preview.png: actual CLI assigns all 15 pads; 170% simulator screenshot visibly includes Pad 15 and passes layout diagnostics."
     ]
@@ -4167,8 +4213,11 @@
     "pr": 4,
     "group": "Paperterm companion",
     "task": "Guide pairing through named reader choice",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "crates/kobo-cli/src/main.rs",
+      "docs/quality/evidence/paperterm-companion/"
+    ]
   },
   {
     "id": "STREAMCLI-02",
@@ -4215,8 +4264,11 @@
     "pr": 4,
     "group": "Sidekick companion",
     "task": "Unify helper install/start/status/stop in companion",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "crates/kobo-cli/src/sidekick.rs",
+      "docs/quality/evidence/sidekick-companion/"
+    ]
   },
   {
     "id": "SIDECLI-02",
@@ -4246,8 +4298,11 @@
     "pr": 4,
     "group": "Sidekick companion",
     "task": "Verify a harmless sample event on the reader",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "crates/kobo-cli/src/sidekick.rs",
+      "docs/quality/evidence/sidekick-companion/"
+    ]
   },
   {
     "id": "SIDECLI-05",

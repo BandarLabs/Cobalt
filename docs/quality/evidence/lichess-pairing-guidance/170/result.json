@@ -1,0 +1,13 @@
+{
+  "build": {
+    "source_revision": "ec1706624948df856d9281d059368756078b1129",
+    "tracked_changes": true,
+    "cli_sha256": "dbd169fbb7da73fc3e87ee5c26e0204fc5ce9db34ce97939b1c259860d71cd16",
+    "toolchain": "1.85.1"
+  },
+  "scenario": "pairing-error",
+  "scale": "170",
+  "profile": "clara-bw-391",
+  "status": "pass",
+  "scope": "Offline demo of pairing recovery guidance; not live matchmaking or physical hardware validation"
+}

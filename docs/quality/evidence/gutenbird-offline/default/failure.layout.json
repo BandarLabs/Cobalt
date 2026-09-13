@@ -1,0 +1,214 @@
+{
+  "paints": 2,
+  "nodes": [
+    {
+      "kind": "StatusBand",
+      "x": 0,
+      "y": 0,
+      "width": 1072,
+      "height": 59,
+      "centre": {
+        "x": 536,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusClock",
+      "x": 47,
+      "y": 0,
+      "width": 78,
+      "height": 59,
+      "centre": {
+        "x": 86,
+        "y": 29
+      },
+      "action": null,
+      "lines": [
+        "14:06"
+      ]
+    },
+    {
+      "kind": "StatusBattery(Some(Percent(72)), false)",
+      "x": 955,
+      "y": 12,
+      "width": 70,
+      "height": 35,
+      "centre": {
+        "x": 990,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusSignal(Strong)",
+      "x": 896,
+      "y": 12,
+      "width": 35,
+      "height": 35,
+      "centre": {
+        "x": 913,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusBluetooth",
+      "x": 837,
+      "y": 12,
+      "width": 35,
+      "height": 35,
+      "centre": {
+        "x": 854,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "TopBar",
+      "x": 0,
+      "y": 59,
+      "width": 1072,
+      "height": 100,
+      "centre": {
+        "x": 536,
+        "y": 109
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Back",
+      "x": 47,
+      "y": 59,
+      "width": 100,
+      "height": 100,
+      "centre": {
+        "x": 97,
+        "y": 109
+      },
+      "action": 4294967295,
+      "lines": []
+    },
+    {
+      "kind": "BarGlyph(ActionId(2150836393), Search)",
+      "x": 925,
+      "y": 59,
+      "width": 100,
+      "height": 100,
+      "centre": {
+        "x": 975,
+        "y": 109
+      },
+      "action": 2150836393,
+      "lines": [
+        "Search"
+      ]
+    },
+    {
+      "kind": "BarGlyph(ActionId(505454449), Globe)",
+      "x": 801,
+      "y": 59,
+      "width": 100,
+      "height": 100,
+      "centre": {
+        "x": 851,
+        "y": 109
+      },
+      "action": 505454449,
+      "lines": [
+        "Catalogs"
+      ]
+    },
+    {
+      "kind": "TopBarTitle",
+      "x": 171,
+      "y": 86,
+      "width": 606,
+      "height": 46,
+      "centre": {
+        "x": 474,
+        "y": 109
+      },
+      "action": null,
+      "lines": [
+        "Project Gutenberg"
+      ]
+    },
+    {
+      "kind": "Divider",
+      "x": 0,
+      "y": 159,
+      "width": 1072,
+      "height": 4,
+      "centre": {
+        "x": 536,
+        "y": 161
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Banner(Attention)",
+      "x": 47,
+      "y": 175,
+      "width": 978,
+      "height": 94,
+      "centre": {
+        "x": 536,
+        "y": 222
+      },
+      "action": null,
+      "lines": [
+        "This action isn't available."
+      ]
+    },
+    {
+      "kind": "SplashGlyph(Key)",
+      "x": 489,
+      "y": 693,
+      "width": 94,
+      "height": 94,
+      "centre": {
+        "x": 536,
+        "y": 740
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "SplashTitle",
+      "x": 169,
+      "y": 834,
+      "width": 733,
+      "height": 62,
+      "centre": {
+        "x": 535,
+        "y": 865
+      },
+      "action": null,
+      "lines": [
+        "Permission needed"
+      ]
+    },
+    {
+      "kind": "SplashText",
+      "x": 169,
+      "y": 943,
+      "width": 733,
+      "height": 46,
+      "centre": {
+        "x": 535,
+        "y": 966
+      },
+      "action": null,
+      "lines": [
+        "This action isn't available."
+      ]
+    }
+  ]
+}

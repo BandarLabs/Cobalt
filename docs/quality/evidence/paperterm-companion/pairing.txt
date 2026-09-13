@@ -1,0 +1,34 @@
+`kobo stream init`, 12 September 2026, on a network with no reader attached.
+
+  $ kobo stream init
+  Looking for readers on 192.168.1.1-254.
+  No reader answered. Put it on this Wi-Fi, or name it with --device IP.
+  Minting the certificate for this computer at 192.168.1.10.
+  Paperterm is initialised.
+
+    address       192.168.1.10:9332
+    pairing code  u23ayt
+
+  No reader was named, so the trust root is not installed yet. Run
+    kobo trust set stream --device READER_IP
+  or run this again with --device once the reader is on this network.
+
+What it said before this task: "address your-computer:9332", followed by
+"Next: kobo trust set stream --device READER_IP". Both addresses were things
+the companion could work out, and the second command was one more thing to get
+wrong before anything worked.
+
+A reader named outright is checked before anything is minted:
+
+  $ kobo stream init --device "not a host"
+  kobo: "not a host" is not an address this can reach
+
+  $ kobo stream init --device 192.168.1.99
+  ...
+  Installing the trust root on 192.168.1.99.
+  kobo: install the 'stream' trust root; stderr: ssh: connect to host
+  192.168.1.99 port 22: Host is down
+
+The last one is the honest failure for an address that answers nothing: the
+certificate exists, the trust root does not, and the message says which step
+did not happen.

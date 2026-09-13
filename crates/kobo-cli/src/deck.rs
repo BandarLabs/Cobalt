@@ -1006,6 +1006,8 @@ fn remote(host: &str, script: &str) -> Result<super::RemoteShellOutput, String> 
 
 #[cfg(test)]
 mod tests {
+    use std::fmt::Write as _;
+
     use super::{
         command, config_path, launch_command, load, open_url_command, parse_toml, sim_root,
         write_store, CACHE_KEY, LOCAL_PAIRING, PAIRED_KEY,
@@ -1185,9 +1187,10 @@ mod tests {
     fn imported_configuration_obeys_the_same_fifteen_pad_limit() {
         let mut config = "[[page]]\nname = \"Full page\"\n".to_owned();
         for pad in 1..=15 {
-            config.push_str(&format!(
-                "[[page.key]]\nlabel = \"Pad {pad}\"\nrun = \"true\"\n"
-            ));
+            let _ = writeln!(
+                config,
+                "[[page.key]]\nlabel = \"Pad {pad}\"\nrun = \"true\""
+            );
         }
         assert_eq!(parse_toml(&config).unwrap().pad_count(), 15);
         config.push_str("[[page.key]]\nlabel = \"Pad 16\"\nrun = \"true\"\n");

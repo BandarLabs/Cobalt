@@ -871,6 +871,9 @@ pub fn init(hosts: &[String]) -> Result<(), String> {
         std::fs::write(directory.join("hosts"), requested_hosts.join("\n"))
             .map_err(|error| format!("save computer addresses: {error}"))?;
     }
+    // What remains after this is the caller's to say: the companion installs
+    // the trust root itself now, and printing an instruction it has already
+    // carried out said the same thing twice, one of them wrongly.
     println!(
         "Paperterm is ready to pair.\n{}",
         pairing_instructions(DEFAULT_PORT)?

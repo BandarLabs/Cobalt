@@ -3238,10 +3238,31 @@ pub const OFFLINE: &str = "KOBO_SIM_OFFLINE";
 /// arranged to avoid. Capabilities come from the app's publishing manifest;
 /// an unknown app has no implicit network or shell permission.
 fn simulated_tasks(name: &str, declared: &kobo_policy::Declared) -> TaskRunner {
+    // A fixture uses real TLS and HTTP, but cannot reach public hosts. Refuse
+    // invalid configurations and release builds instead of silently going live.
+    static FIXTURE_READY: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    static TRUST: std::sync::Once = std::sync::Once::new();
+    let fixture_ready = *FIXTURE_READY.get_or_init(|| {
+        let Some(specification) = std::env::var_os("KOBO_SIM_HTTP_FIXTURE") else {
+            return true;
+        };
+        #[cfg(debug_assertions)]
+        let ready = specification
+            .to_str()
+            .is_some_and(|specification| kobo_net::fixture::install(specification).is_ok());
+        #[cfg(not(debug_assertions))]
+        let ready = {
+            let _ = specification;
+            false
+        };
+        if !ready {
+            eprintln!("Simulator HTTP fixture unavailable; network requests are disabled.");
+        }
+        ready
+    });
     // The same owner trust roots the device loads, from the host's own
     // directory. Once per process: roots are process-wide and the TLS
     // configuration refuses additions after it is first used.
-    static TRUST: std::sync::Once = std::sync::Once::new();
     TRUST.call_once(|| {
         let directory = std::env::var_os("KOBO_SIM_TRUST_DIR").map_or_else(
             || {
@@ -3261,7 +3282,7 @@ fn simulated_tasks(name: &str, declared: &kobo_policy::Declared) -> TaskRunner {
     });
     let runner = TaskRunner::simulated(simulated_data_root(name))
         .with_app_secrets(std::env::temp_dir().join(SIM_SECRETS), name);
-    if std::env::var_os(OFFLINE).is_some() {
+    if !fixture_ready || std::env::var_os(OFFLINE).is_some() {
         return runner;
     }
     // The same policy the device applies, from the same function, because a

@@ -1,0 +1,20 @@
+expect Crossword
+tap-id puzzle-3
+tap-id cell-0
+type cat
+tap Enter
+tap-id cell-5
+type ore
+tap Enter
+tap-id cell-10
+type wedge
+tap Enter
+tap-id cell-17
+type dom
+tap Enter
+tap-id cell-22
+type you
+tap Enter
+expect Puzzle complete
+clean
+shot completed-board

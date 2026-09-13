@@ -1,0 +1,18 @@
+Computer address:
+  127.0.0.1:52691
+Pairing code: [pairing code]
+
+First time: run kobo trust set stream --device READER_IP.
+Then open Paperterm and enter the computer address and pairing code.
+Keep both devices on the same network and the computer awake.
+
+Open Paperterm on your reader and connect to this computer. Keep the computer awake.
+This check echoes text; it does not run commands. Type exit to finish.
+Paperterm connection check
+Type here or on your reader.
+Press Enter to send.
+Both screens show the same session.
+Type exit to finish.
+> reader
+Received: reader
+> laptop

@@ -1,5 +1,6 @@
 //! Two bounded recovery slots; the pointer changes only after a complete copy.
 use kobo_frame_host::{Manifest, MANIFEST};
+use std::fmt::Write as _;
 use std::fs;
 use std::path::Path;
 
@@ -91,12 +92,13 @@ pub fn save_script(previous: &Manifest) -> String {
     }
     let mut script = format!("current=\"\"\nif [ -f \"$root/{POINTER}\" ]; then current=$(cat \"$root/{POINTER}\"); fi\ncase \"$current\" in a) next=b ;; b|'') next=a ;; *) echo 'Invalid Frame recovery pointer' >&2; exit 1 ;; esac\nbackup=\"$root/.recovery-$next\"\nrm -rf \"$backup\"\nmkdir \"$backup\"\n");
     for photo in &previous.photos {
-        script.push_str(&format!(
-            "cp \"$root/{}.png\" \"$backup/{}.png\"\n",
+        let _ = writeln!(
+            script,
+            "cp \"$root/{}.png\" \"$backup/{}.png\"",
             photo.id, photo.id
-        ));
+        );
     }
-    script.push_str(&format!("cp \"$root/{MANIFEST}\" \"$backup/{MANIFEST}\"\nsync\nprintf '%s' \"$next\" > \"$root/.recovery-pointer.writing\"\nmv -f \"$root/.recovery-pointer.writing\" \"$root/{POINTER}\"\nsync\n"));
+    let _ = write!(script, "cp \"$root/{MANIFEST}\" \"$backup/{MANIFEST}\"\nsync\nprintf '%s' \"$next\" > \"$root/.recovery-pointer.writing\"\nmv -f \"$root/.recovery-pointer.writing\" \"$root/{POINTER}\"\nsync\n");
     script
 }
 
@@ -108,12 +110,19 @@ pub fn restore_script(manifest: &Manifest) -> String {
     let mut script = select_script();
     // Check every file before touching the current shelf.
     for photo in &manifest.photos {
-        script.push_str(&format!("test -f \"$backup/{}.png\"\n", photo.id));
+        let _ = writeln!(script, "test -f \"$backup/{}.png\"", photo.id);
     }
     for photo in &manifest.photos {
-        script.push_str(&format!("cp \"$backup/{}.png\" \"$root/.{}.restoring\"\nmv -f \"$root/.{}.restoring\" \"$root/{}.png\"\n", photo.id, photo.id, photo.id, photo.id));
+        let _ = writeln!(
+            script,
+            "cp \"$backup/{}.png\" \"$root/.{}.restoring\"\nmv -f \"$root/.{}.restoring\" \"$root/{}.png\"",
+            photo.id, photo.id, photo.id, photo.id
+        );
     }
-    script.push_str(&format!("cp \"$backup/{MANIFEST}\" \"$root/.manifest.restoring\"\nmv -f \"$root/.manifest.restoring\" \"$root/{MANIFEST}\"\nsync\n"));
+    let _ = writeln!(
+        script,
+        "cp \"$backup/{MANIFEST}\" \"$root/.manifest.restoring\"\nmv -f \"$root/.manifest.restoring\" \"$root/{MANIFEST}\"\nsync"
+    );
     script
 }
 

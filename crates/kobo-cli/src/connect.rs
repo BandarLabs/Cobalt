@@ -79,6 +79,22 @@ reader powering the radio down while you work, and 'kobo session --device <ip>
 --keep-awake on' stops it suspending. Both are reversible and both clear on a
 reboot.";
 
+/// This computer's own address on the network the reader is on.
+///
+/// A certificate for Paperterm has to name an address the reader can reach,
+/// and "your-computer" is what the pairing screen used to say when nobody had
+/// passed --host: an instruction to go and find something the companion
+/// already knows.
+#[must_use]
+pub fn local_address() -> Option<String> {
+    let socket = UdpSocket::bind("0.0.0.0:0").ok()?;
+    socket.connect("192.0.2.1:9").ok()?;
+    let IpAddr::V4(address) = socket.local_addr().ok()?.ip() else {
+        return None;
+    };
+    Some(address.to_string())
+}
+
 /// Guesses the /24 this machine is on, as the first three octets.
 ///
 /// Opening a UDP socket and asking it for its own address is the shortest way

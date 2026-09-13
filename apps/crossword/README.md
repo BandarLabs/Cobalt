@@ -43,3 +43,9 @@ Run `scripts/quality/check-crossword-sim.py --output /tmp/crossword-check` with
 `CARGO_TARGET_DIR` pointing to a target containing the current `kobo` binary.
 It uses private simulator storage and exercises completion, reopen, undo,
 failed writes, explicit retry and both clue directions without network effects.
+
+Completed boards clear the active-word shading. Editing an answer restores
+it. Black squares remain blocked cells, as in a newspaper crossword; they are
+not another game mode.
+
+![Completed crossword without an active-answer highlight](screenshots/completed.png)

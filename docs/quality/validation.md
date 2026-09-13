@@ -2205,6 +2205,58 @@ than from a fixed coordinate, closes the application and picks the game up where
 it was left, at the default size and at 170%. Captures are in `evidence/parlor/`
 and `evidence/parlor-large/`.
 
+
+## Lichess: recover a match while the seek is still open · 12 September
+
+The previous fallback read current games only after the seek request ended.
+A missed account-stream start event could therefore leave the panel waiting
+while the seek connection stayed open. Pairing now schedules a current-games
+read every ten seconds. Empty results preserve an active seek; a unique new
+match opens its board and cancels the seek. Ambiguous matches cancel the seek
+and return to the game list. Cancellation stops the checks, and an ended seek
+still reconciles before reporting no match. The seek POST is never replayed.
+
+**Validation:** all 105 Lichess tests pass on Rust 1.85.1; strict Clippy for all
+app targets passes. New SDK-runner regressions cover recovery before the seek
+ends, one POST only, an empty active check, and cancellation. An additional
+regression covers ambiguous matches. The offline checking screen was driven
+and visually inspected on Clara BW metrics at default and 170% text size;
+both diagnostics contain no errors. Reproduce those captures with
+`scripts/quality/check-lichess-pairing-sim.py --output /tmp/lichess-pairing`.
+Evidence is under `evidence/lichess-recovery/{default,170}`. These are demo
+captures, not live-service or physical-device proof. LICHESS-06 remains open.
+The existing uncommitted tile-label patch was present during host checks and
+is deliberately excluded from this change.
+
+
+## Lichess board and offline journey — 2026-09-12
+
+The board now uses joined alternating squares, equal-sized legal-move hints,
+and a visible selection border. Only the active clock is filled. Player rows
+fit with the board at enlarged text sizes. Leaving an unfinished computer
+game and choosing Computer again preserves its position.
+
+The complete simulator drive passed on Clara BW metrics at normal and 170%
+text size: select e2, play e4, receive a computer reply, leave and resume,
+inspect the menu, cancel resignation, then resign and dismiss the result.
+Both runs have no diagnostic errors. Evidence: `evidence/lichess-computer`.
+The latest combined unit suite passed 107 Lichess and 279 UI tests (two UI
+tests ignored). All nine text sizes exercise board geometry in runner tests.
+
+One authorized live seek reached a real board, with zero moves sent. The
+application subsequently showed Game aborted; the test did not initiate
+that abort. The server then reported no active games. The original harness
+misidentified the overflow control, so this is not proof of UI abort handling.
+Credential-free results are in `evidence/lichess-live/result.json`. Physical
+Clara BW and further recovery acceptance remain open.
+
+The pre-existing tile-title patch is now completed as part of this renderer
+change: the label node records its actual wrapped line count, so short titles
+are not mistakenly painted in a larger font. Its real-title regression now
+passes. This supersedes the earlier note excluding that unfinished patch.
+
+Strict Clippy for all Lichess and UI targets also passes on Rust 1.85.1.
+
 Lichess checklist reconciliation: 107 app tests pass on e33fe681. Normal and
 170% screenshots show legible selected-square borders and legal-move dots.
 Authoritative acknowledgement and stale-state/reconnect fixture tests pass.
@@ -2382,3 +2434,338 @@ preserved that value on another edit, and refused conflicting flags without
 changing configuration bytes. Evidence: `evidence/deck-confirmation/result.json`.
 The helper confirmation runtime tests passed in the preceding full 53-test
 run. Documentation includes explicit preference semantics.
+Lichess 1.0.7 fixes Resume current when only a stored session exists. The fresh
+app now opens the board stream rather than merely switching screens. A new
+regression loads actual SDK store-save bytes, restores the authoritative
+position and verifies cleanup on confirmed completion. All 108 app tests and
+strict all-target Clippy pass. Full restarted simulator transport acceptance
+remains open under LICHESS-05; no live requests or moves were made.
+
+Crossword completion: clear active-word shading once solved and restore it
+when edited. All 12 app tests and strict Clippy pass. The blocked 5x5 puzzle
+was solved by typed answers in the offline simulator at normal and 170% text
+size; screenshots and diagnostics are in `evidence/crossword-completed`.
+The capture harness builds the CLI from the app checkout to avoid sibling
+branch renderer mismatches. Failed preliminary captures are not acceptance
+evidence. Lichess restart transport acceptance remains open: existing static
+demos and error scenarios do not supply an offline HTTP line-stream fixture.
+
+Simulator capture provenance: Crossword completion, Lichess computer play and
+Lichess pairing recovery harnesses now build the CLI from the current checkout
+and use Cargo's reported executable. Each result records the source revision,
+whether tracked changes were present, Rust toolchain and executable SHA-256.
+A post-capture fingerprint check rejects replacement of a shared target binary;
+use a dedicated CARGO_TARGET_DIR when captures run beside other builds.
+All three harnesses pass at normal and 170% text size. A deliberate executable
+replacement was correctly rejected. Refreshed screenshots and result metadata
+are in the corresponding evidence directories. These remain offline presentation
+checks, not live matchmaking, session-restart transport or hardware acceptance.
+
+Offline stream fixture transport: debug simulator builds can route one exact
+HTTPS origin to a numeric loopback endpoint while preserving TLS verification,
+HTTP framing and runtime credential policy. Other destinations fail closed.
+The new integration test passes real GET, authenticated POST and retained
+NDJSON requests and checks Host/SNI preservation and destination refusal.
+All 104 kobo-net tests pass (91 unit, 13 integration); strict all-target
+Clippy and release-profile checks pass for kobo-net and kobo-sim.
+LICHESS-05 stays open until the actual
+app completes and resumes a fixture game through this transport.
+
+Lichess session acceptance is complete for LICHESS-05. The actual SDK app and
+simulator pair against a private TLS fixture, send exactly one move, retain the
+initial board after POST success, render the acknowledged e4/e5 position,
+restart with the same private store, restore that position from a fresh board
+stream, accept a draw, remove the saved session and resume account polling.
+Normal and 170% runs pass; screenshots and request receipts are in
+`evidence/lichess-session`. All 109 app tests and strict Clippy pass.
+The fixture exposed and verified fixes for account polling occupying the move
+task slot and duplicate confirmation copy clipping the clock at 170%.
+No public Lichess requests or moves were made. Physical acceptance remains
+separate. Tracker totals: 230 complete, 265 open, one deferred.
+
+LICHESS-06 is complete: local TLS fixtures omit all gameStart events and still
+open the matched board at normal and 170% text sizes without a duplicate seek
+or account recheck. Full move acknowledgement, restart, draw and post-game
+polling checks pass. Evidence: `evidence/lichess-missed-start`. The fixture
+exposed background account polling starving the ten-second recovery timer;
+Lichess 1.0.9 pauses that polling during pairing and schedules the recovery
+check after cancellation releases capacity. All 110 app tests and strict
+Clippy pass. Tracker: 231 complete, 264 open, one deferred.
+
+PR #181 host job 103551595707 failed because generated Crossword and Lichess
+pages contained old app versions. Regenerated `docs/apps` from the current
+manifests and verified a second generation makes no changes. This repairs the
+observed generated-page failure; the new CI run must still complete.
+
+LICHESS-02 is complete. The real TLS fixture now checks active-side clock
+selection after each acknowledged move, disconnects the board stream, verifies
+retained piece positions and unconfirmed clocks, attempts moves while offline,
+and verifies restored clocks and cleared guidance after reconnect. Normal and
+170% runs pass. A regression verifies finished boards do not say “Paused” or
+offer Reconnect; all 111 app tests and strict Clippy pass. Evidence and captured
+layouts: `evidence/lichess-connection`. Lichess 1.0.10 uses short reconnect copy
+and full-width clock placeholders to preserve touch targets and large-text
+layout. Generated app pages were updated. No live service was used.
+Tracker: 232 complete, 263 open, one deferred.
+
+Lichess 1.0.11 simplifies pairing and recovery guidance, removes the duplicate
+checking banner and separates clock settings from the game type to avoid an
+awkward enlarged heading wrap. Rate-limit guidance no longer incorrectly says
+pairing was cancelled. Normal and 170% checking-screen captures pass; all 111
+app tests and strict Clippy pass. Updated screenshot evidence is in
+`evidence/lichess-recovery`. LICHESS-01 remains open for the rest of its guidance
+review; counts remain 232 complete, 263 open, one deferred.
+
+LICHESS-01 is complete. Reviewed pairing, challenge, saved-game and connection
+recovery guidance; removed protocol vocabulary and clarified ambiguous matches.
+The failed-check screen and explicit cancellation pass at normal and 170% text
+sizes with clean rendering/touch diagnostics. Evidence:
+`evidence/lichess-pairing-guidance`, alongside the prior checking-screen and
+real TLS recovery evidence. All 111 app tests and strict Clippy pass.
+All six Lichess app-quality tasks are now complete; companion work and physical
+acceptance retain their own scope. Tracker: 233 complete, 262 open, one deferred.
+
+
+### Companion checklist reconciliation
+
+Synced PR 4 task records through companion commit `f91c56af`: app setup cards,
+provider help, Sidekick selection/help/backups/sample, and Deck pairing,
+preview, limits and confirmation preferences. Ten additional tasks are done;
+credential transfer recovery remains partial CLI-18. Completion evidence and
+implementation live on `beta-quality-companion` in PR #182. This metadata
+update does not import companion changes into PR #181 or certify hardware
+acceptance. Global counts: 243 done, 252 open, one deferred.
+
+
+### Gutenbird catalog descriptions (GUTEN-01)
+
+Recognized Title/EBook No. records now supply the labeled Summary to About,
+instead of displaying the entire metadata record as prose. Edition notices
+remain separate and summary provenance remains verbatim. The OPDS parser and
+ordinary catalog descriptions are unchanged.
+
+All 87 app tests passed; the actual saved Gutenberg entry-564 fixture tests
+summary extraction, edition warning, provenance and ordinary-prose handling.
+The fixture's detail pages pass layout diagnostics and were rendered with
+runtime fonts, then visually inspected. Reproduce captures with
+`KOBO_QUALITY_CAPTURE_DIR=PATH cargo +1.85.1 test --manifest-path examples/gutenbird/Cargo.toml catalog_metadata_is_not_presented`.
+This is a rendered fixture check, not a live download/offline-reopen journey.
+GUTEN-02 through GUTEN-06 remain open. Manifest 1.0.11 and generated app page
+are updated. Evidence: `evidence/gutenbird-summary/detail-1.png` and subsequent
+pages. The font dependency is test-only.
+
+
+### Gutenbird selected language and format (partial GUTEN-02)
+
+The first detail page now shows the selected format and language beside Read.
+It calls the same best-acquisition selection used by downloading. Common
+language codes have readable names; region/script tags and unknown codes are
+preserved. Details uses the same language formatter.
+
+All 88 app tests and strict all-target Clippy passed, including EPUB preference,
+plain-text fallback, regional tags, unknown codes and absence of a download.
+The runtime-font fixture captures were refreshed and inspected. Existing
+pagination checks cover profiles, orientations and text scales. Manifest
+1.0.12 and generated catalog page are updated. This is selected-edition
+visibility, not an edition chooser; GUTEN-02 remains open for that work.
+
+
+### Gutenbird distinct catalog editions (partial GUTEN-02)
+
+Entry resolution formerly collapsed publications sharing only a title. It now
+also requires matching authors, language, publisher and issued date before
+selecting a representative edition. Distinct or unspecified language values
+are not treated as equivalent. Entries failing this comparison remain in the
+normal catalog browsing path.
+
+All 89 app tests and strict all-target Clippy passed. The new regression covers
+different languages/authors/publishers/dates and a missing language; prior
+illustrated/plain variant tests still pass. Manifest 1.0.13 and generated
+catalog page are updated. This preserves available entries; the full edition
+chooser remains open under GUTEN-02.
+
+
+### Gutenbird edition captions (partial GUTEN-02)
+
+Same-title shelf entries now lead with the language, publisher or edition date
+that distinguishes them. Missing metadata is explicit. Unique titles retain
+the usual author and source caption. This makes the distinct entries retained
+by the previous grouping fix recognizable before opening their detail pages.
+
+All 90 tests and strict all-target Clippy passed. Regressions cover differing
+languages, missing language, edition dates and unchanged ordinary captions.
+A runtime-font original two-language shelf fixture passes layout diagnostics
+and was visually inspected: `evidence/gutenbird-editions/language-choices.png`.
+Reproduce with KOBO_QUALITY_CAPTURE_DIR and the
+`same_title_shelf_captions` test. Manifest 1.0.14 and generated app page are
+updated. Explicit selection of otherwise-grouped format variants remains open.
+
+
+### Gutenbird edition and download selection (GUTEN-02 complete)
+
+Gutenbird 1.0.16 keeps multi-publication entry responses as a shelf of choices,
+including same-title illustrated/plain editions. Catalog image notices provide
+short No images/With images captions. Other editions use stated download titles
+or numbered editions. Language, publisher and date distinctions remain visible.
+The format picker added in 1.0.15 retains URL-specific offline copies and saved
+positions. An oversized selected download is rejected before a fetch is spawned.
+
+All 93 app tests and strict all-target Clippy pass. The saved Gutenberg entry-564
+fixture exercises the actual feed handler, shelf selections and the two requested
+download URLs. The size test now checks fetch commands, rather than relying on
+silent selection of the smaller edition. The format tests cover offline reuse,
+sample labels, unavailable/paid/unsupported/oversized filtering and pagination.
+
+The runtime-font local render at
+[evidence/gutenbird-editions/edition-choices.png](evidence/gutenbird-editions/edition-choices.png)
+was inspected alongside the language and format-picker captures. This is local
+fixture evidence, not a physical-reader or live download acceptance run. The
+remaining full download/offline-reopen task is GUTEN-06.
+
+**496 tasks: 245 completed, 250 open, one deferred.**
+
+
+### Gutenbird cover fallbacks (GUTEN-03 complete)
+
+Gutenbird 1.0.17 letters a shelf cover after the final failed download attempt
+and when the supplied artwork is too small to be a useful cover. Existing
+missing/corrupt-artwork fallbacks remain in place. Multi-edition navigation
+entries can display a shared cover without collapsing the editions; entries
+with different covers, different titles or navigation links retain their glyph.
+
+All 95 app tests and strict Clippy pass. Regression tests check the terminal
+retry outcome, emitted fallback pixels for a tiny-image fixture and cover
+hydration from the saved Gutenberg multi-edition entry. The fallback capture
+uses the actual app screen and the pixels emitted by its picture command, with
+runtime fonts, at Clara BW default metrics. It is local fixture evidence.
+
+![Failed cover fallback](evidence/gutenbird-covers/failed-cover.png)
+
+**496 tasks: 246 completed, 249 open, one deferred.**
+
+
+### Gutenbird reading-position isolation (partial GUTEN-04)
+
+Gutenbird 1.0.18 ignores saved-value responses that do not match the selected
+download's position key. Previously any unhandled value response was decoded
+as reading memory, allowing a delayed response for another book or format to
+move the current reader. Saving now refreshes the in-memory position as well
+as issuing the store write, preventing an in-session reopen from using an older
+position held before the save.
+
+All 95 Gutenbird tests and strict Clippy pass. The restoration test verifies
+that a foreign key cannot change a restored position and that saving refreshes
+memory with the same bytes sent to storage. No visual layout or copy changed;
+existing screenshots remain applicable. GUTEN-04 remains open for the full
+restart/offline-reopen flow alongside GUTEN-06.
+
+
+### Gutenbird download, saved progress and offline restart (GUTEN-04 / GUTEN-06 complete)
+
+The new real-simulator harness first exposed that an offline restart could not
+reach downloaded books: the app kept their files but fetched the catalog anew.
+Gutenbird 1.0.19 saves valid catalog responses up to the store's 256 KiB value
+limit and restores them when the corresponding fetch fails. Unit tests cover
+both cache/failure response orders and ensure a late cached response cannot
+replace a fresh catalog.
+
+`check-gutenbird-offline-sim.py` builds this checkout's CLI, serves an original
+EPUB and OPDS catalog through a private verified HTTPS fixture, and drives the
+actual app. It downloads the book, turns two pages, checks saved state, stops
+the entire simulator process, and restarts with networking disabled. Reopened
+rich-text lines match the saved page exactly and differ from page one. The
+fixture receives no requests after restart. Private files and processes are
+cleaned up on success and failure. No live website is contacted.
+
+Default and 170% text-scale runs pass. Screenshots were inspected; all 97 app
+tests and strict Clippy pass. This completes the local fixture tasks, while
+Clara BW hardware acceptance remains a separate gate.
+
+- [Default result](evidence/gutenbird-offline/default/result.json)
+- [170% result](evidence/gutenbird-offline/170/result.json)
+- [Offline reopened page](evidence/gutenbird-offline/default/03-offline-reopened.png)
+
+**496 tasks: 248 completed, 247 open, one deferred.**
+
+
+### Public catalog provider setup (partial GUTEN-05)
+
+The shared provider flow now has `ProviderSetup::public(service)`. It preserves
+an endpoint's trailing slash and query, omits account entry and credentials,
+and exposes a bounded response for application validation. Existing account
+providers retain their base-address and fixed-probe behavior. Tests check the
+actual fetch command, URL preservation, missing credential, validation gate,
+cancellation and rejection of malformed addresses without replacing the previous
+address or echoing private values.
+
+All 165 SDK tests and strict all-target Clippy pass. SDK.md documents usage.
+Gutenbird has not yet adopted this mode: OPDS response validation before saving,
+app integration and corresponding setup screenshots remain under GUTEN-05.
+No checklist item was closed by this prerequisite change.
+
+
+### Gutenbird shared catalog setup (GUTEN-05 complete)
+
+Gutenbird 1.0.20 uses the SDK's public provider flow for Add catalog. Addresses
+are not persisted on entry; only a parsed OPDS response can complete setup.
+The checked response is used directly, and an existing URL reuses its catalog.
+Opening setup cancels unrelated foreground/hydration requests; leaving setup
+cancels its check. Tests verify that invalid HTML and late cancelled replies
+cannot alter the registry.
+
+The actual simulator journey types the custom URL, checks that it is not yet
+stored, checks the connection, and verifies one custom-catalog fetch and a saved
+registry. It then downloads, reads and restarts completely offline at the same
+position. Default and 170% runs pass; setup and address screenshots inspected.
+All 98 app tests and strict Clippy pass. SDK and app docs include the shared UI.
+
+- [Default setup result](evidence/gutenbird-setup/default/result.json)
+- [170% setup result](evidence/gutenbird-setup/170/result.json)
+- [Address entry](evidence/gutenbird-setup/default/00-address.png)
+- [Connection check](evidence/gutenbird-setup/default/00-ready-to-check.png)
+
+All six Gutenbird quality tasks are now complete. The overall project and
+separate hardware acceptance remain open.
+
+**496 tasks: 249 completed, 246 open, one deferred.**
+
+
+### Read Later refresh retention and retry control (partial LATER-01/03/05)
+
+Read Later 0.1.3 retains fetched article bodies when refreshing metadata from
+the same server and credential. An unreadable or malformed response no longer
+becomes an empty queue. Parsing rejects invalid UTF-8, malformed entries and
+duplicate IDs, while accepting an explicit empty list. Requests retain their
+origin so a reply after a server/credential change cannot replace the current
+list; content is not merged across origins.
+
+The queue's Sync action was being replaced by a later title-bar call. Reordering
+those calls restores the visible retry control. Nine app/parser tests and strict
+Clippy pass. The local render uses an original article fixture and runtime fonts;
+the retained queue and Sync button were inspected. README now accurately states
+that durable storage, acknowledged action replay and complete controls remain
+unfinished. No checklist items were closed.
+
+![Retained queue after refresh failure](evidence/readlater-refresh/refresh-failed.png)
+
+
+### Read Later acknowledged article storage (partial LATER-01/03/05)
+
+Read Later 0.1.4 uses the SDK's two-slot Snapshot for its complete extracted
+article collection, identified by server and credential name. Versioned JSON
+preserves text verbatim, including angle brackets, Unicode and paragraph breaks;
+it is not passed through HTML extraction a second time. The collection is
+bounded to 8 MiB. Updates received during an outstanding save are queued for
+the next save, and late snapshot reads fill missing bodies without replacing
+fresh metadata.
+
+Twelve app/parser/storage tests and strict Clippy pass. The lifecycle test
+checks content and pointer acknowledgements before publication, restores the
+saved collection in a fresh app instance, and simulates a full-disk write failure
+while retaining the previous snapshot. Settings and Retry saving are reachable
+on the queue; the runtime-font failure render was inspected.
+
+![Save failure with retry](evidence/readlater-cache/save-failed.png)
+
+This is app-level storage evidence. The full simulator restart/recovery journey
+and acknowledged server action outbox remain open; no task was closed here.

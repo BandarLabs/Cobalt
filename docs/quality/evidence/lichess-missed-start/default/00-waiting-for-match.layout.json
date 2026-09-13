@@ -1,0 +1,186 @@
+{
+  "paints": 8,
+  "nodes": [
+    {
+      "kind": "StatusBand",
+      "x": 0,
+      "y": 0,
+      "width": 1072,
+      "height": 59,
+      "centre": {
+        "x": 536,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusClock",
+      "x": 47,
+      "y": 0,
+      "width": 78,
+      "height": 59,
+      "centre": {
+        "x": 86,
+        "y": 29
+      },
+      "action": null,
+      "lines": [
+        "12:17"
+      ]
+    },
+    {
+      "kind": "StatusBattery(Some(Percent(72)), false)",
+      "x": 955,
+      "y": 12,
+      "width": 70,
+      "height": 35,
+      "centre": {
+        "x": 990,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusSignal(Strong)",
+      "x": 896,
+      "y": 12,
+      "width": 35,
+      "height": 35,
+      "centre": {
+        "x": 913,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusBluetooth",
+      "x": 837,
+      "y": 12,
+      "width": 35,
+      "height": 35,
+      "centre": {
+        "x": 854,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "TopBar",
+      "x": 0,
+      "y": 59,
+      "width": 1072,
+      "height": 100,
+      "centre": {
+        "x": 536,
+        "y": 109
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Back",
+      "x": 47,
+      "y": 59,
+      "width": 100,
+      "height": 100,
+      "centre": {
+        "x": 97,
+        "y": 109
+      },
+      "action": 4294967295,
+      "lines": []
+    },
+    {
+      "kind": "TopBarTitle",
+      "x": 171,
+      "y": 86,
+      "width": 854,
+      "height": 46,
+      "centre": {
+        "x": 598,
+        "y": 109
+      },
+      "action": null,
+      "lines": [
+        "Pairing"
+      ]
+    },
+    {
+      "kind": "Divider",
+      "x": 0,
+      "y": 159,
+      "width": 1072,
+      "height": 4,
+      "centre": {
+        "x": 536,
+        "y": 161
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Heading(1)",
+      "x": 47,
+      "y": 175,
+      "width": 978,
+      "height": 80,
+      "centre": {
+        "x": 536,
+        "y": 215
+      },
+      "action": null,
+      "lines": [
+        "10+0 Rapid \u00b7 Rated"
+      ]
+    },
+    {
+      "kind": "ActivityLabel",
+      "x": 47,
+      "y": 267,
+      "width": 978,
+      "height": 46,
+      "centre": {
+        "x": 536,
+        "y": 290
+      },
+      "action": null,
+      "lines": [
+        "Waiting"
+      ]
+    },
+    {
+      "kind": "Secondary",
+      "x": 47,
+      "y": 325,
+      "width": 978,
+      "height": 35,
+      "centre": {
+        "x": 536,
+        "y": 342
+      },
+      "action": null,
+      "lines": [
+        ""
+      ]
+    },
+    {
+      "kind": "Button(ActionId(3461147258), Enabled, Normal)",
+      "x": 371,
+      "y": 372,
+      "width": 330,
+      "height": 118,
+      "centre": {
+        "x": 536,
+        "y": 431
+      },
+      "action": 3461147258,
+      "lines": [
+        "Cancel pairing"
+      ]
+    }
+  ]
+}

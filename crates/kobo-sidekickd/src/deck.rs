@@ -550,6 +550,8 @@ fn finished(status: &'static str, exit: i32, tail: String) -> ResultRecord {
 
 #[cfg(test)]
 mod tests {
+    use std::fmt::Write as _;
+
     use super::{clean_output, parse_config, stable_id, Deck, PressOutcome};
     use std::fs;
     use std::path::PathBuf;
@@ -593,9 +595,7 @@ confirm = {confirm}
     fn all_fifteen_pads_are_accepted_but_a_sixteenth_is_rejected() {
         let mut config = "[[page]]\nname = 'Full page'\n".to_owned();
         for pad in 1..=15 {
-            config.push_str(&format!(
-                "[[page.key]]\nlabel = 'Pad {pad}'\nrun = 'true'\n"
-            ));
+            let _ = write!(config, "[[page.key]]\nlabel = 'Pad {pad}'\nrun = 'true'\n");
         }
         assert!(parse_config(&config).is_ok());
         config.push_str("[[page.key]]\nlabel = 'Pad 16'\nrun = 'true'\n");

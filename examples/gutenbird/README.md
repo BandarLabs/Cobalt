@@ -34,8 +34,8 @@ italics, headings and table of contents -- everything the plain text path
 threw away in exchange for a first page a few seconds sooner. So an EPUB is
 preferred whenever a catalog offers one: fetched in pieces into a shelf blob
 with real progress on screen, parsed once whole, and only then handed to the
-reader. Plain text remains a fallback, chosen only when a catalog -- and there
-are real ones -- publishes nothing else.
+reader. Plain text remains the fallback. When a catalog offers more than one readable
+download, **Choose download** lets you select the format before reading.
 
 ## Why the interface never says which version of OPDS answered
 
@@ -79,3 +79,111 @@ command over USB. The other apps:
 [Todo](../todo/README.md) ·
 [Tic-tac-toe](../tictactoe/README.md) ·
 [Magnet Sensor](../magnet/README.md)
+
+
+### Book descriptions
+
+When a catalog embeds a labeled metadata record in its description field,
+Gutenbird shows the synopsis under **About** rather than repeating the title,
+author and download counters. Edition notices, such as missing illustrations,
+remain in their own **Edition** section. Summary provenance is retained, and
+ordinary descriptions are unchanged.
+
+![Book description and edition notice](../../docs/quality/evidence/gutenbird-summary/detail-1.png)
+
+
+The detail header shows the language and the format selected for **Read**,
+using the same acquisition choice as the downloader. Common language codes
+are expanded; regional/script tags are retained beside the name, and unknown
+codes are shown unchanged.
+
+**Choose download** lists the available EPUB and plain-text links, with sample
+labels, catalog-provided titles and sizes where supplied. Selecting a link
+returns to the book details; **Read** uses that download's offline copy and
+saved position. Switching formats does not overwrite the other copy. Downloads
+that exceed the device limit, require purchase or are unavailable are excluded.
+A catalog response containing multiple editions opens a shelf of choices,
+even when all titles match. Image-edition notices appear as **No images** or
+**With images**; other editions use the catalog's download title or an edition
+number. The full notice remains in the book details. An oversized download is
+refused before fetching, with guidance to choose another download or edition.
+
+![Image edition choices from the saved Gutenberg entry fixture](../../docs/quality/evidence/gutenbird-editions/edition-choices.png)
+
+![Download choices rendered from an original fixture with runtime fonts](../../docs/quality/evidence/gutenbird-formats/download-choices.png)
+
+
+Entries with the same title remain separate when their language, authors,
+publisher or edition date differ. A missing language is not assumed to match
+a known language. This keeps distinct catalog choices available rather than
+silently opening the first matching title.
+
+
+When same-title entries differ, shelf captions lead with the language,
+publisher or edition date that distinguishes them. Missing metadata is stated
+rather than guessed. Ordinary titles keep their author/source caption.
+
+![Language choices in an original shelf fixture](../../docs/quality/evidence/gutenbird-editions/language-choices.png)
+
+
+## Missing cover artwork
+
+The shelf uses a title-and-author cover when artwork is missing, too small,
+invalid, or still unavailable after the bounded retry limit. Catalog tiles can
+use a shared cover from a multi-edition entry without choosing an edition for
+the reader; differing covers keep the neutral book icon until an edition is
+opened.
+
+![Lettered cover after a failed download, rendered from an original fixture](../../docs/quality/evidence/gutenbird-covers/failed-cover.png)
+
+
+## Reading position
+
+Reading positions belong to the selected download URL. Saving updates both the
+stored position and the position held for reopening during the same session.
+A delayed storage response for a different book or format is ignored, so it
+cannot move the book currently being read.
+
+
+## Offline reopening
+
+After visiting a catalog page, Gutenbird saves a local copy when the response
+fits the 256 KiB store limit. If that page cannot be fetched later, the saved
+copy keeps its books and navigation accessible. A fresh successful response
+always wins over a delayed saved copy. Downloaded books open from the local
+shelf at their saved position, including after restarting Cobalt offline.
+Unvisited pages and books that have not been downloaded still need a connection.
+
+The simulator check uses an original EPUB and a private local HTTPS fixture:
+
+```sh
+python3 scripts/quality/check-gutenbird-offline-sim.py --output /tmp/gutenbird-offline
+```
+
+It downloads, turns two pages, stops the process, restarts with networking
+disabled and compares the reopened text with the saved page. Default and 170%
+text-scale runs passed; physical-reader acceptance remains separate.
+
+![Reading after an offline simulator restart](../../docs/quality/evidence/gutenbird-offline/default/03-offline-reopened.png)
+
+
+## Add a public catalog
+
+Open **Catalogs**, tap **Add a catalog**, then enter the library's HTTPS catalog
+address. Choose **Use address**, then **Check connection**. Gutenbird saves the
+address only after the response is a valid OPDS catalog, then opens the checked
+content without fetching it again. A website page, failed check or cancelled
+check does not add a catalog. Adding an address already listed opens the existing
+catalog rather than making a duplicate. Public catalog setup does not ask for
+account details.
+
+![Shared catalog connection check in the simulator](../../docs/quality/evidence/gutenbird-setup/default/00-ready-to-check.png)
+
+Run the setup, download and offline-reopen fixture journey with:
+
+```sh
+python3 scripts/quality/check-gutenbird-offline-sim.py --setup --output /tmp/gutenbird-setup
+```
+
+The screenshots use a private local HTTPS fixture, including the illustrated
+catalog address; they do not document a live service URL.
