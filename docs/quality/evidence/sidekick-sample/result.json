@@ -1,0 +1,14 @@
+{
+  "status": "passed",
+  "helper_sha256": "d19d95ba7ff314cb128053b4aa9f9bb653549613ec98fec2c503ce1f1ce65271",
+  "checks": [
+    "private pairing and verified local TLS",
+    "wrong pairing rejected",
+    "sample starts while hook port is occupied",
+    "Deck unavailable",
+    "sample question acknowledged and removed",
+    "terminal reports receipt"
+  ],
+  "physical_reader_tested": false,
+  "simulator_ui_tested": false
+}

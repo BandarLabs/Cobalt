@@ -257,6 +257,7 @@ See the SDK docs for the
 [runtime services](https://bandarlabs.github.io/Cobalt/sdk.html#services),
 [capabilities](https://bandarlabs.github.io/Cobalt/sdk.html#capabilities),
 [developer-facing crates](https://bandarlabs.github.io/Cobalt/sdk.html#crates),
+the [guided companion entry point](docs/companion-cli.md),
 and the [CLI command reference](https://bandarlabs.github.io/Cobalt/sdk.html#cli).
 
 ## Contributing apps

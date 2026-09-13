@@ -1,0 +1,17 @@
+{
+  "status": "passed",
+  "physical_hardware": false,
+  "checks": [
+    "plan does not create shelf",
+    "push reports success only after shelf readback",
+    "album name survives push and list",
+    "repeated import explicitly reuses photo",
+    "concrete deletion list",
+    "plan leaves existing shelf unchanged",
+    "repeated push preserves image bytes",
+    "replacement and removal can be restored",
+    "recovery limited to two slots",
+    "failed recovery copy refuses replacement",
+    "incomplete recovery refused before manifest change"
+  ]
+}

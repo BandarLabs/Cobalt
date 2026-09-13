@@ -519,6 +519,8 @@ footer nav { display: flex; gap: 20px; flex-wrap: wrap; }
             <tr><td><code>trust set/list/remove</code></td><td>Manage owner TLS roots for private HTTPS services.</td></tr>
             <tr><td><code>app-key --seed PATH</code></td><td>Print the Ed25519 public key for a Store release seed.</td></tr>
             <tr><td><code>app-bundle ...</code></td><td>Build one signed, pathless <code>.cobalt-app</code> package.</td></tr>
+            <tr><td><code>app-verify --package PATH --public-key PATH --manifest PATH --binary PATH</code></td><td>Verify a package signature and its exact expected manifest and ARM binary. The public-key file contains hexadecimal text.</td></tr>
+            <tr><td><code>app-catalog-verify --catalog PATH --signature PATH --public-key PATH --package PATH</code></td><td>Verify catalog and package signatures, then compare the catalog entry's manifest, digest and length with the package. Verification does not install or publish.</td></tr>
             <tr><td><code>app-catalog ...</code></td><td>Build and sign the public application catalog.</td></tr>
             <tr><td><code>app-list --registry PATH</code></td><td>List validated Store registry entries as JSON.</td></tr>
             <tr><td><code>app-check --registry PATH ...</code></td><td>Build and verify registered Store applications.</td></tr>
