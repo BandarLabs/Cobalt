@@ -23,7 +23,10 @@ before.
 ```sh
 kobo-sidekickd init    # certificate with the LAN address in it, pairing code
 kobo-sidekickd run     # both listeners, until killed
-kobo-sidekickd setup codex    # prints the hook config to paste; also: claude
+kobo-sidekickd setup          # choose one integration by number
+kobo-sidekickd setup claude --dry-run  # preview one integration
+kobo-sidekickd setup claude --print    # print configuration for manual setup
+kobo-sidekickd setup claude            # configure the named integration
 kobo-sidekickd hook codex     # what the agent runs; reads stdin, asks, answers
 ```
 
@@ -35,6 +38,25 @@ already look, so the simulator trusts the daemon with no further ceremony,
 and where `kobo setup` looks, so a reader picks it up with the install. A
 reader set up before the authority existed gets it with
 `kobo trust set sidekick --device IP`.
+
+### Choosing an integration
+
+`setup` displays supported integrations, whether each was detected, and its
+configuration path. Choose one number to configure that integration, or press
+Enter or **0** to cancel. It no longer configures every detected integration
+at once. When input or output is redirected, it lists status and explicit
+commands without changing configuration.
+
+`setup AGENT --dry-run` previews the change. `setup --dry-run` retains the
+preview of all detected integrations. `setup AGENT --print` prints manual
+configuration. Explicit setup merges the selected hooks with the existing configuration.
+Before replacement it saves the previous file as `.json.bak`, then
+`.json.bak.1`, `.json.bak.2` and so on, without overwriting earlier backups.
+New configuration is written and synced to a staging file before publication.
+An occupied staging file or invalid existing JSON stops setup and preserves
+the original. Repeating an already completed setup creates no extra backup. Help (`--help`, `-h`, or `help`) returns success; subcommand help is
+also available without initializing pairing, starting listeners or installing
+hooks.
 
 ## The two listeners
 
@@ -60,3 +82,23 @@ changed command, one key cannot overlap itself, and no more than four commands
 run at once. Commands receive ten minutes, then their whole process group gets
 `SIGTERM` followed by `SIGKILL` after ten seconds. The daemon strips terminal
 escape sequences and retains only the last 2 KB of output.
+
+## Try a sample
+
+Run `kobo-sidekickd init` once to create pairing, then stop any running
+Sidekick daemon and run `kobo-sidekickd sample`. Open Sidekick on your paired
+reader and choose **Received**. The computer reports when the acknowledgement
+arrives. Press Ctrl-C to stop; run the sample again to repeat it.
+
+The sample supplies its own question, opens only the authenticated reader
+listener, and does not load Deck or connect to an agent. It runs no command
+when you answer. An unanswered question expires after five minutes. Pairing
+and certificate installation are the same as normal Sidekick use.
+
+For isolated local testing, `KOBO_SIDEKICK_CONFIG_DIR` overrides the root
+containing `sidekick/` identity and `trust/` certificates. It does not change
+agent integration configuration paths. Leave it unset for normal owner use;
+a custom root's certificate must be installed explicitly if pairing a reader.
+
+Deck configuration supports 1–6 pages with 1–15 keys per page, matching the
+CLI and reader grid. Oversized pages are rejected before commands are loaded.

@@ -1,0 +1,19 @@
+Lichess
+Play Lichess games, challenge players, solve puzzles, or play offline.
+
+Bundled guide: version 1.0.5
+
+What the app can use:
+  - Connects to online services
+  - Can keep Wi-Fi connected while in use
+  - Can keep the reader awake while in use
+
+Setup:
+1. Create a Lichess Personal Access Token granting only board:play.
+   https://lichess.org/account/oauth/token/create?scopes[]=board:play&description=Cobalt
+2. Save the token in a private local file, then install it under the exact secret name lichess.
+   kobo secret set lichess --from <token-file> --device <address>
+3. Use Cobalt 0.3.5 or newer. This app uses the responsive Folio interface in protocol 12.
+4. Official Lichess Board API. Rapid and Classical seeks.
+
+This guide does not check installation or account access.

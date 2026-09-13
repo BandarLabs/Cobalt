@@ -23,6 +23,7 @@ def main():
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--profile', default='clara-bw-391')
     parser.add_argument('--pair-on-reader', action='store_true')
+    parser.add_argument('--connection-demo', action='store_true')
     parser.add_argument('--load-failure', action='store_true')
     parser.add_argument('--save-failure', action='store_true')
     parser.add_argument('--temporary-pairing', action='store_true')
@@ -53,6 +54,16 @@ def main():
         with socket.socket() as port_socket:
             port_socket.bind(('127.0.0.1', 0))
             port = port_socket.getsockname()[1]
+        if args.connection_demo:
+            identity_files = ['cert.pem', 'key.pem', 'pairing', 'hosts']
+            before = {name: (config/'stream'/name).read_bytes() for name in identity_files}
+            details = subprocess.run([str(cli), 'stream', 'pairing', '--port', str(port)],
+                                     env=env, cwd=ROOT, capture_output=True, text=True, timeout=10)
+            assert details.returncode == 0, 'Saved pairing details could not be read'
+            assert f'127.0.0.1:{port}' in details.stdout, 'Selected port missing from pairing details'
+            assert before['pairing'].decode().strip() in details.stdout, 'Pairing code missing'
+            assert before == {name: (config/'stream'/name).read_bytes() for name in identity_files}, \
+                'Reading pairing details changed the identity'
         fixture = private/'terminal_fixture.py'
         fixture.write_text('''import os, signal, time
 def resized(*_):
@@ -78,8 +89,11 @@ print("DONE", flush=True)
             try:
                 master, slave = pty.openpty()
                 original = termios.tcgetattr(slave)
-                host = subprocess.Popen([str(cli), 'stream', '--interactive', '--port', str(port),
-                                         '--', '/usr/bin/env', 'python3', '-u', str(fixture)],
+                host_command = ([str(cli), 'stream', 'demo', '--port', str(port)]
+                                if args.connection_demo else
+                                [str(cli), 'stream', '--interactive', '--port', str(port),
+                                 '--', '/usr/bin/env', 'python3', '-u', str(fixture)])
+                host = subprocess.Popen(host_command,
                                         cwd=ROOT, env=env, stdin=slave, stdout=slave, stderr=slave,
                                         start_new_session=True)
 
@@ -95,10 +109,11 @@ print("DONE", flush=True)
                     return host_bytes.decode('utf-8', errors='replace')
 
                 deadline = time.monotonic()+10
-                while 'READY>' not in drain_host() and time.monotonic() < deadline:
+                prompt = '> ' if args.connection_demo else 'READY>'
+                while prompt not in drain_host() and time.monotonic() < deadline:
                     assert host.poll() is None, drain_host()
                     time.sleep(.05)
-                assert 'READY>' in drain_host(), 'Prompt without newline did not reach laptop'
+                assert prompt in drain_host(), 'Prompt without newline did not reach laptop'
                 raw = termios.tcgetattr(slave)
                 assert not raw[3] & (termios.ICANON | termios.ECHO), 'Laptop input was not put in raw mode'
 
@@ -161,6 +176,35 @@ print("DONE", flush=True)
                     if args.save_failure:
                         drive('scenario storage-full')
                     drive('tap-id kb.enter')
+                if args.connection_demo:
+                    drive('wait-for-id toggle-keyboard', 'wait-for Paperterm connection check')
+                    capture('demo-01-connected')
+                    drive('tap-id toggle-keyboard', 'type reader', 'tap enter',
+                          'wait-for Received: reader')
+                    assert 'Received: reader' in drain_host(), 'Reader input did not reach laptop'
+                    capture('demo-02-reader-message')
+                    os.write(master, b'laptop')
+                    drive('wait-for laptop')
+                    assert 'Received: laptop' not in drain_host(), 'Line submitted before Enter'
+                    os.write(master, b'\r')
+                    drive('wait-for Received: laptop')
+                    capture('demo-03-laptop-message')
+                    drive('type exit', 'tap enter', 'wait-for Connection check finished.')
+                    capture('demo-04-finished')
+                    deadline = time.monotonic()+5
+                    while termios.tcgetattr(slave) != original and time.monotonic() < deadline:
+                        time.sleep(.05)
+                    assert termios.tcgetattr(slave) == original, 'Laptop settings not restored'
+                    assert host.poll() is None, 'Final screen service exited early'
+                    result = dict(status='passed', profile=args.profile, scale=args.scale,
+                                  basis='built-in-connection-demo-and-real-sdk-simulator-over-TLS',
+                                  physical_hardware=False,
+                                  checks=['saved pairing details use selected port without changing identity', 'reader input reaches laptop', 'laptop input reaches reader',
+                                          'input remains unsubmitted until Enter', 'portrait layout',
+                                          'exit finishes child', 'final screen remains served',
+                                          'laptop terminal settings restored'])
+                    (args.output/'result.json').write_text(json.dumps(result, indent=2)+'\n')
+                    return
                 drive('wait-for-id toggle-keyboard', 'wait-for READY>')
                 if args.save_failure or args.temporary_pairing:
                     drive('wait-for Not saved')
@@ -245,8 +289,11 @@ print("DONE", flush=True)
                     os.close(slave)
                 if master is not None:
                     os.close(master)
-                # Only synthetic terminal output; pairing credentials are not included.
-                (args.output/'host-terminal.log').write_bytes(host_bytes)
+                # Startup now displays the private pairing code: redact it from local logs too.
+                pairing_path = config/'stream/pairing'
+                code_bytes = pairing_path.read_bytes().strip() if pairing_path.exists() else b''
+                safe_output = bytes(host_bytes).replace(code_bytes, b'[pairing code]') if code_bytes else bytes(host_bytes)
+                (args.output/'host-terminal.log').write_bytes(safe_output)
 
 
 if __name__ == '__main__':

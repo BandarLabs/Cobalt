@@ -10,6 +10,7 @@ use std::process::{Child, Command, ExitCode, ExitStatus, Stdio};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+mod apps;
 mod authorize;
 mod beta_store_smoke;
 mod bootstrap;
@@ -21,12 +22,16 @@ mod exports;
 mod feeds;
 mod flashcards;
 mod frame;
+mod frame_preview;
+mod frame_recovery;
 mod host_release;
 mod menu;
 mod needles;
 mod nonograms;
+mod owner_start;
 mod package;
 mod runtime_dev;
+mod stream_demo;
 mod vault;
 // Only the `device-write` build dispatches to this, but its tests decide what
 // gets sent to a reader and are worth running on every build. So it compiles
@@ -483,10 +488,23 @@ fn canonical(command: &str) -> &str {
         .unwrap_or(command)
 }
 
+fn run_owner_menu() -> Result<(), String> {
+    use std::io::IsTerminal;
+    if std::io::stdin().is_terminal() && std::io::stdout().is_terminal() {
+        let selected =
+            owner_start::choose(&mut std::io::stdin().lock(), &mut std::io::stdout().lock())?;
+        if let Some(selected) = selected {
+            return run(&selected);
+        }
+    } else {
+        println!("{}", owner_start::COMPACT_HELP);
+    }
+    Ok(())
+}
+
 fn run(arguments: &[String]) -> Result<(), String> {
     let Some(command) = arguments.first().map(String::as_str) else {
-        print_help();
-        return Ok(());
+        return run_owner_menu();
     };
     match canonical(command) {
         "new" => create_app(arguments.get(1).ok_or("usage: kobo new <name>")?),
@@ -547,6 +565,8 @@ fn run(arguments: &[String]) -> Result<(), String> {
         "package" => build_package(&arguments[1..]),
         "app-key" => app_key(&arguments[1..]),
         "app-bundle" => app_bundle(&arguments[1..]),
+        "app-verify" => app_verify(&arguments[1..]),
+        "app-catalog-verify" => app_catalog_verify(&arguments[1..]),
         "app-catalog" => app_catalog(&arguments[1..]),
         "app-list" => app_list(&arguments[1..]),
         "app-check" => app_check(&arguments[1..]),
@@ -556,6 +576,7 @@ fn run(arguments: &[String]) -> Result<(), String> {
         "host-release-verify" => host_release_verify(&arguments[1..]),
         "update" => update_host(&arguments[1..]),
         "setup" => setup_device(&arguments[1..]),
+        "apps" => apps::command(&arguments[1..]),
         "deploy" => deploy_package(&arguments[1..]),
         "secret" => secret_command(&arguments[1..]),
         "trust" => trust_command(&arguments[1..]),
@@ -854,16 +875,117 @@ fn stream_authority_in(root: &Path) -> Result<PathBuf, String> {
     Ok(authority)
 }
 
+fn stream_companion(arguments: &[String]) -> Result<(), String> {
+    let port = match &arguments[1..] {
+        [] => kobo_stream::DEFAULT_PORT,
+        [flag, value] if flag == "--port" => value
+            .parse::<u16>()
+            .ok()
+            .filter(|port| *port > 0)
+            .ok_or("--port must be 1 through 65535")?,
+        _ => {
+            return Err("usage: kobo stream demo|terminal|monitor|pairing [--port PORT]".to_owned())
+        }
+    };
+    let pairing = kobo_stream::pairing_instructions(port)?;
+    if arguments[0] == "pairing" {
+        println!("{pairing}");
+        return Ok(());
+    }
+    eprintln!("{pairing}\n");
+    let (command, title) = stream_preset(&arguments[0], std::env::var("SHELL").ok().as_deref())?;
+    eprintln!(
+        "Open Paperterm on your reader and connect to this computer. Keep the computer awake."
+    );
+    if arguments[0] == "demo" {
+        eprintln!("This check echoes text; it does not run commands. Type exit to finish.");
+    }
+    kobo_stream::run_with_title(
+        kobo_stream::Options {
+            grid: kobo_stream::Grid::fallback(),
+            controls: true,
+            interactive: true,
+            port,
+            command,
+        },
+        title,
+    )
+    .map(|_| ())
+}
+
+fn stream_preset(name: &str, shell: Option<&str>) -> Result<(Vec<String>, &'static str), String> {
+    match name {
+        "demo" => {
+            let executable = std::env::current_exe().map_err(|e| format!("find this CLI: {e}"))?;
+            let executable = executable.to_str().ok_or("CLI path must be UTF-8")?;
+            Ok((
+                vec![
+                    executable.into(),
+                    "stream".into(),
+                    "__connection-check".into(),
+                ],
+                "Connection check",
+            ))
+        }
+        "terminal" => {
+            let shell = shell.unwrap_or("/bin/sh");
+            if !Path::new(shell).is_absolute() || !Path::new(shell).is_file() {
+                return Err("Your default shell is unavailable. Set SHELL to an installed shell's absolute path, or use the connection check: kobo stream demo".into());
+            }
+            Ok((vec![shell.into(), "-l".into()], "Terminal"))
+        }
+        "monitor" => Ok((vec!["top".into()], "System monitor")),
+        _ => Err(
+            "Choose demo, terminal or monitor. Use kobo stream --help for custom commands.".into(),
+        ),
+    }
+}
+
+const STREAM_START: &str = "Paperterm shares a computer terminal with your reader.
+
+Start with a connection check:
+  kobo stream demo
+
+Then choose a session:
+  kobo stream terminal    Open your usual shell
+  kobo stream monitor     Watch this computer's processes with top
+
+First use: run kobo stream init. It finds this computer's address, finds the
+readers on this network, and installs the trust root on the one you choose;
+name a reader outright with --device IP. Open Paperterm on the reader and
+enter the computer address and pairing code it prints.
+
+Keep the computer awake. Press Ctrl+] on the computer to stop sharing.
+For custom commands and other advanced options: kobo stream --help";
+
 fn stream_command(arguments: &[String]) -> Result<(), String> {
-    const USAGE: &str = "usage: kobo stream init [--host ADDRESS ...]\n\
+    const USAGE: &str = "usage: kobo stream init [--device IP] [--host ADDRESS ...]\n\
+                         \x20      kobo stream demo [--port PORT]\n\
+                         \x20      kobo stream terminal|monitor [--port PORT]\n\
+                         \x20      kobo stream pairing [--port PORT]\n\
                          \x20      kobo stream [--grid COLSxROWS] [--controls | --interactive] \
                          [--read-only] [--port PORT] -- COMMAND [ARG ...]\n\
                          Host-only. The reader never opens a shell; it paints rows this command serves.";
+    if arguments.is_empty() {
+        println!("{STREAM_START}");
+        return Ok(());
+    }
     if wants_help(arguments) {
         return print_command_help(USAGE);
     }
+    if arguments == ["__connection-check"] {
+        return stream_demo::run();
+    }
     if arguments.first().is_some_and(|argument| argument == "init") {
         return stream_init(&arguments[1..]);
+    }
+    if arguments.first().is_some_and(|argument| {
+        matches!(
+            argument.as_str(),
+            "demo" | "terminal" | "monitor" | "pairing"
+        )
+    }) {
+        return stream_companion(arguments);
     }
     let separator = arguments
         .iter()
@@ -1097,6 +1219,76 @@ fn app_bundle(arguments: &[String]) -> Result<(), String> {
         .map_err(|error| format!("build app bundle: {error}"))?;
     fs::write(&output, bundle).map_err(|error| format!("write {}: {error}", output.display()))?;
     println!("created {}", output.display());
+    Ok(())
+}
+
+fn verification_bytes(path: &Path) -> Result<Vec<u8>, String> {
+    fs::read(path).map_err(|error| format!("read {}: {error}", path.display()))
+}
+
+fn verification_key(path: &Path) -> Result<kobo_app_store::Ed25519PublicKey, String> {
+    let text = String::from_utf8(verification_bytes(path)?)
+        .map_err(|_| "Public key must be UTF-8 hexadecimal")?;
+    kobo_app_store::Ed25519PublicKey::from_hex(text.trim()).map_err(|error| error.to_string())
+}
+
+fn app_verify(arguments: &[String]) -> Result<(), String> {
+    const USAGE: &str =
+        "usage: kobo app-verify --package PATH --public-key PATH --manifest PATH --binary PATH";
+    ensure_only_flags(
+        arguments,
+        &["--package", "--public-key", "--manifest", "--binary"],
+        USAGE,
+    )?;
+    let package = verification_bytes(&single_path_flag(arguments, "--package", USAGE)?)?;
+    let key = verification_key(&single_path_flag(arguments, "--public-key", USAGE)?)?;
+    let manifest = verification_bytes(&single_path_flag(arguments, "--manifest", USAGE)?)?;
+    let binary = verification_bytes(&single_path_flag(arguments, "--binary", USAGE)?)?;
+    let parsed = kobo_app_store::parse_public_bundle(&package, &key)
+        .map_err(|e| format!("Package verification failed: {e}"))?;
+    let expected = kobo_app_store::Manifest::parse_public(&manifest)
+        .map_err(|e| format!("Invalid expected manifest: {e}"))?;
+    if parsed.manifest().to_canonical_bytes() != expected.to_canonical_bytes()
+        || parsed.binary() != binary
+    {
+        return Err("Verified package differs from the supplied manifest or binary".into());
+    }
+    verify_arm_elf_bytes(&binary, true)?;
+    println!("Verified package signature, manifest and binary.");
+    Ok(())
+}
+
+fn app_catalog_verify(arguments: &[String]) -> Result<(), String> {
+    const USAGE: &str = "usage: kobo app-catalog-verify --catalog PATH --signature PATH --public-key PATH --package PATH";
+    ensure_only_flags(
+        arguments,
+        &["--catalog", "--signature", "--public-key", "--package"],
+        USAGE,
+    )?;
+    let catalog = verification_bytes(&single_path_flag(arguments, "--catalog", USAGE)?)?;
+    let signature = verification_bytes(&single_path_flag(arguments, "--signature", USAGE)?)?;
+    let signature =
+        std::str::from_utf8(&signature).map_err(|_| "Signature must be UTF-8 hexadecimal")?;
+    let signature =
+        kobo_app_store::DetachedSignature::from_hex(signature.trim()).map_err(|e| e.to_string())?;
+    let key = verification_key(&single_path_flag(arguments, "--public-key", USAGE)?)?;
+    kobo_app_store::verify(&catalog, &signature, &key)
+        .map_err(|e| format!("Catalog signature verification failed: {e}"))?;
+    let catalog = kobo_app_store::Catalog::parse_public(&catalog).map_err(|e| e.to_string())?;
+    let package = verification_bytes(&single_path_flag(arguments, "--package", USAGE)?)?;
+    let parsed = kobo_app_store::parse_public_bundle(&package, &key).map_err(|e| e.to_string())?;
+    let entry = catalog
+        .entries()
+        .iter()
+        .find(|entry| entry.manifest().id() == parsed.manifest().id())
+        .ok_or("Verified catalog does not contain the supplied package")?;
+    if entry.manifest().to_canonical_bytes() != parsed.manifest().to_canonical_bytes()
+        || entry.package_bytes() != package.len() as u64
+        || entry.package_sha256().as_str() != kobo_net::sha256::hex_digest(&package)
+    {
+        return Err("Catalog entry differs from the supplied package".into());
+    }
+    println!("Verified catalog signature and package entry.");
     Ok(())
 }
 
@@ -6112,12 +6304,22 @@ fn find_secret_source(name: &str) -> Result<PathBuf, String> {
 
 /// Reads a credential off this machine and checks the runtime could read it back.
 fn read_secret_file(path: &Path) -> Result<String, String> {
-    let bytes = std::fs::read(path).map_err(|error| format!("read {}: {error}", path.display()))?;
+    let metadata = fs::metadata(path)
+        .map_err(|error| format!("Read credential file {}: {error}", path.display()))?;
+    if !metadata.is_file() {
+        return Err("Choose a regular file containing the credential.".to_owned());
+    }
+    let mut bytes = Vec::new();
+    fs::File::open(path)
+        .and_then(|file| {
+            file.take((SECRET_MAXIMUM_BYTES + 1) as u64)
+                .read_to_end(&mut bytes)
+        })
+        .map_err(|error| format!("Read credential file {}: {error}", path.display()))?;
     if bytes.len() > SECRET_MAXIMUM_BYTES {
         return Err(format!(
-            "{} holds {} bytes; the runtime refuses anything over {SECRET_MAXIMUM_BYTES}",
-            path.display(),
-            bytes.len()
+            "{} is too large; choose a credential file of at most {SECRET_MAXIMUM_BYTES} bytes",
+            path.display()
         ));
     }
     let value = String::from_utf8(bytes).map_err(|_| format!("{} is not text", path.display()))?;
@@ -6204,14 +6406,17 @@ fn parse_secret(arguments: &[String]) -> Result<(SecretAction, SecretTarget), St
                 if !valid_device_host(&host) {
                     return Err("device host contains unsupported characters".to_owned());
                 }
-                target = Some(SecretTarget::Device(host));
+                select_secret_target(&mut target, SecretTarget::Device(host))?;
                 index += 2;
             }
             "--volume" => {
-                target = Some(SecretTarget::Volume(PathBuf::from(value()?)));
+                select_secret_target(&mut target, SecretTarget::Volume(PathBuf::from(value()?)))?;
                 index += 2;
             }
             "--from" => {
+                if verb != "set" || source.is_some() {
+                    return Err("Use --from once, with set only.".to_owned());
+                }
                 source = Some(PathBuf::from(value()?));
                 index += 2;
             }
@@ -6236,7 +6441,75 @@ fn parse_secret(arguments: &[String]) -> Result<(SecretAction, SecretTarget), St
     Ok((action, target))
 }
 
+fn provider_help_requested(arguments: &[String]) -> bool {
+    matches!(arguments, [help] if matches!(help.as_str(), "--help" | "-h" | "help"))
+        || matches!(arguments, [verb, help]
+            if matches!(verb.as_str(), "set" | "list" | "remove")
+                && matches!(help.as_str(), "--help" | "-h"))
+}
+
+fn select_secret_target(
+    target: &mut Option<SecretTarget>,
+    next: SecretTarget,
+) -> Result<(), String> {
+    if target.is_some() {
+        return Err("Choose one reader: use --device ADDRESS or --volume PATH once.".to_owned());
+    }
+    *target = Some(next);
+    Ok(())
+}
+
+fn secret_install_script(name: &str, value: &str) -> String {
+    format!(
+        "set -e\numask 077\n\
+         mkdir -p {DEVICE_SECRETS_DIRECTORY}\n\
+         chmod 700 {DEVICE_SECRETS_DIRECTORY}\n\
+         cd {DEVICE_SECRETS_DIRECTORY}\n\
+         (set -C; : > .{name}.writing) || exit 1\n\
+         trap 'rm -f .{name}.writing' EXIT\n\
+         trap 'exit 1' HUP INT TERM\n\
+         cat > .{name}.writing <<'{SECRET_DELIMITER}'\n\
+         {value}\n\
+         {SECRET_DELIMITER}\n\
+         chmod 600 .{name}.writing\n\
+         mv -f .{name}.writing {name}\n\
+         trap - EXIT HUP INT TERM\n"
+    )
+}
+
+fn publish_secret(path: &Path, value: &str) -> Result<(), String> {
+    use std::os::unix::fs::OpenOptionsExt;
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or("Invalid credential name")?;
+    let partial = path.with_file_name(format!(".{name}.writing"));
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&partial)
+        .map_err(|error| format!("Prepare credential (previous value unchanged): {error}"))?;
+    let result = writeln!(file, "{value}")
+        .and_then(|()| file.sync_all())
+        .and_then(|()| {
+            drop(file);
+            fs::rename(&partial, path)
+        });
+    if let Err(error) = result {
+        let _ = fs::remove_file(&partial);
+        return Err(format!(
+            "Could not publish credential; previous value unchanged: {error}"
+        ));
+    }
+    Ok(())
+}
+
 fn secret_command(arguments: &[String]) -> Result<(), String> {
+    if provider_help_requested(arguments) {
+        println!("{SECRET_USAGE}");
+        return Ok(());
+    }
     let (action, target) = parse_secret(arguments)?;
     match (&action, &target) {
         (SecretAction::Set { name, source }, _) => {
@@ -6247,15 +6520,7 @@ fn secret_command(arguments: &[String]) -> Result<(), String> {
             let bytes = value.len();
             match &target {
                 SecretTarget::Device(host) => {
-                    let script = format!(
-                        "set -e\n\
-                         mkdir -p {DEVICE_SECRETS_DIRECTORY}\n\
-                         chmod 700 {DEVICE_SECRETS_DIRECTORY}\n\
-                         cat > {DEVICE_SECRETS_DIRECTORY}/{name} <<'{SECRET_DELIMITER}'\n\
-                         {value}\n\
-                         {SECRET_DELIMITER}\n\
-                         chmod 600 {DEVICE_SECRETS_DIRECTORY}/{name}\n"
-                    );
+                    let script = secret_install_script(name, &value);
                     let output =
                         run_remote_shell(&format!("root@{host}"), &script, DEVICE_PROBE_TIMEOUT)?;
                     if !output.status.success() {
@@ -6272,8 +6537,7 @@ fn secret_command(arguments: &[String]) -> Result<(), String> {
                     std::fs::create_dir_all(&directory)
                         .map_err(|error| format!("create {}: {error}", directory.display()))?;
                     let path = directory.join(name);
-                    std::fs::write(&path, format!("{value}\n"))
-                        .map_err(|error| format!("write {}: {error}", path.display()))?;
+                    publish_secret(&path, &value)?;
                     println!("Installed '{name}' ({bytes} bytes) at {}.", path.display());
                 }
             }
@@ -6343,7 +6607,7 @@ fn secret_command(arguments: &[String]) -> Result<(), String> {
 fn report_secret_names<'a>(names: impl Iterator<Item = &'a str>) {
     let names: Vec<&str> = names
         .map(str::trim)
-        .filter(|name| !name.is_empty())
+        .filter(|name| valid_secret_name(name))
         .collect();
     if names.is_empty() {
         println!("No credentials are installed.");
@@ -6370,6 +6634,10 @@ const TRUST_USAGE: &str =
 /// PEM certificate rather than a credential, so unlike a secret it is checked
 /// for being one before it travels, and listing it is harmless.
 fn trust_command(arguments: &[String]) -> Result<(), String> {
+    if provider_help_requested(arguments) {
+        println!("{TRUST_USAGE}");
+        return Ok(());
+    }
     let (action, target) = parse_trust(arguments)?;
     match (action, target) {
         (SecretAction::Set { name, source }, target) => trust_set(&name, &source, &target),
@@ -6525,14 +6793,17 @@ fn parse_trust(arguments: &[String]) -> Result<(SecretAction, SecretTarget), Str
                 if !valid_device_host(&host) {
                     return Err("device host contains unsupported characters".to_owned());
                 }
-                target = Some(SecretTarget::Device(host));
+                select_secret_target(&mut target, SecretTarget::Device(host))?;
                 index += 2;
             }
             "--volume" => {
-                target = Some(SecretTarget::Volume(PathBuf::from(value()?)));
+                select_secret_target(&mut target, SecretTarget::Volume(PathBuf::from(value()?)))?;
                 index += 2;
             }
             "--from" => {
+                if verb != "set" || source.is_some() {
+                    return Err("Use --from once, with set only.".to_owned());
+                }
                 source = Some(PathBuf::from(value()?));
                 index += 2;
             }
@@ -6600,6 +6871,7 @@ fn print_help() {
         "Kobo application SDK\n\n\
          Usage: kobo <command>\n\n\
          Commands:\n\
+           apps [search WORD | setup APP]  Find apps and read offline setup guides\n\
            new <name>             Create a Rust application\n\
            dev [--builtin] [address]  Run this SDK app in the browser simulator\n\
            dev --runtime [address] [--apps IDs]  Run launcher and selected local apps\n\
@@ -6623,6 +6895,7 @@ fn print_help() {
            sidekick setup [AGENT]               Install the Sidekick hook for a coding agent\n\
            sidekick run [--foreground]          Start the helper the reader answers through\n\
            sidekick status|stop                 Inspect or stop that helper\n\
+           sidekick sample                      See it work with nothing else set up\n\
            sidekick test                        Ask the reader a harmless question, print the answer\n\
            feeds check FILE                     Read an OPML subscription list here\n\
            feeds push FILE (--device IP | --sim)  Stage that list on the reader for Feeds\n\
@@ -6859,6 +7132,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::too_many_lines)] // One signed fixture exercises creation and tampering together.
     fn app_bundle_and_catalog_commands_produce_verified_assets() {
         let root = std::env::temp_dir().join(format!("kobo-app-assets-{}", std::process::id()));
         fs::create_dir_all(&root).expect("create fixture");
@@ -6955,10 +7229,95 @@ mod tests {
         kobo_app_store::verify(&catalog_bytes, &signature, &public).expect("verify catalog");
         let catalog = kobo_app_store::Catalog::parse_public(&catalog_bytes).expect("parse catalog");
         assert_eq!(catalog.entries().len(), 1);
+        let public_path = root.join("public-key");
+        fs::write(&public_path, public.to_string()).unwrap();
+        let verify_package = vec![
+            "--package".into(),
+            bundle_path.display().to_string(),
+            "--public-key".into(),
+            public_path.display().to_string(),
+            "--manifest".into(),
+            manifest_path.display().to_string(),
+            "--binary".into(),
+            binary_path.display().to_string(),
+        ];
+        let verify_catalog = vec![
+            "--catalog".into(),
+            catalog_path.display().to_string(),
+            "--signature".into(),
+            signature_path.display().to_string(),
+            "--public-key".into(),
+            public_path.display().to_string(),
+            "--package".into(),
+            bundle_path.display().to_string(),
+        ];
+        super::app_verify(&verify_package).expect("verify matching package");
+        super::app_catalog_verify(&verify_catalog).expect("verify matching catalog");
+        fs::write(&binary_path, b"different binary").unwrap();
+        assert!(super::app_verify(&verify_package).is_err());
+        fs::write(&binary_path, &binary).unwrap();
+        fs::write(
+            &public_path,
+            kobo_app_store::derive_public_key(&[8; 32])
+                .unwrap()
+                .to_string(),
+        )
+        .unwrap();
+        assert!(super::app_verify(&verify_package).is_err());
+        assert!(super::app_catalog_verify(&verify_catalog).is_err());
+        fs::write(&public_path, public.to_string()).unwrap();
+        let mut changed_catalog = catalog_bytes.clone();
+        changed_catalog.push(b' ');
+        fs::write(&catalog_path, changed_catalog).unwrap();
+        assert!(super::app_catalog_verify(&verify_catalog).is_err());
+        fs::write(&catalog_path, &catalog_bytes).unwrap();
+        let wrong_entry = kobo_app_store::CatalogEntry::new(kobo_app_store::CatalogEntryInput {
+            manifest: manifest.clone(),
+            package_url: "https://example.test/wrong.cobalt-app".into(),
+            package_sha256: kobo_net::sha256::hex_digest(&bundle),
+            package_bytes: bundle.len() as u64 + 1,
+        })
+        .unwrap();
+        let wrong_catalog = kobo_app_store::Catalog::new(vec![wrong_entry])
+            .unwrap()
+            .to_canonical_bytes();
+        fs::write(&catalog_path, &wrong_catalog).unwrap();
+        fs::write(
+            &signature_path,
+            kobo_app_store::sign(&wrong_catalog, &seed)
+                .unwrap()
+                .to_string(),
+        )
+        .unwrap();
+        assert!(
+            super::app_catalog_verify(&verify_catalog).is_err(),
+            "valid signature must not hide incorrect package length"
+        );
+        fs::write(&catalog_path, &catalog_bytes).unwrap();
+        fs::write(&signature_path, signature.to_string()).unwrap();
+        let mut changed_package = bundle.clone();
+        *changed_package.last_mut().unwrap() ^= 1;
+        fs::write(&bundle_path, changed_package).unwrap();
+        assert!(super::app_verify(&verify_package).is_err());
+        assert!(super::app_catalog_verify(&verify_catalog).is_err());
         fs::remove_dir_all(root).expect("remove fixture");
     }
 
     /// A session is what somebody asked for by not asking for anything else.
+    #[test]
+    fn paperterm_presets_are_literal_commands_with_clear_titles() {
+        let (command, title) = super::stream_preset("terminal", Some("/bin/sh")).unwrap();
+        assert_eq!(command, ["/bin/sh", "-l"]);
+        assert_eq!(title, "Terminal");
+        assert!(super::stream_preset("terminal", Some("sh; echo unsafe")).is_err());
+        let (command, title) = super::stream_preset("monitor", None).unwrap();
+        assert_eq!(command, ["top"]);
+        assert_eq!(title, "System monitor");
+        assert!(super::stream_preset("unknown", None).is_err());
+        assert!(super::STREAM_START.contains("kobo stream demo"));
+        super::stream_command(&[]).unwrap();
+    }
+
     #[test]
     fn a_shell_with_no_command_is_a_request_for_a_session() {
         let arguments = ["--device".to_owned(), "192.168.1.2".to_owned()];
@@ -7114,6 +7473,51 @@ mod tests {
     use std::path::PathBuf;
     use std::process::Command;
     use std::time::Duration;
+
+    #[test]
+    fn secret_remote_publish_preserves_old_value_on_failed_or_occupied_stage() {
+        use std::os::unix::fs::PermissionsExt;
+        let directory = std::env::temp_dir().join(format!(
+            "cobalt-secret-script-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let script = super::secret_install_script("fixture", "new-value")
+            .replace(super::DEVICE_SECRETS_DIRECTORY, directory.to_str().unwrap());
+        let destination = directory.join("fixture");
+        let partial = directory.join(".fixture.writing");
+        fs::write(&destination, "old-value").unwrap();
+        fs::write(&partial, "other-attempt").unwrap();
+        let run = || Command::new("sh").arg("-c").arg(&script).output().unwrap();
+        assert!(!run().status.success());
+        assert_eq!(fs::read_to_string(&destination).unwrap(), "old-value");
+        assert_eq!(fs::read_to_string(&partial).unwrap(), "other-attempt");
+        fs::remove_file(&partial).unwrap();
+        let bin = directory.join("bin");
+        fs::create_dir(&bin).unwrap();
+        fs::write(bin.join("cat"), "#!/bin/sh\nprintf partial\nexit 42\n").unwrap();
+        fs::set_permissions(bin.join("cat"), fs::Permissions::from_mode(0o700)).unwrap();
+        let failed = Command::new("sh")
+            .arg("-c")
+            .arg(&script)
+            .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
+            .output()
+            .unwrap();
+        assert!(!failed.status.success());
+        assert_eq!(fs::read_to_string(&destination).unwrap(), "old-value");
+        assert!(!partial.exists());
+        assert!(run().status.success());
+        assert_eq!(fs::read_to_string(&destination).unwrap(), "new-value\n");
+        assert_eq!(
+            fs::metadata(&destination).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
 
     #[test]
     fn secret_files_accept_raw_and_assignment_forms() {

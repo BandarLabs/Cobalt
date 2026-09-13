@@ -309,8 +309,8 @@ fn parse_config(source: &str) -> Result<Vec<Page>, String> {
         if name.is_empty() || name.chars().count() > 24 {
             return Err("each page name must be 1 to 24 characters".to_owned());
         }
-        if !(1..=12).contains(&page.key.len()) {
-            return Err(format!("page '{name}' needs between 1 and 12 keys"));
+        if !(1..=15).contains(&page.key.len()) {
+            return Err(format!("page '{name}' needs between 1 and 15 keys"));
         }
         let mut keys = Vec::with_capacity(page.key.len());
         for key in page.key {
@@ -550,6 +550,8 @@ fn finished(status: &'static str, exit: i32, tail: String) -> ResultRecord {
 
 #[cfg(test)]
 mod tests {
+    use std::fmt::Write as _;
+
     use super::{clean_output, parse_config, stable_id, Deck, PressOutcome};
     use std::fs;
     use std::path::PathBuf;
@@ -587,6 +589,17 @@ confirm = {confirm}
         assert!(parse_config("[[page]]\nname='x'\n").is_err());
         assert!(parse_config(&sample("true", false)).is_ok());
         assert!(parse_config(&sample("true", false).replace("Test", "12345678901234567")).is_err());
+    }
+
+    #[test]
+    fn all_fifteen_pads_are_accepted_but_a_sixteenth_is_rejected() {
+        let mut config = "[[page]]\nname = 'Full page'\n".to_owned();
+        for pad in 1..=15 {
+            let _ = write!(config, "[[page.key]]\nlabel = 'Pad {pad}'\nrun = 'true'\n");
+        }
+        assert!(parse_config(&config).is_ok());
+        config.push_str("[[page.key]]\nlabel = 'Pad 16'\nrun = 'true'\n");
+        assert!(parse_config(&config).is_err());
     }
 
     #[test]

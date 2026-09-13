@@ -1,0 +1,27 @@
+{
+  "status": "passed",
+  "cli_sha256": "6151f30db1e5ada43645e8381a49298340ab665577105d2f6865bdd5ab115d40",
+  "checks": [
+    {
+      "flags": [
+        "--confirm"
+      ],
+      "confirmation": true
+    },
+    {
+      "flags": [],
+      "confirmation": true
+    },
+    {
+      "flags": [
+        "--no-confirm"
+      ],
+      "confirmation": false
+    },
+    {
+      "flags": [],
+      "confirmation": false
+    }
+  ],
+  "conflicting_flags_preserve_configuration": true
+}

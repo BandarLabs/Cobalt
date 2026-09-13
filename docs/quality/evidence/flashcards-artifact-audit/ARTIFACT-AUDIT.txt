@@ -1,0 +1,24 @@
+device dependency tree: no Anki packages
+device ELF/package strings and unstripped symbols: no Anki or AnkiDroid implementation material
+device production/audit ELFs: static, with no declared remote-network capability
+device symbols: no known high-level remote-network implementation
+device local transport: generic socket primitives remain for required Cobalt Unix-domain IPC
+device package: signature/canonical manifest verified against catalog and standalone ELF
+host/device font: exact bounded Cobalt Japanese bytes, SIL OFL notice, source pin, and deterministic hash present
+validation catalog: signature and sole package entry verified
+device ELFs: byte-identical to fresh audited-source builds
+host verifier/reference helper: rebuilt from audited source in a fresh target directory
+host helper artifact: finalized from the fresh audited-source build
+host helper: pinned Anki rslib/i18n/io/proto, AGPL notice, source pin, and source instructions present
+host notice sidecars: exact copies of helper notice/licence output
+9508e6f46502c6155254c779b653cd61fb6ea0410901165f565f8c36d3c80fd8  armv7-unknown-linux-musleabihf/release/kobo-flashcards
+ac0414fd6a9c9d73b59eda532368b289a37413fd27f824e6e9ed0515aa2b2231  audit-unstripped/armv7-unknown-linux-musleabihf/release/kobo-flashcards
+4db523525573d68e25e5932b80ff09b338e97e26cb2f33af39a48c7fae0b8b7e  artifacts/flashcards-validation.cobalt-app
+d88fabf7ead917a8acff721b87cdc26ecc20e93e933f5a2268aa971e85e38b9c  artifacts/flashcards.manifest.json
+a1f15471d25ea5c43f195775f78ed970a067a925745b68d63a301692884910db  artifacts/validation-public-key.txt
+1c9515786cb49eee9b3411737f2a93c14ba508cdc9d6e22f400e9c8b3c929f6d  artifacts/catalog/catalog.json
+0555e22835ac29bc33aa9f8a1001a933066152cc176eb5733ee27d265e1959e5  artifacts/catalog/catalog.sig
+3c1120e5201ac2afecee77b025322ac0a1577c28ccabab7833d2fa6c246d72ad  artifacts/flashcards-import.source-commit.txt
+256b47b73696ce0b74e6043021b240003d3ccfe0356b7cadb319a6eef8717cf9  artifacts/flashcards-import.notice.txt
+22b45799e0c11e8412cf88ebdc758478767a8fe4f2beec3f5e93170f4d5aa028  artifacts/flashcards-import.licenses.txt
+bd5cc72e19198a6a204af7b42eeb266d558973b64820d098f370d8d17d832089  host-target/release/flashcards-import

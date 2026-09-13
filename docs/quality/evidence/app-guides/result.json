@@ -1,0 +1,12 @@
+{
+  "status": "passed",
+  "guides_checked": 44,
+  "cli_sha256": "478b5f5e53f8c1dfaabeeabfa58bc1351086c6136acafab03e96021fdea0465b",
+  "checks": [
+    "every bundled app renders a setup guide",
+    "case-insensitive purpose search",
+    "unknown app fails",
+    "real terminal menu retries invalid app number",
+    "terminal selection opens Lichess guide with account scope and command"
+  ]
+}

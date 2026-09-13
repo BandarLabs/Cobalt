@@ -1,0 +1,6 @@
+Claude Code  asks this Kobo
+Codex        asks this Kobo
+
+Choose an integration: kobo-sidekickd setup AGENT
+Preview changes first: kobo-sidekickd setup AGENT --dry-run
+No configuration was changed.

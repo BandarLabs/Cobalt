@@ -107,3 +107,66 @@ Reconnecting and resizing do not retry a failed save automatically.
 The live fixture supports `--load-failure --save-failure` for explicit recovery,
 or `--load-failure --temporary-pairing` to verify a temporary connection. Both
 require `--pair-on-reader` and exercise the same two-way terminal journey.
+
+## First connection check
+
+After setting up the computer identity and installing its trust certificate,
+run `kobo stream demo` on the computer. Connect from Paperterm, type a short
+message and press Enter. The message appears on both screens. Type a second
+message on the computer to check input in the other direction.
+
+This built-in check does not run typed text as commands. Type `exit` on either
+screen to finish; the final screen remains for one minute. Keep the computer
+awake while sharing. Once the check works, use `kobo stream --interactive --
+COMMAND` to share a terminal program you choose.
+
+![The same connection check receiving reader and laptop input](screenshots/connection-check.png)
+
+To see the saved address and pairing code again, use `kobo stream pairing`.
+This reads the existing identity without replacing its keys or code. If you
+choose another port, use `kobo stream pairing --port 9123` and
+`kobo stream demo --port 9123` so the displayed address matches the service.
+The demo also displays these details when it starts. An older setup without
+a saved address explains how to add the computer address with `stream init`.
+
+## Stop sharing from the computer
+
+Press **Ctrl+]** (hold Control and press the closing square bracket) in the
+computer terminal running Paperterm. This ends the shared command and its
+child processes, closes sharing, and restores your terminal settings. Save
+any work in the shared program first. Ctrl+C still goes to the shared program
+as its usual interrupt; it is not the stop-sharing shortcut.
+
+Keep the computer awake and connected while sharing. The Kobo displays a
+session running on that computer; it cannot keep the command available when
+the computer sleeps. The connection check can also finish with `exit`; its
+final screen remains available for a minute, or Ctrl+] followed by Enter closes it early after terminal settings have been
+restored.
+The Ctrl+] byte is reserved locally while sharing.
+
+## Choose a session
+
+Run `kobo stream` to see the starting commands. Use `kobo stream demo` first
+to check typing between the computer and reader. After that:
+
+- `kobo stream terminal` opens your default login shell (`SHELL`, or `/bin/sh`).
+  The reader can type into this shell, just like the computer terminal.
+- `kobo stream monitor` runs `top` to show this computer’s processes. `top`
+  must be installed and available on the computer's PATH.
+
+Both accept `--port PORT` and use the saved pairing identity. They start only
+when explicitly requested. Custom commands remain available under
+`kobo stream --help`; you do not need to enter one for the connection check
+or either preset. Named reader selection is not yet available in this flow.
+
+## Connection messages
+
+The computer reports **waiting for a reader** until an authenticated reader
+establishes its session. **Reader connected** means the reader has sent an
+accepted session or screen request. After 45 seconds without an accepted
+request, it reports **waiting for the reader to reconnect**. This timeout
+does not diagnose Wi-Fi or sleep; keep both devices connected and the
+computer awake. Accepted requests return the status to connected.
+
+When the command finishes, the message says **command stopped** and explains
+the one-minute final-screen window. Status is printed only when it changes.

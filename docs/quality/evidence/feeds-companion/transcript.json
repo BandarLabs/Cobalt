@@ -1,0 +1,64 @@
+[
+  {
+    "arguments": [
+      "check",
+      "<fixture>/Sample subscriptions.opml"
+    ],
+    "exit_code": 0,
+    "output": "1 feed, 2 skipped (duplicate, not HTTPS, or carrying a password)\n  Sample feed https://example.org/feed.xml\n"
+  },
+  {
+    "arguments": [
+      "push",
+      "<fixture>/Sample subscriptions.opml",
+      "--sim"
+    ],
+    "exit_code": 0,
+    "output": "1 feed, 2 skipped (duplicate, not HTTPS, or carrying a password) staged at <fixture>/cobalt-sim-data/rss/sample-subscriptions.opml; open Feeds \u25b8 Import OPML.\n"
+  },
+  {
+    "arguments": [
+      "push",
+      "<fixture>/Sample subscriptions.opml",
+      "--sim"
+    ],
+    "exit_code": 0,
+    "output": "1 feed, 2 skipped (duplicate, not HTTPS, or carrying a password) staged at <fixture>/cobalt-sim-data/rss/sample-subscriptions.opml; open Feeds \u25b8 Import OPML.\n"
+  },
+  {
+    "arguments": [
+      "push",
+      "<fixture>/Sample subscriptions.opml",
+      "--sim"
+    ],
+    "exit_code": 1,
+    "output": "kobo: <fixture>/Sample subscriptions.opml: This OPML file is incomplete or damaged\n"
+  },
+  {
+    "arguments": [
+      "push",
+      "<fixture>/Sample subscriptions.opml",
+      "--sim"
+    ],
+    "exit_code": 1,
+    "output": "kobo: <fixture>/Sample subscriptions.opml: subscription lists must be 256 KB or smaller; export a smaller selection\n"
+  },
+  {
+    "arguments": [
+      "push",
+      "<fixture>/Sample subscriptions.opml",
+      "--sim"
+    ],
+    "exit_code": 1,
+    "output": "kobo: Prepare subscription list (existing shelf unchanged): File exists (os error 17)\n"
+  },
+  {
+    "arguments": [
+      "push",
+      "<fixture>/Sample subscriptions.opml",
+      "--sim"
+    ],
+    "exit_code": 0,
+    "output": "1 feed staged at <fixture>/cobalt-sim-data/rss/sample-subscriptions.opml; open Feeds \u25b8 Import OPML.\n"
+  }
+]

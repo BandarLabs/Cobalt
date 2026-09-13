@@ -1,0 +1,8 @@
+{
+  "sample": "Blue Marble",
+  "source_page": "https://svs.gsfc.nasa.gov/30613",
+  "source_image": "https://svs.gsfc.nasa.gov/vis/a030000/a030600/a030613/blue_marble_apollo_17_19721207_print.jpg",
+  "credit": "NASA Johnson Space Center, Earth Science and Remote Sensing Unit",
+  "other_sample": "Original grayscale test pattern",
+  "cli_output": "Prepared 2 photos at 1072 \u00d7 1448. Open docs/quality/evidence/frame-companion-preview/index.html to compare crop and pad. No photos were transferred.\n"
+}

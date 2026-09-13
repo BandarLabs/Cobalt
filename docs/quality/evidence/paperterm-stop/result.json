@@ -1,0 +1,13 @@
+{
+  "status": "passed",
+  "physical_hardware": false,
+  "connection_states_tested": true,
+  "checks": [
+    "connection check, login shell and system monitor run in real PTYs",
+    "Ctrl+] stops each preset within five seconds",
+    "Ctrl+] then Enter closes the final-screen service",
+    "terminal settings restored",
+    "sharing port closed",
+    "clear stopped message"
+  ]
+}
