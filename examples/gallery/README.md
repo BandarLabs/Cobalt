@@ -12,12 +12,39 @@ sizes are right, not that the result is worth reading.
 
 *Captured from a Kobo Clara BW over Wi-Fi with `kobo shot --device`.*
 
-The **V2** tab is the Folio acceptance surface: masthead, featured card tiles
+The **Panel** tab is the Folio acceptance surface: masthead, featured card tiles
 (including caption and live-value variants), a trailing section link, page
 rail, active nav notch, and a deliberately alternating ghosting comparison.
 Its ordinary action is a centered content-width button; only primary actions
 expand to the full content measure.
 It is captured by `scripts/shoot-apps.sh` with the normal gallery pass.
+
+## Pages that fit the device in your hand
+
+No page here decides in advance how many panels it takes. Each one is a list of
+parts, and the parts are dealt out into panels by measurement: parts are added
+until the runtime's diagnostics say something has been pushed off the panel,
+and then a new panel starts, reachable with the toolkit's own page turns. The
+same reference is thirty-one panels on a Clara BW at the default text size and
+thirty-seven at 170%, and `every_page_fits_every_supported_panel_at_every_text_size`
+lays every screen out on all eight supported panels at all nine text sizes.
+
+## One job, from end to end
+
+The App Store card on the Panel tab starts the worked example: choose a book,
+confirm it, watch it arrive, be told it is there, open it, and come back out
+again a step at a time. Every step is drawn with the controls the other pages
+show. A reference made only of pages of controls teaches how each one is drawn
+and nothing about how they follow one another.
+
+## The two warnings this application provokes on purpose
+
+The tone budget, because a shelf of tiles is a surface, the marked navigation
+bar under it is inverted, and with a rule, a subtitle and a word of prose that
+is all five inks on one panel. That is what a launcher home screen costs, and
+it is worth seeing. And two primary actions on the buttons page, which is the
+same dominant verb drawn twice with one of them refused. Any other warning
+fails `every_warning_this_reference_provokes_is_one_it_means_to`.
 
 ## Why this is the conformance screen
 

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <id>urn:cobalt:sample:catalog</id><title>Sample library</title>
+  <link rel="next" href="/opds?page=2" type="application/atom+xml;profile=opds-catalog"/>
+  <entry><id>authors</id><title>Authors</title><link rel="subsection" href="opds/authors" type="application/atom+xml;profile=opds-catalog;kind=navigation"/></entry>
+  <entry><id>shelves</id><title>My shelves</title><link rel="subsection" href="opds/shelves" type="application/atom+xml;profile=opds-catalog;kind=navigation"/></entry>
+  <entry><id>urn:cobalt:sample:river</id><title>A Walk by the River</title><author><name>Cobalt sample</name></author><summary>An original short book for checking library downloads.</summary><link rel="http://opds-spec.org/acquisition/open-access" href="/books/river.epub" type="application/epub+zip"/></entry>
+</feed>

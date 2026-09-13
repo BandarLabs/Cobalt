@@ -1,0 +1,375 @@
+{
+  "simulation": {
+    "profile": {
+      "id": "clara-bw-391",
+      "model": "Kobo Clara BW",
+      "width": 1072,
+      "height": 1448,
+      "pixelsPerInch": 300,
+      "rotation": 3,
+      "colourPanel": false,
+      "touch": {
+        "name": "cyttsp5_mt",
+        "xMin": 0,
+        "xMax": 1447,
+        "yMin": 0,
+        "yMax": 1071
+      }
+    },
+    "scenario": "normal",
+    "lifecycle": "foreground",
+    "transition": {
+      "waveform": "GL16",
+      "full": false,
+      "refresh": 13,
+      "dirty": 421236,
+      "regions": [
+        {
+          "waveform": "GL16",
+          "region": {
+            "x": 272,
+            "y": 88,
+            "width": 200,
+            "height": 48
+          }
+        },
+        {
+          "waveform": "GL16",
+          "region": {
+            "x": 40,
+            "y": 184,
+            "width": 656,
+            "height": 96
+          }
+        },
+        {
+          "waveform": "GL16",
+          "region": {
+            "x": 48,
+            "y": 304,
+            "width": 216,
+            "height": 40
+          }
+        },
+        {
+          "waveform": "GL16",
+          "region": {
+            "x": 40,
+            "y": 368,
+            "width": 280,
+            "height": 48
+          }
+        },
+        {
+          "waveform": "GL16",
+          "region": {
+            "x": 336,
+            "y": 368,
+            "width": 256,
+            "height": 48
+          }
+        },
+        {
+          "waveform": "GL16",
+          "region": {
+            "x": 0,
+            "y": 1304,
+            "width": 1072,
+            "height": 136
+          }
+        }
+      ],
+      "region": {
+        "x": 0,
+        "y": 88,
+        "width": 1072,
+        "height": 1352
+      }
+    },
+    "refreshCount": 13,
+    "dirtyPixelsSinceClean": 421236,
+    "touch": {
+      "display": {
+        "x": 536,
+        "y": 1377
+      },
+      "raw": {
+        "x": 1377,
+        "y": 535
+      }
+    },
+    "panelApproximation": true,
+    "panel": {
+      "mode": "automatic",
+      "status": "idle",
+      "contentsKnown": true,
+      "visibleFrame": "last confirmed completion with approximate residue",
+      "queued": false,
+      "submitted": "13",
+      "completed": "13",
+      "failures": "0",
+      "submissionMarker": null,
+      "submittedAtMillis": "2273",
+      "finishedAtMillis": "2279",
+      "timing": "host control observations; not hardware calibration"
+    },
+    "observation": null,
+    "backends": [
+      "network",
+      "battery-read",
+      "frontlight-control",
+      "wifi-control",
+      "library",
+      "cover-sensor"
+    ],
+    "navigation": {
+      "mode": "single-app",
+      "app": "panels",
+      "processId": null,
+      "hosted": []
+    },
+    "appStore": {
+      "mode": "catalog-preview",
+      "signedTransactions": false
+    },
+    "clock": {
+      "mode": "manual",
+      "unixMillis": "1788850860000",
+      "monotonicMillis": "0",
+      "utcOffsetMinutes": 0,
+      "date": "2026-09-08"
+    },
+    "input": {
+      "source": "synthetic evdev replay",
+      "rawEvents": "14",
+      "quiescent": true,
+      "needsResynchronization": false,
+      "forwardKey": 194
+    },
+    "power": null,
+    "hardware": {
+      "batteryPercent": 72,
+      "charging": false,
+      "frontlightPercent": 20,
+      "coverClosed": false,
+      "orientation": "portrait",
+      "frontlightAppearanceCalibrated": false,
+      "orientationControl": "display-composition"
+    }
+  },
+  "layout": {
+    "paints": 13,
+    "nodes": [
+      {
+        "kind": "StatusBand",
+        "x": 0,
+        "y": 0,
+        "width": 1072,
+        "height": 59,
+        "centre": {
+          "x": 536,
+          "y": 29
+        },
+        "action": null,
+        "lines": []
+      },
+      {
+        "kind": "StatusClock",
+        "x": 47,
+        "y": 0,
+        "width": 112,
+        "height": 59,
+        "centre": {
+          "x": 103,
+          "y": 29
+        },
+        "action": null,
+        "lines": [
+          "07:01"
+        ]
+      },
+      {
+        "kind": "StatusBattery(Some(Percent(72)), false)",
+        "x": 955,
+        "y": 12,
+        "width": 70,
+        "height": 35,
+        "centre": {
+          "x": 990,
+          "y": 29
+        },
+        "action": null,
+        "lines": []
+      },
+      {
+        "kind": "StatusSignal(Strong)",
+        "x": 896,
+        "y": 12,
+        "width": 35,
+        "height": 35,
+        "centre": {
+          "x": 913,
+          "y": 29
+        },
+        "action": null,
+        "lines": []
+      },
+      {
+        "kind": "StatusBluetooth",
+        "x": 837,
+        "y": 12,
+        "width": 35,
+        "height": 35,
+        "centre": {
+          "x": 854,
+          "y": 29
+        },
+        "action": null,
+        "lines": []
+      },
+      {
+        "kind": "TopBar",
+        "x": 0,
+        "y": 59,
+        "width": 1072,
+        "height": 100,
+        "centre": {
+          "x": 536,
+          "y": 109
+        },
+        "action": null,
+        "lines": []
+      },
+      {
+        "kind": "Back",
+        "x": 47,
+        "y": 59,
+        "width": 100,
+        "height": 100,
+        "centre": {
+          "x": 97,
+          "y": 109
+        },
+        "action": 4294967295,
+        "lines": []
+      },
+      {
+        "kind": "TopBarTitle",
+        "x": 171,
+        "y": 77,
+        "width": 854,
+        "height": 64,
+        "centre": {
+          "x": 598,
+          "y": 109
+        },
+        "action": null,
+        "lines": [
+          "Add to library"
+        ]
+      },
+      {
+        "kind": "Divider",
+        "x": 0,
+        "y": 159,
+        "width": 1072,
+        "height": 4,
+        "centre": {
+          "x": 536,
+          "y": 161
+        },
+        "action": null,
+        "lines": []
+      },
+      {
+        "kind": "Heading(1)",
+        "x": 47,
+        "y": 175,
+        "width": 978,
+        "height": 112,
+        "centre": {
+          "x": 536,
+          "y": 231
+        },
+        "action": null,
+        "lines": [
+          "A small garden"
+        ]
+      },
+      {
+        "kind": "Secondary",
+        "x": 47,
+        "y": 299,
+        "width": 978,
+        "height": 50,
+        "centre": {
+          "x": 536,
+          "y": 324
+        },
+        "action": null,
+        "lines": [
+          "CBZ \u00b7 34 KB"
+        ]
+      },
+      {
+        "kind": "Text",
+        "x": 47,
+        "y": 361,
+        "width": 978,
+        "height": 64,
+        "centre": {
+          "x": 536,
+          "y": 393
+        },
+        "action": null,
+        "lines": [
+          "Available on this reader."
+        ]
+      },
+      {
+        "kind": "Spacer",
+        "x": 0,
+        "y": 1306,
+        "width": 1072,
+        "height": 142,
+        "centre": {
+          "x": 536,
+          "y": 1377
+        },
+        "action": 2053110855,
+        "lines": []
+      },
+      {
+        "kind": "Divider",
+        "x": 0,
+        "y": 1306,
+        "width": 1072,
+        "height": 4,
+        "centre": {
+          "x": 536,
+          "y": 1308
+        },
+        "action": null,
+        "lines": []
+      },
+      {
+        "kind": "Button(ActionId(2053110855), Enabled, Normal)",
+        "x": 47,
+        "y": 1320,
+        "width": 978,
+        "height": 118,
+        "centre": {
+          "x": 536,
+          "y": 1379
+        },
+        "action": 2053110855,
+        "lines": [
+          "Open"
+        ]
+      }
+    ]
+  },
+  "diagnostics": {
+    "issues": []
+  }
+}

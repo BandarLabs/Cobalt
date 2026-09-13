@@ -8,6 +8,8 @@ use std::collections::BTreeMap;
 pub(super) enum Kind {
     Fetch,
     Post,
+    Put,
+    Patch,
     File,
     Sleep,
 }
@@ -17,6 +19,10 @@ impl From<&Task> for Kind {
         match work {
             Task::Fetch { .. } => Self::Fetch,
             Task::Post { .. } => Self::Post,
+            Task::Update { method, .. } => match method {
+                kobo_protocol::UpdateMethod::Put => Self::Put,
+                kobo_protocol::UpdateMethod::Patch => Self::Patch,
+            },
             Task::ReadFile { .. } => Self::File,
             Task::Sleep { .. } => Self::Sleep,
         }
@@ -30,7 +36,7 @@ pub(super) struct Activity {
     barriers: bool,
     connected: bool,
     active: BTreeMap<TaskId, Kind>,
-    effects: [u64; 4],
+    effects: [u64; 6],
     completed: u64,
     failed: u64,
     cancelled: u64,
@@ -45,7 +51,7 @@ impl Default for Activity {
             barriers: false,
             connected: true,
             active: BTreeMap::new(),
-            effects: [0; 4],
+            effects: [0; 6],
             completed: 0,
             failed: 0,
             cancelled: 0,
@@ -61,6 +67,8 @@ impl Activity {
             Kind::Post => 1,
             Kind::File => 2,
             Kind::Sleep => 3,
+            Kind::Put => 4,
+            Kind::Patch => 5,
         };
         self.effects[index] = self.effects[index].saturating_add(1);
         self.revision = self.revision.saturating_add(1);
@@ -139,7 +147,7 @@ impl Activity {
             .filter(|kind| **kind == Kind::Sleep)
             .count();
         let work = self.active.len() - sleeping;
-        format!("{{\"revision\":{},\"callbackMarkers\":{},\"connected\":{},\"pendingCallbacks\":{},\"activeWork\":{},\"sleepingTasks\":{},\"idle\":{},\"effects\":{{\"fetch\":{},\"post\":{},\"file\":{},\"sleep\":{}}},\"completed\":{},\"failed\":{},\"cancelled\":{},\"abandoned\":{},\"cleanupComplete\":{}}}", self.revision, self.barriers, self.connected, self.callbacks, work, sleeping, self.barriers && self.connected && self.callbacks == 0 && work == 0, self.effects[0], self.effects[1], self.effects[2], self.effects[3], self.completed, self.failed, self.cancelled, self.abandoned, self.cleanup_complete)
+        format!("{{\"revision\":{},\"callbackMarkers\":{},\"connected\":{},\"pendingCallbacks\":{},\"activeWork\":{},\"sleepingTasks\":{},\"idle\":{},\"effects\":{{\"fetch\":{},\"post\":{},\"file\":{},\"sleep\":{},\"put\":{},\"patch\":{}}},\"completed\":{},\"failed\":{},\"cancelled\":{},\"abandoned\":{},\"cleanupComplete\":{}}}", self.revision, self.barriers, self.connected, self.callbacks, work, sleeping, self.barriers && self.connected && self.callbacks == 0 && work == 0, self.effects[0], self.effects[1], self.effects[2], self.effects[3], self.effects[4], self.effects[5], self.completed, self.failed, self.cancelled, self.abandoned, self.cleanup_complete)
     }
 }
 #[cfg(test)]
@@ -192,5 +200,35 @@ mod tests {
         assert!(activity.json().contains("\"idle\":false"));
         activity.callback_complete();
         assert!(activity.json().contains("\"cancelled\":1"));
+    }
+    #[test]
+    fn update_effects_are_distinct_and_do_not_expose_request_data() {
+        let mut activity = Activity::default();
+        for (id, method) in [
+            (1, kobo_protocol::UpdateMethod::Put),
+            (2, kobo_protocol::UpdateMethod::Patch),
+        ] {
+            activity.started(
+                TaskId(id),
+                &Task::Update {
+                    method,
+                    url: "https://private.example/token".into(),
+                    body: "private content".into(),
+                    content_type: "application/json".into(),
+                    credential: Some(kobo_protocol::Credential::bearer("secret-name")),
+                    headers: Vec::new(),
+                    max_bytes: 16,
+                },
+            );
+        }
+        activity.callback_complete();
+        let json = activity.json();
+        assert!(json.contains("\"put\":1"));
+        assert!(json.contains("\"patch\":1"));
+        assert!(json.contains("\"post\":0"));
+        assert!(json.contains("\"activeWork\":2"));
+        assert!(json.contains("\"idle\":false"));
+        assert!(!json.contains("private"));
+        assert!(!json.contains("secret-name"));
     }
 }

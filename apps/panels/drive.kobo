@@ -2,5 +2,6 @@ wait 500
 expect Your shelf is empty
 shot library
 tap Browse
-wait 500
-shot library-error
+wait-for-id provider.address
+expect Connect Komga
+shot server-setup

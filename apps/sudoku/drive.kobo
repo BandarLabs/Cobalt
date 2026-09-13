@@ -1,10 +1,18 @@
-expect Sudoku
-tap How to play
-expect Fill every row, column and box
-wait 250
-clean
+# Use disposable simulator storage for this original first-puzzle route.
+wait-for-id more
+tap-id cell-0
+tap-id pencil
+tap-id digit-2
+wait-idle
+expect Row 1
+shot sudoku-notes
+tap-id undo
+tap-id pencil
+tap-id more
+tap-id view
+tap-id how-to-play
+expect Use 1–9 once
 shot sudoku-help
-tap Play
-expect Tap a blank square
-clean
-shot sudoku-start
+tap Back
+wait-idle
+shot sudoku-game

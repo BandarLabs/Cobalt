@@ -88,7 +88,7 @@ def main():
                     assert damaged.returncode != 0 and files[0].read_bytes() == expected
                     with urllib.request.urlopen(f'http://{address}/activity', timeout=5) as response:
                         activity = json.load(response)
-                    assert activity['effects']['fetch'] == 0 and activity['effects']['post'] == 0
+                    assert all(activity['effects'][method] == 0 for method in ('fetch', 'post', 'put', 'patch'))
                     results.append(dict(kind=kind, status='passed', sha256=record['sha256']))
                 finally:
                     if process is not None and process.poll() is None:

@@ -1,0 +1,27 @@
+{
+  "status": "passed",
+  "profile": "clara-bw-391",
+  "scale": "extra-large",
+  "original_fixture": true,
+  "source_head": "a61478ca5fb2455dddbf346f664ffc542868878c",
+  "source_dirty": true,
+  "checks": [
+    "attached clues",
+    "mark selection",
+    "full clue inspection",
+    "forced restart",
+    "persistent atomic run undo",
+    "failed-save preservation",
+    "explicit retry",
+    "confirmed restart undo",
+    "full completion",
+    "completion restart and undo",
+    "25x25 panning",
+    "last square restart",
+    "all help pages",
+    "committed route",
+    "new picture restart",
+    "earlier save preserved",
+    "new picture completion"
+  ]
+}

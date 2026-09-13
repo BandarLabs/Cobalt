@@ -3,10 +3,10 @@
   "display_name": "Hacker News",
   "short_label": "Hacker News",
   "summary": "Read Top, New, Ask, and Show stories with complete comment threads.",
-  "version": "1.0.8",
+  "version": "1.0.9",
   "glyph": "news",
   "capabilities": [
     "network"
   ],
-  "release_notes": "Update shared controls and page layout for Cobalt 0.3.12."
+  "release_notes": "Read a story's article on the reader, keep it after the front page has moved on, and see at a glance which stories have been read."
 }

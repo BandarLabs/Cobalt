@@ -1,0 +1,13 @@
+{
+  "source_sha": "811c5ff0709a41d56ac3671ecf28fce654a38cc6",
+  "dirty": true,
+  "results": [
+    {
+      "app": "paperterm",
+      "launched": true,
+      "status": "pass",
+      "route": "apps/paperterm/drive.kobo",
+      "exit_code": 0
+    }
+  ]
+}

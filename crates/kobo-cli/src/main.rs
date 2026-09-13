@@ -18,6 +18,7 @@ mod deck;
 mod devsession;
 mod drive;
 mod exports;
+mod feeds;
 mod flashcards;
 mod frame;
 mod host_release;
@@ -496,6 +497,7 @@ fn run(arguments: &[String]) -> Result<(), String> {
         "vault" => vault::command(&arguments[1..]),
         "sync" => sync::command(&arguments[1..]),
         "export" => exports::command(&arguments[1..]),
+        "feeds" => feeds::command(&arguments[1..]),
         "needles" => needles::command(&arguments[1..]),
         "nonograms" => nonograms::command(&arguments[1..]),
         "parser" => parser_command(&arguments[1..]),
@@ -6502,6 +6504,8 @@ fn print_help() {
            sync run [--foreground] [--seconds N] Start the private host Syncthing peer\n\
            export --app APP --device IP --out DIR  Receive a prepared text or image copy\n\
            sync status|stop                      Inspect or stop that dedicated peer\n\
+           feeds check FILE                     Read an OPML subscription list here\n\
+           feeds push FILE (--device IP | --sim)  Stage that list on the reader for Feeds\n\
            needles prepare PDF --out FILE       Extract a user-owned PDF for Needles\n\
            needles push FILE --device IP        Transfer a prepared pattern to Needles\n\
            nonograms push IMAGE --size 5|7|9 (--device IP | --out photo.png)\n\

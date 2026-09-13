@@ -1,0 +1,249 @@
+{
+  "paints": 11,
+  "nodes": [
+    {
+      "kind": "StatusBand",
+      "x": 0,
+      "y": 0,
+      "width": 1404,
+      "height": 45,
+      "centre": {
+        "x": 702,
+        "y": 22
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusClock",
+      "x": 36,
+      "y": 0,
+      "width": 78,
+      "height": 45,
+      "centre": {
+        "x": 75,
+        "y": 22
+      },
+      "action": null,
+      "lines": [
+        "22:45"
+      ]
+    },
+    {
+      "kind": "StatusBattery(Some(Percent(72)), false)",
+      "x": 1314,
+      "y": 9,
+      "width": 54,
+      "height": 27,
+      "centre": {
+        "x": 1341,
+        "y": 22
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusSignal(Strong)",
+      "x": 1269,
+      "y": 9,
+      "width": 27,
+      "height": 27,
+      "centre": {
+        "x": 1282,
+        "y": 22
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusBluetooth",
+      "x": 1224,
+      "y": 9,
+      "width": 27,
+      "height": 27,
+      "centre": {
+        "x": 1237,
+        "y": 22
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "TopBar",
+      "x": 0,
+      "y": 45,
+      "width": 1404,
+      "height": 76,
+      "centre": {
+        "x": 702,
+        "y": 83
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Back",
+      "x": 36,
+      "y": 45,
+      "width": 76,
+      "height": 76,
+      "centre": {
+        "x": 74,
+        "y": 83
+      },
+      "action": 4294967295,
+      "lines": []
+    },
+    {
+      "kind": "BarAction(ActionId(693242804))",
+      "x": 1216,
+      "y": 45,
+      "width": 152,
+      "height": 76,
+      "centre": {
+        "x": 1292,
+        "y": 83
+      },
+      "action": 693242804,
+      "lines": [
+        "Pairing"
+      ]
+    },
+    {
+      "kind": "TopBarTitle",
+      "x": 130,
+      "y": 60,
+      "width": 1068,
+      "height": 46,
+      "centre": {
+        "x": 664,
+        "y": 83
+      },
+      "action": null,
+      "lines": [
+        "Paperterm \u2014 ended"
+      ]
+    },
+    {
+      "kind": "Divider",
+      "x": 0,
+      "y": 121,
+      "width": 1404,
+      "height": 3,
+      "centre": {
+        "x": 702,
+        "y": 122
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "TerminalGrid",
+      "x": 36,
+      "y": 133,
+      "width": 1326,
+      "height": 1600,
+      "centre": {
+        "x": 699,
+        "y": 933
+      },
+      "action": null,
+      "lines": [
+        "PTY True True",
+        "READY> SIZE 133 64",
+        "reader",
+        "FROM READER: reader",
+        "laptop",
+        "FROM LAPTOP: laptop",
+        "WIDE:0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456",
+        "WAITING FOR CTRL-C",
+        "^CINTERRUPTED",
+        "DONE",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        ""
+      ]
+    },
+    {
+      "kind": "TerminalCursor",
+      "x": 36,
+      "y": 383,
+      "width": 13,
+      "height": 25,
+      "centre": {
+        "x": 42,
+        "y": 395
+      },
+      "action": null,
+      "lines": [
+        " "
+      ]
+    },
+    {
+      "kind": "Secondary",
+      "x": 233,
+      "y": 1742,
+      "width": 938,
+      "height": 35,
+      "centre": {
+        "x": 702,
+        "y": 1759
+      },
+      "action": null,
+      "lines": [
+        "The host held the final terminal screen."
+      ]
+    }
+  ]
+}

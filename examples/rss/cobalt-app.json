@@ -2,11 +2,11 @@
   "id": "rss",
   "display_name": "Feeds",
   "short_label": "Feeds",
-  "summary": "Follow website feeds and read their articles without the web page around them.",
-  "version": "1.0.8",
+  "summary": "Follow feeds, search saved articles and read offline with images.",
+  "version": "1.0.9",
   "glyph": "rss",
   "capabilities": [
     "network"
   ],
-  "release_notes": "Update shared controls and page layout for Cobalt 0.3.12."
+  "release_notes": "Read saved articles and images offline, search article text, preview direct feeds and OPML imports, browse starter feeds, and track unread articles and refresh history. Failed saves can be retried without losing the previous saved copy."
 }

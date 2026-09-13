@@ -1,0 +1,182 @@
+{
+  "app": "sudoku",
+  "fonts": [
+    {
+      "role": "interface",
+      "source": "AtkinsonHyperlegible-Regular.ttf"
+    },
+    {
+      "role": "display-title",
+      "source": "AtkinsonHyperlegible-Bold.ttf"
+    },
+    {
+      "role": "display-heading",
+      "source": "AtkinsonHyperlegible-Bold.ttf"
+    },
+    {
+      "role": "display-bold",
+      "source": "AtkinsonHyperlegible-Bold.ttf"
+    },
+    {
+      "role": "reading",
+      "source": "AtkinsonHyperlegible-Regular.ttf"
+    },
+    {
+      "role": "mono",
+      "source": "DejaVuSansMono.ttf"
+    }
+  ],
+  "frame": {
+    "colourAppearance": "luminance",
+    "format": "grey8",
+    "sha256": "496a7e838050d74222b76629b8617669860419808703e35be1817fe35dd38cee",
+    "view": "ideal"
+  },
+  "interfaceScalePercent": 140,
+  "mode": "single-app",
+  "orientation": "landscape",
+  "paints": "5",
+  "publisherFontHandle": null,
+  "readingScalePercent": 100,
+  "runtimeVersion": "0.3.12",
+  "schema": "cobalt.simulator-capture",
+  "simulation": {
+    "appStore": {
+      "mode": "catalog-preview",
+      "signedTransactions": false
+    },
+    "backends": [
+      "network",
+      "battery-read",
+      "frontlight-control",
+      "wifi-control",
+      "library",
+      "cover-sensor"
+    ],
+    "clock": {
+      "date": "2026-09-08",
+      "mode": "manual",
+      "monotonicMillis": "0",
+      "unixMillis": "1788850860000",
+      "utcOffsetMinutes": 0
+    },
+    "dirtyPixelsSinceClean": 854116,
+    "hardware": {
+      "batteryPercent": 72,
+      "charging": false,
+      "coverClosed": false,
+      "frontlightAppearanceCalibrated": false,
+      "frontlightPercent": 20,
+      "orientation": "landscape",
+      "orientationControl": "display-composition"
+    },
+    "input": {
+      "forwardKey": 194,
+      "needsResynchronization": false,
+      "quiescent": true,
+      "rawEvents": "21",
+      "source": "synthetic evdev replay"
+    },
+    "lifecycle": "foreground",
+    "navigation": {
+      "app": "sudoku",
+      "hosted": [],
+      "mode": "single-app",
+      "processId": null
+    },
+    "observation": null,
+    "panel": {
+      "completed": "7",
+      "contentsKnown": true,
+      "failures": "0",
+      "finishedAtMillis": "1334",
+      "mode": "automatic",
+      "queued": false,
+      "status": "idle",
+      "submissionMarker": null,
+      "submitted": "7",
+      "submittedAtMillis": "1321",
+      "timing": "host control observations; not hardware calibration",
+      "visibleFrame": "last confirmed completion with approximate residue"
+    },
+    "panelApproximation": true,
+    "power": null,
+    "profile": {
+      "colourPanel": false,
+      "height": 1448,
+      "id": "clara-bw-391",
+      "model": "Kobo Clara BW",
+      "pixelsPerInch": 300,
+      "rotation": 3,
+      "touch": {
+        "name": "cyttsp5_mt",
+        "xMax": 1447,
+        "xMin": 0,
+        "yMax": 1071,
+        "yMin": 0
+      },
+      "width": 1072
+    },
+    "refreshCount": 7,
+    "scenario": "normal",
+    "touch": {
+      "display": {
+        "x": 584,
+        "y": 724
+      },
+      "raw": {
+        "x": 724,
+        "y": 487
+      }
+    },
+    "transition": {
+      "dirty": 854116,
+      "full": false,
+      "refresh": 7,
+      "region": {
+        "height": 1368,
+        "width": 880,
+        "x": 8,
+        "y": 40
+      },
+      "regions": [
+        {
+          "region": {
+            "height": 1368,
+            "width": 120,
+            "x": 8,
+            "y": 40
+          },
+          "waveform": "GL16"
+        },
+        {
+          "region": {
+            "height": 1168,
+            "width": 120,
+            "x": 232,
+            "y": 104
+          },
+          "waveform": "GL16"
+        },
+        {
+          "region": {
+            "height": 1208,
+            "width": 512,
+            "x": 376,
+            "y": 104
+          },
+          "waveform": "GL16"
+        }
+      ],
+      "waveform": "GL16"
+    }
+  },
+  "source": {
+    "binarySha256": "cc153a15d60cd7a23484142076b43c135ba705c06d2a1e9f160ed42b19672a91",
+    "dirty": true,
+    "fixture": "original-sudoku-pack",
+    "requestedSeed": "0",
+    "revision": "a83c2f5c35069e5ac4a857dad80c1089f4607fba"
+  },
+  "version": 1
+}

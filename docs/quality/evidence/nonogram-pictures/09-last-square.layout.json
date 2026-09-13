@@ -1,0 +1,1297 @@
+{
+  "paints": 32,
+  "nodes": [
+    {
+      "kind": "StatusBand",
+      "x": 0,
+      "y": 0,
+      "width": 1072,
+      "height": 59,
+      "centre": {
+        "x": 536,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusClock",
+      "x": 47,
+      "y": 0,
+      "width": 112,
+      "height": 59,
+      "centre": {
+        "x": 103,
+        "y": 29
+      },
+      "action": null,
+      "lines": [
+        "07:01"
+      ]
+    },
+    {
+      "kind": "StatusBattery(Some(Percent(72)), false)",
+      "x": 955,
+      "y": 12,
+      "width": 70,
+      "height": 35,
+      "centre": {
+        "x": 990,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusSignal(Strong)",
+      "x": 896,
+      "y": 12,
+      "width": 35,
+      "height": 35,
+      "centre": {
+        "x": 913,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusBluetooth",
+      "x": 837,
+      "y": 12,
+      "width": 35,
+      "height": 35,
+      "centre": {
+        "x": 854,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "TopBar",
+      "x": 0,
+      "y": 59,
+      "width": 1072,
+      "height": 100,
+      "centre": {
+        "x": 536,
+        "y": 109
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Back",
+      "x": 47,
+      "y": 59,
+      "width": 100,
+      "height": 100,
+      "centre": {
+        "x": 97,
+        "y": 109
+      },
+      "action": 4294967295,
+      "lines": []
+    },
+    {
+      "kind": "TopBarTitle",
+      "x": 171,
+      "y": 77,
+      "width": 854,
+      "height": 64,
+      "centre": {
+        "x": 598,
+        "y": 109
+      },
+      "action": null,
+      "lines": [
+        "Nonograms"
+      ]
+    },
+    {
+      "kind": "Divider",
+      "x": 0,
+      "y": 159,
+      "width": 1072,
+      "height": 4,
+      "centre": {
+        "x": 536,
+        "y": 161
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Secondary",
+      "x": 47,
+      "y": 175,
+      "width": 978,
+      "height": 50,
+      "centre": {
+        "x": 536,
+        "y": 200
+      },
+      "action": null,
+      "lines": [
+        "Row 25 \u00b7 Column 25 \u00b7 Free"
+      ]
+    },
+    {
+      "kind": "Spacer",
+      "x": 95,
+      "y": 237,
+      "width": 882,
+      "height": 682,
+      "centre": {
+        "x": 536,
+        "y": 578
+      },
+      "action": 1668072534,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(1718552486), Board, false)",
+      "x": 213,
+      "y": 411,
+      "width": 124,
+      "height": 124,
+      "centre": {
+        "x": 275,
+        "y": 473
+      },
+      "action": 1718552486,
+      "lines": [
+        "Row 22, column 20, empty"
+      ]
+    },
+    {
+      "kind": "BoardMark(Empty, false)",
+      "x": 213,
+      "y": 411,
+      "width": 124,
+      "height": 124,
+      "centre": {
+        "x": 275,
+        "y": 473
+      },
+      "action": 1718552486,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(1735330105), Board, false)",
+      "x": 341,
+      "y": 411,
+      "width": 124,
+      "height": 124,
+      "centre": {
+        "x": 403,
+        "y": 473
+      },
+      "action": 1735330105,
+      "lines": [
+        "Row 22, column 21, empty"
+      ]
+    },
+    {
+      "kind": "BoardMark(Empty, false)",
+      "x": 341,
+      "y": 411,
+      "width": 124,
+      "height": 124,
+      "centre": {
+        "x": 403,
+        "y": 473
+      },
+      "action": 1735330105,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(1684997248), Board, false)",
+      "x": 469,
+      "y": 411,
+      "width": 124,
+      "height": 124,
+      "centre": {
+        "x": 531,
+        "y": 473
+      },
+      "action": 1684997248,
+      "lines": [
+        "Row 22, column 22, empty"
+      ]
+    },
+    {
+      "kind": "BoardMark(Empty, false)",
+      "x": 469,
+      "y": 411,
+      "width": 124,
+      "height": 124,
+      "centre": {
+        "x": 531,
+        "y": 473
+      },
+      "action": 1684997248,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(1701774867), Board, false)",
+      "x": 597,
+      "y": 411,
+      "width": 124,
+      "height": 124,
+      "centre": {
+        "x": 659,
+        "y": 473
+      },
+      "action": 1701774867,
+      "lines": [
+        "Row 22, column 23, empty"
+      ]
+    },
+    {
+      "kind": "BoardMark(Empty, false)",
+      "x": 597,
+      "y": 411,
+      "width": 124,
+      "height": 124,
+      "centre": {
+        "x": 659,
+        "y": 473
+      },
+      "action": 1701774867,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(1919883914), Board, false)",
+      "x": 725,
+      "y": 411,
+      "width": 124,
+      "height": 124,
+      "centre": {
+        "x": 787,
+        "y": 473
+      },
+      "action": 1919883914,
+      "lines": [
+        "Row 22, column 24, empty"
+      ]
+    },
+    {
+      "kind": "BoardMark(Empty, false)",
+      "x": 725,
+      "y": 411,
+      "width": 124,
+      "height": 124,
+      "centre": {
+        "x": 787,
+        "y": 473
+      },
+      "action": 1919883914,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(1936661533), Board, false)",
+      "x": 853,
+      "y": 411,
+      "width": 124,
+      "height": 124,
+      "centre": {
+        "x": 915,
+        "y": 473
+      },
+      "action": 1936661533,
+      "lines": [
+        "Row 22, column 25, empty"
+      ]
+    },
+    {
+      "kind": "BoardMark(Empty, false)",
+      "x": 853,
+      "y": 411,
+      "width": 124,
+      "height": 124,
+      "centre": {
+        "x": 915,
+        "y": 473
+      },
+      "action": 1936661533,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(1735035915), Board, false)",
+      "x": 213,
+      "y": 539,
+      "width": 124,
+      "height": 124,
+      "centre": {
+        "x": 275,
+        "y": 601
+      },
+      "action": 1735035915,
+      "lines": [
+        "Row 23, column 20, empty"
+      ]
+    },
+    {
+      "kind": "BoardMark(Empty, false)",
+      "x": 213,
+      "y": 539,
+      "width": 124,
+      "height": 124,
+      "centre": {
+        "x": 275,
+        "y": 601
+      },
+      "action": 1735035915,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(1684850153), Board, false)",
+      "x": 341,
+      "y": 539,
+      "width": 124,
+      "height": 124,
+      "centre": {
+        "x": 403,
+        "y": 601
+      },
+      "action": 1684850153,
+      "lines": [
+        "Row 23, column 21, empty"
+      ]
+    },
+    {
+      "kind": "BoardMark(Empty, false)",
+      "x": 341,
+      "y": 539,
+      "width": 124,
+      "height": 124,
+      "centre": {
+        "x": 403,
+        "y": 601
+      },
+      "action": 1684850153,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(1668072534), Board, false)",
+      "x": 469,
+      "y": 539,
+      "width": 124,
+      "height": 124,
+      "centre": {
+        "x": 531,
+        "y": 601
+      },
+      "action": 1668072534,
+      "lines": [
+        "Row 23, column 22, empty"
+      ]
+    },
+    {
+      "kind": "BoardMark(Empty, false)",
+      "x": 469,
+      "y": 539,
+      "width": 124,
+      "height": 124,
+      "centre": {
+        "x": 531,
+        "y": 601
+      },
+      "action": 1668072534,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(1651294915), Board, false)",
+      "x": 597,
+      "y": 539,
+      "width": 124,
+      "height": 124,
+      "centre": {
+        "x": 659,
+        "y": 601
+      },
+      "action": 1651294915,
+      "lines": [
+        "Row 23, column 23, empty"
+      ]
+    },
+    {
+      "kind": "BoardMark(Empty, false)",
+      "x": 597,
+      "y": 539,
+      "width": 124,
+      "height": 124,
+      "centre": {
+        "x": 659,
+        "y": 601
+      },
+      "action": 1651294915,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(1634517296), Board, false)",
+      "x": 725,
+      "y": 539,
+      "width": 124,
+      "height": 124,
+      "centre": {
+        "x": 787,
+        "y": 601
+      },
+      "action": 1634517296,
+      "lines": [
+        "Row 23, column 24, empty"
+      ]
+    },
+    {
+      "kind": "BoardMark(Empty, false)",
+      "x": 725,
+      "y": 539,
+      "width": 124,
+      "height": 124,
+      "centre": {
+        "x": 787,
+        "y": 601
+      },
+      "action": 1634517296,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(1751960629), Board, false)",
+      "x": 853,
+      "y": 539,
+      "width": 124,
+      "height": 124,
+      "centre": {
+        "x": 915,
+        "y": 601
+      },
+      "action": 1751960629,
+      "lines": [
+        "Row 23, column 25, empty"
+      ]
+    },
+    {
+      "kind": "BoardMark(Empty, false)",
+      "x": 853,
+      "y": 539,
+      "width": 124,
+      "height": 124,
+      "centre": {
+        "x": 915,
+        "y": 601
+      },
+      "action": 1751960629,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(1955557723), Board, false)",
+      "x": 213,
+      "y": 667,
+      "width": 124,
+      "height": 124,
+      "centre": {
+        "x": 275,
+        "y": 729
+      },
+      "action": 1955557723,
+      "lines": [
+        "Row 24, column 20, empty"
+      ]
+    },
+    {
+      "kind": "BoardMark(Empty, false)",
+      "x": 213,
+      "y": 667,
+      "width": 124,
+      "height": 124,
+      "centre": {
+        "x": 275,
+        "y": 729
+      },
+      "action": 1955557723,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(1938780104), Board, false)",
+      "x": 341,
+      "y": 667,
+      "width": 124,
+      "height": 124,
+      "centre": {
+        "x": 403,
+        "y": 729
+      },
+      "action": 1938780104,
+      "lines": [
+        "Row 24, column 21, empty"
+      ]
+    },
+    {
+      "kind": "BoardMark(Empty, false)",
+      "x": 341,
+      "y": 667,
+      "width": 124,
+      "height": 124,
+      "centre": {
+        "x": 403,
+        "y": 729
+      },
+      "action": 1938780104,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(1989112961), Board, false)",
+      "x": 469,
+      "y": 667,
+      "width": 124,
+      "height": 124,
+      "centre": {
+        "x": 531,
+        "y": 729
+      },
+      "action": 1989112961,
+      "lines": [
+        "Row 24, column 22, empty"
+      ]
+    },
+    {
+      "kind": "BoardMark(Empty, false)",
+      "x": 469,
+      "y": 667,
+      "width": 124,
+      "height": 124,
+      "centre": {
+        "x": 531,
+        "y": 729
+      },
+      "action": 1989112961,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(1972335342), Board, false)",
+      "x": 597,
+      "y": 667,
+      "width": 124,
+      "height": 124,
+      "centre": {
+        "x": 659,
+        "y": 729
+      },
+      "action": 1972335342,
+      "lines": [
+        "Row 24, column 23, empty"
+      ]
+    },
+    {
+      "kind": "BoardMark(Empty, false)",
+      "x": 597,
+      "y": 667,
+      "width": 124,
+      "height": 124,
+      "centre": {
+        "x": 659,
+        "y": 729
+      },
+      "action": 1972335342,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(1888447247), Board, false)",
+      "x": 725,
+      "y": 667,
+      "width": 124,
+      "height": 124,
+      "centre": {
+        "x": 787,
+        "y": 729
+      },
+      "action": 1888447247,
+      "lines": [
+        "Row 24, column 24, empty"
+      ]
+    },
+    {
+      "kind": "BoardMark(Empty, false)",
+      "x": 725,
+      "y": 667,
+      "width": 124,
+      "height": 124,
+      "centre": {
+        "x": 787,
+        "y": 729
+      },
+      "action": 1888447247,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(1871669628), Board, false)",
+      "x": 853,
+      "y": 667,
+      "width": 124,
+      "height": 124,
+      "centre": {
+        "x": 915,
+        "y": 729
+      },
+      "action": 1871669628,
+      "lines": [
+        "Row 24, column 25, empty"
+      ]
+    },
+    {
+      "kind": "BoardMark(Empty, false)",
+      "x": 853,
+      "y": 667,
+      "width": 124,
+      "height": 124,
+      "centre": {
+        "x": 915,
+        "y": 729
+      },
+      "action": 1871669628,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(2241995533), Board, false)",
+      "x": 213,
+      "y": 795,
+      "width": 124,
+      "height": 124,
+      "centre": {
+        "x": 275,
+        "y": 857
+      },
+      "action": 2241995533,
+      "lines": [
+        "Row 25, column 20, empty"
+      ]
+    },
+    {
+      "kind": "BoardMark(Empty, false)",
+      "x": 213,
+      "y": 795,
+      "width": 124,
+      "height": 124,
+      "centre": {
+        "x": 275,
+        "y": 857
+      },
+      "action": 2241995533,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(1990184153), Board, false)",
+      "x": 341,
+      "y": 795,
+      "width": 124,
+      "height": 124,
+      "centre": {
+        "x": 403,
+        "y": 857
+      },
+      "action": 1990184153,
+      "lines": [
+        "Row 25, column 21, empty"
+      ]
+    },
+    {
+      "kind": "BoardMark(Empty, false)",
+      "x": 341,
+      "y": 795,
+      "width": 124,
+      "height": 124,
+      "centre": {
+        "x": 403,
+        "y": 857
+      },
+      "action": 1990184153,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(1973406534), Board, false)",
+      "x": 469,
+      "y": 795,
+      "width": 124,
+      "height": 124,
+      "centre": {
+        "x": 531,
+        "y": 857
+      },
+      "action": 1973406534,
+      "lines": [
+        "Row 25, column 22, empty"
+      ]
+    },
+    {
+      "kind": "BoardMark(Empty, false)",
+      "x": 469,
+      "y": 795,
+      "width": 124,
+      "height": 124,
+      "centre": {
+        "x": 531,
+        "y": 857
+      },
+      "action": 1973406534,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(1956628915), Board, false)",
+      "x": 597,
+      "y": 795,
+      "width": 124,
+      "height": 124,
+      "centre": {
+        "x": 659,
+        "y": 857
+      },
+      "action": 1956628915,
+      "lines": [
+        "Row 25, column 23, empty"
+      ]
+    },
+    {
+      "kind": "BoardMark(Empty, false)",
+      "x": 597,
+      "y": 795,
+      "width": 124,
+      "height": 124,
+      "centre": {
+        "x": 659,
+        "y": 857
+      },
+      "action": 1956628915,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(1939851296), Board, false)",
+      "x": 725,
+      "y": 795,
+      "width": 124,
+      "height": 124,
+      "centre": {
+        "x": 787,
+        "y": 857
+      },
+      "action": 1939851296,
+      "lines": [
+        "Row 25, column 24, empty"
+      ]
+    },
+    {
+      "kind": "BoardMark(Empty, false)",
+      "x": 725,
+      "y": 795,
+      "width": 124,
+      "height": 124,
+      "centre": {
+        "x": 787,
+        "y": 857
+      },
+      "action": 1939851296,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(2057294629), Board, true)",
+      "x": 853,
+      "y": 795,
+      "width": 124,
+      "height": 124,
+      "centre": {
+        "x": 915,
+        "y": 857
+      },
+      "action": 2057294629,
+      "lines": [
+        "Row 25, column 25, filled"
+      ]
+    },
+    {
+      "kind": "BoardMark(Filled, false)",
+      "x": 853,
+      "y": 795,
+      "width": 124,
+      "height": 124,
+      "centre": {
+        "x": 915,
+        "y": 857
+      },
+      "action": 2057294629,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(1502019328), Plain, false)",
+      "x": 95,
+      "y": 411,
+      "width": 118,
+      "height": 124,
+      "centre": {
+        "x": 154,
+        "y": 473
+      },
+      "action": 1502019328,
+      "lines": [
+        "Row 22 clue: 25"
+      ]
+    },
+    {
+      "kind": "BoardClue",
+      "x": 95,
+      "y": 411,
+      "width": 118,
+      "height": 124,
+      "centre": {
+        "x": 154,
+        "y": 473
+      },
+      "action": 1502019328,
+      "lines": [
+        "25"
+      ]
+    },
+    {
+      "kind": "Cell(ActionId(1552352185), Plain, false)",
+      "x": 95,
+      "y": 539,
+      "width": 118,
+      "height": 124,
+      "centre": {
+        "x": 154,
+        "y": 601
+      },
+      "action": 1552352185,
+      "lines": [
+        "Row 23 clue: 25"
+      ]
+    },
+    {
+      "kind": "BoardClue",
+      "x": 95,
+      "y": 539,
+      "width": 118,
+      "height": 124,
+      "centre": {
+        "x": 154,
+        "y": 601
+      },
+      "action": 1552352185,
+      "lines": [
+        "25"
+      ]
+    },
+    {
+      "kind": "Cell(ActionId(1535574566), Plain, false)",
+      "x": 95,
+      "y": 667,
+      "width": 118,
+      "height": 124,
+      "centre": {
+        "x": 154,
+        "y": 729
+      },
+      "action": 1535574566,
+      "lines": [
+        "Row 24 clue: 0"
+      ]
+    },
+    {
+      "kind": "BoardClue",
+      "x": 95,
+      "y": 667,
+      "width": 118,
+      "height": 124,
+      "centre": {
+        "x": 154,
+        "y": 729
+      },
+      "action": 1535574566,
+      "lines": [
+        "0"
+      ]
+    },
+    {
+      "kind": "Cell(ActionId(1585907423), Key, true)",
+      "x": 95,
+      "y": 795,
+      "width": 118,
+      "height": 124,
+      "centre": {
+        "x": 154,
+        "y": 857
+      },
+      "action": 1585907423,
+      "lines": [
+        "Row 25 clue: 0"
+      ]
+    },
+    {
+      "kind": "BoardClue",
+      "x": 95,
+      "y": 795,
+      "width": 118,
+      "height": 124,
+      "centre": {
+        "x": 154,
+        "y": 857
+      },
+      "action": 1585907423,
+      "lines": [
+        "0"
+      ]
+    },
+    {
+      "kind": "Cell(ActionId(1468142675), Plain, false)",
+      "x": 213,
+      "y": 237,
+      "width": 124,
+      "height": 174,
+      "centre": {
+        "x": 275,
+        "y": 324
+      },
+      "action": 1468142675,
+      "lines": [
+        "Column 20 clue: 2 2 2 3 2"
+      ]
+    },
+    {
+      "kind": "BoardClue",
+      "x": 213,
+      "y": 237,
+      "width": 124,
+      "height": 174,
+      "centre": {
+        "x": 275,
+        "y": 324
+      },
+      "action": 1468142675,
+      "lines": [
+        "2",
+        "2",
+        "\u2026"
+      ]
+    },
+    {
+      "kind": "Cell(ActionId(3498675859), Plain, false)",
+      "x": 341,
+      "y": 237,
+      "width": 124,
+      "height": 174,
+      "centre": {
+        "x": 403,
+        "y": 324
+      },
+      "action": 3498675859,
+      "lines": [
+        "Column 21 clue: 2 2 2 3 2"
+      ]
+    },
+    {
+      "kind": "BoardClue",
+      "x": 341,
+      "y": 237,
+      "width": 124,
+      "height": 174,
+      "centre": {
+        "x": 403,
+        "y": 324
+      },
+      "action": 3498675859,
+      "lines": [
+        "2",
+        "2",
+        "\u2026"
+      ]
+    },
+    {
+      "kind": "Cell(ActionId(3481898240), Plain, false)",
+      "x": 469,
+      "y": 237,
+      "width": 124,
+      "height": 174,
+      "centre": {
+        "x": 531,
+        "y": 324
+      },
+      "action": 3481898240,
+      "lines": [
+        "Column 22 clue: 2 2 2 3 2"
+      ]
+    },
+    {
+      "kind": "BoardClue",
+      "x": 469,
+      "y": 237,
+      "width": 124,
+      "height": 174,
+      "centre": {
+        "x": 531,
+        "y": 324
+      },
+      "action": 3481898240,
+      "lines": [
+        "2",
+        "2",
+        "\u2026"
+      ]
+    },
+    {
+      "kind": "Cell(ActionId(3532231097), Plain, false)",
+      "x": 597,
+      "y": 237,
+      "width": 124,
+      "height": 174,
+      "centre": {
+        "x": 659,
+        "y": 324
+      },
+      "action": 3532231097,
+      "lines": [
+        "Column 23 clue: 2 2 2 3 2"
+      ]
+    },
+    {
+      "kind": "BoardClue",
+      "x": 597,
+      "y": 237,
+      "width": 124,
+      "height": 174,
+      "centre": {
+        "x": 659,
+        "y": 324
+      },
+      "action": 3532231097,
+      "lines": [
+        "2",
+        "2",
+        "\u2026"
+      ]
+    },
+    {
+      "kind": "Cell(ActionId(3515453478), Plain, false)",
+      "x": 725,
+      "y": 237,
+      "width": 124,
+      "height": 174,
+      "centre": {
+        "x": 787,
+        "y": 324
+      },
+      "action": 3515453478,
+      "lines": [
+        "Column 24 clue: 2 2 2 3 2"
+      ]
+    },
+    {
+      "kind": "BoardClue",
+      "x": 725,
+      "y": 237,
+      "width": 124,
+      "height": 174,
+      "centre": {
+        "x": 787,
+        "y": 324
+      },
+      "action": 3515453478,
+      "lines": [
+        "2",
+        "2",
+        "\u2026"
+      ]
+    },
+    {
+      "kind": "Cell(ActionId(3565786335), Key, true)",
+      "x": 853,
+      "y": 237,
+      "width": 124,
+      "height": 174,
+      "centre": {
+        "x": 915,
+        "y": 324
+      },
+      "action": 3565786335,
+      "lines": [
+        "Column 25 clue: 2 2 2 3 2"
+      ]
+    },
+    {
+      "kind": "BoardClue",
+      "x": 853,
+      "y": 237,
+      "width": 124,
+      "height": 174,
+      "centre": {
+        "x": 915,
+        "y": 324
+      },
+      "action": 3565786335,
+      "lines": [
+        "2",
+        "2",
+        "\u2026"
+      ]
+    },
+    {
+      "kind": "Band",
+      "x": 47,
+      "y": 931,
+      "width": 978,
+      "height": 118,
+      "centre": {
+        "x": 536,
+        "y": 990
+      },
+      "action": 3618181290,
+      "lines": []
+    },
+    {
+      "kind": "Button(ActionId(3432850038), Enabled, Normal)",
+      "x": 111,
+      "y": 931,
+      "width": 181,
+      "height": 118,
+      "centre": {
+        "x": 201,
+        "y": 990
+      },
+      "action": 3432850038,
+      "lines": [
+        "Left"
+      ]
+    },
+    {
+      "kind": "Button(ActionId(3618181290), Enabled, Normal)",
+      "x": 457,
+      "y": 931,
+      "width": 158,
+      "height": 118,
+      "centre": {
+        "x": 536,
+        "y": 990
+      },
+      "action": 3618181290,
+      "lines": [
+        "Up"
+      ]
+    },
+    {
+      "kind": "Button(ActionId(3400916651), Disabled, Normal)",
+      "x": 763,
+      "y": 931,
+      "width": 213,
+      "height": 118,
+      "centre": {
+        "x": 869,
+        "y": 990
+      },
+      "action": null,
+      "lines": [
+        "Right"
+      ]
+    },
+    {
+      "kind": "Band",
+      "x": 47,
+      "y": 1061,
+      "width": 978,
+      "height": 118,
+      "centre": {
+        "x": 536,
+        "y": 1120
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Button(ActionId(1580944473), Disabled, Normal)",
+      "x": 139,
+      "y": 1061,
+      "width": 125,
+      "height": 118,
+      "centre": {
+        "x": 201,
+        "y": 1120
+      },
+      "action": null,
+      "lines": [
+        "\u2212"
+      ]
+    },
+    {
+      "kind": "Button(ActionId(2663755531), Disabled, Normal)",
+      "x": 427,
+      "y": 1061,
+      "width": 218,
+      "height": 118,
+      "centre": {
+        "x": 536,
+        "y": 1120
+      },
+      "action": null,
+      "lines": [
+        "Down"
+      ]
+    },
+    {
+      "kind": "Button(ActionId(1241633656), Enabled, Normal)",
+      "x": 807,
+      "y": 1061,
+      "width": 125,
+      "height": 118,
+      "centre": {
+        "x": 869,
+        "y": 1120
+      },
+      "action": 1241633656,
+      "lines": [
+        "+"
+      ]
+    },
+    {
+      "kind": "Band",
+      "x": 47,
+      "y": 1191,
+      "width": 978,
+      "height": 118,
+      "centre": {
+        "x": 536,
+        "y": 1250
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Button(ActionId(4057005743), Enabled, Normal)",
+      "x": 178,
+      "y": 1191,
+      "width": 214,
+      "height": 118,
+      "centre": {
+        "x": 285,
+        "y": 1250
+      },
+      "action": 4057005743,
+      "lines": [
+        "Undo"
+      ]
+    },
+    {
+      "kind": "Button(ActionId(3897901536), Enabled, Normal)",
+      "x": 682,
+      "y": 1191,
+      "width": 209,
+      "height": 118,
+      "centre": {
+        "x": 786,
+        "y": 1250
+      },
+      "action": 3897901536,
+      "lines": [
+        "More"
+      ]
+    }
+  ]
+}

@@ -1,6 +1,12 @@
 .DS_Store
 /.kobo/
 /target/
+# Tests in a crate write their scratch under that crate's own target
+# directory, which the root pattern never covered: the store smoke test's
+# fixture device was committed this way, and every run since has rewritten
+# bytes nobody reads.
+/crates/kobod/target/
+/crates/kobo-cli/target/
 /.pass
 
 # Credentials. `kobo secret` reads keys off this machine and writes them

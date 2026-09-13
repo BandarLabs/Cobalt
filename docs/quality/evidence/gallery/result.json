@@ -1,0 +1,34 @@
+{
+  "status": "passed",
+  "scale": "default",
+  "fixture": "component-gallery",
+  "panels": {
+    "type-type": 1,
+    "type-quotes": 1,
+    "type-marks": 2,
+    "type-tone": 2,
+    "lists-rows": 2,
+    "lists-tiles": 3,
+    "lists-boards": 3,
+    "lists-icons": 1,
+    "input-buttons": 2,
+    "input-groups": 1,
+    "input-fields": 3,
+    "input-overlays": 1,
+    "states-empty": 1,
+    "states-offline": 1,
+    "states-denied": 2,
+    "states-error": 1,
+    "panel-folio": 1,
+    "panel-ghosting": 1,
+    "panel-transfer": 1,
+    "panel-requests": 1
+  },
+  "icon_sheets": 13,
+  "checks": [
+    "every page of all five destinations drew without an error, across 31 panels",
+    "every icon the system draws was seen, 13 sheets of them",
+    "a book was chosen, confirmed, downloaded and opened",
+    "every step of the job had a way back out of it"
+  ]
+}

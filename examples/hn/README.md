@@ -2,9 +2,11 @@
 
 Hacker News, on a panel with no scrollbar and no keyboard.
 
-Four tabs along the bottom (Top, New, Ask, Show) and a comment thread behind
-every story. Nothing animates, nothing scrolls, and nothing moves under a
-finger that is already reaching for it.
+Five destinations along the bottom. Four are the site's own lists (Top, New,
+Ask, Show) and the fifth is what you put aside. Behind every story is its
+discussion, and behind a story with a link is the article itself, read on the
+device. Nothing animates, nothing scrolls, and nothing moves under a finger
+that is already reaching for it.
 
 | The stories | A thread |
 | --- | --- |
@@ -12,26 +14,39 @@ finger that is already reaching for it.
 
 *Captured from a Kobo Clara BW over Wi-Fi with `kobo shot --device`.*
 
-## Why Algolia rather than the official API
+## The story and the discussion are two different places
 
-Hacker News' own Firebase API returns one item per request. A story with four
-hundred replies is four hundred and one requests, which on a device whose radio
-is the largest single draw on the battery would flatten a charge. Algolia's
-`items/:id` returns the entire thread, nested, in
-one. That single fact is the reason this application is possible at all.
+A row opens the discussion, because that is what this application is for. The
+article behind the story is offered on the story's own screen, next to Save,
+and opens in the same reader the rest of the system uses: the same type sizes,
+the same front light control, the same page turns.
 
-## What happens to a thread that does not fit
+## What the device remembers
 
-The transport carries half a megabyte and a busy thread is comfortably more. A
-real one measured while writing this was 734 KB for 925 comments. Algolia
-ignores `Range`, so the trick that lets Gutenbird read a novel in pieces does
-not work here: asking for the second half returns the whole document again and
-the ceiling rejects it.
+Which stories have been opened, and which ones were put aside. Both are shown
+at the front of the row's second line, where an eye running down the left edge
+of a list finds them, and only on the rows that have them.
 
-So the request comes back `TaskError::TooLarge`. Rather than showing a dead
-end, this asks a different question: `search_by_date` over that story's
-comments, thirty at a time, which is bounded by construction. The nesting is
-gone in that answer, so the screen says the nesting is gone.
+A saved story is written down whole, with its article beside it, so the Saved
+list is the one that works on a train: it needs no radio to draw, and the
+article opens from the copy on the device. The site keeps both of these for a
+logged-in reader and will keep neither for an application, and the alternative
+to keeping them here is asking somebody for their Hacker News password so that
+a list can be grey where they have already been.
+
+## One item per request, on purpose
+
+Hacker News' own API answers one item at a time, which is more round trips than
+a search index needs. It is worth every one of them: it is the site's own
+record, so a story submitted a minute ago is in the list, every score is the
+score on the page, and `kids` is the order the site draws replies in. A client
+cannot recompute that ordering, and a ranked search index answering thirty at
+once got Ask HN wrong by thirteen years.
+
+Comments are fetched as the reader pages into them, so the radio a thread costs
+tracks how far it was actually read rather than how popular it is. A reply
+deeper than the gutter can show says how deep it is in its byline, which costs
+no width at all, and any comment can be folded away with its replies.
 
 ## Running it
 

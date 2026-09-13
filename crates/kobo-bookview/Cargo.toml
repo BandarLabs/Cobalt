@@ -7,9 +7,11 @@ license.workspace = true
 publish = false
 
 [dependencies]
+kobo-net = { path = "../kobo-net" }
 kobo-comic = { path = "../kobo-comic" }
 kobo-doc = { path = "../kobo-doc" }
 kobo-image = { path = "../kobo-image" }
+kobo-json = { path = "../kobo-json" }
 kobo-read = { path = "../kobo-read" }
 kobo-sdk = { path = "../kobo-sdk" }
 kobo-ui = { path = "../kobo-ui" }

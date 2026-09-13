@@ -9,5 +9,11 @@ publish = false
 [dependencies]
 kobo-sdk = { path = "../../crates/kobo-sdk" }
 
+[dev-dependencies]
+# The panels the runtime supports, so the reference can be laid out on all of
+# them rather than on the one the author happens to own.
+kobo-profile = { path = "../../crates/kobo-profile" }
+kobo-ui = { path = "../../crates/kobo-ui" }
+
 [lints]
 workspace = true

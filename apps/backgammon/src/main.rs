@@ -1,4 +1,5 @@
 //! Complete, touch-first backgammon rules for a portrait Kobo panel.
+use kobo_sdk::entropy::{Entropy, FixtureEntropy, SystemEntropy};
 use kobo_sdk::{
     action_id, ActionId, Context, KoboApp, PictureHandle, Screen, ScreenBuilder, StoreResult,
     TilePicture,
@@ -9,9 +10,19 @@ const POINTS: usize = 24;
 const CHECKERS: u8 = 15;
 const MAX_CUBE: u8 = 64;
 const POINTS_PER_PAGE: usize = 6;
-const SAVE: &str = "backgammon-autosave-v3";
+const SAVE: &str = "backgammon-autosave-v4";
+/// The save this replaces. A game left half-played survives the upgrade.
+const OLD_SAVE: &str = "backgammon-autosave-v3";
+/// How many finished turns the board remembers out loud.
+const HISTORY: usize = 8;
+/// Set to a number to play a fixed sequence of rolls, for captures and
+/// fixtures. Named on screen whenever it is in use, because a recorded game
+/// that looks like chance and is not would be a lie about the dice.
+const SEED: &str = "KOBO_BACKGAMMON_SEED";
 const BOARD_PICTURE: PictureHandle = PictureHandle(1);
 const BOARD_WIDTH: u32 = 960;
+/// How wide one point is on the drawn board.
+const POINT_WIDTH: i32 = 68;
 const BOARD_HEIGHT: u32 = 580;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -47,6 +58,88 @@ impl Player {
             Self::White => "White",
             Self::Black => "Black",
         }
+    }
+}
+
+/// Where the dice come from.
+///
+/// Backgammon is the dice. Before this the two numbers came off a counter that
+/// advanced by one each roll, so every game dealt the same sequence in the same
+/// order: that is not a game of chance, it is a recital. The operating system
+/// is the source now, a seed can be named for a fixture, and a source that
+/// cannot be opened says so on the board instead of falling back to anything.
+enum Dice {
+    System(SystemEntropy),
+    Fixture(FixtureEntropy),
+    Unavailable(String),
+    /// An exact sequence, for tests that are about the rules rather than the
+    /// dice: "roll 3 and 1, then 5 and 5" reads as the game it describes.
+    #[cfg(test)]
+    Scripted(std::collections::VecDeque<(u8, u8)>),
+}
+
+impl Dice {
+    fn open() -> Self {
+        match std::env::var(SEED) {
+            Ok(value) => match value.trim().parse::<u64>() {
+                Ok(seed) => Self::Fixture(FixtureEntropy::new(seed)),
+                Err(_) => Self::Unavailable(format!("{SEED} is not a number.")),
+            },
+            Err(_) => match SystemEntropy::open() {
+                Ok(source) => Self::System(source),
+                Err(error) => Self::Unavailable(format!("No dice: {error}.")),
+            },
+        }
+    }
+
+    #[cfg(test)]
+    fn scripted(rolls: impl IntoIterator<Item = (u8, u8)>) -> Self {
+        Self::Scripted(rolls.into_iter().collect())
+    }
+
+    /// Two dice, or why there are none.
+    fn roll(&mut self) -> Result<(u8, u8), String> {
+        let source: &mut dyn Entropy = match self {
+            Self::System(source) => source,
+            Self::Fixture(source) => source,
+            Self::Unavailable(problem) => return Err(problem.clone()),
+            #[cfg(test)]
+            Self::Scripted(rolls) => {
+                return rolls
+                    .pop_front()
+                    .ok_or_else(|| "the script ran out of rolls".to_owned())
+            }
+        };
+        let mut die = || {
+            source
+                .below(6)
+                .map(|value| u8::try_from(value + 1).unwrap_or(1))
+                .map_err(|error| format!("The dice could not be rolled: {error}."))
+        };
+        Ok((die()?, die()?))
+    }
+
+    /// What to say about these dice, when there is anything to say.
+    fn provenance(&self) -> Option<String> {
+        match self {
+            Self::System(_) => None,
+            #[cfg(test)]
+            Self::Scripted(_) => Some("Scripted dice.".to_owned()),
+            Self::Fixture(source) => Some(format!("Fixture dice, seed {}.", source.seed())),
+            Self::Unavailable(problem) => Some(problem.clone()),
+        }
+    }
+}
+
+impl std::fmt::Debug for Dice {
+    fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        out.write_str(match self {
+            Self::System(_) => "Dice::System",
+            Self::Fixture(_) => "Dice::Fixture",
+            Self::Unavailable(_) => "Dice::Unavailable",
+            #[cfg(test)]
+            Self::Scripted(_) => "Dice::Scripted",
+        })
     }
 }
 
@@ -305,6 +398,11 @@ enum Phase {
 enum View {
     #[default]
     Board,
+    /// Everything about the match rather than the move: who is playing, how
+    /// long it runs, where the dice came from, and what has happened so far.
+    /// Off the board, because a control that changes the match has no business
+    /// beside the controls that play it.
+    Match,
     Help,
 }
 
@@ -355,7 +453,13 @@ struct Game {
     crawford_active: bool,
     opening: bool,
     mode: Mode,
-    rolls: usize,
+    /// Where the dice come from. Not saved: a source is opened per session,
+    /// and a saved seed would outlive the run that asked for one.
+    dice_source: Dice,
+    /// What each side has played, most recent last, in board notation.
+    played: Vec<String>,
+    /// The moves of the turn in progress, which become one line of that record.
+    turn_moves: Vec<String>,
     phase: Phase,
     history: Vec<Snapshot>,
     message: String,
@@ -379,7 +483,9 @@ impl Default for Game {
             crawford_active: false,
             opening: true,
             mode: Mode::Solo,
-            rolls: 0,
+            dice_source: Dice::open(),
+            played: Vec::new(),
+            turn_moves: Vec::new(),
             phase: Phase::Playing,
             history: Vec::new(),
             message: "Tap Roll to begin.".into(),
@@ -418,11 +524,14 @@ impl Game {
         self.message = "Move restored.".into();
     }
 
-    fn take_roll(&mut self) -> (u8, u8) {
-        let first = u8::try_from(self.rolls % 6 + 1).expect("die fits u8");
-        let second = u8::try_from(self.rolls / 6 % 6 + 1).expect("die fits u8");
-        self.rolls += 1;
-        (first, second)
+    fn take_roll(&mut self) -> Option<(u8, u8)> {
+        match self.dice_source.roll() {
+            Ok(roll) => Some(roll),
+            Err(problem) => {
+                self.message = problem;
+                None
+            }
+        }
     }
 
     fn roll(&mut self) {
@@ -432,11 +541,13 @@ impl Game {
         self.history.clear();
         self.point_page = 0;
         let opening = self.opening;
-        let (first, second) = loop {
-            let roll = self.take_roll();
-            if !self.opening || roll.0 != roll.1 {
-                break roll;
-            }
+        // An opening roll of a pair decides nothing, so it is thrown again.
+        let mut roll = self.take_roll();
+        while opening && roll.is_some_and(|(first, second)| first == second) {
+            roll = self.take_roll();
+        }
+        let Some((first, second)) = roll else {
+            return;
         };
         if opening {
             self.turn = if first > second {
@@ -460,7 +571,7 @@ impl Game {
                 self.turn.name(),
                 if opening { "opened with" } else { "rolled" },
                 if self.next_moves().len() == 1 {
-                    "Only one legal play — tap its checker."
+                    "One legal play. Tap its checker."
                 } else {
                     "Tap a checker."
                 }
@@ -490,11 +601,29 @@ impl Game {
     }
 
     fn end_turn(&mut self) {
+        self.record_turn();
         self.dice.clear();
         self.selected = None;
         self.point_page = 0;
         self.history.clear();
         self.turn = self.turn.other();
+    }
+
+    /// Writes down what this side just did, in the notation a board uses.
+    ///
+    /// Somebody who looks up from the panel and back again has no way to tell
+    /// whether the checker on the five point arrived now or three turns ago.
+    /// Two lines of "White 8/5 6/5" answer that without replaying anything.
+    fn record_turn(&mut self) {
+        if self.turn_moves.is_empty() {
+            return;
+        }
+        let line = format!("{} {}", self.turn.name(), self.turn_moves.join(" "));
+        self.turn_moves.clear();
+        self.played.push(line.chars().take(64).collect());
+        while self.played.len() > HISTORY {
+            self.played.remove(0);
+        }
     }
 
     fn select(&mut self, from: Option<usize>) {
@@ -532,6 +661,7 @@ impl Game {
             return;
         };
         self.history.push(self.snapshot());
+        self.turn_moves.push(notation(self.turn, play));
         self.position.apply(self.turn, play);
         let index = self
             .dice
@@ -725,10 +855,24 @@ impl Game {
             u8::from(self.crawford_used),
             u8::from(self.crawford_active),
             self.mode as u8,
-            self.rolls,
+            self.played.join("|"),
             u8::from(self.opening),
             self.phase.encode()
         )
+    }
+
+    /// The save written before turns were recorded.
+    ///
+    /// Its twelfth field counted rolls, which nothing needs now. A match left
+    /// half-played is worth more than a tidy decoder.
+    fn decode_previous(text: &str) -> Option<Self> {
+        let fields: Vec<_> = text.split(';').collect();
+        if fields.len() != 15 || fields[12].parse::<u64>().is_err() {
+            return None;
+        }
+        let mut carried: Vec<&str> = fields;
+        carried[12] = "";
+        Self::decode(&carried.join(";"))
     }
 
     fn decode(text: &str) -> Option<Self> {
@@ -750,7 +894,9 @@ impl Game {
             crawford_used: saved_flag(fields[9])?,
             crawford_active: saved_flag(fields[10])?,
             mode: saved_mode(fields[11])?,
-            rolls: fields[12].parse().ok()?,
+            dice_source: Dice::open(),
+            played: saved_history(fields[12]),
+            turn_moves: Vec::new(),
             opening: saved_flag(fields[13])?,
             phase,
             history: Vec::new(),
@@ -774,6 +920,20 @@ impl Game {
             self.message = format!("No legal play. {} to roll.", self.turn.name());
         }
     }
+}
+
+/// The record of finished turns, as it was written down.
+///
+/// Anything unreadable is simply not a record: the game is still playable
+/// without one, and refusing to open a saved match over its history would cost
+/// the position as well.
+fn saved_history(field: &str) -> Vec<String> {
+    field
+        .split('|')
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| line.chars().take(64).collect())
+        .take(HISTORY)
+        .collect()
 }
 
 fn saved_pair(field: &str) -> Option<[u8; 2]> {
@@ -1131,13 +1291,15 @@ fn number(pixels: &mut [u8], x: i32, y: i32, value: u8, tone: u8) {
 }
 
 fn pip(pixels: &mut [u8], x: i32, y: i32) {
-    fill_circle(pixels, x, y, 5, 32);
+    fill_circle(pixels, x, y, 6, 32);
 }
 
 fn die(pixels: &mut [u8], x: i32, y: i32, value: u8) {
-    fill_rect(pixels, x, y, 42, 42, 240);
-    stroke_rect(pixels, x, y, 42, 42, 40);
-    let positions = [(11, 11), (31, 11), (21, 21), (11, 31), (31, 31)];
+    // Forty-two pixels on a board drawn 52 mm wide is a die two millimetres
+    // across, which is a die nobody reads. The centre bar gives up the width.
+    fill_rect(pixels, x, y, 44, 44, 240);
+    stroke_rect(pixels, x, y, 44, 44, 40);
+    let positions = [(12, 12), (32, 12), (22, 22), (12, 32), (32, 32)];
     let dots: &[usize] = match value {
         1 => &[2],
         2 => &[0, 4],
@@ -1148,12 +1310,12 @@ fn die(pixels: &mut [u8], x: i32, y: i32, value: u8) {
         _ => &[],
     };
     if value == 6 {
-        pip(pixels, x + 11, y + 9);
-        pip(pixels, x + 31, y + 9);
-        pip(pixels, x + 11, y + 21);
-        pip(pixels, x + 31, y + 21);
-        pip(pixels, x + 11, y + 33);
-        pip(pixels, x + 31, y + 33);
+        pip(pixels, x + 12, y + 10);
+        pip(pixels, x + 32, y + 10);
+        pip(pixels, x + 12, y + 22);
+        pip(pixels, x + 32, y + 22);
+        pip(pixels, x + 12, y + 34);
+        pip(pixels, x + 32, y + 34);
     } else {
         for index in dots {
             let (dot_x, dot_y) = positions[*index];
@@ -1163,16 +1325,14 @@ fn die(pixels: &mut [u8], x: i32, y: i32, value: u8) {
 }
 
 fn point_x(column: usize) -> i32 {
-    const POINT_WIDTH: i32 = 71;
     if column < 6 {
-        18 + i32::try_from(column).expect("column") * POINT_WIDTH
+        14 + i32::try_from(column).expect("column") * POINT_WIDTH
     } else {
-        518 + i32::try_from(column - 6).expect("column") * POINT_WIDTH
+        530 + i32::try_from(column - 6).expect("column") * POINT_WIDTH
     }
 }
 
 fn draw_points(pixels: &mut [u8], game: &Game, order: &[usize]) {
-    const POINT_WIDTH: i32 = 71;
     for (slot, point) in order.iter().enumerate() {
         let row = slot / 12;
         let column = slot % 12;
@@ -1212,30 +1372,42 @@ fn draw_points(pixels: &mut [u8], game: &Game, order: &[usize]) {
 
 fn draw_move_markers(pixels: &mut [u8], game: &Game, order: &[usize]) {
     let moves = game.displayed_moves();
+    let selected = match game.selected {
+        Some(Selected::Point(point)) => Some(point),
+        _ => None,
+    };
     for point in 0..POINTS {
         let marked = if game.selected.is_some() {
             moves.iter().any(|play| play.to == Some(point))
         } else {
             moves.iter().any(|play| play.from == Some(point))
         };
-        if marked {
+        if marked || selected == Some(point) {
             let slot = order
                 .iter()
                 .position(|shown| *shown == point)
                 .expect("each point shown");
             let row = slot / 12;
             let column = slot % 12;
-            let x = point_x(column);
+            let x = point_x(column) + 34;
             let y = if row == 0 { 246 } else { 334 };
-            fill_circle(pixels, x + 71 / 2, y, 10, 248);
-            fill_circle(pixels, x + 71 / 2, y, 7, 40);
-            fill_circle(pixels, x + 71 / 2, y, 4, 248);
+            if selected == Some(point) {
+                // The checker in hand: a solid mark, so it cannot be mistaken
+                // for one of the places it may go.
+                fill_circle(pixels, x, y, 13, 40);
+                fill_circle(pixels, x, y, 9, 248);
+                fill_circle(pixels, x, y, 5, 40);
+            } else {
+                fill_circle(pixels, x, y, 10, 248);
+                fill_circle(pixels, x, y, 7, 40);
+                fill_circle(pixels, x, y, 4, 248);
+            }
         }
     }
 }
 
 fn draw_centre(pixels: &mut [u8], game: &Game) {
-    for (player, y) in [(Player::White, 112), (Player::Black, 428)] {
+    for (player, y) in [(Player::White, 96), (Player::Black, 470)] {
         let count = game.position.bar[player.index()];
         if count > 0 {
             checker(pixels, 480, y, player == Player::White);
@@ -1248,13 +1420,27 @@ fn draw_centre(pixels: &mut [u8], game: &Game) {
             );
         }
     }
-    fill_rect(pixels, 448, 274, 64, 32, 232);
-    stroke_rect(pixels, 448, 274, 64, 32, 40);
-    number(pixels, 465, 279, game.cube, 32);
+    // Whose move it is, drawn as their own checker with a ring around it. The
+    // board is looked at more often than the line above it.
+    let to_play = if game.turn == Player::White { 44 } else { 536 };
+    fill_circle(pixels, 480, to_play, 21, 40);
+    checker(pixels, 480, to_play, game.turn == Player::White);
+
+    // The cube, big enough to read across a table, with its side written into
+    // the box rather than beside it.
+    fill_rect(pixels, 440, 268, 80, 46, 232);
+    stroke_rect(pixels, 440, 268, 80, 46, 40);
+    number(
+        pixels,
+        if game.cube >= 10 { 458 } else { 466 },
+        275,
+        game.cube,
+        32,
+    );
 
     for (index, value) in game.dice.iter().take(4).enumerate() {
-        let x = if index % 2 == 0 { 438 } else { 480 };
-        let y = 168 + i32::try_from(index / 2).expect("index") * 48;
+        let x = if index % 2 == 0 { 440 } else { 484 };
+        let y = 150 + i32::try_from(index / 2).expect("index") * 46;
         die(pixels, x, y, *value);
     }
 }
@@ -1267,8 +1453,8 @@ fn board_pixels(game: &Game) -> Vec<u8> {
     ];
     fill_rect(&mut pixels, 12, 12, 936, 556, 226);
     stroke_rect(&mut pixels, 12, 12, 936, 556, 30);
-    fill_rect(&mut pixels, 444, 14, 72, 552, 148);
-    stroke_rect(&mut pixels, 444, 14, 72, 552, 40);
+    fill_rect(&mut pixels, 434, 14, 92, 552, 148);
+    stroke_rect(&mut pixels, 434, 14, 92, 552, 40);
     let order = board_order(game);
     draw_points(&mut pixels, game, &order);
     draw_move_markers(&mut pixels, game, &order);
@@ -1277,6 +1463,9 @@ fn board_pixels(game: &Game) -> Vec<u8> {
 }
 
 fn screen(game: &Game, picture: Option<TilePicture>) -> Screen {
+    if game.view == View::Match {
+        return match_screen(game);
+    }
     if game.view == View::Help {
         return ScreenBuilder::new("backgammon-help")
             .top_bar("How to play")
@@ -1348,37 +1537,35 @@ fn screen(game: &Game, picture: Option<TilePicture>) -> Screen {
 }
 
 fn playing_screen(game: &Game, picture: Option<TilePicture>) -> Screen {
-    let dice = if game.dice.is_empty() {
-        "—".into()
-    } else {
-        game.dice
-            .iter()
-            .map(u8::to_string)
-            .collect::<Vec<_>>()
-            .join(" · ")
-    };
     let mut screen = ScreenBuilder::new("backgammon")
         .top_bar("Backgammon")
-        .secondary(format!(
-            "{} to play · {}–{} to {} · cube {} · {dice}",
-            game.turn.name(),
-            game.score[0],
-            game.score[1],
-            game.match_to,
-            game.cube
-        ))
-        .secondary(if game.mode == Mode::PassAndPlay {
-            format!("Pass the reader. {} is nearest.", game.turn.name())
-        } else {
-            "Solo: you are White; Computer is Black.".into()
-        })
+        .top_bar_action("match", "Match")
+        // Whose move it is, first and on its own line. It used to be the first
+        // clause of a line that also carried the score, the cube and the dice,
+        // which is the one thing somebody picking the reader up again needs to
+        // read at a glance.
+        .section(turn_line(game))
         .secondary(&game.message);
     if let Some(picture) = picture {
         screen = screen.unframed_picture(picture, 52);
     }
+    // The dice and the cube in words as well as pips. The board draws both,
+    // but it is drawn 52 mm wide on a six inch panel, and a number that small
+    // is not a number somebody squints at across a table.
+    screen = screen.facts([
+        ("Dice", dice_line(game)),
+        ("Cube", cube_line(game)),
+        (
+            "Score",
+            format!("{}–{} to {}", game.score[0], game.score[1], game.match_to),
+        ),
+    ]);
+    if let Some(last) = game.played.last() {
+        screen = screen.secondary(format!("Last: {last}"));
+    }
     if game.mode == Mode::Solo && game.turn == Player::Black {
         return screen
-            .secondary("Computer's turn. Review the board, then play its move.")
+            .secondary("Review the board, then play the computer's move.")
             .bottom_action("computer", "Computer move")
             .build();
     }
@@ -1399,13 +1586,113 @@ fn playing_screen(game: &Game, picture: Option<TilePicture>) -> Screen {
     );
     screen
         .grid(8, true, point_controls(game))
-        .chips([
-            ("mode", game.mode.label().to_owned(), false),
-            ("match", format!("To {}", game.match_to), false),
-            ("how-to-play", "How to play".to_owned(), false),
-        ])
         .action_bar([("roll", "Roll"), ("double", "Double"), ("undo", "Undo")])
         .build()
+}
+
+/// Whose move it is, said the way the reader in front of the panel would.
+fn turn_line(game: &Game) -> String {
+    let name = game.turn.name();
+    match (game.mode, game.turn) {
+        (Mode::Solo, Player::White) => "Your move".to_owned(),
+        (Mode::Solo, Player::Black) => "Computer to play".to_owned(),
+        (Mode::PassAndPlay, _) => format!("{name} to play"),
+    }
+}
+
+fn dice_line(game: &Game) -> String {
+    if game.dice.is_empty() {
+        return "None rolled".to_owned();
+    }
+    let mut values = game.dice.clone();
+    values.sort_unstable();
+    let listed = values
+        .iter()
+        .map(u8::to_string)
+        .collect::<Vec<_>>()
+        .join(" and ");
+    if game.dice.len() > 2 {
+        format!("{listed} (a double)")
+    } else {
+        listed
+    }
+}
+
+fn cube_line(game: &Game) -> String {
+    match game.cube_owner {
+        None if game.crawford_active => format!("{} · no cube this game", game.cube),
+        None => format!("{} · either side may double", game.cube),
+        Some(owner) => format!("{} · {} owns it", game.cube, owner.name()),
+    }
+}
+
+/// The match: its shape, its dice, and what has happened in it.
+fn match_screen(game: &Game) -> Screen {
+    let mut screen = ScreenBuilder::new("backgammon-match")
+        .top_bar("Match")
+        .owns_back(true)
+        .facts([
+            ("Players", game.mode.label().to_owned()),
+            ("Plays to", game.match_to.to_string()),
+            (
+                "Score",
+                format!("White {} · Black {}", game.score[0], game.score[1]),
+            ),
+        ]);
+    if let Some(provenance) = game.dice_source.provenance() {
+        // A recorded game that looks like chance and is not would be a lie
+        // about the dice, so a seeded run says so wherever the match is shown.
+        screen = screen.secondary(provenance);
+    }
+    let changeable = game.score == [0; 2] && game.dice.is_empty();
+    screen = screen.grid(
+        2,
+        false,
+        [
+            ("mode", format!("Players: {}", game.mode.label())),
+            (
+                "match",
+                if changeable {
+                    format!("Plays to {}", game.match_to)
+                } else {
+                    "Length is set".to_owned()
+                },
+            ),
+        ],
+    );
+    screen = screen.section("Turn history");
+    if game.played.is_empty() {
+        screen = screen.secondary("Nothing played yet.");
+    } else {
+        for line in game.played.iter().rev().take(6) {
+            screen = screen.text(line.clone());
+        }
+    }
+    screen
+        .grid(
+            2,
+            false,
+            [("how-to-play", "How to play"), ("new-match", "New match")],
+        )
+        .bottom_action("close-match", "Board")
+        .build()
+}
+
+/// One move as a board writes it: "8/5", "bar/20", "6/off".
+fn notation(player: Player, play: Move) -> String {
+    // Both sides count from their own side of the board, the way the numbers
+    // beside the points are read by whoever is looking at them.
+    let point = |index: usize| match player {
+        Player::White => index + 1,
+        Player::Black => POINTS - index,
+    };
+    let from = play
+        .from
+        .map_or_else(|| "bar".to_owned(), |index| point(index).to_string());
+    let to = play
+        .to
+        .map_or_else(|| "off".to_owned(), |index| point(index).to_string());
+    format!("{from}/{to}")
 }
 
 fn checker_counter(label: &str, count: [u8; 2]) -> String {
@@ -1420,6 +1707,7 @@ fn checker_counter(label: &str, count: [u8; 2]) -> String {
 impl KoboApp for Game {
     fn on_start(&mut self, context: &mut Context) {
         context.store().load(SAVE);
+        context.store().load(OLD_SAVE);
         self.show(context);
     }
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
@@ -1432,6 +1720,22 @@ impl KoboApp for Game {
     }
     fn on_store(&mut self, context: &mut Context, result: StoreResult) {
         if let StoreResult::Loaded { key, value } = result {
+            if key == OLD_SAVE {
+                // Only when this session has nothing newer to show for itself.
+                if self.initial_load == InitialLoad::Pending {
+                    let carried = value
+                        .as_deref()
+                        .and_then(|value| std::str::from_utf8(value).ok())
+                        .and_then(Self::decode_previous);
+                    if let Some(mut carried) = carried {
+                        carried.initial_load = InitialLoad::Settled;
+                        *self = carried;
+                        context.store().save(SAVE, self.encode());
+                        self.show(context);
+                    }
+                }
+                return;
+            }
             if key == SAVE {
                 let normalized = value
                     .as_deref()
@@ -1487,16 +1791,41 @@ impl Game {
     }
 }
 
+/// Moving between the board, the match and the rules.
+///
+/// `Some` when the tap was one of those, which is the caller's cue to stop:
+/// the same word means something different on each of them.
+fn view_action(game: &mut Game, action: ActionId) -> Option<()> {
+    match game.view {
+        View::Help => {
+            if action == action_id("close-help") || action == ActionId::BACK {
+                game.view = View::Board;
+                return Some(());
+            }
+            // Nothing else on the rules screen does anything.
+            Some(())
+        }
+        View::Match if action == action_id("close-match") || action == ActionId::BACK => {
+            game.view = View::Board;
+            Some(())
+        }
+        View::Board if action == action_id("match") => {
+            game.view = View::Match;
+            Some(())
+        }
+        _ if action == action_id("how-to-play") => {
+            game.view = View::Help;
+            Some(())
+        }
+        _ => None,
+    }
+}
+
 fn game_action(game: &mut Game, action: ActionId) -> Option<()> {
     if game.view == View::Help {
-        if action == action_id("close-help") || action == ActionId::BACK {
-            game.view = View::Board;
-            return Some(());
-        }
-        return None;
+        return view_action(game, action).filter(|()| game.view != View::Help);
     }
-    if action == action_id("how-to-play") {
-        game.view = View::Help;
+    if view_action(game, action).is_some() {
         return Some(());
     }
     if game.mode == Mode::Solo
@@ -1547,7 +1876,10 @@ fn game_action(game: &mut Game, action: ActionId) -> Option<()> {
             game.message = format!("{} selected.", game.mode.label());
         }
         Phase::Playing
-            if action == action_id("match") && game.score == [0; 2] && game.dice.is_empty() =>
+            if action == action_id("match")
+                && game.view == View::Match
+                && game.score == [0; 2]
+                && game.dice.is_empty() =>
         {
             let match_to = match game.match_to {
                 1 => 3,
@@ -1750,6 +2082,7 @@ mod tests {
                 0,
                 1,
             ),
+            dice_source: Dice::scripted([(2, 1)]),
             ..Game::default()
         };
         game.roll();
@@ -1759,17 +2092,31 @@ mod tests {
 
     #[test]
     fn opening_roll_rerolls_ties_and_awards_first_turn_to_higher_die() {
-        let mut game = Game::default();
+        // A pair decides nothing, so the opening throws it away and rolls on.
+        let mut game = Game {
+            dice_source: Dice::scripted([(4, 4), (2, 1)]),
+            ..Game::default()
+        };
         game.roll();
         assert!(!game.opening);
         assert_eq!(game.turn, Player::White);
         assert_eq!(game.dice, vec![2, 1]);
         assert!(game.message.starts_with("White opened with 2 and 1"));
+
+        let mut black_first = Game {
+            dice_source: Dice::scripted([(1, 6)]),
+            ..Game::default()
+        };
+        black_first.roll();
+        assert_eq!(black_first.turn, Player::Black);
     }
 
     #[test]
     fn turn_entry_requires_all_usable_dice_before_switching_players() {
-        let mut game = Game::default();
+        let mut game = Game {
+            dice_source: Dice::scripted([(2, 1)]),
+            ..Game::default()
+        };
         game.roll();
         game.select(Some(23));
         game.move_to(Some(22));
@@ -1832,12 +2179,12 @@ mod tests {
     fn a_late_initial_load_cannot_overwrite_local_play() {
         let saved = Game::default().encode().into_bytes();
         let mut game = Game {
-            rolls: 7,
+            score: [2, 1],
             initial_load: InitialLoad::Settled,
             ..Game::default()
         };
         assert!(!game.apply_initial_load(Some(saved)));
-        assert_eq!(game.rolls, 7);
+        assert_eq!(game.score, [2, 1]);
     }
 
     #[test]
@@ -2049,14 +2396,18 @@ mod tests {
         let controls = point_controls(&game);
         assert_eq!(controls, vec![(point_name(5), "6".into())]);
         let pixels = board_pixels(&game);
-        assert_eq!(
-            pixels[334 * usize::try_from(BOARD_WIDTH).expect("width") + 553],
-            248
-        );
-        assert_ne!(
-            pixels[334 * usize::try_from(BOARD_WIDTH).expect("width") + 695],
-            248
-        );
+        let marked = |point: usize| {
+            let (row, column) = point_slot(&game, point);
+            let x = point_x(column) + POINT_WIDTH / 2;
+            let y = if row == 0 { 246 } else { 334 };
+            pixels[usize::try_from(y).expect("row") * usize::try_from(BOARD_WIDTH).expect("width")
+                + usize::try_from(x).expect("column")]
+        };
+        // The checker in hand is marked solid; where it may go is marked with
+        // a ring; everywhere else is left alone.
+        assert_eq!(marked(6), 40, "the selected checker is not marked");
+        assert_eq!(marked(5), 248, "the destination is not ringed");
+        assert_eq!(marked(9), 182, "an unrelated point was marked");
     }
 
     #[test]
@@ -2154,9 +2505,12 @@ mod tests {
 
     #[test]
     fn computer_does_not_play_white_after_an_invalid_opening_black_turn() {
+        // The opening roll decides who starts, whatever the board said before
+        // it. Here it falls to White, so the computer has nothing to play.
         let mut game = Game {
             mode: Mode::Solo,
             turn: Player::Black,
+            dice_source: Dice::scripted([(6, 1)]),
             ..Game::default()
         };
         game.computer_move();
@@ -2169,6 +2523,7 @@ mod tests {
     fn undo_is_committed_when_a_pass_and_play_turn_ends() {
         let mut game = Game {
             mode: Mode::PassAndPlay,
+            dice_source: Dice::scripted([(2, 1), (3, 2)]),
             ..Game::default()
         };
         game.roll();
@@ -2199,6 +2554,11 @@ mod tests {
         game.crawford_used = true;
         game.crawford_active = true;
         game.history.push(game.snapshot());
+        // The length of the match is set where the match is, not beside the
+        // controls that play it.
+        game_action(&mut game, action_id("match"));
+        assert_eq!(game.view, View::Match);
+        assert_eq!(game.match_to, 5, "the board control changed the match");
         game_action(&mut game, action_id("match"));
         assert_eq!(game.match_to, 7);
         assert_eq!(game.position, Position::initial());
@@ -2209,6 +2569,8 @@ mod tests {
         game_action(&mut game, action_id("match"));
         assert_eq!(game.match_to, 1);
         assert!(!game.crawford_active);
+        game_action(&mut game, action_id("close-match"));
+        assert_eq!(game.view, View::Board);
     }
 
     #[test]
@@ -2246,20 +2608,57 @@ mod tests {
         assert!(game.crawford_used);
     }
 
+    /// A seeded run replays exactly, and two seeds do not agree. Without this
+    /// the dice were a counter: every game dealt the same rolls in the same
+    /// order, which is not a game of backgammon.
     #[test]
-    fn deterministic_dice_has_equal_ordered_pair_counts() {
-        let mut counts = [[0usize; 6]; 6];
-        let mut game = Game::default();
-        for _ in 0..3600 {
-            let (first, second) = game.take_roll();
-            counts[usize::from(first - 1)][usize::from(second - 1)] += 1;
+    fn seeded_dice_replay_and_two_seeds_differ_while_staying_in_range() {
+        let sequence = |seed: u64| {
+            let mut game = Game {
+                dice_source: Dice::Fixture(FixtureEntropy::new(seed)),
+                ..Game::default()
+            };
+            (0..120)
+                .map(|_| game.take_roll().expect("a seeded source always rolls"))
+                .collect::<Vec<_>>()
+        };
+        let first = sequence(7);
+        assert_eq!(first, sequence(7), "the same seed dealt different dice");
+        assert_ne!(first, sequence(8), "two seeds dealt the same dice");
+        assert!(first
+            .iter()
+            .all(|(a, b)| (1..=6).contains(a) && (1..=6).contains(b)));
+        let mut faces = [0usize; 6];
+        for (a, b) in &first {
+            faces[usize::from(a - 1)] += 1;
+            faces[usize::from(b - 1)] += 1;
         }
-        assert!(counts.into_iter().flatten().all(|count| count == 100));
+        assert!(
+            faces.iter().all(|count| *count > 0),
+            "a face never came up: {faces:?}"
+        );
+    }
+
+    /// A source that cannot be opened says so and rolls nothing, rather than
+    /// falling back to a sequence that looks like chance.
+    #[test]
+    fn dice_that_cannot_be_rolled_stop_the_turn_and_say_why() {
+        let mut game = Game {
+            dice_source: Dice::Unavailable("No dice: the source is missing.".into()),
+            ..Game::default()
+        };
+        assert!(game.take_roll().is_none());
+        game.roll();
+        assert!(game.dice.is_empty(), "a broken source still produced dice");
+        assert!(game.message.contains("No dice"), "{}", game.message);
     }
 
     #[test]
     fn consumer_board_fits_clara_bw_without_diagnostics() {
-        let mut game = Game::default();
+        let mut game = Game {
+            dice_source: Dice::scripted([(2, 1)]),
+            ..Game::default()
+        };
         game.roll();
         let layout = test_screen(&game).layout_with(&CLARA_BW_METRICS, &Chrome::default());
         assert!(layout.rect_of_action(action_id("point-23")).is_some());
@@ -2270,7 +2669,10 @@ mod tests {
 
     #[test]
     fn board_uses_an_app_owned_picture_and_point_controls() {
-        let mut game = Game::default();
+        let mut game = Game {
+            dice_source: Dice::scripted([(2, 1)]),
+            ..Game::default()
+        };
         game.roll();
         let layout = test_screen(&game).layout_with(&CLARA_BW_METRICS, &Chrome::default());
         assert!(layout
@@ -2278,6 +2680,146 @@ mod tests {
             .iter()
             .any(|node| matches!(node.kind, LayoutKind::Picture(BOARD_PICTURE))));
         assert!(layout.rect_of_action(action_id("point-23")).is_some());
+    }
+
+    /// What a table can read from across the board, and what a reader picking
+    /// the panel back up needs first: whose move it is, what the dice said,
+    /// and where the cube stands.
+    #[test]
+    fn the_board_states_the_turn_the_dice_and_the_cube_at_every_text_size() {
+        for text_scale in kobo_ui::TextScale::STEPS {
+            let metrics = kobo_ui::DisplayMetrics {
+                text_scale,
+                ..CLARA_BW_METRICS
+            };
+            let mut game = Game {
+                dice_source: Dice::scripted([(5, 3)]),
+                mode: Mode::PassAndPlay,
+                cube: 2,
+                cube_owner: Some(Player::White),
+                score: [3, 1],
+                ..Game::default()
+            };
+            game.roll();
+            game.played.push("Black 13/8 24/23".into());
+            for view in [View::Board, View::Match, View::Help] {
+                game.view = view;
+                let screen = test_screen(&game);
+                let diagnostics = screen.diagnostics(&metrics, &Chrome::measuring(true));
+                assert!(
+                    diagnostics.issues.is_empty(),
+                    "{text_scale:?} {view:?}: {:?}",
+                    diagnostics.issues
+                );
+                let drawn = screen
+                    .layout_with(&metrics, &Chrome::measuring(true))
+                    .nodes
+                    .iter()
+                    .flat_map(|node| node.text_lines.clone())
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                match view {
+                    View::Board => {
+                        assert!(drawn.contains("to play"), "{text_scale:?}: {drawn}");
+                        assert!(drawn.contains('5') && drawn.contains('3'), "{drawn}");
+                        assert!(drawn.contains("White owns it"), "{drawn}");
+                        assert!(drawn.contains("Last: Black 13/8"), "{drawn}");
+                    }
+                    View::Match => {
+                        assert!(drawn.contains("Turn history"), "{drawn}");
+                        assert!(drawn.contains("Black 13/8 24/23"), "{drawn}");
+                    }
+                    View::Help => {}
+                }
+            }
+        }
+    }
+
+    /// The record is what each side did, in the notation written beside a real
+    /// board, counted from the side that made the move.
+    #[test]
+    fn finished_turns_are_written_down_in_board_notation_and_survive_a_restart() {
+        let mut game = Game {
+            dice_source: Dice::scripted([(2, 1), (3, 2)]),
+            mode: Mode::PassAndPlay,
+            ..Game::default()
+        };
+        game.roll();
+        game.select(Some(23));
+        game.move_to(Some(22));
+        game.select(Some(22));
+        game.move_to(Some(20));
+        assert_eq!(game.played, vec!["White 24/23 23/21".to_owned()]);
+        assert_eq!(game.turn, Player::Black);
+
+        game.roll();
+        let from = game
+            .next_moves()
+            .first()
+            .copied()
+            .expect("Black has a legal play");
+        game.select(from.from);
+        game.move_to(from.to);
+        let restored = Game::decode(&game.encode()).expect("the match reopens");
+        assert_eq!(restored.played, game.played);
+        assert!(restored
+            .played
+            .first()
+            .is_some_and(|line| line.starts_with("White ")));
+
+        // The record is bounded: an evening of backgammon is not a log file.
+        let mut long = Game::default();
+        for turn in 0..HISTORY * 2 {
+            long.turn_moves.push(format!("{turn}/1"));
+            long.record_turn();
+        }
+        assert_eq!(long.played.len(), HISTORY);
+        assert_eq!(Game::decode(&long.encode()).unwrap().played, long.played);
+    }
+
+    /// A seeded run says so wherever the match is described, because a capture
+    /// of fixed dice that read as chance would be a lie about the game.
+    /// A match left half-played under the previous build opens where it was.
+    #[test]
+    fn a_game_saved_by_the_previous_version_is_carried_forward() {
+        let mut game = Game {
+            score: [2, 1],
+            opening: false,
+            dice_source: Dice::scripted([(3, 2)]),
+            ..Game::default()
+        };
+        game.roll();
+        // The shape the previous version wrote: a roll counter where the
+        // record of play now lives.
+        let previous = game
+            .encode()
+            .splitn(15, ';')
+            .enumerate()
+            .map(|(index, field)| if index == 12 { "42" } else { field })
+            .collect::<Vec<_>>()
+            .join(";");
+        let carried = Game::decode_previous(&previous).expect("the old save is understood");
+        assert_eq!(carried.score, [2, 1]);
+        assert_eq!(carried.dice, game.dice);
+        assert!(carried.played.is_empty());
+        assert!(Game::decode_previous(&game.encode()).is_none());
+    }
+
+    #[test]
+    fn a_seeded_run_names_its_seed_on_the_match_screen() {
+        let game = Game {
+            dice_source: Dice::Fixture(FixtureEntropy::new(11)),
+            view: View::Match,
+            ..Game::default()
+        };
+        let drawn = test_screen(&game)
+            .layout_with(&CLARA_BW_METRICS, &Chrome::measuring(true))
+            .nodes
+            .iter()
+            .flat_map(|node| node.text_lines.clone())
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(drawn.contains("Fixture dice, seed 11"), "{drawn}");
     }
 
     #[test]
@@ -2294,7 +2836,12 @@ mod tests {
         assert_eq!(point_slot(&game, 23), (0, 11));
         assert_eq!(point_slot(&game, 11), (1, 0));
         assert_eq!(point_slot(&game, 0), (1, 11));
-        assert_eq!((point_x(5), point_x(6)), (373, 518));
+        // The two halves are separated by the centre bar, which is where the
+        // dice and the cube are drawn large enough to read.
+        assert!(
+            point_x(6) - (point_x(5) + POINT_WIDTH) >= 80,
+            "the centre bar is too narrow for a legible die"
+        );
     }
 
     #[test]

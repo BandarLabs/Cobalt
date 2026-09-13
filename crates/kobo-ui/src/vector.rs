@@ -591,10 +591,25 @@ fn game_piece_shapes(glyph: Glyph) -> Option<Vec<Shape>> {
         Glyph::WhiteDraughtsKing => (false, true),
         Glyph::BlackDraughtsMan => (true, false),
         Glyph::WhiteDraughtsMan => (false, false),
-        Glyph::MorrisPoint => {
+        Glyph::BoardPoint => {
             return Some(vec![Shape::Fill(Path::circle(500, 500, 55))]);
         }
-        Glyph::MorrisLegalPoint => {
+        Glyph::Mill => {
+            // Three points on a rule: the line a player is trying to make.
+            // Drawn a shade heavier than a single board point, because this
+            // one is read as an emblem on a card rather than counted on a
+            // board.
+            return Some(vec![
+                Shape::Stroke {
+                    path: Path::new().move_to(170, 500).line_to(830, 500),
+                    width: 44,
+                },
+                Shape::Fill(Path::circle(170, 500, 105)),
+                Shape::Fill(Path::circle(500, 500, 105)),
+                Shape::Fill(Path::circle(830, 500, 105)),
+            ]);
+        }
+        Glyph::LegalPoint => {
             return Some(vec![Shape::Stroke {
                 path: Path::circle(500, 500, 175),
                 width: 54,

@@ -1,8 +1,13 @@
 # Configured 3×5 command deck from `kobo deck set` / `kobo deck push --sim`.
+#
+# The bar carries the page's own name rather than the word Deck, because a
+# reader with a Build page and a Home page had to read the keys to tell which
+# one they were looking at.
 wait-for Todo
-expect Deck
+expect Home
 expect Todo
 expect Example
+expect Running on this device
 expect-missing Pair with your computer
 expect-missing Opening
 expect-missing Refresh

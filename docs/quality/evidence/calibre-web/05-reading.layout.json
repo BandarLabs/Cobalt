@@ -1,0 +1,409 @@
+{
+  "paints": 17,
+  "nodes": [
+    {
+      "kind": "TopBar",
+      "x": 0,
+      "y": 0,
+      "width": 1072,
+      "height": 100,
+      "centre": {
+        "x": 536,
+        "y": 50
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Back",
+      "x": 47,
+      "y": 0,
+      "width": 100,
+      "height": 100,
+      "centre": {
+        "x": 97,
+        "y": 50
+      },
+      "action": 4294967295,
+      "lines": []
+    },
+    {
+      "kind": "BarGlyph(ActionId(2359859083), Light)",
+      "x": 925,
+      "y": 0,
+      "width": 100,
+      "height": 100,
+      "centre": {
+        "x": 975,
+        "y": 50
+      },
+      "action": 2359859083,
+      "lines": [
+        "Front light"
+      ]
+    },
+    {
+      "kind": "BarAction(ActionId(282227963))",
+      "x": 795,
+      "y": 0,
+      "width": 106,
+      "height": 100,
+      "centre": {
+        "x": 848,
+        "y": 50
+      },
+      "action": 282227963,
+      "lines": [
+        "Aa"
+      ]
+    },
+    {
+      "kind": "TopBarTitle",
+      "x": 171,
+      "y": 18,
+      "width": 600,
+      "height": 64,
+      "centre": {
+        "x": 471,
+        "y": 50
+      },
+      "action": null,
+      "lines": [
+        "A Walk by the River"
+      ]
+    },
+    {
+      "kind": "Divider",
+      "x": 0,
+      "y": 100,
+      "width": 1072,
+      "height": 4,
+      "centre": {
+        "x": 536,
+        "y": 102
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Heading(1)",
+      "x": 47,
+      "y": 116,
+      "width": 978,
+      "height": 112,
+      "centre": {
+        "x": 536,
+        "y": 172
+      },
+      "action": 282227963,
+      "lines": [
+        "A Walk by the River"
+      ]
+    },
+    {
+      "kind": "RichText(TextPresentation { strong: false, emphasis: false, underline: false, superscript: false, subscript: false, highlighted: false })",
+      "x": 47,
+      "y": 240,
+      "width": 887,
+      "height": 55,
+      "centre": {
+        "x": 490,
+        "y": 267
+      },
+      "action": 282227963,
+      "lines": [
+        "An original Cobalt sample for checking downloads and"
+      ]
+    },
+    {
+      "kind": "RichText(TextPresentation { strong: false, emphasis: false, underline: false, superscript: false, subscript: false, highlighted: false })",
+      "x": 47,
+      "y": 295,
+      "width": 396,
+      "height": 55,
+      "centre": {
+        "x": 245,
+        "y": 322
+      },
+      "action": 123572910,
+      "lines": [
+        "saved reading positions."
+      ]
+    },
+    {
+      "kind": "RichText(TextPresentation { strong: false, emphasis: false, underline: false, superscript: false, subscript: false, highlighted: false })",
+      "x": 47,
+      "y": 240,
+      "width": 978,
+      "height": 110,
+      "centre": {
+        "x": 536,
+        "y": 295
+      },
+      "action": 282227963,
+      "lines": []
+    },
+    {
+      "kind": "Heading(2)",
+      "x": 47,
+      "y": 362,
+      "width": 978,
+      "height": 87,
+      "centre": {
+        "x": 536,
+        "y": 405
+      },
+      "action": 282227963,
+      "lines": [
+        "Marker 1"
+      ]
+    },
+    {
+      "kind": "RichText(TextPresentation { strong: false, emphasis: false, underline: false, superscript: false, subscript: false, highlighted: false })",
+      "x": 47,
+      "y": 461,
+      "width": 950,
+      "height": 55,
+      "centre": {
+        "x": 522,
+        "y": 488
+      },
+      "action": 282227963,
+      "lines": [
+        "The path follows the water past a low stone wall. A wooden"
+      ]
+    },
+    {
+      "kind": "RichText(TextPresentation { strong: false, emphasis: false, underline: false, superscript: false, subscript: false, highlighted: false })",
+      "x": 47,
+      "y": 516,
+      "width": 896,
+      "height": 55,
+      "centre": {
+        "x": 495,
+        "y": 543
+      },
+      "action": 282227963,
+      "lines": [
+        "bench faces the bend. We stop here to watch the reeds"
+      ]
+    },
+    {
+      "kind": "RichText(TextPresentation { strong: false, emphasis: false, underline: false, superscript: false, subscript: false, highlighted: false })",
+      "x": 47,
+      "y": 571,
+      "width": 907,
+      "height": 55,
+      "centre": {
+        "x": 500,
+        "y": 598
+      },
+      "action": 282227963,
+      "lines": [
+        "move and listen to the water beneath the bridge. This is"
+      ]
+    },
+    {
+      "kind": "RichText(TextPresentation { strong: false, emphasis: false, underline: false, superscript: false, subscript: false, highlighted: false })",
+      "x": 47,
+      "y": 626,
+      "width": 281,
+      "height": 55,
+      "centre": {
+        "x": 187,
+        "y": 653
+      },
+      "action": 123572910,
+      "lines": [
+        "reading marker 1."
+      ]
+    },
+    {
+      "kind": "RichText(TextPresentation { strong: false, emphasis: false, underline: false, superscript: false, subscript: false, highlighted: false })",
+      "x": 47,
+      "y": 461,
+      "width": 978,
+      "height": 220,
+      "centre": {
+        "x": 536,
+        "y": 571
+      },
+      "action": 282227963,
+      "lines": []
+    },
+    {
+      "kind": "Heading(2)",
+      "x": 47,
+      "y": 693,
+      "width": 978,
+      "height": 87,
+      "centre": {
+        "x": 536,
+        "y": 736
+      },
+      "action": 282227963,
+      "lines": [
+        "Marker 2"
+      ]
+    },
+    {
+      "kind": "RichText(TextPresentation { strong: false, emphasis: false, underline: false, superscript: false, subscript: false, highlighted: false })",
+      "x": 47,
+      "y": 792,
+      "width": 950,
+      "height": 55,
+      "centre": {
+        "x": 522,
+        "y": 819
+      },
+      "action": 282227963,
+      "lines": [
+        "The path follows the water past a low stone wall. A wooden"
+      ]
+    },
+    {
+      "kind": "RichText(TextPresentation { strong: false, emphasis: false, underline: false, superscript: false, subscript: false, highlighted: false })",
+      "x": 47,
+      "y": 847,
+      "width": 896,
+      "height": 55,
+      "centre": {
+        "x": 495,
+        "y": 874
+      },
+      "action": 282227963,
+      "lines": [
+        "bench faces the bend. We stop here to watch the reeds"
+      ]
+    },
+    {
+      "kind": "RichText(TextPresentation { strong: false, emphasis: false, underline: false, superscript: false, subscript: false, highlighted: false })",
+      "x": 47,
+      "y": 902,
+      "width": 907,
+      "height": 55,
+      "centre": {
+        "x": 500,
+        "y": 929
+      },
+      "action": 282227963,
+      "lines": [
+        "move and listen to the water beneath the bridge. This is"
+      ]
+    },
+    {
+      "kind": "RichText(TextPresentation { strong: false, emphasis: false, underline: false, superscript: false, subscript: false, highlighted: false })",
+      "x": 47,
+      "y": 957,
+      "width": 286,
+      "height": 55,
+      "centre": {
+        "x": 190,
+        "y": 984
+      },
+      "action": 123572910,
+      "lines": [
+        "reading marker 2."
+      ]
+    },
+    {
+      "kind": "RichText(TextPresentation { strong: false, emphasis: false, underline: false, superscript: false, subscript: false, highlighted: false })",
+      "x": 47,
+      "y": 792,
+      "width": 978,
+      "height": 220,
+      "centre": {
+        "x": 536,
+        "y": 902
+      },
+      "action": 282227963,
+      "lines": []
+    },
+    {
+      "kind": "Heading(2)",
+      "x": 47,
+      "y": 1024,
+      "width": 978,
+      "height": 87,
+      "centre": {
+        "x": 536,
+        "y": 1067
+      },
+      "action": 282227963,
+      "lines": [
+        "Marker 3"
+      ]
+    },
+    {
+      "kind": "RichText(TextPresentation { strong: false, emphasis: false, underline: false, superscript: false, subscript: false, highlighted: false })",
+      "x": 47,
+      "y": 1123,
+      "width": 950,
+      "height": 55,
+      "centre": {
+        "x": 522,
+        "y": 1150
+      },
+      "action": 282227963,
+      "lines": [
+        "The path follows the water past a low stone wall. A wooden"
+      ]
+    },
+    {
+      "kind": "RichText(TextPresentation { strong: false, emphasis: false, underline: false, superscript: false, subscript: false, highlighted: false })",
+      "x": 47,
+      "y": 1178,
+      "width": 896,
+      "height": 55,
+      "centre": {
+        "x": 495,
+        "y": 1205
+      },
+      "action": 282227963,
+      "lines": [
+        "bench faces the bend. We stop here to watch the reeds"
+      ]
+    },
+    {
+      "kind": "RichText(TextPresentation { strong: false, emphasis: false, underline: false, superscript: false, subscript: false, highlighted: false })",
+      "x": 47,
+      "y": 1123,
+      "width": 978,
+      "height": 110,
+      "centre": {
+        "x": 536,
+        "y": 1178
+      },
+      "action": 282227963,
+      "lines": []
+    },
+    {
+      "kind": "PagePosition",
+      "x": 47,
+      "y": 1318,
+      "width": 978,
+      "height": 83,
+      "centre": {
+        "x": 536,
+        "y": 1359
+      },
+      "action": null,
+      "lines": [
+        "1 of 14"
+      ]
+    },
+    {
+      "kind": "PageNext(ActionId(1727113454))",
+      "x": 907,
+      "y": 1318,
+      "width": 118,
+      "height": 83,
+      "centre": {
+        "x": 966,
+        "y": 1359
+      },
+      "action": 1727113454,
+      "lines": []
+    }
+  ]
+}

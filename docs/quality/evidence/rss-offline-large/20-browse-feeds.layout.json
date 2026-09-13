@@ -1,0 +1,251 @@
+{
+  "paints": 5,
+  "nodes": [
+    {
+      "kind": "StatusBand",
+      "x": 0,
+      "y": 0,
+      "width": 1072,
+      "height": 59,
+      "centre": {
+        "x": 536,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusClock",
+      "x": 47,
+      "y": 0,
+      "width": 134,
+      "height": 59,
+      "centre": {
+        "x": 114,
+        "y": 29
+      },
+      "action": null,
+      "lines": [
+        "07:13"
+      ]
+    },
+    {
+      "kind": "StatusBattery(Some(Percent(72)), false)",
+      "x": 955,
+      "y": 12,
+      "width": 70,
+      "height": 35,
+      "centre": {
+        "x": 990,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusSignal(Strong)",
+      "x": 896,
+      "y": 12,
+      "width": 35,
+      "height": 35,
+      "centre": {
+        "x": 913,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusBluetooth",
+      "x": 837,
+      "y": 12,
+      "width": 35,
+      "height": 35,
+      "centre": {
+        "x": 854,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "TopBar",
+      "x": 0,
+      "y": 59,
+      "width": 1072,
+      "height": 100,
+      "centre": {
+        "x": 536,
+        "y": 109
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Back",
+      "x": 47,
+      "y": 59,
+      "width": 100,
+      "height": 100,
+      "centre": {
+        "x": 97,
+        "y": 109
+      },
+      "action": 4294967295,
+      "lines": []
+    },
+    {
+      "kind": "TopBarTitle",
+      "x": 171,
+      "y": 69,
+      "width": 854,
+      "height": 79,
+      "centre": {
+        "x": 598,
+        "y": 108
+      },
+      "action": null,
+      "lines": [
+        "Browse feeds"
+      ]
+    },
+    {
+      "kind": "Divider",
+      "x": 0,
+      "y": 159,
+      "width": 1072,
+      "height": 4,
+      "centre": {
+        "x": 536,
+        "y": 161
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Row(ActionId(3749817137))",
+      "x": 47,
+      "y": 175,
+      "width": 978,
+      "height": 187,
+      "centre": {
+        "x": 536,
+        "y": 268
+      },
+      "action": 3749817137,
+      "lines": []
+    },
+    {
+      "kind": "RowLead(Icon(Rss))",
+      "x": 47,
+      "y": 216,
+      "width": 44,
+      "height": 44,
+      "centre": {
+        "x": 69,
+        "y": 238
+      },
+      "action": 3749817137,
+      "lines": []
+    },
+    {
+      "kind": "RowTitle",
+      "x": 115,
+      "y": 199,
+      "width": 886,
+      "height": 79,
+      "centre": {
+        "x": 558,
+        "y": 238
+      },
+      "action": 3749817137,
+      "lines": [
+        "BBC Science & Environment"
+      ]
+    },
+    {
+      "kind": "RowSummary",
+      "x": 115,
+      "y": 278,
+      "width": 886,
+      "height": 60,
+      "centre": {
+        "x": 558,
+        "y": 308
+      },
+      "action": 3749817137,
+      "lines": [
+        "Science and environmental reporting"
+      ]
+    },
+    {
+      "kind": "RowRule",
+      "x": 115,
+      "y": 374,
+      "width": 910,
+      "height": 4,
+      "centre": {
+        "x": 570,
+        "y": 376
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Row(ActionId(3733039518))",
+      "x": 47,
+      "y": 386,
+      "width": 978,
+      "height": 187,
+      "centre": {
+        "x": 536,
+        "y": 479
+      },
+      "action": 3733039518,
+      "lines": []
+    },
+    {
+      "kind": "RowLead(Icon(Rss))",
+      "x": 47,
+      "y": 427,
+      "width": 44,
+      "height": 44,
+      "centre": {
+        "x": 69,
+        "y": 449
+      },
+      "action": 3733039518,
+      "lines": []
+    },
+    {
+      "kind": "RowTitle",
+      "x": 115,
+      "y": 410,
+      "width": 886,
+      "height": 79,
+      "centre": {
+        "x": 558,
+        "y": 449
+      },
+      "action": 3733039518,
+      "lines": [
+        "NASA Science"
+      ]
+    },
+    {
+      "kind": "RowSummary",
+      "x": 115,
+      "y": 489,
+      "width": 886,
+      "height": 60,
+      "centre": {
+        "x": 558,
+        "y": 519
+      },
+      "action": 3733039518,
+      "lines": [
+        "Space, Earth and discoveries from NASA"
+      ]
+    }
+  ]
+}

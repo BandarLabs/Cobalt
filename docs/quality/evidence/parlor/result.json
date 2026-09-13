@@ -1,0 +1,12 @@
+{
+  "status": "passed",
+  "scale": "default",
+  "fixture": "four-table-games",
+  "checks": [
+    "all four games are offered, each by its own name",
+    "each game sets up, says whose move it is and marks where a piece may go",
+    "a turn is taken and the board says what it was",
+    "a game put down mid-turn is picked up where it was left",
+    "the board this panel cannot draw says so on the row that offers it"
+  ]
+}

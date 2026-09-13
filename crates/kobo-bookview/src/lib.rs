@@ -44,6 +44,8 @@ use std::collections::{BTreeMap, VecDeque};
 use std::time::{Duration, Instant};
 
 pub mod comic;
+pub mod illustrations;
+pub mod positions;
 
 use kobo_doc::{Block, Document, FORMULA_PICTURE_EM, FORMULA_PICTURE_PREFIX};
 use kobo_read::{Memory, Outcome, Reader};
@@ -932,15 +934,16 @@ impl BookView {
         self.offered.clear();
         self.reserved.clear();
         self.dithering = None;
-        self.plating = None;
+        if let Some(task) = self.plating.take() {
+            context.cancel(task);
+        }
         self.next_handle = self.base;
         self.origin = None;
         self.wanted.clear();
         self.settled = false;
-        // The fetch in flight is left to land and be ignored rather than
-        // cancelled: cancelling costs a message to save nothing, and
-        // `provide_picture` refuses a name no open document mentions anyway.
-        self.fetching = None;
+        if let Some((task, _)) = self.fetching.take() {
+            context.cancel(task);
+        }
     }
 }
 
@@ -954,52 +957,46 @@ impl BookView {
 /// when it is the page's own host or a sub-domain of it, and everything else
 /// has to be a name inside the page.
 ///
-/// A port or credentials written before the host are ways of spelling an
-/// address that reads as the page's and is not, so neither is allowed. A
-/// rooted path leaves the page's own directory and a walk upwards climbs out
-/// of it; both are refused, including when they are spelled in percent escapes
-/// or with a backslash, because the address is joined as text here and
-/// resolved as a path somewhere else.
+/// Explicit HTTPS ports are supported, but an absolute image must use the
+/// document's effective port. Root-relative paths stay on that origin.
+/// Parent traversal, credentials and protocol-relative URLs are refused.
 #[must_use]
 pub fn picture_url(origin: &str, name: &str) -> Option<String> {
     if name.is_empty() || name.len() > MAX_PICTURE_NAME {
         return None;
     }
-    let base = origin.rsplit_once('/').map_or(origin, |(head, _)| head);
-    if let Some(rest) = name.strip_prefix("https://") {
-        let host = rest.split(['/', '?', '#']).next().unwrap_or_default();
-        let home = host_of(origin)?;
-        let same = host == home || host.ends_with(&format!(".{home}"));
-        return same.then(|| name.to_owned());
+    let home = kobo_net::parse(origin).ok()?;
+    if name.starts_with("https://") {
+        let target = kobo_net::parse(name).ok()?;
+        let host = target.host.to_ascii_lowercase();
+        let home_host = home.host.to_ascii_lowercase();
+        let same = host == home_host || host.ends_with(&format!(".{home_host}"));
+        return (same && target.port == home.port).then(|| name.to_owned());
     }
-    // Not http, not a data URI, not a protocol-relative address: a document is
-    // fetched over TLS and nothing else, and a picture is not worth making an
-    // exception for.
     if name.contains("://") || name.starts_with("//") || name.starts_with("data:") {
         return None;
     }
     let escaped = name.to_ascii_lowercase();
-    if name.starts_with('/')
-        || name.contains('\\')
+    if name.contains('\\')
         || escaped.contains("%2e")
         || escaped.contains("%2f")
         || name.split('/').any(|part| part == "..")
     {
         return None;
     }
-    Some(format!("{base}/{name}"))
-}
-
-/// The host an address is at, if it is one this device would fetch.
-fn host_of(url: &str) -> Option<&str> {
-    let rest = url.strip_prefix("https://")?;
-    let host = rest.split(['/', '?', '#']).next().unwrap_or_default();
-    // Credentials or a port make the host something other than what it reads
-    // as, and neither belongs in an address a document was fetched from.
-    if host.is_empty() || host.contains('@') || host.contains(':') {
-        return None;
-    }
-    Some(host)
+    let authority = origin
+        .strip_prefix("https://")?
+        .split(['/', '?', '#'])
+        .next()?;
+    let resolved = if name.starts_with('/') {
+        format!("https://{authority}{name}")
+    } else {
+        let path = home.path.split('?').next()?;
+        let directory = path.rsplit_once('/').map_or("", |(directory, _)| directory);
+        format!("https://{authority}{directory}/{name}")
+    };
+    kobo_net::parse(&resolved).ok()?;
+    Some(resolved)
 }
 
 /// The box an illustration is fitted into, in pixels.
@@ -1261,9 +1258,38 @@ mod tests {
             picture_url(origin, "https://static.arxiv.org/x1.png").as_deref(),
             Some("https://static.arxiv.org/x1.png")
         );
+        assert_eq!(
+            picture_url(origin, "/images/photo.png").as_deref(),
+            Some("https://arxiv.org/images/photo.png")
+        );
+        assert_eq!(
+            picture_url("https://example.org:8443/story", "/photo.png").as_deref(),
+            Some("https://example.org:8443/photo.png")
+        );
+        assert_eq!(
+            picture_url(
+                "https://example.org:8443/story",
+                "https://example.org:8443/photo.png"
+            )
+            .as_deref(),
+            Some("https://example.org:8443/photo.png")
+        );
+        assert!(picture_url(
+            "https://example.org:8443/story",
+            "https://example.org/photo.png"
+        )
+        .is_none());
+        assert!(picture_url(
+            "https://example.org/story",
+            "https://example.org:8443/photo.png"
+        )
+        .is_none());
+        assert_eq!(
+            picture_url("https://example.org", "photo.png").as_deref(),
+            Some("https://example.org/photo.png")
+        );
         for hostile in [
             "",
-            "/etc/passwd",
             "../../../secrets.png",
             "..%2f..%2fsecrets.png",
             "%2e%2e/secrets.png",

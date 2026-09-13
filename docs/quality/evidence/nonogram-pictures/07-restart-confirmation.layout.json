@@ -1,0 +1,184 @@
+{
+  "paints": 6,
+  "nodes": [
+    {
+      "kind": "StatusBand",
+      "x": 0,
+      "y": 0,
+      "width": 1072,
+      "height": 59,
+      "centre": {
+        "x": 536,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusClock",
+      "x": 47,
+      "y": 0,
+      "width": 112,
+      "height": 59,
+      "centre": {
+        "x": 103,
+        "y": 29
+      },
+      "action": null,
+      "lines": [
+        "07:01"
+      ]
+    },
+    {
+      "kind": "StatusBattery(Some(Percent(72)), false)",
+      "x": 955,
+      "y": 12,
+      "width": 70,
+      "height": 35,
+      "centre": {
+        "x": 990,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusSignal(Strong)",
+      "x": 896,
+      "y": 12,
+      "width": 35,
+      "height": 35,
+      "centre": {
+        "x": 913,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusBluetooth",
+      "x": 837,
+      "y": 12,
+      "width": 35,
+      "height": 35,
+      "centre": {
+        "x": 854,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "TopBar",
+      "x": 0,
+      "y": 59,
+      "width": 1072,
+      "height": 100,
+      "centre": {
+        "x": 536,
+        "y": 109
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Back",
+      "x": 47,
+      "y": 59,
+      "width": 100,
+      "height": 100,
+      "centre": {
+        "x": 97,
+        "y": 109
+      },
+      "action": 4294967295,
+      "lines": []
+    },
+    {
+      "kind": "TopBarTitle",
+      "x": 171,
+      "y": 77,
+      "width": 854,
+      "height": 64,
+      "centre": {
+        "x": 598,
+        "y": 109
+      },
+      "action": null,
+      "lines": [
+        "Restart puzzle?"
+      ]
+    },
+    {
+      "kind": "Divider",
+      "x": 0,
+      "y": 159,
+      "width": 1072,
+      "height": 4,
+      "centre": {
+        "x": 536,
+        "y": 161
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Text",
+      "x": 47,
+      "y": 175,
+      "width": 978,
+      "height": 64,
+      "centre": {
+        "x": 536,
+        "y": 207
+      },
+      "action": null,
+      "lines": [
+        "Clear every mark. You can undo this."
+      ]
+    },
+    {
+      "kind": "Band",
+      "x": 47,
+      "y": 251,
+      "width": 978,
+      "height": 118,
+      "centre": {
+        "x": 536,
+        "y": 310
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Button(ActionId(1294048265), Enabled, Normal)",
+      "x": 158,
+      "y": 251,
+      "width": 254,
+      "height": 118,
+      "centre": {
+        "x": 285,
+        "y": 310
+      },
+      "action": 1294048265,
+      "lines": [
+        "Restart"
+      ]
+    },
+    {
+      "kind": "Button(ActionId(4281967466), Enabled, Normal)",
+      "x": 649,
+      "y": 251,
+      "width": 275,
+      "height": 118,
+      "centre": {
+        "x": 786,
+        "y": 310
+      },
+      "action": 4281967466,
+      "lines": [
+        "Resume"
+      ]
+    }
+  ]
+}

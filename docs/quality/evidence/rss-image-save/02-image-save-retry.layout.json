@@ -1,0 +1,282 @@
+{
+  "paints": 9,
+  "nodes": [
+    {
+      "kind": "StatusBand",
+      "x": 0,
+      "y": 0,
+      "width": 1072,
+      "height": 59,
+      "centre": {
+        "x": 536,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusClock",
+      "x": 47,
+      "y": 0,
+      "width": 78,
+      "height": 59,
+      "centre": {
+        "x": 86,
+        "y": 29
+      },
+      "action": null,
+      "lines": [
+        "07:24"
+      ]
+    },
+    {
+      "kind": "StatusBattery(Some(Percent(72)), false)",
+      "x": 955,
+      "y": 12,
+      "width": 70,
+      "height": 35,
+      "centre": {
+        "x": 990,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusSignal(Strong)",
+      "x": 896,
+      "y": 12,
+      "width": 35,
+      "height": 35,
+      "centre": {
+        "x": 913,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusBluetooth",
+      "x": 837,
+      "y": 12,
+      "width": 35,
+      "height": 35,
+      "centre": {
+        "x": 854,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "TopBar",
+      "x": 0,
+      "y": 59,
+      "width": 1072,
+      "height": 100,
+      "centre": {
+        "x": 536,
+        "y": 109
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Back",
+      "x": 47,
+      "y": 59,
+      "width": 100,
+      "height": 100,
+      "centre": {
+        "x": 97,
+        "y": 109
+      },
+      "action": 4294967295,
+      "lines": []
+    },
+    {
+      "kind": "BarGlyph(ActionId(3683784189), Trash)",
+      "x": 925,
+      "y": 59,
+      "width": 100,
+      "height": 100,
+      "centre": {
+        "x": 975,
+        "y": 109
+      },
+      "action": 3683784189,
+      "lines": [
+        "Unfollow"
+      ]
+    },
+    {
+      "kind": "BarGlyph(ActionId(3572655668), Refresh)",
+      "x": 801,
+      "y": 59,
+      "width": 100,
+      "height": 100,
+      "centre": {
+        "x": 851,
+        "y": 109
+      },
+      "action": 3572655668,
+      "lines": [
+        "Refresh"
+      ]
+    },
+    {
+      "kind": "TopBarTitle",
+      "x": 171,
+      "y": 86,
+      "width": 606,
+      "height": 46,
+      "centre": {
+        "x": 474,
+        "y": 109
+      },
+      "action": null,
+      "lines": [
+        "The Field Journal"
+      ]
+    },
+    {
+      "kind": "Divider",
+      "x": 0,
+      "y": 159,
+      "width": 1072,
+      "height": 4,
+      "centre": {
+        "x": 536,
+        "y": 161
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Banner(Attention)",
+      "x": 47,
+      "y": 175,
+      "width": 978,
+      "height": 140,
+      "centre": {
+        "x": 536,
+        "y": 245
+      },
+      "action": null,
+      "lines": [
+        "0 unread of 1 article. Some images and reading progress",
+        "are not saved."
+      ]
+    },
+    {
+      "kind": "Row(ActionId(2958169459))",
+      "x": 47,
+      "y": 327,
+      "width": 978,
+      "height": 129,
+      "centre": {
+        "x": 536,
+        "y": 391
+      },
+      "action": 2958169459,
+      "lines": []
+    },
+    {
+      "kind": "RowLead(Number(1))",
+      "x": 47,
+      "y": 362,
+      "width": 18,
+      "height": 35,
+      "centre": {
+        "x": 56,
+        "y": 379
+      },
+      "action": 2958169459,
+      "lines": []
+    },
+    {
+      "kind": "RowTitle",
+      "x": 89,
+      "y": 351,
+      "width": 912,
+      "height": 46,
+      "centre": {
+        "x": 545,
+        "y": 374
+      },
+      "action": 2958169459,
+      "lines": [
+        "A morning by the river"
+      ]
+    },
+    {
+      "kind": "RowSummary",
+      "x": 89,
+      "y": 397,
+      "width": 912,
+      "height": 35,
+      "centre": {
+        "x": 545,
+        "y": 414
+      },
+      "action": 2958169459,
+      "lines": [
+        "Along the river [A mountain ridge] The hills beyond\u2026"
+      ]
+    },
+    {
+      "kind": "Spacer",
+      "x": 0,
+      "y": 1306,
+      "width": 1072,
+      "height": 142,
+      "centre": {
+        "x": 536,
+        "y": 1377
+      },
+      "action": 3446652729,
+      "lines": []
+    },
+    {
+      "kind": "Divider",
+      "x": 0,
+      "y": 1306,
+      "width": 1072,
+      "height": 4,
+      "centre": {
+        "x": 536,
+        "y": 1308
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Button(ActionId(3446652729), Enabled, Normal)",
+      "x": 47,
+      "y": 1320,
+      "width": 978,
+      "height": 118,
+      "centre": {
+        "x": 536,
+        "y": 1379
+      },
+      "action": 3446652729,
+      "lines": [
+        "Retry saving"
+      ]
+    },
+    {
+      "kind": "InlineGlyph(Refresh, false)",
+      "x": 366,
+      "y": 1355,
+      "width": 47,
+      "height": 47,
+      "centre": {
+        "x": 389,
+        "y": 1378
+      },
+      "action": 3446652729,
+      "lines": []
+    }
+  ]
+}

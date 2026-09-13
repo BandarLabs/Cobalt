@@ -2,9 +2,9 @@
   "id": "sudoku",
   "display_name": "Sudoku",
   "short_label": "Sudoku",
-  "summary": "Play touch-first Sudoku designed for an e-ink screen.",
-  "version": "1.0.10",
+  "summary": "Play 36 original Sudoku puzzles with pencil notes, undo and saved games.",
+  "version": "1.0.11",
   "glyph": "grid",
   "capabilities": [],
-  "release_notes": "Update shared controls and page layout for Cobalt 0.3.12."
+  "release_notes": "Adds three measured difficulty levels, saved answers and pencil notes, persistent undo, optional checking, clear completion and reachable landscape controls."
 }

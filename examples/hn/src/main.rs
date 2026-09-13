@@ -1,39 +1,38 @@
 //! Hacker News, on a panel with no scrollbar and no keyboard.
 //!
-//! Four tabs along the bottom (Top, New, Ask, Show) and a comment thread
-//! behind every story. Nothing animates, nothing scrolls, and nothing moves
-//! under a finger that is already reaching for it.
+//! Five destinations along the bottom. Four are the site's own lists (Top,
+//! New, Ask, Show) and the fifth is what this reader put aside, which is the
+//! one that works with the radio off. Behind every story is its discussion,
+//! and behind a story with a link is the article itself, read here rather
+//! than left on a site nobody can reach from this device.
 //!
-//! ## Why Algolia rather than the official API
+//! ## One item per request, on purpose
 //!
-//! Hacker News' own Firebase API returns one item per request. A story with
-//! four hundred replies is four hundred and one requests, which on a device
-//! whose radio is the largest single draw on the battery is not a design, it
-//! is a way to flatten a charge. Algolia's `items/:id` returns the entire
-//! thread, nested, in one. That single fact is the reason this application is
-//! possible at all.
+//! Hacker News' own API answers one item at a time, which is more round trips
+//! than a search index needs. It is worth every one of them: it is the site's
+//! own record, so a story submitted a minute ago is in the list, every score
+//! is the score on the page, and `kids` is the order the site draws replies
+//! in. A client cannot recompute that ordering, and a ranked search index
+//! answering thirty at once got Ask HN wrong by thirteen years.
 //!
-//! ## What happens to a thread that does not fit
+//! Comments are fetched as the reader pages into them, so the radio a thread
+//! costs tracks how far it was actually read rather than how popular it is.
 //!
-//! The transport carries half a megabyte (`MAX_TASK_BYTES_U32` in
-//! `kobo-protocol`, well under the 1 MiB `MAX_FRAME_LEN` that carries it) and
-//! a busy thread is comfortably more. A real one measured while writing this
-//! was 734 KB for 925 comments. Algolia ignores `Range`, so the trick that
-//! lets Gutenbird read a novel in pieces does not work here: asking for the
-//! second half returns the whole document again and the ceiling rejects it.
+//! ## What the device remembers
 //!
-//! So the request comes back `TaskError::TooLarge`, and rather than showing
-//! a dead end this asks a different question, `search_by_date` over that
-//! story's comments, thirty at a time, which is bounded by construction. The
-//! nesting is gone in that answer, so the screen *says* the nesting is gone.
-//! What never happens is a thread that silently stops halfway, or one that
-//! reads as complete when a third of it is missing.
+//! Which stories have been opened, and which were put aside. The site keeps
+//! both for a logged-in reader and will keep neither for an application, and
+//! the alternative to keeping them here is asking somebody for their Hacker
+//! News password so that a list can be grey where they have already been.
 
 mod model;
 
+use kobo_bookview::illustrations::Illustrations;
+use kobo_bookview::BookView;
+use kobo_sdk::snapshot::{Snapshot, SnapshotEvent};
 use kobo_sdk::{
     action_id, ActionId, BannerLevel, Context, Failure, Glyph, KoboApp, Position, QuoteRole,
-    Screen, ScreenBuilder, Task, TaskId, TaskOutcome,
+    RowLead, Screen, ScreenBuilder, StoreResult, Task, TaskId, TaskOutcome,
 };
 use model::{Comment, Story};
 use std::collections::HashSet;
@@ -49,6 +48,20 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// site draws replies in. That ordering cannot be recomputed by a client, and
 /// it is the reason this is not a search index reading.
 const HN_API: &str = "https://hacker-news.firebaseio.com/v0";
+
+/// Where the lists and the items are actually read from.
+///
+/// Hacker News, unless `KOBO_HN_ORIGIN` names somewhere else. That exists for
+/// fixtures and captures, which need a server they own; it is read once per
+/// request and never written down, so a story kept under a fixture cannot
+/// quietly become a story from somewhere the reader did not choose. Only
+/// HTTPS, because everything else this application asks for is.
+fn api() -> String {
+    std::env::var("KOBO_HN_ORIGIN")
+        .ok()
+        .filter(|origin| origin.starts_with("https://"))
+        .map_or_else(|| HN_API.to_owned(), |origin| format!("{origin}/v0"))
+}
 
 /// How many item fetches run at once.
 ///
@@ -73,7 +86,7 @@ const ITEM_BYTES: u32 = 64 * 1024;
 
 /// One item, by number, from Hacker News itself.
 fn item_url(id: i64) -> String {
-    format!("{HN_API}/item/{id}.json")
+    format!("{}/item/{id}.json", api())
 }
 
 /// How many stories a tab asks for.
@@ -98,25 +111,34 @@ const RANKING_BYTES: u32 = 8 * 1024;
 /// individually, so a ragged column costs nothing but the raggedness.
 const TITLE_LINES: usize = 2;
 
-/// How many placeholder rows stand in for a list while it is arriving.
-const SKELETON_ROWS: u8 = 6;
-
-/// The tag on the paragraphs that stand in for the story's facts.
+/// How many placeholder rows stand in for a list while it is arriving, when
+/// the panel has not been measured yet.
 ///
-/// The thread is measured as prose so the runtime's own wrapping decides where
-/// each page ends, but the facts at the top of the first page are a labelled
-/// block, not prose. So a paragraph is set aside for each fact -- measured, and
-/// so counted against the page -- and swapped for the real `facts` block when
-/// the page is drawn. `u32::MAX` is the tag because comment tags are one-based
-/// indices into a list capped far below it, so this can never be one of them.
-const FACT_TAG: u32 = u32::MAX;
+/// A floor rather than a count. Six fits a Clara BW at the default text size
+/// and runs off the bottom of it at 170%, where the renderer refuses the whole
+/// screen rather than draw through the edge: a reader who turned the type up
+/// got a blank panel while any list was loading. What is drawn now is what
+/// fits, measured the same way the list under it is measured.
+const SKELETON_ROWS: u8 = 3;
+
+/// Where the marks are kept on the device.
+///
+/// One small file rather than one per story: the whole of it is read at start
+/// and written when it changes, and a reader with three hundred read stories
+/// still costs one read and one write.
+const MARKS: &str = "hn-marks";
 
 /// The bottom bar. Fixed, in this order, on every screen that has a list.
-const TABS: [(&str, &str); 4] = [
+///
+/// Saved is last because it is the only one that is not Hacker News: the four
+/// before it are the site's own pages, in the site's own order, and this one
+/// is the reader's.
+const TABS: [(&str, &str); 5] = [
     ("tab-top", "Top"),
     ("tab-new", "New"),
     ("tab-ask", "Ask"),
     ("tab-show", "Show"),
+    ("tab-saved", "Saved"),
 ];
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -126,10 +148,13 @@ enum Tab {
     New,
     Ask,
     Show,
+    /// What this reader put aside, which is on the device rather than on the
+    /// site and is the one list that needs no radio.
+    Saved,
 }
 
 impl Tab {
-    const ALL: [Self; 4] = [Self::Top, Self::New, Self::Ask, Self::Show];
+    const ALL: [Self; 5] = [Self::Top, Self::New, Self::Ask, Self::Show, Self::Saved];
 
     const fn index(self) -> usize {
         match self {
@@ -137,6 +162,7 @@ impl Tab {
             Self::New => 1,
             Self::Ask => 2,
             Self::Show => 3,
+            Self::Saved => 4,
         }
     }
 
@@ -155,6 +181,9 @@ impl Tab {
             Self::New => "Fetching the newest stories",
             Self::Ask => "Fetching Ask HN",
             Self::Show => "Fetching Show HN",
+            // Never drawn: the saved list is already on the device, so there
+            // is no moment between asking for it and having it.
+            Self::Saved => "Opening what you put aside",
         }
     }
 
@@ -171,14 +200,19 @@ impl Tab {
     /// answer is five hundred numbers and 4.5 KB, the slice is thirty and
     /// under three hundred bytes, and the radio is the expensive part of this
     /// device.
-    fn ranking_url(self) -> String {
+    fn ranking_url(self) -> Option<String> {
         let list = match self {
             Self::Top => "topstories",
             Self::New => "newstories",
             Self::Ask => "askstories",
             Self::Show => "showstories",
+            // Not a list Hacker News holds. Nothing to ask anybody for.
+            Self::Saved => return None,
         };
-        format!("{HN_API}/{list}.json?orderBy=%22%24key%22&limitToFirst={HITS}")
+        Some(format!(
+            "{}/{list}.json?orderBy=%22%24key%22&limitToFirst={HITS}",
+            api()
+        ))
     }
 }
 
@@ -187,6 +221,9 @@ enum View {
     #[default]
     List,
     Thread,
+    /// The article behind a story, read here rather than on a site this
+    /// device cannot reach.
+    Reading,
 }
 
 /// What the outstanding request is for.
@@ -273,13 +310,52 @@ struct Hn {
     /// sentence, because an empty list wants the whole-screen version of the
     /// same thing and a list with rows on it wants the banner.
     trouble: Option<Failure>,
+    /// How many placeholder rows this panel holds, once it has been measured.
+    skeleton: u8,
+    /// What this reader has already opened, and what they put aside.
+    marks: model::Marks,
+    /// Whether the marks have been read back from the device yet.
+    ///
+    /// Until they have, nothing is written: a save that lands before the file
+    /// has been read would be written over the top of everything saved on
+    /// every previous day.
+    marks_known: bool,
+    /// Which saved story's menu is open, as an index into `stories`.
+    menu: Option<usize>,
+    /// The article being read, when one is.
+    book: BookView,
+    /// The pictures in that article.
+    illustrations: Illustrations,
+    /// The copy of the article kept on the device, so it reopens with the
+    /// radio off.
+    article: Option<Snapshot>,
+    /// The request fetching an article, when the device has no copy yet.
+    fetching: Option<TaskId>,
 }
 
 impl Hn {
     fn show(&self, context: &mut Context) {
+        if self.view == View::Reading {
+            // The shared reader draws its own screen, including the page
+            // turns and the controls in the middle column, so nothing here
+            // draws over the top of it. Its own Back is the way out.
+            let title = self
+                .open
+                .and_then(|index| self.stories.get(index))
+                .map_or_else(String::new, |story| story.title.clone());
+            let screen = self.book.screen(&title).unwrap_or_else(|| {
+                ScreenBuilder::new("hn-article")
+                    .top_bar(title)
+                    .empty_state("This article arrived empty.")
+                    .bottom_action("close-article", "Discussion")
+                    .build()
+            });
+            context.set_screen(screen.with_own_back(true));
+            return;
+        }
         let screen = match self.view {
             View::List => self.list(),
-            View::Thread => self.thread(),
+            View::Thread | View::Reading => self.thread(),
         };
         // A thread was reached from the list, so Back belongs to the list
         // first and to the launcher second. Claimed only when a thread is
@@ -295,6 +371,9 @@ impl Hn {
         if let Some(problem) = &self.problem {
             screen = screen.banner(BannerLevel::Attention, problem.clone());
         }
+        if self.tab == Tab::Saved && self.stories.is_empty() {
+            return self.nothing_saved(screen);
+        }
         if matches!(self.task, Some((_, Awaiting::Ranking(_))))
             || self.stories.is_empty() && !self.story_lanes.is_empty()
         {
@@ -305,7 +384,7 @@ impl Hn {
                 .with_tabs(
                     screen
                         .activity(self.tab.waiting(), None)
-                        .skeleton(SKELETON_ROWS),
+                        .skeleton(self.skeleton.max(1)),
                 )
                 .build();
         }
@@ -330,12 +409,15 @@ impl Hn {
                 )
                 .build();
         };
+        if self.tab == Tab::Saved {
+            return self.saved_list(screen, indices);
+        }
         let rows = indices.iter().filter_map(|index| {
             let story = self.stories.get(*index)?;
             Some((
                 format!("story-{index}"),
                 self.titles.get(*index).cloned().unwrap_or_default(),
-                model::summary(story, self.now),
+                self.row_summary(story),
                 // The story's position, which is what Hacker News itself puts
                 // here. An icon would be the same icon thirty times over: a
                 // list of stories does not need to be told it is a list of
@@ -361,6 +443,73 @@ impl Hn {
             .rows_with_trailing(rows)
             .page_turns("list-back", "list-next");
         self.with_tabs(turning).build()
+    }
+
+    /// The saved list: the same stories, with the one verb that only applies
+    /// here.
+    ///
+    /// No score and no rank. Both were true when the story was put aside and
+    /// neither has been true since, and a number that looks live and is a day
+    /// old is worse than no number. What the row carries instead is the mark
+    /// that takes it off this list, which is the only thing a reader wants to
+    /// do to a saved story that is not opening it.
+    fn saved_list(&self, screen: ScreenBuilder, indices: &[usize]) -> Screen {
+        let rows = indices.iter().filter_map(|index| {
+            let story = self.stories.get(*index)?;
+            Some((
+                format!("story-{index}"),
+                self.titles.get(*index).cloned().unwrap_or_default(),
+                self.row_summary(story),
+                RowLead::from(Glyph::Bookmark),
+                format!("saved-menu-{index}"),
+            ))
+        });
+        let screen = screen
+            .rows_with_menu(rows)
+            .page_turns("list-back", "list-next");
+        let screen = match self.menu {
+            Some(index) if indices.contains(&index) => screen.row_overflow(
+                format!("saved-menu-{index}"),
+                true,
+                [("saved-forget", "Take off this list", Glyph::Trash)],
+            ),
+            _ => screen,
+        };
+        self.with_tabs(screen).build()
+    }
+
+    /// Nothing saved, said where the saved stories would be.
+    ///
+    /// Not the failure state the other tabs use. An empty saved list is not a
+    /// network problem and there is nothing to try again: it is a list that
+    /// has never been added to, so it says how stories get onto it.
+    fn nothing_saved(&self, screen: ScreenBuilder) -> Screen {
+        self.with_tabs(screen.empty_state(
+            "Nothing saved yet. Open a story and tap Save, and it waits here \
+             with its article, radio or no radio.",
+        ))
+        .build()
+    }
+
+    /// The second line of a row, with what this reader has already done with
+    /// the story said before anything the site says about it.
+    ///
+    /// At the front rather than appended: a reader scanning a list runs their
+    /// eye down the left edge, and a mark at the end of a line that is
+    /// sometimes three clauses long is a mark nobody finds. Only the few rows
+    /// that have been touched carry one at all.
+    fn row_summary(&self, story: &Story) -> String {
+        let summary = model::summary(story, self.now);
+        let read = self.marks.was_read(&story.id);
+        // Not on the saved list itself, where every row is saved and the word
+        // would be the same word thirty times.
+        let saved = self.tab != Tab::Saved && self.marks.was_saved(&story.id);
+        match (read, saved) {
+            (true, true) => format!("Read, saved \u{b7} {summary}"),
+            (true, false) => format!("Read \u{b7} {summary}"),
+            (false, true) => format!("Saved \u{b7} {summary}"),
+            (false, false) => summary,
+        }
     }
 
     fn list_title(&self) -> String {
@@ -407,36 +556,48 @@ impl Hn {
         let Some(story) = self.open.and_then(|index| self.stories.get(index)) else {
             return self.list();
         };
+        // The headline is in the bar and nowhere else. It used to be in both
+        // the bar and the first paragraph, which is the same words twice on
+        // one panel with one of them cut short, and it cost the first page a
+        // headline's worth of comments. The bar is where it has to stay: it
+        // is the only part of the screen that survives paging into the
+        // replies, and a reader four pages down a thread should not have to
+        // page back to find out whose story they are arguing about.
         let mut screen = ScreenBuilder::new("hn-thread").top_bar(story.title.clone());
+        screen = if self.marks.was_saved(&story.id) {
+            screen.top_bar_action("save", "Saved")
+        } else {
+            screen.top_bar_action("save", "Save")
+        };
+        if story.link.is_some() {
+            screen = screen.top_bar_glyph("read-article", "Read the article", Glyph::Book);
+        }
         if !self.lanes.is_empty() && self.comments.is_empty() {
             // No bar, which is what the loaded thread has too: nothing under
             // the reader's finger moves when the comments land.
             return screen
                 .activity("Fetching the comments", None)
-                .skeleton(SKELETON_ROWS)
+                .skeleton(self.skeleton.max(1))
                 .build();
+        }
+        // What the site says about the story, above the first page of the
+        // discussion and above no other. The pagination was measured under
+        // exactly this block, so what is drawn here is room the comments
+        // never had rather than room taken from them.
+        if self.thread_page == 0 {
+            screen = screen.facts(story_facts(story, self.now));
         }
         // A byline is only made foldable once, on the page where its comment
         // begins. The copy repeated at the top of a continuation is a
         // reminder of who is speaking, and hanging a control off it would put
         // two plus signs for the same comment in front of the reader.
         let mut folded_here: Option<u32> = None;
-        let mut facts_drawn = false;
         for (tag, depth, role, paragraph) in self
             .thread_pages
             .get(self.thread_page)
             .into_iter()
             .flatten()
         {
-            if *tag == FACT_TAG {
-                // The labelled block, drawn once where its first reserved
-                // paragraph fell; the rest of the run is the room it stands in.
-                if !facts_drawn {
-                    facts_drawn = true;
-                    screen = screen.facts(story_facts(story, self.now));
-                }
-                continue;
-            }
             let index = (*tag as usize).checked_sub(1);
             match (*role, index) {
                 (QuoteRole::Byline, Some(index)) if folded_here != Some(*tag) => {
@@ -455,9 +616,12 @@ impl Hn {
                 _ => screen = screen.quote_as(*depth, *role, paragraph.clone()),
             }
         }
-        if let Some(problem) = &self.problem {
-            screen = screen.banner(BannerLevel::Attention, problem.clone());
-        }
+        // No banner, and no bottom bar. A banner is chrome the paginator
+        // never measured: on a full page at the larger text settings the
+        // renderer refused the whole screen rather than draw it through the
+        // panel edge, and a reader who turned the type up got nothing at all.
+        // Everything this screen has to say is said inside the flow, which is
+        // what was measured, so it has somewhere to be.
         // No bottom bar. It said "Back / Stories / Next", of which Stories is
         // the chevron already in the top bar and the other two are the page
         // turns the position strip draws for a third of the room. The bar was
@@ -471,6 +635,19 @@ impl Hn {
             );
         }
         turning.build()
+    }
+
+    /// The block of facts that stands above the first page of a discussion.
+    ///
+    /// Built as a screen of its own so it can be measured exactly as it will
+    /// be drawn, which is what the pagination under it needs.
+    fn facts_block(&self) -> Screen {
+        let Some(story) = self.open.and_then(|index| self.stories.get(index)) else {
+            return ScreenBuilder::new("hn-facts").build();
+        };
+        ScreenBuilder::new("hn-facts")
+            .facts(story_facts(story, self.now))
+            .build()
     }
 
     /// Everything the thread screen draws, as paragraphs carrying their depth.
@@ -487,16 +664,7 @@ impl Hn {
         let Some(story) = self.open.and_then(|index| self.stories.get(index)) else {
             return Vec::new();
         };
-        let mut paragraphs = vec![(0, 0, QuoteRole::Body, story.title.clone())];
-        // One paragraph per fact, tagged so the draw pass swaps the run for a
-        // real facts block. They are here, in the measured flow, rather than
-        // hung off the top of the screen as chrome, because chrome the
-        // paginator never sees is chrome that pushes the last line of the page
-        // off the panel. A byline of the value is a hair taller than the fact
-        // row that replaces it, so the block always fits the room reserved.
-        for (_, value) in story_facts(story, self.now) {
-            paragraphs.push((FACT_TAG, 0, QuoteRole::Byline, value));
-        }
+        let mut paragraphs = Vec::new();
         if let Some(note) = &self.note {
             // Inside the flow, not in a banner. A banner is chrome the
             // paginator never measured, so it would push the last paragraph of
@@ -510,6 +678,7 @@ impl Hn {
             paragraphs.push((0, 0, QuoteRole::Body, "No comments yet.".to_owned()));
             return paragraphs;
         }
+        let ended = !self.more_to_take();
         let mut index = 0;
         while index < self.comments.len() {
             let comment = &self.comments[index];
@@ -534,6 +703,12 @@ impl Hn {
                 }
             }
             index += 1;
+        }
+        if ended {
+            // The end of a conversation is a fact about it, so it is written
+            // at the end of it rather than raised as a message over the top
+            // of a page that is already full.
+            paragraphs.push((0, 0, QuoteRole::Byline, "End of the thread.".to_owned()));
         }
         paragraphs
     }
@@ -569,6 +744,7 @@ impl Hn {
 
     /// Asks Hacker News which stories this tab holds. The substance follows.
     fn ask_list(&mut self, context: &mut Context) {
+        self.measure_skeleton(&*context);
         self.cancel_outstanding(context);
         self.drop_lanes(context);
         self.problem = None;
@@ -576,8 +752,12 @@ impl Hn {
         self.ranking.clear();
         self.stories.clear();
         self.pages.clear();
+        let Some(url) = self.tab.ranking_url() else {
+            self.take_saved(context);
+            return;
+        };
         match context.spawn_retrying(Task::Fetch {
-            url: self.tab.ranking_url(),
+            url,
             offset: 0,
             max_bytes: RANKING_BYTES,
             credential: None,
@@ -586,6 +766,37 @@ impl Hn {
             Some(task) => self.task = Some((task, Awaiting::Ranking(self.tab))),
             None => self.problem = Some("Too much is already in flight.".to_owned()),
         }
+    }
+
+    /// How many rows of a list this panel holds.
+    ///
+    /// Measured with the engine that will lay the list out, against rows of
+    /// the shape this application actually draws, so the placeholder is the
+    /// same height as the list that replaces it and nothing jumps when the
+    /// stories land.
+    fn measure_skeleton(&mut self, context: &Context) {
+        const SHAPE: (&str, &str, &str) = (
+            "A headline of about the length a story on this site is given",
+            "example.com \u{b7} 12 comments \u{b7} 3h ago",
+            "214 points",
+        );
+        let rows = vec![SHAPE; 12];
+        let pages =
+            context.paginate_ranked_rows_with_trailing(&rows, true, 12, Position::Elsewhere);
+        let fits = pages.first().map_or(0, Vec::len);
+        self.skeleton = u8::try_from(fits).unwrap_or(SKELETON_ROWS).max(1);
+    }
+
+    /// Puts the saved list on the panel, which costs no radio at all.
+    ///
+    /// The stories were written down whole when they were saved, so this is
+    /// the one list that is complete the moment it is asked for, and the only
+    /// one that works on a train.
+    fn take_saved(&mut self, context: &mut Context) {
+        self.stories = self.marks.saved.clone();
+        self.now = unix_now();
+        self.page = 0;
+        self.repaginate_list(&*context);
     }
 
     /// Starts as many story fetches as there are free lanes.
@@ -732,8 +943,223 @@ impl Hn {
             .then_some(id)
     }
 
+    /// How much of an article is worth carrying onto this device.
+    ///
+    /// Half a megabyte of markup is a long feature with its pictures still to
+    /// come. Past that is a page that is mostly somebody else's javascript,
+    /// and the reader is told rather than made to wait for it.
+    const ARTICLE_BYTES: u32 = 512 * 1024;
+
+    /// Opens the article behind the story, from the device if it is there.
+    ///
+    /// A saved copy is read without asking anybody for anything, which is the
+    /// whole reason a story is saved at all.
+    fn read_link(&mut self, context: &mut Context) {
+        let Some(story) = self.open.and_then(|index| self.stories.get(index)) else {
+            return;
+        };
+        let Some(link) = story.link.clone() else {
+            // A question or a show-and-tell is its own text, and the text is
+            // already on the discussion screen. Nothing to fetch.
+            self.say_in_thread(
+                context,
+                "This story is its own text, which is on this screen.".to_owned(),
+            );
+            return;
+        };
+        self.problem = None;
+        let saved =
+            Snapshot::new(&format!("hn-article:{link}")).at_most(Self::ARTICLE_BYTES as usize);
+        saved.start(context);
+        self.article = Some(saved);
+        self.show(context);
+    }
+
+    /// A store answer that belongs to the article being read, or does not.
+    ///
+    /// Returns whether it was one of those. The pictures are asked first
+    /// because they arrive under their own names and answer for themselves.
+    fn article_result(&mut self, context: &mut Context, key: &str, result: &StoreResult) -> bool {
+        if self
+            .illustrations
+            .store(context, &mut self.book, key, result, false)
+        {
+            self.show(context);
+            return true;
+        }
+        let Some(article) = self.article.as_mut().filter(|saved| saved.key == key) else {
+            return false;
+        };
+        let event = article.stored(context, result);
+        self.article_event(context, event);
+        true
+    }
+
+    /// What the device said about its copy of the article.
+    fn article_event(&mut self, context: &mut Context, event: Option<SnapshotEvent>) {
+        match event {
+            Some(SnapshotEvent::Loaded) => {
+                let saved = self.article.as_ref().and_then(|saved| saved.bytes.clone());
+                match saved {
+                    Some(bytes) => self.open_article(context, &bytes),
+                    None => self.fetch_article(context),
+                }
+            }
+            Some(SnapshotEvent::Failed) => {
+                self.problem = Some("This article could not be kept on the device.".to_owned());
+                self.show(context);
+            }
+            Some(SnapshotEvent::Saved) | None => self.show(context),
+        }
+    }
+
+    /// Asks the site the story points at for the article itself.
+    fn fetch_article(&mut self, context: &mut Context) {
+        let Some(link) = self
+            .open
+            .and_then(|index| self.stories.get(index))
+            .and_then(|story| story.link.clone())
+        else {
+            return;
+        };
+        match context.spawn(Task::Fetch {
+            url: link,
+            offset: 0,
+            max_bytes: Self::ARTICLE_BYTES,
+            credential: None,
+            headers: Vec::new(),
+        }) {
+            Some(task) => self.fetching = Some(task),
+            None => self.problem = Some("Too much is already in flight.".to_owned()),
+        }
+        self.show(context);
+    }
+
+    /// Puts the article in front of the reader.
+    fn open_article(&mut self, context: &mut Context, body: &[u8]) {
+        let link = self
+            .open
+            .and_then(|index| self.stories.get(index))
+            .and_then(|story| story.link.clone())
+            .unwrap_or_default();
+        let source = String::from_utf8_lossy(body).into_owned();
+        self.book.close(context);
+        self.illustrations.close(context);
+        self.book.open(
+            context,
+            kobo_doc::html::parse(&source),
+            kobo_read::Memory::default(),
+        );
+        self.illustrations.open(context, &mut self.book, &link);
+        self.view = View::Reading;
+        self.problem = None;
+        self.show(context);
+    }
+
+    /// What came back from the site the story points at.
+    fn took_article(&mut self, context: &mut Context, outcome: TaskOutcome) {
+        match outcome {
+            TaskOutcome::Completed(body) => {
+                // Kept before it is read, so the second opening costs nothing
+                // and works with the radio off.
+                if !self
+                    .article
+                    .as_mut()
+                    .is_some_and(|saved| saved.save(context, body.clone()))
+                {
+                    self.problem =
+                        Some("This article is open but not kept on the device.".to_owned());
+                }
+                self.open_article(context, &body);
+            }
+            TaskOutcome::Failed(error) => {
+                // The article, not the discussion. A site that will not answer
+                // says nothing about the thread, which is still here and is
+                // what this screen is for. The advice is the SDK's own words
+                // for that failure, so a reader is told the same thing here as
+                // everywhere else.
+                self.say_in_thread(
+                    context,
+                    format!(
+                        "{} The discussion is still here.",
+                        Failure::of(error).advice
+                    ),
+                );
+            }
+            TaskOutcome::Cancelled => self.show(context),
+        }
+    }
+
+    /// Closes the article and goes back to the discussion it was reached from.
+    fn close_article(&mut self, context: &mut Context) {
+        self.illustrations.close(context);
+        self.book.close(context);
+        self.article = None;
+        self.fetching = None;
+        self.view = View::Thread;
+        self.show(context);
+    }
+
+    /// Puts the open story on the saved list, or takes it off again.
+    fn save_open(&mut self, context: &mut Context) {
+        let Some(story) = self.open.and_then(|index| self.stories.get(index)).cloned() else {
+            return;
+        };
+        self.marks.toggle_saved(&story);
+        self.remember(context);
+        // No message. The control that was tapped says what happened: it
+        // reads Save before and Saved after, which is the acknowledgement,
+        // and a banner saying the same thing on a page that is already full
+        // is a banner drawn through the edge of the panel.
+        self.show(context);
+    }
+
+    /// Says something on the discussion screen, where there is room for it.
+    ///
+    /// In the measured flow rather than over the top of it, and the reader is
+    /// carried back to the first page so that what was said is on the page
+    /// they are looking at.
+    fn say_in_thread(&mut self, context: &mut Context, said: String) {
+        self.note = Some(said);
+        self.thread_page = 0;
+        self.repaginate_thread(&*context);
+        self.show(context);
+    }
+
+    /// Writes the marks down, once they are known to be the whole of them.
+    fn remember(&mut self, context: &mut Context) {
+        if !self.marks_known {
+            return;
+        }
+        context.store().save(MARKS, self.marks.encode());
+    }
+
+    /// Takes the story whose menu is open off the saved list.
+    fn forget_saved(&mut self, context: &mut Context) {
+        let Some(story) = self.menu.and_then(|index| self.stories.get(index)).cloned() else {
+            return;
+        };
+        if self.marks.was_saved(&story.id) {
+            self.marks.toggle_saved(&story);
+            self.remember(context);
+        }
+        self.menu = None;
+        // The list being shown is the saved list, so the row goes with it.
+        self.take_saved(context);
+        self.show(context);
+    }
+
     fn open_story(&mut self, context: &mut Context, index: usize) {
         self.open = Some(index);
+        self.menu = None;
+        // Opened is read. Not "read to the end", which nothing here can know,
+        // but the same thing the site means when it greys a visited link: you
+        // have been here.
+        if let Some(story) = self.stories.get(index) {
+            let id = story.id.clone();
+            self.marks.mark_read(&id);
+            self.remember(context);
+        }
         self.view = View::Thread;
         // A different story, so nothing about the last one survives. A thread
         // left in place would be drawn under the new title for the second it
@@ -851,6 +1277,10 @@ impl Hn {
 
     /// Measures the rows against the panel to find where the folds are.
     fn repaginate_list(&mut self, context: &Context) {
+        if self.tab == Tab::Saved {
+            self.repaginate_saved(context);
+            return;
+        }
         self.titles = self
             .stories
             .iter()
@@ -882,6 +1312,33 @@ impl Hn {
         let highest = u16::try_from(rows.len()).unwrap_or(u16::MAX);
         self.pages =
             context.paginate_ranked_rows_with_trailing(&rows, true, highest, Position::Elsewhere);
+        self.page = self.page.min(self.pages.len().saturating_sub(1));
+    }
+
+    /// The same, for the saved list, whose rows carry a mark instead of a
+    /// score.
+    ///
+    /// Measured with the mark, because it takes a finger's width out of every
+    /// title: a saved list paginated as though the rows were full width wraps
+    /// its last title and draws it through the tab bar.
+    fn repaginate_saved(&mut self, context: &Context) {
+        self.titles = self
+            .stories
+            .iter()
+            .map(|story| context.clamped_row_with_menu(&story.title, TITLE_LINES, true))
+            .collect();
+        let summaries = self
+            .stories
+            .iter()
+            .map(|story| self.row_summary(story))
+            .collect::<Vec<_>>();
+        let rows = self
+            .titles
+            .iter()
+            .zip(&summaries)
+            .map(|(title, summary)| (title.as_str(), summary.as_str()))
+            .collect::<Vec<_>>();
+        self.pages = context.paginate_rows_with_menu(&rows, true);
         self.page = self.page.min(self.pages.len().saturating_sub(1));
     }
 
@@ -932,7 +1389,12 @@ impl Hn {
             .iter()
             .map(|(tag, depth, role, text)| (*tag, *depth, *role, text.as_str()))
             .collect::<Vec<_>>();
-        self.thread_pages = context.paginate_tagged(&borrowed, false);
+        // Measured under the facts, which stand on the first page and on no
+        // other. They used to be measured as a run of paragraphs of roughly
+        // the same height, swapped for the real block while drawing, and
+        // roughly the same height is a dozen pixels out over four facts,
+        // which is one line too many at the foot of the first page.
+        self.thread_pages = context.paginate_tagged_under(&borrowed, false, &self.facts_block());
         self.thread_page = self
             .thread_page
             .min(self.thread_pages.len().saturating_sub(1));
@@ -967,6 +1429,27 @@ impl Hn {
             return;
         }
         self.view = View::List;
+        self.menu = None;
+        if tab == Tab::Saved {
+            // Nothing to ask anybody for, and nothing to keep from the tab
+            // being left: the saved list is on the device and is rebuilt
+            // whole every time it is opened, so a story saved from a thread
+            // is on it the moment the reader gets back.
+            //
+            // What is already in the air has to go, though. A ranking that
+            // lands after the reader has moved on puts its own tab back on
+            // the panel, so tapping Saved while the front page was still
+            // arriving showed the saved list for a second and then the front
+            // page.
+            self.cancel_outstanding(context);
+            self.drop_lanes(context);
+            self.tab = tab;
+            self.problem = None;
+            self.trouble = None;
+            self.take_saved(context);
+            self.show(context);
+            return;
+        }
         if self.tab == tab && !self.stories.is_empty() {
             // Coming back from a thread to the tab that is already loaded.
             // Asking again would cost a second of radio for a list that has
@@ -987,19 +1470,111 @@ impl Hn {
 impl KoboApp for Hn {
     fn on_start(&mut self, context: &mut Context) {
         self.now = unix_now();
+        // Asked for before the network is: what has been read is what makes
+        // the first list drawn look different from a stranger's.
+        context.store().load(MARKS);
         self.ask_list(context);
         self.show(context);
     }
 
+    fn on_save(&mut self, context: &mut Context, key: &str, result: StoreResult) {
+        self.article_result(context, key, &result);
+    }
+
+    /// The piecework of moving an article on or off the device.
+    ///
+    /// A state file travels in one message; an article does not, so it goes
+    /// through the shelf a piece at a time and the snapshot is told about each
+    /// piece. Without this the copy is started and never finished, and the
+    /// story that was put aside for the train is a story that is not there.
+    fn on_shelf(&mut self, context: &mut Context, name: &str, result: StoreResult) {
+        if self
+            .illustrations
+            .store(context, &mut self.book, name, &result, true)
+        {
+            self.show(context);
+            return;
+        }
+        if let Some(article) = self.article.as_mut().filter(|saved| saved.owns_file(name)) {
+            let event = article.shelf(context, &result);
+            self.article_event(context, event);
+        }
+    }
+
+    fn on_store(&mut self, context: &mut Context, result: StoreResult) {
+        if let StoreResult::Loaded { key, value } = &result {
+            if key == MARKS {
+                if let Some(text) = value
+                    .as_ref()
+                    .and_then(|bytes| std::str::from_utf8(bytes).ok())
+                {
+                    self.marks = model::Marks::decode(text);
+                }
+                self.marks_known = true;
+                if self.tab == Tab::Saved {
+                    // The saved list was drawn empty while the file was being
+                    // read. Now it is the list.
+                    self.take_saved(context);
+                }
+                self.show(context);
+                return;
+            }
+        }
+        // Anything else belongs to the copy of an article kept on the device.
+        let key = match &result {
+            StoreResult::Loaded { key, .. } | StoreResult::Saved { key } => key.clone(),
+            _ => String::new(),
+        };
+        self.article_result(context, &key, &result);
+    }
+
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
+        // An open article answers its own page turns and its own controls
+        // before anything else looks at the tap.
+        if self.view == View::Reading && self.book.memory().is_some() {
+            match self.book.act(context, action) {
+                Some(kobo_read::Outcome::Close) => self.close_article(context),
+                Some(kobo_read::Outcome::Light(level)) => context.device().set_frontlight(level),
+                None if action == ActionId::BACK || action == action_id("close-article") => {
+                    self.close_article(context);
+                }
+                _ => {}
+            }
+            self.show(context);
+            return;
+        }
         if action == ActionId::BACK {
             // Only ever delivered on a screen that asked for it, so this is
             // always a thread returning to the list it was opened from.
             self.view = View::List;
             self.problem = None;
             self.trouble = None;
+            self.menu = None;
             self.show(context);
             return;
+        }
+        if action == action_id("save") {
+            self.save_open(context);
+            return;
+        }
+        if action == action_id("read-article") || action == action_id("close-article") {
+            if self.view == View::Reading {
+                self.close_article(context);
+            } else {
+                self.read_link(context);
+            }
+            return;
+        }
+        if action == action_id("saved-forget") {
+            self.forget_saved(context);
+            return;
+        }
+        for index in 0..self.stories.len() {
+            if action == action_id(&format!("saved-menu-{index}")) {
+                self.menu = Some(index);
+                self.show(context);
+                return;
+            }
         }
         for tab in Tab::ALL {
             if action == action_id(tab.action()) {
@@ -1050,6 +1625,25 @@ impl KoboApp for Hn {
     }
 
     fn on_task(&mut self, context: &mut Context, task: TaskId, outcome: TaskOutcome) {
+        // The open article, its pictures, and the request that fetched it.
+        if self
+            .illustrations
+            .task(context, &mut self.book, task, &outcome)
+        {
+            self.show(context);
+            return;
+        }
+        if self.book.woke(context, task, &outcome) != kobo_bookview::Step::Elsewhere {
+            if self.view == View::Reading {
+                self.show(context);
+            }
+            return;
+        }
+        if self.fetching == Some(task) {
+            self.fetching = None;
+            self.took_article(context, outcome);
+            return;
+        }
         if let Some(at) = self.lanes.iter().position(|(lane, _)| *lane == task) {
             let (_, id) = self.lanes.remove(at);
             match outcome {
@@ -1137,7 +1731,9 @@ impl Hn {
     ///
     /// Reaching the end of what has arrived is an appetite for more, not a
     /// dead end: the rest of the conversation is known to exist and is being
-    /// fetched a run at a time.
+    /// fetched a run at a time. Where there is nothing more, the last page
+    /// already says so in its own last line, so a tap on a page that cannot
+    /// turn does nothing rather than raising a message about it.
     fn turn_thread(&mut self, context: &mut Context) {
         if self.thread_page + 1 < self.thread_pages.len() {
             self.thread_page += 1;
@@ -1148,8 +1744,6 @@ impl Hn {
             self.pump_thread(context);
             self.problem = None;
             self.trouble = None;
-        } else {
-            self.problem = Some("That is the end of the thread.".to_owned());
         }
         self.show(context);
     }
@@ -1222,8 +1816,8 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::{model, Awaiting, Hn, Slot, Tab, View, CHUNK, FACT_TAG, LANES, TABS, TITLE_LINES};
-    use kobo_sdk::{action_id, AppRunner, Command, Task, TaskError, TaskId, TaskOutcome};
+    use super::{model, Awaiting, Hn, Slot, Tab, View, CHUNK, LANES, TABS, TITLE_LINES};
+    use kobo_sdk::{action_id, ActionId, AppRunner, Command, Task, TaskError, TaskId, TaskOutcome};
     use kobo_ui::{Chrome, LayoutKind, Rect, CLARA_BW_METRICS};
     use std::collections::BTreeMap;
 
@@ -1679,6 +2273,7 @@ mod tests {
                 comments: 7,
                 created: application.now - 3600,
                 text: None,
+                link: Some(format!("https://example.com/{index}")),
                 site: Some("example.com".into()),
             })
             .collect();
@@ -1864,14 +2459,14 @@ mod tests {
             let layout = showing
                 .thread()
                 .layout_with(&CLARA_BW_METRICS, &Chrome::default());
-            // A paragraph is drawn either as a quote or, where it stood in for
-            // one of the story's facts, as a value in the facts block; one
-            // value per reserved fact line, so the two together still have to
-            // account for every paragraph the page was measured to hold.
+            // Every paragraph the page was measured to hold is drawn as a
+            // quote. The facts are not paragraphs: they are the block the
+            // first page was measured under, and they are counted below with
+            // everything else that must stay above the foot of the panel.
             let drawn = layout
                 .nodes
                 .iter()
-                .filter(|node| matches!(node.kind, LayoutKind::Quote(..) | LayoutKind::FactValue))
+                .filter(|node| matches!(node.kind, LayoutKind::Quote(..)))
                 .count();
             assert_eq!(
                 drawn,
@@ -2288,6 +2883,7 @@ mod tests {
                 comments: u32::try_from(depths.len()).unwrap_or(u32::MAX),
                 created: 0,
                 text: None,
+                link: None,
                 site: None,
             }],
             open: Some(0),
@@ -2303,6 +2899,181 @@ mod tests {
                 .collect(),
             ..Hn::default()
         }
+    }
+
+    #[test]
+    fn a_reply_deeper_than_the_gutter_can_show_says_how_deep_it_is() {
+        // Past the indent cap every level is drawn at the same offset, so a
+        // reader eight replies in sees the same gutter as one two replies in.
+        // The byline is where the difference goes, because it costs no width.
+        let capped = u16::from(model::MAX_INDENT);
+        let deep = a_thread_of(&[0, capped, capped + 3]);
+        let bylines = deep
+            .thread_paragraphs()
+            .into_iter()
+            .filter(|(_, _, role, _)| *role == kobo_sdk::QuoteRole::Byline)
+            .map(|(_, depth, _, text)| (depth, text))
+            .collect::<Vec<_>>();
+        let (shallow_depth, shallow) = &bylines[0];
+        let (capped_depth, at_the_cap) = &bylines[1];
+        let (past_depth, past_the_cap) = &bylines[2];
+        assert_eq!(*shallow_depth, 0);
+        assert!(!shallow.contains("deep"), "{shallow:?}");
+        assert!(!at_the_cap.contains("deep"), "{at_the_cap:?}");
+        assert_eq!(
+            capped_depth, past_depth,
+            "past the cap the drawn indent stops moving, which is the point"
+        );
+        assert!(
+            past_the_cap.contains(&format!("reply {} deep", capped + 3)),
+            "a reply past the indent cap did not say how deep it was: {past_the_cap:?}"
+        );
+    }
+
+    #[test]
+    fn a_folded_comment_can_be_opened_again_and_brings_its_replies_back() {
+        // The round trip, rather than the two halves of it separately: a fold
+        // that cannot be undone is a comment the reader has thrown away.
+        // Not started: `on_start` goes after the front page, which would
+        // throw this thread away before the first tap.
+        let mut runner = AppRunner::new(a_thread_of(&[0, 1, 2, 0]));
+        let whole = runner.app().thread_paragraphs().len();
+        runner.action(action_id("fold-0"));
+        let folded = runner.app().thread_paragraphs().len();
+        assert!(
+            folded < whole,
+            "folding the first comment hid nothing: {folded} of {whole}"
+        );
+        assert!(runner.app().collapsed.contains(&0));
+        runner.action(action_id("fold-0"));
+        assert_eq!(
+            runner.app().thread_paragraphs().len(),
+            whole,
+            "opening a folded comment did not bring its replies back"
+        );
+        assert!(runner.app().collapsed.is_empty());
+    }
+
+    #[test]
+    fn the_discussion_says_the_headline_once() {
+        // The headline used to be in the top bar and in the first paragraph,
+        // which is the same words twice on one panel with one of them cut
+        // short, and it cost the first page a headline's worth of comments.
+        let (runner, _) = opened_thread();
+        let application = runner.app();
+        let title = application
+            .open
+            .and_then(|index| application.stories.get(index))
+            .map(|story| story.title.clone())
+            .expect("a story is open");
+        let repeated = application
+            .thread_paragraphs()
+            .into_iter()
+            .filter(|(_, _, _, text)| text.contains(&title))
+            .count();
+        assert_eq!(repeated, 0, "the headline is in the bar, and only there");
+        let screen = application.thread();
+        assert_eq!(
+            screen.top_bar.as_ref().map(|bar| bar.title.clone()),
+            Some(title),
+            "the bar is where the headline has to be: it survives page turns"
+        );
+    }
+
+    #[test]
+    fn a_story_that_was_opened_is_marked_read_on_the_list_it_was_opened_from() {
+        let mut runner = loaded();
+        let page = runner.app().page;
+        let id = runner.app().stories[0].id.clone();
+        runner.action(action_id("story-0"));
+        assert!(runner.app().marks.was_read(&id));
+        // Back to the list, on the page it was left on. A reader four pages
+        // into the front page who opens a story and comes back to the top has
+        // lost their place, which on a list of thirty is most of it.
+        runner.action(ActionId::BACK);
+        assert_eq!(runner.app().view, View::List);
+        assert_eq!(runner.app().page, page);
+        let summary = runner.app().row_summary(&runner.app().stories[0]);
+        assert!(summary.starts_with("Read \u{b7} "), "{summary:?}");
+    }
+
+    #[test]
+    fn saving_a_story_puts_it_on_the_saved_list_and_saying_so_again_takes_it_off() {
+        let mut runner = loaded();
+        runner.action(action_id("story-0"));
+        let id = runner.app().stories[0].id.clone();
+        runner.action(action_id("save"));
+        assert!(runner.app().marks.was_saved(&id));
+        runner.action(action_id("save"));
+        assert!(!runner.app().marks.was_saved(&id));
+    }
+
+    #[test]
+    fn a_list_that_lands_after_the_reader_moved_on_does_not_put_itself_back() {
+        // Tapping Saved while the front page was still arriving showed the
+        // saved list, and then the front page a second later when the ranking
+        // landed and set its own tab back.
+        let mut runner = AppRunner::new(Hn::default());
+        runner.start();
+        let task = spawned(&runner);
+        runner.action(action_id("tab-saved"));
+        runner.task_outcome(task, TaskOutcome::Completed(RANKING.as_bytes().to_vec()));
+        assert_eq!(runner.app().tab, Tab::Saved);
+        assert!(runner.app().stories.is_empty());
+    }
+
+    #[test]
+    fn the_saved_list_needs_no_network_at_all() {
+        // The whole reason for saving: a list that is already on the device
+        // is a list that works on a train. Nothing may be asked for.
+        let mut runner = loaded();
+        runner.action(action_id("story-0"));
+        runner.action(action_id("save"));
+        let before = runner.app().stories[0].title.clone();
+        let commands = runner.action(action_id("tab-saved"));
+        assert!(
+            asked(&commands).is_none(),
+            "opening the saved list asked the network for something"
+        );
+        assert_eq!(runner.app().tab, Tab::Saved);
+        assert_eq!(runner.app().stories.len(), 1);
+        assert_eq!(runner.app().stories[0].title, before);
+    }
+
+    #[test]
+    fn a_story_with_no_link_of_its_own_says_so_rather_than_fetching_nothing() {
+        // An Ask HN post is its own text. Offering to fetch an article that
+        // does not exist is a request that can only fail, so the screen says
+        // what is true instead and the discussion stays where it is.
+        let mut application = a_thread_of(&[0]);
+        application.stories[0].link = None;
+        application.view = View::Thread;
+        let mut runner = AppRunner::new(application);
+        let commands = runner.action(action_id("read-article"));
+        assert!(asked(&commands).is_none(), "it went looking for an article");
+        assert_eq!(runner.app().view, View::Thread);
+        let said = runner.app().note.clone().unwrap_or_default();
+        assert!(said.contains("its own text"), "{said:?}");
+        // And the bar does not offer what it cannot do.
+        let screen = runner.app().thread();
+        let bar = format!("{:?}", screen.top_bar);
+        assert!(!bar.contains("read-article"), "{bar}");
+    }
+
+    #[test]
+    fn a_long_headline_is_cut_to_the_rows_it_has_and_kept_whole_everywhere_else() {
+        let runner = loaded();
+        let application = runner.app();
+        let context = runner.context();
+        let long = "A headline of the length the site allows, which is eighty characters \
+                    and change, and rather more than a six inch panel will hold on two lines";
+        let clamped = context.clamped_row_beside(long, "214 points", TITLE_LINES, true);
+        assert!(clamped.len() < long.len(), "{clamped:?}");
+        assert!(clamped.ends_with('\u{2026}'), "{clamped:?}");
+        // Cut on the list, whole in the bar of its own screen, where the
+        // runtime does the cutting and the reader can still see the rest by
+        // opening the article.
+        assert!(application.titles.iter().all(|title| !title.contains('\n')));
     }
 
     #[test]
@@ -2385,11 +3156,6 @@ mod tests {
         let application = a_thread_of(&[0, 1, 0]);
         let paragraphs = application.thread_paragraphs();
         for (tag, _, _, text) in &paragraphs {
-            if *tag == FACT_TAG {
-                // A reserved fact line, which belongs to the story rather than
-                // to any comment, so its tag leads nowhere and is meant to.
-                continue;
-            }
             if let Some(index) = (*tag as usize).checked_sub(1) {
                 let author = &application.comments[index].author;
                 assert!(

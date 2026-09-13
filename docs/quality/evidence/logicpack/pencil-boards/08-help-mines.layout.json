@@ -1,0 +1,230 @@
+{
+  "paints": 6,
+  "nodes": [
+    {
+      "kind": "StatusBand",
+      "x": 0,
+      "y": 0,
+      "width": 1072,
+      "height": 59,
+      "centre": {
+        "x": 536,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusClock",
+      "x": 47,
+      "y": 0,
+      "width": 112,
+      "height": 59,
+      "centre": {
+        "x": 103,
+        "y": 29
+      },
+      "action": null,
+      "lines": [
+        "07:01"
+      ]
+    },
+    {
+      "kind": "StatusBattery(Some(Percent(72)), false)",
+      "x": 955,
+      "y": 12,
+      "width": 70,
+      "height": 35,
+      "centre": {
+        "x": 990,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusSignal(Strong)",
+      "x": 896,
+      "y": 12,
+      "width": 35,
+      "height": 35,
+      "centre": {
+        "x": 913,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusBluetooth",
+      "x": 837,
+      "y": 12,
+      "width": 35,
+      "height": 35,
+      "centre": {
+        "x": 854,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "TopBar",
+      "x": 0,
+      "y": 59,
+      "width": 1072,
+      "height": 100,
+      "centre": {
+        "x": 536,
+        "y": 109
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Back",
+      "x": 47,
+      "y": 59,
+      "width": 100,
+      "height": 100,
+      "centre": {
+        "x": 97,
+        "y": 109
+      },
+      "action": 4294967295,
+      "lines": []
+    },
+    {
+      "kind": "TopBarTitle",
+      "x": 171,
+      "y": 77,
+      "width": 854,
+      "height": 64,
+      "centre": {
+        "x": 598,
+        "y": 109
+      },
+      "action": null,
+      "lines": [
+        "How to play"
+      ]
+    },
+    {
+      "kind": "Divider",
+      "x": 0,
+      "y": 159,
+      "width": 1072,
+      "height": 4,
+      "centre": {
+        "x": 536,
+        "y": 161
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Heading(1)",
+      "x": 47,
+      "y": 175,
+      "width": 978,
+      "height": 112,
+      "centre": {
+        "x": 536,
+        "y": 231
+      },
+      "action": null,
+      "lines": [
+        "Minesweeper"
+      ]
+    },
+    {
+      "kind": "Text",
+      "x": 47,
+      "y": 299,
+      "width": 978,
+      "height": 128,
+      "centre": {
+        "x": 536,
+        "y": 363
+      },
+      "action": null,
+      "lines": [
+        "Reveal every safe square without opening a",
+        "mine."
+      ]
+    },
+    {
+      "kind": "Text",
+      "x": 47,
+      "y": 439,
+      "width": 978,
+      "height": 128,
+      "centre": {
+        "x": 536,
+        "y": 503
+      },
+      "action": null,
+      "lines": [
+        "A number counts mines in the eight",
+        "touching squares."
+      ]
+    },
+    {
+      "kind": "Text",
+      "x": 47,
+      "y": 579,
+      "width": 978,
+      "height": 128,
+      "centre": {
+        "x": 536,
+        "y": 643
+      },
+      "action": null,
+      "lines": [
+        "Switch to Flag, then mark squares that may",
+        "hold mines."
+      ]
+    },
+    {
+      "kind": "Spacer",
+      "x": 0,
+      "y": 1306,
+      "width": 1072,
+      "height": 142,
+      "centre": {
+        "x": 536,
+        "y": 1377
+      },
+      "action": 3588247949,
+      "lines": []
+    },
+    {
+      "kind": "Divider",
+      "x": 0,
+      "y": 1306,
+      "width": 1072,
+      "height": 4,
+      "centre": {
+        "x": 536,
+        "y": 1308
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Button(ActionId(3588247949), Enabled, Normal)",
+      "x": 47,
+      "y": 1320,
+      "width": 978,
+      "height": 118,
+      "centre": {
+        "x": 536,
+        "y": 1379
+      },
+      "action": 3588247949,
+      "lines": [
+        "Play"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,2034 @@
+{
+  "paints": 2,
+  "nodes": [
+    {
+      "kind": "StatusBand",
+      "x": 0,
+      "y": 0,
+      "width": 1072,
+      "height": 59,
+      "centre": {
+        "x": 536,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusClock",
+      "x": 47,
+      "y": 0,
+      "width": 112,
+      "height": 59,
+      "centre": {
+        "x": 103,
+        "y": 29
+      },
+      "action": null,
+      "lines": [
+        "07:01"
+      ]
+    },
+    {
+      "kind": "StatusBattery(Some(Percent(72)), false)",
+      "x": 955,
+      "y": 12,
+      "width": 70,
+      "height": 35,
+      "centre": {
+        "x": 990,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusSignal(Strong)",
+      "x": 896,
+      "y": 12,
+      "width": 35,
+      "height": 35,
+      "centre": {
+        "x": 913,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusBluetooth",
+      "x": 837,
+      "y": 12,
+      "width": 35,
+      "height": 35,
+      "centre": {
+        "x": 854,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "TopBar",
+      "x": 0,
+      "y": 59,
+      "width": 1072,
+      "height": 100,
+      "centre": {
+        "x": 536,
+        "y": 109
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Back",
+      "x": 47,
+      "y": 59,
+      "width": 100,
+      "height": 100,
+      "centre": {
+        "x": 97,
+        "y": 109
+      },
+      "action": 4294967295,
+      "lines": []
+    },
+    {
+      "kind": "BarAction(ActionId(1524496950))",
+      "x": 874,
+      "y": 59,
+      "width": 151,
+      "height": 100,
+      "centre": {
+        "x": 949,
+        "y": 109
+      },
+      "action": 1524496950,
+      "lines": [
+        "Help"
+      ]
+    },
+    {
+      "kind": "TopBarTitle",
+      "x": 171,
+      "y": 77,
+      "width": 679,
+      "height": 64,
+      "centre": {
+        "x": 510,
+        "y": 109
+      },
+      "action": null,
+      "lines": [
+        "Slitherlink"
+      ]
+    },
+    {
+      "kind": "Divider",
+      "x": 0,
+      "y": 159,
+      "width": 1072,
+      "height": 4,
+      "centre": {
+        "x": 536,
+        "y": 161
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Secondary",
+      "x": 47,
+      "y": 175,
+      "width": 978,
+      "height": 50,
+      "centre": {
+        "x": 536,
+        "y": 200
+      },
+      "action": null,
+      "lines": [
+        "Solved."
+      ]
+    },
+    {
+      "kind": "Spacer",
+      "x": 113,
+      "y": 237,
+      "width": 846,
+      "height": 846,
+      "centre": {
+        "x": 536,
+        "y": 660
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(3025732745), Plain, false)",
+      "x": 207,
+      "y": 237,
+      "width": 94,
+      "height": 94,
+      "centre": {
+        "x": 254,
+        "y": 284
+      },
+      "action": 3025732745,
+      "lines": [
+        "Horizontal 1,1 to 1,3: blank"
+      ]
+    },
+    {
+      "kind": "PencilEdge(0, false)",
+      "x": 160,
+      "y": 237,
+      "width": 188,
+      "height": 94,
+      "centre": {
+        "x": 254,
+        "y": 284
+      },
+      "action": 3025732745,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(3008955126), Plain, false)",
+      "x": 395,
+      "y": 237,
+      "width": 94,
+      "height": 94,
+      "centre": {
+        "x": 442,
+        "y": 284
+      },
+      "action": 3008955126,
+      "lines": [
+        "Horizontal 1,3 to 1,5: single"
+      ]
+    },
+    {
+      "kind": "PencilEdge(1, false)",
+      "x": 348,
+      "y": 237,
+      "width": 188,
+      "height": 94,
+      "centre": {
+        "x": 442,
+        "y": 284
+      },
+      "action": 3008955126,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(2992177507), Plain, false)",
+      "x": 583,
+      "y": 237,
+      "width": 94,
+      "height": 94,
+      "centre": {
+        "x": 630,
+        "y": 284
+      },
+      "action": 2992177507,
+      "lines": [
+        "Horizontal 1,5 to 1,7: single"
+      ]
+    },
+    {
+      "kind": "PencilEdge(1, false)",
+      "x": 536,
+      "y": 237,
+      "width": 188,
+      "height": 94,
+      "centre": {
+        "x": 630,
+        "y": 284
+      },
+      "action": 2992177507,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(2975399888), Plain, false)",
+      "x": 771,
+      "y": 237,
+      "width": 94,
+      "height": 94,
+      "centre": {
+        "x": 818,
+        "y": 284
+      },
+      "action": 2975399888,
+      "lines": [
+        "Horizontal 1,7 to 1,9: single"
+      ]
+    },
+    {
+      "kind": "PencilEdge(1, false)",
+      "x": 724,
+      "y": 237,
+      "width": 188,
+      "height": 94,
+      "centre": {
+        "x": 818,
+        "y": 284
+      },
+      "action": 2975399888,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(3092843221), Plain, false)",
+      "x": 207,
+      "y": 425,
+      "width": 94,
+      "height": 94,
+      "centre": {
+        "x": 254,
+        "y": 472
+      },
+      "action": 3092843221,
+      "lines": [
+        "Horizontal 3,1 to 3,3: single"
+      ]
+    },
+    {
+      "kind": "PencilEdge(1, false)",
+      "x": 160,
+      "y": 425,
+      "width": 188,
+      "height": 94,
+      "centre": {
+        "x": 254,
+        "y": 472
+      },
+      "action": 3092843221,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(3076065602), Plain, false)",
+      "x": 395,
+      "y": 425,
+      "width": 94,
+      "height": 94,
+      "centre": {
+        "x": 442,
+        "y": 472
+      },
+      "action": 3076065602,
+      "lines": [
+        "Horizontal 3,3 to 3,5: blank"
+      ]
+    },
+    {
+      "kind": "PencilEdge(0, false)",
+      "x": 348,
+      "y": 425,
+      "width": 188,
+      "height": 94,
+      "centre": {
+        "x": 442,
+        "y": 472
+      },
+      "action": 3076065602,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(3059287983), Plain, false)",
+      "x": 583,
+      "y": 425,
+      "width": 94,
+      "height": 94,
+      "centre": {
+        "x": 630,
+        "y": 472
+      },
+      "action": 3059287983,
+      "lines": [
+        "Horizontal 3,5 to 3,7: blank"
+      ]
+    },
+    {
+      "kind": "PencilEdge(0, false)",
+      "x": 536,
+      "y": 425,
+      "width": 188,
+      "height": 94,
+      "centre": {
+        "x": 630,
+        "y": 472
+      },
+      "action": 3059287983,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(3042510364), Plain, false)",
+      "x": 771,
+      "y": 425,
+      "width": 94,
+      "height": 94,
+      "centre": {
+        "x": 818,
+        "y": 472
+      },
+      "action": 3042510364,
+      "lines": [
+        "Horizontal 3,7 to 3,9: blank"
+      ]
+    },
+    {
+      "kind": "PencilEdge(0, false)",
+      "x": 724,
+      "y": 425,
+      "width": 188,
+      "height": 94,
+      "centre": {
+        "x": 818,
+        "y": 472
+      },
+      "action": 3042510364,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(3159953697), Plain, false)",
+      "x": 207,
+      "y": 613,
+      "width": 94,
+      "height": 94,
+      "centre": {
+        "x": 254,
+        "y": 660
+      },
+      "action": 3159953697,
+      "lines": [
+        "Horizontal 5,1 to 5,3: blank"
+      ]
+    },
+    {
+      "kind": "PencilEdge(0, false)",
+      "x": 160,
+      "y": 613,
+      "width": 188,
+      "height": 94,
+      "centre": {
+        "x": 254,
+        "y": 660
+      },
+      "action": 3159953697,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(3143176078), Plain, false)",
+      "x": 395,
+      "y": 613,
+      "width": 94,
+      "height": 94,
+      "centre": {
+        "x": 442,
+        "y": 660
+      },
+      "action": 3143176078,
+      "lines": [
+        "Horizontal 5,3 to 5,5: blank"
+      ]
+    },
+    {
+      "kind": "PencilEdge(0, false)",
+      "x": 348,
+      "y": 613,
+      "width": 188,
+      "height": 94,
+      "centre": {
+        "x": 442,
+        "y": 660
+      },
+      "action": 3143176078,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(455040434), Plain, false)",
+      "x": 583,
+      "y": 613,
+      "width": 94,
+      "height": 94,
+      "centre": {
+        "x": 630,
+        "y": 660
+      },
+      "action": 455040434,
+      "lines": [
+        "Horizontal 5,5 to 5,7: single"
+      ]
+    },
+    {
+      "kind": "PencilEdge(1, false)",
+      "x": 536,
+      "y": 613,
+      "width": 188,
+      "height": 94,
+      "centre": {
+        "x": 630,
+        "y": 660
+      },
+      "action": 455040434,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(471818053), Plain, false)",
+      "x": 771,
+      "y": 613,
+      "width": 94,
+      "height": 94,
+      "centre": {
+        "x": 818,
+        "y": 660
+      },
+      "action": 471818053,
+      "lines": [
+        "Horizontal 5,7 to 5,9: single"
+      ]
+    },
+    {
+      "kind": "PencilEdge(1, false)",
+      "x": 724,
+      "y": 613,
+      "width": 188,
+      "height": 94,
+      "centre": {
+        "x": 818,
+        "y": 660
+      },
+      "action": 471818053,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(421485196), Plain, false)",
+      "x": 207,
+      "y": 801,
+      "width": 94,
+      "height": 94,
+      "centre": {
+        "x": 254,
+        "y": 848
+      },
+      "action": 421485196,
+      "lines": [
+        "Horizontal 7,1 to 7,3: blank"
+      ]
+    },
+    {
+      "kind": "PencilEdge(0, false)",
+      "x": 160,
+      "y": 801,
+      "width": 188,
+      "height": 94,
+      "centre": {
+        "x": 254,
+        "y": 848
+      },
+      "action": 421485196,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(438262815), Plain, false)",
+      "x": 395,
+      "y": 801,
+      "width": 94,
+      "height": 94,
+      "centre": {
+        "x": 442,
+        "y": 848
+      },
+      "action": 438262815,
+      "lines": [
+        "Horizontal 7,3 to 7,5: blank"
+      ]
+    },
+    {
+      "kind": "PencilEdge(0, false)",
+      "x": 348,
+      "y": 801,
+      "width": 188,
+      "height": 94,
+      "centre": {
+        "x": 442,
+        "y": 848
+      },
+      "action": 438262815,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(387929958), Plain, false)",
+      "x": 583,
+      "y": 801,
+      "width": 94,
+      "height": 94,
+      "centre": {
+        "x": 630,
+        "y": 848
+      },
+      "action": 387929958,
+      "lines": [
+        "Horizontal 7,5 to 7,7: single"
+      ]
+    },
+    {
+      "kind": "PencilEdge(1, false)",
+      "x": 536,
+      "y": 801,
+      "width": 188,
+      "height": 94,
+      "centre": {
+        "x": 630,
+        "y": 848
+      },
+      "action": 387929958,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(404707577), Plain, false)",
+      "x": 771,
+      "y": 801,
+      "width": 94,
+      "height": 94,
+      "centre": {
+        "x": 818,
+        "y": 848
+      },
+      "action": 404707577,
+      "lines": [
+        "Horizontal 7,7 to 7,9: blank"
+      ]
+    },
+    {
+      "kind": "PencilEdge(0, false)",
+      "x": 724,
+      "y": 801,
+      "width": 188,
+      "height": 94,
+      "centre": {
+        "x": 818,
+        "y": 848
+      },
+      "action": 404707577,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(354374720), Plain, false)",
+      "x": 207,
+      "y": 989,
+      "width": 94,
+      "height": 94,
+      "centre": {
+        "x": 254,
+        "y": 1036
+      },
+      "action": 354374720,
+      "lines": [
+        "Horizontal 9,1 to 9,3: single"
+      ]
+    },
+    {
+      "kind": "PencilEdge(1, false)",
+      "x": 160,
+      "y": 989,
+      "width": 188,
+      "height": 94,
+      "centre": {
+        "x": 254,
+        "y": 1036
+      },
+      "action": 354374720,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(371152339), Plain, false)",
+      "x": 395,
+      "y": 989,
+      "width": 94,
+      "height": 94,
+      "centre": {
+        "x": 442,
+        "y": 1036
+      },
+      "action": 371152339,
+      "lines": [
+        "Horizontal 9,3 to 9,5: single"
+      ]
+    },
+    {
+      "kind": "PencilEdge(1, false)",
+      "x": 348,
+      "y": 989,
+      "width": 188,
+      "height": 94,
+      "centre": {
+        "x": 442,
+        "y": 1036
+      },
+      "action": 371152339,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(589261386), Plain, false)",
+      "x": 583,
+      "y": 989,
+      "width": 94,
+      "height": 94,
+      "centre": {
+        "x": 630,
+        "y": 1036
+      },
+      "action": 589261386,
+      "lines": [
+        "Horizontal 9,5 to 9,7: single"
+      ]
+    },
+    {
+      "kind": "PencilEdge(1, false)",
+      "x": 536,
+      "y": 989,
+      "width": 188,
+      "height": 94,
+      "centre": {
+        "x": 630,
+        "y": 1036
+      },
+      "action": 589261386,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(606039005), Plain, false)",
+      "x": 771,
+      "y": 989,
+      "width": 94,
+      "height": 94,
+      "centre": {
+        "x": 818,
+        "y": 1036
+      },
+      "action": 606039005,
+      "lines": [
+        "Horizontal 9,7 to 9,9: blank"
+      ]
+    },
+    {
+      "kind": "PencilEdge(0, false)",
+      "x": 724,
+      "y": 989,
+      "width": 188,
+      "height": 94,
+      "centre": {
+        "x": 818,
+        "y": 1036
+      },
+      "action": 606039005,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(354227625), Plain, false)",
+      "x": 113,
+      "y": 331,
+      "width": 94,
+      "height": 94,
+      "centre": {
+        "x": 160,
+        "y": 378
+      },
+      "action": 354227625,
+      "lines": [
+        "Vertical 1,1 to 3,1: blank"
+      ]
+    },
+    {
+      "kind": "PencilEdge(0, true)",
+      "x": 113,
+      "y": 284,
+      "width": 94,
+      "height": 188,
+      "centre": {
+        "x": 160,
+        "y": 378
+      },
+      "action": 354227625,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(337450006), Plain, false)",
+      "x": 301,
+      "y": 331,
+      "width": 94,
+      "height": 94,
+      "centre": {
+        "x": 348,
+        "y": 378
+      },
+      "action": 337450006,
+      "lines": [
+        "Vertical 1,3 to 3,3: single"
+      ]
+    },
+    {
+      "kind": "PencilEdge(1, true)",
+      "x": 301,
+      "y": 284,
+      "width": 94,
+      "height": 188,
+      "centre": {
+        "x": 348,
+        "y": 378
+      },
+      "action": 337450006,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(320672387), Plain, false)",
+      "x": 489,
+      "y": 331,
+      "width": 94,
+      "height": 94,
+      "centre": {
+        "x": 536,
+        "y": 378
+      },
+      "action": 320672387,
+      "lines": [
+        "Vertical 1,5 to 3,5: blank"
+      ]
+    },
+    {
+      "kind": "PencilEdge(0, true)",
+      "x": 489,
+      "y": 284,
+      "width": 94,
+      "height": 188,
+      "centre": {
+        "x": 536,
+        "y": 378
+      },
+      "action": 320672387,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(303894768), Plain, false)",
+      "x": 677,
+      "y": 331,
+      "width": 94,
+      "height": 94,
+      "centre": {
+        "x": 724,
+        "y": 378
+      },
+      "action": 303894768,
+      "lines": [
+        "Vertical 1,7 to 3,7: blank"
+      ]
+    },
+    {
+      "kind": "PencilEdge(0, true)",
+      "x": 677,
+      "y": 284,
+      "width": 94,
+      "height": 188,
+      "centre": {
+        "x": 724,
+        "y": 378
+      },
+      "action": 303894768,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(421338101), Plain, false)",
+      "x": 865,
+      "y": 331,
+      "width": 94,
+      "height": 94,
+      "centre": {
+        "x": 912,
+        "y": 378
+      },
+      "action": 421338101,
+      "lines": [
+        "Vertical 1,9 to 3,9: single"
+      ]
+    },
+    {
+      "kind": "PencilEdge(1, true)",
+      "x": 865,
+      "y": 284,
+      "width": 94,
+      "height": 188,
+      "centre": {
+        "x": 912,
+        "y": 378
+      },
+      "action": 421338101,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(404560482), Plain, false)",
+      "x": 113,
+      "y": 519,
+      "width": 94,
+      "height": 94,
+      "centre": {
+        "x": 160,
+        "y": 566
+      },
+      "action": 404560482,
+      "lines": [
+        "Vertical 3,1 to 5,1: single"
+      ]
+    },
+    {
+      "kind": "PencilEdge(1, true)",
+      "x": 113,
+      "y": 472,
+      "width": 94,
+      "height": 188,
+      "centre": {
+        "x": 160,
+        "y": 566
+      },
+      "action": 404560482,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(387782863), Plain, false)",
+      "x": 301,
+      "y": 519,
+      "width": 94,
+      "height": 94,
+      "centre": {
+        "x": 348,
+        "y": 566
+      },
+      "action": 387782863,
+      "lines": [
+        "Vertical 3,3 to 5,3: blank"
+      ]
+    },
+    {
+      "kind": "PencilEdge(0, true)",
+      "x": 301,
+      "y": 472,
+      "width": 94,
+      "height": 188,
+      "centre": {
+        "x": 348,
+        "y": 566
+      },
+      "action": 387782863,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(371005244), Plain, false)",
+      "x": 489,
+      "y": 519,
+      "width": 94,
+      "height": 94,
+      "centre": {
+        "x": 536,
+        "y": 566
+      },
+      "action": 371005244,
+      "lines": [
+        "Vertical 3,5 to 5,5: blank"
+      ]
+    },
+    {
+      "kind": "PencilEdge(0, true)",
+      "x": 489,
+      "y": 472,
+      "width": 94,
+      "height": 188,
+      "centre": {
+        "x": 536,
+        "y": 566
+      },
+      "action": 371005244,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(488448577), Plain, false)",
+      "x": 677,
+      "y": 519,
+      "width": 94,
+      "height": 94,
+      "centre": {
+        "x": 724,
+        "y": 566
+      },
+      "action": 488448577,
+      "lines": [
+        "Vertical 3,7 to 5,7: blank"
+      ]
+    },
+    {
+      "kind": "PencilEdge(0, true)",
+      "x": 677,
+      "y": 472,
+      "width": 94,
+      "height": 188,
+      "centre": {
+        "x": 724,
+        "y": 566
+      },
+      "action": 488448577,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(471670958), Plain, false)",
+      "x": 865,
+      "y": 519,
+      "width": 94,
+      "height": 94,
+      "centre": {
+        "x": 912,
+        "y": 566
+      },
+      "action": 471670958,
+      "lines": [
+        "Vertical 3,9 to 5,9: single"
+      ]
+    },
+    {
+      "kind": "PencilEdge(1, true)",
+      "x": 865,
+      "y": 472,
+      "width": 94,
+      "height": 188,
+      "centre": {
+        "x": 912,
+        "y": 566
+      },
+      "action": 471670958,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(253414816), Plain, false)",
+      "x": 113,
+      "y": 707,
+      "width": 94,
+      "height": 94,
+      "centre": {
+        "x": 160,
+        "y": 754
+      },
+      "action": 253414816,
+      "lines": [
+        "Vertical 5,1 to 7,1: single"
+      ]
+    },
+    {
+      "kind": "PencilEdge(1, true)",
+      "x": 113,
+      "y": 660,
+      "width": 94,
+      "height": 188,
+      "centre": {
+        "x": 160,
+        "y": 754
+      },
+      "action": 253414816,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(270192435), Plain, false)",
+      "x": 301,
+      "y": 707,
+      "width": 94,
+      "height": 94,
+      "centre": {
+        "x": 348,
+        "y": 754
+      },
+      "action": 270192435,
+      "lines": [
+        "Vertical 5,3 to 7,3: blank"
+      ]
+    },
+    {
+      "kind": "PencilEdge(0, true)",
+      "x": 301,
+      "y": 660,
+      "width": 94,
+      "height": 188,
+      "centre": {
+        "x": 348,
+        "y": 754
+      },
+      "action": 270192435,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(286970054), Plain, false)",
+      "x": 489,
+      "y": 707,
+      "width": 94,
+      "height": 94,
+      "centre": {
+        "x": 536,
+        "y": 754
+      },
+      "action": 286970054,
+      "lines": [
+        "Vertical 5,5 to 7,5: single"
+      ]
+    },
+    {
+      "kind": "PencilEdge(1, true)",
+      "x": 489,
+      "y": 660,
+      "width": 94,
+      "height": 188,
+      "centre": {
+        "x": 536,
+        "y": 754
+      },
+      "action": 286970054,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(303747673), Plain, false)",
+      "x": 677,
+      "y": 707,
+      "width": 94,
+      "height": 94,
+      "centre": {
+        "x": 724,
+        "y": 754
+      },
+      "action": 303747673,
+      "lines": [
+        "Vertical 5,7 to 7,7: blank"
+      ]
+    },
+    {
+      "kind": "PencilEdge(0, true)",
+      "x": 677,
+      "y": 660,
+      "width": 94,
+      "height": 188,
+      "centre": {
+        "x": 724,
+        "y": 754
+      },
+      "action": 303747673,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(320525292), Plain, false)",
+      "x": 865,
+      "y": 707,
+      "width": 94,
+      "height": 94,
+      "centre": {
+        "x": 912,
+        "y": 754
+      },
+      "action": 320525292,
+      "lines": [
+        "Vertical 5,9 to 7,9: blank"
+      ]
+    },
+    {
+      "kind": "PencilEdge(0, true)",
+      "x": 865,
+      "y": 660,
+      "width": 94,
+      "height": 188,
+      "centre": {
+        "x": 912,
+        "y": 754
+      },
+      "action": 320525292,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(337302911), Plain, false)",
+      "x": 113,
+      "y": 895,
+      "width": 94,
+      "height": 94,
+      "centre": {
+        "x": 160,
+        "y": 942
+      },
+      "action": 337302911,
+      "lines": [
+        "Vertical 7,1 to 9,1: single"
+      ]
+    },
+    {
+      "kind": "PencilEdge(1, true)",
+      "x": 113,
+      "y": 848,
+      "width": 94,
+      "height": 188,
+      "centre": {
+        "x": 160,
+        "y": 942
+      },
+      "action": 337302911,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(354080530), Plain, false)",
+      "x": 301,
+      "y": 895,
+      "width": 94,
+      "height": 94,
+      "centre": {
+        "x": 348,
+        "y": 942
+      },
+      "action": 354080530,
+      "lines": [
+        "Vertical 7,3 to 9,3: blank"
+      ]
+    },
+    {
+      "kind": "PencilEdge(0, true)",
+      "x": 301,
+      "y": 848,
+      "width": 94,
+      "height": 188,
+      "centre": {
+        "x": 348,
+        "y": 942
+      },
+      "action": 354080530,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(370858149), Plain, false)",
+      "x": 489,
+      "y": 895,
+      "width": 94,
+      "height": 94,
+      "centre": {
+        "x": 536,
+        "y": 942
+      },
+      "action": 370858149,
+      "lines": [
+        "Vertical 7,5 to 9,5: blank"
+      ]
+    },
+    {
+      "kind": "PencilEdge(0, true)",
+      "x": 489,
+      "y": 848,
+      "width": 94,
+      "height": 188,
+      "centre": {
+        "x": 536,
+        "y": 942
+      },
+      "action": 370858149,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(387635768), Plain, false)",
+      "x": 677,
+      "y": 895,
+      "width": 94,
+      "height": 94,
+      "centre": {
+        "x": 724,
+        "y": 942
+      },
+      "action": 387635768,
+      "lines": [
+        "Vertical 7,7 to 9,7: single"
+      ]
+    },
+    {
+      "kind": "PencilEdge(1, true)",
+      "x": 677,
+      "y": 848,
+      "width": 94,
+      "height": 188,
+      "centre": {
+        "x": 724,
+        "y": 942
+      },
+      "action": 387635768,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(404413387), Plain, false)",
+      "x": 865,
+      "y": 895,
+      "width": 94,
+      "height": 94,
+      "centre": {
+        "x": 912,
+        "y": 942
+      },
+      "action": 404413387,
+      "lines": [
+        "Vertical 7,9 to 9,9: blank"
+      ]
+    },
+    {
+      "kind": "PencilEdge(0, true)",
+      "x": 865,
+      "y": 848,
+      "width": 94,
+      "height": 188,
+      "centre": {
+        "x": 912,
+        "y": 942
+      },
+      "action": 404413387,
+      "lines": []
+    },
+    {
+      "kind": "PencilMark(Dot, false)",
+      "x": 113,
+      "y": 237,
+      "width": 94,
+      "height": 94,
+      "centre": {
+        "x": 160,
+        "y": 284
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "PencilMark(Dot, false)",
+      "x": 301,
+      "y": 237,
+      "width": 94,
+      "height": 94,
+      "centre": {
+        "x": 348,
+        "y": 284
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "PencilMark(Dot, false)",
+      "x": 489,
+      "y": 237,
+      "width": 94,
+      "height": 94,
+      "centre": {
+        "x": 536,
+        "y": 284
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "PencilMark(Dot, false)",
+      "x": 677,
+      "y": 237,
+      "width": 94,
+      "height": 94,
+      "centre": {
+        "x": 724,
+        "y": 284
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "PencilMark(Dot, false)",
+      "x": 865,
+      "y": 237,
+      "width": 94,
+      "height": 94,
+      "centre": {
+        "x": 912,
+        "y": 284
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "PencilMark(Dot, false)",
+      "x": 113,
+      "y": 425,
+      "width": 94,
+      "height": 94,
+      "centre": {
+        "x": 160,
+        "y": 472
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "PencilMark(Dot, false)",
+      "x": 301,
+      "y": 425,
+      "width": 94,
+      "height": 94,
+      "centre": {
+        "x": 348,
+        "y": 472
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "PencilMark(Dot, false)",
+      "x": 489,
+      "y": 425,
+      "width": 94,
+      "height": 94,
+      "centre": {
+        "x": 536,
+        "y": 472
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "PencilMark(Dot, false)",
+      "x": 677,
+      "y": 425,
+      "width": 94,
+      "height": 94,
+      "centre": {
+        "x": 724,
+        "y": 472
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "PencilMark(Dot, false)",
+      "x": 865,
+      "y": 425,
+      "width": 94,
+      "height": 94,
+      "centre": {
+        "x": 912,
+        "y": 472
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "PencilMark(Dot, false)",
+      "x": 113,
+      "y": 613,
+      "width": 94,
+      "height": 94,
+      "centre": {
+        "x": 160,
+        "y": 660
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "PencilMark(Dot, false)",
+      "x": 301,
+      "y": 613,
+      "width": 94,
+      "height": 94,
+      "centre": {
+        "x": 348,
+        "y": 660
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "PencilMark(Dot, false)",
+      "x": 489,
+      "y": 613,
+      "width": 94,
+      "height": 94,
+      "centre": {
+        "x": 536,
+        "y": 660
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "PencilMark(Dot, false)",
+      "x": 677,
+      "y": 613,
+      "width": 94,
+      "height": 94,
+      "centre": {
+        "x": 724,
+        "y": 660
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "PencilMark(Dot, false)",
+      "x": 865,
+      "y": 613,
+      "width": 94,
+      "height": 94,
+      "centre": {
+        "x": 912,
+        "y": 660
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "PencilMark(Dot, false)",
+      "x": 113,
+      "y": 801,
+      "width": 94,
+      "height": 94,
+      "centre": {
+        "x": 160,
+        "y": 848
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "PencilMark(Dot, false)",
+      "x": 301,
+      "y": 801,
+      "width": 94,
+      "height": 94,
+      "centre": {
+        "x": 348,
+        "y": 848
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "PencilMark(Dot, false)",
+      "x": 489,
+      "y": 801,
+      "width": 94,
+      "height": 94,
+      "centre": {
+        "x": 536,
+        "y": 848
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "PencilMark(Dot, false)",
+      "x": 677,
+      "y": 801,
+      "width": 94,
+      "height": 94,
+      "centre": {
+        "x": 724,
+        "y": 848
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "PencilMark(Dot, false)",
+      "x": 865,
+      "y": 801,
+      "width": 94,
+      "height": 94,
+      "centre": {
+        "x": 912,
+        "y": 848
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "PencilMark(Dot, false)",
+      "x": 113,
+      "y": 989,
+      "width": 94,
+      "height": 94,
+      "centre": {
+        "x": 160,
+        "y": 1036
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "PencilMark(Dot, false)",
+      "x": 301,
+      "y": 989,
+      "width": 94,
+      "height": 94,
+      "centre": {
+        "x": 348,
+        "y": 1036
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "PencilMark(Dot, false)",
+      "x": 489,
+      "y": 989,
+      "width": 94,
+      "height": 94,
+      "centre": {
+        "x": 536,
+        "y": 1036
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "PencilMark(Dot, false)",
+      "x": 677,
+      "y": 989,
+      "width": 94,
+      "height": 94,
+      "centre": {
+        "x": 724,
+        "y": 1036
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "PencilMark(Dot, false)",
+      "x": 865,
+      "y": 989,
+      "width": 94,
+      "height": 94,
+      "centre": {
+        "x": 912,
+        "y": 1036
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "PencilMark(Clue(2), false)",
+      "x": 207,
+      "y": 331,
+      "width": 94,
+      "height": 94,
+      "centre": {
+        "x": 254,
+        "y": 378
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "PencilNumber(false)",
+      "x": 215,
+      "y": 339,
+      "width": 78,
+      "height": 78,
+      "centre": {
+        "x": 254,
+        "y": 378
+      },
+      "action": null,
+      "lines": [
+        "2"
+      ]
+    },
+    {
+      "kind": "PencilMark(Clue(1), false)",
+      "x": 583,
+      "y": 331,
+      "width": 94,
+      "height": 94,
+      "centre": {
+        "x": 630,
+        "y": 378
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "PencilNumber(false)",
+      "x": 591,
+      "y": 339,
+      "width": 78,
+      "height": 78,
+      "centre": {
+        "x": 630,
+        "y": 378
+      },
+      "action": null,
+      "lines": [
+        "1"
+      ]
+    },
+    {
+      "kind": "PencilMark(Clue(2), false)",
+      "x": 771,
+      "y": 331,
+      "width": 94,
+      "height": 94,
+      "centre": {
+        "x": 818,
+        "y": 378
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "PencilNumber(false)",
+      "x": 779,
+      "y": 339,
+      "width": 78,
+      "height": 78,
+      "centre": {
+        "x": 818,
+        "y": 378
+      },
+      "action": null,
+      "lines": [
+        "2"
+      ]
+    },
+    {
+      "kind": "PencilMark(Clue(2), false)",
+      "x": 207,
+      "y": 519,
+      "width": 94,
+      "height": 94,
+      "centre": {
+        "x": 254,
+        "y": 566
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "PencilNumber(false)",
+      "x": 215,
+      "y": 527,
+      "width": 78,
+      "height": 78,
+      "centre": {
+        "x": 254,
+        "y": 566
+      },
+      "action": null,
+      "lines": [
+        "2"
+      ]
+    },
+    {
+      "kind": "PencilMark(Clue(0), false)",
+      "x": 395,
+      "y": 519,
+      "width": 94,
+      "height": 94,
+      "centre": {
+        "x": 442,
+        "y": 566
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "PencilNumber(false)",
+      "x": 403,
+      "y": 527,
+      "width": 78,
+      "height": 78,
+      "centre": {
+        "x": 442,
+        "y": 566
+      },
+      "action": null,
+      "lines": [
+        "0"
+      ]
+    },
+    {
+      "kind": "PencilMark(Clue(1), false)",
+      "x": 583,
+      "y": 519,
+      "width": 94,
+      "height": 94,
+      "centre": {
+        "x": 630,
+        "y": 566
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "PencilNumber(false)",
+      "x": 591,
+      "y": 527,
+      "width": 78,
+      "height": 78,
+      "centre": {
+        "x": 630,
+        "y": 566
+      },
+      "action": null,
+      "lines": [
+        "1"
+      ]
+    },
+    {
+      "kind": "PencilMark(Clue(2), false)",
+      "x": 771,
+      "y": 519,
+      "width": 94,
+      "height": 94,
+      "centre": {
+        "x": 818,
+        "y": 566
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "PencilNumber(false)",
+      "x": 779,
+      "y": 527,
+      "width": 78,
+      "height": 78,
+      "centre": {
+        "x": 818,
+        "y": 566
+      },
+      "action": null,
+      "lines": [
+        "2"
+      ]
+    },
+    {
+      "kind": "PencilMark(Clue(1), false)",
+      "x": 207,
+      "y": 707,
+      "width": 94,
+      "height": 94,
+      "centre": {
+        "x": 254,
+        "y": 754
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "PencilNumber(false)",
+      "x": 215,
+      "y": 715,
+      "width": 78,
+      "height": 78,
+      "centre": {
+        "x": 254,
+        "y": 754
+      },
+      "action": null,
+      "lines": [
+        "1"
+      ]
+    },
+    {
+      "kind": "PencilMark(Clue(1), false)",
+      "x": 395,
+      "y": 707,
+      "width": 94,
+      "height": 94,
+      "centre": {
+        "x": 442,
+        "y": 754
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "PencilNumber(false)",
+      "x": 403,
+      "y": 715,
+      "width": 78,
+      "height": 78,
+      "centre": {
+        "x": 442,
+        "y": 754
+      },
+      "action": null,
+      "lines": [
+        "1"
+      ]
+    },
+    {
+      "kind": "PencilMark(Clue(1), false)",
+      "x": 771,
+      "y": 707,
+      "width": 94,
+      "height": 94,
+      "centre": {
+        "x": 818,
+        "y": 754
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "PencilNumber(false)",
+      "x": 779,
+      "y": 715,
+      "width": 78,
+      "height": 78,
+      "centre": {
+        "x": 818,
+        "y": 754
+      },
+      "action": null,
+      "lines": [
+        "1"
+      ]
+    },
+    {
+      "kind": "PencilMark(Clue(2), false)",
+      "x": 207,
+      "y": 895,
+      "width": 94,
+      "height": 94,
+      "centre": {
+        "x": 254,
+        "y": 942
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "PencilNumber(false)",
+      "x": 215,
+      "y": 903,
+      "width": 78,
+      "height": 78,
+      "centre": {
+        "x": 254,
+        "y": 942
+      },
+      "action": null,
+      "lines": [
+        "2"
+      ]
+    },
+    {
+      "kind": "PencilMark(Clue(1), false)",
+      "x": 395,
+      "y": 895,
+      "width": 94,
+      "height": 94,
+      "centre": {
+        "x": 442,
+        "y": 942
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "PencilNumber(false)",
+      "x": 403,
+      "y": 903,
+      "width": 78,
+      "height": 78,
+      "centre": {
+        "x": 442,
+        "y": 942
+      },
+      "action": null,
+      "lines": [
+        "1"
+      ]
+    },
+    {
+      "kind": "Secondary",
+      "x": 47,
+      "y": 1095,
+      "width": 978,
+      "height": 50,
+      "centre": {
+        "x": 536,
+        "y": 1120
+      },
+      "action": null,
+      "lines": [
+        "Saved"
+      ]
+    },
+    {
+      "kind": "Spacer",
+      "x": 47,
+      "y": 1157,
+      "width": 978,
+      "height": 118,
+      "centre": {
+        "x": 536,
+        "y": 1216
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(1538531746), Key, false)",
+      "x": 47,
+      "y": 1157,
+      "width": 483,
+      "height": 118,
+      "centre": {
+        "x": 288,
+        "y": 1216
+      },
+      "action": 1538531746,
+      "lines": []
+    },
+    {
+      "kind": "CellLabel(false)",
+      "x": 47,
+      "y": 1157,
+      "width": 483,
+      "height": 118,
+      "centre": {
+        "x": 288,
+        "y": 1216
+      },
+      "action": 1538531746,
+      "lines": [
+        "Puzzles"
+      ]
+    },
+    {
+      "kind": "Cell(ActionId(3897901536), Key, false)",
+      "x": 542,
+      "y": 1157,
+      "width": 483,
+      "height": 118,
+      "centre": {
+        "x": 783,
+        "y": 1216
+      },
+      "action": 3897901536,
+      "lines": []
+    },
+    {
+      "kind": "CellLabel(false)",
+      "x": 542,
+      "y": 1157,
+      "width": 483,
+      "height": 118,
+      "centre": {
+        "x": 783,
+        "y": 1216
+      },
+      "action": 3897901536,
+      "lines": [
+        "More"
+      ]
+    }
+  ]
+}

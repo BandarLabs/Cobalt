@@ -3,11 +3,11 @@
   "display_name": "AI Command Center",
   "short_label": "AI Chat",
   "summary": "Ask a question, then read and navigate the answer with touch controls.",
-  "version": "1.0.10",
+  "version": "1.0.11",
   "minimum_cobalt_version": "0.3.4",
   "glyph": "chat",
   "capabilities": [
     "network"
   ],
-  "release_notes": "Update shared controls and page layout for Cobalt 0.3.12."
+  "release_notes": "Rebuilt on a renderer that keeps every control reachable at the largest text sizes, and on a keyboard that can type every character this app asks for."
 }

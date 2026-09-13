@@ -1,0 +1,200 @@
+{
+  "paints": 12,
+  "nodes": [
+    {
+      "kind": "StatusBand",
+      "x": 0,
+      "y": 0,
+      "width": 1072,
+      "height": 59,
+      "centre": {
+        "x": 536,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusClock",
+      "x": 47,
+      "y": 0,
+      "width": 112,
+      "height": 59,
+      "centre": {
+        "x": 103,
+        "y": 29
+      },
+      "action": null,
+      "lines": [
+        "07:01"
+      ]
+    },
+    {
+      "kind": "StatusBattery(Some(Percent(72)), false)",
+      "x": 955,
+      "y": 12,
+      "width": 70,
+      "height": 35,
+      "centre": {
+        "x": 990,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusSignal(Strong)",
+      "x": 896,
+      "y": 12,
+      "width": 35,
+      "height": 35,
+      "centre": {
+        "x": 913,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusBluetooth",
+      "x": 837,
+      "y": 12,
+      "width": 35,
+      "height": 35,
+      "centre": {
+        "x": 854,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "TopBar",
+      "x": 0,
+      "y": 59,
+      "width": 1072,
+      "height": 100,
+      "centre": {
+        "x": 536,
+        "y": 109
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Back",
+      "x": 47,
+      "y": 59,
+      "width": 100,
+      "height": 100,
+      "centre": {
+        "x": 97,
+        "y": 109
+      },
+      "action": 4294967295,
+      "lines": []
+    },
+    {
+      "kind": "TopBarTitle",
+      "x": 171,
+      "y": 77,
+      "width": 854,
+      "height": 64,
+      "centre": {
+        "x": 598,
+        "y": 109
+      },
+      "action": null,
+      "lines": [
+        "Sudoku"
+      ]
+    },
+    {
+      "kind": "Divider",
+      "x": 0,
+      "y": 159,
+      "width": 1072,
+      "height": 4,
+      "centre": {
+        "x": 536,
+        "y": 161
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Heading(1)",
+      "x": 47,
+      "y": 175,
+      "width": 978,
+      "height": 112,
+      "centre": {
+        "x": 536,
+        "y": 231
+      },
+      "action": null,
+      "lines": [
+        "Reveal answer?"
+      ]
+    },
+    {
+      "kind": "Text",
+      "x": 47,
+      "y": 299,
+      "width": 978,
+      "height": 128,
+      "centre": {
+        "x": 536,
+        "y": 363
+      },
+      "action": null,
+      "lines": [
+        "Fill this square and count one hint. You can",
+        "undo."
+      ]
+    },
+    {
+      "kind": "Divider",
+      "x": 47,
+      "y": 451,
+      "width": 978,
+      "height": 4,
+      "centre": {
+        "x": 536,
+        "y": 453
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Button(ActionId(706762643), Enabled, Normal)",
+      "x": 329,
+      "y": 479,
+      "width": 413,
+      "height": 118,
+      "centre": {
+        "x": 535,
+        "y": 538
+      },
+      "action": 706762643,
+      "lines": [
+        "Reveal answer"
+      ]
+    },
+    {
+      "kind": "Button(ActionId(3268139107), Enabled, Normal)",
+      "x": 344,
+      "y": 609,
+      "width": 384,
+      "height": 118,
+      "centre": {
+        "x": 536,
+        "y": 668
+      },
+      "action": 3268139107,
+      "lines": [
+        "Keep playing"
+      ]
+    }
+  ]
+}

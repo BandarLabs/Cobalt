@@ -1,12 +1,14 @@
 [package]
 name = "kobo-crossword"
-version = "0.1.0"
+version = "0.1.3"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 publish = false
 
 [dependencies]
+kobo-state = { path = "../../crates/kobo-state" }
+kobo-json = { path = "../../crates/kobo-json" }
 kobo-sdk = { path = "../../crates/kobo-sdk" }
 
 [dev-dependencies]

@@ -1,7 +1,11 @@
-# A whole game, played to a win, on a board whose cells have no words in them.
-# The points are the centres the layout reports for a 1072x1448 panel: columns
-# at 206, 536 and 866, rows at 367, 697 and 1027.
+# A session rather than a game: two players play one out, the score is kept,
+# the next game starts, and the Kobo takes the other side.
+#
+# Taps go to the squares by name rather than by coordinate. A route written in
+# pixels re-breaks every time a line of text is added above the board, which is
+# a test of the layout arithmetic rather than of the game.
 wait-for O to play
+expect No games finished yet
 tap How to play
 wait-for Make three in a row
 wait 250
@@ -9,19 +13,31 @@ clean
 shot tictactoe-help
 tap Play
 wait-for O to play
-wait 900
-tap-at 206,367
+wait 600
+tap-id cell-0
 wait-for X to play
-wait 700
-tap-at 536,367
+tap-id cell-3
 wait-for O to play
-wait 700
-tap-at 536,697
+tap-id cell-1
 wait-for X to play
-wait 700
-tap-at 866,367
+tap-id cell-4
 wait-for O to play
-wait 700
-tap-at 866,1027
+tap-id cell-2
 wait-for O wins
-wait 1800
+expect O 1
+wait 600
+clean
+shot tictactoe-won
+tap-id reset
+wait-for O to play
+expect O 1
+tap Against the Kobo
+wait-for Your turn
+tap-id cell-0
+wait-for Your turn
+wait 600
+clean
+shot tictactoe-solo
+tap Clear score
+wait-for No games finished yet
+wait 900

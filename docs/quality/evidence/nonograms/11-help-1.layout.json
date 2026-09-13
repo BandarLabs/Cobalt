@@ -1,0 +1,294 @@
+{
+  "paints": 16,
+  "nodes": [
+    {
+      "kind": "StatusBand",
+      "x": 0,
+      "y": 0,
+      "width": 1072,
+      "height": 59,
+      "centre": {
+        "x": 536,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusClock",
+      "x": 47,
+      "y": 0,
+      "width": 112,
+      "height": 59,
+      "centre": {
+        "x": 103,
+        "y": 29
+      },
+      "action": null,
+      "lines": [
+        "07:01"
+      ]
+    },
+    {
+      "kind": "StatusBattery(Some(Percent(72)), false)",
+      "x": 955,
+      "y": 12,
+      "width": 70,
+      "height": 35,
+      "centre": {
+        "x": 990,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusSignal(Strong)",
+      "x": 896,
+      "y": 12,
+      "width": 35,
+      "height": 35,
+      "centre": {
+        "x": 913,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusBluetooth",
+      "x": 837,
+      "y": 12,
+      "width": 35,
+      "height": 35,
+      "centre": {
+        "x": 854,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "TopBar",
+      "x": 0,
+      "y": 59,
+      "width": 1072,
+      "height": 100,
+      "centre": {
+        "x": 536,
+        "y": 109
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Back",
+      "x": 47,
+      "y": 59,
+      "width": 100,
+      "height": 100,
+      "centre": {
+        "x": 97,
+        "y": 109
+      },
+      "action": 4294967295,
+      "lines": []
+    },
+    {
+      "kind": "TopBarTitle",
+      "x": 171,
+      "y": 77,
+      "width": 854,
+      "height": 64,
+      "centre": {
+        "x": 598,
+        "y": 109
+      },
+      "action": null,
+      "lines": [
+        "How to play"
+      ]
+    },
+    {
+      "kind": "Divider",
+      "x": 0,
+      "y": 159,
+      "width": 1072,
+      "height": 4,
+      "centre": {
+        "x": 536,
+        "y": 161
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Text",
+      "x": 47,
+      "y": 175,
+      "width": 978,
+      "height": 64,
+      "centre": {
+        "x": 536,
+        "y": 207
+      },
+      "action": 3440364824,
+      "lines": [
+        "Use the clues to fill the picture"
+      ]
+    },
+    {
+      "kind": "Text",
+      "x": 47,
+      "y": 251,
+      "width": 978,
+      "height": 256,
+      "centre": {
+        "x": 536,
+        "y": 379
+      },
+      "action": 3440364824,
+      "lines": [
+        "Each number is a run of filled squares in its",
+        "row or column. Separate runs with at least",
+        "one empty square. A zero means the entire",
+        "line is empty."
+      ]
+    },
+    {
+      "kind": "Text",
+      "x": 47,
+      "y": 519,
+      "width": 978,
+      "height": 256,
+      "centre": {
+        "x": 536,
+        "y": 647
+      },
+      "action": 3440364824,
+      "lines": [
+        "Tap a square to cycle blank, filled and",
+        "crossed out. The outlined square is your",
+        "last choice. A cross means you have",
+        "decided the square is empty."
+      ]
+    },
+    {
+      "kind": "Text",
+      "x": 47,
+      "y": 787,
+      "width": 978,
+      "height": 192,
+      "centre": {
+        "x": 536,
+        "y": 883
+      },
+      "action": 3440364824,
+      "lines": [
+        "Clues sit beside their matching lines. Tap a",
+        "clue to read its complete sequence. An",
+        "ellipsis means there are more numbers."
+      ]
+    },
+    {
+      "kind": "Text",
+      "x": 47,
+      "y": 991,
+      "width": 978,
+      "height": 128,
+      "centre": {
+        "x": 536,
+        "y": 1055
+      },
+      "action": 3440364824,
+      "lines": [
+        "Left, Right, Up and Down move the window",
+        "with an overlap. The \u2212 and + buttons"
+      ]
+    },
+    {
+      "kind": "NavBar",
+      "x": 0,
+      "y": 1306,
+      "width": 1072,
+      "height": 142,
+      "centre": {
+        "x": 536,
+        "y": 1377
+      },
+      "action": 3440364824,
+      "lines": []
+    },
+    {
+      "kind": "Divider",
+      "x": 0,
+      "y": 1306,
+      "width": 1072,
+      "height": 4,
+      "centre": {
+        "x": 536,
+        "y": 1308
+      },
+      "action": 3440364824,
+      "lines": []
+    },
+    {
+      "kind": "NavDestination(ActionId(4118453880), None)",
+      "x": 0,
+      "y": 1306,
+      "width": 536,
+      "height": 142,
+      "centre": {
+        "x": 268,
+        "y": 1377
+      },
+      "action": 4118453880,
+      "lines": [
+        "Previous"
+      ]
+    },
+    {
+      "kind": "NavDestination(ActionId(3440364824), None)",
+      "x": 536,
+      "y": 1306,
+      "width": 536,
+      "height": 142,
+      "centre": {
+        "x": 804,
+        "y": 1377
+      },
+      "action": 3440364824,
+      "lines": [
+        "Next"
+      ]
+    },
+    {
+      "kind": "PagePosition",
+      "x": 47,
+      "y": 1223,
+      "width": 978,
+      "height": 83,
+      "centre": {
+        "x": 536,
+        "y": 1264
+      },
+      "action": null,
+      "lines": [
+        "1 of 2"
+      ]
+    },
+    {
+      "kind": "PageNext(ActionId(3440364824))",
+      "x": 907,
+      "y": 1223,
+      "width": 118,
+      "height": 83,
+      "centre": {
+        "x": 966,
+        "y": 1264
+      },
+      "action": 3440364824,
+      "lines": []
+    }
+  ]
+}

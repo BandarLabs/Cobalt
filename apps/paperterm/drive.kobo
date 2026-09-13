@@ -1,3 +1,62 @@
+scenario offline
+expect Terminal sessions
+clean
+shot welcome
+tap-id preview
+expect Preview
+expect Nothing is running on your computer
+clean
+expect-state /activity#/effects/fetch 0
+expect-state /activity#/effects/post 0
+shot preview
+tap-id welcome
+tap-id setup
+expect Prepare the computer
+clean
+shot setup
+tap-id trust
+expect Trust this computer
+clean
+shot trust
+tap-id start
+expect Start a session
+clean
+shot start
+tap-id enter-address
 expect Pair with your computer
 clean
 shot pairing
+type bad address
+tap-id kb.enter
+expect Use a name or IP address
+clean
+shot address-error
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
+type laptop
+tap-id kb.enter
+expect Now the pairing code
+clean
+shot code
+type xyz
+tap-id kb.enter
+expect Enter the six letters and numbers
+clean
+shot code-error
+expect-state /activity#/effects/fetch 0
+expect-state /activity#/effects/post 0
+tap-id edit-address
+expect laptop:9332
+tap-id kb.enter
+expect xyz
+clean
+shot code-preserved

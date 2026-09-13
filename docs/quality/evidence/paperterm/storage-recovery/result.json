@@ -1,0 +1,54 @@
+{
+  "status": "passed",
+  "profile": "clara-bw-391",
+  "scale": "extra-large",
+  "orientation": "portrait",
+  "negotiated_grids": [
+    [
+      54,
+      33
+    ],
+    [
+      54,
+      18
+    ],
+    [
+      54,
+      14
+    ],
+    [
+      54,
+      18
+    ]
+  ],
+  "storage_checks": {
+    "load_failure": true,
+    "save_failure": true,
+    "temporary": false
+  },
+  "source_head": "c612cb1a1801002afcfee32128af5d23a5171312",
+  "source_dirty": true,
+  "basis": "real-host-pty-and-sdk-simulator-over-trusted-tls",
+  "pairing": "entered through on-screen keyboard",
+  "checks": [
+    "reconnect retains output and keyboard toggle",
+    "connection restored",
+    "failed input pauses without replay",
+    "explicit input resume",
+    "portrait captures",
+    "measured grid on keyboard toggle",
+    "prompt without newline",
+    "laptop raw mode",
+    "trusted TLS",
+    "reader input to host",
+    "laptop input before Enter",
+    "same-session output",
+    "PTY grid negotiation",
+    "wide output",
+    "reader Ctrl-C",
+    "retained final screen",
+    "laptop terminal restoration",
+    "failed pairing read has an explicit recovery path",
+    "failed pairing save retries only on request"
+  ]
+}

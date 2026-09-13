@@ -1,0 +1,361 @@
+{
+  "paints": 3,
+  "nodes": [
+    {
+      "kind": "StatusBand",
+      "x": 0,
+      "y": 0,
+      "width": 1072,
+      "height": 59,
+      "centre": {
+        "x": 536,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusClock",
+      "x": 47,
+      "y": 0,
+      "width": 112,
+      "height": 59,
+      "centre": {
+        "x": 103,
+        "y": 29
+      },
+      "action": null,
+      "lines": [
+        "07:01"
+      ]
+    },
+    {
+      "kind": "StatusBattery(Some(Percent(72)), false)",
+      "x": 955,
+      "y": 12,
+      "width": 70,
+      "height": 35,
+      "centre": {
+        "x": 990,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusSignal(Strong)",
+      "x": 896,
+      "y": 12,
+      "width": 35,
+      "height": 35,
+      "centre": {
+        "x": 913,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusBluetooth",
+      "x": 837,
+      "y": 12,
+      "width": 35,
+      "height": 35,
+      "centre": {
+        "x": 854,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "TopBar",
+      "x": 0,
+      "y": 59,
+      "width": 1072,
+      "height": 100,
+      "centre": {
+        "x": 536,
+        "y": 109
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Back",
+      "x": 47,
+      "y": 59,
+      "width": 100,
+      "height": 100,
+      "centre": {
+        "x": 97,
+        "y": 109
+      },
+      "action": 4294967295,
+      "lines": []
+    },
+    {
+      "kind": "TopBarTitle",
+      "x": 171,
+      "y": 77,
+      "width": 854,
+      "height": 64,
+      "centre": {
+        "x": 598,
+        "y": 109
+      },
+      "action": null,
+      "lines": [
+        "Slitherlink"
+      ]
+    },
+    {
+      "kind": "Divider",
+      "x": 0,
+      "y": 159,
+      "width": 1072,
+      "height": 4,
+      "centre": {
+        "x": 536,
+        "y": 161
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Row(ActionId(2837549936))",
+      "x": 47,
+      "y": 175,
+      "width": 978,
+      "height": 162,
+      "centre": {
+        "x": 536,
+        "y": 256
+      },
+      "action": 2837549936,
+      "lines": []
+    },
+    {
+      "kind": "RowLead(Icon(Grid))",
+      "x": 47,
+      "y": 209,
+      "width": 44,
+      "height": 44,
+      "centre": {
+        "x": 69,
+        "y": 231
+      },
+      "action": 2837549936,
+      "lines": []
+    },
+    {
+      "kind": "RowTitle",
+      "x": 115,
+      "y": 199,
+      "width": 886,
+      "height": 64,
+      "centre": {
+        "x": 558,
+        "y": 231
+      },
+      "action": 2837549936,
+      "lines": [
+        "Four twos"
+      ]
+    },
+    {
+      "kind": "RowSummary",
+      "x": 115,
+      "y": 263,
+      "width": 886,
+      "height": 50,
+      "centre": {
+        "x": 558,
+        "y": 288
+      },
+      "action": 2837549936,
+      "lines": [
+        "Starter \u00b7 New"
+      ]
+    },
+    {
+      "kind": "RowRule",
+      "x": 115,
+      "y": 349,
+      "width": 910,
+      "height": 4,
+      "centre": {
+        "x": 570,
+        "y": 351
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Row(ActionId(2904660412))",
+      "x": 47,
+      "y": 361,
+      "width": 978,
+      "height": 162,
+      "centre": {
+        "x": 536,
+        "y": 442
+      },
+      "action": 2904660412,
+      "lines": []
+    },
+    {
+      "kind": "RowLead(Icon(Grid))",
+      "x": 47,
+      "y": 395,
+      "width": 44,
+      "height": 44,
+      "centre": {
+        "x": 69,
+        "y": 417
+      },
+      "action": 2904660412,
+      "lines": []
+    },
+    {
+      "kind": "RowTitle",
+      "x": 115,
+      "y": 385,
+      "width": 886,
+      "height": 64,
+      "centre": {
+        "x": 558,
+        "y": 417
+      },
+      "action": 2904660412,
+      "lines": [
+        "First bend"
+      ]
+    },
+    {
+      "kind": "RowSummary",
+      "x": 115,
+      "y": 449,
+      "width": 886,
+      "height": 50,
+      "centre": {
+        "x": 558,
+        "y": 474
+      },
+      "action": 2904660412,
+      "lines": [
+        "Easy \u00b7 New"
+      ]
+    },
+    {
+      "kind": "RowRule",
+      "x": 115,
+      "y": 535,
+      "width": 910,
+      "height": 4,
+      "centre": {
+        "x": 570,
+        "y": 537
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Row(ActionId(2921438031))",
+      "x": 47,
+      "y": 547,
+      "width": 978,
+      "height": 162,
+      "centre": {
+        "x": 536,
+        "y": 628
+      },
+      "action": 2921438031,
+      "lines": []
+    },
+    {
+      "kind": "RowLead(Icon(Grid))",
+      "x": 47,
+      "y": 581,
+      "width": 44,
+      "height": 44,
+      "centre": {
+        "x": 69,
+        "y": 603
+      },
+      "action": 2921438031,
+      "lines": []
+    },
+    {
+      "kind": "RowTitle",
+      "x": 115,
+      "y": 571,
+      "width": 886,
+      "height": 64,
+      "centre": {
+        "x": 558,
+        "y": 603
+      },
+      "action": 2921438031,
+      "lines": [
+        "Around the corner"
+      ]
+    },
+    {
+      "kind": "RowSummary",
+      "x": 115,
+      "y": 635,
+      "width": 886,
+      "height": 50,
+      "centre": {
+        "x": 558,
+        "y": 660
+      },
+      "action": 2921438031,
+      "lines": [
+        "Easy \u00b7 New"
+      ]
+    },
+    {
+      "kind": "Spacer",
+      "x": 47,
+      "y": 721,
+      "width": 978,
+      "height": 118,
+      "centre": {
+        "x": 536,
+        "y": 780
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(1588593004), Key, false)",
+      "x": 47,
+      "y": 721,
+      "width": 483,
+      "height": 118,
+      "centre": {
+        "x": 288,
+        "y": 780
+      },
+      "action": 1588593004,
+      "lines": []
+    },
+    {
+      "kind": "CellLabel(false)",
+      "x": 47,
+      "y": 721,
+      "width": 483,
+      "height": 118,
+      "centre": {
+        "x": 288,
+        "y": 780
+      },
+      "action": 1588593004,
+      "lines": [
+        "Next"
+      ]
+    }
+  ]
+}

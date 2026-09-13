@@ -1,0 +1,45 @@
+{
+  "status": "passed",
+  "checks": [
+    "credential-free HTTPS image acquisition",
+    "failed image write does not publish a pointer",
+    "visible image-save retry",
+    "retry persists exact bytes without downloading again",
+    "offline process restart renders saved image without a fetch",
+    "failed feed save preserves the published snapshot",
+    "retry publishes the newest refresh without another download",
+    "latest feed and image reopen offline after restart",
+    "missing and damaged images preserve the pointer while offline",
+    "reopening online restores missing and damaged images into the other slot",
+    "repaired image opens offline after another restart",
+    "zero POST/PUT/PATCH requests"
+  ],
+  "requests": [
+    {
+      "path": "/ridge.png",
+      "authorization": null,
+      "token": null
+    },
+    {
+      "path": "/journal.xml",
+      "authorization": null,
+      "token": null
+    },
+    {
+      "path": "/journal.xml",
+      "authorization": null,
+      "token": null
+    },
+    {
+      "path": "/ridge.png",
+      "authorization": null,
+      "token": null
+    },
+    {
+      "path": "/ridge.png",
+      "authorization": null,
+      "token": null
+    }
+  ],
+  "fixture": "original-rss-journal"
+}

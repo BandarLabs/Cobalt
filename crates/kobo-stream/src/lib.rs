@@ -11,7 +11,7 @@
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::path::PathBuf;
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
@@ -556,7 +556,12 @@ struct RawStdin(String);
 
 impl RawStdin {
     fn enable() -> Option<Self> {
-        let saved = Command::new("stty").arg("-g").output().ok()?;
+        // output() otherwise supplies a null stdin, even when the owner has a TTY.
+        let saved = Command::new("stty")
+            .arg("-g")
+            .stdin(Stdio::inherit())
+            .output()
+            .ok()?;
         if !saved.status.success() {
             return None;
         }
@@ -599,23 +604,32 @@ fn forward_stdin(pty: Arc<Mutex<kobo_abi::pty::Pty>>) {
 /// input lock while waiting. Device key writes therefore never wait behind
 /// output from a noisy full-screen application.
 fn drain_pty(pty: &Mutex<kobo_abi::pty::Pty>, session: &Session) -> bool {
+    const MAX_CHUNKS_PER_TURN: usize = 32;
     let mut drained = Vec::new();
-    let disconnected = {
+    let mut disconnected = false;
+    {
         let Ok(terminal) = pty.lock() else {
             return false;
         };
-        loop {
+        // A continuously-writing child must yield to input and connection work.
+        for _ in 0..MAX_CHUNKS_PER_TURN {
             match terminal.output().try_recv() {
                 Ok(bytes) => drained.push(bytes),
-                Err(std::sync::mpsc::TryRecvError::Empty) => break false,
-                Err(std::sync::mpsc::TryRecvError::Disconnected) => break true,
+                Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    disconnected = true;
+                    break;
+                }
             }
         }
-    };
+    }
+    let mut stdout = std::io::stdout().lock();
     for bytes in drained {
-        let _ = std::io::stdout().write_all(&bytes);
+        let _ = stdout.write_all(&bytes);
         session.feed(&bytes);
     }
+    // Prompts and cursor updates often have no newline.
+    let _ = stdout.flush();
     disconnected
 }
 
@@ -781,6 +795,13 @@ pub fn init(hosts: &[String]) -> Result<(), String> {
 }
 
 fn config_dir() -> Result<PathBuf, String> {
+    if let Some(root) = std::env::var_os("KOBO_STREAM_CONFIG_DIR") {
+        let root = PathBuf::from(root);
+        if !root.is_absolute() {
+            return Err("KOBO_STREAM_CONFIG_DIR must be an absolute path".into());
+        }
+        return Ok(root);
+    }
     let home = std::env::var_os("HOME").ok_or("no HOME in the environment")?;
     Ok(PathBuf::from(home).join(".config").join("kobo"))
 }

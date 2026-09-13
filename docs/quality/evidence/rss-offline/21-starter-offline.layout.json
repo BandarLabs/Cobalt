@@ -1,0 +1,171 @@
+{
+  "paints": 7,
+  "nodes": [
+    {
+      "kind": "StatusBand",
+      "x": 0,
+      "y": 0,
+      "width": 1072,
+      "height": 59,
+      "centre": {
+        "x": 536,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusClock",
+      "x": 47,
+      "y": 0,
+      "width": 78,
+      "height": 59,
+      "centre": {
+        "x": 86,
+        "y": 29
+      },
+      "action": null,
+      "lines": [
+        "07:12"
+      ]
+    },
+    {
+      "kind": "StatusBattery(Some(Percent(72)), false)",
+      "x": 955,
+      "y": 12,
+      "width": 70,
+      "height": 35,
+      "centre": {
+        "x": 990,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusSignal(Off)",
+      "x": 896,
+      "y": 12,
+      "width": 35,
+      "height": 35,
+      "centre": {
+        "x": 913,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusBluetooth",
+      "x": 837,
+      "y": 12,
+      "width": 35,
+      "height": 35,
+      "centre": {
+        "x": 854,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "TopBar",
+      "x": 0,
+      "y": 59,
+      "width": 1072,
+      "height": 100,
+      "centre": {
+        "x": 536,
+        "y": 109
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Back",
+      "x": 47,
+      "y": 59,
+      "width": 100,
+      "height": 100,
+      "centre": {
+        "x": 97,
+        "y": 109
+      },
+      "action": 4294967295,
+      "lines": []
+    },
+    {
+      "kind": "TopBarTitle",
+      "x": 171,
+      "y": 86,
+      "width": 854,
+      "height": 46,
+      "centre": {
+        "x": 598,
+        "y": 109
+      },
+      "action": null,
+      "lines": [
+        "Feed preview"
+      ]
+    },
+    {
+      "kind": "Divider",
+      "x": 0,
+      "y": 159,
+      "width": 1072,
+      "height": 4,
+      "centre": {
+        "x": 536,
+        "y": 161
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Banner(Attention)",
+      "x": 47,
+      "y": 175,
+      "width": 978,
+      "height": 94,
+      "centre": {
+        "x": 536,
+        "y": 222
+      },
+      "action": null,
+      "lines": [
+        "This reader is not on a network. Join Wi-Fi and try again."
+      ]
+    },
+    {
+      "kind": "Button(ActionId(2362351222), Enabled, Primary)",
+      "x": 47,
+      "y": 281,
+      "width": 978,
+      "height": 118,
+      "centre": {
+        "x": 536,
+        "y": 340
+      },
+      "action": 2362351222,
+      "lines": [
+        "Try again"
+      ]
+    },
+    {
+      "kind": "Button(ActionId(993596020), Enabled, Normal)",
+      "x": 357,
+      "y": 411,
+      "width": 358,
+      "height": 118,
+      "centre": {
+        "x": 536,
+        "y": 470
+      },
+      "action": 993596020,
+      "lines": [
+        "Change address"
+      ]
+    }
+  ]
+}

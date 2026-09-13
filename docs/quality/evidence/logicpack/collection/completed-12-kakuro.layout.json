@@ -1,0 +1,791 @@
+{
+  "paints": 33,
+  "nodes": [
+    {
+      "kind": "StatusBand",
+      "x": 0,
+      "y": 0,
+      "width": 1072,
+      "height": 59,
+      "centre": {
+        "x": 536,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusClock",
+      "x": 47,
+      "y": 0,
+      "width": 112,
+      "height": 59,
+      "centre": {
+        "x": 103,
+        "y": 29
+      },
+      "action": null,
+      "lines": [
+        "07:01"
+      ]
+    },
+    {
+      "kind": "StatusBattery(Some(Percent(72)), false)",
+      "x": 955,
+      "y": 12,
+      "width": 70,
+      "height": 35,
+      "centre": {
+        "x": 990,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusSignal(Strong)",
+      "x": 896,
+      "y": 12,
+      "width": 35,
+      "height": 35,
+      "centre": {
+        "x": 913,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusBluetooth",
+      "x": 837,
+      "y": 12,
+      "width": 35,
+      "height": 35,
+      "centre": {
+        "x": 854,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "TopBar",
+      "x": 0,
+      "y": 59,
+      "width": 1072,
+      "height": 100,
+      "centre": {
+        "x": 536,
+        "y": 109
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Back",
+      "x": 47,
+      "y": 59,
+      "width": 100,
+      "height": 100,
+      "centre": {
+        "x": 97,
+        "y": 109
+      },
+      "action": 4294967295,
+      "lines": []
+    },
+    {
+      "kind": "BarAction(ActionId(1524496950))",
+      "x": 874,
+      "y": 59,
+      "width": 151,
+      "height": 100,
+      "centre": {
+        "x": 949,
+        "y": 109
+      },
+      "action": 1524496950,
+      "lines": [
+        "Help"
+      ]
+    },
+    {
+      "kind": "TopBarTitle",
+      "x": 171,
+      "y": 77,
+      "width": 679,
+      "height": 64,
+      "centre": {
+        "x": 510,
+        "y": 109
+      },
+      "action": null,
+      "lines": [
+        "Kakuro"
+      ]
+    },
+    {
+      "kind": "Divider",
+      "x": 0,
+      "y": 159,
+      "width": 1072,
+      "height": 4,
+      "centre": {
+        "x": 536,
+        "y": 161
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Secondary",
+      "x": 47,
+      "y": 175,
+      "width": 978,
+      "height": 50,
+      "centre": {
+        "x": 536,
+        "y": 200
+      },
+      "action": null,
+      "lines": [
+        "Solved."
+      ]
+    },
+    {
+      "kind": "Spacer",
+      "x": 300,
+      "y": 237,
+      "width": 472,
+      "height": 472,
+      "centre": {
+        "x": 536,
+        "y": 473
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "PencilMark(Block, false)",
+      "x": 300,
+      "y": 237,
+      "width": 118,
+      "height": 118,
+      "centre": {
+        "x": 359,
+        "y": 296
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "PencilMark(Sum { across: 0, down: 19 }, false)",
+      "x": 418,
+      "y": 237,
+      "width": 118,
+      "height": 118,
+      "centre": {
+        "x": 477,
+        "y": 296
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "PencilNumber(true)",
+      "x": 426,
+      "y": 304,
+      "width": 43,
+      "height": 43,
+      "centre": {
+        "x": 447,
+        "y": 325
+      },
+      "action": null,
+      "lines": [
+        "19"
+      ]
+    },
+    {
+      "kind": "PencilMark(Sum { across: 0, down: 21 }, false)",
+      "x": 536,
+      "y": 237,
+      "width": 118,
+      "height": 118,
+      "centre": {
+        "x": 595,
+        "y": 296
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "PencilNumber(true)",
+      "x": 544,
+      "y": 304,
+      "width": 43,
+      "height": 43,
+      "centre": {
+        "x": 565,
+        "y": 325
+      },
+      "action": null,
+      "lines": [
+        "21"
+      ]
+    },
+    {
+      "kind": "PencilMark(Sum { across: 0, down: 15 }, false)",
+      "x": 654,
+      "y": 237,
+      "width": 118,
+      "height": 118,
+      "centre": {
+        "x": 713,
+        "y": 296
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "PencilNumber(true)",
+      "x": 662,
+      "y": 304,
+      "width": 43,
+      "height": 43,
+      "centre": {
+        "x": 683,
+        "y": 325
+      },
+      "action": null,
+      "lines": [
+        "15"
+      ]
+    },
+    {
+      "kind": "PencilMark(Sum { across: 20, down: 0 }, false)",
+      "x": 300,
+      "y": 355,
+      "width": 118,
+      "height": 118,
+      "centre": {
+        "x": 359,
+        "y": 414
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "PencilNumber(true)",
+      "x": 367,
+      "y": 363,
+      "width": 43,
+      "height": 43,
+      "centre": {
+        "x": 388,
+        "y": 384
+      },
+      "action": null,
+      "lines": [
+        "20"
+      ]
+    },
+    {
+      "kind": "Cell(ActionId(2138010119), Plain, false)",
+      "x": 418,
+      "y": 355,
+      "width": 118,
+      "height": 118,
+      "centre": {
+        "x": 477,
+        "y": 414
+      },
+      "action": 2138010119,
+      "lines": [
+        "Row 2, column 2, digit 6"
+      ]
+    },
+    {
+      "kind": "PencilMark(Digit { value: 6, given: false }, false)",
+      "x": 418,
+      "y": 355,
+      "width": 118,
+      "height": 118,
+      "centre": {
+        "x": 477,
+        "y": 414
+      },
+      "action": 2138010119,
+      "lines": []
+    },
+    {
+      "kind": "PencilNumber(false)",
+      "x": 426,
+      "y": 363,
+      "width": 102,
+      "height": 102,
+      "centre": {
+        "x": 477,
+        "y": 414
+      },
+      "action": 2138010119,
+      "lines": [
+        "6"
+      ]
+    },
+    {
+      "kind": "Cell(ActionId(2121232500), Plain, false)",
+      "x": 536,
+      "y": 355,
+      "width": 118,
+      "height": 118,
+      "centre": {
+        "x": 595,
+        "y": 414
+      },
+      "action": 2121232500,
+      "lines": [
+        "Row 2, column 3, digit 5"
+      ]
+    },
+    {
+      "kind": "PencilMark(Digit { value: 5, given: false }, false)",
+      "x": 536,
+      "y": 355,
+      "width": 118,
+      "height": 118,
+      "centre": {
+        "x": 595,
+        "y": 414
+      },
+      "action": 2121232500,
+      "lines": []
+    },
+    {
+      "kind": "PencilNumber(false)",
+      "x": 544,
+      "y": 363,
+      "width": 102,
+      "height": 102,
+      "centre": {
+        "x": 595,
+        "y": 414
+      },
+      "action": 2121232500,
+      "lines": [
+        "5"
+      ]
+    },
+    {
+      "kind": "Cell(ActionId(2171565357), Plain, false)",
+      "x": 654,
+      "y": 355,
+      "width": 118,
+      "height": 118,
+      "centre": {
+        "x": 713,
+        "y": 414
+      },
+      "action": 2171565357,
+      "lines": [
+        "Row 2, column 4, digit 9"
+      ]
+    },
+    {
+      "kind": "PencilMark(Digit { value: 9, given: false }, false)",
+      "x": 654,
+      "y": 355,
+      "width": 118,
+      "height": 118,
+      "centre": {
+        "x": 713,
+        "y": 414
+      },
+      "action": 2171565357,
+      "lines": []
+    },
+    {
+      "kind": "PencilNumber(false)",
+      "x": 662,
+      "y": 363,
+      "width": 102,
+      "height": 102,
+      "centre": {
+        "x": 713,
+        "y": 414
+      },
+      "action": 2171565357,
+      "lines": [
+        "9"
+      ]
+    },
+    {
+      "kind": "PencilMark(Sum { across: 17, down: 0 }, false)",
+      "x": 300,
+      "y": 473,
+      "width": 118,
+      "height": 118,
+      "centre": {
+        "x": 359,
+        "y": 532
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "PencilNumber(true)",
+      "x": 367,
+      "y": 481,
+      "width": 43,
+      "height": 43,
+      "centre": {
+        "x": 388,
+        "y": 502
+      },
+      "action": null,
+      "lines": [
+        "17"
+      ]
+    },
+    {
+      "kind": "Cell(ActionId(2154787738), Plain, false)",
+      "x": 418,
+      "y": 473,
+      "width": 118,
+      "height": 118,
+      "centre": {
+        "x": 477,
+        "y": 532
+      },
+      "action": 2154787738,
+      "lines": [
+        "Row 3, column 2, digit 8"
+      ]
+    },
+    {
+      "kind": "PencilMark(Digit { value: 8, given: false }, false)",
+      "x": 418,
+      "y": 473,
+      "width": 118,
+      "height": 118,
+      "centre": {
+        "x": 477,
+        "y": 532
+      },
+      "action": 2154787738,
+      "lines": []
+    },
+    {
+      "kind": "PencilNumber(false)",
+      "x": 426,
+      "y": 481,
+      "width": 102,
+      "height": 102,
+      "centre": {
+        "x": 477,
+        "y": 532
+      },
+      "action": 2154787738,
+      "lines": [
+        "8"
+      ]
+    },
+    {
+      "kind": "PencilMark(Digit { value: 7, given: true }, false)",
+      "x": 536,
+      "y": 473,
+      "width": 118,
+      "height": 118,
+      "centre": {
+        "x": 595,
+        "y": 532
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "PencilNumber(false)",
+      "x": 544,
+      "y": 481,
+      "width": 102,
+      "height": 102,
+      "centre": {
+        "x": 595,
+        "y": 532
+      },
+      "action": null,
+      "lines": [
+        "7"
+      ]
+    },
+    {
+      "kind": "Cell(ActionId(2070899643), Plain, false)",
+      "x": 654,
+      "y": 473,
+      "width": 118,
+      "height": 118,
+      "centre": {
+        "x": 713,
+        "y": 532
+      },
+      "action": 2070899643,
+      "lines": [
+        "Row 3, column 4, digit 2"
+      ]
+    },
+    {
+      "kind": "PencilMark(Digit { value: 2, given: false }, false)",
+      "x": 654,
+      "y": 473,
+      "width": 118,
+      "height": 118,
+      "centre": {
+        "x": 713,
+        "y": 532
+      },
+      "action": 2070899643,
+      "lines": []
+    },
+    {
+      "kind": "PencilNumber(false)",
+      "x": 662,
+      "y": 481,
+      "width": 102,
+      "height": 102,
+      "centre": {
+        "x": 713,
+        "y": 532
+      },
+      "action": 2070899643,
+      "lines": [
+        "2"
+      ]
+    },
+    {
+      "kind": "PencilMark(Sum { across: 18, down: 0 }, false)",
+      "x": 300,
+      "y": 591,
+      "width": 118,
+      "height": 118,
+      "centre": {
+        "x": 359,
+        "y": 650
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "PencilNumber(true)",
+      "x": 367,
+      "y": 599,
+      "width": 43,
+      "height": 43,
+      "centre": {
+        "x": 388,
+        "y": 620
+      },
+      "action": null,
+      "lines": [
+        "18"
+      ]
+    },
+    {
+      "kind": "PencilMark(Digit { value: 5, given: true }, false)",
+      "x": 418,
+      "y": 591,
+      "width": 118,
+      "height": 118,
+      "centre": {
+        "x": 477,
+        "y": 650
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "PencilNumber(false)",
+      "x": 426,
+      "y": 599,
+      "width": 102,
+      "height": 102,
+      "centre": {
+        "x": 477,
+        "y": 650
+      },
+      "action": null,
+      "lines": [
+        "5"
+      ]
+    },
+    {
+      "kind": "Cell(ActionId(2054122024), Plain, false)",
+      "x": 536,
+      "y": 591,
+      "width": 118,
+      "height": 118,
+      "centre": {
+        "x": 595,
+        "y": 650
+      },
+      "action": 2054122024,
+      "lines": [
+        "Row 4, column 3, digit 9"
+      ]
+    },
+    {
+      "kind": "PencilMark(Digit { value: 9, given: false }, false)",
+      "x": 536,
+      "y": 591,
+      "width": 118,
+      "height": 118,
+      "centre": {
+        "x": 595,
+        "y": 650
+      },
+      "action": 2054122024,
+      "lines": []
+    },
+    {
+      "kind": "PencilNumber(false)",
+      "x": 544,
+      "y": 599,
+      "width": 102,
+      "height": 102,
+      "centre": {
+        "x": 595,
+        "y": 650
+      },
+      "action": 2054122024,
+      "lines": [
+        "9"
+      ]
+    },
+    {
+      "kind": "Cell(ActionId(2104454881), Plain, false)",
+      "x": 654,
+      "y": 591,
+      "width": 118,
+      "height": 118,
+      "centre": {
+        "x": 713,
+        "y": 650
+      },
+      "action": 2104454881,
+      "lines": [
+        "Row 4, column 4, digit 4"
+      ]
+    },
+    {
+      "kind": "PencilMark(Digit { value: 4, given: false }, false)",
+      "x": 654,
+      "y": 591,
+      "width": 118,
+      "height": 118,
+      "centre": {
+        "x": 713,
+        "y": 650
+      },
+      "action": 2104454881,
+      "lines": []
+    },
+    {
+      "kind": "PencilNumber(false)",
+      "x": 662,
+      "y": 599,
+      "width": 102,
+      "height": 102,
+      "centre": {
+        "x": 713,
+        "y": 650
+      },
+      "action": 2104454881,
+      "lines": [
+        "4"
+      ]
+    },
+    {
+      "kind": "Secondary",
+      "x": 47,
+      "y": 721,
+      "width": 978,
+      "height": 50,
+      "centre": {
+        "x": 536,
+        "y": 746
+      },
+      "action": null,
+      "lines": [
+        "Saved"
+      ]
+    },
+    {
+      "kind": "Spacer",
+      "x": 47,
+      "y": 783,
+      "width": 978,
+      "height": 118,
+      "centre": {
+        "x": 536,
+        "y": 842
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(1538531746), Key, false)",
+      "x": 47,
+      "y": 783,
+      "width": 483,
+      "height": 118,
+      "centre": {
+        "x": 288,
+        "y": 842
+      },
+      "action": 1538531746,
+      "lines": []
+    },
+    {
+      "kind": "CellLabel(false)",
+      "x": 47,
+      "y": 783,
+      "width": 483,
+      "height": 118,
+      "centre": {
+        "x": 288,
+        "y": 842
+      },
+      "action": 1538531746,
+      "lines": [
+        "Puzzles"
+      ]
+    },
+    {
+      "kind": "Cell(ActionId(3897901536), Key, false)",
+      "x": 542,
+      "y": 783,
+      "width": 483,
+      "height": 118,
+      "centre": {
+        "x": 783,
+        "y": 842
+      },
+      "action": 3897901536,
+      "lines": []
+    },
+    {
+      "kind": "CellLabel(false)",
+      "x": 542,
+      "y": 783,
+      "width": 483,
+      "height": 118,
+      "centre": {
+        "x": 783,
+        "y": 842
+      },
+      "action": 3897901536,
+      "lines": [
+        "More"
+      ]
+    }
+  ]
+}

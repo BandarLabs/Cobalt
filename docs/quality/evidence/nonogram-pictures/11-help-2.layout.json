@@ -1,0 +1,279 @@
+{
+  "paints": 17,
+  "nodes": [
+    {
+      "kind": "StatusBand",
+      "x": 0,
+      "y": 0,
+      "width": 1072,
+      "height": 59,
+      "centre": {
+        "x": 536,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusClock",
+      "x": 47,
+      "y": 0,
+      "width": 112,
+      "height": 59,
+      "centre": {
+        "x": 103,
+        "y": 29
+      },
+      "action": null,
+      "lines": [
+        "07:01"
+      ]
+    },
+    {
+      "kind": "StatusBattery(Some(Percent(72)), false)",
+      "x": 955,
+      "y": 12,
+      "width": 70,
+      "height": 35,
+      "centre": {
+        "x": 990,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusSignal(Strong)",
+      "x": 896,
+      "y": 12,
+      "width": 35,
+      "height": 35,
+      "centre": {
+        "x": 913,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusBluetooth",
+      "x": 837,
+      "y": 12,
+      "width": 35,
+      "height": 35,
+      "centre": {
+        "x": 854,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "TopBar",
+      "x": 0,
+      "y": 59,
+      "width": 1072,
+      "height": 100,
+      "centre": {
+        "x": 536,
+        "y": 109
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Back",
+      "x": 47,
+      "y": 59,
+      "width": 100,
+      "height": 100,
+      "centre": {
+        "x": 97,
+        "y": 109
+      },
+      "action": 4294967295,
+      "lines": []
+    },
+    {
+      "kind": "TopBarTitle",
+      "x": 171,
+      "y": 77,
+      "width": 854,
+      "height": 64,
+      "centre": {
+        "x": 598,
+        "y": 109
+      },
+      "action": null,
+      "lines": [
+        "How to play"
+      ]
+    },
+    {
+      "kind": "Divider",
+      "x": 0,
+      "y": 159,
+      "width": 1072,
+      "height": 4,
+      "centre": {
+        "x": 536,
+        "y": 161
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Text",
+      "x": 47,
+      "y": 175,
+      "width": 978,
+      "height": 128,
+      "centre": {
+        "x": 536,
+        "y": 239
+      },
+      "action": 3440364824,
+      "lines": [
+        "change square size. Your marks stay in",
+        "their original rows and columns."
+      ]
+    },
+    {
+      "kind": "Text",
+      "x": 47,
+      "y": 315,
+      "width": 978,
+      "height": 256,
+      "centre": {
+        "x": 536,
+        "y": 443
+      },
+      "action": 3440364824,
+      "lines": [
+        "More contains checking and run entry. Free",
+        "accepts your choices without warnings.",
+        "Guided names a row or column whose",
+        "clues no longer fit."
+      ]
+    },
+    {
+      "kind": "Text",
+      "x": 47,
+      "y": 583,
+      "width": 978,
+      "height": 192,
+      "centre": {
+        "x": 536,
+        "y": 679
+      },
+      "action": 3440364824,
+      "lines": [
+        "Run entry fills a horizontal or vertical run",
+        "between two taps. Undo reverses the whole",
+        "run, a single mark or a confirmed restart."
+      ]
+    },
+    {
+      "kind": "Text",
+      "x": 47,
+      "y": 787,
+      "width": 978,
+      "height": 256,
+      "centre": {
+        "x": 536,
+        "y": 915
+      },
+      "action": 3440364824,
+      "lines": [
+        "Mark every square, including empty",
+        "squares with a cross, to finish. The",
+        "completed picture opens when all marks",
+        "match."
+      ]
+    },
+    {
+      "kind": "NavBar",
+      "x": 0,
+      "y": 1306,
+      "width": 1072,
+      "height": 142,
+      "centre": {
+        "x": 536,
+        "y": 1377
+      },
+      "action": 3440364824,
+      "lines": []
+    },
+    {
+      "kind": "Divider",
+      "x": 0,
+      "y": 1306,
+      "width": 1072,
+      "height": 4,
+      "centre": {
+        "x": 536,
+        "y": 1308
+      },
+      "action": 3440364824,
+      "lines": []
+    },
+    {
+      "kind": "NavDestination(ActionId(4118453880), None)",
+      "x": 0,
+      "y": 1306,
+      "width": 536,
+      "height": 142,
+      "centre": {
+        "x": 268,
+        "y": 1377
+      },
+      "action": 4118453880,
+      "lines": [
+        "Previous"
+      ]
+    },
+    {
+      "kind": "NavDestination(ActionId(3440364824), None)",
+      "x": 536,
+      "y": 1306,
+      "width": 536,
+      "height": 142,
+      "centre": {
+        "x": 804,
+        "y": 1377
+      },
+      "action": 3440364824,
+      "lines": [
+        "Next"
+      ]
+    },
+    {
+      "kind": "PagePosition",
+      "x": 47,
+      "y": 1223,
+      "width": 978,
+      "height": 83,
+      "centre": {
+        "x": 536,
+        "y": 1264
+      },
+      "action": null,
+      "lines": [
+        "2 of 2"
+      ]
+    },
+    {
+      "kind": "PagePrevious(ActionId(4118453880))",
+      "x": 47,
+      "y": 1223,
+      "width": 118,
+      "height": 83,
+      "centre": {
+        "x": 106,
+        "y": 1264
+      },
+      "action": 4118453880,
+      "lines": []
+    }
+  ]
+}

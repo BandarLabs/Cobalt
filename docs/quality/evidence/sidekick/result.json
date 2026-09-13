@@ -1,0 +1,41 @@
+{
+  "status": "passed",
+  "scale": "default",
+  "fixture": "two-agents-asking",
+  "answered": [
+    {
+      "token": "abc123",
+      "id": 1,
+      "choice": "allow",
+      "labels": []
+    },
+    {
+      "token": "abc123",
+      "id": 3,
+      "choice": "deny",
+      "labels": []
+    },
+    {
+      "token": "abc123",
+      "id": 2,
+      "choice": "pass",
+      "labels": []
+    },
+    {
+      "token": "abc123",
+      "id": 9,
+      "choice": "allow",
+      "labels": []
+    }
+  ],
+  "checks": [
+    "an unpaired reader is told what to run on the computer",
+    "a paired reader says which computer it is watching",
+    "a question says what is being run, by which terminal, on which computer",
+    "an answer is sent and the panel says what was decided",
+    "two terminals asking at once are both on the board, each named",
+    "answering one of them answers that one and brings up the other",
+    "a question can be left for the terminal without deciding it",
+    "an answer the daemon no longer holds is not reported as a decision"
+  ]
+}

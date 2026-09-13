@@ -48,19 +48,15 @@ pub fn pad_cells(page: &Page) -> Vec<(String, String, Option<kobo_sdk::Glyph>)> 
     cells
 }
 
+/// What is written on a key.
+///
+/// The word and nothing else. What the key is doing is said by the picture
+/// above it, which is the one part of a pad that is large enough to read at
+/// arm's length; a status character was appended here as well, and since a pad
+/// carries a single line the newline in front of it was drawn as a box with a
+/// cross in it on every key that had ever been pressed.
 fn pad_label(key: &Key) -> String {
-    let label: String = key.label.chars().take(8).collect();
-    let status = match key.state.as_str() {
-        "running" => "…",
-        "ok" => "✓",
-        "failed" => "×",
-        _ => "",
-    };
-    if status.is_empty() {
-        label
-    } else {
-        format!("{label}\n{status}")
-    }
+    key.label.chars().take(8).collect()
 }
 
 fn pad_glyph(key: &Key) -> kobo_sdk::Glyph {

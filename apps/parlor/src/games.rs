@@ -481,6 +481,13 @@ pub struct Morris {
     pub turn: i8,
     pub placed: [u8; 2],
     pub removing: bool,
+    /// Moves since the last piece was taken off the board.
+    ///
+    /// Two players who both refuse to break a mill can shuffle along the same
+    /// two points forever, and a game that cannot end cannot be scored: the
+    /// match card said best of three while the round in front of it had no
+    /// way of finishing. Fifty is the tournament rule.
+    pub quiet: u16,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -497,6 +504,7 @@ impl Default for Morris {
             turn: 1,
             placed: [0, 0],
             removing: false,
+            quiet: 0,
         }
     }
 }
@@ -557,9 +565,14 @@ impl Morris {
                 next.board[at] = 0;
                 next.removing = false;
                 next.turn = -self.turn;
+                // Something was taken, so the shuffling counter starts again.
+                next.quiet = 0;
                 None
             }
         };
+        if !matches!(*mv, MorrisMove::Remove(_)) {
+            next.quiet = next.quiet.saturating_add(1);
+        }
         if let Some(to) = destination {
             if next.in_mill(to, self.turn) {
                 next.removing = true;
@@ -604,12 +617,20 @@ impl Game for Morris {
             return None;
         }
         if self.count(self.turn) < 3 || self.moves().is_empty() {
-            Some(if self.turn == side { -100_000 } else { 100_000 })
-        } else {
-            None
+            return Some(if self.turn == side { -100_000 } else { 100_000 });
         }
+        // Fifty moves with nothing taken is a draw, which is the rule every
+        // Morris tournament uses and the only thing that ends a game between
+        // two players who will not break their own mills.
+        if self.quiet >= QUIET_LIMIT {
+            return Some(0);
+        }
+        None
     }
 }
+
+/// How many moves without a capture end a game of Morris in a draw.
+pub const QUIET_LIMIT: u16 = 50;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Kalah {

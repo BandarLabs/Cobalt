@@ -50,7 +50,9 @@ file it could not parse.
 
 On the reader, open Sidekick and type the two things `init` printed: the
 address, then the six-character pairing code. Both are remembered; pairing is
-typed once.
+typed once. The first screen names `kobo-sidekickd init` rather than telling
+you to open something, because what has to happen is that a daemon is running
+on the computer, and that is the command that starts it.
 
 ## What the screens hold
 
@@ -58,7 +60,9 @@ Three screens after pairing, and nothing on any of them that is not needed:
 
 - **Watching** -- a splash saying questions will appear, who the reader is
   paired with, and the last answer given, so a glance says the tap counted.
-- **Asking** -- who asks, the tool, the command as a quote, and the answers.
+- **Asking** -- who asks, which terminal on which computer, the command as a
+  quote, and the answers. With one agent the tool was enough; with three of
+  them on two machines, "shell asks" is not a question anybody can answer.
   Usually Allow and Deny; a question that brought its own answers shows one
   row each, with the sentence the agent wrote underneath. Back is not an
   escape hatch here: dismissing a question sends "leave it for the

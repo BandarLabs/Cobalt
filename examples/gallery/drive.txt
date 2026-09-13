@@ -1,32 +1,63 @@
-# Every page of the component gallery, and a tab inside three of them. This is
-# the route a rendering change is diffed along, so it is deliberately wide
-# rather than deep: one screen from each family, not every screen of one.
+# Every page of the component gallery, the panels the crowded ones turn onto,
+# and the job it walks from end to end. This is the route a rendering change is
+# diffed along, so it is deliberately wide rather than deep: one screen from
+# each family, not every screen of one.
 wait-for Type and tone
 wait 900
 tap Quotes
+wait 900
+tap Marks
+wait 900
+tap-id panel-next
 wait 900
 tap Lists
 wait-for Lists, rows and tiles
 wait 900
 tap Tiles
 wait 900
-tap Covers
+tap-id panel-next
+wait 900
+tap Boards
+wait 900
+tap Icons
+wait-for Every icon the system draws
+tap-id icons-next
 wait 900
 tap Input
 wait-for Groups, fields and asking
 wait 900
 tap Fields
 wait 900
+tap-id panel-next
+wait 900
+tap Overlays
+wait 900
+tap Open a modal
+wait-for Details
+tap Close
+wait 900
 tap States
-wait-for Nothing here yet
+wait-for No books on this shelf
 wait 900
 tap Offline
 wait 900
 expect You're offline
-tap V2
-wait 500
+tap Panel
+wait 900
 tap Requests
-wait-for Work with no bytes at all
+wait-for A splash
 tap Start a request
 wait-for Request failed
-wait 1500
+wait 900
+tap Folio
+wait-for COBALT
+tap App Store
+wait-for Downloading a book
+tap Download it
+wait-for Download Mrs Dalloway?
+tap Download
+wait-for Arriving
+tap Let it finish
+wait-for Mrs Dalloway is on this device
+tap Open it
+wait 900

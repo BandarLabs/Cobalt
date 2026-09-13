@@ -46,12 +46,19 @@ fn cli_assignment_round_trips_into_the_rendered_grid() {
         assert!(rect.height >= CLARA_BW_METRICS.touch_target_minimum());
         assert_eq!(rect.width, rect.height, "{name} should be square");
     }
-    let pads = layout
+    // The two assigned pads are keys; the rest of the deck is places for one.
+    let keys = layout
         .nodes
         .iter()
         .filter(|node| matches!(node.kind, LayoutKind::Cell(_, CellStyle::Pad, _)))
         .count();
-    assert_eq!(pads, PAD_COUNT);
+    let places = layout
+        .nodes
+        .iter()
+        .filter(|node| matches!(node.kind, LayoutKind::Cell(_, CellStyle::EmptyPad, _)))
+        .count();
+    assert_eq!(keys, 2);
+    assert_eq!(keys + places, PAD_COUNT);
     let issues = screen
         .diagnostics(&CLARA_BW_METRICS, &Chrome::default())
         .issues;
@@ -74,14 +81,21 @@ fn clara_bw_portrait_grid_is_tappable() {
                 >= CLARA_BW_METRICS.touch_target_minimum()
         );
     }
-    assert_eq!(
-        layout
-            .nodes
-            .iter()
-            .filter(|node| matches!(node.kind, LayoutKind::Cell(_, CellStyle::Pad, _)))
-            .count(),
-        PAD_COUNT
-    );
+    // Two keys and thirteen places for one. A place is drawn in a hairline
+    // rather than the bezel a key gets, so a deck with three things on it
+    // does not read as a panel of twelve controls that do nothing.
+    let keys = layout
+        .nodes
+        .iter()
+        .filter(|node| matches!(node.kind, LayoutKind::Cell(_, CellStyle::Pad, _)))
+        .count();
+    let places = layout
+        .nodes
+        .iter()
+        .filter(|node| matches!(node.kind, LayoutKind::Cell(_, CellStyle::EmptyPad, _)))
+        .count();
+    assert_eq!(keys, 2);
+    assert_eq!(keys + places, PAD_COUNT);
     assert!(screen
         .diagnostics(&CLARA_BW_METRICS, &Chrome::default())
         .issues

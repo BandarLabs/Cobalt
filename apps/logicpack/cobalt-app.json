@@ -2,10 +2,10 @@
   "id": "logicpack",
   "display_name": "Logic Pack",
   "short_label": "Logic Pack",
-  "summary": "Play four touch-first pencil puzzles.",
-  "page_description": "A daily collection of familiar logic puzzles with paper-like marks and large controls.",
-  "version": "0.1.2",
-  "release_notes": "Update shared controls and page layout for Cobalt 0.3.12.",
+  "summary": "Play four familiar logic games offline.",
+  "page_description": "Twenty original offline puzzles across four logic games, with difficulty guides, separate progress and undo.",
+  "version": "0.1.5",
+  "release_notes": "Choose from 20 original puzzles with difficulty guides, separate progress and direct Kakuro number entry.",
   "glyph": "grid",
   "capabilities": []
 }

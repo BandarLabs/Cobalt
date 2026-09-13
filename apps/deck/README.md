@@ -6,9 +6,33 @@ visible when the computer is off the air.
 
 <img width="300" src="screenshots/deck.png" alt="Deck on a Clara BW showing a 3 by 5 grid of square command pads">
 
+## What the panel says
+
+The bar carries the name of the page showing, because a deck with a Build page
+and a Home page is two decks and the reader has to know which one is under
+their thumb. Under the tabs, one line says which computer this is talking to
+and whether it answered the last thing it was asked: a key that does nothing
+because the computer is asleep looks exactly like a key that does nothing
+because it has not been assigned.
+
+Fifteen places are drawn, three rows of five, because that is the shape of the
+panel. The ones nobody has assigned are drawn in a hairline rather than the
+bezel a key gets, so a deck with three things on it does not read as twelve
+controls that do nothing.
+
+A key that has run opens what it said, whether it worked or not, and the line
+under the deck says what the last one did.
+
 ## Set up
 
-Initialize Sidekick once, then assign pads with the host CLI. Those commands
+Start from a preset, or assign pads one at a time with the host CLI:
+
+```sh
+kobo deck init --preset build   # test, format, lint, build, status, pull, deploy
+kobo deck init --preset home    # music, lights, a timer, lock the screen
+```
+
+Either way the pads are yours to change. Those commands
 write `~/.config/kobo/sidekick/deck.toml` and can push the same layout into the
 simulator or reader store so Deck opens on the grid, not the pairing splash:
 

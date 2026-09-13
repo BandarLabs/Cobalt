@@ -1,9 +1,12 @@
 //! The device half of Paperterm. It renders host rows but never owns a shell.
+mod onboarding;
+mod pairing;
+
 use kobo_sdk::keyboard::{Keyboard, Layer, Pressed};
 use kobo_sdk::terminal::{TerminalKeys, Typed};
 use kobo_sdk::{
     action_id, ActionId, BannerLevel, Caret, Context, DisplayMetrics, KoboApp, Orientation, Screen,
-    ScreenBuilder, Space, StoreResult, Task, TaskId, TaskOutcome,
+    ScreenBuilder, StoreResult, Task, TaskId, TaskOutcome,
 };
 use std::collections::VecDeque;
 use std::process::ExitCode;
@@ -17,10 +20,18 @@ const MAX_REPLY_BYTES: u32 = 64 * 1024;
 const MAX_KEY_BYTES: usize = 64;
 const PAIRING: &str = "pairing";
 const REPAIR: &str = "repair";
+const PAIRING_MENU: &str = "pairing-menu";
+const RETRY_PAIRING: &str = "retry-pairing";
+const RETRY_LOAD: &str = "retry-pairing-load";
 const TOGGLE_KEYBOARD: &str = "toggle-keyboard";
-const OFF_AIR: &str = "off the air";
-const PAIRING_REFUSED: &str = "Pairing was refused — run kobo stream init.";
-const INPUT_REFUSED: &str = "Input was not accepted by your computer.";
+const OFF_AIR: &str = "Connection lost. Reconnecting.";
+const PAIRING_REFUSED: &str = "Pairing failed. Check the computer address and pairing code.";
+const INPUT_REFUSED: &str =
+    "Your computer refused the input. Check the terminal before continuing.";
+const INPUT_UNCERTAIN: &str = "Input may have reached your computer. Queued keys were discarded. Check the terminal before continuing.";
+const INPUT_BUSY: &str = "Typing paused because your computer is not keeping up. Queued keys were discarded. Check the terminal before continuing.";
+const MAX_QUEUED_KEY_BYTES: usize = 256;
+const RESUME_INPUT: &str = "resume-input";
 const KB_SHIFT: &str = "kb.shift";
 const KB_LAYER: &str = "kb.layer";
 const KB_SPACE: &str = "kb.space";
@@ -42,6 +53,13 @@ const CONTROL_KEYS: [(&str, &str, &[u8]); 9] = [
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum View {
     Opening,
+    LoadFailed,
+    PairingMenu,
+    Welcome,
+    Setup,
+    Trust,
+    Start,
+    Preview,
     Address,
     Code,
     Watching,
@@ -54,6 +72,13 @@ enum Input {
     Full,
 }
 impl Input {
+    fn label(self) -> &'static str {
+        match self {
+            Self::None => "Read only",
+            Self::Controls => "Controls",
+            Self::Full => "Keyboard",
+        }
+    }
     fn from_wire(text: &str) -> Self {
         match text {
             "controls" => Self::Controls,
@@ -61,6 +86,14 @@ impl Input {
             _ => Self::None,
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PairingRead {
+    Pending,
+    Available,
+    Failed,
+    Temporary,
 }
 
 struct Paperterm {
@@ -94,6 +127,15 @@ struct Paperterm {
     send_session: Option<u64>,
     send_queue: VecDeque<Vec<u8>>,
     keys: TerminalKeys,
+    input_notice: Option<String>,
+    form_error: Option<&'static str>,
+    pairing_read: PairingRead,
+    pairing_writing: Option<String>,
+    pairing_wanted: Option<String>,
+    pairing_saved: Option<String>,
+    pairing_save_failed: bool,
+    pairing_to_verify: bool,
+    menu_return: View,
     failure: Option<String>,
 }
 
@@ -130,14 +172,100 @@ impl Default for Paperterm {
             send_session: None,
             send_queue: VecDeque::new(),
             keys: TerminalKeys::new(),
+            input_notice: None,
+            form_error: None,
+            pairing_read: PairingRead::Pending,
+            pairing_writing: None,
+            pairing_wanted: None,
+            pairing_saved: None,
+            pairing_save_failed: false,
+            pairing_to_verify: false,
+            menu_return: View::Watching,
             failure: None,
         }
     }
 }
 
 impl Paperterm {
+    fn onboarding_action(&mut self, context: &mut Context, action: ActionId) -> bool {
+        if matches!(self.view, View::Address | View::Code) && action == action_id("setup") {
+            if self.view == View::Address {
+                self.address = self.keyboard.text().to_owned();
+            } else {
+                self.code = self.keyboard.text().to_owned();
+            }
+            self.form_error = None;
+            self.view = View::Setup;
+            self.show(context);
+            return true;
+        }
+        if self.view == View::Code && action == action_id("edit-address") {
+            self.code = self.keyboard.text().to_owned();
+            self.keyboard = Keyboard::with_text(&self.address);
+            self.form_error = None;
+            self.view = View::Address;
+            self.show(context);
+            return true;
+        }
+        if matches!(
+            self.view,
+            View::Welcome | View::Setup | View::Trust | View::Start | View::Preview
+        ) {
+            let next = if action == action_id("trust") {
+                Some(View::Trust)
+            } else if action == action_id("start") {
+                Some(View::Start)
+            } else if action == action_id("setup") {
+                Some(View::Setup)
+            } else if action == action_id("preview") {
+                Some(View::Preview)
+            } else if action == action_id("welcome") {
+                Some(View::Welcome)
+            } else if action == action_id("enter-address") {
+                Some(View::Address)
+            } else {
+                None
+            };
+            if let Some(view) = next {
+                self.form_error = None;
+                if view == View::Address {
+                    self.keyboard = Keyboard::with_text(&self.address);
+                }
+                self.view = view;
+                self.show(context);
+            }
+            return true;
+        }
+        false
+    }
     fn show(&self, context: &mut Context) {
         context.set_screen(self.screen());
+    }
+    fn connection_label(&self) -> String {
+        let mut label = self.session_label();
+        if self.pairing_save_failed || self.pairing_read == PairingRead::Temporary {
+            label.push_str(" · Not saved");
+        }
+        label
+    }
+    fn session_label(&self) -> String {
+        if self.view == View::Ended {
+            return "Session ended".into();
+        }
+        let state = if self.input_notice.is_some() {
+            "Input paused"
+        } else if self.failure.is_some() {
+            "Reconnecting"
+        } else if self.session.is_some() {
+            "Connected"
+        } else {
+            "Connecting"
+        };
+        if self.session.is_none() && self.input == Input::None {
+            state.into()
+        } else {
+            format!("{state} · {}", self.input.label())
+        }
     }
     fn screen(&self) -> Screen {
         match self.view {
@@ -145,35 +273,31 @@ impl Paperterm {
                 .top_bar("Paperterm")
                 .activity("Reading pairing", None)
                 .build(),
-            View::Address => ScreenBuilder::new("paperterm-pairing")
-                .top_bar("Paperterm")
-                .heading("Pair with your computer")
-                .text("Run kobo stream init there, then enter the address it prints.")
-                .field("address", self.keyboard.text(), "192.168.1.20:9332")
-                .spacer(Space::Small)
-                .keyboard(&self.keyboard, "Next")
-                .build(),
-            View::Code => ScreenBuilder::new("paperterm-code")
-                .top_bar("Paperterm")
-                .heading("Now the pairing code")
-                .text("Enter the six characters printed by kobo stream init.")
-                .field("code", self.keyboard.text(), "ABC123")
-                .spacer(Space::Small)
-                .keyboard(&self.keyboard, "Watch")
-                .build(),
+            View::LoadFailed => ScreenBuilder::new("paperterm-load-failed")
+                .top_bar("Paperterm").heading("Pairing could not be read")
+                .text("Your saved pairing has not been changed. Retry, or continue without saving a connection.")
+                .button(RETRY_LOAD, "Retry reading")
+                .button("temporary-pairing", "Continue without saving").build(),
+            View::PairingMenu => self.pairing_menu(),
+            View::Welcome => onboarding::welcome(self.form_error),
+            View::Setup => onboarding::setup(),
+            View::Trust => onboarding::trust(),
+            View::Start => onboarding::start(),
+            View::Preview => onboarding::preview(),
+            View::Address => onboarding::entry(false, &self.keyboard, self.form_error),
+            View::Code => onboarding::entry(true, &self.keyboard, self.form_error),
             View::Watching | View::Ended => {
                 let mut screen = ScreenBuilder::new(if self.view == View::Ended {
                     "paperterm-ended"
                 } else {
                     "paperterm-watching"
                 })
-                .top_bar(if self.view == View::Ended {
-                    "Paperterm — ended"
-                } else {
-                    "Paperterm"
-                })
-                .top_bar_action(REPAIR, "Pairing");
-                if self.view == View::Watching && self.input == Input::Full {
+                .top_bar("Paperterm")
+                .top_bar_action(PAIRING_MENU, "Pairing");
+                if self.view == View::Watching
+                    && self.input == Input::Full
+                    && self.input_notice.is_none()
+                {
                     screen = screen.top_bar_action(
                         TOGGLE_KEYBOARD,
                         if self.keyboard_open {
@@ -183,13 +307,25 @@ impl Paperterm {
                         },
                     );
                 }
-                screen = screen.terminal(self.rows.clone(), self.cursor);
+                screen = screen.secondary(self.connection_label());
                 if let Some(failure) = &self.failure {
                     screen = screen.banner(BannerLevel::Attention, failure.clone());
                 }
-                if self.view == View::Ended {
-                    screen = screen.secondary("The host held the final terminal screen.");
-                } else {
+                if let Some(notice) = &self.input_notice {
+                    screen = screen.banner(BannerLevel::Attention, notice);
+                }
+                screen = screen.terminal(self.rows.clone(), self.cursor);
+                if self.input_notice.is_some() {
+                    screen = screen.fill();
+                    screen = if self.view == View::Watching
+                        && self.session.is_some()
+                        && self.failure.is_none()
+                    {
+                        screen.button(RESUME_INPUT, "Resume typing")
+                    } else {
+                        screen.disabled_button(RESUME_INPUT, "Resume typing")
+                    };
+                } else if self.view == View::Watching {
                     screen = match self.input {
                         Input::Controls => screen.fill().grid(
                             CONTROL_COLUMNS,
@@ -208,10 +344,31 @@ impl Paperterm {
     }
 
     fn grid(&self, context: &Context) -> (u16, u16) {
-        Self::grid_for(
-            self.input,
-            self.keyboard_open,
-            &context.metrics().oriented(Orientation::Landscape),
+        if self.view == View::PairingMenu {
+            return if self.viewport.0 > 0 && self.viewport.1 > 0 {
+                self.viewport
+            } else {
+                Self::grid_for(
+                    self.input,
+                    self.keyboard_open,
+                    &context.metrics().oriented(Orientation::Portrait),
+                )
+            };
+        }
+        if self.input_notice.is_none()
+            && self.failure.is_none()
+            && !self.pairing_save_failed
+            && self.pairing_read != PairingRead::Temporary
+        {
+            return Self::grid_for(
+                self.input,
+                self.keyboard_open,
+                &context.metrics().oriented(Orientation::Portrait),
+            );
+        }
+        kobo_sdk::terminal_grid_for(
+            &self.screen(),
+            &context.metrics().oriented(Orientation::Portrait),
         )
     }
     fn grid_for(input: Input, keyboard_open: bool, metrics: &DisplayMetrics) -> (u16, u16) {
@@ -220,7 +377,7 @@ impl Paperterm {
     fn screen_for_grid(input: Input, keyboard_open: bool) -> Screen {
         let mut screen = ScreenBuilder::new("paperterm-grid")
             .top_bar("Paperterm")
-            .top_bar_action(REPAIR, "Pairing");
+            .top_bar_action(PAIRING_MENU, "Pairing");
         if input == Input::Full {
             screen = screen.top_bar_action(
                 TOGGLE_KEYBOARD,
@@ -231,7 +388,9 @@ impl Paperterm {
                 },
             );
         }
-        screen = screen.terminal(Vec::<String>::new(), None);
+        screen = screen
+            .secondary(format!("Connected · {}", input.label()))
+            .terminal(Vec::<String>::new(), None);
         match (input, keyboard_open) {
             (Input::Controls, _) => screen.fill().grid(
                 CONTROL_COLUMNS,
@@ -354,13 +513,123 @@ impl Paperterm {
     fn clear_failure(&mut self) -> bool {
         self.failure.take().is_some()
     }
-    fn save_pairing(&self, context: &mut Context) {
-        context
-            .store()
-            .save(PAIRING, format!("{}\n{}", self.address, self.code));
+    fn save_pairing(&mut self, context: &mut Context) {
+        if self.pairing_read == PairingRead::Temporary {
+            return;
+        }
+        self.pairing_wanted = Some(format!("{}\n{}", self.address, self.code));
+        self.flush_pairing(context);
+    }
+    fn flush_pairing(&mut self, context: &mut Context) {
+        if self.pairing_read != PairingRead::Available || self.pairing_writing.is_some() {
+            return;
+        }
+        let Some(value) = self.pairing_wanted.as_ref() else {
+            return;
+        };
+        if self.pairing_saved.as_ref() == Some(value) {
+            return;
+        }
+        self.pairing_save_failed = false;
+        self.pairing_writing = Some(value.clone());
+        context.store().save(PAIRING, value.clone());
+    }
+    fn pairing_menu(&self) -> Screen {
+        let message = if self.pairing_read == PairingRead::Temporary {
+            "This connection will not be remembered. Reopen Paperterm to retry reading your saved pairing."
+        } else if self.pairing_to_verify {
+            "Waiting for this computer to confirm pairing. Your saved connection has not been changed."
+        } else if self.pairing_writing.is_some() {
+            "Saving pairing…"
+        } else if self.pairing_save_failed {
+            "Pairing was not saved. Your previous pairing is unchanged. This session can continue."
+        } else {
+            "Pairing is saved for next time."
+        };
+        let mut screen = ScreenBuilder::new("paperterm-pairing-menu")
+            .top_bar("Paperterm")
+            .heading("Computer connection")
+            .text(&self.address)
+            .text(message);
+        if self.pairing_save_failed && !self.pairing_to_verify {
+            screen = screen.button(RETRY_PAIRING, "Retry saving");
+        }
+        screen
+            .button("return-session", "Return to terminal")
+            .button(REPAIR, "Change computer")
+            .build()
+    }
+    fn pairing_storage_action(&mut self, context: &mut Context, action: ActionId) -> bool {
+        if self.view == View::LoadFailed {
+            if action == action_id(RETRY_LOAD) {
+                self.pairing_read = PairingRead::Pending;
+                self.view = View::Opening;
+                context.store().load(PAIRING);
+            } else if action == action_id("temporary-pairing") {
+                self.pairing_read = PairingRead::Temporary;
+                self.view = View::Welcome;
+            } else {
+                return true;
+            }
+            self.show(context);
+            return true;
+        }
+        if action == action_id(PAIRING_MENU) && matches!(self.view, View::Watching | View::Ended) {
+            self.menu_return = self.view;
+            self.view = View::PairingMenu;
+            self.show(context);
+            return true;
+        }
+        if self.view == View::PairingMenu {
+            if action == action_id(RETRY_PAIRING)
+                && self.pairing_save_failed
+                && !self.pairing_to_verify
+            {
+                self.flush_pairing(context);
+                self.show(context);
+                return true;
+            }
+            if action == action_id("return-session") {
+                self.view = self.menu_return;
+                if self.view == View::Watching && self.session.is_some() && self.lease.is_some() {
+                    self.renegotiate(context);
+                }
+                self.show(context);
+                return true;
+            }
+        }
+        false
+    }
+    fn pairing_result(&mut self, context: &mut Context, result: &StoreResult) -> bool {
+        match result {
+            StoreResult::Saved { key } if key == PAIRING && self.pairing_writing.is_some() => {
+                self.pairing_saved = self.pairing_writing.take();
+                self.pairing_save_failed = false;
+                self.flush_pairing(context);
+            }
+            StoreResult::Denied(_) if self.pairing_read == PairingRead::Pending => {
+                self.pairing_read = PairingRead::Failed;
+                self.view = View::LoadFailed;
+            }
+            StoreResult::Denied(_) if self.pairing_writing.is_some() => {
+                self.pairing_writing = None;
+                self.pairing_save_failed = true;
+            }
+            _ => return false,
+        }
+        self.show(context);
+        true
     }
     fn send(&mut self, context: &mut Context, bytes: &[u8]) {
-        if self.session.is_none() {
+        if self.session.is_none() || self.input_notice.is_some() || self.input == Input::None {
+            return;
+        }
+        if self.input == Input::Controls && !CONTROL_KEYS.iter().any(|(_, _, key)| *key == bytes) {
+            return;
+        }
+        if self.send_queue.iter().map(Vec::len).sum::<usize>() + bytes.len() > MAX_QUEUED_KEY_BYTES
+        {
+            self.pause_input(context, INPUT_BUSY);
             return;
         }
         if bytes.is_empty() || bytes.len() > MAX_KEY_BYTES {
@@ -375,7 +644,7 @@ impl Paperterm {
     fn flush_send(&mut self, context: &mut Context) {
         let Some(session) = self.session else { return };
         let Some(lease) = self.lease else { return };
-        if self.send.is_some() || self.send_queue.is_empty() {
+        if self.send.is_some() || self.send_queue.is_empty() || self.input_notice.is_some() {
             return;
         }
         let mut actions = Vec::new();
@@ -426,18 +695,25 @@ impl Paperterm {
         let Some(pressed) = self.keyboard.press(action) else {
             return false;
         };
+        self.form_error = None;
         if pressed == Pressed::Submitted {
-            let text = self.keyboard.take();
+            let text = self.keyboard.text();
             if self.view == View::Address {
-                self.address = text;
-                self.view = View::Code;
-            } else {
-                self.code = text;
-                if self.code.len() == 6 {
-                    self.save_pairing(context);
-                    self.view = View::Watching;
-                    self.hello(context);
+                if let Some(address) = pairing::address(text) {
+                    self.address = address;
+                    self.keyboard = Keyboard::with_text(&self.code);
+                    self.view = View::Code;
+                } else {
+                    self.form_error = Some("Use a name or IP address, for example laptop:9332.");
                 }
+            } else if let Some(code) = pairing::code(text) {
+                self.code = code;
+                self.keyboard = Keyboard::new();
+                self.pairing_to_verify = true;
+                self.view = View::Watching;
+                self.hello(context);
+            } else {
+                self.form_error = Some("Enter the six letters and numbers from your computer.");
             }
         }
         self.show(context);
@@ -479,6 +755,9 @@ impl Paperterm {
         true
     }
     fn parse_screen(&mut self, bytes: &[u8]) -> Option<bool> {
+        if bytes.len() > MAX_REPLY_BYTES as usize {
+            return None;
+        }
         let Ok(value) = kobo_json::parse(std::str::from_utf8(bytes).unwrap_or("")) else {
             return None;
         };
@@ -487,6 +766,19 @@ impl Paperterm {
             .and_then(kobo_json::Value::as_i64)
             .and_then(|value| u64::try_from(value).ok())?;
         let rows = value.get("rows").and_then(kobo_json::Value::as_array)?;
+        // Validate the whole delta before changing retained output. In particular,
+        // a tiny reply with a huge row index must never cause a huge allocation.
+        if sequence < self.sequence
+            || rows.len() > 64
+            || rows.iter().any(|row| {
+                let y = row.get("y").and_then(kobo_json::Value::as_i64);
+                let cells = row.get("cells").and_then(kobo_json::Value::as_str);
+                !y.is_some_and(|y| (0..64).contains(&y))
+                    || cells.is_none_or(|cells| cells.chars().count() > 640)
+            })
+        {
+            return None;
+        }
         let mut changed = false;
         for row in rows {
             let (Some(y), Some(cells)) = (
@@ -536,6 +828,9 @@ impl Paperterm {
         Some(changed)
     }
     fn disconnect(&mut self, context: &mut Context, message: &str) {
+        if self.send.is_some() || !self.send_queue.is_empty() {
+            self.input_notice = Some(INPUT_UNCERTAIN.to_owned());
+        }
         self.clear_send(context);
         self.session = None;
         self.lease = None;
@@ -586,12 +881,17 @@ impl Paperterm {
                 let previous_keyboard_open = self.keyboard_open;
                 let previous_session = self.session;
                 if self.parse_hello(&bytes) {
+                    if self.pairing_to_verify {
+                        self.pairing_to_verify = false;
+                        self.save_pairing(context);
+                    }
                     if self.session != previous_session {
                         self.clear_send(context);
                     }
                     let repaint = self.clear_failure()
                         || self.input != previous_input
-                        || self.keyboard_open != previous_keyboard_open;
+                        || self.keyboard_open != previous_keyboard_open
+                        || self.session != previous_session;
                     if repaint {
                         self.show(context);
                     }
@@ -625,6 +925,12 @@ impl Paperterm {
                     if repaint {
                         self.show(context);
                     }
+                } else {
+                    self.disconnect(
+                        context,
+                        "The computer sent an unreadable screen. Reconnecting.",
+                    );
+                    return;
                 }
                 if self.view != View::Ended {
                     self.poll(context);
@@ -657,11 +963,33 @@ impl Paperterm {
         if !current {
             return;
         }
-        if matches!(outcome, TaskOutcome::Completed(_)) {
+        let accepted = match outcome {
+            TaskOutcome::Completed(bytes) => std::str::from_utf8(bytes)
+                .ok()
+                .and_then(|text| kobo_json::parse(text).ok())
+                .and_then(|value| value.get("accepted").and_then(kobo_json::Value::as_bool)),
+            _ => None,
+        };
+        if accepted == Some(true) {
             self.flush_send(context);
-        } else if self.set_failure(INPUT_REFUSED) {
-            self.show(context);
+        } else {
+            self.pause_input(
+                context,
+                if accepted == Some(false) {
+                    INPUT_REFUSED
+                } else {
+                    INPUT_UNCERTAIN
+                },
+            );
         }
+    }
+    fn pause_input(&mut self, context: &mut Context, message: &str) {
+        self.clear_send(context);
+        self.input_notice = Some(message.to_owned());
+        if self.session.is_some() && self.lease.is_some() {
+            self.renegotiate(context);
+        }
+        self.show(context);
     }
 }
 
@@ -731,37 +1059,64 @@ fn paperterm_terminal_keys(screen: ScreenBuilder, keys: &TerminalKeys) -> Screen
 
 impl KoboApp for Paperterm {
     fn on_start(&mut self, context: &mut Context) {
-        context.set_orientation(Orientation::Landscape);
+        context.set_orientation(Orientation::Portrait);
         context.store().load(PAIRING);
         self.show(context);
     }
     fn on_store(&mut self, context: &mut Context, result: StoreResult) {
+        if self.pairing_result(context, &result) {
+            return;
+        }
         let StoreResult::Loaded { key, value } = result else {
             return;
         };
-        if key != PAIRING {
+        if key != PAIRING || self.pairing_read != PairingRead::Pending {
             return;
         }
+        self.pairing_read = PairingRead::Available;
+        self.pairing_saved = value
+            .as_deref()
+            .and_then(|bytes| std::str::from_utf8(bytes).ok())
+            .map(str::to_owned);
         if let Some((address, code)) = value
             .as_deref()
             .and_then(|bytes| std::str::from_utf8(bytes).ok())
             .and_then(|text| text.split_once('\n'))
+            .and_then(|(address, code)| Some((pairing::address(address)?, pairing::code(code)?)))
         {
-            address.trim().clone_into(&mut self.address);
-            code.trim().clone_into(&mut self.code);
+            self.address = address;
+            self.code = code;
             self.view = View::Watching;
             self.keyboard_open = false;
             self.hello(context);
         } else {
-            self.view = View::Address;
+            self.view = View::Welcome;
+            if value.is_some() {
+                self.form_error = Some("Saved pairing could not be read. You can enter it again.");
+            }
         }
         self.show(context);
     }
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
+        if self.pairing_storage_action(context, action) {
+            return;
+        }
+        if self.onboarding_action(context, action) {
+            return;
+        }
         if matches!(self.view, View::Address | View::Code) && self.typed(context, action) {
             return;
         }
+        if action == action_id(RESUME_INPUT) && self.input_notice.is_some() {
+            if self.view == View::Watching && self.session.is_some() && self.failure.is_none() {
+                self.input_notice = None;
+                self.renegotiate(context);
+                self.show(context);
+            }
+            return;
+        }
         if action == action_id(REPAIR) {
+            self.pairing_to_verify = false;
             self.pairing_generation = self.pairing_generation.saturating_add(1);
             self.grid_generation = 0;
             self.lease = None;
@@ -778,6 +1133,8 @@ impl KoboApp for Paperterm {
                 context.cancel(task);
             }
             self.clear_send(context);
+            self.input_notice = None;
+            self.form_error = None;
             self.hello_grid = None;
             self.keyboard = Keyboard::with_text(&self.address);
             self.keyboard_open = false;
@@ -958,6 +1315,308 @@ mod tests {
     }
 
     #[test]
+    fn first_run_preview_and_setup_have_no_network_or_save_effects() {
+        let mut app = Paperterm::default();
+        let mut context = Context::default();
+        app.on_store(
+            &mut context,
+            StoreResult::Loaded {
+                key: PAIRING.into(),
+                value: None,
+            },
+        );
+        assert_eq!(app.view, View::Welcome);
+        app.on_action(&mut context, action_id("preview"));
+        assert_eq!(app.view, View::Preview);
+        app.on_action(&mut context, action_id("kb.r0c0"));
+        app.on_foreground(&mut context);
+        assert_eq!(app.view, View::Preview);
+        app.on_action(&mut context, action_id("welcome"));
+        app.on_action(&mut context, action_id("setup"));
+        assert_eq!(app.view, View::Setup);
+        app.on_action(&mut context, action_id("trust"));
+        assert_eq!(app.view, View::Trust);
+        app.on_action(&mut context, action_id("start"));
+        assert_eq!(app.view, View::Start);
+        app.on_action(&mut context, action_id("enter-address"));
+        assert_eq!(app.view, View::Address);
+        assert!(!context.commands().iter().any(|command| matches!(
+            command,
+            Command::Spawn { .. } | Command::Store(StoreRequest::Save { .. })
+        )));
+    }
+    #[test]
+    fn entry_and_empty_terminal_screens_fit_all_supported_profiles_and_text_sizes() {
+        for profile in kobo_profile::SUPPORTED_PROFILES {
+            for text_scale in kobo_ui::TextScale::STEPS {
+                let metrics = DisplayMetrics {
+                    width: i32::try_from(profile.width).expect("profile width"),
+                    height: i32::try_from(profile.height).expect("profile height"),
+                    pixels_per_inch: i32::from(profile.pixels_per_inch),
+                    text_scale,
+                };
+                let _runner = kobo_sdk::AppRunner::with_metrics(Paperterm::default(), metrics);
+                for view in [
+                    View::Welcome,
+                    View::Setup,
+                    View::Trust,
+                    View::Start,
+                    View::Preview,
+                    View::Address,
+                    View::Code,
+                    View::Watching,
+                ] {
+                    for form_error in [
+                        None,
+                        Some("Use a name or IP address, for example laptop:9332."),
+                        Some("Enter the six letters and numbers from your computer."),
+                    ] {
+                        let app = Paperterm {
+                            view,
+                            form_error,
+                            ..Paperterm::default()
+                        };
+                        let diagnostics =
+                            app.screen().diagnostics(&metrics, &Chrome::measuring(true));
+                        assert!(
+                            diagnostics.issues.is_empty(),
+                            "{} {text_scale:?} {view:?}: {:?}",
+                            profile.id,
+                            diagnostics.issues
+                        );
+                    }
+                }
+            }
+        }
+    }
+    #[test]
+    fn pairing_errors_preserve_typed_values_and_do_not_start_requests() {
+        let mut app = Paperterm {
+            view: View::Address,
+            keyboard: Keyboard::with_text("http://bad/path"),
+            ..Paperterm::default()
+        };
+        let mut context = Context::default();
+        app.on_action(&mut context, action_id(KB_ENTER));
+        assert_eq!(app.view, View::Address);
+        assert_eq!(app.keyboard.text(), "http://bad/path");
+        assert!(app.form_error.is_some());
+        app.keyboard = Keyboard::with_text("Laptop");
+        app.on_action(&mut context, action_id(KB_ENTER));
+        assert_eq!(app.view, View::Code);
+        assert_eq!(app.address, "laptop:9332");
+        app.keyboard = Keyboard::with_text("ab&123");
+        app.on_action(&mut context, action_id(KB_ENTER));
+        assert_eq!(app.view, View::Code);
+        assert_eq!(app.keyboard.text(), "ab&123");
+        assert!(!context.commands().iter().any(|command| matches!(
+            command,
+            Command::Spawn { .. } | Command::Store(StoreRequest::Save { .. })
+        )));
+        app.on_action(&mut context, action_id("edit-address"));
+        assert_eq!(app.view, View::Address);
+        assert_eq!(app.keyboard.text(), "laptop:9332");
+        app.on_action(&mut context, action_id(KB_ENTER));
+        assert_eq!(app.view, View::Code);
+        assert_eq!(app.keyboard.text(), "ab&123");
+        app.keyboard = Keyboard::with_text("ABC234");
+        app.on_action(&mut context, action_id(KB_ENTER));
+        assert_eq!(app.code, "abc234");
+        assert_eq!(app.view, View::Watching);
+        assert!(app.form_error.is_none());
+    }
+    #[test]
+    fn unreadable_saved_pairing_is_preserved_without_network_requests() {
+        let mut app = Paperterm::default();
+        let mut context = Context::default();
+        app.on_store(
+            &mut context,
+            StoreResult::Loaded {
+                key: PAIRING.into(),
+                value: Some(b"host/path\nabc123".to_vec()),
+            },
+        );
+        assert_eq!(app.view, View::Welcome);
+        assert!(app.form_error.is_some());
+        assert!(!context.commands().iter().any(|command| matches!(
+            command,
+            Command::Spawn { .. } | Command::Store(StoreRequest::Save { .. })
+        )));
+    }
+    #[test]
+    fn connection_labels_distinguish_modes_and_recovery() {
+        let mut app = Paperterm {
+            view: View::Watching,
+            ..Paperterm::default()
+        };
+        assert_eq!(app.connection_label(), "Connecting");
+        app.session = Some(1);
+        for (input, label) in [
+            (Input::None, "Read only"),
+            (Input::Controls, "Controls"),
+            (Input::Full, "Keyboard"),
+        ] {
+            app.input = input;
+            assert_eq!(app.connection_label(), format!("Connected · {label}"));
+        }
+        app.failure = Some(OFF_AIR.into());
+        assert_eq!(app.connection_label(), "Reconnecting · Keyboard");
+        app.input_notice = Some(INPUT_UNCERTAIN.into());
+        assert_eq!(app.connection_label(), "Input paused · Keyboard");
+        app.view = View::Ended;
+        assert_eq!(app.connection_label(), "Session ended");
+    }
+    #[test]
+    fn failed_pairing_read_can_retry_or_continue_without_overwriting_storage() {
+        for temporary in [false, true] {
+            let mut app = Paperterm::default();
+            let mut context = Context::default();
+            app.on_store(
+                &mut context,
+                StoreResult::Denied(kobo_sdk::StoreError::Unwritable),
+            );
+            assert_eq!(app.view, View::LoadFailed);
+            if temporary {
+                app.on_action(&mut context, action_id("temporary-pairing"));
+                assert_eq!(app.view, View::Welcome);
+                app.address = "host:9332".into();
+                app.code = "abc234".into();
+                app.save_pairing(&mut context);
+                assert_eq!(app.pairing_read, PairingRead::Temporary);
+                assert!(!context
+                    .commands()
+                    .iter()
+                    .any(|command| matches!(command, Command::Store(StoreRequest::Save { .. }))));
+            } else {
+                app.on_action(&mut context, action_id(RETRY_LOAD));
+                assert_eq!(app.view, View::Opening);
+                app.on_store(
+                    &mut context,
+                    StoreResult::Loaded {
+                        key: PAIRING.into(),
+                        value: None,
+                    },
+                );
+                assert_eq!(app.view, View::Welcome);
+            }
+        }
+    }
+    #[test]
+    fn pairing_writes_are_serialized_and_only_acknowledge_their_own_snapshot() {
+        let mut app = Paperterm {
+            pairing_read: PairingRead::Available,
+            address: "first:9332".into(),
+            code: "abc234".into(),
+            ..Paperterm::default()
+        };
+        let mut context = Context::default();
+        app.save_pairing(&mut context);
+        app.address = "second:9332".into();
+        app.save_pairing(&mut context);
+        assert_eq!(app.pairing_writing.as_deref(), Some("first:9332\nabc234"));
+        app.on_store(
+            &mut context,
+            StoreResult::Saved {
+                key: PAIRING.into(),
+            },
+        );
+        assert_eq!(app.pairing_saved.as_deref(), Some("first:9332\nabc234"));
+        assert_eq!(app.pairing_writing.as_deref(), Some("second:9332\nabc234"));
+        app.on_store(
+            &mut context,
+            StoreResult::Denied(kobo_sdk::StoreError::Unwritable),
+        );
+        assert!(app.pairing_save_failed);
+        assert_eq!(app.pairing_saved.as_deref(), Some("first:9332\nabc234"));
+        app.view = View::PairingMenu;
+        app.viewport = (75, 25);
+        assert_eq!(
+            app.grid(&context),
+            (75, 25),
+            "menus must retain a valid host grid"
+        );
+        app.on_action(&mut context, action_id(RETRY_PAIRING));
+        assert_eq!(app.pairing_writing.as_deref(), Some("second:9332\nabc234"));
+        app.on_store(
+            &mut context,
+            StoreResult::Saved {
+                key: PAIRING.into(),
+            },
+        );
+        assert_eq!(app.pairing_saved.as_deref(), Some("second:9332\nabc234"));
+        assert!(app.pairing_writing.is_none());
+        assert!(!app.pairing_save_failed);
+    }
+    #[test]
+    fn pairing_storage_recovery_screens_fit_all_text_sizes() {
+        for text_scale in kobo_ui::TextScale::STEPS {
+            let metrics = DisplayMetrics {
+                text_scale,
+                ..CLARA_BW_METRICS
+            };
+            let _runner = kobo_sdk::AppRunner::with_metrics(Paperterm::default(), metrics);
+            for view in [View::LoadFailed, View::PairingMenu, View::Watching] {
+                let app = Paperterm {
+                    view,
+                    pairing_read: PairingRead::Available,
+                    address: "laptop.local:9332".into(),
+                    pairing_save_failed: true,
+                    session: Some(1),
+                    input: Input::Full,
+                    keyboard_open: true,
+                    rows: vec!["terminal".into(); 64],
+                    ..Paperterm::default()
+                };
+                let diagnostic = app.screen().diagnostics(&metrics, &Chrome::measuring(true));
+                assert!(
+                    diagnostic.issues.is_empty(),
+                    "{view:?} {text_scale:?}: {:?}",
+                    diagnostic.issues
+                );
+            }
+        }
+    }
+    #[test]
+    fn new_pairing_is_saved_only_after_host_verification_and_not_retried_by_resize() {
+        let old = "old:9332\nabc234";
+        let mut app = Paperterm {
+            view: View::Watching,
+            address: "new:9332".into(),
+            code: "def567".into(),
+            pairing_saved: Some(old.into()),
+            pairing_read: PairingRead::Available,
+            pairing_to_verify: true,
+            ..Paperterm::default()
+        };
+        let mut context = Context::default();
+        app.handle_hello(
+            &mut context,
+            TaskOutcome::Failed(kobo_sdk::TaskError::Unreachable),
+        );
+        assert_eq!(app.pairing_saved.as_deref(), Some(old));
+        assert!(app.pairing_writing.is_none());
+        assert!(app.pairing_to_verify);
+        app.handle_hello(
+            &mut context,
+            TaskOutcome::Completed(br#"{"session":1,"input":"full"}"#.to_vec()),
+        );
+        assert_eq!(app.pairing_writing.as_deref(), Some("new:9332\ndef567"));
+        app.on_store(
+            &mut context,
+            StoreResult::Denied(kobo_sdk::StoreError::Unwritable),
+        );
+        app.handle_hello(
+            &mut context,
+            TaskOutcome::Completed(br#"{"session":1,"input":"full"}"#.to_vec()),
+        );
+        assert!(
+            app.pairing_writing.is_none(),
+            "a resize must not retry a failed save"
+        );
+        assert!(app.pairing_save_failed);
+        assert_eq!(app.pairing_saved.as_deref(), Some(old));
+    }
+    #[test]
     fn paired_start_measures_grid_and_asks_the_host() {
         let mut app = Paperterm::default();
         let mut context = Context::default();
@@ -1021,27 +1680,39 @@ mod tests {
     #[test]
     fn every_profile_negotiates_host_valid_hidden_controls_and_keyboard_grids() {
         for profile in kobo_profile::SUPPORTED_PROFILES {
-            let portrait = DisplayMetrics {
-                width: i32::try_from(profile.width).expect("profile width"),
-                height: i32::try_from(profile.height).expect("profile height"),
-                pixels_per_inch: i32::from(profile.pixels_per_inch),
-                text_scale: kobo_ui::TextScale::Default,
-            };
-            let metrics = portrait.oriented(Orientation::Landscape);
-            let hidden = Paperterm::grid_for(Input::Full, false, &metrics);
-            let controls = Paperterm::grid_for(Input::Controls, false, &metrics);
-            let open = Paperterm::grid_for(Input::Full, true, &metrics);
-            for (state, grid) in [
-                ("initial", Paperterm::grid_for(Input::None, false, &metrics)),
-                ("hidden", hidden),
-                ("controls", controls),
-                ("open", open),
-            ] {
-                assert_host_valid(grid, &format!("{} {state}", profile.id));
+            for text_scale in kobo_ui::TextScale::STEPS {
+                let metrics = DisplayMetrics {
+                    width: i32::try_from(profile.width).expect("profile width"),
+                    height: i32::try_from(profile.height).expect("profile height"),
+                    pixels_per_inch: i32::from(profile.pixels_per_inch),
+                    text_scale,
+                }
+                .oriented(Orientation::Portrait);
+                // Use the shipped fonts, not bitmap fallback geometry.
+                let _runner = kobo_sdk::AppRunner::with_metrics(Paperterm::default(), metrics);
+                let hidden = Paperterm::grid_for(Input::Full, false, &metrics);
+                let controls = Paperterm::grid_for(Input::Controls, false, &metrics);
+                let open = Paperterm::grid_for(Input::Full, true, &metrics);
+                for (state, grid) in [
+                    ("initial", Paperterm::grid_for(Input::None, false, &metrics)),
+                    ("hidden", hidden),
+                    ("controls", controls),
+                    ("open", open),
+                ] {
+                    assert_host_valid(grid, &format!("{} {text_scale:?} {state}", profile.id));
+                }
+                assert_eq!(hidden.0, open.0, "{} columns", profile.id);
+                // Large panels may reach the 64-row protocol bound in either state.
+                assert!(hidden.1 >= open.1, "{} keyboard rows", profile.id);
+                assert!(hidden.1 >= controls.1, "{} control rows", profile.id);
+                if profile.id == "clara-bw-391" && text_scale == kobo_ui::TextScale::Default {
+                    assert!(
+                        (70..=80).contains(&hidden.0),
+                        "portrait terminal density: {hidden:?}"
+                    );
+                    assert!(hidden.1 > open.1);
+                }
             }
-            assert_eq!(hidden.0, open.0, "{} columns", profile.id);
-            assert!(hidden.1 > open.1, "{} keyboard rows", profile.id);
-            assert!(hidden.1 > controls.1, "{} control rows", profile.id);
         }
     }
     #[test]
@@ -1263,9 +1934,17 @@ mod tests {
         let first = app.send.expect("first key post");
         assert_eq!(app.send_queue.len(), 21);
 
-        app.on_task(&mut context, first, TaskOutcome::Completed(Vec::new()));
+        app.on_task(
+            &mut context,
+            first,
+            TaskOutcome::Completed(br#"{"accepted":true}"#.to_vec()),
+        );
         let second = app.send.expect("whole-action queued batch");
-        app.on_task(&mut context, second, TaskOutcome::Completed(Vec::new()));
+        app.on_task(
+            &mut context,
+            second,
+            TaskOutcome::Completed(br#"{"accepted":true}"#.to_vec()),
+        );
 
         let payloads = posted_key_payloads(&context);
         assert_eq!(
@@ -1295,9 +1974,17 @@ mod tests {
         for action in [b"\x1b[A".as_slice(), "界".as_bytes(), b"\r".as_slice()] {
             app.send(&mut context, action);
         }
-        app.on_task(&mut context, first, TaskOutcome::Completed(Vec::new()));
+        app.on_task(
+            &mut context,
+            first,
+            TaskOutcome::Completed(br#"{"accepted":true}"#.to_vec()),
+        );
         let second = app.send.expect("mixed action batch");
-        app.on_task(&mut context, second, TaskOutcome::Completed(Vec::new()));
+        app.on_task(
+            &mut context,
+            second,
+            TaskOutcome::Completed(br#"{"accepted":true}"#.to_vec()),
+        );
         assert_eq!(
             posted_key_payloads(&context),
             vec![base64(b"x"), base64(b"\x1b[A\xe7\x95\x8c\r")]
@@ -1305,7 +1992,44 @@ mod tests {
     }
 
     #[test]
-    fn failed_key_post_is_visible_and_keeps_later_keys_queued() {
+    fn uncertain_key_post_discards_queue_and_requires_explicit_resume() {
+        for outcome in [
+            TaskOutcome::Failed(kobo_sdk::TaskError::Unreachable),
+            TaskOutcome::Completed(Vec::new()),
+            TaskOutcome::Completed(br#"{"accepted":false}"#.to_vec()),
+        ] {
+            let mut app = Paperterm {
+                view: View::Watching,
+                input: Input::Full,
+                session: Some(41),
+                lease: Some(1),
+                ..Paperterm::default()
+            };
+            let mut context = Context::default();
+            app.send(&mut context, b"a");
+            let first = app.send.unwrap();
+            app.send(&mut context, b"b");
+            app.on_task(&mut context, first, outcome);
+            assert!(app.input_notice.is_some());
+            assert!(app.send_queue.is_empty());
+            app.send(&mut context, b"c");
+            assert!(app.send.is_none());
+            assert_eq!(posted_key_payloads(&context), vec![base64(b"a")]);
+            app.clear_failure();
+            assert!(
+                app.input_notice.is_some(),
+                "successful polling must not resume input"
+            );
+            app.on_action(&mut context, action_id(RESUME_INPUT));
+            app.send(&mut context, b"d");
+            assert_eq!(
+                posted_key_payloads(&context),
+                vec![base64(b"a"), base64(b"d")]
+            );
+        }
+    }
+    #[test]
+    fn stalled_input_is_bounded_and_read_only_sessions_cannot_send() {
         let mut app = Paperterm {
             view: View::Watching,
             input: Input::Full,
@@ -1314,22 +2038,62 @@ mod tests {
             ..Paperterm::default()
         };
         let mut context = Context::default();
-        app.send(&mut context, b"a");
-        let first = app.send.expect("active key post");
-        app.send(&mut context, b"b");
-        app.on_task(
-            &mut context,
-            first,
-            TaskOutcome::Failed(kobo_sdk::TaskError::Unreachable),
-        );
-        assert_eq!(app.failure.as_deref(), Some(INPUT_REFUSED));
-        assert_eq!(app.send_queue, VecDeque::from([b"b".to_vec()]));
-
-        app.send(&mut context, b"c");
-        assert!(app.send.is_some());
-        assert_eq!(posted_key_payloads(&context).last(), Some(&base64(b"bc")));
+        for _ in 0..300 {
+            app.send(&mut context, b"x");
+        }
+        assert_eq!(app.input_notice.as_deref(), Some(INPUT_BUSY));
+        assert!(app.send_queue.is_empty());
+        assert_eq!(posted_key_payloads(&context).len(), 1);
+        app.input_notice = None;
+        app.input = Input::None;
+        app.send(&mut context, b"x");
+        assert_eq!(posted_key_payloads(&context).len(), 1);
     }
-
+    #[test]
+    fn input_recovery_keeps_the_resume_action_visible_at_every_text_size() {
+        for text_scale in kobo_ui::TextScale::STEPS {
+            let metrics = DisplayMetrics {
+                text_scale,
+                ..CLARA_BW_METRICS
+            };
+            let _runner = kobo_sdk::AppRunner::with_metrics(Paperterm::default(), metrics);
+            let app = Paperterm {
+                view: View::Watching,
+                input: Input::Full,
+                keyboard_open: true,
+                session: Some(41),
+                lease: Some(1),
+                rows: vec!["terminal".into(); 64],
+                input_notice: Some(INPUT_UNCERTAIN.into()),
+                ..Paperterm::default()
+            };
+            let screen = app.screen();
+            let chrome = Chrome::measuring(true);
+            assert!(
+                screen.diagnostics(&metrics, &chrome).issues.is_empty(),
+                "{text_scale:?}"
+            );
+            let layout = screen.layout_with(&metrics, &chrome);
+            assert!(layout.rect_of_action(action_id(RESUME_INPUT)).is_some());
+            assert!(layout.rect_of_action(action_id("kb.r0c0")).is_none());
+        }
+    }
+    #[test]
+    fn malformed_terminal_delta_cannot_allocate_or_partially_replace_rows() {
+        let mut app = Paperterm {
+            rows: vec!["retained".into()],
+            ..Paperterm::default()
+        };
+        for bytes in [
+            br#"{"seq":1,"rows":[{"y":0,"cells":"changed"},{"y":999999999,"cells":"x"}]}"#
+                .as_slice(),
+            br#"{"seq":1,"rows":[{"y":-1,"cells":"x"}]}"#.as_slice(),
+        ] {
+            assert_eq!(app.parse_screen(bytes), None);
+            assert_eq!(app.rows, ["retained"]);
+            assert_eq!(app.sequence, 0);
+        }
+    }
     #[test]
     fn session_change_cancels_active_send_and_discards_queued_old_input() {
         let mut app = Paperterm {
@@ -1355,7 +2119,11 @@ mod tests {
         assert!(app.send_queue.is_empty());
         assert!(context.commands().contains(&Command::Cancel(old_send)));
 
-        app.on_task(&mut context, old_send, TaskOutcome::Completed(Vec::new()));
+        app.on_task(
+            &mut context,
+            old_send,
+            TaskOutcome::Completed(br#"{"accepted":true}"#.to_vec()),
+        );
         assert!(app.send.is_none());
         app.send(&mut context, b"new");
         let latest_body = context
@@ -1386,7 +2154,7 @@ mod tests {
         let screen = app.screen();
         assert!(screen
             .layout_with(&CLARA_BW_METRICS, &Chrome::default())
-            .rect_of_action(action_id(REPAIR))
+            .rect_of_action(action_id(PAIRING_MENU))
             .is_some());
         assert!(screen
             .diagnostics(&CLARA_BW_METRICS, &Chrome::default())
@@ -1395,12 +2163,13 @@ mod tests {
     }
     #[test]
     fn pairing_save_is_app_scoped() {
-        let app = Paperterm {
+        let mut app = Paperterm {
             address: "host:9332".to_owned(),
             code: "abc123".to_owned(),
             ..Paperterm::default()
         };
         let mut context = Context::default();
+        app.pairing_read = PairingRead::Available;
         app.save_pairing(&mut context);
         assert!(
             matches!(context.commands().first(), Some(Command::Store(StoreRequest::Save { key, .. })) if key == PAIRING)
@@ -1434,7 +2203,11 @@ mod tests {
             1
         );
         let nap = app.nap.expect("retry sleep");
-        app.on_task(&mut context, nap, TaskOutcome::Completed(Vec::new()));
+        app.on_task(
+            &mut context,
+            nap,
+            TaskOutcome::Completed(br#"{"accepted":true}"#.to_vec()),
+        );
         assert!(context.commands().iter().any(
             |command| matches!(command, Command::Spawn { work: Task::Fetch { url, .. }, .. } if url.contains("/lease?"))
         ));
@@ -1468,7 +2241,11 @@ mod tests {
         assert_eq!(app.failure.as_deref(), Some(OFF_AIR));
 
         let nap = app.nap.expect("retry sleep");
-        app.on_task(&mut context, nap, TaskOutcome::Completed(Vec::new()));
+        app.on_task(
+            &mut context,
+            nap,
+            TaskOutcome::Completed(br#"{"accepted":true}"#.to_vec()),
+        );
         let lease_task = app.lease_task.expect("reconnect lease");
         app.on_task(
             &mut context,
@@ -1486,6 +2263,15 @@ mod tests {
         assert_eq!(app.session, Some(5));
         assert_eq!(app.sequence, 0);
         assert_eq!(app.failure, None);
+        // Removing the reconnect banner returns its space to the terminal.
+        let resize = app.hello.expect("grid restored after reconnect banner");
+        // Runtime callbacks get a fresh context with completed work released.
+        let mut context = Context::default();
+        app.on_task(
+            &mut context,
+            resize,
+            TaskOutcome::Completed(br#"{"session":5,"input":"full"}"#.to_vec()),
+        );
         assert!(app.poll.is_some());
     }
 
@@ -1533,7 +2319,11 @@ mod tests {
             TaskId(9),
             TaskOutcome::Completed(br#"{"session":99,"input":"full"}"#.to_vec()),
         );
-        app.on_task(&mut context, TaskId(11), TaskOutcome::Completed(Vec::new()));
+        app.on_task(
+            &mut context,
+            TaskId(11),
+            TaskOutcome::Completed(br#"{"accepted":true}"#.to_vec()),
+        );
         assert_eq!(app.lease_task, Some(lease_task));
         assert_eq!(app.session, None);
         assert_eq!(app.address, "new-host:9332");
@@ -1734,13 +2524,13 @@ mod tests {
     }
 
     #[test]
-    fn paperterm_requests_landscape_before_its_first_screen() {
+    fn paperterm_requests_portrait_before_its_first_screen() {
         let mut app = Paperterm::default();
         let mut context = Context::default();
         app.on_start(&mut context);
         assert_eq!(
             context.commands().first(),
-            Some(&Command::SetOrientation(Orientation::Landscape))
+            Some(&Command::SetOrientation(Orientation::Portrait))
         );
     }
 

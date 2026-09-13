@@ -1,0 +1,182 @@
+{
+  "app": "crossword",
+  "fonts": [
+    {
+      "role": "interface",
+      "source": "AtkinsonHyperlegible-Regular.ttf"
+    },
+    {
+      "role": "display-title",
+      "source": "AtkinsonHyperlegible-Bold.ttf"
+    },
+    {
+      "role": "display-heading",
+      "source": "AtkinsonHyperlegible-Bold.ttf"
+    },
+    {
+      "role": "display-bold",
+      "source": "AtkinsonHyperlegible-Bold.ttf"
+    },
+    {
+      "role": "reading",
+      "source": "AtkinsonHyperlegible-Regular.ttf"
+    },
+    {
+      "role": "mono",
+      "source": "DejaVuSansMono.ttf"
+    }
+  ],
+  "frame": {
+    "colourAppearance": "luminance",
+    "format": "grey8",
+    "sha256": "3b389048da0791103195f7e30652a3476c2d5bf73d9804b78f7f9a5e5c35eeb2",
+    "view": "ideal"
+  },
+  "interfaceScalePercent": 140,
+  "mode": "single-app",
+  "orientation": "portrait",
+  "paints": "10",
+  "publisherFontHandle": null,
+  "readingScalePercent": 100,
+  "runtimeVersion": "0.3.12",
+  "schema": "cobalt.simulator-capture",
+  "simulation": {
+    "appStore": {
+      "mode": "catalog-preview",
+      "signedTransactions": false
+    },
+    "backends": [
+      "network",
+      "battery-read",
+      "frontlight-control",
+      "wifi-control",
+      "library",
+      "cover-sensor"
+    ],
+    "clock": {
+      "date": "2026-09-08",
+      "mode": "manual",
+      "monotonicMillis": "0",
+      "unixMillis": "1788850860000",
+      "utcOffsetMinutes": 0
+    },
+    "dirtyPixelsSinceClean": 4638334,
+    "hardware": {
+      "batteryPercent": 72,
+      "charging": false,
+      "coverClosed": false,
+      "frontlightAppearanceCalibrated": false,
+      "frontlightPercent": 20,
+      "orientation": "portrait",
+      "orientationControl": "display-composition"
+    },
+    "input": {
+      "forwardKey": 194,
+      "needsResynchronization": false,
+      "quiescent": true,
+      "rawEvents": "56",
+      "source": "synthetic evdev replay"
+    },
+    "lifecycle": "foreground",
+    "navigation": {
+      "app": "crossword",
+      "hosted": [],
+      "mode": "single-app",
+      "processId": null
+    },
+    "observation": null,
+    "panel": {
+      "completed": "11",
+      "contentsKnown": true,
+      "failures": "0",
+      "finishedAtMillis": "2446",
+      "mode": "automatic",
+      "queued": false,
+      "status": "idle",
+      "submissionMarker": null,
+      "submitted": "11",
+      "submittedAtMillis": "2433",
+      "timing": "host control observations; not hardware calibration",
+      "visibleFrame": "last confirmed completion with approximate residue"
+    },
+    "panelApproximation": true,
+    "power": null,
+    "profile": {
+      "colourPanel": false,
+      "height": 1448,
+      "id": "clara-bw-391",
+      "model": "Kobo Clara BW",
+      "pixelsPerInch": 300,
+      "rotation": 3,
+      "touch": {
+        "name": "cyttsp5_mt",
+        "xMax": 1447,
+        "xMin": 0,
+        "yMax": 1071,
+        "yMin": 0
+      },
+      "width": 1072
+    },
+    "refreshCount": 11,
+    "scenario": "normal",
+    "touch": {
+      "display": {
+        "x": 536,
+        "y": 1377
+      },
+      "raw": {
+        "x": 1377,
+        "y": 535
+      }
+    },
+    "transition": {
+      "dirty": 4638334,
+      "full": false,
+      "refresh": 11,
+      "region": {
+        "height": 984,
+        "width": 984,
+        "x": 40,
+        "y": 184
+      },
+      "regions": [
+        {
+          "region": {
+            "height": 384,
+            "width": 984,
+            "x": 40,
+            "y": 184
+          },
+          "waveform": "GL16"
+        },
+        {
+          "region": {
+            "height": 376,
+            "width": 976,
+            "x": 40,
+            "y": 584
+          },
+          "waveform": "GL16"
+        },
+        {
+          "region": {
+            "height": 192,
+            "width": 968,
+            "x": 40,
+            "y": 976
+          },
+          "waveform": "GL16"
+        }
+      ],
+      "waveform": "GL16"
+    }
+  },
+  "source": {
+    "binarySha256": "54a1753088924ab561d74e9c4e3410a30eec1c31caf68aea49cc00c2a8129cc7",
+    "dirty": true,
+    "fixture": "original-crossword-pack",
+    "requestedSeed": "0",
+    "revision": "bdbd4056b64db6841b5836e607be0e14713f3ce5"
+  },
+  "version": 1
+}

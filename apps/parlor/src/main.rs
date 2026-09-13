@@ -10,8 +10,13 @@ mod engine;
 mod games;
 
 use engine::{choose_move, Game, Strength};
+#[cfg(test)]
+use games::QUIET_LIMIT;
 use games::{Draughts, Kalah, Morris, MorrisMove, Reversi, ReversiMove, Rules};
-use kobo_sdk::{action_id, ActionId, Context, Glyph, KoboApp, Screen, ScreenBuilder, StoreResult};
+use kobo_sdk::{
+    action_id, ActionId, Context, Glyph, KoboApp, Screen, ScreenBuilder, StoreResult, Tile,
+    TileShape,
+};
 use std::cmp::Ordering;
 use std::process::ExitCode;
 
@@ -43,6 +48,34 @@ impl Title {
             Self::Kalah => "kalah",
         }
     }
+    /// The mark on the game's card.
+    ///
+    /// A drawn piece rather than a generic shape: a shelf of four identical
+    /// circles is a shelf that has to be read word by word, and on a panel
+    /// that takes half a second to repaint, reading it twice is the cost.
+    const fn glyph(self) -> Glyph {
+        match self {
+            Self::Reversi => Glyph::BlackDisc,
+            Self::Draughts => Glyph::BlackDraughtsKing,
+            Self::Morris => Glyph::Mill,
+            Self::Kalah => Glyph::Grid,
+        }
+    }
+
+    /// Three or four words under the name on the card.
+    ///
+    /// What the game is in a phrase. The sentence belongs on the game's own
+    /// screen, where there is room for it and where somebody is deciding
+    /// whether to play rather than which to play.
+    const fn shelf_caption(self) -> &'static str {
+        match self {
+            Self::Reversi => "Bracket and flip",
+            Self::Draughts => "Captures are forced",
+            Self::Morris => "Mills, then flying",
+            Self::Kalah => "Sow and capture",
+        }
+    }
+
     const fn detail(self) -> &'static str {
         match self {
             Self::Reversi => "Bracket discs in eight directions.",
@@ -119,10 +152,17 @@ impl Position {
                         .captured
                         .iter()
                         .all(|&at| at < expected && game.board[at].signum() == -game.turn)
-                    && (game.rules == Rules::International
-                        || (game.forced.is_none() && game.captured.is_empty()))
-                    && (game.forced.is_some() != game.captured.is_empty()
-                        || game.rules == Rules::AngloAmerican)
+                    // A chain in progress is legal under both rulesets: the
+                    // piece that has just captured must capture again, and
+                    // that is what `forced` says. What differs is the list of
+                    // pieces waiting to be lifted, which only the
+                    // international rules keep on the board until the turn
+                    // ends. Refusing a forced square on an 8x8 board threw
+                    // away the game of anybody who shut the cover in the
+                    // middle of a double capture.
+                    && (game.rules == Rules::International || game.captured.is_empty())
+                    && (game.rules == Rules::AngloAmerican
+                        || game.forced.is_some() != game.captured.is_empty())
                     && {
                         let mut captured = game.captured.clone();
                         captured.sort_unstable();
@@ -227,26 +267,40 @@ impl Parlor {
     }
 
     fn menu_screen(&self) -> Screen {
-        let mut screen = ScreenBuilder::new("parlor-menu")
-            .top_bar("Parlor")
-            .heading("Pass-and-play classics")
-            .secondary("Set the reader between two players, choose a game, and begin.")
-            .rows(GAMES.map(|title| {
+        // A shelf of four, not a list of four. Each game is a card with its
+        // name on it: four rows carrying a line of description each is more
+        // than a six inch panel holds at the larger text settings, where the
+        // last of them was drawn through the bottom edge and the renderer
+        // refused the screen outright. What each game is belongs on its own
+        // screen, which is the one the card opens.
+        let screen = self.menu_prefix().tile_grid(
+            TileShape::Card,
+            GAMES.map(|title| {
                 (
                     title.key(),
                     title.name(),
-                    title.detail(),
-                    if title == Title::Draughts {
-                        Glyph::Grid
-                    } else {
-                        Glyph::Circle
-                    },
+                    title.glyph(),
+                    move |tile: Tile| tile.with_caption(title.shelf_caption()),
                 )
-            }));
-        if self.position.is_some() {
-            screen = screen.primary_button("resume", "Resume saved game");
-        }
+            }),
+        );
         screen.build()
+    }
+
+    /// Everything above the shelf of games.
+    fn menu_prefix(&self) -> ScreenBuilder {
+        let screen = ScreenBuilder::new("parlor-menu")
+            .top_bar("Parlor")
+            .heading("Pass-and-play classics")
+            .secondary("Set the reader between two players, choose a game, and begin.");
+        if self.position.is_some() {
+            // The game already in progress is the first thing a reader who put
+            // the panel down wants, so it sits above the shelf rather than
+            // under it, where a fourth card would have pushed it off the panel.
+            screen.primary_button("resume", "Resume saved game")
+        } else {
+            screen
+        }
     }
 
     fn setup_screen(&self, title: Title) -> Screen {
@@ -257,6 +311,7 @@ impl Parlor {
         let mut screen = ScreenBuilder::new("parlor-setup")
             .top_bar(title.name())
             .heading("Set the table")
+            .secondary(title.detail())
             .rows([
                 ("mode", "Mode", mode, Glyph::Person),
                 (
@@ -271,7 +326,15 @@ impl Parlor {
                 ),
             ]);
         if title == Title::Draughts {
-            screen = screen.rows([("rules", "Rules", self.rules.name(), Glyph::Grid)]);
+            // The ruleset says up front whether it can be played here. It
+            // used to read as a plain choice, and the reason the 10×10 board
+            // is refused only appeared once it had been chosen.
+            let rules = if self.rules == Rules::International {
+                format!("{} · not playable on this panel", self.rules.name())
+            } else {
+                self.rules.name().to_owned()
+            };
+            screen = screen.rows([("rules", "Rules", rules, Glyph::Grid)]);
         }
         if self.mode == Mode::Solo {
             screen = screen.rows([
@@ -294,14 +357,20 @@ impl Parlor {
             ]);
         }
         if title == Title::Draughts && self.rules == Rules::International {
-            screen = screen.error_state(
-                "International draughts needs a 10×10 board. This reader's board surface is limited to 81 touch cells; choose Anglo-American 8×8.",
-            );
-            return screen.build();
+            // A ruleset this panel cannot draw is a choice that is not on
+            // offer, not a fault. It used to raise the full error panel, with
+            // its cross and its "Something went wrong", which read as though
+            // the app had broken and which was itself drawn through the bottom
+            // edge at the larger text settings. The row says it plainly, the
+            // line under it says why, and the game simply cannot be started.
+            return screen
+                .secondary("10×10 needs 100 touch cells and this panel holds 81.")
+                .buttons([("how-to-play", "How to play")])
+                .build();
         }
         screen
             .primary_button("start", "Start game")
-            .buttons([("how-to-play", "How to play"), ("back", "Games")])
+            .buttons([("how-to-play", "How to play")])
             .build()
     }
 
@@ -364,18 +433,34 @@ impl Parlor {
         } else {
             format!("{} to move", player(position.turn()))
         };
+        // The bar carries the game and nothing else. Whose move it is went in
+        // there too, and on a six inch panel at the larger text settings the
+        // bar cut it off mid-word: the one thing two people passing a reader
+        // between them have to read was the first thing to go.
         let base = ScreenBuilder::new("parlor-board")
-            .top_bar(format!("{} — {status}", title.name()))
-            .secondary(format!(
-                "Best of 3 · Black/South {}–{} White/North · {}",
-                self.match_score[0], self.match_score[1], self.notice
-            ));
+            .top_bar(title.name())
+            .section_with_value(
+                status,
+                format!("{}–{}", self.match_score[0], self.match_score[1]),
+            )
+            .secondary(self.notice.clone());
+        // What just happened, in the same words the record uses. Two people
+        // passing one reader between them cannot see each other's tap, and a
+        // board of identical discs does not say which one moved.
+        let base = match self.record.last() {
+            Some(last) => base.secondary(format!("Last: {last}")),
+            None => base,
+        };
         let base = match position {
             Position::Reversi(game) => self.reversi_board(base, game, rotated),
             Position::Draughts(game) => self.draughts_board(base, game, rotated),
             Position::Morris(game) => self.morris_board(base, game, rotated),
             Position::Kalah(game) => self.kalah_board(base, game, rotated),
         };
+        // Three controls and no fourth: leaving the game is the chevron in the
+        // bar, the same as everywhere else on the reader. A "Games" button
+        // beside these wrapped onto a second row at the larger text settings
+        // and was drawn off the bottom of the panel.
         base.grid(
             3,
             false,
@@ -399,7 +484,6 @@ impl Parlor {
                 ),
             ],
         )
-        .button("back", "Games")
         .build()
     }
 
@@ -408,10 +492,15 @@ impl Parlor {
         base.board(
             8,
             ordered(64, rotated).map(|at| {
+                // A drawn ring rather than the dotted circle character. A
+                // legal square is the one thing a reader is looking for, and
+                // what it looked like depended on which glyph the typeface
+                // happened to carry: the renderer draws this one, at the same
+                // weight on every board in the catalogue.
                 let (label, glyph) = match game.board[at] {
                     1 => ("", Some(Glyph::BlackDisc)),
                     -1 => ("", Some(Glyph::WhiteDisc)),
-                    _ if legal.contains(&at) => ("◌", None),
+                    _ if legal.contains(&at) => ("Legal square", Some(Glyph::LegalPoint)),
                     _ => (" ", None),
                 };
                 (cell_name(at), label, glyph)
@@ -421,16 +510,18 @@ impl Parlor {
 
     fn draughts_board(&self, base: ScreenBuilder, game: &Draughts, rotated: bool) -> ScreenBuilder {
         let moves = game.moves();
-        base.board(
+        // The square in hand is a state the renderer draws, not a character
+        // written into the square. It used to be a white square drawn as the
+        // text "□", which is whatever the typeface has and sits beside the
+        // pieces rather than under them.
+        base.board_with_selection(
             game.side() as u8,
             ordered(game.board.len(), rotated).map(|at| {
                 let marked = self
                     .selected
                     .is_some_and(|from| moves.iter().any(|m| m.from == from && m.to == at));
                 let (label, glyph) = if marked {
-                    ("◌", None)
-                } else if self.selected == Some(at) {
-                    ("□", None)
+                    ("Legal square", Some(Glyph::LegalPoint))
                 } else {
                     match game.board.get(at) {
                         Some(1) => ("", Some(Glyph::BlackDraughtsMan)),
@@ -440,14 +531,15 @@ impl Parlor {
                         _ => (" ", None),
                     }
                 };
-                (cell_name(at), label, glyph)
+                (cell_name(at), label, glyph, self.selected == Some(at))
             }),
         )
     }
 
     fn morris_board(&self, base: ScreenBuilder, game: &Morris, rotated: bool) -> ScreenBuilder {
         let moves = game.moves();
-        base.board(
+        let chosen = self.selected;
+        base.board_with_selection(
             7,
             ordered(49, rotated).map(|grid| {
                 let point = MORRIS_GRID.iter().position(|&g| g == grid);
@@ -457,16 +549,21 @@ impl Parlor {
                         MorrisMove::Slide(from, to) => self.selected == Some(from) && to == at,
                     });
                     if marked && game.board[at] == 0 {
-                        ("Legal point", Some(Glyph::MorrisLegalPoint))
+                        ("Legal point", Some(Glyph::LegalPoint))
                     } else {
                         match game.board[at] {
                             1 => ("", Some(Glyph::BlackDisc)),
                             -1 => ("", Some(Glyph::WhiteDisc)),
-                            _ => ("Open point", Some(Glyph::MorrisPoint)),
+                            _ => ("Open point", Some(Glyph::BoardPoint)),
                         }
                     }
                 });
-                (cell_name(grid), label, glyph)
+                (
+                    cell_name(grid),
+                    label,
+                    glyph,
+                    point.is_some_and(|at| chosen == Some(at)),
+                )
             }),
         )
     }
@@ -1025,10 +1122,11 @@ fn encode(app: &Parlor, position: &Position) -> String {
                 .join(",")
         ),
         Position::Morris(g) => format!(
-            "M,{},{},{};{}",
+            "M,{},{},{},{};{}",
             g.placed[0],
             g.placed[1],
             u8::from(g.removing),
+            g.quiet,
             g.board
                 .iter()
                 .map(i8::to_string)
@@ -1124,7 +1222,10 @@ fn decode_position(kind: &[&str], board: &str, rules: Rules, turn: i8) -> Option
             forced: parse_optional_usize(kind.get(1)?).ok()?,
             captured: parse_usizes(kind.get(2)?)?,
         }),
-        "M" if kind.len() == 4 => Position::Morris(Morris {
+        // Four fields is a game written down before the fifty move rule
+        // existed; it reads back as a game with nothing counted yet, which is
+        // the truth about it.
+        "M" if matches!(kind.len(), 4 | 5) => Position::Morris(Morris {
             board: parse_array(board)?,
             turn,
             placed: [kind.get(1)?.parse().ok()?, kind.get(2)?.parse().ok()?],
@@ -1132,6 +1233,10 @@ fn decode_position(kind: &[&str], board: &str, rules: Rules, turn: i8) -> Option
                 "0" => false,
                 "1" => true,
                 _ => return None,
+            },
+            quiet: match kind.get(4) {
+                Some(quiet) => quiet.parse().ok()?,
+                None => 0,
             },
         }),
         "K" if kind.len() == 1 => Position::Kalah(Kalah {
@@ -1249,11 +1354,12 @@ fn encode_snapshot(position: &Position) -> String {
                 .join(",")
         ),
         Position::Morris(game) => format!(
-            "M:{}:{}:{}:{}:{}",
+            "M:{}:{}:{}:{}:{}:{}",
             game.turn,
             game.placed[0],
             game.placed[1],
             u8::from(game.removing),
+            game.quiet,
             game.board
                 .iter()
                 .map(i8::to_string)
@@ -1290,11 +1396,18 @@ fn decode_snapshot(snapshot: &str) -> Option<Position> {
             captured: parse_usizes(fields.get(4)?)?,
             board: parse_vec(fields.get(5)?)?,
         })),
+        // Six fields is a snapshot written before the fifty move rule
+        // existed: the board is where the counter now sits, and the game it
+        // describes has nothing counted yet.
         "M" => Some(Position::Morris(Morris {
             turn: fields.get(1)?.parse().ok()?,
             placed: [fields.get(2)?.parse().ok()?, fields.get(3)?.parse().ok()?],
             removing: fields.get(4)? == &"1",
-            board: parse_array(fields.get(5)?)?,
+            quiet: match fields.get(6) {
+                Some(_) => fields.get(5)?.parse().ok()?,
+                None => 0,
+            },
+            board: parse_array(fields.get(6).or_else(|| fields.get(5))?)?,
         })),
         "K" => Some(Position::Kalah(Kalah {
             turn: fields.get(1)?.parse().ok()?,
@@ -1632,6 +1745,329 @@ mod tests {
                 strength.name()
             );
         }
+    }
+
+    /// Taps whatever the rules say is legal next, the way a player would.
+    ///
+    /// One move may be two taps -- a piece then its destination -- and a
+    /// capture chain is more, so this drives the application through its own
+    /// action handling rather than reaching into the engine.
+    fn play_one_move(app: &mut Parlor) -> bool {
+        let Some(position) = app.position.clone() else {
+            return false;
+        };
+        if position.terminal().is_some() {
+            return false;
+        }
+        // The house's own choice rather than the first legal move: a game
+        // where both sides always take the first move on the list wanders,
+        // and Nine Men's Morris in particular never ends. This is the same
+        // engine the solo mode plays with.
+        let mut context = Context::default();
+        match position {
+            Position::Reversi(game) => {
+                let Some(ReversiMove::Place(at)) = choose_move(&game, Strength::Casual) else {
+                    return false;
+                };
+                app.on_action(&mut context, action_id(&cell_name(at)));
+            }
+            Position::Draughts(game) => {
+                let Some(mv) = choose_move(&game, Strength::Casual) else {
+                    return false;
+                };
+                app.on_action(&mut context, action_id(&cell_name(mv.from)));
+                app.on_action(&mut context, action_id(&cell_name(mv.to)));
+            }
+            Position::Morris(game) => match choose_move(&game, Strength::Casual) {
+                None => return false,
+                Some(chosen) => match chosen {
+                    MorrisMove::Place(to) | MorrisMove::Remove(to) => {
+                        app.on_action(&mut context, action_id(&cell_name(MORRIS_GRID[to])));
+                    }
+                    MorrisMove::Slide(from, to) => {
+                        app.on_action(&mut context, action_id(&cell_name(MORRIS_GRID[from])));
+                        app.on_action(&mut context, action_id(&cell_name(MORRIS_GRID[to])));
+                    }
+                },
+            },
+            Position::Kalah(game) => {
+                // A Kalah move is the pit it sows from, so the tap is the pit.
+                let Some(pit) = choose_move(&game, Strength::Casual) else {
+                    return false;
+                };
+                app.on_action(&mut context, action_id(&cell_name(pit)));
+            }
+        }
+        true
+    }
+
+    #[test]
+    fn every_game_can_be_played_to_its_end_and_picked_up_again() {
+        // Through the application's own taps rather than the engine, because
+        // the engine being right about the rules says nothing about whether
+        // the panel lets anybody reach them.
+        for title in GAMES {
+            let mut app = Parlor::default();
+            app.start(title);
+            let mut moves = 0;
+            while play_one_move(&mut app) && moves < 400 {
+                moves += 1;
+            }
+            let position = app.position.clone().expect("a position");
+            assert!(
+                position.terminal().is_some(),
+                "{} did not finish in {moves} moves",
+                title.name()
+            );
+            assert!(moves > 0, "{} took no moves at all", title.name());
+            assert!(
+                app.match_score[0] + app.match_score[1] <= 2,
+                "{} counted more rounds than were played",
+                title.name()
+            );
+            let ended = app.screen();
+            let words = shown(&ended);
+            assert!(
+                words
+                    .iter()
+                    .any(|line| line.contains("wins") || line.contains("Draw")),
+                "{} never said how it ended: {words:?}",
+                title.name()
+            );
+
+            // And the same game, put down and picked up: the autosave is what
+            // a reader who closes the cover mid-game is relying on.
+            let text = encode(&app, app.position.as_ref().expect("a position"));
+            let reopened = decode(&text)
+                .unwrap_or_else(|| panic!("{} save was refused: {text}", title.name()));
+            assert_eq!(
+                reopened.position.as_ref().map(Position::turn),
+                Some(position.turn()),
+                "{} resumed on the wrong side",
+                title.name()
+            );
+            assert_eq!(
+                reopened.position.as_ref().and_then(Position::terminal),
+                position.terminal(),
+                "{} resumed as an unfinished game",
+                title.name()
+            );
+        }
+    }
+
+    #[test]
+    fn a_morris_shuffle_ends_in_a_draw_rather_than_going_on_forever() {
+        // Two players who will not break their own mills can slide the same
+        // two pieces back and forth for as long as they like, and the match
+        // card above the board says best of three: a round that cannot end
+        // cannot be scored.
+        let mut game = Morris {
+            placed: [9, 9],
+            quiet: QUIET_LIMIT - 1,
+            ..Morris::default()
+        };
+        game.board[0] = 1;
+        game.board[1] = 1;
+        game.board[2] = 1;
+        game.board[9] = -1;
+        game.board[10] = -1;
+        game.board[11] = -1;
+        assert_eq!(game.terminal_score(1), None);
+        let quiet = game.apply_move(&game.moves().remove(0));
+        assert_eq!(quiet.terminal_score(1), Some(0), "the shuffle never ended");
+    }
+
+    #[test]
+    fn a_capture_chain_survives_being_put_down_on_the_board_this_panel_plays() {
+        // The eight by eight rules keep a forced square with nothing waiting
+        // to be lifted, and the save refused exactly that: a reader who shut
+        // the cover in the middle of a double capture lost the game. The ten
+        // by ten case has its own test above; this is the one that can
+        // actually be played here.
+        let mut app = Parlor::default();
+        app.start(Title::Draughts);
+        let mut chained = false;
+        for _ in 0..200 {
+            if !play_one_move(&mut app) {
+                break;
+            }
+            let forced = match app.position.as_ref() {
+                Some(Position::Draughts(game)) => game.forced,
+                _ => None,
+            };
+            if forced.is_some() {
+                chained = true;
+                let text = encode(&app, app.position.as_ref().expect("a position"));
+                let reopened = decode(&text)
+                    .unwrap_or_else(|| panic!("a chain in progress was refused: {text}"));
+                assert_eq!(reopened.position, app.position);
+                break;
+            }
+        }
+        assert!(chained, "no capture chain came up in two hundred moves");
+    }
+
+    #[test]
+    fn the_board_says_what_just_happened() {
+        // Two people passing one reader cannot see each other's tap, and a
+        // board of identical discs does not say which one moved.
+        let mut app = Parlor::default();
+        app.start(Title::Reversi);
+        assert!(play_one_move(&mut app));
+        let words = shown(&app.screen()).join(" | ");
+        assert!(words.contains("Last:"), "{words}");
+        let last = app.record.last().expect("a move was recorded");
+        assert!(words.contains(last.as_str()), "{words}");
+    }
+
+    #[test]
+    fn a_legal_square_is_a_drawn_mark_rather_than_whatever_the_typeface_has() {
+        // It used to be the dotted circle character, so what a legal square
+        // looked like depended on the face the panel happened to be using.
+        for title in [Title::Reversi, Title::Draughts] {
+            let mut app = Parlor::default();
+            app.start(title);
+            if title == Title::Draughts {
+                // A piece has to be in hand before its destinations show.
+                let mv = match app.position.clone() {
+                    Some(Position::Draughts(game)) => game.moves().remove(0),
+                    _ => unreachable!("draughts"),
+                };
+                app.on_action(&mut Context::default(), action_id(&cell_name(mv.from)));
+            }
+            let drawn = format!("{:?}", app.screen());
+            assert!(
+                drawn.contains("LegalPoint"),
+                "{}: no legal square was drawn: {drawn}",
+                title.name()
+            );
+            assert!(
+                !drawn.contains('\u{25cc}'),
+                "{}: still a character",
+                title.name()
+            );
+        }
+    }
+
+    #[test]
+    fn a_board_this_panel_cannot_hold_says_so_before_it_is_chosen() {
+        // Ten by ten is a hundred cells and the panel draws eighty-one. The
+        // reader is told on the row that offers it, not after starting it.
+        let setup = Parlor {
+            view: View::Setup(Title::Draughts),
+            rules: Rules::International,
+            ..Parlor::default()
+        };
+        let words = shown(&setup.screen()).join(" | ");
+        assert!(words.contains("not playable on this panel"), "{words}");
+        assert!(words.contains("10×10"), "{words}");
+        // And it is said as a plain fact about the panel rather than as a
+        // fault, with no button offering to start what cannot be drawn.
+        assert!(!words.contains("Something went wrong"), "{words}");
+        assert!(!words.contains("Start game"), "{words}");
+
+        // And starting it anyway never reaches a board.
+        let mut app = Parlor {
+            rules: Rules::International,
+            ..Parlor::default()
+        };
+        app.start(Title::Draughts);
+        assert!(matches!(app.view, View::Setup(Title::Draughts)));
+        assert!(app.position.is_none());
+    }
+
+    /// Every line of words a screen draws.
+    fn shown(screen: &Screen) -> Vec<String> {
+        screen
+            .layout_with(&CLARA_BW_METRICS, &Chrome::default())
+            .nodes
+            .iter()
+            .flat_map(|node| node.text_lines.clone())
+            .collect()
+    }
+
+    #[test]
+    fn every_screen_fits_the_panel_at_every_text_size() {
+        // A board shrinks to fit, and everything around it does not: the
+        // score card, the line saying what just happened, the three controls
+        // under the board. This is the sweep that says so at the sizes a
+        // reader can actually choose.
+        let chrome = Chrome::default();
+        let mut failures = Vec::new();
+        for scale in kobo_ui::TextScale::STEPS {
+            let metrics = kobo_ui::DisplayMetrics {
+                text_scale: scale,
+                ..CLARA_BW_METRICS
+            };
+            // The shelf itself, which is the screen every reader sees first,
+            // in both of its states: bare, and carrying the offer to pick up a
+            // game that is already under way.
+            let mut resumable = Parlor::default();
+            resumable.start(Title::Reversi);
+            play_one_move(&mut resumable);
+            resumable.view = View::Menu;
+            for (name, table) in [("table", Parlor::default()), ("table resuming", resumable)] {
+                let issues = table
+                    .screen()
+                    .diagnostics(&metrics, &chrome)
+                    .issues
+                    .into_iter()
+                    .filter(|issue| issue.severity == kobo_ui::DiagnosticSeverity::Error)
+                    .collect::<Vec<_>>();
+                if !issues.is_empty() {
+                    failures.push(format!("{scale:?} {name}: {issues:?}"));
+                }
+            }
+            for title in GAMES {
+                let mut app = Parlor::default();
+                app.start(title);
+                play_one_move(&mut app);
+                let setup = Parlor {
+                    view: View::Setup(title),
+                    ..Parlor::default()
+                };
+                // The one ruleset this panel cannot draw is set up like any
+                // other, and its explanation has to fit like any other.
+                if title == Title::Draughts {
+                    let refused = Parlor {
+                        view: View::Setup(title),
+                        rules: Rules::International,
+                        ..Parlor::default()
+                    };
+                    let issues = refused
+                        .screen()
+                        .diagnostics(&metrics, &chrome)
+                        .issues
+                        .into_iter()
+                        .filter(|issue| issue.severity == kobo_ui::DiagnosticSeverity::Error)
+                        .collect::<Vec<_>>();
+                    if !issues.is_empty() {
+                        failures.push(format!("{scale:?} international setup: {issues:?}"));
+                    }
+                }
+                let board = app.screen();
+                app.view = View::Record;
+                let record = app.screen();
+                app.view = View::Board;
+                for (name, screen) in [
+                    ("setup", setup.screen()),
+                    ("board", board),
+                    ("record", record),
+                ] {
+                    let issues = screen
+                        .diagnostics(&metrics, &chrome)
+                        .issues
+                        .into_iter()
+                        .filter(|issue| issue.severity == kobo_ui::DiagnosticSeverity::Error)
+                        .map(|issue| format!("{:?}", issue.kind))
+                        .collect::<Vec<_>>();
+                    if !issues.is_empty() {
+                        failures.push(format!("{scale:?} {} {name}: {issues:?}", title.name()));
+                    }
+                }
+            }
+        }
+        assert!(failures.is_empty(), "{failures:#?}");
     }
 
     #[test]

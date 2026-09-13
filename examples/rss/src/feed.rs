@@ -60,6 +60,8 @@ pub struct Item {
     pub author: String,
     /// The body, already converted from whatever markup it arrived in.
     pub body: String,
+    /// Publisher markup for the shared reader; empty for plain-text-only content.
+    pub html: String,
 }
 
 impl Item {
@@ -148,6 +150,22 @@ pub fn parse(bytes: &[u8]) -> Option<Feed> {
     let feed = if body.starts_with('{') {
         json_feed(body)?
     } else {
+        let mut root = None;
+        let mut decoded = Vec::new();
+        scan(body, &mut decoded, |event| {
+            if root.is_none() {
+                if let Event::Open { name, .. } = event {
+                    root = Some(name);
+                }
+            }
+        });
+        if !root.is_some_and(|name| {
+            ["rss", "feed", "rdf:RDF"]
+                .iter()
+                .any(|allowed| name.eq_ignore_ascii_case(allowed))
+        }) {
+            return None;
+        }
         xml_feed(body)
     };
     if feed.items.is_empty() && feed.title.is_empty() {
@@ -272,11 +290,34 @@ fn xml_feed(input: &str) -> Feed {
     let mut item = Item::default();
     let mut in_item = false;
     let mut body_rank = 0u8;
+    let mut body_capture: Option<(usize, u8, String, bool)> = None;
 
     for event in steps {
         match event {
             Event::Open { name, attributes } => {
+                if let Some((_, _, html, _)) = &mut body_capture {
+                    html.push('<');
+                    html.push_str(name);
+                    if !attributes.is_empty() {
+                        html.push(' ');
+                        html.push_str(attributes);
+                    }
+                    html.push('>');
+                    stack.push(name);
+                    continue;
+                }
                 let field = field(name);
+                if let Field::Body(rank) = field {
+                    if in_item {
+                        let plain = name.eq_ignore_ascii_case("content")
+                            && attribute(attributes, "type")
+                                .unwrap_or("text")
+                                .eq_ignore_ascii_case("text");
+                        body_capture = Some((stack.len() + 1, rank, String::new(), plain));
+                        stack.push(name);
+                        continue;
+                    }
+                }
                 match field {
                     Field::Item => {
                         in_item = true;
@@ -308,13 +349,51 @@ fn xml_feed(input: &str) -> Feed {
                 }
                 stack.push(name);
             }
-            Event::Text(text) => buffer.push_str(text),
-            Event::Owned(index) => {
-                if let Some(text) = decoded.get(index) {
+            Event::Text(text) => {
+                if let Some((depth, _, html, _)) = &mut body_capture {
+                    if stack.len() > *depth {
+                        html.push_str(&escape_html(text));
+                    } else {
+                        html.push_str(text);
+                    }
+                } else {
                     buffer.push_str(text);
                 }
             }
+            Event::Owned(index) => {
+                if let Some(text) = decoded.get(index) {
+                    if let Some((depth, _, html, _)) = &mut body_capture {
+                        if stack.len() > *depth {
+                            html.push_str(&escape_html(text));
+                        } else {
+                            html.push_str(text);
+                        }
+                    } else {
+                        buffer.push_str(text);
+                    }
+                }
+            }
             Event::Close { name } => {
+                if let Some((depth, _, html, _)) = &mut body_capture {
+                    if stack.len() > *depth {
+                        html.push_str("</");
+                        html.push_str(name);
+                        html.push('>');
+                    } else if let Some((_, rank, html, plain)) = body_capture.take() {
+                        if rank >= body_rank && !html.trim().is_empty() {
+                            body_rank = rank;
+                            if plain {
+                                item.body = html;
+                                item.html.clear();
+                            } else {
+                                item.body = to_text(&html);
+                                item.html = html;
+                            }
+                        }
+                    }
+                    stack.pop();
+                    continue;
+                }
                 let parent = stack
                     .len()
                     .checked_sub(2)
@@ -324,7 +403,6 @@ fn xml_feed(input: &str) -> Feed {
                 let value = buffer.trim().to_owned();
                 match field(name) {
                     Field::Item => {
-                        item.body = to_text(&item.body);
                         if !item.is_empty() && feed.items.len() < MAX_ITEMS {
                             feed.items.push(std::mem::take(&mut item));
                         }
@@ -395,11 +473,16 @@ fn xml_feed(input: &str) -> Feed {
     }
 
     // A document truncated mid-item still described that item, so it is kept.
-    item.body = to_text(&item.body);
     if !item.is_empty() && feed.items.len() < MAX_ITEMS {
         feed.items.push(item);
     }
     feed
+}
+
+fn escape_html(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 fn json_feed(input: &str) -> Option<Feed> {
@@ -446,7 +529,8 @@ fn json_feed(input: &str) -> Option<Feed> {
             // Plain text is preferred where the publisher supplied it, because
             // it is what they meant the words to be, rather than what a
             // converter made of their markup.
-            body: text.map_or_else(|| to_text(html.unwrap_or_default()), to_text),
+            body: text.map_or_else(|| to_text(html.unwrap_or_default()), str::to_owned),
+            html: html.unwrap_or_default().to_owned(),
         };
         if !item.is_empty() {
             feed.items.push(item);
@@ -544,6 +628,38 @@ mod tests {
     }
 
     #[test]
+    fn rss_encoded_html_retains_images_and_captions() {
+        let feed = read(
+            r#"<rss><channel><item><title>Photo essay</title><content:encoded><![CDATA[<figure><img src="/photo.jpg" alt="A mountain"/><figcaption>Morning light</figcaption></figure><p>Story.</p>]]></content:encoded></item></channel></rss>"#,
+        );
+        let item = &feed.items[0];
+        assert!(item.html.contains(r#"src="/photo.jpg""#));
+        assert!(item.html.contains("Morning light"));
+        assert!(item.body.contains("Story."));
+    }
+
+    #[test]
+    fn atom_xhtml_preserves_images_without_treating_nested_titles_as_entry_titles() {
+        let feed = read(
+            r#"<feed><entry><title>Entry title</title><content type="xhtml"><div xmlns="http://www.w3.org/1999/xhtml"><figure><img src="photo.png" alt="A &amp; B"/><figcaption>Caption</figcaption></figure><p>A &lt; B &amp; C</p><svg><title>Figure title</title></svg></div></content></entry></feed>"#,
+        );
+        let item = &feed.items[0];
+        assert_eq!(item.title, "Entry title");
+        assert!(item.html.contains(r#"src="photo.png""#));
+        assert!(item.html.contains("A &lt; B &amp; C"));
+        assert!(item.body.contains("A < B & C"));
+    }
+
+    #[test]
+    fn plain_atom_text_is_not_interpreted_as_html() {
+        let feed = read(
+            r#"<feed><entry><title>T</title><content type="text">Use &lt;img&gt; literally.</content></entry></feed>"#,
+        );
+        assert_eq!(feed.items[0].body, "Use <img> literally.");
+        assert!(feed.items[0].html.is_empty());
+    }
+
+    #[test]
     fn a_json_feed_reads_the_same_way() {
         let feed = read(
             r#"{"version":"https://jsonfeed.org/version/1","title":"JSON Feed",
@@ -556,6 +672,7 @@ mod tests {
         assert_eq!(feed.title, "JSON Feed");
         assert_eq!(feed.items[0].title, "First");
         assert_eq!(feed.items[0].body, "Hello");
+        assert_eq!(feed.items[0].html, "<p>Hello</p>");
         assert_eq!(feed.items[0].author, "A Writer");
     }
 
@@ -637,6 +754,9 @@ mod tests {
     fn nothing_that_is_not_a_feed_parses_as_one() {
         assert!(parse(b"").is_none());
         assert!(parse(b"not markup at all").is_none());
+        assert!(
+            parse(b"<html><head><title>A website</title></head><body>News</body></html>").is_none()
+        );
         assert!(parse(b"<html><body><h1>A web page</h1></body></html>").is_none());
         assert!(parse(b"{\"unrelated\":true}").is_none());
         assert!(parse(b"{ this is not json").is_none());

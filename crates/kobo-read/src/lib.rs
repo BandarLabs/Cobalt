@@ -523,6 +523,7 @@ pub struct Reader {
     page: usize,
     chrome: Chrome,
     problem: Option<String>,
+    panel: DisplayMetrics,
     /// Whether the last page is the end of the book or merely where it stopped.
     ///
     /// A copy that arrived cut short, or one so long that pagination hit its
@@ -569,6 +570,7 @@ impl Reader {
             page: 0,
             chrome: Chrome::Hidden,
             problem: None,
+            panel: *panel,
             cut: false,
             pending: false,
         };
@@ -582,6 +584,7 @@ impl Reader {
     /// first, pages second: the block index does not change when the setting
     /// does, which is the whole reason a position is stored the way it is.
     fn repaginate(&mut self, panel: &DisplayMetrics) {
+        self.panel = *panel;
         kobo_ui::with_reading_font(self.publisher_font, || self.repaginate_selected_font(panel));
     }
 
@@ -598,7 +601,17 @@ impl Reader {
         // the layout engine takes it out of the content before it places
         // anything. Measured without it, the last two lines of every page were
         // set underneath "22 of 226" and the chevrons beside it.
-        let full = metrics.prose_area_in(true, false, Face::Reading);
+        let mut full = metrics.prose_area_in(true, false, Face::Reading);
+        if let Some(problem) = &self.problem {
+            let notice = kobo_ui::with_text_scale(panel.text_scale, || {
+                kobo_ui::banner_height(problem, full.width, panel)
+            });
+            full.height = full
+                .height
+                .saturating_sub(notice)
+                .saturating_sub(full.gap)
+                .max(1);
+        }
         let mut area = full;
         area.height = area
             .height
@@ -1184,6 +1197,8 @@ impl Reader {
     /// Says something went wrong, on the next repaint.
     pub fn report(&mut self, problem: impl Into<String>) {
         self.problem = Some(problem.into());
+        let panel = self.panel;
+        self.repaginate(&panel);
     }
 
     #[must_use]
@@ -1216,7 +1231,13 @@ impl Reader {
 
     /// Applies one named action.
     pub fn act(&mut self, name: &str, panel: &DisplayMetrics) -> Outcome {
-        self.problem = None;
+        if self.problem.take().is_some() {
+            let at_end = !self.can_go_forward();
+            self.repaginate(panel);
+            if at_end {
+                self.page = self.pages.len().saturating_sub(1);
+            }
+        }
         match name {
             action::FORWARD => {
                 if self.forward() {
@@ -2128,12 +2149,14 @@ impl Reader {
                     self.links_in(piece),
                 )
                 .with_formulae(formulae)
-        } else if piece.spans.is_empty()
-            && formulae.is_empty()
-            && piece.presentation == kobo_ui::ParagraphPresentation::default()
-        {
-            screen.text_linking(piece.text.clone(), self.links_in(piece))
         } else {
+            // Every paragraph goes through the same node, including the plain
+            // ones. A page is measured with the book's line spacing, and a
+            // plain text node is measured with the interface's: the tail of a
+            // paragraph split across a page break came out as the one node on
+            // the page whose lines were taller than the room the paginator had
+            // reserved for them, so its last line was dropped and the renderer
+            // refused the screen.
             screen
                 .rich_text_linking(
                     piece.text.clone(),

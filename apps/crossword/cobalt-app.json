@@ -4,8 +4,8 @@
   "short_label": "Crossword",
   "summary": "Solve a compact touch-first crossword with clue navigation.",
   "page_description": "Work through a compact crossword with cell-by-cell touch entry and clue navigation.",
-  "version": "0.1.2",
-  "release_notes": "Update shared controls and page layout for Cobalt 0.3.12.",
+  "version": "0.1.3",
+  "release_notes": "Add numbered crossword grids, four offline puzzles, word entry, undo, check/reveal controls and confirmed saves.",
   "glyph": "grid",
   "capabilities": []
 }

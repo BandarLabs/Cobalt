@@ -340,6 +340,19 @@ footer nav { display: flex; gap: 20px; flex-wrap: wrap; }
       </div>
     </section>
 
+    <section id="measured-lists">
+      <h2>Lists with notices and menus</h2>
+      <p>Measure the same content you draw. Use <code>Context::paginate_rows_below_notice(rows, bottom_action_present, notice)</code> when a notice appears above a list. It reserves the notice's measured height at the current interface text size before dividing rows into pages. Pass the same notice text to the screen builder.</p>
+      <p>For rows with an overflow menu, use <code>paginate_rows_with_menu_below_notice</code> and <code>clamped_row_with_menu(text, lines, bottom_action_present)</code>. These helpers account for the menu column when measuring and shortening text. Pass whether the screen has a bottom action so the last row leaves room for it. Feeds uses these helpers for refresh history, unread counts and save-recovery notices.</p>
+      <p>When more than a notice sits above the list, such as tabs, a heading or a pending count, measure against the screen itself: <code>paginate_rows_under(rows, nav_bar, position, &amp;prefix)</code>, or <code>paginate_rows_with_menu_under</code> for rows carrying a mark. Both reserve the measured height of the prefix you pass, so build it with the same function the screen uses and leave the list and the page-position strip out of it. The Miniflux reader measures its tabbed article list this way.</p>
+    </section>
+
+    <section id="offline-snapshots">
+      <h2>Verified offline snapshots</h2>
+      <p><code>kobo_sdk::snapshot::Snapshot</code> stores bounded, replaceable content in two shelf files. A new copy becomes available only after its file and pointer saves are acknowledged. Use a server-and-account-specific identity, validate incoming content, and route store and shelf results to the snapshot.</p>
+      <p>The default limit is 512 KiB; <code>at_most</code> sets an app-specific bound. Missing or damaged content can be fetched again. Failed writes offer explicit retry, which checks the published pointer before reusing a slot. Keep active and failed saves alive until their callbacks or recovery finish. Apps still own disk retention and cleanup.</p>
+    </section>
+
     <section id="services">
       <h2>Runtime services</h2>
       <div class="table-wrap">
@@ -352,7 +365,7 @@ footer nav { display: flex; gap: 20px; flex-wrap: wrap; }
           <thead><tr><th>Surface</th><th>Developer API</th><th>Purpose</th></tr></thead>
           <tbody>
             <tr><td>Display</td><td><code>set_screen</code>, <code>put_picture</code>, <code>put_font</code></td><td>Publish a screen and bounded picture or book-font resources; release them with <code>drop_picture</code> and <code>drop_font</code>.</td></tr>
-            <tr><td>Async work</td><td><code>spawn</code>, <code>spawn_retrying</code>, <code>cancel</code></td><td>HTTPS fetch/post, app-private file reads and sleeps without blocking the event loop.</td></tr>
+            <tr><td>Async work</td><td><code>spawn</code>, <code>spawn_retrying</code>, <code>cancel</code></td><td>HTTPS fetch/post/update, app-private file reads and sleeps without blocking the event loop.</td></tr>
             <tr><td>Small state</td><td><code>store().save/load/cache/load_cached/forget/list</code></td><td>Atomic app-private keyed state and evictable cache values.</td></tr>
             <tr><td>Large state</td><td><code>shelf()</code>, <code>ShelfUpload</code>, <code>ShelfDownload</code></td><td>App-private books, audio, covers and other large blobs transferred in bounded chunks.</td></tr>
             <tr><td>Application handoff</td><td><code>launch</code></td><td>Ask the runtime to open an installed catalog application by stable ID.</td></tr>
@@ -362,7 +375,7 @@ footer nav { display: flex; gap: 20px; flex-wrap: wrap; }
             <tr><td>Wi-Fi and Bluetooth</td><td><code>read/set/scan/join/connect/disconnect/forget</code></td><td>Capability-gated radio control through firmware-owned services.</td></tr>
             <tr><td>Audio</td><td><code>load/play/pause/seek/stop/set_audio_volume</code>, <code>AudioPlayer</code></td><td>Play app-shelf audio or bounded unauthenticated HTTPS streams through the active output.</td></tr>
             <tr><td>Dictionary</td><td><code>lookup_word</code></td><td>Use runtime-installed dictionaries offline, with an optional language tag.</td></tr>
-            <tr><td>Terminal</td><td><code>shell()</code>, <code>TerminalKeys</code></td><td>Send bytes to a runtime-owned terminal and receive output events; apps never choose a program path.</td></tr>
+            <tr><td>Terminal</td><td><code>shell()</code>, <code>TerminalKeys</code></td><td>Send bytes to a runtime-owned terminal and receive output events; apps never choose a program path. Empty terminals are valid while waiting for output. Terminal text has a smaller monospace size; use <code>terminal_grid_for</code> to measure columns and rows for the panel, text setting and keyboard. <a href="media/site/apps/paperterm.png">Portrait example</a>.</td></tr>
             <tr><td>Platform update</td><td><code>device().update</code></td><td>Settings-only replacement from an HTTPS release archive with an exact SHA-256 digest.</td></tr>
             <tr><td>Diagnostics</td><td><code>log</code>, <code>build_checked</code>, <code>AppRunner</code></td><td>Structured runtime logs, screen validation and host-side deterministic app tests.</td></tr>
           </tbody>
@@ -373,12 +386,30 @@ footer nav { display: flex; gap: 20px; flex-wrap: wrap; }
     <section id="durable-content">
       <h2>Durable content and comic reading</h2>
       <p>Use <code>kobo_state::draft::Draft</code> for acknowledged edits, <code>record::Schema</code> for bounded versioned records, and <code>outbox</code> for deferred work. Keep failed writes visible and offer a retry. Queued work is not delivered work.</p>
+      <p><code>grid_with_selection(columns, square, cells)</code> accepts <code>(action, label, selected)</code> tuples. Selected keypad keys add an ink outline without expanding their labels. Fixed board marks use the largest fitting semantic size; short marks may step down the interface scale when needed to fit a legal square.</p>
+      <p><code>BoardViewport</code> keeps absolute cell and clue actions while fitting a movable window to the allocated area. Nonograms uses attached clues and full-clue inspection; the selected square’s matching row and column gutters receive a shaded field and ink outline. The app measures controls first, then gives the remaining area to the board.</p>
+      <figure><img src="media/site/apps/nonograms.png" width="536" height="724" alt="Actual Nonograms simulator capture with the selected square and its matching clues outlined" loading="lazy"><figcaption>Nonograms in the Clara BW simulator at extra-large interface size. Actual SDK output; hardware acceptance remains pending.</figcaption></figure>
+      <p><code>crossword_board</code> adds joined squares, corner clue numbers and noninteractive black blocks. Crossword owns the active word and saved answers; the component owns grid geometry and lettering.</p>
+      <figure><img src="media/site/apps/crossword.png" width="536" height="724" alt="Actual Crossword simulator with numbered squares, solid black blocks and a shaded active word" loading="lazy"><figcaption>Crossword in the Clara BW simulator at extra-large interface size.</figcaption></figure>
+      <p><code>pencil_board(PencilBoard)</code> draws dots, clue numbers, circular islands, connected single/double strokes and joined cross-sum cells. A board uses integer row/column positions and a physical cell size; fixed clues have no action. Edge targets occupy the space between endpoints, so tapping an island or clue does not accidentally change a line. The reader and simulator use the same layout and ink.</p>
+      <p>Build marks with <code>PencilMarkKind::{Dot, Clue, Island, Block, Sum, Digit}</code> and stable <code>action_id</code> values for editable marks or edges. Sum clues use <code>across</code> at upper right and <code>down</code> at lower left; zero omits that direction. Edge states are blank (0), single (1), double (2), and excluded (3). Given digits and clues carry no action. Number fitting retains the board’s physical geometry, including at large text settings.</p>
+      <p>The component is bounded to 9 × 9 positions, 81 marks and 144 orthogonal edges, with additional layout-node limits. Endpoints must be dots or islands at least two positions apart; duplicate coordinates, edges or actions, reserved action IDs and invalid values are rejected. Use endpoint selection instead of overlapping direct edge targets when a puzzle has crossing candidate routes. Applications own the rules, selection, progress and undo. Keep the board within the area left after controls; invalid or oversized layouts fail diagnostics.</p>
+      <p>This beta component uses protocol 14 node tag 34. Earlier wire versions reject it; existing board/grid tags are unchanged. Rebuild the runtime and simulator together with an app that uses it.</p>
+      <figure><img src="media/site/sdk/pencil-boards.png" width="536" height="724" alt="Actual Logic Pack simulator showing Hashi islands joined by continuous bridges" loading="lazy"><figcaption>Shared pencil-board geometry in the Clara BW simulator.</figcaption></figure>
+      <p><code>paginate_oriented(text, nav_bar, orientation)</code> measures interface prose for the requested app orientation. Pair it with <code>set_orientation</code> and <code>metrics().oriented(orientation)</code>. Sudoku uses these contracts for pencil-note keys and landscape help.</p>
+      <figure><img src="media/site/apps/sudoku.png" width="536" height="724" alt="Actual Sudoku simulator capture showing selected pencil-note keys and row and column focus" loading="lazy"><figcaption>Sudoku in the Clara BW simulator at extra-large interface size. Actual SDK output; physical-reader acceptance is pending.</figcaption></figure>
       <p><code>kobo_sdk::imports::Import</code> verifies a local copy before saving its receipt. <code>exports::Export</code> prepares text, Markdown, PNG or JPEG copies up to 32 MiB for the existing computer connection. Forward shelf and save callbacks; Ready means the reader stored its offer, not that the computer received it.</p>
       <pre><code>kobo export --app APP --device reader.local --out "$HOME/Downloads"</code></pre>
       <p>Replace <code>APP</code> with an app that has prepared an export. For a running simulator use <code>--sim</code> and the same <code>TMPDIR</code>. The receiver verifies the file and preserves existing copies. See the <a href="https://github.com/BandarLabs/Cobalt/blob/main/docs/quality/sdk-export-and-copy.md">integration guide</a> for callbacks and recovery.</p>
       <figure><img src="quality/evidence/exports/text-ready.png" width="320" alt="SDK fixture showing Garden notes ready for its computer after acknowledged storage" loading="lazy"><figcaption>Actual SDK fixture in the Clara BW simulator. Physical transfer validation is pending.</figcaption></figure>
       <p><code>kobo_comic</code> and <code>kobo_bookview::comic::ComicView</code> share bounded CBZ inspection, page decoding, zoom, pan, thumbnails, page jump, spreads and right-to-left reading. Save reading memory through an acknowledged draft. CBR/RAR support is deferred.</p>
-      <p>Owner-hosted accounts use <code>CredentialSetup::bind_server</code> or <code>secrets().set_server</code> to bind an authorized account to an HTTPS origin, port and base path. <code>ProviderSetup::with_server_accounts</code> supplies separate username and password steps. Changing servers requires account entry for that address.</p>
+      <p>For cover lists, use <code>clamped_cover_row</code> and <code>paginate_cover_rows_below_section</code> so measurement reserves the same picture column as rendering. <code>ComicView::cover_preview</code> supplies a bounded cover without moving the page. <code>Memory::saved_page</code> validates a small saved record for a shelf summary without decoding its archive; use unchanged page order, such as a content-addressed CBZ.</p>
+      <figure><img src="media/site/apps/panels.png" width="320" alt="Panels showing the original comic cover and acknowledged saved page 2 of 4" loading="lazy"><figcaption>Actual Panels shelf in the Clara BW simulator, with cover-aware rows and saved progress.</figcaption></figure>
+      <p><code>Task::Update</code> accepts <code>UpdateMethod::Put</code> or <code>UpdateMethod::Patch</code>, with named credentials, bounded bodies and responses, and cancellation. POST permissions do not authorize these methods. The reviewed Miniflux token policy permits bounded entry PUTs within its saved server scope. Other providers require their own method, destination and body review.</p>
+      <p>Updates use beta protocol 14 task tag 4: rebuild the app, runtime and simulator together. They are sent once, even through <code>spawn_retrying</code>. After a lost response, read back server state before retrying; cancellation cannot undo a request already accepted by the server.</p>
+      <p>See the <a href="https://github.com/BandarLabs/Cobalt/blob/main/docs/quality/http-updates.md">update-task validation record</a> for protocol, policy, simulator and native-runtime checks.</p>
+      <figure><img src="quality/evidence/http-updates/02-numbered-grid.png" width="320" alt="Portrait Crossword grid after the SDK update-task regression checks" loading="lazy"><figcaption>Actual Clara BW simulator after rebuilding the SDK and runtime. The 17-check Crossword regression verifies zero fetch, post, put and patch activity.</figcaption></figure>
+      <p>Owner-hosted accounts use <code>CredentialSetup::bind_server</code> or <code>secrets().set_server</code> to bind an authorized account to an HTTPS origin, port and base path. <code>ProviderSetup::with_server_accounts</code> supplies separate username and password steps. Changing servers requires account entry for that address. The reviewed server-bound Basic providers are Panels (<code>komga</code>) and calibre-web (<code>calibre</code>); both permit reads within the saved server scope, never writes. Miniflux (<code>miniflux</code>, <code>X-Auth-Token</code>) additionally permits reviewed entry updates and feed creation; unknown routes, toggle bookmarks and unbound writes are refused.</p>
     </section>
 
     <section id="capabilities">
@@ -388,7 +419,7 @@ footer nav { display: flex; gap: 20px; flex-wrap: wrap; }
         <table>
           <thead><tr><th>Capability</th><th>Current SDK surface</th></tr></thead>
           <tbody>
-            <tr><td><code>network</code></td><td>Foreground <code>Task::Fetch</code> and <code>Task::Post</code>.</td></tr>
+            <tr><td><code>network</code></td><td>Foreground <code>Task::Fetch</code>, <code>Task::Post</code> and <code>Task::Update</code>.</td></tr>
             <tr><td><code>background-network</code></td><td>Network tasks during a scheduled background wake; requires <code>scheduled-wake</code>.</td></tr>
             <tr><td><code>hold-wifi</code></td><td>Bounded Wi-Fi association hold; requires <code>network</code>.</td></tr>
             <tr><td><code>keep-awake</code></td><td>Bounded foreground suspend prevention.</td></tr>

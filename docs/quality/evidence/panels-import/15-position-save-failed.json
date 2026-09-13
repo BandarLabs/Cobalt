@@ -1,0 +1,220 @@
+{
+  "simulation": {
+    "profile": {
+      "id": "clara-bw-391",
+      "model": "Kobo Clara BW",
+      "width": 1072,
+      "height": 1448,
+      "pixelsPerInch": 300,
+      "rotation": 3,
+      "colourPanel": false,
+      "touch": {
+        "name": "cyttsp5_mt",
+        "xMin": 0,
+        "xMax": 1447,
+        "yMin": 0,
+        "yMax": 1071
+      }
+    },
+    "scenario": "storage-full",
+    "lifecycle": "foreground",
+    "transition": {
+      "waveform": "GL16",
+      "full": false,
+      "refresh": 29,
+      "dirty": 688227,
+      "regions": [
+        {
+          "waveform": "GL16",
+          "region": {
+            "x": 280,
+            "y": 120,
+            "width": 328,
+            "height": 48
+          }
+        }
+      ],
+      "region": {
+        "x": 280,
+        "y": 120,
+        "width": 328,
+        "height": 48
+      }
+    },
+    "refreshCount": 29,
+    "dirtyPixelsSinceClean": 688227,
+    "touch": {
+      "display": {
+        "x": 964,
+        "y": 724
+      },
+      "raw": {
+        "x": 724,
+        "y": 107
+      }
+    },
+    "panelApproximation": true,
+    "panel": {
+      "mode": "automatic",
+      "status": "idle",
+      "contentsKnown": true,
+      "visibleFrame": "last confirmed completion with approximate residue",
+      "queued": false,
+      "submitted": "30",
+      "completed": "29",
+      "failures": "1",
+      "submissionMarker": null,
+      "submittedAtMillis": "15113",
+      "finishedAtMillis": "15113",
+      "timing": "host control observations; not hardware calibration"
+    },
+    "observation": null,
+    "backends": [
+      "network",
+      "battery-read",
+      "frontlight-control",
+      "wifi-control",
+      "library",
+      "cover-sensor"
+    ],
+    "navigation": {
+      "mode": "single-app",
+      "app": "panels",
+      "processId": null,
+      "hosted": []
+    },
+    "appStore": {
+      "mode": "catalog-preview",
+      "signedTransactions": false
+    },
+    "clock": {
+      "mode": "manual",
+      "unixMillis": "1788850980000",
+      "monotonicMillis": "120000",
+      "utcOffsetMinutes": 330,
+      "date": "2026-09-08"
+    },
+    "input": {
+      "source": "synthetic evdev replay",
+      "rawEvents": "51",
+      "quiescent": true,
+      "needsResynchronization": false,
+      "forwardKey": 194
+    },
+    "power": null,
+    "hardware": {
+      "batteryPercent": 72,
+      "charging": false,
+      "frontlightPercent": 39,
+      "coverClosed": false,
+      "orientation": "portrait",
+      "frontlightAppearanceCalibrated": false,
+      "orientationControl": "display-composition"
+    }
+  },
+  "layout": {
+    "paints": 23,
+    "nodes": [
+      {
+        "kind": "TopBar",
+        "x": 0,
+        "y": 0,
+        "width": 1072,
+        "height": 100,
+        "centre": {
+          "x": 536,
+          "y": 50
+        },
+        "action": null,
+        "lines": []
+      },
+      {
+        "kind": "Back",
+        "x": 47,
+        "y": 0,
+        "width": 100,
+        "height": 100,
+        "centre": {
+          "x": 97,
+          "y": 50
+        },
+        "action": 4294967295,
+        "lines": []
+      },
+      {
+        "kind": "BarAction(ActionId(487004783))",
+        "x": 793,
+        "y": 0,
+        "width": 232,
+        "height": 100,
+        "centre": {
+          "x": 909,
+          "y": 50
+        },
+        "action": 487004783,
+        "lines": [
+          "Reading"
+        ]
+      },
+      {
+        "kind": "TopBarTitle",
+        "x": 171,
+        "y": 18,
+        "width": 598,
+        "height": 64,
+        "centre": {
+          "x": 470,
+          "y": 50
+        },
+        "action": null,
+        "lines": [
+          "Added comic"
+        ]
+      },
+      {
+        "kind": "Divider",
+        "x": 0,
+        "y": 100,
+        "width": 1072,
+        "height": 4,
+        "centre": {
+          "x": 536,
+          "y": 102
+        },
+        "action": null,
+        "lines": []
+      },
+      {
+        "kind": "Secondary",
+        "x": 47,
+        "y": 116,
+        "width": 978,
+        "height": 50,
+        "centre": {
+          "x": 536,
+          "y": 141
+        },
+        "action": 2456245216,
+        "lines": [
+          "Page 2 of 3 \u00b7 Position not saved"
+        ]
+      },
+      {
+        "kind": "Picture(PictureHandle(2000))",
+        "x": 116,
+        "y": 178,
+        "width": 840,
+        "height": 1157,
+        "centre": {
+          "x": 536,
+          "y": 756
+        },
+        "action": 2456245216,
+        "lines": []
+      }
+    ]
+  },
+  "diagnostics": {
+    "issues": []
+  }
+}

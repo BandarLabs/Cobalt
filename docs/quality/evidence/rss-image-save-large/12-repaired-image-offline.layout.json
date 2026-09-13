@@ -1,0 +1,377 @@
+{
+  "paints": 8,
+  "nodes": [
+    {
+      "kind": "TopBar",
+      "x": 0,
+      "y": 0,
+      "width": 1072,
+      "height": 100,
+      "centre": {
+        "x": 536,
+        "y": 50
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Back",
+      "x": 47,
+      "y": 0,
+      "width": 100,
+      "height": 100,
+      "centre": {
+        "x": 97,
+        "y": 50
+      },
+      "action": 4294967295,
+      "lines": []
+    },
+    {
+      "kind": "BarGlyph(ActionId(2359859083), Light)",
+      "x": 925,
+      "y": 0,
+      "width": 100,
+      "height": 100,
+      "centre": {
+        "x": 975,
+        "y": 50
+      },
+      "action": 2359859083,
+      "lines": [
+        "Front light"
+      ]
+    },
+    {
+      "kind": "BarAction(ActionId(282227963))",
+      "x": 781,
+      "y": 0,
+      "width": 120,
+      "height": 100,
+      "centre": {
+        "x": 841,
+        "y": 50
+      },
+      "action": 282227963,
+      "lines": [
+        "Aa"
+      ]
+    },
+    {
+      "kind": "TopBarTitle",
+      "x": 171,
+      "y": 10,
+      "width": 586,
+      "height": 79,
+      "centre": {
+        "x": 464,
+        "y": 49
+      },
+      "action": null,
+      "lines": [
+        "An evening by the\u2026"
+      ]
+    },
+    {
+      "kind": "Divider",
+      "x": 0,
+      "y": 100,
+      "width": 1072,
+      "height": 4,
+      "centre": {
+        "x": 536,
+        "y": 102
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Heading(2)",
+      "x": 47,
+      "y": 116,
+      "width": 978,
+      "height": 105,
+      "centre": {
+        "x": 536,
+        "y": 168
+      },
+      "action": 282227963,
+      "lines": [
+        "Along the river"
+      ]
+    },
+    {
+      "kind": "FramedPicture(PictureHandle(0))",
+      "x": 376,
+      "y": 233,
+      "width": 320,
+      "height": 120,
+      "centre": {
+        "x": 536,
+        "y": 293
+      },
+      "action": 282227963,
+      "lines": []
+    },
+    {
+      "kind": "Secondary",
+      "x": 47,
+      "y": 365,
+      "width": 978,
+      "height": 60,
+      "centre": {
+        "x": 536,
+        "y": 395
+      },
+      "action": 282227963,
+      "lines": [
+        "The hills beyond the river."
+      ]
+    },
+    {
+      "kind": "RichText(TextPresentation { strong: false, emphasis: false, underline: false, superscript: false, subscript: false, highlighted: false })",
+      "x": 47,
+      "y": 437,
+      "width": 916,
+      "height": 55,
+      "centre": {
+        "x": 505,
+        "y": 464
+      },
+      "action": 282227963,
+      "lines": [
+        "The first light reaches the bridge before the town wakes."
+      ]
+    },
+    {
+      "kind": "RichText(TextPresentation { strong: false, emphasis: false, underline: false, superscript: false, subscript: false, highlighted: false })",
+      "x": 47,
+      "y": 437,
+      "width": 978,
+      "height": 55,
+      "centre": {
+        "x": 536,
+        "y": 464
+      },
+      "action": 282227963,
+      "lines": []
+    },
+    {
+      "kind": "Quote(1, Body)",
+      "x": 95,
+      "y": 504,
+      "width": 930,
+      "height": 55,
+      "centre": {
+        "x": 560,
+        "y": 531
+      },
+      "action": 282227963,
+      "lines": [
+        "A good walk leaves room to notice small things."
+      ]
+    },
+    {
+      "kind": "RichText(TextPresentation { strong: false, emphasis: false, underline: false, superscript: false, subscript: false, highlighted: false })",
+      "x": 47,
+      "y": 571,
+      "width": 910,
+      "height": 55,
+      "centre": {
+        "x": 502,
+        "y": 598
+      },
+      "action": 282227963,
+      "lines": [
+        "Reeds bend towards the water. Beyond the footpath, the"
+      ]
+    },
+    {
+      "kind": "RichText(TextPresentation { strong: false, emphasis: false, underline: false, superscript: false, subscript: false, highlighted: false })",
+      "x": 47,
+      "y": 626,
+      "width": 911,
+      "height": 55,
+      "centre": {
+        "x": 502,
+        "y": 653
+      },
+      "action": 282227963,
+      "lines": [
+        "allotments are quiet. We stop at the old stone steps and"
+      ]
+    },
+    {
+      "kind": "RichText(TextPresentation { strong: false, emphasis: false, underline: false, superscript: false, subscript: false, highlighted: false })",
+      "x": 47,
+      "y": 681,
+      "width": 562,
+      "height": 55,
+      "centre": {
+        "x": 328,
+        "y": 708
+      },
+      "action": 123572910,
+      "lines": [
+        "listen to the birds across the bank."
+      ]
+    },
+    {
+      "kind": "RichText(TextPresentation { strong: false, emphasis: false, underline: false, superscript: false, subscript: false, highlighted: false })",
+      "x": 47,
+      "y": 571,
+      "width": 978,
+      "height": 165,
+      "centre": {
+        "x": 536,
+        "y": 653
+      },
+      "action": 282227963,
+      "lines": []
+    },
+    {
+      "kind": "RichText(TextPresentation { strong: false, emphasis: false, underline: false, superscript: false, subscript: false, highlighted: false })",
+      "x": 47,
+      "y": 748,
+      "width": 910,
+      "height": 55,
+      "centre": {
+        "x": 502,
+        "y": 775
+      },
+      "action": 282227963,
+      "lines": [
+        "Reeds bend towards the water. Beyond the footpath, the"
+      ]
+    },
+    {
+      "kind": "RichText(TextPresentation { strong: false, emphasis: false, underline: false, superscript: false, subscript: false, highlighted: false })",
+      "x": 47,
+      "y": 803,
+      "width": 911,
+      "height": 55,
+      "centre": {
+        "x": 502,
+        "y": 830
+      },
+      "action": 282227963,
+      "lines": [
+        "allotments are quiet. We stop at the old stone steps and"
+      ]
+    },
+    {
+      "kind": "RichText(TextPresentation { strong: false, emphasis: false, underline: false, superscript: false, subscript: false, highlighted: false })",
+      "x": 47,
+      "y": 858,
+      "width": 562,
+      "height": 55,
+      "centre": {
+        "x": 328,
+        "y": 885
+      },
+      "action": 123572910,
+      "lines": [
+        "listen to the birds across the bank."
+      ]
+    },
+    {
+      "kind": "RichText(TextPresentation { strong: false, emphasis: false, underline: false, superscript: false, subscript: false, highlighted: false })",
+      "x": 47,
+      "y": 748,
+      "width": 978,
+      "height": 165,
+      "centre": {
+        "x": 536,
+        "y": 830
+      },
+      "action": 282227963,
+      "lines": []
+    },
+    {
+      "kind": "RichText(TextPresentation { strong: false, emphasis: false, underline: false, superscript: false, subscript: false, highlighted: false })",
+      "x": 47,
+      "y": 925,
+      "width": 910,
+      "height": 55,
+      "centre": {
+        "x": 502,
+        "y": 952
+      },
+      "action": 282227963,
+      "lines": [
+        "Reeds bend towards the water. Beyond the footpath, the"
+      ]
+    },
+    {
+      "kind": "RichText(TextPresentation { strong: false, emphasis: false, underline: false, superscript: false, subscript: false, highlighted: false })",
+      "x": 47,
+      "y": 980,
+      "width": 911,
+      "height": 55,
+      "centre": {
+        "x": 502,
+        "y": 1007
+      },
+      "action": 282227963,
+      "lines": [
+        "allotments are quiet. We stop at the old stone steps and"
+      ]
+    },
+    {
+      "kind": "RichText(TextPresentation { strong: false, emphasis: false, underline: false, superscript: false, subscript: false, highlighted: false })",
+      "x": 47,
+      "y": 1035,
+      "width": 562,
+      "height": 55,
+      "centre": {
+        "x": 328,
+        "y": 1062
+      },
+      "action": 123572910,
+      "lines": [
+        "listen to the birds across the bank."
+      ]
+    },
+    {
+      "kind": "RichText(TextPresentation { strong: false, emphasis: false, underline: false, superscript: false, subscript: false, highlighted: false })",
+      "x": 47,
+      "y": 925,
+      "width": 978,
+      "height": 165,
+      "centre": {
+        "x": 536,
+        "y": 1007
+      },
+      "action": 282227963,
+      "lines": []
+    },
+    {
+      "kind": "PagePosition",
+      "x": 47,
+      "y": 1318,
+      "width": 978,
+      "height": 83,
+      "centre": {
+        "x": 536,
+        "y": 1359
+      },
+      "action": null,
+      "lines": [
+        "1 of 4"
+      ]
+    },
+    {
+      "kind": "PageNext(ActionId(1727113454))",
+      "x": 907,
+      "y": 1318,
+      "width": 118,
+      "height": 83,
+      "centre": {
+        "x": 966,
+        "y": 1359
+      },
+      "action": 1727113454,
+      "lines": []
+    }
+  ]
+}

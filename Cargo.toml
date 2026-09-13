@@ -16,6 +16,7 @@ members = [
     "crates/kobo-image",
     "crates/kobo-json",
     "crates/kobo-net",
+    "crates/kobo-opml",
     "crates/kobo-opds",
     "crates/kobo-term",
     "crates/kobo-text",
@@ -92,7 +93,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.3.13"
+version = "0.3.14"
 edition = "2021"
 rust-version = "1.85.1"
 license = "AGPL-3.0-only"

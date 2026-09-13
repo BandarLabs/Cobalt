@@ -1,0 +1,182 @@
+{
+  "app": "parlor",
+  "fonts": [
+    {
+      "role": "interface",
+      "source": "AtkinsonHyperlegible-Regular.ttf"
+    },
+    {
+      "role": "display-title",
+      "source": "AtkinsonHyperlegible-Bold.ttf"
+    },
+    {
+      "role": "display-heading",
+      "source": "AtkinsonHyperlegible-Bold.ttf"
+    },
+    {
+      "role": "display-bold",
+      "source": "AtkinsonHyperlegible-Bold.ttf"
+    },
+    {
+      "role": "reading",
+      "source": "AtkinsonHyperlegible-Regular.ttf"
+    },
+    {
+      "role": "mono",
+      "source": "DejaVuSansMono.ttf"
+    }
+  ],
+  "frame": {
+    "colourAppearance": "luminance",
+    "format": "grey8",
+    "sha256": "65231303c83a1c4cd08c08b19f14c75f27b5760a5a0ef8ed94c4b51e3f14d2ad",
+    "view": "ideal"
+  },
+  "interfaceScalePercent": 100,
+  "mode": "single-app",
+  "orientation": "portrait",
+  "paints": "6",
+  "publisherFontHandle": null,
+  "readingScalePercent": 100,
+  "runtimeVersion": "0.3.12",
+  "schema": "cobalt.simulator-capture",
+  "simulation": {
+    "appStore": {
+      "mode": "catalog-preview",
+      "signedTransactions": false
+    },
+    "backends": [
+      "network",
+      "battery-read",
+      "frontlight-control",
+      "wifi-control",
+      "library",
+      "cover-sensor"
+    ],
+    "clock": {
+      "date": "2026-09-12",
+      "mode": "real",
+      "monotonicMillis": "2454",
+      "unixMillis": "1789191643322",
+      "utcOffsetMinutes": 0
+    },
+    "dirtyPixelsSinceClean": 1396412,
+    "hardware": {
+      "batteryPercent": 72,
+      "charging": false,
+      "coverClosed": false,
+      "frontlightAppearanceCalibrated": false,
+      "frontlightPercent": 20,
+      "orientation": "portrait",
+      "orientationControl": "display-composition"
+    },
+    "input": {
+      "forwardKey": 194,
+      "needsResynchronization": false,
+      "quiescent": true,
+      "rawEvents": "28",
+      "source": "synthetic evdev replay"
+    },
+    "lifecycle": "foreground",
+    "navigation": {
+      "app": "parlor",
+      "hosted": [],
+      "mode": "single-app",
+      "processId": null
+    },
+    "observation": null,
+    "panel": {
+      "completed": "6",
+      "contentsKnown": true,
+      "failures": "0",
+      "finishedAtMillis": "1702",
+      "mode": "automatic",
+      "queued": false,
+      "status": "idle",
+      "submissionMarker": null,
+      "submitted": "6",
+      "submittedAtMillis": "1699",
+      "timing": "host control observations; not hardware calibration",
+      "visibleFrame": "last confirmed completion with approximate residue"
+    },
+    "panelApproximation": true,
+    "power": null,
+    "profile": {
+      "colourPanel": false,
+      "height": 1448,
+      "id": "clara-bw-391",
+      "model": "Kobo Clara BW",
+      "pixelsPerInch": 300,
+      "rotation": 3,
+      "touch": {
+        "name": "cyttsp5_mt",
+        "xMax": 1447,
+        "xMin": 0,
+        "yMax": 1071,
+        "yMin": 0
+      },
+      "width": 1072
+    },
+    "refreshCount": 6,
+    "scenario": "normal",
+    "touch": {
+      "display": {
+        "x": 558,
+        "y": 655
+      },
+      "raw": {
+        "x": 655,
+        "y": 513
+      }
+    },
+    "transition": {
+      "dirty": 1396412,
+      "full": false,
+      "refresh": 6,
+      "region": {
+        "height": 320,
+        "width": 992,
+        "x": 40,
+        "y": 680
+      },
+      "regions": [
+        {
+          "region": {
+            "height": 32,
+            "width": 600,
+            "x": 112,
+            "y": 680
+          },
+          "waveform": "GL16"
+        },
+        {
+          "region": {
+            "height": 144,
+            "width": 992,
+            "x": 40,
+            "y": 744
+          },
+          "waveform": "GL16"
+        },
+        {
+          "region": {
+            "height": 96,
+            "width": 288,
+            "x": 392,
+            "y": 904
+          },
+          "waveform": "GL16"
+        }
+      ],
+      "waveform": "GL16"
+    }
+  },
+  "source": {
+    "binarySha256": "59df811438384b9a5cf452ac9986f4f9242920534343e55decb3dfc018f92ed6",
+    "dirty": true,
+    "fixture": "four-table-games",
+    "requestedSeed": "0",
+    "revision": "2799db8ccf1994267c8b7bebd201110257b939b8"
+  },
+  "version": 1
+}

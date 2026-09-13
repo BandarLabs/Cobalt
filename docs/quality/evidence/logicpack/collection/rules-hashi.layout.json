@@ -1,0 +1,243 @@
+{
+  "paints": 3,
+  "nodes": [
+    {
+      "kind": "StatusBand",
+      "x": 0,
+      "y": 0,
+      "width": 1072,
+      "height": 59,
+      "centre": {
+        "x": 536,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusClock",
+      "x": 47,
+      "y": 0,
+      "width": 112,
+      "height": 59,
+      "centre": {
+        "x": 103,
+        "y": 29
+      },
+      "action": null,
+      "lines": [
+        "07:01"
+      ]
+    },
+    {
+      "kind": "StatusBattery(Some(Percent(72)), false)",
+      "x": 955,
+      "y": 12,
+      "width": 70,
+      "height": 35,
+      "centre": {
+        "x": 990,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusSignal(Strong)",
+      "x": 896,
+      "y": 12,
+      "width": 35,
+      "height": 35,
+      "centre": {
+        "x": 913,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusBluetooth",
+      "x": 837,
+      "y": 12,
+      "width": 35,
+      "height": 35,
+      "centre": {
+        "x": 854,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "TopBar",
+      "x": 0,
+      "y": 59,
+      "width": 1072,
+      "height": 100,
+      "centre": {
+        "x": 536,
+        "y": 109
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Back",
+      "x": 47,
+      "y": 59,
+      "width": 100,
+      "height": 100,
+      "centre": {
+        "x": 97,
+        "y": 109
+      },
+      "action": 4294967295,
+      "lines": []
+    },
+    {
+      "kind": "TopBarTitle",
+      "x": 171,
+      "y": 77,
+      "width": 854,
+      "height": 64,
+      "centre": {
+        "x": 598,
+        "y": 109
+      },
+      "action": null,
+      "lines": [
+        "Hashi"
+      ]
+    },
+    {
+      "kind": "Divider",
+      "x": 0,
+      "y": 159,
+      "width": 1072,
+      "height": 4,
+      "centre": {
+        "x": 536,
+        "y": 161
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Text",
+      "x": 47,
+      "y": 175,
+      "width": 978,
+      "height": 128,
+      "centre": {
+        "x": 536,
+        "y": 239
+      },
+      "action": null,
+      "lines": [
+        "Join islands with one or two straight",
+        "bridges."
+      ]
+    },
+    {
+      "kind": "Text",
+      "x": 47,
+      "y": 315,
+      "width": 978,
+      "height": 128,
+      "centre": {
+        "x": 536,
+        "y": 379
+      },
+      "action": null,
+      "lines": [
+        "Each island needs exactly its printed",
+        "number of bridges."
+      ]
+    },
+    {
+      "kind": "Text",
+      "x": 47,
+      "y": 455,
+      "width": 978,
+      "height": 128,
+      "centre": {
+        "x": 536,
+        "y": 519
+      },
+      "action": null,
+      "lines": [
+        "Bridges cannot cross; every island must",
+        "connect."
+      ]
+    },
+    {
+      "kind": "Spacer",
+      "x": 47,
+      "y": 595,
+      "width": 978,
+      "height": 118,
+      "centre": {
+        "x": 536,
+        "y": 654
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(718021004), Key, false)",
+      "x": 47,
+      "y": 595,
+      "width": 483,
+      "height": 118,
+      "centre": {
+        "x": 288,
+        "y": 654
+      },
+      "action": 718021004,
+      "lines": []
+    },
+    {
+      "kind": "CellLabel(false)",
+      "x": 47,
+      "y": 595,
+      "width": 483,
+      "height": 118,
+      "centre": {
+        "x": 288,
+        "y": 654
+      },
+      "action": 718021004,
+      "lines": [
+        "Difficulty"
+      ]
+    },
+    {
+      "kind": "Cell(ActionId(3588247949), Key, false)",
+      "x": 542,
+      "y": 595,
+      "width": 483,
+      "height": 118,
+      "centre": {
+        "x": 783,
+        "y": 654
+      },
+      "action": 3588247949,
+      "lines": []
+    },
+    {
+      "kind": "CellLabel(false)",
+      "x": 542,
+      "y": 595,
+      "width": 483,
+      "height": 118,
+      "centre": {
+        "x": 783,
+        "y": 654
+      },
+      "action": 3588247949,
+      "lines": [
+        "Play"
+      ]
+    }
+  ]
+}

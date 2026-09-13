@@ -1,0 +1,166 @@
+{
+  "status": "passed",
+  "scale": "default",
+  "fixture": "original-miniflux-account",
+  "requests": [
+    {
+      "method": "GET",
+      "path": "/v1/entries?limit=60&status=unread&order=published_at&direction=desc",
+      "token": "fixture-token",
+      "authorization": null,
+      "body": null
+    },
+    {
+      "method": "GET",
+      "path": "/v1/entries?limit=20&starred=true&order=published_at&direction=desc",
+      "token": "fixture-token",
+      "authorization": null,
+      "body": null
+    },
+    {
+      "method": "GET",
+      "path": "/v1/entries?limit=20&status=read&order=published_at&direction=desc",
+      "token": "fixture-token",
+      "authorization": null,
+      "body": null
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/entries",
+      "token": "fixture-token",
+      "authorization": null,
+      "body": {
+        "entry_ids": [
+          7
+        ],
+        "status": "read"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/ridge.png",
+      "token": null,
+      "authorization": null,
+      "body": null
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/entries",
+      "token": "fixture-token",
+      "authorization": null,
+      "body": {
+        "entry_ids": [
+          7
+        ],
+        "starred": true
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/entries",
+      "token": "fixture-token",
+      "authorization": null,
+      "body": {
+        "entry_ids": [
+          7
+        ],
+        "starred": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/v1/entries?limit=60&status=unread&order=published_at&direction=desc",
+      "token": "fixture-token",
+      "authorization": null,
+      "body": null
+    },
+    {
+      "method": "GET",
+      "path": "/v1/entries?limit=20&starred=true&order=published_at&direction=desc",
+      "token": "fixture-token",
+      "authorization": null,
+      "body": null
+    },
+    {
+      "method": "GET",
+      "path": "/v1/entries?limit=20&status=read&order=published_at&direction=desc",
+      "token": "fixture-token",
+      "authorization": null,
+      "body": null
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/entries",
+      "token": "fixture-token",
+      "authorization": null,
+      "body": {
+        "entry_ids": [
+          8
+        ],
+        "starred": true
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/entries",
+      "token": "fixture-token",
+      "authorization": null,
+      "body": {
+        "entry_ids": [
+          8
+        ],
+        "starred": true
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/v1/entries/8/fetch-content?update_content=false",
+      "token": "fixture-token",
+      "authorization": null,
+      "body": null
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/entries",
+      "token": "fixture-token",
+      "authorization": null,
+      "body": {
+        "entry_ids": [
+          8
+        ],
+        "status": "read"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/v1/categories",
+      "token": "fixture-token",
+      "authorization": null,
+      "body": null
+    },
+    {
+      "method": "POST",
+      "path": "/v1/feeds",
+      "token": "fixture-token",
+      "authorization": null,
+      "body": {
+        "feed_url": "https://feeds.bbci.co.uk/news/science_and_environment/rss.xml",
+        "category_id": 3
+      }
+    }
+  ],
+  "checks": [
+    "three lists merged into one saved batch",
+    "article picture fetched once and saved",
+    "reading position kept and returned to",
+    "opening an article marks it read on the server",
+    "star reaches the account and shows in its tab",
+    "an offline change is kept and reported",
+    "saved batch and unsent change survive a restart offline",
+    "unsent changes are flushed before the next sync",
+    "a lost reply is re-sent as the same end state",
+    "a fetched article replaces its summary and is saved",
+    "the fetched article reopens offline after a restart",
+    "a chosen feed is filed under an existing category"
+  ]
+}

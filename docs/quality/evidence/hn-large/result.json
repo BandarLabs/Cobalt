@@ -1,0 +1,35 @@
+{
+  "status": "passed",
+  "scale": "170",
+  "fixture": "hacker-news-front-page",
+  "requests": [
+    "/v0/topstories.json?orderBy=%22%24key%22&limitToFirst=30",
+    "/v0/item/1.json",
+    "/v0/item/50.json",
+    "/v0/item/90.json",
+    "/v0/item/51.json",
+    "/v0/item/52.json",
+    "/v0/item/53.json",
+    "/v0/item/54.json",
+    "/v0/item/55.json",
+    "/v0/item/1.json",
+    "/v0/item/2.json",
+    "/v0/item/3.json",
+    "/v0/item/4.json",
+    "/v0/item/5.json",
+    "/v0/item/6.json",
+    "/v0/item/7.json",
+    "/article.html"
+  ],
+  "checks": [
+    "the front page arrives in the order the site gave it",
+    "the discussion says the headline once, in the bar",
+    "a reply six levels down is reachable and says how deep it is",
+    "the article behind a story is read on the device",
+    "leaving the article lands back in the discussion",
+    "a story is put aside from its own screen",
+    "the list says which story was read and which was put aside",
+    "the saved story and its article reopen with no network",
+    "a saved story can be taken off the list, and the empty list says how to fill it"
+  ]
+}

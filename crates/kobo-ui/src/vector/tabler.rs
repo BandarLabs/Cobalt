@@ -93,8 +93,9 @@ pub(super) fn outline(glyph: Glyph) -> &'static [&'static [Cmd]] {
         | Glyph::WhiteDraughtsKing
         | Glyph::BlackDraughtsMan
         | Glyph::WhiteDraughtsMan
-        | Glyph::MorrisPoint
-        | Glyph::MorrisLegalPoint
+        | Glyph::BoardPoint
+        | Glyph::Mill
+        | Glyph::LegalPoint
         | Glyph::Backspace
         | Glyph::Shift => &[],
     }

@@ -1,0 +1,31 @@
+{
+  "status": "passed",
+  "profile": "elipsa-2e-389",
+  "scale": "default",
+  "orientation": "portrait",
+  "negotiated_grids": [
+    [
+      133,
+      64
+    ]
+  ],
+  "source_head": "6f13feca0353fae767ca4320d2e7b754ab0d15fc",
+  "source_dirty": true,
+  "basis": "real-host-pty-and-sdk-simulator-over-trusted-tls",
+  "pairing": "private seeded fixture",
+  "checks": [
+    "portrait captures",
+    "measured grid on keyboard toggle",
+    "prompt without newline",
+    "laptop raw mode",
+    "trusted TLS",
+    "reader input to host",
+    "laptop input before Enter",
+    "same-session output",
+    "PTY grid negotiation",
+    "wide output",
+    "reader Ctrl-C",
+    "retained final screen",
+    "laptop terminal restoration"
+  ]
+}

@@ -310,33 +310,19 @@ impl Driver {
         self.touch(x, y)
     }
 
-    /// Types by tapping the keys of the on-screen keyboard.
-    ///
-    /// There is no other way in, and that is correct: this device has no
-    /// hardware keyboard, so a driver that injected text into the application
-    /// would be exercising a path a reader can never take. A key is any
-    /// tappable node whose whole label is the character -- the SDK has no
-    /// keyboard node, because a keyboard, a calculator and a colour picker are
-    /// all the same grid of one-word buttons, so there is nothing more
-    /// specific to match on. If the character has no key on the layer showing,
-    /// that is a finding, not an inconvenience, and it is reported as one.
+    /// Types through visible touch targets. Standard SDK key identities take
+    /// precedence over matching letters in a crossword or document. Custom
+    /// keyboards retain label matching when no SDK keyboard is present.
     fn type_text(&mut self, text: &str) -> Result<(), String> {
         for character in text.chars() {
             let label = match character {
                 ' ' => "Space".to_owned(),
                 character => character.to_string(),
             };
-            let key = self
-                .layout()?
-                .into_iter()
-                .find(|control| {
-                    control.action.is_some()
-                        && control.lines.len() == 1
-                        && control.lines[0].trim().eq_ignore_ascii_case(&label)
-                })
-                .ok_or_else(|| {
-                    format!("no key for {label:?}; is the right keyboard layer showing?")
-                })?;
+            let controls = self.layout()?;
+            let key = keyboard_key(&controls, &label).ok_or_else(|| {
+                format!("no key for {label:?}; is the right keyboard layer showing?")
+            })?;
             self.touch(key.centre.0, key.centre.1)?;
         }
         Ok(())
@@ -1216,6 +1202,22 @@ fn parse_atomic_capture(bytes: &[u8]) -> Result<(serde_json::Value, u32, u32, &[
     Ok((metadata, width, height, frame))
 }
 
+fn keyboard_key<'a>(controls: &'a [Control], label: &str) -> Option<&'a Control> {
+    let mut keys = (0..3)
+        .flat_map(|row| (0..10).map(move |column| format!("kb.r{row}c{column}")))
+        .filter_map(|name| parse_action_id(&name).ok())
+        .collect::<Vec<_>>();
+    keys.push(parse_action_id("kb.space").expect("fixed key"));
+    let is_key = |control: &Control| control.action.is_some_and(|action| keys.contains(&action));
+    let standard = controls.iter().any(is_key);
+    controls.iter().find(|control| {
+        control.tappable()
+            && (!standard || is_key(control))
+            && control.lines.len() == 1
+            && control.lines[0].trim().eq_ignore_ascii_case(label)
+    })
+}
+
 fn parse_action_id(value: &str) -> Result<u32, String> {
     if let Ok(number) = value.parse::<u32>() {
         return Ok(number);
@@ -1315,6 +1317,30 @@ mod tests {
     use std::path::Path;
 
     const BODY: &str = r#"{"nodes":[{"kind":"Button","x":10,"y":20,"width":30,"height":40,"centre":{"x":25,"y":40},"action":77,"lines":["Search","for a \"book\""]},{"kind":"Divider","x":0,"y":1,"width":2,"height":3,"centre":{"x":1,"y":2},"action":null,"lines":[]}]}"#;
+
+    #[test]
+    fn typing_prefers_sdk_keys_over_existing_crossword_letters() {
+        let control = |name: &str, label: &str| super::Control {
+            kind: "Cell".into(),
+            centre: (1, 1),
+            lines: vec![label.into()],
+            action: Some(super::parse_action_id(name).unwrap()),
+        };
+        let cells = [
+            control("entry-12", "N"),
+            control("kb.r2c5", "n"),
+            control("entry-1", "1"),
+        ];
+        assert_eq!(
+            super::keyboard_key(&cells, "n").unwrap().action,
+            cells[1].action
+        );
+        assert!(super::keyboard_key(&cells, "1").is_none());
+        assert_eq!(
+            super::keyboard_key(&cells[..1], "n").unwrap().action,
+            cells[0].action
+        );
+    }
 
     #[test]
     fn atomic_capture_rejects_truncation_corruption_and_mismatched_metadata() {

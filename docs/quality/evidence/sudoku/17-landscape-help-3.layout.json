@@ -1,0 +1,200 @@
+{
+  "paints": 7,
+  "nodes": [
+    {
+      "kind": "StatusBand",
+      "x": 1013,
+      "y": 0,
+      "width": 59,
+      "height": 1448,
+      "centre": {
+        "x": 1042,
+        "y": 724
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusClock",
+      "x": 1013,
+      "y": 47,
+      "width": 59,
+      "height": 112,
+      "centre": {
+        "x": 1042,
+        "y": 103
+      },
+      "action": null,
+      "lines": [
+        "07:01"
+      ]
+    },
+    {
+      "kind": "StatusBattery(Some(Percent(72)), false)",
+      "x": 1025,
+      "y": 1331,
+      "width": 35,
+      "height": 70,
+      "centre": {
+        "x": 1042,
+        "y": 1366
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusSignal(Strong)",
+      "x": 1025,
+      "y": 1272,
+      "width": 35,
+      "height": 35,
+      "centre": {
+        "x": 1042,
+        "y": 1289
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusBluetooth",
+      "x": 1025,
+      "y": 1213,
+      "width": 35,
+      "height": 35,
+      "centre": {
+        "x": 1042,
+        "y": 1230
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "TopBar",
+      "x": 913,
+      "y": 0,
+      "width": 100,
+      "height": 1448,
+      "centre": {
+        "x": 963,
+        "y": 724
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Back",
+      "x": 913,
+      "y": 47,
+      "width": 100,
+      "height": 100,
+      "centre": {
+        "x": 963,
+        "y": 97
+      },
+      "action": 4294967295,
+      "lines": []
+    },
+    {
+      "kind": "TopBarTitle",
+      "x": 931,
+      "y": 171,
+      "width": 64,
+      "height": 1230,
+      "centre": {
+        "x": 963,
+        "y": 786
+      },
+      "action": null,
+      "lines": [
+        "Sudoku"
+      ]
+    },
+    {
+      "kind": "Divider",
+      "x": 909,
+      "y": 0,
+      "width": 4,
+      "height": 1448,
+      "centre": {
+        "x": 911,
+        "y": 724
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Text",
+      "x": 641,
+      "y": 104,
+      "width": 256,
+      "height": 1240,
+      "centre": {
+        "x": 769,
+        "y": 724
+      },
+      "action": null,
+      "lines": [
+        "There are 12 original puzzles per difficulty. Easy uses",
+        "single candidates. Medium adds single locations in a",
+        "row, column or box. Hard needs more advanced",
+        "techniques."
+      ]
+    },
+    {
+      "kind": "NavBar",
+      "x": 0,
+      "y": 0,
+      "width": 142,
+      "height": 1448,
+      "centre": {
+        "x": 71,
+        "y": 724
+      },
+      "action": 3440364824,
+      "lines": []
+    },
+    {
+      "kind": "Divider",
+      "x": 138,
+      "y": 0,
+      "width": 4,
+      "height": 1448,
+      "centre": {
+        "x": 140,
+        "y": 724
+      },
+      "action": 3440364824,
+      "lines": []
+    },
+    {
+      "kind": "NavDestination(ActionId(4118453880), None)",
+      "x": 0,
+      "y": 0,
+      "width": 142,
+      "height": 724,
+      "centre": {
+        "x": 71,
+        "y": 362
+      },
+      "action": 4118453880,
+      "lines": [
+        "Previous"
+      ]
+    },
+    {
+      "kind": "NavDestination(ActionId(3440364824), None)",
+      "x": 0,
+      "y": 724,
+      "width": 142,
+      "height": 724,
+      "centre": {
+        "x": 71,
+        "y": 1086
+      },
+      "action": 3440364824,
+      "lines": [
+        "Next"
+      ]
+    }
+  ]
+}

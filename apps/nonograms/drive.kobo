@@ -1,15 +1,21 @@
 expect Nonograms
-tap How to play
+tap Help
 expect Use the clues to fill the picture
 wait 250
 clean
 shot nonograms-help
-tap Play
-tap Harbor dawn
-expect Harbor dawn · free mode
+tap Back
+tap House
+wait-for-id more
+tap-id board.cell.2
+wait-idle
+tap-id board.column.2
+expect Column 3
+shot nonograms-clue
+tap-id resume
+tap-id more
 tap Free
-expect guided mode
-tap Run entry: off
-expect Run entry: on
-clean
+tap Run off
+tap Resume
+wait-idle
 shot nonograms-play

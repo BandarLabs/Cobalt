@@ -1,0 +1,24 @@
+{
+  "status": "passed",
+  "checks": [
+    "saved feed opens without network",
+    "saved body search, no matches and clearing without network",
+    "HTML reading and page turn with a verified offline image",
+    "offline refresh retains articles",
+    "process restart reopens saved body at saved page",
+    "original snapshot unchanged",
+    "no server mutations",
+    "failed progress write preserves prior state",
+    "explicit save retry persists latest position",
+    "OPML preview supports selection and skips duplicate and HTTP entries",
+    "OPML save failure preserves subscriptions and retry adds only new feed",
+    "failed unfollow preserves disk state and retry survives restart",
+    "unreadable subscriptions survive retry and a repaired file can reload",
+    "starter browsing sends no requests and offline selection does not subscribe",
+    "the computer stages a checked OPML list into the Feeds shelf"
+  ],
+  "fixture": "original-rss-journal",
+  "limits": [
+    "Image snapshot is seeded locally; network download and image-save failure need separate coverage"
+  ]
+}

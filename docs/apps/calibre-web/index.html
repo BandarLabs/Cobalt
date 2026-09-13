@@ -4,12 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Install calibre-web on Kobo | Cobalt</title>
-<meta name="description" content="Connect your calibre-web library and browse its books from your Kobo. Install it on a supported Kobo e-reader with Cobalt.">
+<meta name="description" content="Browse a public or private OPDS library, download EPUBs and continue reading offline. Install it on a supported Kobo e-reader with Cobalt.">
 <link rel="canonical" href="https://bandarlabs.github.io/Cobalt/apps/calibre-web/">
 <link rel="icon" href="../../logo.svg" type="image/svg+xml">
 <meta property="og:type" content="website">
 <meta property="og:title" content="Install calibre-web on Kobo | Cobalt">
-<meta property="og:description" content="Connect your calibre-web library and browse its books from your Kobo. Install it on a supported Kobo e-reader with Cobalt.">
+<meta property="og:description" content="Browse a public or private OPDS library, download EPUBs and continue reading offline. Install it on a supported Kobo e-reader with Cobalt.">
 <meta property="og:url" content="https://bandarlabs.github.io/Cobalt/apps/calibre-web/">
 <meta property="og:site_name" content="Cobalt">
 <meta property="og:image" content="https://bandarlabs.github.io/Cobalt/media/site/apps/calibre-web.png">
@@ -18,17 +18,17 @@
 <meta property="og:image:alt" content="Private-library list with an Add control and an empty-state explanation.">
 <meta name="twitter:card" content="summary">
 <meta name="twitter:title" content="Install calibre-web on Kobo | Cobalt">
-<meta name="twitter:description" content="Connect your calibre-web library and browse its books from your Kobo. Install it on a supported Kobo e-reader with Cobalt.">
+<meta name="twitter:description" content="Browse a public or private OPDS library, download EPUBs and continue reading offline. Install it on a supported Kobo e-reader with Cobalt.">
 <meta name="twitter:image" content="https://bandarlabs.github.io/Cobalt/media/site/apps/calibre-web.png">
 <meta name="twitter:image:alt" content="Private-library list with an Add control and an empty-state explanation.">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-JhHgsBYwptVGBDnUJKZOORgDYZV5+/CZXJezuZCKv/w='; style-src 'self'; img-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-Nr7Lz9CnzvhH+ByN5Uan8h8h4uLAzklht4vEKVEsOi0='; style-src 'self'; img-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
 <script type="application/ld+json">{
   "@context": "https://schema.org",
   "@graph": [
     {
       "@type": "SoftwareApplication",
       "name": "calibre-web",
-      "description": "Connect your calibre-web library and browse its books from your Kobo.",
+      "description": "Browse a public or private OPDS library, download EPUBs and continue reading offline.",
       "url": "https://bandarlabs.github.io/Cobalt/apps/calibre-web/",
       "image": {
         "@type": "ImageObject",
@@ -40,7 +40,7 @@
       "applicationSuite": "Cobalt",
       "applicationCategory": "SoftwareApplication",
       "operatingSystem": "Cobalt on supported Kobo e-readers",
-      "softwareVersion": "0.1.2",
+      "softwareVersion": "0.1.3",
       "isAccessibleForFree": true,
       "offers": {
         "@type": "Offer",
@@ -96,8 +96,8 @@
     <div class="app-copy">
       <p class="eyebrow">Kobo app</p>
       <h1>calibre-web</h1>
-      <p class="summary">Connect your calibre-web library and browse its books from your Kobo.</p>
-      <div class="meta"><span>Version 0.1.2</span><span>network</span></div>
+      <p class="summary">Browse a public or private OPDS library, download EPUBs and continue reading offline.</p>
+      <div class="meta"><span>Version 0.1.3</span><span>network</span></div>
     </div>
     <figure class="app-shot">
       <img src="../../media/site/apps/calibre-web.png" width="1072" height="1448" alt="Private-library list with an Add control and an empty-state explanation.">
@@ -107,10 +107,9 @@
     <p class="eyebrow">App setup</p>
     <h2 id="prerequisites-title">Before you install</h2>
     <ol>
-      <li>Have an HTTPS calibre-web or calibre content-server OPDS endpoint ready.</li>
-      <li>For a private library, install its username and password as the named Basic credential used by the app.
-        <code class="setup-command">kobo secret set calibre --device &lt;address&gt;</code></li>
-      <li>If the server uses a private certificate authority, install that trust root separately.
+      <li>Add the HTTPS OPDS address of your calibre-web or calibre content-server library.</li>
+      <li>Choose Sign in on the reader for a private library, or Use public library. Older named accounts should sign in again to bind the account to this server.</li>
+      <li>For a private certificate authority, install its trust root separately.
         <code class="setup-command">kobo trust set calibre --device &lt;address&gt;</code></li>
     </ol>
   </section>

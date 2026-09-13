@@ -1,0 +1,27 @@
+{
+  "status": "passed",
+  "profile": "clara-bw-391",
+  "scale": "extra-large",
+  "basis": "simulator-sdk-ipc",
+  "source_head": "8184f9814b73ea41474e3fe2612ea20de1853578",
+  "source_dirty": true,
+  "checks": [
+    "numbered blocked crossword",
+    "clue with word entry",
+    "exact restart",
+    "persistent undo",
+    "full-storage preservation",
+    "save retry",
+    "optional checking",
+    "confirmed reveal and undo",
+    "full completion",
+    "completion restart",
+    "restart confirmation and undo",
+    "all help pages",
+    "across clue pages",
+    "down clue and entry",
+    "committed drive route",
+    "legacy migration",
+    "unreadable-record preservation"
+  ]
+}

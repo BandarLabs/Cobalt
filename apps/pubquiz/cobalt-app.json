@@ -4,8 +4,8 @@
   "short_label": "Pub Quiz",
   "summary": "Play offline solo or pass-around trivia rounds.",
   "page_description": "Offline trivia rounds for one reader or a table passing one Kobo between players.",
-  "version": "0.1.2",
-  "release_notes": "Update shared controls and page layout for Cobalt 0.3.12.",
+  "version": "0.1.3",
+  "release_notes": "Rebuilt on a renderer that keeps every control reachable at the largest text sizes, and on a keyboard that can type every character this app asks for.",
   "glyph": "chat",
   "capabilities": [
     "network"

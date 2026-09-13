@@ -1,0 +1,26 @@
+{
+  "status": "passed",
+  "profile": "clara-bw-391",
+  "scale": "extra-large",
+  "basis": "simulator-sdk-ipc",
+  "source_head": "87ea6ce4ad5b1b8931d1893de7964d8f8ef9bdf7",
+  "source_dirty": true,
+  "checks": [
+    "separate game progress",
+    "forced restart restoration",
+    "persistent undo",
+    "full-storage preservation",
+    "explicit save retry",
+    "restart confirmation and undo",
+    "Hashi completion and reopen",
+    "Kakuro completion and reopen",
+    "Slitherlink completion and reopen",
+    "Mines completion and reopen",
+    "first-mine relocation undo",
+    "loss undo",
+    "all game help screens",
+    "legacy migration",
+    "future record preservation",
+    "committed drive route"
+  ]
+}

@@ -1,0 +1,173 @@
+{
+  "app": "tictactoe",
+  "fonts": [
+    {
+      "role": "interface",
+      "source": "AtkinsonHyperlegible-Regular.ttf"
+    },
+    {
+      "role": "display-title",
+      "source": "AtkinsonHyperlegible-Bold.ttf"
+    },
+    {
+      "role": "display-heading",
+      "source": "AtkinsonHyperlegible-Bold.ttf"
+    },
+    {
+      "role": "display-bold",
+      "source": "AtkinsonHyperlegible-Bold.ttf"
+    },
+    {
+      "role": "reading",
+      "source": "AtkinsonHyperlegible-Regular.ttf"
+    },
+    {
+      "role": "mono",
+      "source": "DejaVuSansMono.ttf"
+    }
+  ],
+  "frame": {
+    "colourAppearance": "luminance",
+    "format": "grey8",
+    "sha256": "8dd3d9d0b7135704175e23b4ef0920790a15950e66f848cee422e358e59af95c",
+    "view": "ideal"
+  },
+  "interfaceScalePercent": 100,
+  "mode": "single-app",
+  "orientation": "portrait",
+  "paints": "11",
+  "publisherFontHandle": null,
+  "readingScalePercent": 100,
+  "runtimeVersion": "0.3.12",
+  "schema": "cobalt.simulator-capture",
+  "simulation": {
+    "appStore": {
+      "mode": "catalog-preview",
+      "signedTransactions": false
+    },
+    "backends": [
+      "network",
+      "battery-read",
+      "frontlight-control",
+      "wifi-control",
+      "library",
+      "cover-sensor"
+    ],
+    "clock": {
+      "date": "2026-09-11",
+      "mode": "real",
+      "monotonicMillis": "5620",
+      "unixMillis": "1789132371086",
+      "utcOffsetMinutes": 0
+    },
+    "dirtyPixelsSinceClean": 755015,
+    "hardware": {
+      "batteryPercent": 72,
+      "charging": false,
+      "coverClosed": false,
+      "frontlightAppearanceCalibrated": false,
+      "frontlightPercent": 20,
+      "orientation": "portrait",
+      "orientationControl": "display-composition"
+    },
+    "input": {
+      "forwardKey": 194,
+      "needsResynchronization": false,
+      "quiescent": true,
+      "rawEvents": "70",
+      "source": "synthetic evdev replay"
+    },
+    "lifecycle": "foreground",
+    "navigation": {
+      "app": "tictactoe",
+      "hosted": [],
+      "mode": "single-app",
+      "processId": null
+    },
+    "observation": null,
+    "panel": {
+      "completed": "11",
+      "contentsKnown": true,
+      "failures": "0",
+      "finishedAtMillis": "4507",
+      "mode": "automatic",
+      "queued": false,
+      "status": "idle",
+      "submissionMarker": null,
+      "submitted": "11",
+      "submittedAtMillis": "4506",
+      "timing": "host control observations; not hardware calibration",
+      "visibleFrame": "last confirmed completion with approximate residue"
+    },
+    "panelApproximation": true,
+    "power": null,
+    "profile": {
+      "colourPanel": false,
+      "height": 1448,
+      "id": "clara-bw-391",
+      "model": "Kobo Clara BW",
+      "pixelsPerInch": 300,
+      "rotation": 3,
+      "touch": {
+        "name": "cyttsp5_mt",
+        "xMax": 1447,
+        "xMin": 0,
+        "yMax": 1071,
+        "yMin": 0
+      },
+      "width": 1072
+    },
+    "refreshCount": 11,
+    "scenario": "normal",
+    "touch": {
+      "display": {
+        "x": 244,
+        "y": 453
+      },
+      "raw": {
+        "x": 453,
+        "y": 827
+      }
+    },
+    "transition": {
+      "dirty": 755015,
+      "full": false,
+      "refresh": 11,
+      "region": {
+        "height": 408,
+        "width": 408,
+        "x": 176,
+        "y": 384
+      },
+      "regions": [
+        {
+          "region": {
+            "height": 144,
+            "width": 144,
+            "x": 176,
+            "y": 384
+          },
+          "waveform": "GL16"
+        },
+        {
+          "region": {
+            "height": 96,
+            "width": 96,
+            "x": 488,
+            "y": 696
+          },
+          "waveform": "GL16"
+        }
+      ],
+      "waveform": "GL16"
+    }
+  },
+  "source": {
+    "binarySha256": "b039fe62ca2a1dbdcd0fc43acffce84b1483da59562d3b0b552ce4f4e6377f9a",
+    "dirty": true,
+    "fixture": null,
+    "requestedSeed": null,
+    "revision": "5344c4301d5f934c8c350299e3d8ad3d0bd5f0cf"
+  },
+  "version": 1
+}

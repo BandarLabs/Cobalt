@@ -1,0 +1,233 @@
+{
+  "paints": 37,
+  "nodes": [
+    {
+      "kind": "StatusBand",
+      "x": 0,
+      "y": 0,
+      "width": 1072,
+      "height": 59,
+      "centre": {
+        "x": 536,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusClock",
+      "x": 47,
+      "y": 0,
+      "width": 112,
+      "height": 59,
+      "centre": {
+        "x": 103,
+        "y": 29
+      },
+      "action": null,
+      "lines": [
+        "23:29"
+      ]
+    },
+    {
+      "kind": "StatusBattery(Some(Percent(72)), false)",
+      "x": 955,
+      "y": 12,
+      "width": 70,
+      "height": 35,
+      "centre": {
+        "x": 990,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusSignal(Strong)",
+      "x": 896,
+      "y": 12,
+      "width": 35,
+      "height": 35,
+      "centre": {
+        "x": 913,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusBluetooth",
+      "x": 837,
+      "y": 12,
+      "width": 35,
+      "height": 35,
+      "centre": {
+        "x": 854,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "TopBar",
+      "x": 0,
+      "y": 59,
+      "width": 1072,
+      "height": 100,
+      "centre": {
+        "x": 536,
+        "y": 109
+      },
+      "action": 503208485,
+      "lines": []
+    },
+    {
+      "kind": "Back",
+      "x": 47,
+      "y": 59,
+      "width": 100,
+      "height": 100,
+      "centre": {
+        "x": 97,
+        "y": 109
+      },
+      "action": 4294967295,
+      "lines": []
+    },
+    {
+      "kind": "BarAction(ActionId(3808307129))",
+      "x": 818,
+      "y": 59,
+      "width": 207,
+      "height": 100,
+      "centre": {
+        "x": 921,
+        "y": 109
+      },
+      "action": 3808307129,
+      "lines": [
+        "Pairing"
+      ]
+    },
+    {
+      "kind": "BarAction(ActionId(503208485))",
+      "x": 536,
+      "y": 59,
+      "width": 258,
+      "height": 100,
+      "centre": {
+        "x": 665,
+        "y": 109
+      },
+      "action": 503208485,
+      "lines": [
+        "Keyboard"
+      ]
+    },
+    {
+      "kind": "TopBarTitle",
+      "x": 171,
+      "y": 77,
+      "width": 341,
+      "height": 64,
+      "centre": {
+        "x": 341,
+        "y": 109
+      },
+      "action": null,
+      "lines": [
+        "Paperterm"
+      ]
+    },
+    {
+      "kind": "Divider",
+      "x": 0,
+      "y": 159,
+      "width": 1072,
+      "height": 4,
+      "centre": {
+        "x": 536,
+        "y": 161
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Secondary",
+      "x": 47,
+      "y": 175,
+      "width": 978,
+      "height": 50,
+      "centre": {
+        "x": 536,
+        "y": 200
+      },
+      "action": null,
+      "lines": [
+        "Connected \u00b7 Keyboard \u00b7 Not saved"
+      ]
+    },
+    {
+      "kind": "TerminalGrid",
+      "x": 47,
+      "y": 237,
+      "width": 972,
+      "height": 1155,
+      "centre": {
+        "x": 533,
+        "y": 814
+      },
+      "action": null,
+      "lines": [
+        "PTY True True",
+        "READY> SIZE 54 33",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        ""
+      ]
+    },
+    {
+      "kind": "TerminalCursor",
+      "x": 47,
+      "y": 307,
+      "width": 18,
+      "height": 35,
+      "centre": {
+        "x": 56,
+        "y": 324
+      },
+      "action": null,
+      "lines": [
+        " "
+      ]
+    }
+  ]
+}

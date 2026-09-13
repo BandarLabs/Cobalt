@@ -1959,6 +1959,44 @@ impl ScreenBuilder {
         self
     }
 
+    /// Physical pencil-puzzle geometry shared by the reader and simulator.
+    /// Actions use stable IDs from `action_id`; fixed clues carry no action.
+    /// Requires the protocol-14 beta runtime's pencil-board node.
+    #[must_use]
+    pub fn pencil_board(mut self, board: kobo_ui::PencilBoard) -> Self {
+        let id = self.next_id();
+        self.nodes.push(Node::PencilBoard { id, board });
+        self
+    }
+
+    /// A newspaper-style grid: joined squares, corner numbers and centered letters.
+    /// Requires the protocol-14 beta runtime's numbered-board node.
+    #[must_use]
+    pub fn crossword_board<I, N>(mut self, columns: u8, cells: I) -> Self
+    where
+        I: IntoIterator<Item = (N, char, Option<u8>, bool)>,
+        N: AsRef<str>,
+    {
+        let id = self.next_id();
+        let cells = cells
+            .into_iter()
+            .take(MAX_CELLS)
+            .map(|(name, letter, corner, selected)| {
+                let mut cell = Cell::new(self.register(name.as_ref()), letter.to_string())
+                    .with_selected(selected);
+                cell.corner = corner.filter(|n| (1..=99).contains(n));
+                cell
+            })
+            .collect();
+        self.nodes.push(Node::Grid {
+            id,
+            columns: columns.clamp(1, MAX_COLUMNS),
+            square: true,
+            cells,
+        });
+        self
+    }
+
     /// A row of buttons that each have a picture as well as a word.
     ///
     /// For the handful of actions that have a drawing everybody already knows:
@@ -1967,9 +2005,12 @@ impl ScreenBuilder {
     /// than the verb written out, because the reader now has to decode the
     /// icon *and* read the label to check they agree.
     ///
-    /// The label always stays. The picture is the fast path for someone who
-    /// already knows the control; the word is what makes it learnable, and it
-    /// is the only part that can say "thirty seconds".
+    /// The cell is drawn as the picture alone, and the label is carried
+    /// rather than set under it: a mark that has to be checked against a word
+    /// beneath it is slower to read than either on its own. The label is still
+    /// required, because it is the name of the action and the only thing a
+    /// reader could be told out loud, which is why the picture has to be one
+    /// nobody needs the word to understand.
     #[must_use]
     pub fn controls<I, N, L>(mut self, columns: u8, cells: I) -> Self
     where
@@ -1995,6 +2036,27 @@ impl ScreenBuilder {
         self
     }
 
+    /// A table, drawn as columns that line up rather than as a sentence.
+    ///
+    /// Rows are given exactly as the document had them, headings included:
+    /// the widths are worked out from all of them together, which is the only
+    /// way the columns can agree, and that arithmetic belongs to the layout
+    /// rather than to whoever is describing the page.
+    ///
+    /// `weights` are the widths, in pixels, that named columns ask for, not
+    /// proportions: a column with a weight is measured as that wide and one
+    /// without is measured from its widest cell, and every column is then
+    /// squeezed in proportion until the row fits. Pass an empty vector unless
+    /// the widths came from a document that stated them, which is what a book
+    /// with a table in it does. A table handed `vec![1, 1]` in the belief that
+    /// it meant "two equal columns" is a table of two one-pixel columns.
+    #[must_use]
+    pub fn table(mut self, rows: Vec<kobo_ui::TableRow>, weights: Vec<u16>) -> Self {
+        let id = self.next_id();
+        self.nodes.push(Node::Table { id, rows, weights });
+        self
+    }
+
     /// Offers a value that moves one notch at a time.
     ///
     /// This is the shape a setting takes when its values form a line rather
@@ -2004,19 +2066,6 @@ impl ScreenBuilder {
     /// tap the same spot twice than read five labels to find the one above the
     /// one they have.
     ///
-    /// A table, drawn as columns that line up rather than as a sentence.
-    ///
-    /// Rows are given exactly as the document had them, headings included:
-    /// the widths are worked out from all of them together, which is the only
-    /// way the columns can agree, and that arithmetic belongs to the layout
-    /// rather than to whoever is describing the page.
-    #[must_use]
-    pub fn table(mut self, rows: Vec<kobo_ui::TableRow>, weights: Vec<u16>) -> Self {
-        let id = self.next_id();
-        self.nodes.push(Node::Table { id, rows, weights });
-        self
-    }
-
     /// The two ends carry pictures, not words, so the control needs no
     /// translating and no room for a label. Whichever end has nowhere further
     /// to go is drawn muted and stops answering taps.

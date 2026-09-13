@@ -261,6 +261,22 @@ fn unpack(tar: &[u8], staging: &Path) -> Result<(), DeviceError> {
 /// `allow_bootstrap = false` is the exact path policy used by f49b32c: every
 /// regular file had to be below `cobalt/`. Tests use it to prove that release
 /// fails closed before the old updater reaches its swap.
+///
+/// The standalone launcher is permitted rather than required, because the two
+/// updaters in the field want opposite things from the same archive and only
+/// one release can be the latest one. Readers on 0.3.0 to 0.3.5 refuse any
+/// archive carrying the launcher beside `cobalt/`, and every release since
+/// 0.3.9 has carried it, so those readers have had no update they could
+/// install since the sixth of September. Readers from 0.3.9 on refused an
+/// archive without it, which left nothing that both families would take. This
+/// side of that is now a choice rather than a demand: what the launcher must
+/// be if it is there has not changed, and neither has the refusal of anything
+/// else outside the installation prefix.
+///
+/// Nothing is lost by accepting an archive without it. `ensure_launch_bootstrap`
+/// writes the launcher from the bytes built into this binary before any
+/// directory can move, so the member was only ever a second copy of what the
+/// updater already installs itself.
 fn unpack_with_bootstrap(
     tar: &[u8],
     staging: &Path,
@@ -331,7 +347,7 @@ fn unpack_with_bootstrap(
         members += 1;
         offset = end.div_ceil(BLOCK) * BLOCK;
     }
-    if members == 0 || (allow_bootstrap && !launch_bootstrap) {
+    if members == 0 {
         return Err(DeviceError::InvalidInput);
     }
     sync_tree(staging)?;
@@ -1050,6 +1066,14 @@ mod tests {
         (archive, digest)
     }
 
+    /// An archive in the layout every release before 0.3.9 shipped: the
+    /// installation and nothing beside it.
+    fn published_in_the_old_layout(members: &[Member<'_>]) -> (Vec<u8>, String) {
+        let archive = gzip(&tar(members));
+        let digest = kobo_net::sha256::hex_digest(&archive);
+        (archive, digest)
+    }
+
     fn launch_files(start: &[u8]) -> Vec<Member<'_>> {
         vec![
             folder("bin"),
@@ -1184,6 +1208,115 @@ mod tests {
         assert!(!adds.join("cobalt.prev").exists());
         assert!(!adds.join(super::JOURNAL).exists());
         assert!(!adds.join("cobalt-launch.sh").exists());
+        fs::remove_dir_all(adds).expect("cleanup");
+    }
+
+    #[test]
+    fn the_old_layout_is_one_the_stranded_updaters_accept() {
+        // The other half of unbreaking those readers, and the half this code
+        // cannot fix by changing itself: what is published has to be something
+        // their updater takes. `allow_bootstrap = false` is their exact path
+        // policy, and this is the archive shape a bridge release would carry.
+        let adds = scratch("stranded-accepts");
+        let members = launch_files(b"new");
+        let (archive, _) = published_in_the_old_layout(&members);
+        let tar = kobo_net::gzip::expand(&archive, super::EXPANDED_LIMIT).expect("published gzip");
+        let staging = adds.join("cobalt.next");
+
+        super::unpack_with_bootstrap(&tar, &staging, false)
+            .expect("the policy on 0.3.0 to 0.3.5 takes a release without the launcher");
+
+        assert_eq!(
+            fs::read(staging.join("start.sh")).expect("unpacked release"),
+            b"new"
+        );
+        fs::remove_dir_all(adds).expect("cleanup");
+    }
+
+    #[test]
+    fn a_release_packaged_the_way_they_were_before_the_launcher_still_installs() {
+        // The readers that cannot take any current release are the ones whose
+        // updaters refuse an archive carrying the launcher. Unbreaking them
+        // means publishing one in the older layout, and this is the half of
+        // that which has to be true first: a reader running this code takes
+        // an archive without the member, and still ends up with the launcher,
+        // because the updater writes it rather than unpacking it.
+        let adds = scratch("old-layout");
+        fs::create_dir_all(adds.join("cobalt")).expect("current installation");
+        fs::write(adds.join("cobalt/start.sh"), b"old").expect("current file");
+        let members = launch_files(b"new");
+        let (archive, digest) = published_in_the_old_layout(&members);
+
+        install(&archive, &digest, &adds).expect("an archive without the launcher installs");
+
+        assert_eq!(
+            fs::read(adds.join("cobalt/start.sh")).expect("new file"),
+            b"new"
+        );
+        assert_eq!(
+            fs::read_to_string(adds.join("cobalt-launch.sh")).expect("launcher"),
+            super::LAUNCH_BOOTSTRAP_CONTENT
+        );
+        fs::remove_dir_all(adds).expect("cleanup");
+    }
+
+    #[test]
+    fn a_launcher_that_is_not_the_one_this_release_carries_is_still_refused() {
+        // Permitting the member is not trusting it. An archive may say it
+        // carries the launcher only by carrying exactly the bytes this binary
+        // would have written there itself.
+        let adds = scratch("altered-launcher");
+        fs::create_dir_all(adds.join("cobalt")).expect("current installation");
+        fs::write(adds.join("cobalt/start.sh"), b"old").expect("current file");
+        let mut members = vec![Member {
+            path: super::LAUNCH_BOOTSTRAP_ARCHIVE_PATH.to_owned(),
+            kind: b'0',
+            payload: b"#!/bin/sh\nrm -rf /\n",
+            mode: 0o755,
+        }];
+        members.extend(launch_files(b"new"));
+        let (archive, digest) = published_in_the_old_layout(&members);
+
+        assert_eq!(
+            install(&archive, &digest, &adds),
+            Err(DeviceError::InvalidInput)
+        );
+
+        assert_eq!(
+            fs::read(adds.join("cobalt/start.sh")).expect("active file"),
+            b"old"
+        );
+        assert!(!adds.join("cobalt.next").exists());
+        fs::remove_dir_all(adds).expect("cleanup");
+    }
+
+    #[test]
+    fn anything_else_beside_the_installation_is_still_refused() {
+        // The launcher is the one member allowed to live outside the
+        // installation, and it is allowed by its exact path. A file next to it
+        // is the shape this policy exists to refuse.
+        let adds = scratch("sibling-file");
+        fs::create_dir_all(adds.join("cobalt")).expect("current installation");
+        fs::write(adds.join("cobalt/start.sh"), b"old").expect("current file");
+        let mut members = vec![Member {
+            path: "mnt/onboard/.adds/cobalt-other.sh".to_owned(),
+            kind: b'0',
+            payload: b"anything",
+            mode: 0o755,
+        }];
+        members.extend(launch_files(b"new"));
+        let (archive, digest) = published(&members);
+
+        assert_eq!(
+            install(&archive, &digest, &adds),
+            Err(DeviceError::InvalidInput)
+        );
+
+        assert_eq!(
+            fs::read(adds.join("cobalt/start.sh")).expect("active file"),
+            b"old"
+        );
+        assert!(!adds.join("cobalt.next").exists());
         fs::remove_dir_all(adds).expect("cleanup");
     }
 
@@ -1784,9 +1917,12 @@ mod tests {
     }
 
     #[test]
-    fn ota_requires_the_exact_regular_standalone_bootstrap_member() {
+    fn a_standalone_bootstrap_member_has_to_be_the_exact_regular_file() {
+        // An archive without the member is a release in the layout that
+        // shipped before 0.3.9, and is installed rather than refused. An
+        // archive that claims to carry the launcher has to carry that file
+        // and no other.
         for members in [
-            vec![file("start.sh", b"release")],
             vec![
                 Member {
                     path: super::LAUNCH_BOOTSTRAP_ARCHIVE_PATH.to_owned(),

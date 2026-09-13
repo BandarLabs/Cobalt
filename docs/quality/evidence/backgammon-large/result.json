@@ -1,0 +1,15 @@
+{
+  "status": "passed",
+  "scale": "170",
+  "seed": "7",
+  "fixture": "seeded-backgammon",
+  "checks": [
+    "the board says whose move it is and that no dice are down",
+    "the match screen changes who is playing, off the board",
+    "a seeded roll of 4 and 6 is stated in words",
+    "the checker in hand is marked and asks for a destination",
+    "the finished turn is written down as \"Black 24/20 24/18 \"",
+    "the match screen names the seed and lists the turns",
+    "the record of play survives a restart"
+  ]
+}

@@ -16,4 +16,27 @@ wait-for buy milk
 wait 1300
 tap buy milk
 wait-for Tap to reopen
-wait 1600
+wait 1300
+tap Clear finished
+wait-for Undo clear
+wait 900
+tap Undo clear
+wait 900
+tap-id edit-list
+wait-for Edit list
+wait 900
+tap buy milk
+wait-for When it is due
+wait 900
+tap Tomorrow
+wait 900
+tap back
+wait-for Edit list
+tap back
+wait-for Todo
+wait 900
+# Reopened, because a finished item keeps its date to itself: what is due is
+# what is still to do.
+tap buy milk
+wait-for due tomorrow
+wait 1300
