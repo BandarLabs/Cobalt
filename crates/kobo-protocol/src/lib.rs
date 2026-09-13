@@ -61,11 +61,14 @@ pub const MAGIC: [u8; 4] = *b"KOBO";
 /// Its beta numbered-grid tag 33 carries corner clue numbers; tag 15 stays byte-compatible.
 /// Beta tag 34 adds bounded pencil-puzzle marks and orthogonal strokes.
 /// Beta task tag 4 adds explicit PUT/PATCH updates; older task tags are unchanged.
+/// Version 15 adds actionable refusal guidance when a known `MediaTek` radio has
+/// not yet been initialized by Nickel. Older versions map that reason to
+/// `Unsupported`.
 ///
 /// A colour picture travels the same way: a grey picture still uses the tags it
 /// always did, byte for byte, and a colour one uses tags of its own that an
 /// older runtime refuses rather than misreads.
-pub const VERSION: u8 = 14;
+pub const VERSION: u8 = 15;
 /// Version introducing server-bound account records.
 pub const SERVER_ACCOUNT_VERSION: u8 = 14;
 /// Beta wire version introducing explicit update tasks.
@@ -1844,6 +1847,8 @@ pub enum DenyReason {
     PolicyRejected = 4,
     /// Another application currently owns this exclusive resource.
     Busy = 5,
+    /// The known radio must first be initialized by the stock reader.
+    WifiNeedsNickel = 6,
 }
 
 impl DenyReason {
@@ -1855,6 +1860,7 @@ impl DenyReason {
             Self::Unsupported => "not supported by this runtime on this hardware",
             Self::PolicyRejected => "refused by system policy",
             Self::Busy => "another application holds this resource",
+            Self::WifiNeedsNickel => "Enable Wi-Fi in the Kobo reader, then start Cobalt again.",
         }
     }
 }
@@ -1875,6 +1881,7 @@ impl TryFrom<u8> for DenyReason {
             3 => Ok(Self::Unsupported),
             4 => Ok(Self::PolicyRejected),
             5 => Ok(Self::Busy),
+            6 => Ok(Self::WifiNeedsNickel),
             _ => Err(ProtocolError::InvalidValue("deny reason")),
         }
     }
@@ -1962,7 +1969,7 @@ impl From<io::Error> for StreamError {
 pub fn encode(frame: &Frame) -> Result<Vec<u8>, ProtocolError> {
     if !matches!(
         frame.version,
-        LEGACY_VERSION | FOLIO_VERSION | SELECTED_GRID_VERSION | VERSION
+        LEGACY_VERSION | FOLIO_VERSION | SELECTED_GRID_VERSION | UPDATE_TASK_VERSION | VERSION
     ) {
         return Err(ProtocolError::UnsupportedVersion(frame.version));
     }
@@ -2011,7 +2018,9 @@ pub fn encode(frame: &Frame) -> Result<Vec<u8>, ProtocolError> {
         Message::DeviceRequest(request) => {
             encode_device_request(&mut payload, request, frame.version)?;
         }
-        Message::DeviceResult(result) => encode_device_result(&mut payload, result)?,
+        Message::DeviceResult(result) => {
+            encode_device_result(&mut payload, result, frame.version)?;
+        }
         Message::Spawn { .. } | Message::Cancel { .. } | Message::TaskOutcome { .. } => {
             encode_task_message(&mut payload, &frame.message)?;
         }
@@ -2986,7 +2995,7 @@ fn device_request_len(request: &DeviceRequest, version: u8) -> Result<usize, Pro
 
 fn device_result_len(result: &DeviceResult) -> Result<usize, ProtocolError> {
     let mut encoded = Vec::new();
-    encode_device_result(&mut encoded, result)?;
+    encode_device_result(&mut encoded, result, VERSION)?;
     Ok(encoded.len())
 }
 
@@ -3332,7 +3341,11 @@ fn fixed_argument(reader: &mut Reader<'_>, expected: u32) -> Result<(), Protocol
     clippy::too_many_lines,
     reason = "one explicit bounded result tag table"
 )]
-fn encode_device_result(output: &mut Vec<u8>, result: &DeviceResult) -> Result<(), ProtocolError> {
+fn encode_device_result(
+    output: &mut Vec<u8>,
+    result: &DeviceResult,
+    version: u8,
+) -> Result<(), ProtocolError> {
     match result {
         DeviceResult::Done => output.push(1),
         DeviceResult::Granted { seconds } => {
@@ -3358,7 +3371,12 @@ fn encode_device_result(output: &mut Vec<u8>, result: &DeviceResult) -> Result<(
         }
         DeviceResult::Denied(reason) => {
             output.push(5);
-            output.push(*reason as u8);
+            let reason = if version < VERSION && *reason == DenyReason::WifiNeedsNickel {
+                DenyReason::Unsupported
+            } else {
+                *reason
+            };
+            output.push(reason as u8);
         }
         DeviceResult::Bluetooth {
             available,
@@ -4549,7 +4567,7 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, ProtocolError> {
     let version = bytes[4];
     if !matches!(
         version,
-        LEGACY_VERSION | FOLIO_VERSION | SELECTED_GRID_VERSION | VERSION
+        LEGACY_VERSION | FOLIO_VERSION | SELECTED_GRID_VERSION | UPDATE_TASK_VERSION | VERSION
     ) {
         return Err(ProtocolError::UnsupportedVersion(bytes[4]));
     }
@@ -5027,7 +5045,7 @@ pub fn read_from<R: Read>(reader: &mut R) -> Result<Frame, StreamError> {
     }
     if !matches!(
         header[4],
-        LEGACY_VERSION | FOLIO_VERSION | SELECTED_GRID_VERSION | VERSION
+        LEGACY_VERSION | FOLIO_VERSION | SELECTED_GRID_VERSION | UPDATE_TASK_VERSION | VERSION
     ) {
         return Err(ProtocolError::UnsupportedVersion(header[4]).into());
     }
@@ -8615,6 +8633,45 @@ mod tests {
         assert_eq!(
             decode(&bytes),
             Err(ProtocolError::UnsupportedVersion(VERSION + 1))
+        );
+    }
+
+    #[test]
+    fn old_applications_receive_a_decodable_wifi_refusal() {
+        for version in [
+            LEGACY_VERSION,
+            FOLIO_VERSION,
+            SELECTED_GRID_VERSION,
+            UPDATE_TASK_VERSION,
+            VERSION,
+        ] {
+            let frame = Frame {
+                version,
+                request_id: 91,
+                message: Message::DeviceResult(DeviceResult::Denied(DenyReason::WifiNeedsNickel)),
+            };
+            let bytes = encode(&frame).expect("encode");
+            let decoded = decode(&bytes).expect("decode");
+            let expected = if version < VERSION {
+                DenyReason::Unsupported
+            } else {
+                DenyReason::WifiNeedsNickel
+            };
+            assert_eq!(decoded.version, version);
+            assert_eq!(
+                decoded.message,
+                Message::DeviceResult(DeviceResult::Denied(expected))
+            );
+        }
+    }
+
+    #[test]
+    fn uninitialized_wifi_has_actionable_guidance() {
+        assert_eq!(
+            DenyReason::try_from(6)
+                .expect("Wi-Fi startup reason")
+                .describe(),
+            "Enable Wi-Fi in the Kobo reader, then start Cobalt again."
         );
     }
 

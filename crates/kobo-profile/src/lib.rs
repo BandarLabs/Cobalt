@@ -522,7 +522,10 @@ pub const ELIPSA_2E_389: DeviceProfile = DeviceProfile {
     kernel_release: "4.9.77",
     write_ready: true,
     leftover_radio_daemons: &[],
-    reap_nickel_supplicant: false,
+    // N605 / 4.38.23697: issue #91 traces the detached owner colliding with
+    // Nickel's replacement. The measured reap restores scanning/association.
+    // This does not initialize the MediaTek driver or touch Bluetooth.
+    reap_nickel_supplicant: true,
     colour_panel: false,
 };
 
@@ -1970,7 +1973,7 @@ mod tests {
                 ("clara-bw-395", true),
                 ("clara-hd-376", false),
                 ("clara-colour-393", false),
-                ("elipsa-2e-389", false),
+                ("elipsa-2e-389", true),
                 ("libra-2-388", true),
                 ("libra-colour-390", false),
                 ("libra-colour-390-4.46.23836", false),

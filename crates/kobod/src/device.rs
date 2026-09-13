@@ -1602,7 +1602,7 @@ impl Hosted {
         kobo_protocol::write_to(
             &mut self.stream,
             &Frame {
-                version: kobo_protocol::VERSION,
+                version: self.protocol,
                 request_id: 0,
                 message,
             },
@@ -1679,6 +1679,8 @@ fn host_applications(
         backends.push(Capability::BluetoothControl);
     }
     let wifi = kobo_hal::wifi::Wifi::open();
+    let wifi_unavailable = kobo_hal::wifi::Wifi::unavailable_reason(display.profile())
+        .unwrap_or(kobo_protocol::DenyReason::Unsupported);
     if wifi.is_some() {
         backends.push(Capability::WifiControl);
         backends.push(Capability::Network);
@@ -2253,8 +2255,10 @@ fn host_applications(
                         u64::try_from(gesture_started.elapsed().as_millis()).unwrap_or(u64::MAX),
                     );
                     let orientation = apps[index].orientation;
+                    let protocol = apps[index].protocol;
                     let disposition = deliver_touch(
                         &mut apps[index].stream,
+                        protocol,
                         event,
                         screen.as_ref(),
                         &chrome,
@@ -2501,7 +2505,11 @@ fn host_applications(
                             ) {
                                 result
                             } else if let Some(reason) = services.refusal_for(&request) {
-                                kobo_protocol::DeviceResult::Denied(reason)
+                                kobo_protocol::DeviceResult::Denied(wifi_refusal(
+                                    &request,
+                                    reason,
+                                    wifi_unavailable,
+                                ))
                             } else {
                                 match &request {
                                     kobo_protocol::DeviceRequest::ReadBluetooth => {
@@ -3160,12 +3168,34 @@ fn reply(app: &mut Hosted, request_id: u32, message: Message) -> Result<(), Stri
     kobo_protocol::write_to(
         &mut app.stream,
         &Frame {
-            version: kobo_protocol::VERSION,
+            version: app.protocol,
             request_id,
             message,
         },
     )
     .map_err(|error| format!("answer {}: {error}", app.name))
+}
+
+fn wifi_refusal(
+    request: &kobo_protocol::DeviceRequest,
+    reason: kobo_protocol::DenyReason,
+    unavailable: kobo_protocol::DenyReason,
+) -> kobo_protocol::DenyReason {
+    use kobo_protocol::{DenyReason, DeviceRequest};
+    if reason == DenyReason::Unsupported
+        && matches!(
+            request,
+            DeviceRequest::ReadWifi
+                | DeviceRequest::SetWifi { .. }
+                | DeviceRequest::ScanWifi
+                | DeviceRequest::JoinWifi { .. }
+                | DeviceRequest::DisconnectWifi
+        )
+    {
+        unavailable
+    } else {
+        reason
+    }
 }
 
 /// One line describing how the session ended and what ran during it.
@@ -4178,6 +4208,7 @@ enum Tap {
 )]
 fn deliver_touch(
     stream: &mut std::os::unix::net::UnixStream,
+    protocol: u8,
     event: TouchEvent,
     current: Option<&Screen>,
     chrome: &Chrome,
@@ -4212,7 +4243,7 @@ fn deliver_touch(
         kobo_protocol::write_to(
             stream,
             &Frame {
-                version: kobo_protocol::VERSION,
+                version: protocol,
                 request_id: 0,
                 message: Message::TextHold {
                     action,
@@ -4240,7 +4271,7 @@ fn deliver_touch(
     kobo_protocol::write_to(
         stream,
         &Frame {
-            version: kobo_protocol::VERSION,
+            version: protocol,
             request_id: 0,
             message: Message::Action { action },
         },
@@ -4598,7 +4629,8 @@ fn pump_application(
 mod tests {
     use kobo_policy::{Capability, TaskRunner};
     use kobo_protocol::{
-        Credential, CredentialUse, Frame, Header, Message, Task, TaskId, TaskOutcome,
+        Credential, CredentialUse, DenyReason, DeviceRequest, Frame, Header, Message, Task, TaskId,
+        TaskOutcome,
     };
     use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
     use rustls::{ServerConfig, ServerConnection, StreamOwned};
@@ -4617,6 +4649,45 @@ mod tests {
         include_bytes!("../../kobo-net/tests/fixtures/localhost-key.der");
     const SEEK_BODY: &str = "rated=true&time=10&increment=0&variant=standard&color=random";
     const FORM: &str = "application/x-www-form-urlencoded";
+
+    #[test]
+    fn wifi_startup_guidance_does_not_change_other_refusals() {
+        for request in [
+            DeviceRequest::ReadWifi,
+            DeviceRequest::ScanWifi,
+            DeviceRequest::SetWifi { enabled: true },
+            DeviceRequest::JoinWifi {
+                ssid: "test".into(),
+                password: String::new(),
+            },
+            DeviceRequest::DisconnectWifi,
+        ] {
+            assert_eq!(
+                super::wifi_refusal(
+                    &request,
+                    DenyReason::Unsupported,
+                    DenyReason::WifiNeedsNickel
+                ),
+                DenyReason::WifiNeedsNickel
+            );
+            assert_eq!(
+                super::wifi_refusal(
+                    &request,
+                    DenyReason::NotDeclared,
+                    DenyReason::WifiNeedsNickel
+                ),
+                DenyReason::NotDeclared
+            );
+        }
+        assert_eq!(
+            super::wifi_refusal(
+                &DeviceRequest::ReadBattery,
+                DenyReason::Unsupported,
+                DenyReason::WifiNeedsNickel
+            ),
+            DenyReason::Unsupported
+        );
+    }
 
     #[test]
     fn launch_splash_covers_the_panel_and_centres_the_mark_without_chrome() {
@@ -5011,6 +5082,7 @@ mod tests {
         reader.set_nonblocking(true).unwrap();
         let result = super::deliver_touch(
             &mut writer,
+            kobo_protocol::VERSION,
             kobo_hal::touch::TouchEvent::Cancel,
             None,
             &kobo_ui::Chrome::default(),
@@ -5399,20 +5471,34 @@ mod tests {
         // becomes a mark.
         let screen = Screen::new(
             1,
-            vec![kobo_ui::Node::Text {
+            vec![kobo_ui::Node::RichText {
                 id: kobo_ui::NodeId(1),
                 text: "A page of a book.".to_owned(),
                 links: Vec::new(),
+                spans: Vec::new(),
+                presentation: kobo_ui::ParagraphPresentation::default(),
+                selection: Some(kobo_ui::TextSelection {
+                    context: 19,
+                    offset: 100,
+                }),
+                formulae: Vec::new(),
             }],
         )
         .with_page_turns(ActionId(11), ActionId(12))
-        .with_hold(ActionId(13));
+        .with_hold(ActionId(13))
+        .with_reading(true);
         let chrome = Chrome::default();
         let metrics = metrics_for(&screen);
-        let content = screen.layout_with(&metrics, &chrome).content;
+        let layout = screen.layout_with(&metrics, &chrome);
+        let (text_rect, _) = layout.text_hits.first().expect("selectable text");
+        let text_touch = TouchEvent::Up {
+            x: u32::try_from(text_rect.x + text_rect.width / 2).expect("inside the panel"),
+            y: u32::try_from(text_rect.y + text_rect.height / 2).expect("inside the panel"),
+        };
         let touch = TouchEvent::Up {
             x: u32::try_from(metrics.width / 2).expect("inside the panel"),
-            y: u32::try_from(content.y + content.height / 2).expect("inside the panel"),
+            y: u32::try_from(layout.content.y + layout.content.height / 2)
+                .expect("inside the panel"),
         };
         assert_eq!(
             action_for(touch, Some(&screen), &chrome, true),
@@ -5428,6 +5514,26 @@ mod tests {
         assert_eq!(
             action_for(touch, Some(&no_hold), &chrome, true),
             Some(ActionId(12))
+        );
+        let (mut runtime, mut app) =
+            std::os::unix::net::UnixStream::pair().expect("a pair of sockets");
+        deliver_touch(
+            &mut runtime,
+            kobo_protocol::LEGACY_VERSION,
+            text_touch,
+            Some(&screen),
+            &chrome,
+            true,
+            kobo_ui::Orientation::Portrait,
+            kobo_ui::LandscapeTurn::Clockwise,
+        )
+        .expect("deliver the legacy text hold");
+        let frame = kobo_protocol::read_from(&mut app).expect("the application is told");
+        assert_eq!(frame.version, kobo_protocol::LEGACY_VERSION);
+        assert!(
+            matches!(frame.message, Message::TextHold { .. }),
+            "unexpected legacy touch frame: {:?}",
+            frame.message
         );
 
         let covered = screen.clone().with_overlay(kobo_ui::Overlay::modal(
@@ -5676,6 +5782,7 @@ mod tests {
         assert_eq!(
             deliver_touch(
                 &mut runtime,
+                kobo_protocol::LEGACY_VERSION,
                 tap,
                 Some(&screen),
                 &chrome,
@@ -5692,6 +5799,7 @@ mod tests {
         assert_eq!(
             deliver_touch(
                 &mut runtime,
+                kobo_protocol::LEGACY_VERSION,
                 tap,
                 Some(&owning),
                 &chrome,
@@ -5709,6 +5817,7 @@ mod tests {
                 action: ActionId::BACK
             }
         ));
+        assert_eq!(frame.version, kobo_protocol::LEGACY_VERSION);
     }
 
     fn catalogue() -> PathBuf {
