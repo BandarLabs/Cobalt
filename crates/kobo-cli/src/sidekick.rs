@@ -34,7 +34,7 @@ const TEST_PATIENCE: Duration = Duration::from_secs(600);
 const START_PATIENCE: Duration = Duration::from_secs(10);
 
 const USAGE: &str =
-    "usage: kobo sidekick setup [AGENT] | run [--foreground] | status | stop | test";
+    "usage: kobo sidekick setup [AGENT] | run [--foreground] | status | stop | sample | test";
 
 pub fn command(arguments: &[String]) -> Result<(), String> {
     match arguments.split_first() {
@@ -46,6 +46,7 @@ pub fn command(arguments: &[String]) -> Result<(), String> {
                 Ok(())
             }
             ("stop", []) => stop(),
+            ("sample", []) => sample(),
             ("test", extra) => test(extra),
             _ => Err(USAGE.to_owned()),
         },
@@ -185,6 +186,35 @@ fn stop() -> Result<(), String> {
     Err(format!(
         "PID {pid} was asked to stop and is still answering"
     ))
+}
+
+/// Runs the helper's own sample, for a reader that has nothing set up yet.
+///
+/// Two ways to see this work, and they answer different questions. `sample`
+/// starts a helper with no agent hooks and no deck, asks its own question and
+/// waits: it is for somebody who has installed nothing and wants to see the
+/// path light up. `test` sends a question through a helper that is already
+/// running for real, which is the one that proves an actual installation.
+///
+/// Both live here so that neither needs the owner to know the helper binary
+/// exists, which is the whole point of this module.
+fn sample() -> Result<(), String> {
+    let helper = locate()?;
+    if listening() {
+        return Err(
+            "the Sidekick helper is already running; use 'kobo sidekick test' to send that one a question"
+                .to_owned(),
+        );
+    }
+    let status = Command::new(&helper)
+        .arg("sample")
+        .status()
+        .map_err(|error| format!("run {}: {error}", helper.display()))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("the sample ended with {status}"))
+    }
 }
 
 /// Sends the reader a question of the companion's own and prints the answer.
@@ -355,7 +385,7 @@ mod tests {
     fn every_verb_is_one_the_other_helpers_already_use() {
         // Sync established setup, run, status and stop, and an owner who has
         // used one helper should not have to learn another vocabulary.
-        for verb in ["setup", "run", "status", "stop", "test"] {
+        for verb in ["setup", "run", "status", "stop", "sample", "test"] {
             assert!(USAGE.contains(verb), "{verb} is not in the usage line");
         }
     }

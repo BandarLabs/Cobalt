@@ -6895,6 +6895,7 @@ fn print_help() {
            sidekick setup [AGENT]               Install the Sidekick hook for a coding agent\n\
            sidekick run [--foreground]          Start the helper the reader answers through\n\
            sidekick status|stop                 Inspect or stop that helper\n\
+           sidekick sample                      See it work with nothing else set up\n\
            sidekick test                        Ask the reader a harmless question, print the answer\n\
            feeds check FILE                     Read an OPML subscription list here\n\
            feeds push FILE (--device IP | --sim)  Stage that list on the reader for Feeds\n\

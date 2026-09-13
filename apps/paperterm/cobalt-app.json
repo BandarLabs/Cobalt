@@ -3,12 +3,12 @@
   "display_name": "Paperterm",
   "short_label": "Paperterm",
   "summary": "Pair with a computer to mirror a terminal session on e-ink.",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "glyph": "terminal",
   "capabilities": [
     "network"
   ],
-  "release_notes": "Recover failed pairing reads and saves, or use a connection without saving it.",
+  "release_notes": "See whether the computer is connected, waiting or reconnecting, stop sharing from the laptop, and start a terminal or a system monitor from a named preset instead of typing a command.",
   "setup": {
     "steps": [
       {
