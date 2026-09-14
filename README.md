@@ -32,8 +32,9 @@ new app can appear in Store without reinstalling or updating Cobalt.
 > [!IMPORTANT]
 > The **Kobo Clara BW N365 (device code 391)**, **Kobo Elipsa 2E N605 (device
 > code 389)**, **Kobo Clara HD N249 (device code 376)**, **Kobo Libra 2 N418
-> (device code 388)**, **Kobo Clara Colour N367 (device code 393)**, and
-> **Kobo Libra Colour N428 (device code 390)** are
+> (device code 388)**, **Kobo Clara Colour N367 (device code 393)**,
+> **Kobo Libra Colour N428 (device code 390)**, and **Kobo Libra H2O N873
+> (device code 384)** are
 > fully hardware-tested on the firmware and kernel versions in the
 > support matrix. The 2025 **Kobo Clara BW P365 (device code 395)** hardware
 > refresh is also supported: its measured panel, touch, firmware, and kernel
