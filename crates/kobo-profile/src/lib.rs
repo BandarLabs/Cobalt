@@ -737,23 +737,32 @@ pub const LIBRA_COLOUR_390_446: DeviceProfile = DeviceProfile {
 /// `cyttsp5_mt` rather than the Libra 2's Elan, with axis maximums one short
 /// of the Libra 2's (1679/1263 against 1680/1264) -- a different digitiser.
 ///
-/// Unlike every profile above, the framebuffer's own `rotation` reads back as
-/// `0`, not `1`; kept as read rather than mapped onto the Clara/Elipsa/Libra
-/// convention that `rotation: 1` means "buttons on the right".
+/// Unlike the Elipsa and Libra profiles above, whose framebuffers report
+/// `rotation: 1` for this same pose, the Libra H2O's own `rotation` reads
+/// back as `0`; kept as read rather than mapped onto their convention that
+/// `rotation: 1` means "buttons on the right".
 ///
 /// `touch_transform` was measured with `kobo touch-probe` against the
-/// physical device: 11 of 11 corner taps landed in their correct quadrant
-/// across both verified rotations (0, normal reading orientation, and 2, the
-/// framebuffer's own reported half-turn pairing with 0). Touch maximums are
-/// exactly one less than the display dimensions in both axes, making
-/// `scale_touch_axis` the identity, so the taps could be checked by hand.
-/// Result: `TransposeMirrorX` -- the Clara BW/Clara HD transform, not the
-/// Libra 2's plain `Transpose`, despite sharing its exact panel geometry.
+/// physical device across both verified rotations (0, normal reading
+/// orientation, and 2, the framebuffer's own reported half-turn pairing with
+/// 0). Touch maximums are exactly one less than the display dimensions in
+/// both axes, making `scale_touch_axis` the identity, so the taps could be
+/// checked by hand. Result: `TransposeMirrorX` -- the Clara BW/Clara HD
+/// transform, not the Libra 2's plain `Transpose`, despite sharing its exact
+/// panel geometry.
 ///
-/// Gotcha: one pass lost its first tap (top-left), most likely to the screen
-/// still waking from the prior SSH round-trip; every other tap across all
-/// three passes landed correctly. Expected on this hardware, not a sign the
-/// probe or transform is wrong.
+/// Rotation 2 (buttons-left) was re-measured directly against the physical
+/// device to settle a discrepancy between the touch-probe pass originally
+/// recorded in BandarLabs/Cobalt#184 and the one first committed here --
+/// free-hand taps land tens of pixels apart run to run, so the two were
+/// never going to match exactly, but they needed to be resolved to one
+/// traceable source rather than left disagreeing. The re-measurement (three
+/// passes, four corners each, all landing within the tolerance
+/// `libra_h2o_composed_touch_at_the_buttons_left_pose` checks) replaces both
+/// earlier readings; its cleanest pass, tapped in order top-left/top-right/
+/// bottom-right/bottom-left, is the one that test asserts against: raw
+/// `(1576,45)` -> display `(45,103)`, raw `(1576,1201)` -> `(1201,103)`, raw
+/// `(64,1204)` -> `(1204,1615)`, raw `(66,58)` -> `(58,1613)`.
 ///
 /// `write_ready` is `true` per maintainer sign-off in BandarLabs/Cobalt#184,
 /// backed by the full attended `--features device-write` pass, all five
@@ -1958,8 +1967,9 @@ mod tests {
     const CLARA_BW_POSE: PanelPose<'static> = PanelPose::reference(&CLARA_BW_391);
     const ELIPSA_2E_POSE: PanelPose<'static> = PanelPose::reference(&ELIPSA_2E_389);
     const CLARA_HD_POSE: PanelPose<'static> = PanelPose::reference(&CLARA_HD_376);
-    /// The Libra H2O at the pose it was measured in: `rotation: 0` as the
-    /// framebuffer reports it, the only pose in `verified_rotations`.
+    /// The Libra H2O at its reference pose: `rotation: 0` as the framebuffer
+    /// reports it. The other verified pose, `rotation: 2` (buttons-left), has
+    /// its own composed-pose test below rather than a second reference here.
     const LIBRA_H2O_POSE: PanelPose<'static> = PanelPose::reference(&LIBRA_H2O_384);
 
     use super::{
@@ -2156,24 +2166,28 @@ mod tests {
         );
 
         // Four corners, tapped in order with the reader physically flipped
-        // buttons-left: top-left, top-right, bottom-right, bottom-left.
+        // buttons-left: top-left, top-right, bottom-right, bottom-left. The
+        // cleanest of a three-pass re-measurement against the physical
+        // device -- see the doc comment on `LIBRA_H2O_384` for why this
+        // replaces both the value originally committed here and the pass
+        // recorded in BandarLabs/Cobalt#184.
         let top_left = pose
-            .touch_to_display(1585, 100)
+            .touch_to_display(1576, 45)
             .expect("measured tap maps to the display");
         let top_right = pose
-            .touch_to_display(1616, 1188)
+            .touch_to_display(1576, 1201)
             .expect("measured tap maps to the display");
         let bottom_right = pose
-            .touch_to_display(53, 1196)
+            .touch_to_display(64, 1204)
             .expect("measured tap maps to the display");
         let bottom_left = pose
-            .touch_to_display(57, 55)
+            .touch_to_display(66, 58)
             .expect("measured tap maps to the display");
 
-        assert_eq!(top_left, (100, 94));
-        assert_eq!(top_right, (1188, 63));
-        assert_eq!(bottom_right, (1196, 1626));
-        assert_eq!(bottom_left, (55, 1622));
+        assert_eq!(top_left, (45, 103));
+        assert_eq!(top_right, (1201, 103));
+        assert_eq!(bottom_right, (1204, 1615));
+        assert_eq!(bottom_left, (58, 1613));
 
         assert!(top_left.0 < top_right.0, "the top edge runs rightward");
         assert!(
