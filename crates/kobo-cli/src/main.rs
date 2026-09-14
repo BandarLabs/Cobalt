@@ -14,6 +14,7 @@ mod apps;
 mod authorize;
 mod beta_store_smoke;
 mod bootstrap;
+mod clippings;
 mod connect;
 mod deck;
 mod devsession;
@@ -514,6 +515,7 @@ fn run(arguments: &[String]) -> Result<(), String> {
         "flashcards" => flashcards::command(&arguments[1..]),
         "frame" => frame::command(&arguments[1..]),
         "vault" => vault::command(&arguments[1..]),
+        "clippings" => clippings::command(&arguments[1..]),
         "sync" => sync::command(&arguments[1..]),
         "sidekick" => sidekick::command(&arguments[1..]),
         "export" => exports::command(&arguments[1..]),
@@ -6888,6 +6890,7 @@ fn print_help() {
            frame rm ID (--sim | --device IP)     Remove a Frame shelf photo\n\
            vault init (--device IP | --sim)      Prepare the Vault store on the reader or simulator\n\
            vault push DIR (--device IP | --sim | --out INDEX)  Pack a markdown vault and publish it\n\
+           clippings push DIR (--device IP | --sim)  Push a Web Clipper folder's notes and metadata\n\
            sync setup DIR --folder NAME --device IP  Pair one safe fixed Sync folder\n\
            sync run [--foreground] [--seconds N] Start the private host Syncthing peer\n\
            export --app APP --device IP --out DIR  Receive a prepared text or image copy\n\
@@ -7035,6 +7038,7 @@ mod tests {
         super::needles::command(&["--help".into()]).expect("needles help");
         super::nonograms::command(&["--help".into()]).expect("nonograms help");
         super::vault::command(&["--help".into()]).expect("vault help");
+        super::clippings::command(&["--help".into()]).expect("clippings help");
     }
 
     #[test]
