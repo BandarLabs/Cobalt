@@ -787,7 +787,9 @@ fn clip(value: &str, bytes: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{adapter_present, classify, device_path, parse_ctl_devices, parse_managed_devices, property};
+    use super::{
+        adapter_present, classify, device_path, parse_ctl_devices, parse_managed_devices, property,
+    };
     use kobo_protocol::BluetoothDeviceKind;
     use std::fs;
     use std::path::PathBuf;
