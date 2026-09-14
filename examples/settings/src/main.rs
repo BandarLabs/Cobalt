@@ -69,9 +69,17 @@ enum View {
     UpdateChannelConfirm,
 }
 
+/// `Unavailable` is a confirmed hardware fact: it is only ever produced by
+/// `new`, from a successful device reply reporting `available: false`. It
+/// must never be assumed from the absence of an answer -- `Unknown`, the
+/// default, is what every radio starts as before its first read replies, and
+/// what a failed or denied read leaves it as, precisely so a pending or
+/// backend-failed read can never be mistaken for a device that has no radio
+/// at all.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 enum RadioState {
     #[default]
+    Unknown,
     Unavailable,
     Off,
     On,
@@ -259,6 +267,7 @@ impl Settings {
 
     fn home(&self) -> Screen {
         let bluetooth = match self.bluetooth_state {
+            RadioState::Unknown => "Checking…".to_owned(),
             RadioState::Unavailable => "Not available on this device".to_owned(),
             RadioState::Off => "Off".to_owned(),
             RadioState::On => {
@@ -271,6 +280,7 @@ impl Settings {
             }
         };
         let wifi = match (self.wifi_state, &self.connected_ssid) {
+            (RadioState::Unknown, _) => "Checking…".to_owned(),
             (RadioState::Unavailable, _) => "Not available on this device".to_owned(),
             (RadioState::On, Some(ssid)) => format!("Connected to {ssid}"),
             (RadioState::On, None) => "On · Not connected".to_owned(),
@@ -1706,6 +1716,7 @@ mod tests {
         let screen = settings.bluetooth();
         let issues = screen.validate(&CLARA_BW_METRICS);
         assert!(issues.is_empty(), "{issues:?}");
+        assert!(text_of(&screen).contains("This device has no Bluetooth hardware."));
         let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::with_back(true));
         assert!(layout.rect_of_action(action_id(TOGGLE)).is_none());
     }
@@ -1719,8 +1730,34 @@ mod tests {
         let screen = settings.wifi();
         let issues = screen.validate(&CLARA_BW_METRICS);
         assert!(issues.is_empty(), "{issues:?}");
+        assert!(text_of(&screen).contains("This device has no Wi-Fi hardware."));
         let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::with_back(true));
         assert!(layout.rect_of_action(action_id(TOGGLE)).is_none());
+    }
+
+    /// The bug this pins: `RadioState::Unavailable` is also the enum's
+    /// default before the first `read_bluetooth`/`read_wifi` reply, and what
+    /// a denied or failed read leaves it as. Before `Unknown` existed as a
+    /// separate state, both screens above claimed the reader's hardware
+    /// outright had no radio during that window -- true only once a
+    /// successful reply has actually said so.
+    #[test]
+    fn a_radio_with_no_answer_yet_is_not_claimed_absent() {
+        let settings = Settings::default();
+        assert_eq!(settings.bluetooth_state, RadioState::Unknown);
+        assert_eq!(settings.wifi_state, RadioState::Unknown);
+        let bluetooth = settings.bluetooth();
+        assert!(!text_of(&bluetooth).contains("no Bluetooth hardware"));
+        let wifi = settings.wifi();
+        assert!(!text_of(&wifi).contains("no Wi-Fi hardware"));
+    }
+
+    #[test]
+    fn a_failed_bluetooth_read_leaves_hardware_state_unknown_not_absent() {
+        let mut settings = Settings::default();
+        settings.fail(super::Topic::Bluetooth, "backend unavailable");
+        assert_eq!(settings.bluetooth_state, RadioState::Unknown);
+        assert!(!text_of(&settings.bluetooth()).contains("no Bluetooth hardware"));
     }
 
     #[test]
