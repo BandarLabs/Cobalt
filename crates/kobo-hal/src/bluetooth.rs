@@ -43,17 +43,25 @@ const MTK_MARKERS: [&str; 4] = [
 ];
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(18);
 
-/// Whether the kernel has registered a real Bluetooth controller.
+/// Whether the kernel has registered `hci0`, the controller every backend
+/// below talks to.
 ///
 /// Takes the root so it can be tested without `/sys`. `/sys/class/bluetooth`
 /// existing is not enough: the directory is created by the kernel's
 /// Bluetooth subsystem itself, whether or not any controller ever attaches,
-/// so an empty directory is the same "no radio" case as a missing one. Each
-/// entry it does hold is created only when a controller registers, by any
-/// driver or vendor stack, which is why this one check covers every backend
-/// below rather than needing a variant per backend.
+/// so an empty directory is the same "no radio" case as a missing one. Only
+/// a successfully-read entry counts as proof -- a transient enumeration
+/// error (a controller disappearing mid-`readdir`, say) must not be read as
+/// an adapter being present -- and only `hci0` specifically, since every
+/// D-Bus path below (`ADAPTER`) is hardcoded to it rather than discovered: a
+/// system exposing only `hci1` would otherwise pass this gate and then send
+/// every request to an object nothing is listening on.
 fn adapter_present(root: &Path) -> bool {
-    std::fs::read_dir(root).is_ok_and(|mut entries| entries.next().is_some())
+    std::fs::read_dir(root).is_ok_and(|entries| {
+        entries
+            .filter_map(Result::ok)
+            .any(|entry| entry.file_name() == "hci0")
+    })
 }
 
 /// The MTK driver is not safely re-initialised by Nickel in the same boot.
@@ -70,6 +78,35 @@ enum Backend {
         mtk: bool,
     },
     Bluetoothctl(PathBuf),
+}
+
+/// Chooses a backend when [`adapter_present`] can prove one exists under
+/// `sys_root`, and never otherwise -- taking the root as a parameter, rather
+/// than hardcoding `/sys/class/bluetooth`, so a test can gate this on an
+/// empty directory and confirm no backend is chosen even when the marker
+/// files and tool binaries below it are found, the same as a Libra H2O
+/// running the exact firmware image a real Bluetooth-equipped device ships.
+fn select_backend(sys_root: &Path) -> Option<Backend> {
+    if !adapter_present(sys_root) {
+        return None;
+    }
+    let dbus = DBUS_TOOLS
+        .into_iter()
+        .map(Path::new)
+        .find(|path| path.is_file());
+    if let Some(tool) = dbus {
+        let mtk = MTK_MARKERS.iter().any(|marker| Path::new(marker).exists());
+        return Some(Backend::Dbus {
+            tool: tool.to_path_buf(),
+            bus: if mtk { MTK_BUS } else { BLUEZ_BUS },
+            mtk,
+        });
+    }
+    BLUETOOTHCTL_TOOLS
+        .into_iter()
+        .map(Path::new)
+        .find(|path| path.is_file())
+        .map(|tool| Backend::Bluetoothctl(tool.to_path_buf()))
 }
 
 #[derive(Clone, Debug)]
@@ -93,41 +130,10 @@ impl Bluetooth {
     /// by accident: it is the kernel's own record that a controller attached.
     #[must_use]
     pub fn open() -> Option<Self> {
-        if !adapter_present(Path::new("/sys/class/bluetooth")) {
-            return None;
-        }
-        let dbus = DBUS_TOOLS
-            .into_iter()
-            .map(Path::new)
-            .find(|path| path.is_file());
-        if let Some(tool) = dbus {
-            if MTK_MARKERS.iter().any(|marker| Path::new(marker).exists()) {
-                return Some(Self {
-                    backend: Backend::Dbus {
-                        tool: tool.to_path_buf(),
-                        bus: MTK_BUS,
-                        mtk: true,
-                    },
-                    scanning: Arc::new(AtomicBool::new(false)),
-                });
-            }
-            return Some(Self {
-                backend: Backend::Dbus {
-                    tool: tool.to_path_buf(),
-                    bus: BLUEZ_BUS,
-                    mtk: false,
-                },
-                scanning: Arc::new(AtomicBool::new(false)),
-            });
-        }
-        BLUETOOTHCTL_TOOLS
-            .into_iter()
-            .map(Path::new)
-            .find(|path| path.is_file())
-            .map(|tool| Self {
-                backend: Backend::Bluetoothctl(tool.to_path_buf()),
-                scanning: Arc::new(AtomicBool::new(false)),
-            })
+        select_backend(Path::new("/sys/class/bluetooth")).map(|backend| Self {
+            backend,
+            scanning: Arc::new(AtomicBool::new(false)),
+        })
     }
 
     /// Current controller state and remembered/discovered devices.
@@ -789,6 +795,7 @@ fn clip(value: &str, bytes: usize) -> String {
 mod tests {
     use super::{
         adapter_present, classify, device_path, parse_ctl_devices, parse_managed_devices, property,
+        select_backend,
     };
     use kobo_protocol::BluetoothDeviceKind;
     use std::fs;
@@ -820,6 +827,27 @@ mod tests {
         let root = root("with-hci0");
         fs::create_dir_all(root.join("hci0")).expect("an adapter directory");
         assert!(adapter_present(&root));
+    }
+
+    #[test]
+    fn a_non_hci0_entry_is_not_proof() {
+        // Every D-Bus path this module calls is hardcoded to hci0 (`ADAPTER`);
+        // a system that only ever registers hci1 must not pass this gate,
+        // since every request would then target an object nothing answers.
+        let root = root("with-hci1-only");
+        fs::create_dir_all(root.join("hci1")).expect("an adapter directory");
+        assert!(!adapter_present(&root));
+    }
+
+    #[test]
+    fn no_adapter_selects_no_backend_even_when_tools_and_markers_exist() {
+        // Exercises the actual gate in `select_backend` (what `Bluetooth::open`
+        // calls), not just `adapter_present` in isolation: a regression that
+        // removed or bypassed the early return would still leave
+        // `adapter_present`'s own tests green while restoring the Libra H2O
+        // failure this backend selection is meant to prevent.
+        let root = root("gate-empty");
+        assert!(select_backend(&root).is_none());
     }
 
     #[test]
