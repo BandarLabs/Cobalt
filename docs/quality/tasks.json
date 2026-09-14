@@ -4323,7 +4323,8 @@
     "evidence": [
       "kobo-sidekickd sample provides its own non-permission Received question, uses normal pairing, and starts without agent hooks or Deck commands.",
       "docs/quality/evidence/sidekick-sample/default/result.json and 170/result.json: actual helper and simulator pair through on-screen keyboard over verified TLS, show sample, tap Received, acknowledge on computer, clear pending state and render without layout errors.",
-      "Screenshots inspected at default and 170% text. Fixed choice-answer history incorrectly saying Left at the terminal; all 30 app tests and strict Clippy passed. Physical reader acceptance remains SIDECLI-04."
+      "Screenshots inspected at default and 170% text. Fixed choice-answer history incorrectly saying Left at the terminal; all 30 app tests and strict Clippy passed. Physical reader acceptance remains SIDECLI-04.",
+      "kobo sidekick sample runs the helper sample mode, so the companion offers it without the owner knowing the helper binary."
     ]
   },
   {

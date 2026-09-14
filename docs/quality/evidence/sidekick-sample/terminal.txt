@@ -1,0 +1,4 @@
+Sidekick sample is ready. Open Sidekick on your reader and choose Received.
+No agent integration is required. This sample cannot run commands.
+Press Ctrl-C to stop.
+Received on your reader. The connection check is complete. Press Ctrl-C to stop.

@@ -7,6 +7,7 @@
 //! that would be refused on a panel is refused here, where there is room to
 //! say why.
 use std::fs;
+use std::io::{Read, Write};
 use std::path::Path;
 
 const USAGE: &str = "usage: kobo feeds check FILE\n\
@@ -49,8 +50,7 @@ pub fn command(arguments: &[String]) -> Result<(), String> {
                 .map_err(|error| format!("create the Feeds simulator shelf: {error}"))?;
             let name = shelf_name(Path::new(file))?;
             let destination = root.join(&name);
-            fs::write(&destination, &bytes)
-                .map_err(|error| format!("write {}: {error}", destination.display()))?;
+            publish(&destination, &bytes)?;
             println!(
                 "{} staged at {}; open Feeds ▸ Import OPML.",
                 summary(&import),
@@ -73,8 +73,25 @@ pub fn command(arguments: &[String]) -> Result<(), String> {
 }
 
 fn read(path: &Path) -> Result<(Vec<u8>, kobo_opml::Import), String> {
-    let bytes =
-        fs::read(path).map_err(|error| format!("could not read {}: {error}", path.display()))?;
+    let file = fs::File::open(path)
+        .map_err(|error| format!("could not read {}: {error}", path.display()))?;
+    if !file
+        .metadata()
+        .map_err(|error| error.to_string())?
+        .is_file()
+    {
+        return Err("Choose an OPML file, not a directory or device.".into());
+    }
+    let mut bytes = Vec::new();
+    file.take(kobo_opml::LIMIT as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("could not read {}: {error}", path.display()))?;
+    if bytes.len() > kobo_opml::LIMIT {
+        return Err(format!(
+            "{}: subscription lists must be 256 KB or smaller; export a smaller selection",
+            path.display()
+        ));
+    }
     let import = kobo_opml::parse(&bytes).map_err(|problem| {
         // The reader's sentence, which is written for a panel, with the file
         // named in front of it because a computer has more than one.
@@ -88,6 +105,35 @@ fn read(path: &Path) -> Result<(Vec<u8>, kobo_opml::Import), String> {
         ));
     }
     Ok((bytes, import))
+}
+
+fn publish(destination: &Path, bytes: &[u8]) -> Result<(), String> {
+    let name = destination
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or("Invalid shelf filename")?;
+    let partial = destination.with_file_name(format!(".{name}.writing"));
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&partial)
+        .map_err(|error| {
+            format!("Prepare subscription list (existing shelf unchanged): {error}")
+        })?;
+    let result = file
+        .write_all(bytes)
+        .and_then(|()| file.sync_all())
+        .and_then(|()| {
+            drop(file);
+            fs::rename(&partial, destination)
+        });
+    if let Err(error) = result {
+        let _ = fs::remove_file(&partial);
+        return Err(format!(
+            "Could not publish subscription list; previous file unchanged: {error}"
+        ));
+    }
+    Ok(())
 }
 
 fn summary(import: &kobo_opml::Import) -> String {
@@ -177,6 +223,34 @@ mod tests {
         let path = std::env::temp_dir().join(name);
         fs::write(&path, bytes).expect("write the fixture list");
         path
+    }
+
+    #[test]
+    fn oversized_lists_are_refused_before_parsing() {
+        let path = written(
+            "kobo-feeds-too-large.opml",
+            &vec![b' '; kobo_opml::LIMIT + 1],
+        );
+        assert!(read(&path).unwrap_err().contains("256 KB"));
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn publication_preserves_existing_list_when_staging_is_unavailable() {
+        let root = std::env::temp_dir().join(format!("kobo-feeds-publish-{}", std::process::id()));
+        fs::create_dir(&root).unwrap();
+        let destination = root.join("feeds.opml");
+        fs::write(&destination, b"previous valid list").unwrap();
+        let partial = root.join(".feeds.opml.writing");
+        fs::write(&partial, b"another transfer").unwrap();
+        assert!(publish(&destination, LIST).is_err());
+        assert_eq!(fs::read(&destination).unwrap(), b"previous valid list");
+        assert_eq!(fs::read(&partial).unwrap(), b"another transfer");
+        fs::remove_file(&partial).unwrap();
+        publish(&destination, LIST).unwrap();
+        assert_eq!(fs::read(&destination).unwrap(), LIST);
+        assert!(!partial.exists());
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

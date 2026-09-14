@@ -1,0 +1,830 @@
+{
+  "paints": 4,
+  "nodes": [
+    {
+      "kind": "StatusBand",
+      "x": 0,
+      "y": 0,
+      "width": 1072,
+      "height": 59,
+      "centre": {
+        "x": 536,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusClock",
+      "x": 47,
+      "y": 0,
+      "width": 134,
+      "height": 59,
+      "centre": {
+        "x": 114,
+        "y": 29
+      },
+      "action": null,
+      "lines": [
+        "13:18"
+      ]
+    },
+    {
+      "kind": "StatusBattery(Some(Percent(72)), false)",
+      "x": 955,
+      "y": 12,
+      "width": 70,
+      "height": 35,
+      "centre": {
+        "x": 990,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusSignal(Strong)",
+      "x": 896,
+      "y": 12,
+      "width": 35,
+      "height": 35,
+      "centre": {
+        "x": 913,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusBluetooth",
+      "x": 837,
+      "y": 12,
+      "width": 35,
+      "height": 35,
+      "centre": {
+        "x": 854,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "TopBar",
+      "x": 0,
+      "y": 59,
+      "width": 1072,
+      "height": 100,
+      "centre": {
+        "x": 536,
+        "y": 109
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Back",
+      "x": 47,
+      "y": 59,
+      "width": 100,
+      "height": 100,
+      "centre": {
+        "x": 97,
+        "y": 109
+      },
+      "action": 4294967295,
+      "lines": []
+    },
+    {
+      "kind": "BarAction(ActionId(2166003664))",
+      "x": 868,
+      "y": 59,
+      "width": 157,
+      "height": 100,
+      "centre": {
+        "x": 946,
+        "y": 109
+      },
+      "action": 2166003664,
+      "lines": [
+        "Pair"
+      ]
+    },
+    {
+      "kind": "TopBarTitle",
+      "x": 171,
+      "y": 69,
+      "width": 673,
+      "height": 79,
+      "centre": {
+        "x": 507,
+        "y": 108
+      },
+      "action": null,
+      "lines": [
+        "Home"
+      ]
+    },
+    {
+      "kind": "Divider",
+      "x": 0,
+      "y": 159,
+      "width": 1072,
+      "height": 4,
+      "centre": {
+        "x": 536,
+        "y": 161
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Banner(Attention)",
+      "x": 47,
+      "y": 175,
+      "width": 978,
+      "height": 206,
+      "centre": {
+        "x": 536,
+        "y": 278
+      },
+      "action": null,
+      "lines": [
+        "Preview only. Pair with your",
+        "computer to use these pads."
+      ]
+    },
+    {
+      "kind": "Secondary",
+      "x": 47,
+      "y": 393,
+      "width": 978,
+      "height": 60,
+      "centre": {
+        "x": 536,
+        "y": 423
+      },
+      "action": null,
+      "lines": [
+        "Preview only. Pair to run commands."
+      ]
+    },
+    {
+      "kind": "Spacer",
+      "x": 48,
+      "y": 465,
+      "width": 976,
+      "height": 576,
+      "centre": {
+        "x": 536,
+        "y": 753
+      },
+      "action": 4225602611,
+      "lines": []
+    },
+    {
+      "kind": "Cell(ActionId(2160591074), Pad, false)",
+      "x": 48,
+      "y": 465,
+      "width": 176,
+      "height": 176,
+      "centre": {
+        "x": 136,
+        "y": 553
+      },
+      "action": 2160591074,
+      "lines": []
+    },
+    {
+      "kind": "InlineGlyph(Grid, false)",
+      "x": 101,
+      "y": 501,
+      "width": 70,
+      "height": 70,
+      "centre": {
+        "x": 136,
+        "y": 536
+      },
+      "action": 2160591074,
+      "lines": [
+        "Sample"
+      ]
+    },
+    {
+      "kind": "CellLabel(false)",
+      "x": 62,
+      "y": 570,
+      "width": 148,
+      "height": 57,
+      "centre": {
+        "x": 136,
+        "y": 598
+      },
+      "action": 2160591074,
+      "lines": [
+        "Sample"
+      ]
+    },
+    {
+      "kind": "Cell(ActionId(1262850258), Pad, false)",
+      "x": 248,
+      "y": 465,
+      "width": 176,
+      "height": 176,
+      "centre": {
+        "x": 336,
+        "y": 553
+      },
+      "action": 1262850258,
+      "lines": []
+    },
+    {
+      "kind": "InlineGlyph(Grid, false)",
+      "x": 301,
+      "y": 501,
+      "width": 70,
+      "height": 70,
+      "centre": {
+        "x": 336,
+        "y": 536
+      },
+      "action": 1262850258,
+      "lines": [
+        "Pad 2"
+      ]
+    },
+    {
+      "kind": "CellLabel(false)",
+      "x": 262,
+      "y": 570,
+      "width": 148,
+      "height": 57,
+      "centre": {
+        "x": 336,
+        "y": 598
+      },
+      "action": 1262850258,
+      "lines": [
+        "Pad 2"
+      ]
+    },
+    {
+      "kind": "Cell(ActionId(2809817682), Pad, false)",
+      "x": 448,
+      "y": 465,
+      "width": 176,
+      "height": 176,
+      "centre": {
+        "x": 536,
+        "y": 553
+      },
+      "action": 2809817682,
+      "lines": []
+    },
+    {
+      "kind": "InlineGlyph(Grid, false)",
+      "x": 501,
+      "y": 501,
+      "width": 70,
+      "height": 70,
+      "centre": {
+        "x": 536,
+        "y": 536
+      },
+      "action": 2809817682,
+      "lines": [
+        "Pad 3"
+      ]
+    },
+    {
+      "kind": "CellLabel(false)",
+      "x": 462,
+      "y": 570,
+      "width": 148,
+      "height": 57,
+      "centre": {
+        "x": 536,
+        "y": 598
+      },
+      "action": 2809817682,
+      "lines": [
+        "Pad 3"
+      ]
+    },
+    {
+      "kind": "Cell(ActionId(2080483864), Pad, false)",
+      "x": 648,
+      "y": 465,
+      "width": 176,
+      "height": 176,
+      "centre": {
+        "x": 736,
+        "y": 553
+      },
+      "action": 2080483864,
+      "lines": []
+    },
+    {
+      "kind": "InlineGlyph(Grid, false)",
+      "x": 701,
+      "y": 501,
+      "width": 70,
+      "height": 70,
+      "centre": {
+        "x": 736,
+        "y": 536
+      },
+      "action": 2080483864,
+      "lines": [
+        "Pad 4"
+      ]
+    },
+    {
+      "kind": "CellLabel(false)",
+      "x": 662,
+      "y": 570,
+      "width": 148,
+      "height": 57,
+      "centre": {
+        "x": 736,
+        "y": 598
+      },
+      "action": 2080483864,
+      "lines": [
+        "Pad 4"
+      ]
+    },
+    {
+      "kind": "Cell(ActionId(395625291), Pad, false)",
+      "x": 848,
+      "y": 465,
+      "width": 176,
+      "height": 176,
+      "centre": {
+        "x": 936,
+        "y": 553
+      },
+      "action": 395625291,
+      "lines": []
+    },
+    {
+      "kind": "InlineGlyph(Grid, false)",
+      "x": 901,
+      "y": 501,
+      "width": 70,
+      "height": 70,
+      "centre": {
+        "x": 936,
+        "y": 536
+      },
+      "action": 395625291,
+      "lines": [
+        "Pad 5"
+      ]
+    },
+    {
+      "kind": "CellLabel(false)",
+      "x": 862,
+      "y": 570,
+      "width": 148,
+      "height": 57,
+      "centre": {
+        "x": 936,
+        "y": 598
+      },
+      "action": 395625291,
+      "lines": [
+        "Pad 5"
+      ]
+    },
+    {
+      "kind": "Cell(ActionId(2562155300), Pad, false)",
+      "x": 48,
+      "y": 665,
+      "width": 176,
+      "height": 176,
+      "centre": {
+        "x": 136,
+        "y": 753
+      },
+      "action": 2562155300,
+      "lines": []
+    },
+    {
+      "kind": "InlineGlyph(Grid, false)",
+      "x": 101,
+      "y": 701,
+      "width": 70,
+      "height": 70,
+      "centre": {
+        "x": 136,
+        "y": 736
+      },
+      "action": 2562155300,
+      "lines": [
+        "Pad 6"
+      ]
+    },
+    {
+      "kind": "CellLabel(false)",
+      "x": 62,
+      "y": 770,
+      "width": 148,
+      "height": 57,
+      "centre": {
+        "x": 136,
+        "y": 798
+      },
+      "action": 2562155300,
+      "lines": [
+        "Pad 6"
+      ]
+    },
+    {
+      "kind": "Cell(ActionId(1012255584), Pad, false)",
+      "x": 248,
+      "y": 665,
+      "width": 176,
+      "height": 176,
+      "centre": {
+        "x": 336,
+        "y": 753
+      },
+      "action": 1012255584,
+      "lines": []
+    },
+    {
+      "kind": "InlineGlyph(Grid, false)",
+      "x": 301,
+      "y": 701,
+      "width": 70,
+      "height": 70,
+      "centre": {
+        "x": 336,
+        "y": 736
+      },
+      "action": 1012255584,
+      "lines": [
+        "Pad 7"
+      ]
+    },
+    {
+      "kind": "CellLabel(false)",
+      "x": 262,
+      "y": 770,
+      "width": 148,
+      "height": 57,
+      "centre": {
+        "x": 336,
+        "y": 798
+      },
+      "action": 1012255584,
+      "lines": [
+        "Pad 7"
+      ]
+    },
+    {
+      "kind": "Cell(ActionId(4225602611), Pad, false)",
+      "x": 448,
+      "y": 665,
+      "width": 176,
+      "height": 176,
+      "centre": {
+        "x": 536,
+        "y": 753
+      },
+      "action": 4225602611,
+      "lines": []
+    },
+    {
+      "kind": "InlineGlyph(Grid, false)",
+      "x": 501,
+      "y": 701,
+      "width": 70,
+      "height": 70,
+      "centre": {
+        "x": 536,
+        "y": 736
+      },
+      "action": 4225602611,
+      "lines": [
+        "Pad 8"
+      ]
+    },
+    {
+      "kind": "CellLabel(false)",
+      "x": 462,
+      "y": 770,
+      "width": 148,
+      "height": 57,
+      "centre": {
+        "x": 536,
+        "y": 798
+      },
+      "action": 4225602611,
+      "lines": [
+        "Pad 8"
+      ]
+    },
+    {
+      "kind": "Cell(ActionId(1354599752), Pad, false)",
+      "x": 648,
+      "y": 665,
+      "width": 176,
+      "height": 176,
+      "centre": {
+        "x": 736,
+        "y": 753
+      },
+      "action": 1354599752,
+      "lines": []
+    },
+    {
+      "kind": "InlineGlyph(Grid, false)",
+      "x": 701,
+      "y": 701,
+      "width": 70,
+      "height": 70,
+      "centre": {
+        "x": 736,
+        "y": 736
+      },
+      "action": 1354599752,
+      "lines": [
+        "Pad 9"
+      ]
+    },
+    {
+      "kind": "CellLabel(false)",
+      "x": 662,
+      "y": 770,
+      "width": 148,
+      "height": 57,
+      "centre": {
+        "x": 736,
+        "y": 798
+      },
+      "action": 1354599752,
+      "lines": [
+        "Pad 9"
+      ]
+    },
+    {
+      "kind": "Cell(ActionId(991563473), Pad, false)",
+      "x": 848,
+      "y": 665,
+      "width": 176,
+      "height": 176,
+      "centre": {
+        "x": 936,
+        "y": 753
+      },
+      "action": 991563473,
+      "lines": []
+    },
+    {
+      "kind": "InlineGlyph(Grid, false)",
+      "x": 901,
+      "y": 701,
+      "width": 70,
+      "height": 70,
+      "centre": {
+        "x": 936,
+        "y": 736
+      },
+      "action": 991563473,
+      "lines": [
+        "Pad 10"
+      ]
+    },
+    {
+      "kind": "CellLabel(false)",
+      "x": 862,
+      "y": 770,
+      "width": 148,
+      "height": 57,
+      "centre": {
+        "x": 936,
+        "y": 798
+      },
+      "action": 991563473,
+      "lines": [
+        "Pad 10"
+      ]
+    },
+    {
+      "kind": "Cell(ActionId(2103080225), Pad, false)",
+      "x": 48,
+      "y": 865,
+      "width": 176,
+      "height": 176,
+      "centre": {
+        "x": 136,
+        "y": 953
+      },
+      "action": 2103080225,
+      "lines": []
+    },
+    {
+      "kind": "InlineGlyph(Grid, false)",
+      "x": 101,
+      "y": 901,
+      "width": 70,
+      "height": 70,
+      "centre": {
+        "x": 136,
+        "y": 936
+      },
+      "action": 2103080225,
+      "lines": [
+        "Pad 11"
+      ]
+    },
+    {
+      "kind": "CellLabel(false)",
+      "x": 62,
+      "y": 970,
+      "width": 148,
+      "height": 57,
+      "centre": {
+        "x": 136,
+        "y": 998
+      },
+      "action": 2103080225,
+      "lines": [
+        "Pad 11"
+      ]
+    },
+    {
+      "kind": "Cell(ActionId(247778506), Pad, false)",
+      "x": 248,
+      "y": 865,
+      "width": 176,
+      "height": 176,
+      "centre": {
+        "x": 336,
+        "y": 953
+      },
+      "action": 247778506,
+      "lines": []
+    },
+    {
+      "kind": "InlineGlyph(Grid, false)",
+      "x": 301,
+      "y": 901,
+      "width": 70,
+      "height": 70,
+      "centre": {
+        "x": 336,
+        "y": 936
+      },
+      "action": 247778506,
+      "lines": [
+        "Pad 12"
+      ]
+    },
+    {
+      "kind": "CellLabel(false)",
+      "x": 262,
+      "y": 970,
+      "width": 148,
+      "height": 57,
+      "centre": {
+        "x": 336,
+        "y": 998
+      },
+      "action": 247778506,
+      "lines": [
+        "Pad 12"
+      ]
+    },
+    {
+      "kind": "Cell(ActionId(857062676), Pad, false)",
+      "x": 448,
+      "y": 865,
+      "width": 176,
+      "height": 176,
+      "centre": {
+        "x": 536,
+        "y": 953
+      },
+      "action": 857062676,
+      "lines": []
+    },
+    {
+      "kind": "InlineGlyph(Grid, false)",
+      "x": 501,
+      "y": 901,
+      "width": 70,
+      "height": 70,
+      "centre": {
+        "x": 536,
+        "y": 936
+      },
+      "action": 857062676,
+      "lines": [
+        "Pad 13"
+      ]
+    },
+    {
+      "kind": "CellLabel(false)",
+      "x": 462,
+      "y": 970,
+      "width": 148,
+      "height": 57,
+      "centre": {
+        "x": 536,
+        "y": 998
+      },
+      "action": 857062676,
+      "lines": [
+        "Pad 13"
+      ]
+    },
+    {
+      "kind": "Cell(ActionId(3131446110), Pad, false)",
+      "x": 648,
+      "y": 865,
+      "width": 176,
+      "height": 176,
+      "centre": {
+        "x": 736,
+        "y": 953
+      },
+      "action": 3131446110,
+      "lines": []
+    },
+    {
+      "kind": "InlineGlyph(Grid, false)",
+      "x": 701,
+      "y": 901,
+      "width": 70,
+      "height": 70,
+      "centre": {
+        "x": 736,
+        "y": 936
+      },
+      "action": 3131446110,
+      "lines": [
+        "Pad 14"
+      ]
+    },
+    {
+      "kind": "CellLabel(false)",
+      "x": 662,
+      "y": 970,
+      "width": 148,
+      "height": 57,
+      "centre": {
+        "x": 736,
+        "y": 998
+      },
+      "action": 3131446110,
+      "lines": [
+        "Pad 14"
+      ]
+    },
+    {
+      "kind": "Cell(ActionId(3936667439), Pad, false)",
+      "x": 848,
+      "y": 865,
+      "width": 176,
+      "height": 176,
+      "centre": {
+        "x": 936,
+        "y": 953
+      },
+      "action": 3936667439,
+      "lines": []
+    },
+    {
+      "kind": "InlineGlyph(Grid, false)",
+      "x": 901,
+      "y": 901,
+      "width": 70,
+      "height": 70,
+      "centre": {
+        "x": 936,
+        "y": 936
+      },
+      "action": 3936667439,
+      "lines": [
+        "Pad 15"
+      ]
+    },
+    {
+      "kind": "CellLabel(false)",
+      "x": 862,
+      "y": 970,
+      "width": 148,
+      "height": 57,
+      "centre": {
+        "x": 936,
+        "y": 998
+      },
+      "action": 3936667439,
+      "lines": [
+        "Pad 15"
+      ]
+    }
+  ]
+}

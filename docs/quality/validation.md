@@ -2265,6 +2265,175 @@ or moves were made in this check. PR 3 evidence:
 https://github.com/BandarLabs/Cobalt/tree/beta-quality-apps-2/docs/quality/evidence/lichess-todo-review
 Cross-PR tracker totals reconciled: 229 done, 266 open, one deferred.
 
+
+### CLI app setup guides (CLI-11)
+
+`kobo apps`, `kobo apps search WORD` and `kobo apps setup APP` expose the
+bundled Store catalog as offline owner guides. Numbered menu option 6 opens
+the same cards. Each card explains requested capabilities and retains the
+manifest's setup links and literal commands. The displayed catalog version
+belongs to this CLI; installation and account access are explicitly unchecked.
+
+All 44 bundled cards rendered through the built executable. The acceptance
+script checked case-insensitive search, an unknown app failure, and real PTY
+selection of Lichess after an invalid number. The existing real PTY feed-file
+menu acceptance also passed. Two guide tests, three menu tests and strict
+all-target CLI Clippy passed. Evidence: `evidence/app-guides/result.json` and
+`terminal.txt`; reproduce with `scripts/quality/check-app-guides.py`.
+
+Setup persistence, named readers and account verification remain open.
+
+
+### Provider command help and destination selection (SERVICECLI-01)
+
+Secret and trust help now return success, including help for set/list/remove,
+without credential discovery or reader access. Missing arguments remain an
+error. Both parsers reject repeated/mixed destinations and repeated source
+paths; `--from` belongs to set only. Ambiguity is rejected before source reads
+or transfer dispatch.
+
+The built CLI passed 12 help calls, 10 argument refusal cases, two missing
+argument checks and a synthetic volume credential set/list/remove lifecycle.
+The installed synthetic value was verified and never appeared in command
+output. Strict all-target CLI Clippy passed. No real token, reader or service
+was used. Evidence: `evidence/provider-help/result.json` and help transcripts;
+reproduce with `scripts/quality/check-provider-help.py`.
+
+
+### Credential replacement recovery (partial CLI-18)
+
+Credential source reads are bounded to the 4 KB limit plus one byte and
+reject non-regular files. Local volume publication writes a new private
+staging file, syncs it and renames it over the destination. Network publication
+uses an exclusively created staging file and a cleanup trap before rename.
+An occupied staging file is preserved and causes refusal. Staging names are
+excluded from the credential list.
+
+Two focused Rust tests passed, including executing the generated shell script
+with a failing `cat`: prior value retained, partial removed, retry successful.
+The same script refuses an occupied stage without deleting it. Real CLI volume
+checks cover empty, oversized and invalid UTF-8 input, occupied staging,
+replacement retry and private file permissions on the local test filesystem.
+Strict all-target CLI Clippy passed. The provider acceptance result was
+refreshed against the newly built CLI. Hardware filesystem and power-loss
+acceptance remain outstanding; CLI-18 stays open for the wider transfer scope.
+
+
+### Sidekick integration choice and help (SIDECLI-02, SIDECLI-05)
+
+Bare helper setup now displays supported integrations with detection state
+and config paths, then configures only the selected number. Blank input, EOF
+and zero cancel. Redirected setup lists status and instructions without
+writing configuration. Explicit named setup, dry-run previews and printed
+configuration retain their existing paths. Help and subcommand help return
+success without starting listeners or installing hooks.
+
+All 51 helper tests and strict all-target Clippy passed. Acceptance drove the
+built helper in a real terminal through invalid choice and cancellation,
+checked eight help forms and the noninteractive setup behavior, and retained
+missing-argument errors. No user hook configuration was written. Evidence:
+`evidence/sidekick-setup/result.json`, terminal transcript and rendered chooser.
+The full helper lifecycle, sample event and reader acceptance remain open.
+
+
+### Sidekick configuration recovery (SIDECLI-03)
+
+Setup retains dry-run and printed configuration. Publication now stages and
+syncs the new file, saves the exact previous bytes to a newly reserved backup,
+and renames the stage over the destination. Numbered backups preserve prior
+copies. An occupied staging file is refused; repeat setup already containing
+the hook remains a no-op.
+
+All 52 helper tests and strict all-target Clippy passed. The private fixture
+lifecycle covers unchanged dry-run, staging collision and retry, repeated
+setup, retained older backups, preserved owner settings and malformed JSON.
+Actual helper acceptance checks printed configuration for both supported
+integrations and repeats the terminal/help checks. Evidence:
+`evidence/sidekick-setup/result.json`; filesystem regression:
+`setup_preview_backup_retry_and_invalid_config_preserve_owner_files`.
+No user's integration configuration was modified during validation.
+
+
+### Sidekick built-in sample (partial SIDECLI-06)
+
+`kobo-sidekickd sample` publishes its own non-permission Received question,
+using the normal identity and reader authentication. It does not open the
+hook listener or load Deck. The acknowledgement clears the question and is
+reported on the computer; lack of acknowledgement expires after five minutes.
+Ctrl-C stops the sample server. Pairing is initialized through the usual init
+command. An optional dedicated configuration root isolates identity/trust
+files for tests without changing user integration paths.
+
+The actual helper passed local TLS acceptance using a temporary authority:
+wrong pairing rejected, question delivered and acknowledged, pending state
+cleared, and Deck unavailable even with a configuration file present. A guard
+held the hook port throughout, proving the sample did not require it.
+Evidence: `evidence/sidekick-sample/result.json` and terminal transcript.
+This is protocol evidence; simulator and physical reader acceptance remain
+outstanding, and SIDECLI-04/06 remain open.
+
+
+### Sidekick sample simulator acceptance (SIDECLI-06)
+
+The sample now passes through the actual helper and SDK simulator at default
+and 170% interface text. The driver types the address and pairing code through
+the reader keyboard, waits for the built-in question, taps Received and checks
+the reader confirmation plus the helper's acknowledgement. The authenticated
+pending queue then clears. Both captures have no layout errors and were
+visually inspected. Evidence: `evidence/sidekick-sample/{default,170}`.
+
+This journey exposed incorrect last-answer text for choice responses: the
+reader said Left at the terminal despite successful acknowledgement. The app
+now records the selected labels. All 30 app tests and strict all-target Clippy
+passed; app manifest advanced to 1.0.10 and its generated catalog page was
+updated. The harness uses a short isolated temporary directory to fit macOS
+Unix socket path limits. SIDECLI-06 is complete; physical receipt validation
+remains SIDECLI-04 and has not been claimed.
+
+
+### Deck pairing preservation and static preview (DECKCLI-01/02)
+
+Device layout pushes update cached grid state without writing pairing.
+Simulator pushes preserve an existing pairing and seed the local preview
+marker only when none exists. Preview pads are explicitly labeled, cannot
+spawn a command request or claim a running state, and offer Pair to enter the
+normal computer connection flow.
+
+Seven CLI Deck tests pass, including execution of the generated transfer shell
+against temporary paired/unpaired stores. Sixteen app tests pass, including
+no-task/no-running-state preview behavior. Strict all-target CLI and app
+Clippy passed. The actual CLI stages a sample, opens the simulator, taps a pad
+and opens Pair at default and 170% text. Both have no layout errors; screenshots
+were inspected and added to documentation. Evidence:
+`evidence/deck-preview/{default,170}`. The app manifest is 0.2.3 and its catalog
+page is regenerated. No physical reader was modified in these checks.
+
+
+### Deck 15-pad boundary (DECKCLI-03)
+
+The helper incorrectly rejected pages above 12 keys while the CLI and reader
+supported 15. It now accepts 1–15, and the CLI import parser applies the same
+bound to hand-edited files. Eight CLI Deck tests and all 53 helper tests pass,
+including 15 accepted / 16 rejected boundaries. Strict CLI/helper all-target
+Clippy passed. The actual CLI assigned all 15 pads and staged a preview;
+170% simulator capture shows Pad 15 and has no layout errors. Screenshot
+inspected and documented. Evidence: `evidence/deck-fifteen-pads`.
+
+
+### Deck confirmation preference (DECKCLI-07)
+
+Editing a pad previously reset its confirmation to false unless --confirm was
+repeated. Edits now preserve the current setting by default; --confirm and
+--no-confirm explicitly enable and disable it. Conflicting/repeated flags
+return an error before configuration is touched. New pads retain the existing
+false default.
+
+Nine CLI Deck tests and strict all-target Clippy passed. Actual built CLI
+set/show calls enabled confirmation, preserved it on edit, disabled it,
+preserved that value on another edit, and refused conflicting flags without
+changing configuration bytes. Evidence: `evidence/deck-confirmation/result.json`.
+The helper confirmation runtime tests passed in the preceding full 53-test
+run. Documentation includes explicit preference semantics.
 Lichess 1.0.7 fixes Resume current when only a stored session exists. The fresh
 app now opens the board stream rather than merely switching screens. A new
 regression loads actual SDK store-save bytes, restores the authoritative
