@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 const USAGE: &str = "usage: kobo deck init [--preset build|home] [--home DIR]\n\
                      \x20      kobo deck set PAD [--page NAME] --label LABEL [--detail TEXT] \
-                     (--run CMD | --url URL | --launch APP) [--confirm] [--home DIR]\n\
+                     (--run CMD | --url URL | --launch APP) [--confirm | --no-confirm] [--home DIR]\n\
                      \x20      kobo deck ls [--home DIR]\n\
                      \x20      kobo deck show [--json] [--home DIR]\n\
                      \x20      kobo deck push (--sim | --device IP | --out PATH) [--home DIR]\n\
@@ -229,7 +229,9 @@ fn set(arguments: &[String]) -> Result<(), String> {
             label: assignment.label,
             detail: assignment.detail,
             run: assignment.run,
-            confirm: assignment.confirm,
+            confirm: assignment
+                .confirm
+                .unwrap_or_else(|| page.keys.get(pad - 1).is_some_and(|key| key.confirm)),
         };
         if pad == page.keys.len() + 1 {
             page.keys.push(key);
@@ -321,7 +323,7 @@ fn push(arguments: &[String]) -> Result<(), String> {
         Destination::Simulator => {
             write_store(&sim_root(), LOCAL_PAIRING.as_bytes(), snapshot.as_bytes())?;
             println!(
-                "Pushed {} pad(s) to the simulator store; Deck opens on the assigned grid.",
+                "Staged {} pad(s) in the simulator. Existing pairing is kept; an unpaired simulator opens a static preview.",
                 layout.pad_count()
             );
             Ok(())
@@ -345,8 +347,16 @@ struct Assignment<'a> {
     label: String,
     detail: String,
     run: String,
-    confirm: bool,
+    confirm: Option<bool>,
     home: Option<&'a str>,
+}
+
+fn confirmation_flag(previous: Option<bool>, flag: &str) -> Result<bool, String> {
+    if previous.is_some() {
+        Err("Choose --confirm or --no-confirm once.".to_owned())
+    } else {
+        Ok(flag == "--confirm")
+    }
 }
 
 fn parse_set(arguments: &[String]) -> Result<Assignment<'_>, String> {
@@ -364,7 +374,7 @@ fn parse_set(arguments: &[String]) -> Result<Assignment<'_>, String> {
     let mut run = None;
     let mut url = None;
     let mut launch = None;
-    let mut confirm = false;
+    let mut confirm = None;
     let mut home = None;
     let mut index = 1;
     while index < arguments.len() {
@@ -393,8 +403,8 @@ fn parse_set(arguments: &[String]) -> Result<Assignment<'_>, String> {
                 launch = Some(owned_flag(arguments, index, "--launch")?);
                 index += 2;
             }
-            "--confirm" => {
-                confirm = true;
+            "--confirm" | "--no-confirm" => {
+                confirm = Some(confirmation_flag(confirm, &arguments[index])?);
                 index += 1;
             }
             "--home" => {
@@ -788,8 +798,11 @@ fn parse_toml(source: &str) -> Result<Layout, String> {
     }
     for page in &pages {
         validate_page_name(&page.name)?;
-        if page.keys.is_empty() {
-            return Err(format!("page '{}' needs between 1 and 12 keys", page.name));
+        if !(1..=MAX_KEYS).contains(&page.keys.len()) {
+            return Err(format!(
+                "page '{}' needs between 1 and {MAX_KEYS} keys",
+                page.name
+            ));
         }
         for key in &page.keys {
             validate_label(&key.label)?;
@@ -900,8 +913,20 @@ fn push_toml_string(body: &mut String, value: &str) {
 
 fn write_store(root: &Path, pairing: &[u8], snapshot: &[u8]) -> Result<(), String> {
     fs::create_dir_all(root).map_err(|error| format!("create {}: {error}", root.display()))?;
-    write_atomic(&root.join(PAIRED_KEY), pairing)?;
     write_atomic(&root.join(CACHE_KEY), snapshot)?;
+    match OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(root.join(PAIRED_KEY))
+    {
+        Ok(mut file) => file
+            .write_all(pairing)
+            .and_then(|()| file.sync_all())
+            .map_err(|error| format!("Initialize simulator preview: {error}"))?,
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(error) => return Err(format!("Initialize simulator preview: {error}")),
+    }
     Ok(())
 }
 
@@ -935,9 +960,15 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
 }
 
 fn transfer(host: &str, snapshot: &str, pads: usize) -> Result<(), String> {
-    let pairing = super::base64_encode(LOCAL_PAIRING.as_bytes());
+    let output = remote(host, &transfer_script(snapshot, pads))?;
+    print!("{}", String::from_utf8_lossy(&output.stdout));
+    println!("Pairing was preserved. Open Deck and pair with the computer if needed.");
+    Ok(())
+}
+
+fn transfer_script(snapshot: &str, pads: usize) -> String {
     let encoded = super::base64_encode(snapshot.as_bytes());
-    let script = format!(
+    format!(
         "set -eu\n\
          root='{DEVICE_ROOT}'\n\
          mkdir -p \"$root\"\n\
@@ -949,18 +980,12 @@ fn transfer(host: &str, snapshot: &str, pads: usize) -> Result<(), String> {
            chmod 600 \"$partial\"\n\
            mv -f \"$partial\" \"$root/$key\"\n\
          }}\n\
-         write '{PAIRED_KEY}' <<'KOBO_DECK_PAIR'\n\
-         {pairing}\n\
-         KOBO_DECK_PAIR\n\
          write '{CACHE_KEY}' <<'KOBO_DECK_LAYOUT'\n\
          {encoded}\n\
          KOBO_DECK_LAYOUT\n\
          sync\n\
          printf 'Pushed {pads} Deck pad(s)\\n'\n"
-    );
-    let output = remote(host, &script)?;
-    print!("{}", String::from_utf8_lossy(&output.stdout));
-    Ok(())
+    )
 }
 
 fn remote(host: &str, script: &str) -> Result<super::RemoteShellOutput, String> {
@@ -981,6 +1006,8 @@ fn remote(host: &str, script: &str) -> Result<super::RemoteShellOutput, String> 
 
 #[cfg(test)]
 mod tests {
+    use std::fmt::Write as _;
+
     use super::{
         command, config_path, launch_command, load, open_url_command, parse_toml, sim_root,
         write_store, CACHE_KEY, LOCAL_PAIRING, PAIRED_KEY,
@@ -1098,6 +1125,36 @@ mod tests {
     }
 
     #[test]
+    fn layout_updates_preserve_real_pairing_and_do_not_pair_new_readers() {
+        let root = home();
+        let pairing = b"192.0.2.10:9331|fixture-pairing";
+        fs::write(root.join(PAIRED_KEY), pairing).unwrap();
+        write_store(&root, LOCAL_PAIRING.as_bytes(), b"{\"pages\":[]}").unwrap();
+        assert_eq!(fs::read(root.join(PAIRED_KEY)).unwrap(), pairing);
+        let snapshot = "{\"pages\":[]}";
+        let script =
+            super::transfer_script(snapshot, 0).replace(super::DEVICE_ROOT, root.to_str().unwrap());
+        let result = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(&script)
+            .output()
+            .unwrap();
+        assert!(result.status.success(), "{:?}", result.stderr);
+        assert_eq!(fs::read(root.join(PAIRED_KEY)).unwrap(), pairing);
+        assert_eq!(fs::read_to_string(root.join(CACHE_KEY)).unwrap(), snapshot);
+        fs::remove_file(root.join(PAIRED_KEY)).unwrap();
+        assert!(std::process::Command::new("sh")
+            .arg("-c")
+            .arg(&script)
+            .output()
+            .unwrap()
+            .status
+            .success());
+        assert!(!root.join(PAIRED_KEY).exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn push_sim_seeds_the_store_the_app_opens_from() {
         let root = home();
         let home = root.display().to_string();
@@ -1124,6 +1181,57 @@ mod tests {
             Some("deck")
         );
         fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn imported_configuration_obeys_the_same_fifteen_pad_limit() {
+        let mut config = "[[page]]\nname = \"Full page\"\n".to_owned();
+        for pad in 1..=15 {
+            let _ = writeln!(
+                config,
+                "[[page.key]]\nlabel = \"Pad {pad}\"\nrun = \"true\""
+            );
+        }
+        assert_eq!(parse_toml(&config).unwrap().pad_count(), 15);
+        config.push_str("[[page.key]]\nlabel = \"Pad 16\"\nrun = \"true\"\n");
+        assert!(parse_toml(&config).unwrap_err().contains("1 and 15"));
+    }
+
+    #[test]
+    fn editing_a_pad_preserves_confirmation_until_explicitly_changed() {
+        let root = home();
+        let owner = root.to_str().unwrap();
+        let set = |flag: Option<&str>| {
+            let mut arguments = args(&[
+                "set", "1", "--run", "true", "--label", "Sample", "--home", owner,
+            ]);
+            if let Some(flag) = flag {
+                arguments.push(flag.into());
+            }
+            command(&arguments)
+        };
+        set(Some("--confirm")).unwrap();
+        set(None).unwrap();
+        let path = config_path(Some(owner)).unwrap();
+        assert!(load(&path).unwrap().pages[0].keys[0].confirm);
+        let previous = fs::read(&path).unwrap();
+        assert!(command(&args(&[
+            "set",
+            "1",
+            "--run",
+            "true",
+            "--home",
+            owner,
+            "--confirm",
+            "--no-confirm"
+        ]))
+        .is_err());
+        assert_eq!(fs::read(&path).unwrap(), previous);
+        set(Some("--no-confirm")).unwrap();
+        assert!(!load(&path).unwrap().pages[0].keys[0].confirm);
+        set(None).unwrap();
+        assert!(!load(&path).unwrap().pages[0].keys[0].confirm);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

@@ -1,0 +1,269 @@
+{
+  "paints": 29,
+  "nodes": [
+    {
+      "kind": "StatusBand",
+      "x": 0,
+      "y": 0,
+      "width": 1072,
+      "height": 59,
+      "centre": {
+        "x": 536,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusClock",
+      "x": 47,
+      "y": 0,
+      "width": 78,
+      "height": 59,
+      "centre": {
+        "x": 86,
+        "y": 29
+      },
+      "action": null,
+      "lines": [
+        "13:07"
+      ]
+    },
+    {
+      "kind": "StatusBattery(Some(Percent(72)), false)",
+      "x": 955,
+      "y": 12,
+      "width": 70,
+      "height": 35,
+      "centre": {
+        "x": 990,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusSignal(Strong)",
+      "x": 896,
+      "y": 12,
+      "width": 35,
+      "height": 35,
+      "centre": {
+        "x": 913,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusBluetooth",
+      "x": 837,
+      "y": 12,
+      "width": 35,
+      "height": 35,
+      "centre": {
+        "x": 854,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "TopBar",
+      "x": 0,
+      "y": 59,
+      "width": 1072,
+      "height": 100,
+      "centre": {
+        "x": 536,
+        "y": 109
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Back",
+      "x": 47,
+      "y": 59,
+      "width": 100,
+      "height": 100,
+      "centre": {
+        "x": 97,
+        "y": 109
+      },
+      "action": 4294967295,
+      "lines": []
+    },
+    {
+      "kind": "TopBarTitle",
+      "x": 171,
+      "y": 86,
+      "width": 854,
+      "height": 46,
+      "centre": {
+        "x": 598,
+        "y": 109
+      },
+      "action": null,
+      "lines": [
+        "Sidekick"
+      ]
+    },
+    {
+      "kind": "Divider",
+      "x": 0,
+      "y": 159,
+      "width": 1072,
+      "height": 4,
+      "centre": {
+        "x": 536,
+        "y": 161
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Heading(1)",
+      "x": 47,
+      "y": 175,
+      "width": 978,
+      "height": 80,
+      "centre": {
+        "x": 536,
+        "y": 215
+      },
+      "action": null,
+      "lines": [
+        "Sidekick sample asks"
+      ]
+    },
+    {
+      "kind": "Quote(0, Byline)",
+      "x": 47,
+      "y": 267,
+      "width": 978,
+      "height": 45,
+      "centre": {
+        "x": 536,
+        "y": 289
+      },
+      "action": null,
+      "lines": [
+        "Connection check \u00b7 127.0.0.1:9331"
+      ]
+    },
+    {
+      "kind": "Quote(0, Body)",
+      "x": 47,
+      "y": 324,
+      "width": 978,
+      "height": 92,
+      "centre": {
+        "x": 536,
+        "y": 370
+      },
+      "action": null,
+      "lines": [
+        "Choose Received to confirm that this sample reached your",
+        "reader."
+      ]
+    },
+    {
+      "kind": "Spacer",
+      "x": 47,
+      "y": 428,
+      "width": 978,
+      "height": 24,
+      "centre": {
+        "x": 536,
+        "y": 440
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Row(ActionId(1146958344))",
+      "x": 47,
+      "y": 464,
+      "width": 978,
+      "height": 129,
+      "centre": {
+        "x": 536,
+        "y": 528
+      },
+      "action": 1146958344,
+      "lines": []
+    },
+    {
+      "kind": "RowLead(Icon(Circle))",
+      "x": 47,
+      "y": 489,
+      "width": 44,
+      "height": 44,
+      "centre": {
+        "x": 69,
+        "y": 511
+      },
+      "action": 1146958344,
+      "lines": []
+    },
+    {
+      "kind": "RowTitle",
+      "x": 115,
+      "y": 488,
+      "width": 886,
+      "height": 46,
+      "centre": {
+        "x": 558,
+        "y": 511
+      },
+      "action": 1146958344,
+      "lines": [
+        "Received"
+      ]
+    },
+    {
+      "kind": "RowSummary",
+      "x": 115,
+      "y": 534,
+      "width": 886,
+      "height": 35,
+      "centre": {
+        "x": 558,
+        "y": 551
+      },
+      "action": 1146958344,
+      "lines": [
+        "Send a confirmation to the computer."
+      ]
+    },
+    {
+      "kind": "Spacer",
+      "x": 47,
+      "y": 605,
+      "width": 978,
+      "height": 24,
+      "centre": {
+        "x": 536,
+        "y": 617
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Button(ActionId(2071622424), Enabled, Normal)",
+      "x": 294,
+      "y": 641,
+      "width": 484,
+      "height": 118,
+      "centre": {
+        "x": 536,
+        "y": 700
+      },
+      "action": 2071622424,
+      "lines": [
+        "Leave it for the terminal"
+      ]
+    }
+  ]
+}

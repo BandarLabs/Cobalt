@@ -246,7 +246,10 @@ if [ -n "$(git -C "$repo" status --porcelain --untracked-files=normal)" ] ||
   exit 1
 fi
 
-"$PYTHON3" -I - "$repo/apps/catalog.json" "$device" "$artifacts/flashcards.manifest.json" <<'PY'
+# Use the same contributed-app normalization and protocol minimums as releases.
+registry="$target_root/.flashcards-collected-registry.json"
+node "$repo/tools/collect-app-registry.mjs" --out "$registry"
+"$PYTHON3" -I - "$registry" "$device" "$artifacts/flashcards.manifest.json" <<'PY'
 import hashlib
 import json
 import sys
@@ -289,6 +292,7 @@ text = "{" + ",".join(
 ) + "}"
 Path(sys.argv[3]).write_text(text)
 PY
+rm -f "$registry"
 
 # Public, fixed validation material only. Production runtimes do not trust it.
 seed="$artifacts/.validation-seed.hex"

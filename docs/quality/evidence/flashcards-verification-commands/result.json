@@ -1,0 +1,16 @@
+{
+  "artifact_source_commit": "ea937dc1ec2c63bbfbf1a1747d66c03b4c8de97b",
+  "checks": [
+    {
+      "command": "app-verify",
+      "status": "passed",
+      "output": "Verified package signature, manifest and binary."
+    },
+    {
+      "command": "app-catalog-verify",
+      "status": "passed",
+      "output": "Verified catalog signature and package entry."
+    }
+  ],
+  "full_audit_passed": false
+}

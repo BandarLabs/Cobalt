@@ -155,6 +155,14 @@ the Kobo intentionally does not run Anki's scheduler after a local grade.
 Long card text is split against the actual panel metrics and text scale, with
 visible page controls and the review actions retained on every page.
 
+## Check the installed helper
+
+`kobo flashcards status` shows the selected executable, helper version,
+source-build identity and notice. `kobo flashcards formats` prints that helper's
+supported package subset without importing a file. `kobo flashcards --licenses`
+shows its bundled license and source documents. A missing helper reports the
+installation steps instead of claiming that all import support is unavailable.
+
 ## Host toolchain
 
 The standalone importer requires Rust 1.88 or newer and its own lockfile. This
