@@ -81,6 +81,7 @@ fn companion_help_exits_successfully() {
     super::needles::command(&["--help".into()]).expect("needles help");
     super::nonograms::command(&["--help".into()]).expect("nonograms help");
     super::vault::command(&["--help".into()]).expect("vault help");
+    super::clippings::command(&["--help".into()]).expect("clippings help");
 }
 
 #[test]

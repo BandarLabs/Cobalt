@@ -1,0 +1,11 @@
+{
+  "id": "clippings",
+  "display_name": "Clippings",
+  "short_label": "Clippings",
+  "summary": "Read your Web Clipper saves, mark them read, and tag them.",
+  "page_description": "A reader for Obsidian Web Clipper articles, with sync back to your vault.",
+  "version": "0.1.0",
+  "release_notes": "First version.",
+  "glyph": "note",
+  "capabilities": []
+}
