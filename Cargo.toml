@@ -62,6 +62,7 @@ members = [
     "apps/backgammon",
     "apps/birds",
     "apps/calibre-web",
+    "apps/clippings",
     "apps/crossword",
     "apps/deck",
     "apps/fanshelf",
