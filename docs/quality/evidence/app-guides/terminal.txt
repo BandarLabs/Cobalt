@@ -1,0 +1,76 @@
+Cobalt
+
+1. Set up a reader over USB
+2. Preview photos for Frame
+3. Check a feed subscription file
+4. Check a Paperterm connection
+5. Developer and release commands
+6. App setup guides
+0. Exit
+Choose a number: 6
+1. arXiv
+2. Audiobook Studio
+3. Backgammon
+4. Daily Brief
+5. calibre-web
+6. AI Command Center
+7. Crossword
+8. Deck
+9. Fanshelf
+10. Fieldbook
+11. Flashcards
+12. Frame
+13. Components
+14. Grimoire
+15. Gutenbird
+16. Habits
+17. Hacker News
+18. Home Panel
+19. Inkling
+20. Kitchen Card
+21. Lichess
+22. Logic Pack
+23. Magnet
+24. Morse
+25. Music Stand
+26. Needles
+27. Nonograms
+28. Panels
+29. Paperterm
+30. Parlor
+31. Parser
+32. Post
+33. Pub Quiz
+34. Read Later
+35. Feeds
+36. RSS Reader — Miniflux
+37. Sidekick
+38. Sudoku
+39. Sync
+40. Tic-tac-toe
+41. Todo
+42. Vault
+43. Verses
+44. Zotero Reader
+App number (blank cancels): 0
+Choose an app number from the list.
+App number (blank cancels): 21
+Lichess
+Play Lichess games, challenge players, solve puzzles, or play offline.
+
+Bundled guide: version 1.0.5
+
+What the app can use:
+  - Connects to online services
+  - Can keep Wi-Fi connected while in use
+  - Can keep the reader awake while in use
+
+Setup:
+1. Create a Lichess Personal Access Token granting only board:play.
+   https://lichess.org/account/oauth/token/create?scopes[]=board:play&description=Cobalt
+2. Save the token in a private local file, then install it under the exact secret name lichess.
+   kobo secret set lichess --from <token-file> --device <address>
+3. Use Cobalt 0.3.5 or newer. This app uses the responsive Folio interface in protocol 12.
+4. Official Lichess Board API. Rapid and Classical seeks.
+
+This guide does not check installation or account access.

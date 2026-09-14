@@ -1,0 +1,65 @@
+[
+  {
+    "arguments": [
+      "status"
+    ],
+    "exit_code": 0,
+    "output": "flashcards-import is an unofficial host-only converter for the documented legacy Anki package subset. It links pinned Anki rslib under AGPL-3.0-or-later, is not affiliated with Ankitects, and contains no upstream logos. Its Cobalt bundle output is neutral and the Kobo app links no Anki code.\n"
+  },
+  {
+    "arguments": [
+      "import",
+      "<fixture>/original study cards.apkg",
+      "--merge",
+      "<fixture>/collection.cobfc"
+    ],
+    "exit_code": 0,
+    "output": "imported apkg: 3 notes, 3 due cards (3 new, 0 learning, 0 review), 1 decks, 0 media files (0 bytes), 0 image-bearing notes resolved, 0 sound-bearing notes retained\nbundle sha256: f566754480f060fc6b64d9f9293846868859a4777817be5d2c5674ecfde542a6\n"
+  },
+  {
+    "arguments": [
+      "verify",
+      "<fixture>/collection.cobfc"
+    ],
+    "exit_code": 0,
+    "output": "verified: 3 notes, 3 due cards (3 new, 0 learning, 0 review), 0 digest-verified media files; 0 image-bearing notes resolve to bundled bytes; 0 sound-bearing notes are retained\nbundle sha256: f566754480f060fc6b64d9f9293846868859a4777817be5d2c5674ecfde542a6\n"
+  },
+  {
+    "arguments": [
+      "stage",
+      "<fixture>/collection.cobfc",
+      "--kobo-root",
+      "<fixture>/reader"
+    ],
+    "exit_code": 0,
+    "output": "staged 3746 digest-verified bytes to <fixture>/reader/.adds/cobalt/data/flashcards/collection.cobfc\nbundle sha256: f566754480f060fc6b64d9f9293846868859a4777817be5d2c5674ecfde542a6\n"
+  },
+  {
+    "arguments": [
+      "verify",
+      "<fixture>/corrupt.cobfc"
+    ],
+    "exit_code": 1,
+    "output": "flashcards-import: bundle is truncated\nkobo: The Flashcards importer did not complete (exit status: 1). Review its message above before retrying.\n"
+  },
+  {
+    "arguments": [
+      "stage",
+      "<fixture>/corrupt.cobfc",
+      "--kobo-root",
+      "<fixture>/reader"
+    ],
+    "exit_code": 1,
+    "output": "flashcards-import: bundle is truncated\nkobo: The Flashcards importer did not complete (exit status: 1). Review its message above before retrying.\n"
+  },
+  {
+    "arguments": [
+      "export-review-log",
+      "--kobo-root",
+      "<fixture>/reader",
+      "<fixture>/reviews.ndjson"
+    ],
+    "exit_code": 0,
+    "output": "exported 1 lossless Cobalt review records (170 bytes)\nreview-log sha256: 32ca4866597cce1b26d7b80b01d121c36d6d0fdce23d8e112b4d8bf29ff5bb9d\n"
+  }
+]

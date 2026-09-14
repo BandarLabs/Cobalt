@@ -12,8 +12,11 @@ use std::time::Duration;
 const ROOT: &str = "/mnt/onboard/.adds/cobalt/data/frame";
 const KOBOD: &str = "/mnt/onboard/.adds/cobalt/bin/kobod";
 const TRANSFER_TIMEOUT: Duration = Duration::from_secs(300);
-const USAGE: &str = "usage: kobo frame init (--sim | --device IP)\n\
-                     \x20      kobo frame push INPUT (--sim | --device IP) [--fit crop|pad] [--delete]\n\
+const USAGE: &str = "usage: kobo frame preview INPUT --out DIRECTORY [--profile PROFILE]\n\
+                     \x20      kobo frame init (--sim | --device IP)\n\
+                     \x20      kobo frame push INPUT (--sim | --device IP) [--fit crop|pad] [--album NAME] [--delete]\n\
+                     \x20      kobo frame plan INPUT (--sim | --device IP) [--fit crop|pad] [--album NAME] [--delete]\n\
+                     \x20      kobo frame restore (--sim | --device IP)\n\
                      \x20      kobo frame ls (--sim | --device IP)\n\
                      \x20      kobo frame rm ID (--sim | --device IP)";
 
@@ -28,8 +31,11 @@ pub fn command(arguments: &[String]) -> Result<(), String> {
         return super::print_command_help(USAGE);
     }
     match arguments.first().map(String::as_str) {
+        Some("preview") => super::frame_preview::command(&arguments[1..]),
         Some("init") => init(&arguments[1..]),
-        Some("push") => push(&arguments[1..]),
+        Some("push") => push(&arguments[1..], false),
+        Some("plan") => push(&arguments[1..], true),
+        Some("restore") => restore(&arguments[1..]),
         Some("ls") => list(&arguments[1..]),
         Some("rm") => remove(&arguments[1..]),
         _ => Err(USAGE.to_owned()),
@@ -66,25 +72,75 @@ fn init(arguments: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-fn push(arguments: &[String]) -> Result<(), String> {
-    let (input, target, fit, delete) = parse_push(arguments)?;
+fn push(arguments: &[String], plan_only: bool) -> Result<(), String> {
+    let PushOptions {
+        input,
+        target,
+        fit,
+        delete,
+        album,
+    } = parse_push(arguments)?;
     let (existing, panel) = match &target {
         Target::Device(host) => (read_manifest(host)?, reader_panel(host)?),
         Target::Sim => (read_local_manifest()?, sim_panel()),
     };
-    let push = prepare_for_panel(Path::new(input), fit, &existing, delete, panel)?;
+    let mut push = prepare_for_panel(Path::new(input), fit, &existing, delete, panel)?;
+    if let Some(album) = album {
+        for prepared in &mut push.photos {
+            album.clone_into(&mut prepared.photo.album);
+            if let Some(photo) = push
+                .manifest
+                .photos
+                .iter_mut()
+                .find(|photo| photo.id == prepared.photo.id)
+            {
+                album.clone_into(&mut photo.album);
+            }
+        }
+    }
+    print_plan(&push);
+    if plan_only {
+        println!("Plan only. No photos were transferred or removed.");
+        return Ok(());
+    }
     match &target {
         Target::Device(host) => {
             enforce_capacity(host, &push)?;
+            if push.manifest != existing {
+                let script = format!(
+                    "set -eu\nroot='{ROOT}'\n{}",
+                    super::frame_recovery::save_script(&existing)
+                );
+                remote(host, &script)?;
+            }
             transfer(host, &push)?;
+            let actual = read_manifest(host)?;
+            let ids = push
+                .manifest
+                .photos
+                .iter()
+                .map(|p| p.id.as_str())
+                .collect::<Vec<_>>();
+            verify_published(&push, &actual, &frame_sizes(host, &ids)?)?;
         }
         Target::Sim => {
             enforce_local_capacity(&push)?;
+            if push.manifest != existing {
+                super::frame_recovery::save(&sim_root(), &existing)?;
+            }
             publish_local(&push)?;
+            let actual = read_local_manifest()?;
+            let ids = push
+                .manifest
+                .photos
+                .iter()
+                .map(|p| p.id.as_str())
+                .collect::<Vec<_>>();
+            verify_published(&push, &actual, &local_sizes(&ids)?)?;
         }
     }
     println!(
-        "Frame updated: {} photo(s), {} new, {} removed",
+        "Frame transfer verified: {} photo(s), {} new, {} removed",
         push.manifest.photos.len(),
         push.photos
             .iter()
@@ -92,6 +148,33 @@ fn push(arguments: &[String]) -> Result<(), String> {
             .count(),
         push.removed.len()
     );
+    Ok(())
+}
+
+fn verify_published(
+    push: &Push,
+    actual: &Manifest,
+    sizes: &BTreeMap<String, usize>,
+) -> Result<(), String> {
+    if actual != &push.manifest {
+        return Err("Frame verification found a different shelf. Run `kobo frame ls` with the same target to inspect it before retrying.".into());
+    }
+    for photo in &actual.photos {
+        let size = sizes.get(&photo.id).copied().unwrap_or(0);
+        if size == 0 {
+            return Err(format!("Frame verification found a missing or empty photo: {}. The transfer is not verified.", photo.name));
+        }
+        if let Some(png) = push
+            .photos
+            .iter()
+            .find(|p| p.photo.id == photo.id)
+            .and_then(|p| p.png.as_ref())
+        {
+            if size != png.len() {
+                return Err(format!("Frame verification found an incomplete photo: {}. The transfer is not verified.", photo.name));
+            }
+        }
+    }
     Ok(())
 }
 
@@ -131,45 +214,118 @@ fn list(arguments: &[String]) -> Result<(), String> {
 
 fn remove(arguments: &[String]) -> Result<(), String> {
     let (id, target) = parse_remove(arguments)?;
+    let existing = match &target {
+        Target::Device(host) => read_manifest(host)?,
+        Target::Sim => read_local_manifest()?,
+    };
+    let mut manifest = existing.clone();
+    let index = manifest
+        .photos
+        .iter()
+        .position(|photo| photo.id == id)
+        .ok_or_else(|| format!("Frame has no photo with id {id:?}"))?;
+    let photo = manifest.photos.remove(index);
+    let push = Push {
+        manifest,
+        photos: Vec::new(),
+        removed: vec![photo],
+    };
     match target {
         Target::Device(host) => {
-            let mut manifest = read_manifest(&host)?;
-            let Some(index) = manifest.photos.iter().position(|photo| photo.id == id) else {
-                return Err(format!("Frame has no photo with id {id:?}"));
-            };
-            let photo = manifest.photos.remove(index);
-            let encoded = super::base64_encode(&manifest.encode());
-            let script = format!(
-                "set -eu\nroot='{ROOT}'\npartial=\"$root/.{MANIFEST}.writing\"\nbase64 -d > \"$partial\" <<'COBALT_FRAME_MANIFEST'\n{encoded}\nCOBALT_FRAME_MANIFEST\nchmod 600 \"$partial\"\nmv -f \"$partial\" \"$root/{MANIFEST}\"\nsync\nrm -f \"$root/{}.png\"\nsync\nprintf 'Removed Frame photo {}\\n'\n",
-                photo.id, photo.id
-            );
-            let output = remote(&host, &script)?;
-            print!("{}", String::from_utf8_lossy(&output.stdout));
+            remote(
+                &host,
+                &format!(
+                    "set -eu\nroot='{ROOT}'\n{}",
+                    super::frame_recovery::save_script(&existing)
+                ),
+            )?;
+            transfer(&host, &push)?;
         }
         Target::Sim => {
-            let mut manifest = read_local_manifest()?;
-            let Some(index) = manifest.photos.iter().position(|photo| photo.id == id) else {
-                return Err(format!("Frame has no photo with id {id:?}"));
-            };
-            let photo = manifest.photos.remove(index);
-            publish_local(&Push {
-                manifest,
-                photos: Vec::new(),
-                removed: vec![photo.clone()],
-            })?;
-            println!("Removed Frame photo {}", photo.id);
+            super::frame_recovery::save(&sim_root(), &existing)?;
+            publish_local(&push)?;
         }
     }
+    println!("Removed Frame photo {id}. Use `kobo frame restore` with the same target to undo.");
     Ok(())
 }
 
-fn parse_push(arguments: &[String]) -> Result<(&str, Target, Fit, bool), String> {
+fn restore(arguments: &[String]) -> Result<(), String> {
+    let count = match parse_target(arguments)? {
+        Target::Sim => super::frame_recovery::restore(&sim_root())?,
+        Target::Device(host) => {
+            let current = read_manifest(&host)?;
+            let selection = super::frame_recovery::select_script();
+            let output = remote(
+                &host,
+                &format!("set -eu\nroot='{ROOT}'\n{selection}base64 \"$backup/{MANIFEST}\"\n"),
+            )?;
+            let previous =
+                Manifest::decode(&base64_decode(&String::from_utf8_lossy(&output.stdout))?)?;
+            let mut script = format!(
+                "set -eu\nroot='{ROOT}'\n{}",
+                super::frame_recovery::restore_script(&previous)
+            );
+            for photo in &current.photos {
+                if !previous.photos.iter().any(|p| p.id == photo.id) {
+                    let _ = writeln!(script, "rm -f \"$root/{}.png\"", photo.id);
+                }
+            }
+            remote(&host, &script)?;
+            previous.photos.len()
+        }
+    };
+    println!("Restored the previous Frame album: {count} photo(s).");
+    Ok(())
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct PushOptions<'a> {
+    input: &'a str,
+    target: Target,
+    fit: Fit,
+    delete: bool,
+    album: Option<&'a str>,
+}
+
+fn print_plan(push: &Push) {
+    let new = push
+        .photos
+        .iter()
+        .filter(|photo| photo.png.is_some())
+        .count();
+    let reused = push.photos.len() - new;
+    let bytes = push
+        .photos
+        .iter()
+        .filter_map(|photo| photo.png.as_ref())
+        .map(Vec::len)
+        .sum::<usize>();
+    println!(
+        "{} new, {reused} already present, {} removed; {bytes} image bytes to send",
+        new,
+        push.removed.len()
+    );
+    for photo in &push.photos {
+        let action = if photo.png.is_some() { "Add" } else { "Keep" };
+        println!(
+            "  {action}: {} / {} ({})",
+            photo.photo.album, photo.photo.name, photo.photo.id
+        );
+    }
+    for photo in &push.removed {
+        println!("  Remove: {} / {} ({})", photo.album, photo.name, photo.id);
+    }
+}
+
+fn parse_push(arguments: &[String]) -> Result<PushOptions<'_>, String> {
     let Some(input) = arguments.first() else {
         return Err(USAGE.to_owned());
     };
     let mut target = None;
     let mut fit = Fit::Crop;
     let mut delete = false;
+    let mut album = None;
     let mut index = 1;
     while index < arguments.len() {
         match arguments[index].as_str() {
@@ -198,6 +354,21 @@ fn parse_push(arguments: &[String]) -> Result<(&str, Target, Fit, bool), String>
                 fit = Fit::parse(arguments.get(index + 1).ok_or_else(|| USAGE.to_owned())?)?;
                 index += 2;
             }
+            "--album" => {
+                let name = arguments.get(index + 1).ok_or("--album needs a name")?;
+                if album.is_some()
+                    || name.trim().is_empty()
+                    || name.chars().count() > 80
+                    || name.chars().any(char::is_control)
+                {
+                    return Err(
+                        "Album names must contain 1 to 80 characters without tabs or line breaks."
+                            .into(),
+                    );
+                }
+                album = Some(name.as_str());
+                index += 2;
+            }
             "--delete" => {
                 delete = true;
                 index += 1;
@@ -206,7 +377,13 @@ fn parse_push(arguments: &[String]) -> Result<(&str, Target, Fit, bool), String>
         }
     }
     let target = target.ok_or_else(|| USAGE.to_owned())?;
-    Ok((input, target, fit, delete))
+    Ok(PushOptions {
+        input,
+        target,
+        fit,
+        delete,
+        album,
+    })
 }
 
 fn parse_target(arguments: &[String]) -> Result<Target, String> {
@@ -539,15 +716,48 @@ mod tests {
         ];
         assert_eq!(
             parse_push(&arguments).expect("parse"),
-            ("family", Target::Device("192.0.2.1".into()), Fit::Pad, true)
+            super::PushOptions {
+                input: "family",
+                target: Target::Device("192.0.2.1".into()),
+                fit: Fit::Pad,
+                delete: true,
+                album: None
+            }
         );
+    }
+
+    #[test]
+    fn album_names_are_explicit_and_cannot_break_manifest_rows() {
+        let arguments = [
+            "photo.png".into(),
+            "--sim".into(),
+            "--album".into(),
+            "Summer holiday".into(),
+        ];
+        let options = parse_push(&arguments).unwrap();
+        assert_eq!(options.album, Some("Summer holiday"));
+        for invalid in ["", "bad\nname", "bad\tname"] {
+            assert!(parse_push(&[
+                "photo.png".into(),
+                "--sim".into(),
+                "--album".into(),
+                invalid.into()
+            ])
+            .is_err());
+        }
     }
 
     #[test]
     fn parses_simulator_target() {
         assert_eq!(
             parse_push(&["harbour.png".into(), "--sim".into()]).expect("parse"),
-            ("harbour.png", Target::Sim, Fit::Crop, false)
+            super::PushOptions {
+                input: "harbour.png",
+                target: Target::Sim,
+                fit: Fit::Crop,
+                delete: false,
+                album: None
+            }
         );
         assert_eq!(
             parse_target(&["--sim".into()]).expect("target"),
@@ -610,6 +820,33 @@ mod tests {
         };
         let current = BTreeMap::from([(old.id, 64)]);
         assert_eq!(capacity_bytes(&push, &current).expect("capacity"), 96);
+    }
+
+    #[test]
+    fn publication_verification_refuses_changed_missing_and_truncated_photos() {
+        let item = photo("photo-new");
+        let push = Push {
+            manifest: Manifest {
+                photos: vec![item.clone()],
+            },
+            photos: vec![PreparedPhoto {
+                photo: item.clone(),
+                png: Some(vec![1; 32]),
+            }],
+            removed: vec![],
+        };
+        let sizes = BTreeMap::from([(item.id.clone(), 32)]);
+        assert!(super::verify_published(&push, &push.manifest, &sizes).is_ok());
+        assert!(super::verify_published(&push, &Manifest::default(), &sizes).is_err());
+        for size in [0, 31, 33] {
+            assert!(super::verify_published(
+                &push,
+                &push.manifest,
+                &BTreeMap::from([(item.id.clone(), size)])
+            )
+            .is_err());
+        }
+        assert!(super::verify_published(&push, &push.manifest, &BTreeMap::new()).is_err());
     }
 
     #[test]

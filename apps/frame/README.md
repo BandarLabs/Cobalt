@@ -19,8 +19,7 @@ kobo frame rm photo-0123456789abcdef --device 192.168.1.42
 of identical content already on the shelf. It adds to an album by default;
 pass `--delete` only when the input should replace the shelf and remove photos
 not present in it. Frame accepts at most 500 photos and 150 MB of prepared
-PNG data. Sources are bounded to 4 MB and four Clara BW panels of decoded
-pixels. Camera EXIF orientation is applied before either center-crop (the
+PNG data. Sources are bounded to 32 MB and 50 million decoded pixels. Camera EXIF orientation is applied before either center-crop (the
 default) or white-pad fitting.
 
 HEIC/HEIF is deliberately refused with a conversion instruction. Supporting it
@@ -66,3 +65,71 @@ service and keeps transfer authority in the existing audited mechanism.
 
 Frame is intentionally grayscale. E-ink gives a held photograph essentially
 no panel power cost; changing the photograph is the work.
+
+
+## Compare photos before transfer
+
+```sh
+kobo frame preview /path/to/photos --out /path/to/new-preview
+```
+
+Open `index.html` in the new directory to compare crop and pad for each photo.
+Crop fills the screen and trims edges; pad keeps the whole image with white
+borders. The page shows album names, reader dimensions and prepared image
+storage. No reader connection or transfer is made. The default is Clara BW;
+`--profile PROFILE` selects another supported reader profile. The preview uses
+the same bounded conversion as `frame push`. Choose a new output directory;
+an existing directory is never replaced.
+
+
+![Crop and pad comparison before transfer](screenshots/companion-preview.png)
+
+Sample photograph: [Blue Marble, NASA Johnson Space Center](https://svs.gsfc.nasa.gov/30613),
+Earth Science and Remote Sensing Unit. It is used here to demonstrate photo
+preparation; the other validation image is an original grayscale test pattern.
+
+## Review an album transfer
+
+```sh
+kobo frame plan ~/Pictures/family --device 192.168.1.42 --album "Summer holiday"
+kobo frame push ~/Pictures/family --device 192.168.1.42 --album "Summer holiday"
+```
+
+`plan` reads the reader’s shelf and prepares the photos locally. It lists new
+photos, photos already present, and image bytes to send, without transferring
+or removing anything. `--album` names the incoming photos; otherwise their
+folder names are used. Identical photos are reused on repeated imports.
+
+To replace the shelf, first run `plan` with `--delete`. Review each `Remove`
+entry, then use the same options with `push` to apply the replacement.
+Planning is a snapshot, not a reservation: the next push reads the shelf
+again and checks capacity before transferring. Before changing an existing nonempty shelf, Frame saves a recovery copy. If
+that copy fails, the change is refused. Keep originals on your computer too.
+
+## Undo the last album change
+
+```sh
+kobo frame restore --device 192.168.1.42
+```
+
+Restore brings back the shelf saved before the last push or removal, including
+its album names and photo files. An unchanged repeated push does not replace
+that recovery copy. Restore itself leaves the recovery copy available, so it
+can be retried after a connection failure. A missing backup photo is reported
+before the current manifest changes.
+
+Recovery uses two rotating copies on the reader, each at most the size of a
+previous shelf. Allow up to 300 MB in addition to the current shelf and space
+for an incoming transfer. A full disk can prevent a change; Frame must finish
+saving the previous shelf before it proceeds. This is one-step recovery, not
+an archive of every past album. The same commands accept `--sim` for rehearsal.
+
+## Transfer verification
+
+A successful push says `Frame transfer verified` only after reading the shelf
+back from the target. The manifest must match, every photo must be present
+and nonempty, and newly transferred files must have the expected byte length.
+A lost connection or failed readback returns an error instead of a success
+message. This checks stored files, not whether Frame is currently open or a
+photo has appeared on the physical screen. Open Frame on the reader to view
+it. Hardware display acceptance remains a separate check.
