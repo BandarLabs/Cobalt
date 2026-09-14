@@ -2096,7 +2096,11 @@ mod tests {
         assert!(report.mismatches.is_empty(), "{:?}", report.mismatches);
         assert!(LIBRA_H2O_384.write_identity_blockers(&snapshot).is_empty());
         assert_eq!(report.readiness, Readiness::WriteReady);
-        assert!(report.write_blockers.is_empty(), "{:?}", report.write_blockers);
+        assert!(
+            report.write_blockers.is_empty(),
+            "{:?}",
+            report.write_blockers
+        );
         assert_eq!(
             super::identify_profile(&snapshot).map(|profile| profile.id),
             Some("libra-h2o-384")
@@ -2112,7 +2116,11 @@ mod tests {
         let report = LIBRA_H2O_384.validate(&snapshot);
         assert!(report.mismatches.is_empty(), "{:?}", report.mismatches);
         assert_eq!(report.readiness, Readiness::WriteReady);
-        assert!(report.write_blockers.is_empty(), "{:?}", report.write_blockers);
+        assert!(
+            report.write_blockers.is_empty(),
+            "{:?}",
+            report.write_blockers
+        );
         assert_eq!(
             super::identify_profile(&snapshot).map(|profile| profile.id),
             Some("libra-h2o-384")
@@ -2135,8 +2143,8 @@ mod tests {
 
     #[test]
     fn libra_h2o_composed_touch_at_the_buttons_left_pose() {
-        let pose =
-            PanelPose::for_test(&LIBRA_H2O_384, 2).expect("a half turn from the reference");
+        const SAME_EDGE_TOLERANCE: u32 = 48;
+        let pose = PanelPose::for_test(&LIBRA_H2O_384, 2).expect("a half turn from the reference");
         assert_eq!(
             pose.touch_mapping(),
             TouchMapping {
@@ -2167,16 +2175,12 @@ mod tests {
         assert_eq!(bottom_right, (1196, 1626));
         assert_eq!(bottom_left, (55, 1622));
 
-        const SAME_EDGE_TOLERANCE: u32 = 48;
         assert!(top_left.0 < top_right.0, "the top edge runs rightward");
         assert!(
             top_left.1.abs_diff(top_right.1) < SAME_EDGE_TOLERANCE,
             "the top edge stays at one end"
         );
-        assert!(
-            top_right.1 < bottom_right.1,
-            "the right edge runs downward"
-        );
+        assert!(top_right.1 < bottom_right.1, "the right edge runs downward");
         assert!(
             top_right.0.abs_diff(bottom_right.0) < SAME_EDGE_TOLERANCE,
             "the right edge stays at one side"
@@ -2198,6 +2202,13 @@ mod tests {
 
     #[test]
     fn libra_h2o_touch_matches_four_physically_measured_taps() {
+        // The tolerance the shape assertions below check against. Wider than
+        // the Libra 2 test's: these four corners were tapped by hand across
+        // two live passes rather than measured once in a lab, and the
+        // largest same-edge spread observed (39px, bottom edge) is real tap
+        // imprecision, not a transform defect -- the exact-value assertions
+        // below already pin down the transform itself.
+        const SAME_EDGE_TOLERANCE: u32 = 48;
         // Four corners, tapped in order on the physical device with `kobo
         // touch-probe`: top-left, top-right, bottom-right, bottom-left. Every
         // one landed in its correct quadrant; see the evidence recorded on
@@ -2220,24 +2231,15 @@ mod tests {
         assert_eq!(bottom_right, (1138, 1620));
         assert_eq!(bottom_left, (100, 1659));
 
-        // The shape of the square, stated independently of the exact numbers,
-        // so a mirrored or unswapped axis fails here even if the constants
-        // above are edited. The tolerance is wider than the Libra 2 test's:
-        // these four corners were tapped by hand across two live passes
-        // rather than measured once in a lab, and the largest same-edge
-        // spread observed (39px, bottom edge) is real tap imprecision, not a
-        // transform defect -- the exact-value assertions above already pin
-        // down the transform itself.
-        const SAME_EDGE_TOLERANCE: u32 = 48;
+        // The shape of the square, stated independently of the exact
+        // numbers, so a mirrored or unswapped axis fails here even if the
+        // constants above are edited.
         assert!(top_left.0 < top_right.0, "the top edge runs rightward");
         assert!(
             top_left.1.abs_diff(top_right.1) < SAME_EDGE_TOLERANCE,
             "the top edge stays at one end"
         );
-        assert!(
-            top_right.1 < bottom_right.1,
-            "the right edge runs downward"
-        );
+        assert!(top_right.1 < bottom_right.1, "the right edge runs downward");
         assert!(
             top_right.0.abs_diff(bottom_right.0) < SAME_EDGE_TOLERANCE,
             "the right edge stays at one side"
