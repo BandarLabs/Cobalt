@@ -1661,10 +1661,20 @@ mod tests {
             ("cmd.exe", &["/c", "cls & echo ready"], &[]);
         let mut pty = kobo_abi::pty::Pty::spawn(program, arguments, environment, 12, 2)
             .expect("start a PTY command");
-        let bytes = pty
+        // ConPTY delivers the clear and the text as separate writes, so
+        // collect until the answer arrives rather than assuming one read is
+        // everything; on Unix the whole output lands in the first read.
+        let mut bytes = pty
             .output()
             .recv_timeout(Duration::from_secs(2))
             .expect("PTY output");
+        while !String::from_utf8_lossy(&bytes).contains("ready") {
+            bytes.extend_from_slice(
+                &pty.output()
+                    .recv_timeout(Duration::from_secs(2))
+                    .expect("PTY output"),
+            );
+        }
         let session = Session::new(Grid {
             columns: 12,
             rows: 2,
@@ -1696,7 +1706,15 @@ mod tests {
             columns: 20,
             rows: 2,
         });
-        let deadline = Instant::now() + Duration::from_secs(3);
+        // ConPTY process startup and cmd's own pacing stretch the same
+        // sequence; the assertion (both halves arrive before EOF) is
+        // unchanged.
+        let deadline = Instant::now()
+            + if cfg!(windows) {
+                Duration::from_secs(10)
+            } else {
+                Duration::from_secs(3)
+            };
         let mut before = None;
         let mut exit = None;
         loop {
