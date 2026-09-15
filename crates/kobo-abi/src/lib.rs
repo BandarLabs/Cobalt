@@ -2982,9 +2982,14 @@ mod pty_tests {
         for _ in 0..3 {
             match Pty::spawn(program, arguments, environment, columns, rows) {
                 Ok(pty) => return Some(pty),
+                // qemu-user's devpts is unreliable beyond the open itself:
+                // ptsname can also come back as a NUL-filled buffer, which
+                // surfaces here as an invalid file name.
                 Err(error)
-                    if error.kind() == std::io::ErrorKind::PermissionDenied
-                        && std::env::var_os("KOBO_QEMU_EMULATED").is_some() =>
+                    if matches!(
+                        error.kind(),
+                        std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::InvalidInput
+                    ) && std::env::var_os("KOBO_QEMU_EMULATED").is_some() =>
                 {
                     std::thread::sleep(Duration::from_millis(200));
                 }

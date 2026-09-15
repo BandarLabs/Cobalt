@@ -93,7 +93,13 @@ fn publish_with(
     destination: &Path,
     sync: &mut impl FnMut(&Path) -> io::Result<()>,
 ) -> io::Result<()> {
-    fs::File::open(partial)?.sync_all()?;
+    // FlushFileBuffers answers ERROR_ACCESS_DENIED on a read-only handle, so
+    // the final flush asks for write access even though nothing is written.
+    fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(partial)?
+        .sync_all()?;
     fs::rename(partial, destination)?;
     sync(parent(destination))
 }
