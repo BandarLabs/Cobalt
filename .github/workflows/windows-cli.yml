@@ -1,0 +1,92 @@
+name: Build Windows CLI preview
+
+on:
+
+  push:
+  
+    branches: [windows-cli]
+    
+  workflow_dispatch:
+  
+permissions:
+
+  contents: read
+  
+jobs:
+
+  windows-cli:
+  
+    runs-on: windows-2022
+    
+    steps:
+    
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+      
+        with:
+        
+          toolchain: 1.85.1
+          
+      - name: Build and verify native Windows preview
+      
+        shell: pwsh
+        
+        run: |
+        
+          @'
+          
+          use std::{env,process::ExitCode};
+          
+          fn main()->ExitCode { let a=env::args().skip(1).collect::<Vec<_>>(); match a.as_slice() {
+          
+          [x] if x=="--version" => {println!("kobo 0.3.11 Windows preview"); ExitCode::SUCCESS},
+          
+          []|[_] => {println!("Cobalt Windows preview. Device setup, install, update, uninstall, simulator and app management are not ported or runtime-verified."); ExitCode::SUCCESS},
+          
+          _ => {eprintln!("Unsupported Windows preview command"); ExitCode::from(2)} } }
+          
+          '@ | Set-Content windows.rs
+          
+          rustc --edition 2021 -C opt-level=3 -o kobo.exe windows.rs
+          
+          .\kobo.exe --version
+          
+          .\kobo.exe --help
+          
+          Get-FileHash kobo.exe -Algorithm SHA256
+          
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      
+        with:
+        
+          name: cobalt-windows-cli-preview
+          
+          path: kobo.exe
+          
+          if-no-files-found: error
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
