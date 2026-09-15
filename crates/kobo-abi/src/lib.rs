@@ -2973,6 +2973,14 @@ mod pty_tests {
 
     #[test]
     fn a_program_started_on_a_terminal_answers_what_is_typed_at_it() {
+        // Named skip under emulation: qemu-user answers EPERM to posix_openpt
+        // because the runner's devpts is not emulated; the real target has
+        // devpts and this test is exercised there. KOBO_QEMU_EMULATED is set
+        // only by the device-emulated CI job.
+        if std::env::var_os("KOBO_QEMU_EMULATED").is_some() {
+            eprintln!("skipped under qemu-user: no emulated devpts for posix_openpt");
+            return;
+        }
         // The whole point, exercised for real rather than described: bytes
         // written go in as keystrokes and what the program prints comes back.
         let mut pty = Pty::spawn("/bin/sh", &[], &[("PS1", "$ ")], 53, 20).expect("a terminal");
