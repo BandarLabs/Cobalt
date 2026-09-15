@@ -166,3 +166,12 @@ The example applications talk to services this project does not own.
 
 None of them is paid for or rate-limit-exempt. An application that hammers
 them is your responsibility, not theirs.
+
+## Optional Tailscale runtime
+
+The experimental Tailscale app downloads the official, unmodified Tailscale
+1.102.2 ARM build from `pkgs.tailscale.com` on first use and verifies the
+archive's pinned SHA-256 digest before installation. The binary is not stored
+in this repository or Cobalt release artifacts. Tailscale is distributed
+under the BSD 3-Clause license; its source and license are published at
+<https://github.com/tailscale/tailscale>.

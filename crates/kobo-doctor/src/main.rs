@@ -169,6 +169,7 @@ fn human_probe() -> ExitCode {
             touch.name, touch.path, touch.x_min, touch.x_max, touch.y_min, touch.y_max
         );
     }
+    print_tailscale_readiness();
 
     let matched_profile = match require_profile(matched_profile) {
         Ok(profile) => profile,
@@ -558,5 +559,65 @@ mod tests {
             vec![20, 50],
             "the panel is single-channel, so the three colour bytes agree and any one of them is the grey"
         );
+    }
+}
+
+/// Read-only Tailscale readiness facts (P0 probe).
+///
+/// Every line is a `/proc`/`/sys`/metadata read; nothing is created, written
+/// or brought up. The facts answer the four questions the experimental
+/// Tailscale supervisor (crates/kobod/src/tailscale.rs) depends on: whether
+/// the tun node already exists, whether `/dev` is devtmpfs (so creating the
+/// node per start is viable), whether loopback is up, and how much memory the
+/// daemon would have. `iptables` is expected to be absent, which is why the
+/// supervisor runs with `--netfilter-mode=off`.
+fn print_tailscale_readiness() {
+    println!("tailscale readiness (read-only, experimental):");
+    println!(
+        "  tun node: {}",
+        if Path::new("/dev/net/tun").exists() {
+            "present"
+        } else {
+            "absent (supervisor creates it on each start)"
+        }
+    );
+    let mounts = std::fs::read_to_string("/proc/mounts").unwrap_or_default();
+    let dev_is_devtmpfs = mounts
+        .lines()
+        .any(|line| line.split_whitespace().nth(1) == Some("/dev") && line.contains("devtmpfs"));
+    println!(
+        "  /dev filesystem: {}",
+        if dev_is_devtmpfs {
+            "devtmpfs (node must be recreated after every boot)"
+        } else {
+            "not devtmpfs (verify manually)"
+        }
+    );
+    let lo = std::fs::read_to_string("/sys/class/net/lo/operstate").unwrap_or_default();
+    println!("  loopback: {}", lo.trim());
+    let meminfo = std::fs::read_to_string("/proc/meminfo").unwrap_or_default();
+    for key in ["MemTotal", "MemAvailable"] {
+        if let Some(line) = meminfo.lines().find(|line| line.starts_with(key)) {
+            println!("  {line}");
+        }
+    }
+    println!(
+        "  iptables binary: {}",
+        if ["/sbin/iptables", "/usr/sbin/iptables"]
+            .iter()
+            .any(|path| Path::new(path).exists())
+        {
+            "present (unexpected)"
+        } else {
+            "absent (expected; netfilter-mode=off)"
+        }
+    );
+    let onboard = mounts
+        .lines()
+        .find(|line| line.split_whitespace().nth(1) == Some("/mnt/onboard"))
+        .map(str::to_owned);
+    match onboard {
+        Some(line) => println!("  /mnt/onboard: {line}"),
+        None => println!("  /mnt/onboard: not mounted"),
     }
 }

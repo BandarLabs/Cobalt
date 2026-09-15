@@ -85,6 +85,7 @@ members = [
     "apps/rss-miniflux",
     "apps/sudoku",
     "apps/syncthing",
+    "apps/tailscale",
     "apps/vault",
     "apps/verses",
     "apps/zotero-reader",
