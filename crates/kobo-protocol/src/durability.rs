@@ -45,3 +45,20 @@ fn open_directory(path: &Path) -> io::Result<fs::File> {
 pub fn sync_directory(path: &Path) -> io::Result<()> {
     open_directory(path)?.sync_all()
 }
+
+/// Flushes an existing file's contents.
+///
+/// `FlushFileBuffers` refuses a read-only handle with `ERROR_ACCESS_DENIED`,
+/// so the Windows arm opens the file for writing as well; nothing is
+/// written, but the access right is what the flush call checks.
+///
+/// # Errors
+///
+/// Returns the error from opening or flushing the file.
+pub fn sync_file(path: &Path) -> io::Result<()> {
+    #[cfg(windows)]
+    let file = fs::OpenOptions::new().read(true).write(true).open(path)?;
+    #[cfg(unix)]
+    let file = fs::File::open(path)?;
+    file.sync_all()
+}

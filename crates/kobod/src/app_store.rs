@@ -1161,15 +1161,11 @@ fn write_synced(path: &Path, contents: &[u8]) -> Result<(), DeviceError> {
 }
 
 fn sync_file(path: &Path) -> Result<(), DeviceError> {
-    fs::File::open(path)
-        .and_then(|file| file.sync_all())
-        .map_err(|_| DeviceError::Backend)
+    kobo_protocol::durability::sync_file(path).map_err(|_| DeviceError::Backend)
 }
 
 fn sync_directory(path: &Path) -> Result<(), DeviceError> {
-    fs::File::open(path)
-        .and_then(|directory| directory.sync_all())
-        .map_err(|_| DeviceError::Backend)
+    kobo_protocol::durability::sync_directory(path).map_err(|_| DeviceError::Backend)
 }
 
 fn rename_synced(source: &Path, destination: &Path, parent: &Path) -> Result<(), DeviceError> {
