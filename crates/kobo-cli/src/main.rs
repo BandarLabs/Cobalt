@@ -1417,7 +1417,11 @@ fn stream_companion(arguments: &[String]) -> Result<(), String> {
         return Ok(());
     }
     eprintln!("{pairing}\n");
-    let (command, title) = stream_preset(&arguments[0], std::env::var("SHELL").ok().as_deref())?;
+    #[cfg(unix)]
+    let shell = std::env::var("SHELL").ok();
+    #[cfg(windows)]
+    let shell = std::env::var("COMSPEC").ok();
+    let (command, title) = stream_preset(&arguments[0], shell.as_deref())?;
     eprintln!(
         "Open Paperterm on your reader and connect to this computer. Keep the computer awake."
     );
@@ -1452,13 +1456,32 @@ fn stream_preset(name: &str, shell: Option<&str>) -> Result<(Vec<String>, &'stat
             ))
         }
         "terminal" => {
-            let shell = shell.unwrap_or("/bin/sh");
+            // The login-shell flag is a Unix convention; cmd.exe takes none,
+            // and its home is COMSPEC rather than SHELL.
+            #[cfg(unix)]
+            let fallback = "/bin/sh";
+            #[cfg(windows)]
+            let fallback = "C:\\Windows\\System32\\cmd.exe";
+            let shell = shell.unwrap_or(fallback);
             if !Path::new(shell).is_absolute() || !Path::new(shell).is_file() {
+                #[cfg(unix)]
                 return Err("Your default shell is unavailable. Set SHELL to an installed shell's absolute path, or use the connection check: kobo stream demo".into());
+                #[cfg(windows)]
+                return Err("Your default shell is unavailable. Set COMSPEC to an installed shell's absolute path, or use the connection check: kobo stream demo".into());
             }
-            Ok((vec![shell.into(), "-l".into()], "Terminal"))
+            #[cfg(unix)]
+            return Ok((vec![shell.into(), "-l".into()], "Terminal"));
+            #[cfg(windows)]
+            return Ok((vec![shell.into()], "Terminal"));
         }
+        #[cfg(unix)]
         "monitor" => Ok((vec!["top".into()], "System monitor")),
+        // top(1) has no Windows equivalent; fail loudly rather than spawn a
+        // missing program.
+        #[cfg(windows)]
+        "monitor" => Err(
+            "the monitor preset runs top(1), which has no Windows equivalent; use kobo stream -- <command> with an explicit command".into(),
+        ),
         _ => Err(
             "Choose demo, terminal or monitor. Use kobo stream --help for custom commands.".into(),
         ),
@@ -8027,6 +8050,7 @@ mod tests {
     }
 
     /// A session is what somebody asked for by not asking for anything else.
+    #[cfg(unix)]
     #[test]
     fn paperterm_presets_are_literal_commands_with_clear_titles() {
         let (command, title) = super::stream_preset("terminal", Some("/bin/sh")).unwrap();
@@ -8036,6 +8060,23 @@ mod tests {
         let (command, title) = super::stream_preset("monitor", None).unwrap();
         assert_eq!(command, ["top"]);
         assert_eq!(title, "System monitor");
+        assert!(super::stream_preset("unknown", None).is_err());
+        assert!(super::STREAM_START.contains("kobo stream demo"));
+        super::stream_command(&[]).unwrap();
+    }
+
+    /// The Windows presets: cmd.exe with no login flag, and monitor's
+    /// explicit unsupported error instead of a missing top(1).
+    #[cfg(windows)]
+    #[test]
+    fn paperterm_presets_are_literal_commands_with_clear_titles() {
+        let shell = std::env::var("COMSPEC")
+            .unwrap_or_else(|_| "C:\\Windows\\System32\\cmd.exe".to_owned());
+        let (command, title) = super::stream_preset("terminal", Some(shell.as_str())).unwrap();
+        assert_eq!(command, [shell.as_str()]);
+        assert_eq!(title, "Terminal");
+        assert!(super::stream_preset("terminal", Some("cmd & echo unsafe")).is_err());
+        assert!(super::stream_preset("monitor", None).is_err());
         assert!(super::stream_preset("unknown", None).is_err());
         assert!(super::STREAM_START.contains("kobo stream demo"));
         super::stream_command(&[]).unwrap();
@@ -8181,9 +8222,9 @@ mod tests {
         build_executables, canonical, configured_target_directory, is_device_flag,
         manifest_uses_sdk, normalise_secret_value, parse_deploy, parse_devices, parse_logs,
         parse_touch_probe, unreachable_device, valid_device_host, valid_slug, verify_arm_elf,
-        wait_for_remote_child, workspace_doctor_binary, DevSessionGuard, RemoteArtifact,
-        SimulationGuard, ALIASES, DEFAULT_TRACE_LINES, DEPLOY_TIMEOUT, DEVICE_PACKAGES,
-        TOUCH_PROBE_DEFAULT_SECONDS, TOUCH_PROBE_MAXIMUM_SECONDS,
+        workspace_doctor_binary, DevSessionGuard, RemoteArtifact, SimulationGuard, ALIASES,
+        DEFAULT_TRACE_LINES, DEPLOY_TIMEOUT, DEVICE_PACKAGES, TOUCH_PROBE_DEFAULT_SECONDS,
+        TOUCH_PROBE_MAXIMUM_SECONDS,
     };
     #[cfg(feature = "device-write")]
     use super::{
@@ -8194,7 +8235,12 @@ mod tests {
     };
     use std::fs;
     use std::path::PathBuf;
+    // Only the unix-gated fixtures drive child processes and timeouts.
+    #[cfg(unix)]
+    use super::wait_for_remote_child;
+    #[cfg(unix)]
     use std::process::Command;
+    #[cfg(unix)]
     use std::time::Duration;
 
     // The fixture drives /bin/sh and mode bits, so it is Unix-only.
@@ -8559,6 +8605,10 @@ mod tests {
         fs::remove_file(path).expect("remove fixture");
     }
 
+    // Builds device binaries with the ARM musl toolchain, which the Windows
+    // job does not install; the device-build and device-emulated jobs cover
+    // these builds on Linux.
+    #[cfg(unix)]
     #[test]
     fn every_uploaded_artifact_is_built_from_this_workspace() {
         let command =
@@ -8605,6 +8655,8 @@ mod tests {
     /// as long as the packager existed, so `--present` was not compiled in and
     /// `start.sh` answered the owner with a usage message. Everything else
     /// about that binary was correct, which is why nothing else caught it.
+    // Needs the ARM musl toolchain; covered by the Linux device jobs.
+    #[cfg(unix)]
     #[test]
     fn every_packaged_binary_is_built_with_what_it_needs() {
         let features = super::INSTALLED_PACKAGES
@@ -9329,6 +9381,8 @@ mod tests {
         assert!(message.contains("stderr: doctor stderr"));
     }
 
+    // The fixture spawns the unix `sleep` utility.
+    #[cfg(unix)]
     #[test]
     fn remote_child_timeout_kills_the_local_process() {
         let mut child = Command::new("/bin/sleep")

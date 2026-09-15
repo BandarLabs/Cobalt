@@ -40,27 +40,10 @@ fn parent(path: &Path) -> &Path {
         .unwrap_or(Path::new("."))
 }
 
-/// Opens a directory for flushing. Windows refuses a plain `File::open` on a
-/// directory; `FILE_FLAG_BACKUP_SEMANTICS` is the flag that exists exactly so
-/// tools can hold a directory handle, and `FlushFileBuffers` on it flushes the
-/// directory's metadata the way `fsync` on a directory does on Unix.
-#[cfg(windows)]
-fn open_directory(path: &Path) -> io::Result<fs::File> {
-    use std::os::windows::fs::OpenOptionsExt as _;
-    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
-    fs::OpenOptions::new()
-        .read(true)
-        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
-        .open(path)
-}
-
-#[cfg(unix)]
-fn open_directory(path: &Path) -> io::Result<fs::File> {
-    fs::File::open(path)
-}
-
+/// The shared implementation lives in kobo_protocol::durability so the CLI's
+/// own flush sites cannot drift into a quieter platform arm.
 pub(crate) fn sync_directory(path: &Path) -> io::Result<()> {
-    open_directory(path)?.sync_all()
+    kobo_protocol::durability::sync_directory(path)
 }
 
 pub(crate) fn ensure_directory(path: &Path) -> io::Result<()> {
@@ -155,6 +138,7 @@ mod tests {
                 std::process::id(),
                 std::thread::current().id()
             ));
+            #[allow(unused_mut)] // only the Unix arm sets a mode
             let mut builder = fs::DirBuilder::new();
             #[cfg(unix)]
             {

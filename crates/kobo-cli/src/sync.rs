@@ -657,7 +657,33 @@ fn secure_directory(input: &Path) -> Result<PathBuf, String> {
     canonical
         .to_str()
         .ok_or_else(|| "LOCAL_DIR must be valid UTF-8 for Syncthing".to_owned())?;
-    Ok(canonical)
+    Ok(simplify_verbatim(canonical))
+}
+
+/// Windows `canonicalize` returns verbatim `\\?\` paths, which compare
+/// unequal to the same path written the ordinary way and print awkwardly in
+/// errors. Strip the prefix for drive-letter paths; genuine UNC paths keep
+/// it, since a bare `\\server\share` loses the distinction.
+#[cfg(windows)]
+fn simplify_verbatim(path: PathBuf) -> PathBuf {
+    let text = path.to_string_lossy().into_owned();
+    if let Some(rest) = text.strip_prefix("\\?\\") {
+        let mut chars = rest.chars();
+        if chars
+            .next()
+            .is_some_and(|drive| drive.is_ascii_alphabetic())
+            && chars.next() == Some(':')
+        {
+            return PathBuf::from(rest);
+        }
+    }
+    path
+}
+
+/// No verbatim prefix exists off Windows.
+#[cfg(not(windows))]
+fn simplify_verbatim(path: PathBuf) -> PathBuf {
+    path
 }
 
 fn reject_symlink_components(path: &Path, purpose: &str) -> Result<(), String> {
@@ -1797,7 +1823,12 @@ mod tests {
         let metadata = fs::metadata(&local).expect("metadata");
         let id = "AAAAAAA-AAAAAAA-AAAAAAA-AAAAAAA-AAAAAAA-AAAAAAA-AAAAAAA-AAAAAA2";
         let state = State {
+            // "/usr/bin/syncthing" is not absolute on Windows; the test
+            // binary itself is an absolute path on both.
+            #[cfg(unix)]
             binary: PathBuf::from("/usr/bin/syncthing"),
+            #[cfg(windows)]
+            binary: std::env::current_exe().expect("test binary"),
             binary_sha256: "a".repeat(64),
             version: "syncthing v2.0.9".to_owned(),
             api_key: "b".repeat(64),
@@ -1884,7 +1915,10 @@ mod tests {
         let host_id = "AAAAAAA-AAAAAAA-AAAAAAA-AAAAAAA-AAAAAAA-AAAAAAA-AAAAAAA-AAAAAA2";
         let kobo_id = "BBBBBBB-BBBBBBB-BBBBBBB-BBBBBBB-BBBBBBB-BBBBBBB-BBBBBBB-BBBBBB2";
         let state = State {
+            #[cfg(unix)]
             binary: PathBuf::from("/usr/bin/syncthing"),
+            #[cfg(windows)]
+            binary: std::env::current_exe().expect("test binary"),
             binary_sha256: "a".repeat(64),
             version: "syncthing v2.0.9".to_owned(),
             api_key: "b".repeat(64),
