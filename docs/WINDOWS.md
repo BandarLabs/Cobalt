@@ -78,6 +78,13 @@ Verified by emulation (qemu-arm on every push, job `device-emulated`):
 - Execution smoke: each built device binary is invoked under qemu-arm, so
   artifacts are proven to run, not just to link.
 
+Named emulation skips (qemu-user cannot meet the assumption):
+
+- kobo-abi `a_program_started_on_a_terminal_answers_what_is_typed_at_it`:
+  qemu-user answers EPERM to posix_openpt because the runner's devpts is
+  not emulated. Skipped only when the job sets KOBO_QEMU_EMULATED; the real
+  target has devpts and the test runs there.
+
 Still UNVERIFIED on real hardware even where emulation passes:
 
 - Framebuffer, panel refresh and touch input ioctls against a real kernel.
