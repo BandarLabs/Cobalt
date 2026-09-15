@@ -1202,6 +1202,42 @@ fn valid_hex(value: &str) -> bool {
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
+#[cfg(unix)]
+fn dir_identity(metadata: &fs::Metadata) -> (u64, u64) {
+    (metadata.dev(), metadata.ino())
+}
+
+/// Windows std has no stable device/inode identity, so the sync-root guard
+/// relies on the canonical path there: redirection is still refused, but a
+/// delete-and-recreate at the same path is not detected. Documented weaker
+/// boundary.
+#[cfg(not(unix))]
+fn dir_identity(_metadata: &fs::Metadata) -> (u64, u64) {
+    (0, 0)
+}
+
+#[cfg(unix)]
+fn executable_engine(metadata: &fs::Metadata) -> bool {
+    metadata.permissions().mode() & 0o111 != 0 && metadata.permissions().mode() & 0o022 == 0
+}
+
+#[cfg(not(unix))]
+fn executable_engine(_metadata: &fs::Metadata) -> bool {
+    true
+}
+
+#[cfg(unix)]
+fn private_mode(metadata: &fs::Metadata) -> bool {
+    metadata.permissions().mode().trailing_zeros() >= 6
+}
+
+/// The dedicated Sync home lives under the account profile on Windows, whose
+/// ACL already scopes it to the account.
+#[cfg(not(unix))]
+fn private_mode(_metadata: &fs::Metadata) -> bool {
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1407,40 +1443,4 @@ mod tests {
         }
         fs::remove_dir_all(root).expect("cleanup");
     }
-}
-
-#[cfg(unix)]
-fn dir_identity(metadata: &fs::Metadata) -> (u64, u64) {
-    (metadata.dev(), metadata.ino())
-}
-
-/// Windows std has no stable device/inode identity, so the sync-root guard
-/// relies on the canonical path there: redirection is still refused, but a
-/// delete-and-recreate at the same path is not detected. Documented weaker
-/// boundary.
-#[cfg(not(unix))]
-fn dir_identity(_metadata: &fs::Metadata) -> (u64, u64) {
-    (0, 0)
-}
-
-#[cfg(unix)]
-fn executable_engine(metadata: &fs::Metadata) -> bool {
-    metadata.permissions().mode() & 0o111 != 0 && metadata.permissions().mode() & 0o022 == 0
-}
-
-#[cfg(not(unix))]
-fn executable_engine(_metadata: &fs::Metadata) -> bool {
-    true
-}
-
-#[cfg(unix)]
-fn private_mode(metadata: &fs::Metadata) -> bool {
-    metadata.permissions().mode() & 0o077 == 0
-}
-
-/// The dedicated Sync home lives under the account profile on Windows, whose
-/// ACL already scopes it to the account.
-#[cfg(not(unix))]
-fn private_mode(_metadata: &fs::Metadata) -> bool {
-    true
 }

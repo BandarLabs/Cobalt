@@ -234,6 +234,18 @@ fn publish(folder: &Path, app: &str, offer: &Offer, bytes: &[u8]) -> Result<Path
     result
 }
 
+#[cfg(unix)]
+fn same_file(before: &fs::Metadata, opened: &fs::Metadata) -> bool {
+    before.dev() == opened.dev() && before.ino() == opened.ino()
+}
+
+/// See the call site: Windows substitutes size and modification time for the
+/// device/inode pair, a weaker same-file guard.
+#[cfg(not(unix))]
+fn same_file(before: &fs::Metadata, opened: &fs::Metadata) -> bool {
+    before.len() == opened.len() && before.modified().ok() == opened.modified().ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -327,16 +339,4 @@ mod tests {
         assert!(script.contains("/state/todo/cobalt-export"));
         assert!(!script.contains("rm "));
     }
-}
-
-#[cfg(unix)]
-fn same_file(before: &fs::Metadata, opened: &fs::Metadata) -> bool {
-    before.dev() == opened.dev() && before.ino() == opened.ino()
-}
-
-/// See the call site: Windows substitutes size and modification time for the
-/// device/inode pair, a weaker same-file guard.
-#[cfg(not(unix))]
-fn same_file(before: &fs::Metadata, opened: &fs::Metadata) -> bool {
-    before.len() == opened.len() && before.modified().ok() == opened.modified().ok()
 }
