@@ -40,7 +40,7 @@ fn parent(path: &Path) -> &Path {
         .unwrap_or(Path::new("."))
 }
 
-/// The shared implementation lives in kobo_protocol::durability so the CLI's
+/// The shared implementation lives in `kobo_protocol::durability` so the CLI's
 /// own flush sites cannot drift into a quieter platform arm.
 pub(crate) fn sync_directory(path: &Path) -> io::Result<()> {
     kobo_protocol::durability::sync_directory(path)
