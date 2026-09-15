@@ -2396,6 +2396,7 @@ pub mod pty {
 
     const EXTENDED_STARTUPINFO_PRESENT: Dword = 0x0008_0000;
     const CREATE_UNICODE_ENVIRONMENT: Dword = 0x0000_0400;
+    const STARTF_USESTDHANDLES: Dword = 0x0000_0100;
     /// ProcThreadAttributeValue(22, Thread: false, Input: true, Additive: false).
     const PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE: usize = 22 | 0x0002_0000;
     const HEAP_ZERO_MEMORY: Dword = 0x8;
@@ -2658,6 +2659,12 @@ pub mod pty {
             let mut startup = StartupInfoExW {
                 base: StartupInfoW {
                     cb: size_of::<StartupInfoExW>() as Dword,
+                    // With the parent's std handles redirected (a test harness
+                    // or CI runner is exactly that), a child created without
+                    // STARTF_USESTDHANDLES attaches to the inherited console
+                    // instead of the pseudoconsole. Null std handles plus the
+                    // flag force the pseudoconsole to supply them.
+                    flags: STARTF_USESTDHANDLES,
                     ..StartupInfoW::default()
                 },
                 attribute_list: list,
