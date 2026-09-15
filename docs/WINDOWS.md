@@ -34,14 +34,19 @@ built `kobo.exe` artifact that is executed for `--version`):
   CI; the verbs' runtime behavior against a real device is UNVERIFIED from
   any host OS until run against hardware.
 
+- Interactive terminal attachment (`kobo shell`, `kobo stream`): the PTY
+  layer is a real ConPTY implementation (`CreatePseudoConsole` + extended
+  startup info), runtime-verified on the windows-2022 runner by the
+  `conpty_carries_output_status_and_shutdown` test, which spawns cmd.exe,
+  reads its output over the channel, checks its exit status and closes the
+  console. Interactive use against a real device is UNVERIFIED until run
+  from a physical Windows machine.
+
 UNVERIFIED on Windows (compile clean, unit-tested where noted, but not yet
 run end-to-end on a real Windows machine):
 
 - `kobo sync` (dedicated Syncthing orchestration). Unit tests pass in CI;
   a full sync against a device has not been run from Windows.
-- Interactive terminal attachment (`kobo shell`, `kobo stream`): the PTY
-  layer returns an explicit Unsupported error today. A ConPTY port is
-  planned; until it lands these commands fail loudly, never silently.
 - Device communication (ssh/scp to a reader) from Windows: expected to
   work with an installed OpenSSH client, not yet exercised.
 
