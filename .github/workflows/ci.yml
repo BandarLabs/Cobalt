@@ -166,10 +166,14 @@ jobs:
           cargo test --locked --target armv7-unknown-linux-musleabihf
           -p kobo-abi -p kobo-hal -p kobod
           -p kobo-tap -p kobo-guard -p kobo-handoff -p kobo-smoke
-          --all-features
+          --all-features --no-fail-fast
         env:
           CC_armv7_unknown_linux_musleabihf: armv7-musl-cc
           CARGO_TARGET_ARMV7_UNKNOWN_LINUX_MUSLEABIHF_RUNNER: qemu-arm
+          # Marks emulation so tests whose assumptions qemu-user cannot meet
+          # (no emulated devpts for posix_openpt) skip by name instead of
+          # failing; each skip prints its reason.
+          KOBO_QEMU_EMULATED: "1"
       # Prove the shipped artifacts execute, not just link. An application
       # error exit is a pass here - the binary ran; only an exec-level
       # failure (127/126 or an emulator crash by signal) fails the step.
