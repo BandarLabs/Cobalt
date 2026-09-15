@@ -407,6 +407,7 @@ fn atomic_write(path: &Path, value: &str, mode: u32) -> Result<(), String> {
     options.write(true).create_new(true);
     #[cfg(unix)]
     options.mode(mode);
+    #[cfg(not(unix))]
     let _ = mode;
     let mut file = options
         .open(&temporary)

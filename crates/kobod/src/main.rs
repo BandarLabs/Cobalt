@@ -8,10 +8,10 @@ use std::fs::{self, OpenOptions};
 use std::io::Write;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
-
-use kobo_protocol::channel;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
+
+use kobo_protocol::channel;
 
 static VERIFIED_DEVICE_METRICS: OnceLock<kobo_ui::DisplayMetrics> = OnceLock::new();
 

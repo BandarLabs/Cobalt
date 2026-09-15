@@ -1398,31 +1398,14 @@ fn atomic_write(path: &Path, bytes: &[u8], mode: u32) -> Result<(), DeviceError>
     #[cfg(unix)]
     fs::set_permissions(&next, fs::Permissions::from_mode(mode))
         .map_err(|_| DeviceError::Backend)?;
+    #[cfg(windows)]
     let _ = mode;
     fs::rename(&next, path).map_err(|_| DeviceError::Backend)?;
     sync_directory(parent)
 }
 
-/// Flushes a directory's metadata so a rename inside it is durable. Windows
-/// only hands out directory handles with `FILE_FLAG_BACKUP_SEMANTICS`, and
-/// `FlushFileBuffers` on one is the `fsync`-on-a-directory equivalent.
-#[cfg(windows)]
 fn sync_directory(path: &Path) -> Result<(), DeviceError> {
-    use std::os::windows::fs::OpenOptionsExt as _;
-    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
-    OpenOptions::new()
-        .read(true)
-        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
-        .open(path)
-        .and_then(|directory| directory.sync_all())
-        .map_err(|_| DeviceError::Backend)
-}
-
-#[cfg(unix)]
-fn sync_directory(path: &Path) -> Result<(), DeviceError> {
-    File::open(path)
-        .and_then(|directory| directory.sync_all())
-        .map_err(|_| DeviceError::Backend)
+    kobo_protocol::durability::sync_directory(path).map_err(|_| DeviceError::Backend)
 }
 
 fn remove_state_file(root: &Path, name: &str) -> Result<(), DeviceError> {
