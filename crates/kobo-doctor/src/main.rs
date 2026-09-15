@@ -519,49 +519,6 @@ fn observe(
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn a_recording_request_is_read_as_seconds_and_a_rate() {
-        assert_eq!(super::parse_record_request("20:2"), Ok((20, 2)));
-    }
-
-    #[test]
-    fn a_recording_that_would_never_stop_is_refused() {
-        // A tool that watches the device has to stop on its own. This one runs
-        // with the reader unattended, so an unbounded loop would flatten a
-        // battery and hold the memory bus against the reader.
-        assert!(super::parse_record_request("0:2").is_err());
-        assert!(super::parse_record_request("100000:2").is_err());
-        assert!(super::parse_record_request("20:0").is_err());
-        assert!(super::parse_record_request("20:60").is_err());
-        assert!(super::parse_record_request("20").is_err());
-        assert!(super::parse_record_request("soon:2").is_err());
-    }
-
-    use super::{base64_line, grey_of};
-
-    #[test]
-    fn the_encoder_agrees_with_the_standard_at_every_remainder() {
-        assert_eq!(base64_line(b""), "");
-        assert_eq!(base64_line(b"f"), "Zg==");
-        assert_eq!(base64_line(b"fo"), "Zm8=");
-        assert_eq!(base64_line(b"foo"), "Zm9v");
-        assert_eq!(base64_line(b"foobar"), "Zm9vYmFy");
-        assert_eq!(base64_line(&[0x00, 0xff, 0x80]), "AP+A");
-    }
-
-    #[test]
-    fn a_pixel_becomes_one_grey_byte_and_the_alpha_is_dropped() {
-        let pixels = [10, 20, 30, 255, 40, 50, 60, 255];
-        assert_eq!(
-            grey_of(&pixels),
-            vec![20, 50],
-            "the panel is single-channel, so the three colour bytes agree and any one of them is the grey"
-        );
-    }
-}
-
 /// Read-only Tailscale readiness facts (P0 probe).
 ///
 /// Every line is a `/proc`/`/sys`/metadata read; nothing is created, written
@@ -619,5 +576,48 @@ fn print_tailscale_readiness() {
     match onboard {
         Some(line) => println!("  /mnt/onboard: {line}"),
         None => println!("  /mnt/onboard: not mounted"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn a_recording_request_is_read_as_seconds_and_a_rate() {
+        assert_eq!(super::parse_record_request("20:2"), Ok((20, 2)));
+    }
+
+    #[test]
+    fn a_recording_that_would_never_stop_is_refused() {
+        // A tool that watches the device has to stop on its own. This one runs
+        // with the reader unattended, so an unbounded loop would flatten a
+        // battery and hold the memory bus against the reader.
+        assert!(super::parse_record_request("0:2").is_err());
+        assert!(super::parse_record_request("100000:2").is_err());
+        assert!(super::parse_record_request("20:0").is_err());
+        assert!(super::parse_record_request("20:60").is_err());
+        assert!(super::parse_record_request("20").is_err());
+        assert!(super::parse_record_request("soon:2").is_err());
+    }
+
+    use super::{base64_line, grey_of};
+
+    #[test]
+    fn the_encoder_agrees_with_the_standard_at_every_remainder() {
+        assert_eq!(base64_line(b""), "");
+        assert_eq!(base64_line(b"f"), "Zg==");
+        assert_eq!(base64_line(b"fo"), "Zm8=");
+        assert_eq!(base64_line(b"foo"), "Zm9v");
+        assert_eq!(base64_line(b"foobar"), "Zm9vYmFy");
+        assert_eq!(base64_line(&[0x00, 0xff, 0x80]), "AP+A");
+    }
+
+    #[test]
+    fn a_pixel_becomes_one_grey_byte_and_the_alpha_is_dropped() {
+        let pixels = [10, 20, 30, 255, 40, 50, 60, 255];
+        assert_eq!(
+            grey_of(&pixels),
+            vec![20, 50],
+            "the panel is single-channel, so the three colour bytes agree and any one of them is the grey"
+        );
     }
 }
