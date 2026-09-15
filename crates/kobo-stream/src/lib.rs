@@ -1693,16 +1693,17 @@ mod tests {
             &["-c", "printf first; sleep 1; printf final"],
             &[("TERM", "xterm-256color")],
         );
-        // `echo | set /p` prints without a newline, so the two halves share
-        // a row exactly as sh's printf makes them; a plain echo per half
-        // would print the second on its own line and scroll the first off
-        // this two-row grid.
+        // PowerShell is stock on Windows and its Console.Write is exact:
+        // both halves without a newline, so they share a row exactly as
+        // sh's printf makes them. (cmd's newline-free echo|set /p idiom
+        // proved unreliable under ConPTY.)
         #[cfg(windows)]
         let (program, arguments, environment): (&str, &[&str], &[(&str, &str)]) = (
-            "cmd.exe",
+            "powershell.exe",
             &[
-                "/c",
-                "echo | set /p x=first & ping -n 2 127.0.0.1 >nul & echo | set /p x=final",
+                "-NoProfile",
+                "-Command",
+                "[Console]::Write('first'); Start-Sleep -Milliseconds 800; [Console]::Write('final')",
             ],
             &[],
         );
