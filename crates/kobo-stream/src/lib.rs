@@ -1693,10 +1693,17 @@ mod tests {
             &["-c", "printf first; sleep 1; printf final"],
             &[("TERM", "xterm-256color")],
         );
+        // `echo | set /p` prints without a newline, so the two halves share
+        // a row exactly as sh's printf makes them; a plain echo per half
+        // would print the second on its own line and scroll the first off
+        // this two-row grid.
         #[cfg(windows)]
         let (program, arguments, environment): (&str, &[&str], &[(&str, &str)]) = (
             "cmd.exe",
-            &["/c", "echo first & ping -n 2 127.0.0.1 >nul & echo final"],
+            &[
+                "/c",
+                "echo | set /p x=first & ping -n 2 127.0.0.1 >nul & echo | set /p x=final",
+            ],
             &[],
         );
         let pty = kobo_abi::pty::Pty::spawn(program, arguments, environment, 20, 2)
@@ -1743,23 +1750,10 @@ mod tests {
         let final_screen = session.screen(before.expect("initial output snapshot"));
         assert!(final_screen.ended);
         assert_eq!(final_screen.exit, Some(0));
-        // sh's printf writes both halves with no newline, so they share a
-        // row; cmd's echo puts each on its own line.
-        #[cfg(unix)]
-        let arrived = final_screen
+        assert!(final_screen
             .rows
             .iter()
-            .any(|row| row.cells.contains("firstfinal"));
-        #[cfg(windows)]
-        let arrived = final_screen
-            .rows
-            .iter()
-            .any(|row| row.cells.contains("first"))
-            && final_screen
-                .rows
-                .iter()
-                .any(|row| row.cells.contains("final"));
-        assert!(arrived);
+            .any(|row| row.cells.contains("firstfinal")));
     }
 
     #[test]
