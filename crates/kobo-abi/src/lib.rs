@@ -1847,6 +1847,9 @@ pub mod sandbox {
         }
 
         #[test]
+        // libc::AF_INET has no Windows analogue; the seccomp machinery this
+        // exercises is Unix-only anyway.
+        #[cfg(unix)]
         fn a_denied_syscall_is_replaced_then_reported_as_permission_denied() {
             let selected = Cell::new(None);
             let result = Cell::new(None);
@@ -2375,8 +2378,8 @@ pub mod pty {
 #[cfg(windows)]
 pub mod pty {
     use std::io;
-    use std::sync::Arc;
     use std::sync::mpsc::Receiver;
+    use std::sync::Arc;
 
     /// Something to call when the program has printed. Same shape as Unix.
     pub type Wake = Arc<dyn Fn() + Send + Sync>;

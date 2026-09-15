@@ -7,6 +7,7 @@ use std::fmt::Write as _;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
+#[cfg(unix)]
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Component, Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -147,10 +148,11 @@ fn setup(arguments: &[String]) -> Result<(), String> {
 fn add_mapping(state: &mut State, folder: &str, local: &Path, home: &Path) -> Result<(), String> {
     let metadata =
         fs::metadata(local).map_err(|error| format!("inspect {}: {error}", local.display()))?;
+    let (device, inode) = dir_identity(&metadata);
     let mapping = Mapping {
         path: local.to_owned(),
-        device: metadata.dev(),
-        inode: metadata.ino(),
+        device,
+        inode,
     };
     let already_mapped = state.mappings.contains_key(folder);
     if let Some(existing) = state.mappings.get(folder) {
@@ -386,8 +388,10 @@ fn protect_home(home: &Path) -> Result<(), String> {
             .map_err(|error| format!("create dedicated Sync home {}: {error}", home.display()))?;
     }
     reject_symlink_components(home, "dedicated Sync home")?;
+    #[cfg(unix)]
     fs::set_permissions(home, fs::Permissions::from_mode(0o700))
-        .map_err(|error| format!("protect dedicated Sync home {}: {error}", home.display()))
+        .map_err(|error| format!("protect dedicated Sync home {}: {error}", home.display()))?;
+    Ok(())
 }
 
 fn secure_directory(input: &Path) -> Result<PathBuf, String> {
@@ -445,10 +449,9 @@ fn locate_syncthing() -> Result<PathBuf, String> {
         let Ok(metadata) = fs::metadata(&canonical) else {
             continue;
         };
-        if metadata.is_file()
-            && metadata.permissions().mode() & 0o111 != 0
-            && metadata.permissions().mode() & 0o022 == 0
-        {
+        // Windows has no executable bit; a regular file found on the
+        // search path is the engine candidate there.
+        if metadata.is_file() && executable_engine(&metadata) {
             return Ok(canonical);
         }
     }
@@ -505,6 +508,7 @@ fn generate_identity(binary: &Path, home: &Path) -> Result<(), String> {
     for name in ["cert.pem", "key.pem", "config.xml"] {
         let path = home.join(name);
         if path.exists() {
+            #[cfg(unix)]
             fs::set_permissions(&path, fs::Permissions::from_mode(0o600))
                 .map_err(|error| format!("protect {}: {error}", path.display()))?;
         }
@@ -597,8 +601,10 @@ fn configure_host(state: &State, home: &Path) -> Result<(), String> {
     let _ignored = shutdown(state);
     let stop_result = wait_child(&mut child, STOP_TIMEOUT);
     result.and(stop_result)?;
+    #[cfg(unix)]
     fs::set_permissions(home.join("config.xml"), fs::Permissions::from_mode(0o600))
-        .map_err(|error| format!("protect dedicated Syncthing config: {error}"))
+        .map_err(|error| format!("protect dedicated Syncthing config: {error}"))?;
+    Ok(())
 }
 
 fn configure_live(state: &State) -> Result<(), String> {
@@ -668,10 +674,11 @@ fn verify_state(state: &State) -> Result<(), String> {
             state.binary.display()
         )
     })?;
+    // Windows has no mode bits; the symlink check and the pinned digest
+    // still guard the engine there, so the boundary narrows but holds.
     if !metadata.is_file()
         || metadata.file_type().is_symlink()
-        || metadata.permissions().mode() & 0o111 == 0
-        || metadata.permissions().mode() & 0o022 != 0
+        || !executable_engine(&metadata)
         || digest_file(&state.binary)? != state.binary_sha256
     {
         return Err(
@@ -690,10 +697,8 @@ fn verify_mappings(state: &State) -> Result<(), String> {
         let canonical = secure_directory(&mapping.path)?;
         let metadata = fs::metadata(&canonical)
             .map_err(|error| format!("inspect {}: {error}", canonical.display()))?;
-        if canonical != mapping.path
-            || metadata.dev() != mapping.device
-            || metadata.ino() != mapping.inode
-        {
+        let (device, inode) = dir_identity(&metadata);
+        if canonical != mapping.path || device != mapping.device || inode != mapping.inode {
             return Err(format!(
                 "the local directory for kobo-{folder} was replaced or redirected; refusing to synchronize it"
             ));
@@ -712,12 +717,15 @@ fn start(state: &State, home: &Path, paused: bool) -> Result<Child, String> {
             ));
         }
     }
-    let log = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .mode(0o600)
+    #[allow(unused_mut)] // Windows has no mode bits to set.
+    let mut log_options = OpenOptions::new();
+    log_options.create(true).append(true);
+    #[cfg(unix)]
+    log_options.mode(0o600);
+    let log = log_options
         .open(&log_path)
         .map_err(|error| format!("open private Syncthing log: {error}"))?;
+    #[cfg(unix)]
     fs::set_permissions(&log_path, fs::Permissions::from_mode(0o600))
         .map_err(|error| format!("protect private Syncthing log: {error}"))?;
     let error_log = log
@@ -933,10 +941,7 @@ fn read_state(home: &Path) -> Result<State, String> {
     let path = home.join("kobo-host.json");
     let metadata =
         fs::symlink_metadata(&path).map_err(|error| format!("read {}: {error}", path.display()))?;
-    if !metadata.is_file()
-        || metadata.file_type().is_symlink()
-        || metadata.permissions().mode() & 0o077 != 0
-    {
+    if !metadata.is_file() || metadata.file_type().is_symlink() || !private_mode(&metadata) {
         return Err(format!("refusing unsafe Sync state {}", path.display()));
     }
     let value: Value = serde_json::from_slice(
@@ -1025,23 +1030,30 @@ fn optional_state(home: &Path) -> Result<Option<State>, String> {
     }
 }
 
-fn atomic_write(path: &Path, value: &str, mode: u32) -> Result<(), String> {
+fn atomic_write(
+    path: &Path,
+    value: &str,
+    #[cfg_attr(not(unix), allow(unused))] mode: u32,
+) -> Result<(), String> {
     let temporary = path.with_extension("new");
     match fs::remove_file(&temporary) {
         Ok(()) => {}
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => return Err(format!("remove stale {}: {error}", temporary.display())),
     }
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(mode)
+    #[allow(unused_mut)] // Windows has no mode bits to set.
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    options.mode(mode);
+    let mut file = options
         .open(&temporary)
         .map_err(|error| format!("write {}: {error}", temporary.display()))?;
     file.write_all(value.as_bytes())
         .map_err(|error| format!("write {}: {error}", temporary.display()))?;
     file.sync_all()
         .map_err(|error| format!("sync {}: {error}", temporary.display()))?;
+    #[cfg(unix)]
     fs::set_permissions(&temporary, fs::Permissions::from_mode(mode))
         .map_err(|error| format!("protect {}: {error}", temporary.display()))?;
     fs::rename(&temporary, path).map_err(|error| format!("replace {}: {error}", path.display()))
@@ -1099,12 +1111,12 @@ impl OperationLock {
     fn acquire(home: &Path) -> Result<Self, String> {
         let path = home.join("operation.lock");
         for _attempt in 0..2 {
-            match OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .mode(0o600)
-                .open(&path)
-            {
+            #[allow(unused_mut)] // Windows has no mode bits to set.
+            let mut options = OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            options.mode(0o600);
+            match options.open(&path) {
                 Ok(mut file) => {
                     writeln!(file, "{}", std::process::id())
                         .map_err(|error| format!("write Sync operation lock: {error}"))?;
@@ -1219,9 +1231,12 @@ mod tests {
         fs::create_dir(&real).expect("real");
         assert_eq!(secure_directory(&real).expect("secure"), real);
         assert!(secure_directory(Path::new("../elsewhere")).is_err());
-        let link = root.join("link");
-        std::os::unix::fs::symlink(&real, &link).expect("symlink");
-        assert!(secure_directory(&link).is_err());
+        #[cfg(unix)]
+        {
+            let link = root.join("link");
+            std::os::unix::fs::symlink(&real, &link).expect("symlink");
+            assert!(secure_directory(&link).is_err());
+        }
         fs::remove_dir_all(root).expect("cleanup");
     }
 
@@ -1240,27 +1255,36 @@ mod tests {
             api_key: "b".repeat(64),
             host_id: id.to_owned(),
             kobo_id: id.replace('A', "B"),
-            mappings: BTreeMap::from([(
-                "vault".to_owned(),
-                Mapping {
-                    path: local.clone(),
-                    device: metadata.dev(),
-                    inode: metadata.ino(),
-                },
-            )]),
+            mappings: BTreeMap::from([{
+                let (device, inode) = dir_identity(&metadata);
+                (
+                    "vault".to_owned(),
+                    Mapping {
+                        path: local.clone(),
+                        device,
+                        inode,
+                    },
+                )
+            }]),
         };
         write_state(&root, &state).expect("write");
-        let mode = fs::metadata(root.join("kobo-host.json"))
-            .expect("state metadata")
-            .permissions()
-            .mode();
-        assert_eq!(mode & 0o077, 0);
+        #[cfg(unix)]
+        {
+            let mode = fs::metadata(root.join("kobo-host.json"))
+                .expect("state metadata")
+                .permissions()
+                .mode();
+            assert_eq!(mode & 0o077, 0);
+        }
         assert_eq!(read_state(&root).expect("read"), state);
-        fs::remove_dir(&local).expect("remove root");
-        let decoy = root.join("decoy");
-        fs::create_dir(&decoy).expect("decoy");
-        std::os::unix::fs::symlink(&decoy, &local).expect("replace root with a symlink");
-        assert!(verify_mappings(&state).is_err());
+        #[cfg(unix)]
+        {
+            fs::remove_dir(&local).expect("remove root");
+            let decoy = root.join("decoy");
+            fs::create_dir(&decoy).expect("decoy");
+            std::os::unix::fs::symlink(&decoy, &local).expect("replace root with a symlink");
+            assert!(verify_mappings(&state).is_err());
+        }
         fs::remove_dir_all(root).expect("cleanup");
     }
 
@@ -1302,10 +1326,11 @@ mod tests {
         fs::create_dir_all(&out).expect("out");
         let mapping = |path: PathBuf| {
             let metadata = fs::metadata(&path).expect("metadata");
+            let (device, inode) = dir_identity(&metadata);
             Mapping {
                 path,
-                device: metadata.dev(),
-                inode: metadata.ino(),
+                device,
+                inode,
             }
         };
         let host_id = "AAAAAAA-AAAAAAA-AAAAAAA-AAAAAAA-AAAAAAA-AAAAAAA-AAAAAAA-AAAAAA2";
@@ -1348,4 +1373,40 @@ mod tests {
         }
         fs::remove_dir_all(root).expect("cleanup");
     }
+}
+
+#[cfg(unix)]
+fn dir_identity(metadata: &fs::Metadata) -> (u64, u64) {
+    (metadata.dev(), metadata.ino())
+}
+
+/// Windows std has no stable device/inode identity, so the sync-root guard
+/// relies on the canonical path there: redirection is still refused, but a
+/// delete-and-recreate at the same path is not detected. Documented weaker
+/// boundary.
+#[cfg(not(unix))]
+fn dir_identity(_metadata: &fs::Metadata) -> (u64, u64) {
+    (0, 0)
+}
+
+#[cfg(unix)]
+fn executable_engine(metadata: &fs::Metadata) -> bool {
+    metadata.permissions().mode() & 0o111 != 0 && metadata.permissions().mode() & 0o022 == 0
+}
+
+#[cfg(not(unix))]
+fn executable_engine(_metadata: &fs::Metadata) -> bool {
+    true
+}
+
+#[cfg(unix)]
+fn private_mode(metadata: &fs::Metadata) -> bool {
+    metadata.permissions().mode() & 0o077 == 0
+}
+
+/// The dedicated Sync home lives under the account profile on Windows, whose
+/// ACL already scopes it to the account.
+#[cfg(not(unix))]
+fn private_mode(_metadata: &fs::Metadata) -> bool {
+    true
 }

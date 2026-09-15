@@ -155,7 +155,13 @@ mod tests {
                 std::process::id(),
                 std::thread::current().id()
             ));
-            fs::DirBuilder::new().mode(0o700).create(&root).unwrap();
+            let mut builder = fs::DirBuilder::new();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::DirBuilderExt as _;
+                builder.mode(0o700);
+            }
+            builder.create(&root).unwrap();
             Self(root)
         }
     }

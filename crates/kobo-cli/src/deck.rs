@@ -3,6 +3,7 @@
 use std::env;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
+#[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
@@ -914,12 +915,12 @@ fn push_toml_string(body: &mut String, value: &str) {
 fn write_store(root: &Path, pairing: &[u8], snapshot: &[u8]) -> Result<(), String> {
     fs::create_dir_all(root).map_err(|error| format!("create {}: {error}", root.display()))?;
     write_atomic(&root.join(CACHE_KEY), snapshot)?;
-    match OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(root.join(PAIRED_KEY))
-    {
+    #[allow(unused_mut)] // Windows has no mode bits to set.
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+    match options.open(root.join(PAIRED_KEY)) {
         Ok(mut file) => file
             .write_all(pairing)
             .and_then(|()| file.sync_all())
@@ -941,11 +942,12 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
         .ok_or_else(|| format!("{} is not a usable path", path.display()))?;
     let temporary = path.with_file_name(format!(".{name}.writing"));
     {
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o600)
+        #[allow(unused_mut)] // Windows has no mode bits to set.
+        let mut options = OpenOptions::new();
+        options.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        options.mode(0o600);
+        let mut file = options
             .open(&temporary)
             .map_err(|error| format!("write {}: {error}", temporary.display()))?;
         file.write_all(bytes)
