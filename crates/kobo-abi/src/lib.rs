@@ -2386,7 +2386,7 @@ pub mod pty {
     use std::os::windows::io::{FromRawHandle as _, RawHandle};
     use std::ptr;
     use std::sync::mpsc::{self, Receiver};
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
     use std::thread;
 
     /// How much is taken from the program in one read. Same bound as Unix.
@@ -2404,6 +2404,7 @@ pub mod pty {
     const HEAP_ZERO_MEMORY: Dword = 0x8;
     const WAIT_OBJECT_0: Dword = 0;
     const INFINITE: Dword = 0xFFFF_FFFF;
+    const DUPLICATE_SAME_ACCESS: Dword = 0x2;
 
     #[repr(C)]
     #[derive(Clone, Copy)]
@@ -2489,6 +2490,15 @@ pub mod pty {
         ) -> i32;
         fn ResizePseudoConsole(console: Handle, size: Coord) -> i32;
         fn ClosePseudoConsole(console: Handle);
+        fn DuplicateHandle(
+            source_process: Handle,
+            source: Handle,
+            target_process: Handle,
+            target: *mut Handle,
+            access: Dword,
+            inherit: Bool,
+            options: Dword,
+        ) -> Bool;
         fn InitializeProcThreadAttributeList(
             list: *mut c_void,
             count: Dword,
@@ -2534,15 +2544,45 @@ pub mod pty {
     pub struct Pty {
         /// The write end of the console's input pipe.
         input: File,
-        /// HPCON, nulled once closed so Drop cannot close it twice.
-        console: Handle,
+        /// The pseudo-console, shared with the waiter thread that closes it
+        /// when the child exits on its own: that is the event that makes a
+        /// Unix PTY report end of file, and the only one that makes a ConPTY
+        /// output pipe report one.
+        console: Arc<ConsoleCell>,
         /// The child's process handle, nulled once closed.
         process: Handle,
         output: Receiver<Vec<u8>>,
     }
 
-    // The handles are owned by this value and only moved with it.
+    // The handles are owned by this value and only moved with it; the
+    // console handle is only used under the cell's lock.
     unsafe impl Send for Pty {}
+
+    /// A duplicate of the child's process handle, owned by the waiter
+    /// thread so its wait never races the Pty's own handle.
+    struct WaitHandle(Handle);
+
+    // The handle is the thread's own duplicate and never leaves it.
+    unsafe impl Send for WaitHandle {}
+
+    /// A pseudo-console handle behind the lock that serializes the waiter
+    /// thread, `close`, and `Drop`.
+    struct ConsoleCell(Mutex<Handle>);
+
+    // The handle is owned by the cell and touched only under its lock.
+    unsafe impl Send for ConsoleCell {}
+    unsafe impl Sync for ConsoleCell {}
+
+    /// Closes the console in the cell exactly once, whoever runs first.
+    fn close_console(cell: &ConsoleCell) {
+        let mut console = cell.0.lock().expect("console lock");
+        if !console.is_null() {
+            // SAFETY: closed exactly once; the lock serializes every closer
+            // and nulling marks it done.
+            unsafe { ClosePseudoConsole(*console) };
+            *console = ptr::null_mut();
+        }
+    }
 
     fn wide(text: &str) -> Vec<u16> {
         std::ffi::OsStr::new(text)
@@ -2749,6 +2789,30 @@ pub mod pty {
                 return Err(error);
             }
             close_handle(information.thread);
+            // A second reference to the child for the waiter thread: waiting
+            // must not race the Pty's own close of its handle.
+            let mut wait_handle: Handle = ptr::null_mut();
+            // SAFETY: -1 is the current-process pseudo-handle on both sides,
+            // information.process is live and ours, and DUPLICATE_SAME_ACCESS
+            // fills wait_handle with an equivalent reference.
+            let duplicated = unsafe {
+                DuplicateHandle(
+                    (-1isize) as Handle,
+                    information.process,
+                    (-1isize) as Handle,
+                    &mut wait_handle,
+                    0,
+                    0,
+                    DUPLICATE_SAME_ACCESS,
+                )
+            };
+            if duplicated == 0 {
+                let error = io::Error::last_os_error();
+                close_handle(out_read);
+                close_handle(in_write);
+                close_handle(information.process);
+                return Err(error);
+            }
             // The pipes' surviving ends become owned Files here.
             // SAFETY: both handles are live, open, and uniquely owned.
             let (input, mut reader) = unsafe {
@@ -2779,13 +2843,30 @@ pub mod pty {
             });
 
             // Hand the console to the Pty without the guard closing it: the
-            // guard exists for the error paths above, and from here the Pty
-            // owns the handle (close() and Drop manage it).
+            // guard exists for the error paths above, and from here the cell
+            // owns the handle (the waiter thread, close(), and Drop manage it
+            // under the lock).
             let console_handle = console.0;
             std::mem::forget(console);
+            let console = Arc::new(ConsoleCell(Mutex::new(console_handle)));
+            let waiter_console = Arc::clone(&console);
+            let wait_handle = WaitHandle(wait_handle);
+            thread::spawn(move || {
+                // Bound whole first so the closure takes the wrapper: any
+                // field-shaped capture would move the bare raw handle, which
+                // is not Send.
+                let whole = wait_handle;
+                let WaitHandle(wait_handle) = whole;
+                // SAFETY: wait_handle is this thread's own reference; the
+                // wait ends when the child exits, which is when the console
+                // must go for readers to see the end of the stream.
+                unsafe { WaitForSingleObject(wait_handle, INFINITE) };
+                close_handle(wait_handle);
+                close_console(&waiter_console);
+            });
             Ok(Self {
                 input,
-                console: console_handle,
+                console,
                 process: information.process,
                 output,
             })
@@ -2817,8 +2898,15 @@ pub mod pty {
                 x: columns as i16,
                 y: rows as i16,
             };
-            // SAFETY: the console handle is live; Pty outlives the call.
-            let result = unsafe { ResizePseudoConsole(self.console, grid) };
+            let console = self.console.0.lock().expect("console lock");
+            if console.is_null() {
+                return Err(io::Error::new(
+                    io::ErrorKind::NotConnected,
+                    "the console went with the program",
+                ));
+            }
+            // SAFETY: the console handle is live under the lock.
+            let result = unsafe { ResizePseudoConsole(*console, grid) };
             if result != 0 {
                 return Err(hresult(result, "resize the pseudo-console"));
             }
@@ -2860,21 +2948,14 @@ pub mod pty {
                 // SAFETY: as above; waits for the termination to land.
                 unsafe { WaitForSingleObject(self.process, INFINITE) };
             }
-            if !self.console.is_null() {
-                // SAFETY: closed exactly once; nulled here so Drop skips it.
-                unsafe { ClosePseudoConsole(self.console) };
-                self.console = ptr::null_mut();
-            }
+            close_console(&self.console);
             Ok(())
         }
     }
 
     impl Drop for Pty {
         fn drop(&mut self) {
-            if !self.console.is_null() {
-                // SAFETY: still open; close() nulls it when it runs first.
-                unsafe { ClosePseudoConsole(self.console) };
-            }
+            close_console(&self.console);
             close_handle(self.process);
         }
     }
