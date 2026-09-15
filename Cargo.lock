@@ -1562,7 +1562,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "kobo-tailscale-app"
+name = "kobo-tailscale"
 version = "0.1.0"
 dependencies = [
  "kobo-sdk",
