@@ -2370,36 +2370,221 @@ pub mod pty {
     }
 }
 
-/// A pseudo-terminal on Windows would be a ConPTY pair, a different kernel
-/// object with its own creation dance (`CreatePseudoConsole`,
-/// `UpdateProcThreadAttribute`, pipes both ways). That port has not been done
-/// or runtime-verified, so every entry point here fails loudly instead of
-/// pretending a terminal exists.
+/// A pseudo-terminal on Windows is a ConPTY pair: two anonymous pipes joined
+/// by `CreatePseudoConsole`, the child started through an extended startup
+/// info whose attribute list names the console. Built on the documented
+/// kernel32 surface with the same shape as the Unix arm; runtime-verified by
+/// the windows-2022 CI job.
 #[cfg(windows)]
 pub mod pty {
-    use std::io;
-    use std::sync::mpsc::Receiver;
+    use std::ffi::c_void;
+    use std::fs::File;
+    use std::io::{self, Read, Write};
+    use std::os::windows::ffi::OsStrExt as _;
+    use std::os::windows::io::{FromRawHandle as _, RawHandle};
+    use std::ptr;
+    use std::sync::mpsc::{self, Receiver};
     use std::sync::Arc;
+    use std::thread;
+
+    /// How much is taken from the program in one read. Same bound as Unix.
+    const CHUNK: usize = 4096;
+
+    type Bool = i32;
+    type Dword = u32;
+    type Handle = *mut c_void;
+
+    const EXTENDED_STARTUPINFO_PRESENT: Dword = 0x0008_0000;
+    const CREATE_UNICODE_ENVIRONMENT: Dword = 0x0000_0400;
+    /// ProcThreadAttributeValue(22, Thread: false, Input: true, Additive: false).
+    const PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE: usize = 22 | 0x0002_0000;
+    const HEAP_ZERO_MEMORY: Dword = 0x8;
+    const WAIT_OBJECT_0: Dword = 0;
+    const INFINITE: Dword = 0xFFFF_FFFF;
+
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct Coord {
+        x: i16,
+        y: i16,
+    }
+
+    #[repr(C)]
+    struct StartupInfoW {
+        cb: Dword,
+        reserved: *mut u16,
+        desktop: *mut u16,
+        title: *mut u16,
+        x: Dword,
+        y: Dword,
+        x_size: Dword,
+        y_size: Dword,
+        x_count: Dword,
+        y_count: Dword,
+        fill: Dword,
+        flags: Dword,
+        show_window: u16,
+        reserved2: u16,
+        reserved2_pointer: *mut u8,
+        std_input: Handle,
+        std_output: Handle,
+        std_error: Handle,
+    }
+
+    impl Default for StartupInfoW {
+        fn default() -> Self {
+            Self {
+                cb: 0,
+                reserved: ptr::null_mut(),
+                desktop: ptr::null_mut(),
+                title: ptr::null_mut(),
+                x: 0,
+                y: 0,
+                x_size: 0,
+                y_size: 0,
+                x_count: 0,
+                y_count: 0,
+                fill: 0,
+                flags: 0,
+                show_window: 0,
+                reserved2: 0,
+                reserved2_pointer: ptr::null_mut(),
+                std_input: ptr::null_mut(),
+                std_output: ptr::null_mut(),
+                std_error: ptr::null_mut(),
+            }
+        }
+    }
+
+    #[repr(C)]
+    struct StartupInfoExW {
+        base: StartupInfoW,
+        attribute_list: *mut c_void,
+    }
+
+    #[repr(C)]
+    struct ProcessInformation {
+        process: Handle,
+        thread: Handle,
+        process_id: Dword,
+        thread_id: Dword,
+    }
+
+    extern "system" {
+        fn CreatePipe(
+            read: *mut Handle,
+            write: *mut Handle,
+            attrs: *mut c_void,
+            size: Dword,
+        ) -> Bool;
+        fn CreatePseudoConsole(
+            size: Coord,
+            input: Handle,
+            output: Handle,
+            flags: Dword,
+            console: *mut Handle,
+        ) -> i32;
+        fn ResizePseudoConsole(console: Handle, size: Coord) -> i32;
+        fn ClosePseudoConsole(console: Handle);
+        fn InitializeProcThreadAttributeList(
+            list: *mut c_void,
+            count: Dword,
+            flags: Dword,
+            size: *mut usize,
+        ) -> Bool;
+        fn UpdateProcThreadAttribute(
+            list: *mut c_void,
+            flags: Dword,
+            attribute: usize,
+            value: *mut c_void,
+            size: usize,
+            previous: *mut c_void,
+            return_size: *mut usize,
+        ) -> Bool;
+        fn DeleteProcThreadAttributeList(list: *mut c_void);
+        fn CreateProcessW(
+            application: *const u16,
+            command_line: *mut u16,
+            process_attributes: *mut c_void,
+            thread_attributes: *mut c_void,
+            inherit_handles: Bool,
+            flags: Dword,
+            environment: *mut c_void,
+            directory: *const u16,
+            startup_info: *mut StartupInfoExW,
+            information: *mut ProcessInformation,
+        ) -> Bool;
+        fn CloseHandle(handle: Handle) -> Bool;
+        fn WaitForSingleObject(handle: Handle, milliseconds: Dword) -> Dword;
+        fn GetExitCodeProcess(handle: Handle, code: *mut Dword) -> Bool;
+        fn TerminateProcess(handle: Handle, code: u32) -> Bool;
+        fn GetProcessHeap() -> Handle;
+        fn HeapAlloc(heap: Handle, flags: Dword, bytes: usize) -> *mut c_void;
+        fn HeapFree(heap: Handle, flags: Dword, memory: *mut c_void) -> Bool;
+    }
 
     /// Something to call when the program has printed. Same shape as Unix.
     pub type Wake = Arc<dyn Fn() + Send + Sync>;
 
-    /// UNVERIFIED on Windows: no instance can be created, because
-    /// [`Pty::spawn`] and [`Pty::spawn_with_wake`] always return an explicit
-    /// unsupported error. The type exists so callers compile against one API.
+    /// A running program with a terminal attached. Same contract as Unix:
+    /// output arrives on a channel so a caller blocks on its own event loop.
     pub struct Pty {
+        /// The write end of the console's input pipe.
+        input: File,
+        /// HPCON, nulled once closed so Drop cannot close it twice.
+        console: Handle,
+        /// The child's process handle, nulled once closed.
+        process: Handle,
         output: Receiver<Vec<u8>>,
     }
 
-    fn unsupported() -> io::Error {
+    // The handles are owned by this value and only moved with it.
+    unsafe impl Send for Pty {}
+
+    fn wide(text: &str) -> Vec<u16> {
+        std::ffi::OsStr::new(text)
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect()
+    }
+
+    fn close_handle(handle: Handle) {
+        if !handle.is_null() {
+            // SAFETY: the handle is one we created or were handed by
+            // CreateProcessW, still open, and closed at most once by the
+            // callers' nulling discipline.
+            unsafe { CloseHandle(handle) };
+        }
+    }
+
+    fn hresult(code: i32, context: &str) -> io::Error {
         io::Error::new(
-            io::ErrorKind::Unsupported,
-            "pseudo-terminals are not implemented on Windows yet (ConPTY port pending and unverified)",
+            io::ErrorKind::Other,
+            format!("{context}: HRESULT {code:#010x}"),
         )
     }
 
+    struct ConsoleGuard(Handle);
+    impl Drop for ConsoleGuard {
+        fn drop(&mut self) {
+            if !self.0.is_null() {
+                // SAFETY: created by CreatePseudoConsole, closed exactly once.
+                unsafe { ClosePseudoConsole(self.0) };
+            }
+        }
+    }
+
     impl Pty {
-        /// Always fails on Windows: no pseudo-terminal implementation exists.
+        /// Starts `program` under a new pseudo-terminal of the given grid.
+        ///
+        /// The environment is replaced rather than inherited, matching the
+        /// Unix arm; on Windows a caller that wants DLL lookup to behave
+        /// normally should pass `SystemRoot` through.
+        ///
+        /// # Errors
+        ///
+        /// Returns the OS error from any step of the allocation, or from
+        /// starting the program.
         pub fn spawn(
             program: &str,
             arguments: &[&str],
@@ -2407,11 +2592,14 @@ pub mod pty {
             columns: u16,
             rows: u16,
         ) -> io::Result<Self> {
-            let _ = (program, arguments, environment, columns, rows);
-            Err(unsupported())
+            Self::spawn_with_wake(program, arguments, environment, columns, rows, None)
         }
 
-        /// Always fails on Windows: no pseudo-terminal implementation exists.
+        /// The same, with something to call whenever output has arrived.
+        ///
+        /// # Errors
+        ///
+        /// As [`Pty::spawn`].
         pub fn spawn_with_wake(
             program: &str,
             arguments: &[&str],
@@ -2420,37 +2608,340 @@ pub mod pty {
             rows: u16,
             wake: Option<Wake>,
         ) -> io::Result<Self> {
-            let _ = (program, arguments, environment, columns, rows, wake);
-            Err(unsupported())
+            let mut in_read: Handle = ptr::null_mut();
+            let mut in_write: Handle = ptr::null_mut();
+            let mut out_read: Handle = ptr::null_mut();
+            let mut out_write: Handle = ptr::null_mut();
+            // SAFETY: out-pointers to live locals, no attributes (the handles
+            // are not inheritable, which the extended-startupinfo child does
+            // not need: the console attaches its own std handles).
+            if unsafe { CreatePipe(&mut in_read, &mut in_write, ptr::null_mut(), 0) } == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            if unsafe { CreatePipe(&mut out_read, &mut out_write, ptr::null_mut(), 0) } == 0 {
+                let error = io::Error::last_os_error();
+                close_handle(in_read);
+                close_handle(in_write);
+                return Err(error);
+            }
+            let grid = Coord {
+                x: columns as i16,
+                y: rows as i16,
+            };
+            let mut console: Handle = ptr::null_mut();
+            // SAFETY: both pipe ends are live handles we own; the console
+            // out-pointer is a live local.
+            let created = unsafe { CreatePseudoConsole(grid, in_read, out_write, 0, &mut console) };
+            // The console holds its own references; our copies of the ends it
+            // consumed are closed whatever happened.
+            close_handle(in_read);
+            close_handle(out_write);
+            if created != 0 {
+                close_handle(out_read);
+                close_handle(in_write);
+                return Err(hresult(created, "create the pseudo-console"));
+            }
+            let console = ConsoleGuard(console);
+
+            let mut list_size = 0_usize;
+            // SAFETY: a sizing call with a null list; failure with the size
+            // written is the documented contract.
+            unsafe { InitializeProcThreadAttributeList(ptr::null_mut(), 1, 0, &mut list_size) };
+            // SAFETY: the heap is the process heap and the size came from the
+            // sizing call above; zeroed so the attribute list starts clean.
+            let list = unsafe { HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, list_size) };
+            if list.is_null() {
+                close_handle(out_read);
+                close_handle(in_write);
+                return Err(io::Error::last_os_error());
+            }
+            let mut startup = StartupInfoExW {
+                base: StartupInfoW {
+                    cb: size_of::<StartupInfoExW>() as Dword,
+                    ..StartupInfoW::default()
+                },
+                attribute_list: list,
+            };
+            let prepared = unsafe {
+                // SAFETY: `list` is a live allocation of `list_size` bytes.
+                InitializeProcThreadAttributeList(list, 1, 0, &mut list_size) != 0
+                    // SAFETY: one attribute, the console handle by value.
+                    && UpdateProcThreadAttribute(
+                        list,
+                        0,
+                        PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE,
+                        console.0,
+                        size_of::<Handle>(),
+                        ptr::null_mut(),
+                        ptr::null_mut(),
+                    ) != 0
+            };
+            if !prepared {
+                let error = io::Error::last_os_error();
+                // SAFETY: list was allocated above and is ours to free.
+                unsafe {
+                    DeleteProcThreadAttributeList(list);
+                    HeapFree(GetProcessHeap(), 0, list)
+                };
+                close_handle(out_read);
+                close_handle(in_write);
+                return Err(error);
+            }
+
+            let command_line = std::iter::once(program)
+                .chain(arguments.iter().copied())
+                .map(quote_argument)
+                .collect::<Vec<_>>()
+                .join(" ");
+            let mut command_line = wide(&command_line);
+            let mut environment_block = environment_block(environment);
+            let mut information = ProcessInformation {
+                process: ptr::null_mut(),
+                thread: ptr::null_mut(),
+                process_id: 0,
+                thread_id: 0,
+            };
+            // SAFETY: every pointer names a live local or a NUL-terminated
+            // wide buffer that outlives the call; the environment block is
+            // double-NUL terminated and flags say it is Unicode.
+            let spawned = unsafe {
+                CreateProcessW(
+                    ptr::null(),
+                    command_line.as_mut_ptr(),
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                    0,
+                    EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT,
+                    environment_block.as_mut_ptr().cast::<c_void>(),
+                    ptr::null(),
+                    &mut startup,
+                    &mut information,
+                )
+            };
+            // SAFETY: the attribute list is ours and no longer needed.
+            unsafe {
+                DeleteProcThreadAttributeList(list);
+                HeapFree(GetProcessHeap(), 0, list)
+            };
+            if spawned == 0 {
+                let error = io::Error::last_os_error();
+                close_handle(out_read);
+                close_handle(in_write);
+                return Err(error);
+            }
+            close_handle(information.thread);
+            // The pipes' surviving ends become owned Files here.
+            // SAFETY: both handles are live, open, and uniquely owned.
+            let (input, mut reader) = unsafe {
+                (
+                    File::from_raw_handle(in_write as RawHandle),
+                    File::from_raw_handle(out_read as RawHandle),
+                )
+            };
+
+            let (sender, output) = mpsc::channel();
+            thread::spawn(move || {
+                let mut buffer = [0u8; CHUNK];
+                loop {
+                    match reader.read(&mut buffer) {
+                        // A closed console reports end of file or a broken
+                        // pipe; both mean the program has gone.
+                        Ok(0) | Err(_) => break,
+                        Ok(read) => {
+                            if sender.send(buffer[..read].to_vec()).is_err() {
+                                break;
+                            }
+                            if let Some(wake) = wake.as_ref() {
+                                wake();
+                            }
+                        }
+                    }
+                }
+            });
+
+            Ok(Self {
+                input,
+                console: console.0,
+                process: information.process,
+                output,
+            })
         }
 
-        /// The output channel of a running terminal. Unreachable in practice:
-        /// no `Pty` can be constructed on Windows.
+        /// The channel every byte the program prints arrives on.
+        #[must_use]
         pub const fn output(&self) -> &Receiver<Vec<u8>> {
             &self.output
         }
 
-        /// Always fails on Windows.
+        /// Sends keystrokes to the program.
+        ///
+        /// # Errors
+        ///
+        /// Returns the write error, including the one that means the program
+        /// has already gone.
         pub fn write(&mut self, bytes: &[u8]) -> io::Result<()> {
-            let _ = bytes;
-            Err(unsupported())
+            self.input.write_all(bytes)
         }
 
-        /// Always fails on Windows.
+        /// Tells the program its grid changed.
+        ///
+        /// # Errors
+        ///
+        /// Returns the HRESULT from `ResizePseudoConsole`.
         pub fn resize(&self, columns: u16, rows: u16) -> io::Result<()> {
-            let _ = (columns, rows);
-            Err(unsupported())
+            let grid = Coord {
+                x: columns as i16,
+                y: rows as i16,
+            };
+            // SAFETY: the console handle is live; Pty outlives the call.
+            let result = unsafe { ResizePseudoConsole(self.console, grid) };
+            if result != 0 {
+                return Err(hresult(result, "resize the pseudo-console"));
+            }
+            Ok(())
         }
 
-        /// Always fails on Windows.
+        /// Whether the program has finished, and with what status.
+        ///
+        /// # Errors
+        ///
+        /// Returns the error from waiting on the child.
         pub fn finished(&mut self) -> io::Result<Option<i32>> {
-            Err(unsupported())
+            // SAFETY: the process handle is live or the child already exited;
+            // a zero timeout only polls.
+            let state = unsafe { WaitForSingleObject(self.process, 0) };
+            if state != WAIT_OBJECT_0 {
+                return Ok(None);
+            }
+            let mut code: Dword = 0;
+            // SAFETY: the process handle is live and signaled.
+            if unsafe { GetExitCodeProcess(self.process, &mut code) } == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(Some(code as i32))
         }
 
-        /// Always fails on Windows.
+        /// Stops the program and reaps it.
+        ///
+        /// # Errors
+        ///
+        /// Returns the error from waiting, except for a program that had
+        /// already exited, which is success.
         pub fn close(&mut self) -> io::Result<()> {
-            Err(unsupported())
+            if self.finished()?.is_none() {
+                // SAFETY: the process handle is live; terminating an already
+                // exited child fails harmlessly and is ignored, matching the
+                // Unix arm's sweep-after-exit.
+                unsafe { TerminateProcess(self.process, 1) };
+                // SAFETY: as above; waits for the termination to land.
+                unsafe { WaitForSingleObject(self.process, INFINITE) };
+            }
+            if !self.console.is_null() {
+                // SAFETY: closed exactly once; nulled here so Drop skips it.
+                unsafe { ClosePseudoConsole(self.console) };
+                self.console = ptr::null_mut();
+            }
+            Ok(())
         }
+    }
+
+    impl Drop for Pty {
+        fn drop(&mut self) {
+            if !self.console.is_null() {
+                // SAFETY: still open; close() nulls it when it runs first.
+                unsafe { ClosePseudoConsole(self.console) };
+            }
+            close_handle(self.process);
+        }
+    }
+
+    /// Quotes one command-line word the way the C runtime parses it.
+    fn quote_argument(word: &str) -> String {
+        if !word.is_empty()
+            && !word
+                .chars()
+                .any(|character| character.is_whitespace() || character == '"')
+        {
+            return word.to_owned();
+        }
+        let mut quoted = String::from('"');
+        let mut backslashes = 0_usize;
+        for character in word.chars() {
+            match character {
+                '\\' => backslashes += 1,
+                '"' => {
+                    quoted.push_str(&"\\".repeat(backslashes * 2 + 1));
+                    backslashes = 0;
+                    quoted.push('"');
+                }
+                _ => {
+                    quoted.push_str(&"\\".repeat(backslashes));
+                    backslashes = 0;
+                    quoted.push(character);
+                }
+            }
+        }
+        quoted.push_str(&"\\".repeat(backslashes * 2));
+        quoted.push('"');
+        quoted
+    }
+
+    /// The double-NUL-terminated Unicode environment block, sorted as
+    /// CreateProcessW expects.
+    fn environment_block(environment: &[(&str, &str)]) -> Vec<u16> {
+        let mut pairs: Vec<String> = environment
+            .iter()
+            .map(|(name, value)| format!("{name}={value}"))
+            .collect();
+        pairs.sort_by_key(|pair| pair.to_uppercase());
+        let mut block: Vec<u16> = pairs
+            .join("\0")
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect();
+        block.push(0);
+        block
+    }
+}
+
+#[cfg(all(test, windows))]
+mod pty_windows_tests {
+    use super::pty::Pty;
+    use std::time::{Duration, Instant};
+
+    // Runs on the windows-2022 CI job: cmd under a real ConPTY must carry
+    // output over the channel, report its exit status, and close cleanly.
+    #[test]
+    fn conpty_carries_output_status_and_shutdown() {
+        let system_root = std::env::var("SystemRoot").expect("SystemRoot");
+        let mut pty = Pty::spawn(
+            "cmd.exe",
+            &["/c", "echo cobalt-pty-ok && exit 3"],
+            &[("SystemRoot", system_root.as_str())],
+            80,
+            24,
+        )
+        .expect("spawn cmd under ConPTY");
+        let mut output = String::new();
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while Instant::now() < deadline && !output.contains("cobalt-pty-ok") {
+            match pty.output().recv_timeout(Duration::from_millis(250)) {
+                Ok(chunk) => output.push_str(&String::from_utf8_lossy(&chunk)),
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+            }
+        }
+        assert!(output.contains("cobalt-pty-ok"), "output was: {output:?}");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let status = loop {
+            if let Some(code) = pty.finished().expect("poll the child") {
+                break code;
+            }
+            assert!(Instant::now() < deadline, "cmd did not exit");
+            std::thread::sleep(Duration::from_millis(50));
+        };
+        assert_eq!(status, 3);
+        pty.close().expect("close after exit");
     }
 }
 
