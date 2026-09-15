@@ -29,7 +29,12 @@ use std::sync::mpsc::TryRecvError;
 /// The stock shell, because it is the one that is certainly present on the
 /// device and the one whose behaviour the owner can look up. Nothing is
 /// shipped to the device to support it.
+#[cfg(unix)]
 const PROGRAM: &str = "/bin/sh";
+/// On Windows the stock shell is cmd: the one every installation carries
+/// and the one ConPTY hosts without extra flags.
+#[cfg(windows)]
+const PROGRAM: &str = "cmd.exe";
 
 /// What the shell is told about the world.
 ///
@@ -42,6 +47,7 @@ const PROGRAM: &str = "/bin/sh";
 /// guessing, and `vt100` is the one every program falls back to anyway. It is
 /// also exactly the dialect the runtime's own parser implements, so a program
 /// cannot ask for a capability the panel could not draw.
+#[cfg(unix)]
 const ENVIRONMENT: [(&str, &str); 5] = [
     ("TERM", "vt100"),
     ("PATH", "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"),
@@ -49,6 +55,12 @@ const ENVIRONMENT: [(&str, &str); 5] = [
     ("SHELL", PROGRAM),
     ("PS1", "$ "),
 ];
+/// On Windows the shell inherits the runtime's environment instead of a
+/// built one: cmd cannot start without SystemRoot, and a terminal taking
+/// its launcher's environment is the platform's normal contract. An empty
+/// list makes `Pty` pass a null pointer, which is exactly inheritance.
+#[cfg(windows)]
+const ENVIRONMENT: [(&str, &str); 0] = [];
 
 /// The largest grid a terminal may be opened with.
 ///
@@ -244,6 +256,20 @@ mod tests {
         Shells::new(&[Capability::Shell])
     }
 
+    /// The byte that submits a line: a carriage return into ConPTY, a
+    /// newline into a Unix PTY.
+    #[cfg(windows)]
+    const SUBMIT: &[u8] = b"\r";
+    #[cfg(unix)]
+    const SUBMIT: &[u8] = b"\n";
+
+    /// A shell input line with the platform's submit byte.
+    fn line(text: &str) -> Vec<u8> {
+        let mut bytes = text.as_bytes().to_vec();
+        bytes.extend_from_slice(SUBMIT);
+        bytes
+    }
+
     /// Drains until `needle` shows up in the output, or patience runs out.
     fn wait_for(shells: &mut Shells, needle: &str) -> String {
         let deadline = Instant::now() + Duration::from_secs(10);
@@ -293,7 +319,7 @@ mod tests {
             }),
             Some(ShellEvent::Opened)
         );
-        shells.handle(ShellRequest::Input(b"echo COBALT_SHELL\n".to_vec()));
+        shells.handle(ShellRequest::Input(line("echo COBALT_SHELL")));
         let seen = wait_for(&mut shells, "COBALT_SHELL");
         assert!(seen.contains("COBALT_SHELL"), "saw {seen:?}");
     }
@@ -332,7 +358,7 @@ mod tests {
             columns: 53,
             rows: 20,
         });
-        shells.handle(ShellRequest::Input(b"exit 0\n".to_vec()));
+        shells.handle(ShellRequest::Input(line("exit 0")));
         let deadline = Instant::now() + Duration::from_secs(10);
         let mut closes = 0;
         while Instant::now() < deadline {
@@ -352,6 +378,10 @@ mod tests {
         assert!(shells.drain().is_empty());
     }
 
+    /// stty is a Unix program with no stock cmd counterpart that prints the
+    /// grid back, so this is exercised on Unix only; on Windows the resize
+    /// path itself is what ConPTY reports to the hosted program.
+    #[cfg(unix)]
     #[test]
     fn the_program_is_told_the_grid_the_panel_actually_has() {
         // The whole reason the grid travels with the open request: a program

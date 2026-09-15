@@ -1648,14 +1648,19 @@ mod tests {
 
     #[test]
     fn pty_output_keeps_terminal_escape_sequences_for_the_screen_model() {
-        let mut pty = kobo_abi::pty::Pty::spawn(
+        #[cfg(unix)]
+        let (program, arguments, environment): (&str, &[&str], &[(&str, &str)]) = (
             "/bin/sh",
             &["-c", "printf '\\033[2Jready'"],
             &[("TERM", "xterm-256color")],
-            12,
-            2,
-        )
-        .expect("start a PTY command");
+        );
+        // The same observable under ConPTY: a clear issued by the hosted
+        // program, then text, which must land on the first row.
+        #[cfg(windows)]
+        let (program, arguments, environment): (&str, &[&str], &[(&str, &str)]) =
+            ("cmd.exe", &["/c", "cls & echo ready"], &[]);
+        let mut pty = kobo_abi::pty::Pty::spawn(program, arguments, environment, 12, 2)
+            .expect("start a PTY command");
         let bytes = pty
             .output()
             .recv_timeout(Duration::from_secs(2))
@@ -1672,14 +1677,20 @@ mod tests {
 
     #[test]
     fn child_exit_drains_pty_eof_and_exposes_uncapped_final_output() {
-        let pty = kobo_abi::pty::Pty::spawn(
+        #[cfg(unix)]
+        let (program, arguments, environment): (&str, &[&str], &[(&str, &str)]) = (
             "/bin/sh",
             &["-c", "printf first; sleep 1; printf final"],
             &[("TERM", "xterm-256color")],
-            20,
-            2,
-        )
-        .expect("start final-output command");
+        );
+        #[cfg(windows)]
+        let (program, arguments, environment): (&str, &[&str], &[(&str, &str)]) = (
+            "cmd.exe",
+            &["/c", "echo first & ping -n 2 127.0.0.1 >nul & echo final"],
+            &[],
+        );
+        let pty = kobo_abi::pty::Pty::spawn(program, arguments, environment, 20, 2)
+            .expect("start final-output command");
         let input = Mutex::new(pty);
         let session = Session::new(Grid {
             columns: 20,
@@ -1714,22 +1725,40 @@ mod tests {
         let final_screen = session.screen(before.expect("initial output snapshot"));
         assert!(final_screen.ended);
         assert_eq!(final_screen.exit, Some(0));
-        assert!(final_screen
+        // sh's printf writes both halves with no newline, so they share a
+        // row; cmd's echo puts each on its own line.
+        #[cfg(unix)]
+        let arrived = final_screen
             .rows
             .iter()
-            .any(|row| row.cells.contains("firstfinal")));
+            .any(|row| row.cells.contains("firstfinal"));
+        #[cfg(windows)]
+        let arrived = final_screen
+            .rows
+            .iter()
+            .any(|row| row.cells.contains("first"))
+            && final_screen
+                .rows
+                .iter()
+                .any(|row| row.cells.contains("final"));
+        assert!(arrived);
     }
 
     #[test]
     fn pty_accepts_control_input_without_waiting_for_a_snapshot() {
-        let mut pty = kobo_abi::pty::Pty::spawn(
+        #[cfg(unix)]
+        let (program, arguments, environment): (&str, &[&str], &[(&str, &str)]) = (
             "/bin/sh",
             &["-c", "read answer; printf 'answer:%s' \"$answer\""],
             &[("TERM", "xterm-256color")],
-            24,
-            2,
-        )
-        .expect("start PTY command");
+        );
+        // `set /p` reads a line; ConPTY echoes what was typed, which is the
+        // whole assertion below.
+        #[cfg(windows)]
+        let (program, arguments, environment): (&str, &[&str], &[(&str, &str)]) =
+            ("cmd.exe", &["/c", "set /p answer="], &[]);
+        let mut pty = kobo_abi::pty::Pty::spawn(program, arguments, environment, 24, 2)
+            .expect("start PTY command");
         pty.write(b"yes\r").expect("write terminal input");
         let output = pty
             .output()

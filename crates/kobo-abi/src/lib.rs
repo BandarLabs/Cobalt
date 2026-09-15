@@ -2704,6 +2704,15 @@ pub mod pty {
                 .join(" ");
             let mut command_line = wide(&command_line);
             let mut environment_block = environment_block(environment);
+            // An empty environment list means inherit: a null pointer hands
+            // the child the parent's block (SystemRoot among it, which cmd
+            // cannot start without). CREATE_UNICODE_ENVIRONMENT is ignored
+            // in that case.
+            let environment_pointer = if environment.is_empty() {
+                ptr::null_mut()
+            } else {
+                environment_block.as_mut_ptr().cast::<c_void>()
+            };
             let mut information = ProcessInformation {
                 process: ptr::null_mut(),
                 thread: ptr::null_mut(),
@@ -2711,8 +2720,9 @@ pub mod pty {
                 thread_id: 0,
             };
             // SAFETY: every pointer names a live local or a NUL-terminated
-            // wide buffer that outlives the call; the environment block is
-            // double-NUL terminated and flags say it is Unicode.
+            // wide buffer that outlives the call; the environment pointer is
+            // either null (inherit the parent's block) or a live double-NUL
+            // terminated Unicode buffer.
             let spawned = unsafe {
                 CreateProcessW(
                     ptr::null(),
@@ -2721,7 +2731,7 @@ pub mod pty {
                     ptr::null_mut(),
                     0,
                     EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT,
-                    environment_block.as_mut_ptr().cast::<c_void>(),
+                    environment_pointer,
                     ptr::null(),
                     &mut startup,
                     &mut information,
