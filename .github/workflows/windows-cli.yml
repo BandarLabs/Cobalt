@@ -22,7 +22,7 @@ jobs:
       # cfg(windows) path that has unit coverage is runtime-verified here,
       # not just compiled.
       - name: Test the workspace on Windows
-        run: cargo test --workspace --all-targets --locked
+        run: cargo test --workspace --all-targets --locked --no-fail-fast  # report every failing crate at once, not one layer per run
 
       # device-write stays gated exactly as upstream; the CLI's gated verbs
       # are host-side ssh orchestration, so they must still compile for a
