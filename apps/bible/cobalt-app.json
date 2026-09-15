@@ -1,0 +1,14 @@
+{
+  "id": "bible",
+  "display_name": "Holy Bible",
+  "short_label": "Bible",
+  "summary": "Read the Holy Scriptures with offline caching, clean typography, and fast book navigation.",
+  "page_description": "Read the Holy Scriptures on your Kobo with offline caching, clean typography, and fast book navigation across Old and New Testaments.",
+  "version": "0.1.0",
+  "release_notes": "Initial release of the Holy Bible with bundled books, offline caching, and clean typography.",
+  "glyph": "book",
+  "capabilities": [
+    "network",
+    "hold-wifi"
+  ]
+}
