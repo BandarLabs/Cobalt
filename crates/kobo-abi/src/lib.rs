@@ -2927,17 +2927,10 @@ mod pty_windows_tests {
             24,
         )
         .expect("spawn cmd under ConPTY");
-        let mut output = String::new();
+        // Wait on the child first, then drain the channel until the reader
+        // hangs up: the exit status and the captured bytes diagnose attach
+        // and plumbing separately instead of conflating them in one timeout.
         let deadline = Instant::now() + Duration::from_secs(30);
-        while Instant::now() < deadline && !output.contains("cobalt-pty-ok") {
-            match pty.output().recv_timeout(Duration::from_millis(250)) {
-                Ok(chunk) => output.push_str(&String::from_utf8_lossy(&chunk)),
-                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
-                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
-            }
-        }
-        assert!(output.contains("cobalt-pty-ok"), "output was: {output:?}");
-        let deadline = Instant::now() + Duration::from_secs(10);
         let status = loop {
             if let Some(code) = pty.finished().expect("poll the child") {
                 break code;
@@ -2945,7 +2938,20 @@ mod pty_windows_tests {
             assert!(Instant::now() < deadline, "cmd did not exit");
             std::thread::sleep(Duration::from_millis(50));
         };
-        assert_eq!(status, 3);
+        let mut output = String::new();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while Instant::now() < deadline {
+            match pty.output().recv_timeout(Duration::from_millis(250)) {
+                Ok(chunk) => output.push_str(&String::from_utf8_lossy(&chunk)),
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+            }
+            if output.contains("cobalt-pty-ok") {
+                break;
+            }
+        }
+        assert_eq!(status, 3, "cmd exit status (output so far: {output:?})");
+        assert!(output.contains("cobalt-pty-ok"), "output was: {output:?}");
         pty.close().expect("close after exit");
     }
 }
