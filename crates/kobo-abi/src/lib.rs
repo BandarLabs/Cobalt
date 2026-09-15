@@ -2759,9 +2759,14 @@ pub mod pty {
                 }
             });
 
+            // Hand the console to the Pty without the guard closing it: the
+            // guard exists for the error paths above, and from here the Pty
+            // owns the handle (close() and Drop manage it).
+            let console_handle = console.0;
+            std::mem::forget(console);
             Ok(Self {
                 input,
-                console: console.0,
+                console: console_handle,
                 process: information.process,
                 output,
             })
