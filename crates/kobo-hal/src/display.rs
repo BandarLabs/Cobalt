@@ -33,7 +33,7 @@ use kobo_profile::{DeviceProfile, DeviceSnapshot, TouchTransform, WRITE_EVIDENCE
 use std::collections::VecDeque;
 use std::fmt;
 use std::fs::{File, OpenOptions};
-use std::io::{self, Read};
+use std::io;
 use std::path::Path;
 use std::sync::Mutex;
 use std::thread::sleep;
@@ -1040,7 +1040,7 @@ fn smoke_show_and_restore(
 /// Returns an error when the system random source is unreadable.
 fn unique_marker() -> Result<u32, DisplayError> {
     let mut bytes = [0_u8; 4];
-    File::open("/dev/urandom")?.read_exact(&mut bytes)?;
+    kobo_abi::entropy::random_bytes(&mut bytes)?;
     // Keep the value large so it cannot coincide with the small sequential
     // markers the stock reader is observed to use.
     Ok((u32::from_le_bytes(bytes) | 0x4000_0000).max(1))
