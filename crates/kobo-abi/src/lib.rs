@@ -2968,6 +2968,35 @@ mod pty_tests {
     use super::pty::Pty;
     use std::time::{Duration, Instant};
 
+    /// qemu-user has no real devpts, so `posix_openpt` intermittently answers
+    /// `EPERM` there. Give the emulator a few attempts, then skip by name with
+    /// the reason if it keeps refusing: `KOBO_QEMU_EMULATED` is set only by the
+    /// device-emulated CI job, and these tests run for real in the host job.
+    fn spawn(
+        program: &str,
+        arguments: &[&str],
+        environment: &[(&str, &str)],
+        columns: u16,
+        rows: u16,
+    ) -> Option<Pty> {
+        for _ in 0..3 {
+            match Pty::spawn(program, arguments, environment, columns, rows) {
+                Ok(pty) => return Some(pty),
+                Err(error)
+                    if error.kind() == std::io::ErrorKind::PermissionDenied
+                        && std::env::var_os("KOBO_QEMU_EMULATED").is_some() =>
+                {
+                    std::thread::sleep(Duration::from_millis(200));
+                }
+                Err(error) => panic!("a terminal: {error}"),
+            }
+        }
+        eprintln!(
+            "skipped under qemu-user: posix_openpt keeps answering EPERM (no emulated devpts)"
+        );
+        None
+    }
+
     /// Collects output until `needle` appears or the patience runs out.
     fn wait_for(pty: &Pty, needle: &str) -> String {
         let deadline = Instant::now() + Duration::from_secs(10);
@@ -2986,17 +3015,11 @@ mod pty_tests {
 
     #[test]
     fn a_program_started_on_a_terminal_answers_what_is_typed_at_it() {
-        // Named skip under emulation: qemu-user answers EPERM to posix_openpt
-        // because the runner's devpts is not emulated; the real target has
-        // devpts and this test is exercised there. KOBO_QEMU_EMULATED is set
-        // only by the device-emulated CI job.
-        if std::env::var_os("KOBO_QEMU_EMULATED").is_some() {
-            eprintln!("skipped under qemu-user: no emulated devpts for posix_openpt");
-            return;
-        }
         // The whole point, exercised for real rather than described: bytes
         // written go in as keystrokes and what the program prints comes back.
-        let mut pty = Pty::spawn("/bin/sh", &[], &[("PS1", "$ ")], 53, 20).expect("a terminal");
+        let Some(mut pty) = spawn("/bin/sh", &[], &[("PS1", "$ ")], 53, 20) else {
+            return;
+        };
         pty.write(b"echo COBALT_ONE\n").expect("typing");
         let seen = wait_for(&pty, "COBALT_ONE");
         assert!(seen.contains("COBALT_ONE"), "saw {seen:?}");
@@ -3007,7 +3030,9 @@ mod pty_tests {
     fn the_program_is_told_the_grid_it_has() {
         // A program that is not told its size assumes eighty columns and draws
         // off the side of a panel that has fifty-three.
-        let mut pty = Pty::spawn("/bin/sh", &[], &[("PS1", "$ ")], 53, 37).expect("a terminal");
+        let Some(mut pty) = spawn("/bin/sh", &[], &[("PS1", "$ ")], 53, 37) else {
+            return;
+        };
         pty.write(b"stty size\n").expect("typing");
         let seen = wait_for(&pty, "37 53");
         assert!(seen.contains("37 53"), "saw {seen:?}");
@@ -3016,7 +3041,9 @@ mod pty_tests {
 
     #[test]
     fn a_program_that_ends_is_reported_rather_than_read_forever() {
-        let mut pty = Pty::spawn("/bin/sh", &["-c", "exit 3"], &[], 53, 20).expect("a terminal");
+        let Some(mut pty) = spawn("/bin/sh", &["-c", "exit 3"], &[], 53, 20) else {
+            return;
+        };
         let deadline = Instant::now() + Duration::from_secs(10);
         let mut status = None;
         while Instant::now() < deadline && status.is_none() {
@@ -3028,14 +3055,15 @@ mod pty_tests {
 
     #[test]
     fn closing_stops_a_program_that_would_otherwise_run_forever() {
-        let mut pty = Pty::spawn(
+        let Some(mut pty) = spawn(
             "/bin/sh",
             &["-c", "while true; do sleep 1; done"],
             &[],
             53,
             20,
-        )
-        .expect("a terminal");
+        ) else {
+            return;
+        };
         assert_eq!(pty.finished().expect("waiting"), None);
         pty.close().expect("closing");
         assert!(pty.finished().expect("waiting").is_some());
@@ -3043,7 +3071,9 @@ mod pty_tests {
 
     #[test]
     fn the_grid_can_change_while_the_program_is_running() {
-        let mut pty = Pty::spawn("/bin/sh", &[], &[("PS1", "$ ")], 53, 20).expect("a terminal");
+        let Some(mut pty) = spawn("/bin/sh", &[], &[("PS1", "$ ")], 53, 20) else {
+            return;
+        };
         pty.resize(40, 10).expect("resizing");
         pty.write(b"stty size\n").expect("typing");
         let seen = wait_for(&pty, "10 40");
