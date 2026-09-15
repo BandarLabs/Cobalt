@@ -7,13 +7,13 @@ use std::io::{self, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 #[cfg(unix)]
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
-
-use kobo_protocol::channel;
 use std::path::{Path, PathBuf};
 #[cfg(unix)]
 use std::process::Command;
 use std::sync::{Arc, LazyLock, Mutex};
 use std::thread;
+
+use kobo_protocol::channel;
 
 // Panel policy belongs to the runtime, but the simulator compiles the same
 // source so region and waveform decisions cannot drift.
@@ -926,6 +926,7 @@ fn validate_socket_parent(socket_path: &Path) -> io::Result<()> {
             ));
         }
     }
+    #[cfg(not(unix))]
     let _ = metadata;
     Ok(())
 }
