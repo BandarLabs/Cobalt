@@ -7,5 +7,26 @@
   "version": "0.1.0",
   "release_notes": "First version.",
   "glyph": "note",
-  "capabilities": []
+  "capabilities": [],
+  "setup": {
+    "steps": [
+      {
+        "text": "Clip articles into your vault with Obsidian Web Clipper.",
+        "link": {
+          "label": "Obsidian Web Clipper",
+          "url": "https://obsidian.md/clipper"
+        }
+      },
+      {
+        "text": "Install the Cobalt Clippings Sync Obsidian plugin, which pushes clippings to this app and merges read/tag changes back into your notes.",
+        "link": {
+          "label": "Cobalt Clippings Sync",
+          "url": "https://github.com/teonbrooks/cobalt-clippings-sync"
+        }
+      },
+      {
+        "text": "Set your reader's address in that plugin's settings, then push from Obsidian or open Clippings on the reader."
+      }
+    ]
+  }
 }
