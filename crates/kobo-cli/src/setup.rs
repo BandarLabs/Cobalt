@@ -1082,16 +1082,9 @@ fn preserve_owner_folders(
     Ok(true)
 }
 
-#[cfg(unix)]
 fn sync_directory(path: &Path) -> Result<(), String> {
-    fs::File::open(path)
-        .and_then(|directory| directory.sync_all())
+    kobo_protocol::durability::sync_directory(path)
         .map_err(|error| format!("sync {}: {error}", path.display()))
-}
-
-#[cfg(not(unix))]
-fn sync_directory(_path: &Path) -> Result<(), String> {
-    Ok(())
 }
 
 /// Flushes the volume and ejects it, so the reader remounts its own storage.
@@ -2398,8 +2391,20 @@ mod tests {
     }
 
     fn transaction_fixture(name: &str) -> PathBuf {
+        // Debug-formatted step names carry quotes, which Windows filenames
+        // forbid; the label only has to be unique and readable.
+        let label: String = name
+            .chars()
+            .map(|character| {
+                if character.is_ascii_alphanumeric() || character == '-' || character == '_' {
+                    character
+                } else {
+                    '-'
+                }
+            })
+            .collect();
         let root = std::env::temp_dir().join(format!(
-            "kobo-setup-transaction-{name}-{}",
+            "kobo-setup-transaction-{label}-{}",
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&root);

@@ -213,13 +213,13 @@ fn publish(folder: &Path, app: &str, offer: &Offer, bytes: &[u8]) -> Result<Path
             let target = folder.join(format!("{base}{suffix}.{}", offer.format.extension()));
             match fs::hard_link(&temporary, &target) {
                 Ok(()) => {
-                    fs::File::open(&folder).and_then(|folder| folder.sync_all()).map_err(|error| format!("The copy was written but its save could not be confirmed: {error}"))?;
+                    kobo_protocol::durability::sync_directory(&folder).map_err(|error| format!("The copy was written but its save could not be confirmed: {error}"))?;
                     return Ok(target);
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
                     if bounded_file(&target, offer.bytes).is_ok_and(|bytes| offer.matches(&bytes)) {
                         fs::File::open(&target).and_then(|file| file.sync_all())
-                            .and_then(|()| fs::File::open(&folder)?.sync_all())
+                            .and_then(|()| kobo_protocol::durability::sync_directory(&folder))
                             .map_err(|error| format!("The copy is present, but its save could not be confirmed: {error}"))?;
                         return Ok(target);
                     }

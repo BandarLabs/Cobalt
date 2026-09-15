@@ -510,10 +510,10 @@ fn set_mode(_path: &Path, _mode: u32) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        check, header, list, tar, write_install_tree, write_volume_layout, Member, BLOCK,
-        INSTALL_ROOT,
-    };
+    #[cfg(unix)]
+    use super::write_volume_layout;
+    use super::{check, header, list, tar, write_install_tree, Member, BLOCK, INSTALL_ROOT};
+    #[cfg(unix)]
     use std::process::Command;
 
     fn member(name: &str, bytes: &[u8]) -> Member {
@@ -674,6 +674,8 @@ mod tests {
         let _ignored = std::fs::remove_dir_all(&root);
     }
 
+    // The documented launch executes the packaged POSIX bootstrap script.
+    #[cfg(unix)]
     #[test]
     fn volume_folder_contains_and_launches_the_complete_documented_layout() {
         #[cfg(unix)]
