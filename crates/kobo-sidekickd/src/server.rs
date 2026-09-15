@@ -586,15 +586,22 @@ mod tests {
     fn deck_routes_share_auth_and_run_only_configured_commands() {
         let directory = directory();
         let config = directory.join("deck.toml");
+        // A no-op that succeeds: `true` under sh, a comment line under cmd.
+        #[cfg(unix)]
+        let run = "true";
+        #[cfg(windows)]
+        let run = "rem";
         fs::write(
             &config,
-            r#"[[page]]
+            format!(
+                r#"[[page]]
 name = "Build"
 [[page.key]]
 label = "Test"
-run = "true"
+run = "{run}"
 confirm = true
-"#,
+"#
+            ),
         )
         .unwrap();
         let deck = Deck::new(config, directory.clone());
