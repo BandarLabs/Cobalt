@@ -295,7 +295,7 @@ struct PrivacyKey([u8; 32]);
 impl PrivacyKey {
     fn generate() -> io::Result<Self> {
         let mut bytes = [0_u8; 32];
-        File::open("/dev/urandom")?.read_exact(&mut bytes)?;
+        kobo_abi::entropy::random_bytes(&mut bytes)?;
         Ok(Self(bytes))
     }
 

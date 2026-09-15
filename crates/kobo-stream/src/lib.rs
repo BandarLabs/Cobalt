@@ -925,8 +925,7 @@ fn identity_dir() -> Result<PathBuf, String> {
 fn pairing_code() -> Result<String, String> {
     const ALPHABET: &[u8] = b"abcdefghjkmnpqrstuvwxyz23456789";
     let mut bytes = [0_u8; 6];
-    std::fs::File::open("/dev/urandom")
-        .and_then(|mut file| file.read_exact(&mut bytes))
+    kobo_abi::entropy::random_bytes(&mut bytes)
         .map_err(|error| format!("read randomness: {error}"))?;
     Ok(bytes
         .iter()
@@ -1182,8 +1181,7 @@ fn random_session() -> Result<u64, String> {
     // so the value sent back on /screen and /keys is byte-for-byte equivalent.
     const MAX_EXACT_JSON_INTEGER: u64 = (1_u64 << 53) - 1;
     let mut bytes = [0_u8; 8];
-    std::fs::File::open("/dev/urandom")
-        .and_then(|mut file| file.read_exact(&mut bytes))
+    kobo_abi::entropy::random_bytes(&mut bytes)
         .map_err(|error| format!("read randomness: {error}"))?;
     Ok((u64::from_le_bytes(bytes) & MAX_EXACT_JSON_INTEGER).max(1))
 }

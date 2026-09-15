@@ -8,7 +8,7 @@ use p256::pkcs8::{DecodePublicKey, EncodePublicKey};
 use p256::{PublicKey, SecretKey};
 use ring::{aead, digest, hkdf, hmac};
 use std::fmt::Write as _;
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 #[cfg(unix)]
@@ -292,9 +292,7 @@ impl Identity {
 }
 
 fn random_bytes(bytes: &mut [u8]) -> Result<(), DeviceError> {
-    File::open("/dev/urandom")
-        .and_then(|mut random| random.read_exact(bytes))
-        .map_err(|_| DeviceError::Backend)
+    kobo_abi::entropy::random_bytes(bytes).map_err(|_| DeviceError::Backend)
 }
 
 fn new_link_secret() -> Result<String, DeviceError> {

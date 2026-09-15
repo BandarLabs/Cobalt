@@ -268,11 +268,8 @@ fn prepare(home: &Path) -> Result<(), String> {
     }
     let key_path = home.join("api-key");
     if !key_path.exists() {
-        let mut entropy =
-            File::open("/dev/urandom").map_err(|error| format!("open entropy: {error}"))?;
         let mut bytes = [0_u8; 32];
-        entropy
-            .read_exact(&mut bytes)
+        kobo_abi::entropy::random_bytes(&mut bytes)
             .map_err(|error| format!("read entropy: {error}"))?;
         let mut key = String::with_capacity(bytes.len() * 2);
         for byte in bytes {

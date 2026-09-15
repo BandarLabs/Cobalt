@@ -4,7 +4,7 @@ use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::env;
 use std::fmt::Write as _;
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
 #[cfg(unix)]
@@ -847,8 +847,7 @@ fn remote(host: &str, script: &str) -> Result<super::RemoteShellOutput, String> 
 
 fn generate_key() -> Result<String, String> {
     let mut bytes = [0_u8; 32];
-    File::open("/dev/urandom")
-        .and_then(|mut file| file.read_exact(&mut bytes))
+    kobo_abi::entropy::random_bytes(&mut bytes)
         .map_err(|error| format!("generate private Syncthing API key: {error}"))?;
     Ok(bytes
         .iter()
