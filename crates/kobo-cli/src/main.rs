@@ -3452,8 +3452,7 @@ fn remote_artifact_session(artifact: &RemoteArtifact) -> Result<RemoteArtifactSe
 fn remote_owner_token() -> Result<String, String> {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut bytes = [0_u8; 16];
-    fs::File::open("/dev/urandom")
-        .and_then(|mut random| random.read_exact(&mut bytes))
+    kobo_abi::entropy::random_bytes(&mut bytes)
         .map_err(|error| format!("create remote cleanup ownership token: {error}"))?;
     let mut token = String::with_capacity(bytes.len() * 2);
     for byte in bytes {

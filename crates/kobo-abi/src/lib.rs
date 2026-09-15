@@ -1902,6 +1902,8 @@ pub mod sandbox {
 }
 
 /// Signals a child-owned process group rather than only its leader.
+pub mod entropy;
+
 pub mod process_group {
     #[cfg(target_os = "linux")]
     use std::fs;
