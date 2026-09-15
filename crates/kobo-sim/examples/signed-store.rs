@@ -84,7 +84,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         kobod::app_store::BETA_CATALOG_SIGNATURE_URL,
         sign(&catalog, &SEED)?.to_hex().as_bytes(),
     )?;
-    fs::File::open(root.join("transport"))?.sync_all()?;
+    kobo_protocol::durability::sync_directory(&root.join("transport"))?;
     println!(
         "Local signed Store fixture {} at {}",
         args[3],

@@ -772,7 +772,7 @@ fn atomic_file(
         set_file_mode(&temporary, mode)?;
         file.sync_all()?;
         fs::rename(&temporary, &destination)?;
-        fs::File::open(parent)?.sync_all()
+        kobo_protocol::durability::sync_directory(parent)
     })();
     if result.is_err() {
         let _ignored = fs::remove_file(&temporary);
@@ -847,9 +847,7 @@ fn clear_journal(
 }
 
 fn sync_directory(path: &Path) -> Result<(), DeviceError> {
-    fs::File::open(path)
-        .and_then(|directory| directory.sync_all())
-        .map_err(|_| DeviceError::Backend)
+    kobo_protocol::durability::sync_directory(path).map_err(|_| DeviceError::Backend)
 }
 
 fn sync_tree(path: &Path) -> Result<(), DeviceError> {
@@ -858,9 +856,7 @@ fn sync_tree(path: &Path) -> Result<(), DeviceError> {
         return Err(DeviceError::Backend);
     }
     if metadata.is_file() {
-        return fs::File::open(path)
-            .and_then(|file| file.sync_all())
-            .map_err(|_| DeviceError::Backend);
+        return kobo_protocol::durability::sync_file(path).map_err(|_| DeviceError::Backend);
     }
     for entry in fs::read_dir(path).map_err(|_| DeviceError::Backend)? {
         sync_tree(&entry.map_err(|_| DeviceError::Backend)?.path())?;
