@@ -4000,6 +4000,11 @@ fn build_package_bytes() -> Result<BuiltPackage, String> {
         false,
     ));
     members.push(text_member(
+        "licenses/LICENSE-Tailscale.txt",
+        include_str!("../../../licenses/LICENSE-Tailscale.txt"),
+        false,
+    ));
+    members.push(text_member(
         "licenses/LICENSE-AtkinsonHyperlegible.txt",
         include_str!("../../kobo-text/fonts/LICENSE-AtkinsonHyperlegible.txt"),
         false,

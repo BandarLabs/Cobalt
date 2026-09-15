@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Install Tailscale on Kobo | Cobalt</title>
+<meta name="description" content="EXPERIMENTAL: reach tailnet services - Calibre-Web, paperterm hosts, anything with a 100.x address - from any network. Not yet validated on hardware. Install it on a supported Kobo e-reader with Cobalt.">
+<link rel="canonical" href="https://bandarlabs.github.io/Cobalt/apps/tailscale/">
+<link rel="icon" href="../../logo.svg" type="image/svg+xml">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Install Tailscale on Kobo | Cobalt">
+<meta property="og:description" content="EXPERIMENTAL: reach tailnet services - Calibre-Web, paperterm hosts, anything with a 100.x address - from any network. Not yet validated on hardware. Install it on a supported Kobo e-reader with Cobalt.">
+<meta property="og:url" content="https://bandarlabs.github.io/Cobalt/apps/tailscale/">
+<meta property="og:site_name" content="Cobalt">
+<meta property="og:image" content="https://bandarlabs.github.io/Cobalt/media/site/apps/store.png">
+<meta property="og:image:width" content="1072">
+<meta property="og:image:height" content="1448">
+<meta property="og:image:alt" content="Tailscale available from the signed Cobalt App Store">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="Install Tailscale on Kobo | Cobalt">
+<meta name="twitter:description" content="EXPERIMENTAL: reach tailnet services - Calibre-Web, paperterm hosts, anything with a 100.x address - from any network. Not yet validated on hardware. Install it on a supported Kobo e-reader with Cobalt.">
+<meta name="twitter:image" content="https://bandarlabs.github.io/Cobalt/media/site/apps/store.png">
+<meta name="twitter:image:alt" content="Tailscale available from the signed Cobalt App Store">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-e3gFdGy3jnIB3ZOM1+tci7NiJPQ+FkU4w9XhngEgz1Q='; style-src 'self'; img-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
+<script type="application/ld+json">{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "SoftwareApplication",
+      "name": "Tailscale",
+      "description": "EXPERIMENTAL: reach tailnet services - Calibre-Web, paperterm hosts, anything with a 100.x address - from any network. Not yet validated on hardware.",
+      "url": "https://bandarlabs.github.io/Cobalt/apps/tailscale/",
+      "image": {
+        "@type": "ImageObject",
+        "url": "https://bandarlabs.github.io/Cobalt/media/site/apps/store.png",
+        "width": 1072,
+        "height": 1448,
+        "caption": "Tailscale available from the signed Cobalt App Store"
+      },
+      "applicationSuite": "Cobalt",
+      "applicationCategory": "SoftwareApplication",
+      "operatingSystem": "Cobalt on supported Kobo e-readers",
+      "softwareVersion": "0.1.0",
+      "isAccessibleForFree": true,
+      "offers": {
+        "@type": "Offer",
+        "price": "0",
+        "priceCurrency": "USD"
+      },
+      "installUrl": "https://bandarlabs.github.io/Cobalt/apps/tailscale/"
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "name": "Cobalt",
+          "item": "https://bandarlabs.github.io/Cobalt/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "name": "Apps",
+          "item": "https://bandarlabs.github.io/Cobalt/#apps"
+        },
+        {
+          "@type": "ListItem",
+          "position": 3,
+          "name": "Tailscale",
+          "item": "https://bandarlabs.github.io/Cobalt/apps/tailscale/"
+        }
+      ]
+    }
+  ]
+}</script>
+<link rel="stylesheet" href="../install.css">
+</head>
+<body>
+<header class="masthead">
+  <div class="wrap">
+    <a class="brand" href="../../"><img src="../../logo.svg" alt="Cobalt" width="81" height="34"></a>
+    <nav class="top" aria-label="Main navigation">
+      <a class="active" href="../../#apps">Apps</a>
+      <a href="../../developers.html">Developers</a>
+      <a href="../../faq.html">FAQ</a>
+      <a href="../../#store">Store</a>
+      <a href="../../#install">Install</a>
+      <a href="../../#contributing">Contributing</a>
+      <a href="https://github.com/BandarLabs/Cobalt">GitHub</a>
+    </nav>
+  </div>
+</header>
+<main class="wrap" data-app-id="tailscale" data-minimum-cobalt-version="0.3.12">
+  <div class="app-hero">
+    <div class="app-copy">
+      <p class="eyebrow">Kobo app</p>
+      <h1>Tailscale</h1>
+      <p class="summary">EXPERIMENTAL: reach tailnet services - Calibre-Web, paperterm hosts, anything with a 100.x address - from any network. Not yet validated on hardware.</p>
+      <div class="meta"><span>Version 0.1.0</span><span>scheduled-wake</span></div>
+    </div>
+    <figure class="app-shot">
+      <img src="../../media/site/apps/store.png" width="1072" height="1448" alt="Tailscale available from the signed Cobalt App Store">
+    </figure>
+  </div>
+  <section class="panel prerequisites" aria-labelledby="prerequisites-title">
+    <p class="eyebrow">App setup</p>
+    <h2 id="prerequisites-title">Before you install</h2>
+    <ol>
+      <li>The first time Tailscale runs it downloads the pinned upstream ARMv7 build over Wi-Fi and checks it against the digest the runtime requires, so the Kobo needs to be online once.</li>
+      <li>Turn Tailscale on. Within a minute the screen shows a short approval code; open the link on any phone or computer and approve this reader.</li>
+      <li>In the Tailscale admin console, disable key expiry for this device - node keys expire after 180 days by default and the connection would silently stop.</li>
+    </ol>
+  </section>
+  <section class="panel get-cobalt" id="setup-panel">
+    <div class="get-cobalt-copy">
+      <p class="eyebrow">Do not have Cobalt yet?</p>
+      <h2>Install Cobalt directly from your browser</h2>
+      <p>Plug your Kobo into this computer and the browser writes Cobalt across. About a minute, and no terminal. Applications after that arrive over Wi-Fi, with no cable.</p>
+      <p class="fine">Works in Chrome, Edge and Opera. <a href="https://github.com/BandarLabs/Cobalt/blob/main/docs/DEVICES.md#device-support-matrix">Check your Kobo is supported</a>.</p>
+    </div>
+    <a class="get-cobalt-go" href="../../install/">Install Cobalt<span aria-hidden="true">&#8594;</span></a>
+  </section>
+  <section class="panel" id="pair-panel">
+    <p class="eyebrow">Already have Cobalt?</p>
+    <h2>Link your Kobo to install</h2>
+    <p>On your Kobo, open <strong>App Store</strong>, then <strong>Install links</strong>. Scan the QR code, or enter the pairing code and verification key shown there.</p>
+    <form id="pair-form">
+      <div class="field">
+        <label for="pair-code">Pairing code</label>
+        <input id="pair-code" name="code" inputmode="text" autocomplete="one-time-code" maxlength="8" required>
+      </div>
+      <div class="field" id="pair-secret-field">
+        <label for="pair-secret">Verification key</label>
+        <input class="secret" id="pair-secret" name="secret" inputmode="text" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="45" required>
+      </div>
+      <button type="submit">Link Kobo</button>
+    </form>
+    <p class="status" id="pair-status" role="status" aria-live="polite"></p>
+  </section>
+  <section class="panel" id="install-panel" hidden>
+    <h2>Install on <span id="device-name">your Kobo</span></h2>
+    <p>Cobalt verifies the signed catalog and app package before changing the installed copy.</p>
+    <div class="actions">
+      <button type="button" id="install">Install Tailscale</button>
+      <button type="button" id="forget" class="secondary">Forget this Kobo</button>
+    </div>
+    <p class="status" id="install-status" role="status" aria-live="polite"></p>
+  </section>
+  <aside class="community">
+    <strong>Want another Kobo app?</strong>
+    Request it, suggest a feature or report a bug in
+    <a href="https://www.reddit.com/r/CobaltForKobo/">r/CobaltForKobo</a>.
+  </aside>
+</main>
+<footer>
+  <div class="wrap">
+    <span>Cobalt · AGPL-3.0</span>
+    <nav aria-label="Footer navigation">
+      <a href="../../">Home</a>
+      <a href="https://www.reddit.com/r/CobaltForKobo/">Community</a>
+      <a href="https://github.com/BandarLabs/Cobalt">GitHub</a>
+    </nav>
+  </div>
+</footer>
+<script src="../install.js" defer></script>
+</body>
+</html>

@@ -76,6 +76,7 @@ mod consent;
 mod device;
 mod frame;
 mod syncthing;
+mod tailscale;
 mod update;
 
 fn main() -> ExitCode {
@@ -153,6 +154,12 @@ fn run(arguments: &[String]) -> Result<(), Box<dyn Error>> {
     }
     if arguments
         .first()
+        .is_some_and(|argument| argument == "--tailscale")
+    {
+        return tailscale::command(&arguments[1..]).map_err(Into::into);
+    }
+    if arguments
+        .first()
         .is_some_and(|argument| argument == "--beta-store")
     {
         return beta_store_maintenance(&arguments[1..]);
@@ -163,7 +170,7 @@ fn run(arguments: &[String]) -> Result<(), Box<dyn Error>> {
         println!("path={}", path.display());
         return Ok(());
     }
-    Err("usage: kobod [--sim-socket PATH --frame PATH] [--present APP] [--fetch URL BYTES] [--key-test SECONDS] [--app-link status|unpair] [--syncthing] [--resolve-app APP] [--beta-store identity|status APP|catalog-digest|refresh|install APP|uninstall APP]".into())
+    Err("usage: kobod [--sim-socket PATH --frame PATH] [--present APP] [--fetch URL BYTES] [--key-test SECONDS] [--app-link status|unpair] [--syncthing] [--tailscale] [--resolve-app APP] [--beta-store identity|status APP|catalog-digest|refresh|install APP|uninstall APP]".into())
 }
 
 /// A narrow device-side surface for the host acceptance harness.
