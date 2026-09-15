@@ -170,7 +170,11 @@ impl KoboApp for BibleApp {
         // Navigation Views
         if action == action_id("open-books") {
             self.view = View::BookPicker;
-            self.testament_tab = if self.book().testament == Testament::Old { 0 } else { 1 };
+            self.testament_tab = if self.book().testament == Testament::Old {
+                0
+            } else {
+                1
+            };
             self.book_list_page = 0;
             self.show(context);
             return;
@@ -436,13 +440,14 @@ impl KoboApp for BibleApp {
                                 let new_total = total_downloaded + 1;
                                 let percent = (new_total * 100) / TOTAL_BIBLE_CHAPTERS;
 
-                                let (next_b_idx, next_ch) = if current_chapter < BOOKS[book_index].chapters {
-                                    (book_index, current_chapter + 1)
-                                } else if book_index + 1 < BOOKS.len() {
-                                    (book_index + 1, 1)
-                                } else {
-                                    (BOOKS.len(), 0)
-                                };
+                                let (next_b_idx, next_ch) =
+                                    if current_chapter < BOOKS[book_index].chapters {
+                                        (book_index, current_chapter + 1)
+                                    } else if book_index + 1 < BOOKS.len() {
+                                        (book_index + 1, 1)
+                                    } else {
+                                        (BOOKS.len(), 0)
+                                    };
 
                                 if next_b_idx < BOOKS.len() {
                                     self.download_status = Some(format!(
@@ -581,7 +586,10 @@ impl BibleApp {
 
     fn step_font_scale(&mut self, increase: bool, context: &Context) {
         let steps = TextScale::STEPS;
-        let current_pos = steps.iter().position(|&s| s == self.text_scale).unwrap_or(6);
+        let current_pos = steps
+            .iter()
+            .position(|&s| s == self.text_scale)
+            .unwrap_or(6);
         if increase && current_pos + 1 < steps.len() {
             self.text_scale = steps[current_pos + 1];
         } else if !increase && current_pos > 0 {
@@ -659,7 +667,12 @@ impl BibleApp {
     }
 
     fn show_reading(&self, context: &mut Context) {
-        let title = format!("{} {} · {}", self.book().name, self.chapter, self.translation);
+        let title = format!(
+            "{} {} · {}",
+            self.book().name,
+            self.chapter,
+            self.translation
+        );
         // Note: exactly 2 top bar actions so Cobalt's renderer never clips them!
         let mut builder = ScreenBuilder::new("reading")
             .top_bar(title)
@@ -692,12 +705,10 @@ impl BibleApp {
                 }
             }
 
-            builder = builder
-                .page_turns("page-prev", "page-next")
-                .page_position(
-                    u16::try_from(page_idx + 1).unwrap_or(u16::MAX),
-                    u16::try_from(self.pages.len()).unwrap_or(u16::MAX),
-                );
+            builder = builder.page_turns("page-prev", "page-next").page_position(
+                u16::try_from(page_idx + 1).unwrap_or(u16::MAX),
+                u16::try_from(self.pages.len()).unwrap_or(u16::MAX),
+            );
         }
 
         context.set_screen(builder.build());
@@ -710,7 +721,10 @@ impl BibleApp {
             .top_bar_action("exit-to-reader", "Exit to Kobo")
             .tabs(
                 self.testament_tab,
-                [("tab-ot", "Old Testament (39)"), ("tab-nt", "New Testament (27)")],
+                [
+                    ("tab-ot", "Old Testament (39)"),
+                    ("tab-nt", "New Testament (27)"),
+                ],
             );
 
         let target_testament = if self.testament_tab == 0 {
@@ -762,7 +776,9 @@ impl BibleApp {
         let total_chaps = book.chapters;
 
         let total_pages = (total_chaps + CHAPTERS_PER_PAGE - 1) / CHAPTERS_PER_PAGE;
-        let page = self.chapter_picker_page.min(total_pages.saturating_sub(1) as usize);
+        let page = self
+            .chapter_picker_page
+            .min(total_pages.saturating_sub(1) as usize);
 
         let start_ch = (page as u32) * CHAPTERS_PER_PAGE + 1;
         let end_ch = (start_ch + CHAPTERS_PER_PAGE - 1).min(total_chaps);
@@ -773,8 +789,7 @@ impl BibleApp {
             .top_bar_action("back-to-reading", "Reading");
 
         // 5 columns of square buttons
-        let cells = (start_ch..=end_ch)
-            .map(|ch| (format!("pick-chap-{}", ch), format!("{}", ch)));
+        let cells = (start_ch..=end_ch).map(|ch| (format!("pick-chap-{}", ch), format!("{}", ch)));
 
         builder = builder.grid(5, false, cells);
 
@@ -804,7 +819,10 @@ impl BibleApp {
         let scale_percent = self.text_scale.percent();
         let scale_label = format!("Text Scale: {}%", scale_percent);
         let steps = TextScale::STEPS;
-        let current_pos = steps.iter().position(|&s| s == self.text_scale).unwrap_or(6);
+        let current_pos = steps
+            .iter()
+            .position(|&s| s == self.text_scale)
+            .unwrap_or(6);
         let can_less = current_pos > 0;
         let can_more = current_pos + 1 < steps.len();
 
@@ -827,13 +845,23 @@ impl BibleApp {
             ]);
 
         // Translation Selector
-        builder = builder
-            .heading("Translation")
-            .chips([
-                ("trans-bsb", "BSB (Berean)", self.translation == Translation::Bsb),
-                ("trans-web", "WEB (World English)", self.translation == Translation::Web),
-                ("trans-kjv", "KJV (King James)", self.translation == Translation::Kjv),
-            ]);
+        builder = builder.heading("Translation").chips([
+            (
+                "trans-bsb",
+                "BSB (Berean)",
+                self.translation == Translation::Bsb,
+            ),
+            (
+                "trans-web",
+                "WEB (World English)",
+                self.translation == Translation::Web,
+            ),
+            (
+                "trans-kjv",
+                "KJV (King James)",
+                self.translation == Translation::Kjv,
+            ),
+        ]);
 
         // Offline Download Section
         let book_name = self.book().name;
@@ -936,7 +964,9 @@ mod tests {
         runner.start();
         runner.action(action_id("open-settings"));
         let commands = runner.action(action_id("open-launcher"));
-        assert!(commands.iter().any(|c| matches!(c, Command::Launch(name) if name == "launcher")));
+        assert!(commands
+            .iter()
+            .any(|c| matches!(c, Command::Launch(name) if name == "launcher")));
     }
 
     #[test]

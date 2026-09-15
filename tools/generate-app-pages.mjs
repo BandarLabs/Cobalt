@@ -33,6 +33,7 @@ const screenshots = {
   arxiv: ["arxiv.png", "The newest machine learning preprints listed in the arXiv app on a Kobo"],
   audiobook: ["audiobook.png", "An audiobook player with cover art and playback controls on a Kobo"],
   backgammon: ["backgammon.png", "Backgammon board on a Kobo showing White's opening roll and 24 touchable points."],
+  bible: ["bible.png", "Reading the Holy Scriptures with chapter navigation and clean typography on a Kobo"],
   brief: ["brief.png", "A numbered daily news brief on a Kobo"],
   "calibre-web": ["calibre-web.png", "Private-library list with an Add control and an empty-state explanation."],
   chat: ["chat.png", "An answer displayed for touch-friendly reading on a Kobo"],
