@@ -6,6 +6,9 @@ use kobo_app_store::{
 use std::fs;
 #[cfg(unix)]
 use std::os::unix::fs::DirBuilderExt;
+use std::path::Path;
+
+const SEED: [u8; 32] = [71; 32]; // Public, reproducible test material only.
 
 /// Creates a fresh directory that only the owner may enter. Windows has no
 /// mode bits; the user profile ACL is the boundary there.
@@ -16,9 +19,6 @@ fn create_private(path: &Path) -> std::io::Result<()> {
     builder.mode(0o700);
     builder.create(path)
 }
-use std::path::Path;
-
-const SEED: [u8; 32] = [71; 32]; // Public, reproducible test material only.
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = std::env::args().collect();

@@ -528,20 +528,16 @@ fn read_exact_at(file: &std::fs::File, buffer: &mut [u8], offset: u64) -> std::i
 #[cfg(windows)]
 fn read_exact_at(file: &std::fs::File, buffer: &mut [u8], offset: u64) -> std::io::Result<()> {
     use std::os::windows::fs::FileExt as _;
-    let mut view = &mut *buffer;
-    let mut at = offset;
-    let mut read = 0_usize;
-    while !view.is_empty() {
-        let done = file.seek_read(view, at)?;
-        if done == 0 {
+    let mut filled = 0;
+    while filled < buffer.len() {
+        let read = file.seek_read(&mut buffer[filled..], offset + filled as u64)?;
+        if read == 0 {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::UnexpectedEof,
-                "failed to fill whole buffer",
+                "positional framebuffer read ended early",
             ));
         }
-        read += done;
-        at += done as u64;
-        view = &mut buffer[read..];
+        filled += read;
     }
     Ok(())
 }

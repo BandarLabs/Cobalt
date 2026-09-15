@@ -69,6 +69,27 @@ limits casual discovery, but this is a genuinely weaker boundary than the
 Unix socket and is recorded here rather than smoothed over. Hardening
 options (per-connection token handshake) are under consideration.
 
+### Weaker guards on Windows
+
+Each of these is named in a code comment at its site; collected here so the
+list cannot drift from the code:
+
+- `open_read_nofollow` is check-then-open on Windows, not the kernel's
+  atomic `O_NOFOLLOW` refusal: a symlink swapped between the check and the
+  open is followed.
+- `kobo sync` verifies a mapping by canonical path only; std on Windows has
+  no device/inode identity, so a delete-and-recreate at the same path is not
+  detected.
+- `kobo exports` receive checks the file was not swapped by size and
+  modification time instead of device/inode; a same-size rewrite within one
+  timestamp tick is not detected.
+- Application sandboxing (`kobo_abi::sandbox`) does not run on Windows:
+  there is no fork/exec boundary to hook, so simulated applications spawn
+  unsandboxed rather than behind a pretend boundary.
+- POSIX mode-bit privacy (0600/0700) has no Windows form; files and
+  directories rely on the user-profile ACL, which scopes them to the owning
+  account. No site silently pretends to have set mode bits.
+
 ## Device-side binaries (ARM Linux, musl)
 
 Verified by emulation (qemu-arm on every push, job `device-emulated`):

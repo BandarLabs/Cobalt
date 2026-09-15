@@ -1916,9 +1916,9 @@ pub mod process_group {
     /// Makes `command` the leader of a new process group before exec.
     ///
     /// On Windows there is no POSIX process group; `CREATE_NEW_PROCESS_GROUP`
-    //  is the closest kernel concept and only matters to console CTRL event
-    //  routing, which this crate does not use. Group signalling stays
-    //  unsupported there rather than pretending the mapping is equivalent.
+    /// is the closest kernel concept and only matters to console CTRL event
+    /// routing, which this crate does not use. Group signalling stays
+    /// unsupported there rather than pretending the mapping is equivalent.
     pub fn configure(command: &mut Command) {
         #[cfg(unix)]
         command.process_group(0);
