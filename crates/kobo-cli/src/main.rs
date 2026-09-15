@@ -8239,7 +8239,7 @@ mod tests {
     use super::wait_for_remote_child;
     #[cfg(unix)]
     use std::process::Command;
-    #[cfg(unix)]
+    #[cfg(any(unix, feature = "device-write"))]
     use std::time::Duration;
 
     // The fixture drives /bin/sh and mode bits, so it is Unix-only.
