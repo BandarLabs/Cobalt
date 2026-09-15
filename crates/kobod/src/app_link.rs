@@ -8,9 +8,10 @@ use p256::pkcs8::{DecodePublicKey, EncodePublicKey};
 use p256::{PublicKey, SecretKey};
 use ring::{aead, digest, hkdf, hmac};
 use std::fmt::Write as _;
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
+#[cfg(unix)]
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
@@ -291,9 +292,7 @@ impl Identity {
 }
 
 fn random_bytes(bytes: &mut [u8]) -> Result<(), DeviceError> {
-    File::open("/dev/urandom")
-        .and_then(|mut random| random.read_exact(bytes))
-        .map_err(|_| DeviceError::Backend)
+    kobo_abi::entropy::random_bytes(bytes).map_err(|_| DeviceError::Backend)
 }
 
 fn new_link_secret() -> Result<String, DeviceError> {
@@ -1385,37 +1384,47 @@ fn atomic_write(path: &Path, bytes: &[u8], mode: u32) -> Result<(), DeviceError>
     fs::create_dir_all(parent).map_err(|_| DeviceError::Backend)?;
     set_mode(parent, 0o700)?;
     let next = path.with_extension("next");
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .mode(mode)
-        .open(&next)
-        .map_err(|_| DeviceError::Backend)?;
+    #[allow(unused_mut)] // Windows has no mode bits to set.
+    let mut options = OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    options.mode(mode);
+    let mut file = options.open(&next).map_err(|_| DeviceError::Backend)?;
     file.write_all(bytes)
         .and_then(|()| file.sync_all())
         .map_err(|_| DeviceError::Backend)?;
+    #[cfg(unix)]
     fs::set_permissions(&next, fs::Permissions::from_mode(mode))
         .map_err(|_| DeviceError::Backend)?;
+    #[cfg(windows)]
+    let _ = mode;
     fs::rename(&next, path).map_err(|_| DeviceError::Backend)?;
-    File::open(parent)
-        .and_then(|directory| directory.sync_all())
-        .map_err(|_| DeviceError::Backend)
+    sync_directory(parent)
+}
+
+fn sync_directory(path: &Path) -> Result<(), DeviceError> {
+    kobo_protocol::durability::sync_directory(path).map_err(|_| DeviceError::Backend)
 }
 
 fn remove_state_file(root: &Path, name: &str) -> Result<(), DeviceError> {
     let path = state_root(root).join(name);
     match fs::remove_file(path) {
-        Ok(()) => File::open(state_root(root))
-            .and_then(|directory| directory.sync_all())
-            .map_err(|_| DeviceError::Backend),
+        Ok(()) => sync_directory(&state_root(root)),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(_) => Err(DeviceError::Backend),
     }
 }
 
+/// Mode bits are the Unix mechanism; a Windows directory under the user
+/// profile is already scoped to the owning account by its ACL, so there is
+/// nothing to set. The daemon's on-device behaviour is unchanged.
 fn set_mode(path: &Path, mode: u32) -> Result<(), DeviceError> {
-    fs::set_permissions(path, fs::Permissions::from_mode(mode)).map_err(|_| DeviceError::Backend)
+    #[cfg(unix)]
+    fs::set_permissions(path, fs::Permissions::from_mode(mode))
+        .map_err(|_| DeviceError::Backend)?;
+    #[cfg(windows)]
+    let _ = (path, mode);
+    Ok(())
 }
 
 fn parse_json(bytes: &[u8]) -> Result<Value, DeviceError> {
@@ -1724,12 +1733,15 @@ mod tests {
                 .len(),
             91
         );
-        let mode = fs::metadata(state_root(&root).join(PRIVATE_KEY_FILE))
-            .expect("key metadata")
-            .permissions()
-            .mode()
-            & 0o777;
-        assert_eq!(mode, 0o600);
+        #[cfg(unix)]
+        {
+            let mode = fs::metadata(state_root(&root).join(PRIVATE_KEY_FILE))
+                .expect("key metadata")
+                .permissions()
+                .mode()
+                & 0o777;
+            assert_eq!(mode, 0o600);
+        }
         let _ignored = fs::remove_dir_all(root);
     }
 

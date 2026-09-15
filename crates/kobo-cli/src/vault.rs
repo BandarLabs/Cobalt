@@ -3,6 +3,7 @@
 use std::env;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
+#[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
@@ -211,11 +212,12 @@ fn write_index(path: &Path, index: &str) -> Result<(), String> {
         .ok_or_else(|| format!("{} is not a usable index path", path.display()))?;
     let temporary = path.with_file_name(format!(".{name}.writing"));
     {
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o600)
+        #[allow(unused_mut)] // Windows has no mode bits to set.
+        let mut options = OpenOptions::new();
+        options.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        options.mode(0o600);
+        let mut file = options
             .open(&temporary)
             .map_err(|error| format!("write {}: {error}", temporary.display()))?;
         file.write_all(index.as_bytes())

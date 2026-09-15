@@ -1161,15 +1161,11 @@ fn write_synced(path: &Path, contents: &[u8]) -> Result<(), DeviceError> {
 }
 
 fn sync_file(path: &Path) -> Result<(), DeviceError> {
-    fs::File::open(path)
-        .and_then(|file| file.sync_all())
-        .map_err(|_| DeviceError::Backend)
+    kobo_protocol::durability::sync_file(path).map_err(|_| DeviceError::Backend)
 }
 
 fn sync_directory(path: &Path) -> Result<(), DeviceError> {
-    fs::File::open(path)
-        .and_then(|directory| directory.sync_all())
-        .map_err(|_| DeviceError::Backend)
+    kobo_protocol::durability::sync_directory(path).map_err(|_| DeviceError::Backend)
 }
 
 fn rename_synced(source: &Path, destination: &Path, parent: &Path) -> Result<(), DeviceError> {
@@ -1331,11 +1327,14 @@ mod tests {
     };
 
     fn root() -> PathBuf {
-        let root = std::env::temp_dir().join(format!(
-            "cobalt-app-store-{}-{}",
-            std::process::id(),
-            std::thread::current().name().unwrap_or("test")
-        ));
+        // The test name reads well in a path, but its `::` separators are
+        // illegal in Windows file names; dashes keep it readable everywhere.
+        let name = std::thread::current()
+            .name()
+            .unwrap_or("test")
+            .replace(':', "-");
+        let root =
+            std::env::temp_dir().join(format!("cobalt-app-store-{}-{name}", std::process::id()));
         let _ignored = fs::remove_dir_all(&root);
         root
     }

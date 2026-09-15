@@ -3,12 +3,18 @@
 //! Query operations are always available. Mutating panel requests are compiled
 //! only with the explicitly opt-in `device-write` feature.
 
-use std::ffi::{c_int, c_ulong, CString};
+use std::ffi::c_int;
+#[cfg(unix)]
+use std::ffi::{c_ulong, CString};
 use std::fs::File;
 use std::io;
+#[cfg(unix)]
 use std::mem::MaybeUninit;
+#[cfg(unix)]
 use std::os::fd::AsRawFd;
+#[cfg(unix)]
 use std::os::unix::ffi::OsStrExt;
+#[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 
@@ -21,11 +27,30 @@ use std::path::Path;
 ///
 /// Returns the operating system error when the path cannot be opened or its
 /// final component is a symbolic link.
+#[cfg(unix)]
 pub fn open_read_nofollow(path: &Path) -> io::Result<File> {
     File::options()
         .read(true)
         .custom_flags(libc::O_NOFOLLOW)
         .open(path)
+}
+
+/// Windows has no open-time equivalent of `O_NOFOLLOW`, so this checks the
+/// final component first and then opens it. That is a check-then-open pair,
+/// not the kernel's atomic refusal: a symlink swapped in between the two calls
+/// is still followed. The protection matters on the device, where the stock
+/// reader's files sit next to ours; a Windows host running the CLI against a
+/// mounted device accepts the smaller window rather than faking the atomic
+/// guarantee.
+#[cfg(windows)]
+pub fn open_read_nofollow(path: &Path) -> io::Result<File> {
+    if std::fs::symlink_metadata(path)?.file_type().is_symlink() {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "final path component is a symbolic link",
+        ));
+    }
+    File::options().read(true).open(path)
 }
 
 /// How many bytes are still free on the filesystem `path` lives on.
@@ -42,6 +67,7 @@ pub fn open_read_nofollow(path: &Path) -> io::Result<File> {
 /// as "do not know" rather than as "no room": refusing every write on a device
 /// whose `statvfs` is unusual would be worse than the problem being avoided.
 #[must_use]
+#[cfg(unix)]
 pub fn free_space(path: &Path) -> Option<u64> {
     let path = CString::new(path.as_os_str().as_bytes()).ok()?;
     let mut stats = MaybeUninit::<libc::statvfs>::zeroed();
@@ -65,6 +91,42 @@ pub fn free_space(path: &Path) -> Option<u64> {
     #[allow(clippy::unnecessary_fallible_conversions, clippy::useless_conversion)]
     let size = u64::try_from(stats.f_frsize).ok()?;
     blocks.checked_mul(size)
+}
+
+// `GetDiskFreeSpaceExW` answers the same question as `statvfs` and its
+// caller-available byte count matches `f_bavail` exactly: the reserve only
+// privileged accounts may use is already excluded.
+#[cfg(windows)]
+#[link(name = "kernel32")]
+unsafe extern "system" {
+    fn GetDiskFreeSpaceExW(
+        directory: *const u16,
+        free_bytes_available_to_caller: *mut u64,
+        total_number_of_bytes: *mut u64,
+        total_number_of_free_bytes: *mut u64,
+    ) -> i32;
+}
+
+/// The Windows half of [`free_space`]. `None` still means "do not know".
+#[must_use]
+#[cfg(windows)]
+pub fn free_space(path: &Path) -> Option<u64> {
+    use std::os::windows::ffi::OsStrExt;
+    let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+    let mut available: u64 = 0;
+    // SAFETY: `wide` is a NUL-terminated UTF-16 string that outlives the call.
+    // The output pointer names a live local of the ULARGE_INTEGER size, and a
+    // union of two u32 halves is written compatibly through it. The total
+    // counts are not asked for.
+    let ok = unsafe {
+        GetDiskFreeSpaceExW(
+            wide.as_ptr(),
+            &mut available,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        )
+    };
+    (ok != 0).then_some(available)
 }
 
 const IOC_NRBITS: u32 = 8;
@@ -99,14 +161,53 @@ pub const fn iowr(kind: u8, number: u8, size: u32) -> u64 {
     ioc(IOC_READ | IOC_WRITE, kind, number, size)
 }
 
+#[cfg(unix)]
 unsafe extern "C" {
     fn ioctl(fd: c_int, request: c_ulong, ...) -> c_int;
 }
 
+#[cfg(unix)]
 fn ioctl_request(request: u64) -> c_ulong {
     c_ulong::try_from(request).unwrap_or(c_ulong::MAX)
 }
 
+/// Every ioctl this crate issues names a Linux or Kobo kernel interface:
+/// framebuffer geometry, input axes, panel refreshes. A Windows host has no
+/// such interface, so the honest answer is an explicit unsupported error
+/// rather than a pretend result.
+#[cfg(windows)]
+fn unsupported_ioctl(_request: u64) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::Unsupported,
+        "ioctl requests name Linux/Kobo kernel interfaces and have no Windows equivalent",
+    )
+}
+
+#[cfg(windows)]
+fn query_ioctl<T>(file: &File, request: u64) -> io::Result<T> {
+    let _ = file;
+    Err(unsupported_ioctl(request))
+}
+
+#[cfg(windows)]
+fn query_ioctl_bytes(file: &File, request: u64, bytes: &mut [u8]) -> io::Result<()> {
+    let _ = (file, bytes);
+    Err(unsupported_ioctl(request))
+}
+
+#[cfg(all(windows, feature = "device-write"))]
+fn mutating_ioctl<T>(file: &File, request: u64, value: &mut T) -> io::Result<()> {
+    let _ = (file, value);
+    Err(unsupported_ioctl(request))
+}
+
+#[cfg(all(windows, feature = "device-write"))]
+fn value_ioctl(file: &File, request: u64, value: c_int) -> io::Result<()> {
+    let _ = (file, value);
+    Err(unsupported_ioctl(request))
+}
+
+#[cfg(unix)]
 fn query_ioctl<T>(file: &File, request: u64) -> io::Result<T> {
     let mut value = MaybeUninit::<T>::zeroed();
     // SAFETY: request is a query ioctl whose kernel ABI writes exactly one T.
@@ -125,6 +226,7 @@ fn query_ioctl<T>(file: &File, request: u64) -> io::Result<T> {
     }
 }
 
+#[cfg(unix)]
 fn query_ioctl_bytes(file: &File, request: u64, bytes: &mut [u8]) -> io::Result<()> {
     // SAFETY: bytes is a writable allocation of the size encoded in request.
     let result = unsafe {
@@ -141,7 +243,7 @@ fn query_ioctl_bytes(file: &File, request: u64, bytes: &mut [u8]) -> io::Result<
     }
 }
 
-#[cfg(feature = "device-write")]
+#[cfg(all(unix, feature = "device-write"))]
 fn mutating_ioctl<T>(file: &File, request: u64, value: &mut T) -> io::Result<()> {
     // SAFETY: callers supply the vendor request matching T; this is isolated
     // behind the non-default device-write feature.
@@ -162,7 +264,7 @@ fn mutating_ioctl<T>(file: &File, request: u64, value: &mut T) -> io::Result<()>
 /// Issues an ioctl whose argument is the integer itself rather than a pointer
 /// to it. `EVIOCGRAB` is the only such request we use, and passing a pointer
 /// instead would have the kernel interpret an address as a boolean.
-#[cfg(feature = "device-write")]
+#[cfg(all(unix, feature = "device-write"))]
 fn value_ioctl(file: &File, request: u64, value: c_int) -> io::Result<()> {
     // SAFETY: this request takes its argument by value; no memory is read
     // through it.
@@ -181,7 +283,7 @@ fn value_ioctl(file: &File, request: u64, value: c_int) -> io::Result<()> {
 /// it is the only place we act on a process we do not own. Callers must verify
 /// the target's identity immediately before signalling, because process ids are
 /// reused; nothing here does that for them.
-#[cfg(feature = "device-write")]
+#[cfg(all(unix, feature = "device-write"))]
 pub mod process {
     use super::{c_int, io};
 
@@ -216,6 +318,29 @@ pub mod process {
     }
 }
 
+/// Signalling a process this program did not create is a `kill(2)` shaped
+/// operation with no honest Windows equivalent (`TerminateProcess` cannot
+/// deliver `SIGTERM`/`SIGCONT` semantics), so the device-write-only entry
+/// point fails explicitly.
+#[cfg(all(windows, feature = "device-write"))]
+pub mod process {
+    use super::{c_int, io};
+
+    pub const SIGTERM: c_int = 15;
+    pub const SIGKILL: c_int = 9;
+    pub const SIGCONT: c_int = 18;
+
+    /// Always fails on Windows: POSIX signal delivery to an arbitrary process
+    /// has no equivalent.
+    pub fn signal(pid: c_int, signal_number: c_int) -> io::Result<()> {
+        let _ = (pid, signal_number);
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "POSIX signals to another process have no Windows equivalent",
+        ))
+    }
+}
+
 /// Noticing that this process has been asked to stop.
 ///
 /// A panel session owns the display, the touch panel, the stock reader and the
@@ -245,14 +370,48 @@ pub mod stop {
     const NONE: i32 = 0;
     static REQUESTED: AtomicI32 = AtomicI32::new(NONE);
 
+    #[cfg(unix)]
     unsafe extern "C" {
         fn signal(number: c_int, handler: usize) -> usize;
     }
 
+    #[cfg(unix)]
     const SIG_ERR: usize = usize::MAX;
 
+    #[cfg(unix)]
     extern "C" fn record(number: c_int) {
         REQUESTED.store(number, Ordering::Relaxed);
+    }
+
+    // Windows console processes receive termination requests as console
+    // control events rather than signals. They are mapped onto the Unix
+    // numbers this module reports so callers keep one code path:
+    // Ctrl-C arrives as `SIGINT`, a closed console window as `SIGHUP`, and
+    // break/logoff/shutdown as `SIGTERM`.
+    #[cfg(windows)]
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn SetConsoleCtrlHandler(
+            handler: Option<extern "system" fn(event: u32) -> i32>,
+            add: i32,
+        ) -> i32;
+    }
+
+    #[cfg(windows)]
+    extern "system" fn console_record(event: u32) -> i32 {
+        const CTRL_C: u32 = 0;
+        const CTRL_BREAK: u32 = 1;
+        const CTRL_CLOSE: u32 = 2;
+        const CTRL_LOGOFF: u32 = 5;
+        const CTRL_SHUTDOWN: u32 = 6;
+        let number = match event {
+            CTRL_C => SIGINT,
+            CTRL_CLOSE => SIGHUP,
+            CTRL_BREAK | CTRL_LOGOFF | CTRL_SHUTDOWN => SIGTERM,
+            _ => return 0,
+        };
+        REQUESTED.store(number, Ordering::Relaxed);
+        1
     }
 
     /// Asks the kernel to route termination signals here instead of killing
@@ -264,12 +423,22 @@ pub mod stop {
     /// should carry on regardless: without a handler the process dies the way
     /// it did before, which the recovery watchdog still covers.
     pub fn catch_requests() -> io::Result<()> {
+        #[cfg(unix)]
         for number in CAUGHT {
             // SAFETY: `record` is an `extern "C"` function of the right
             // signature that performs one relaxed atomic store, which is
             // async-signal-safe. The kernel keeps the handler installed.
             let previous = unsafe { signal(number, record as *const () as usize) };
             if previous == SIG_ERR {
+                return Err(io::Error::last_os_error());
+            }
+        }
+        #[cfg(windows)]
+        {
+            // SAFETY: `console_record` has the documented PHANDLER_ROUTINE
+            // shape and performs one relaxed atomic store, which is safe in a
+            // console control callback. The handler stays installed.
+            if unsafe { SetConsoleCtrlHandler(Some(console_record), 1) } == 0 {
                 return Err(io::Error::last_os_error());
             }
         }
@@ -859,6 +1028,7 @@ pub mod sandbox {
     use std::io;
     #[cfg(target_os = "linux")]
     use std::os::unix::fs::MetadataExt;
+    #[cfg(unix)]
     use std::os::unix::process::CommandExt;
     use std::path::Path;
     #[cfg(all(target_os = "linux", target_arch = "arm"))]
@@ -939,10 +1109,19 @@ pub mod sandbox {
             unsafe {
                 command.pre_exec(move || self.enter());
             }
-            #[cfg(not(target_os = "linux"))]
+            #[cfg(all(unix, not(target_os = "linux")))]
             {
                 let _ = self;
                 command.process_group(0);
+            }
+            #[cfg(windows)]
+            {
+                // There is no fork/exec boundary to hook on Windows, so the
+                // sandbox transition cannot run. The caller treats the false
+                // return as "no sandbox" and spawns unsandboxed instead, which
+                // is the honest answer rather than a pretend boundary.
+                let _ = &self;
+                let _ = command;
             }
             #[cfg(target_os = "linux")]
             {
@@ -1668,6 +1847,9 @@ pub mod sandbox {
         }
 
         #[test]
+        // libc::AF_INET has no Windows analogue; the seccomp machinery this
+        // exercises is Unix-only anyway.
+        #[cfg(unix)]
         fn a_denied_syscall_is_replaced_then_reported_as_permission_denied() {
             let selected = Cell::new(None);
             let result = Cell::new(None);
@@ -1720,10 +1902,13 @@ pub mod sandbox {
 }
 
 /// Signals a child-owned process group rather than only its leader.
+pub mod entropy;
+
 pub mod process_group {
     #[cfg(target_os = "linux")]
     use std::fs;
     use std::io;
+    #[cfg(unix)]
     use std::os::unix::process::CommandExt;
     use std::process::Command;
 
@@ -1731,8 +1916,19 @@ pub mod process_group {
     pub const SIGKILL: i32 = 9;
 
     /// Makes `command` the leader of a new process group before exec.
+    ///
+    /// On Windows there is no POSIX process group; `CREATE_NEW_PROCESS_GROUP`
+    /// is the closest kernel concept and only matters to console CTRL event
+    /// routing, which this crate does not use. Group signalling stays
+    /// unsupported there rather than pretending the mapping is equivalent.
     pub fn configure(command: &mut Command) {
+        #[cfg(unix)]
         command.process_group(0);
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt as _;
+            command.creation_flags(0x0000_0200); // CREATE_NEW_PROCESS_GROUP
+        }
     }
 
     /// Sends `signal` to every process in the group whose id is `leader`.
@@ -1742,14 +1938,29 @@ pub mod process_group {
     /// Returns an error when the process identifier cannot be represented by
     /// the platform API or the signal cannot be delivered.
     pub fn signal(leader: u32, signal: i32) -> io::Result<()> {
-        let leader = i32::try_from(leader)
-            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "process id is too large"))?;
-        // SAFETY: a negative pid is the documented `kill(2)` process-group
-        // form. The caller created this group and supplies its leader.
-        if unsafe { libc::kill(-leader, signal) } < 0 {
-            Err(io::Error::last_os_error())
-        } else {
-            Ok(())
+        #[cfg(unix)]
+        {
+            let leader = i32::try_from(leader).map_err(|_| {
+                io::Error::new(io::ErrorKind::InvalidInput, "process id is too large")
+            })?;
+            // SAFETY: a negative pid is the documented `kill(2)` process-group
+            // form. The caller created this group and supplies its leader.
+            if unsafe { libc::kill(-leader, signal) } < 0 {
+                Err(io::Error::last_os_error())
+            } else {
+                Ok(())
+            }
+        }
+        #[cfg(windows)]
+        {
+            // GenerateConsoleCtrlEvent can reach a console process group, but
+            // it delivers CTRL events, not termination guarantees; callers use
+            // this for SIGKILL-grade cleanup, so mapping would fake parity.
+            let _ = (leader, signal);
+            Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "POSIX process-group signalling has no Windows equivalent",
+            ))
         }
     }
 
@@ -1802,14 +2013,20 @@ pub mod process_group {
                 signal(leader, signal_number)
             }
         }
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(all(unix, not(target_os = "linux")))]
         {
+            signal(leader, signal_number)
+        }
+        #[cfg(windows)]
+        {
+            // The group signal already answers unsupported on Windows; a
+            // session-wide sweep has no wider meaning to fall back to.
             signal(leader, signal_number)
         }
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod process_group_tests {
     use std::process::Command;
     use std::thread;
@@ -1851,6 +2068,7 @@ mod process_group_tests {
 /// `rustup target add`, and it forks behind the caller's back. The parts it is
 /// made of, `posix_openpt` through `TIOCSCTTY`, are all in plain libc on both
 /// the device and a development host.
+#[cfg(unix)]
 pub mod pty {
     use std::ffi::{c_char, c_int, c_ulong, c_void, CStr};
     use std::fs::File;
@@ -2154,10 +2372,732 @@ pub mod pty {
     }
 }
 
-#[cfg(test)]
+/// A pseudo-terminal on Windows is a ConPTY pair: two anonymous pipes joined
+/// by `CreatePseudoConsole`, the child started through an extended startup
+/// info whose attribute list names the console. Built on the documented
+/// kernel32 surface with the same shape as the Unix arm; runtime-verified by
+/// the windows-2022 CI job.
+#[cfg(windows)]
+pub mod pty {
+    use std::ffi::c_void;
+    use std::fs::File;
+    use std::io::{self, Read, Write};
+    use std::os::windows::ffi::OsStrExt as _;
+    use std::os::windows::io::{FromRawHandle as _, RawHandle};
+    use std::ptr;
+    use std::sync::mpsc::{self, Receiver};
+    use std::sync::{Arc, Mutex};
+    use std::thread;
+
+    /// How much is taken from the program in one read. Same bound as Unix.
+    const CHUNK: usize = 4096;
+
+    type Bool = i32;
+    type Dword = u32;
+    type Handle = *mut c_void;
+
+    const EXTENDED_STARTUPINFO_PRESENT: Dword = 0x0008_0000;
+    const CREATE_UNICODE_ENVIRONMENT: Dword = 0x0000_0400;
+    const STARTF_USESTDHANDLES: Dword = 0x0000_0100;
+    /// ProcThreadAttributeValue(22, Thread: false, Input: true, Additive: false).
+    const PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE: usize = 22 | 0x0002_0000;
+    const HEAP_ZERO_MEMORY: Dword = 0x8;
+    const WAIT_OBJECT_0: Dword = 0;
+    const INFINITE: Dword = 0xFFFF_FFFF;
+    const DUPLICATE_SAME_ACCESS: Dword = 0x2;
+
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct Coord {
+        x: i16,
+        y: i16,
+    }
+
+    #[repr(C)]
+    struct StartupInfoW {
+        cb: Dword,
+        reserved: *mut u16,
+        desktop: *mut u16,
+        title: *mut u16,
+        x: Dword,
+        y: Dword,
+        x_size: Dword,
+        y_size: Dword,
+        x_count: Dword,
+        y_count: Dword,
+        fill: Dword,
+        flags: Dword,
+        show_window: u16,
+        reserved2: u16,
+        reserved2_pointer: *mut u8,
+        std_input: Handle,
+        std_output: Handle,
+        std_error: Handle,
+    }
+
+    impl Default for StartupInfoW {
+        fn default() -> Self {
+            Self {
+                cb: 0,
+                reserved: ptr::null_mut(),
+                desktop: ptr::null_mut(),
+                title: ptr::null_mut(),
+                x: 0,
+                y: 0,
+                x_size: 0,
+                y_size: 0,
+                x_count: 0,
+                y_count: 0,
+                fill: 0,
+                flags: 0,
+                show_window: 0,
+                reserved2: 0,
+                reserved2_pointer: ptr::null_mut(),
+                std_input: ptr::null_mut(),
+                std_output: ptr::null_mut(),
+                std_error: ptr::null_mut(),
+            }
+        }
+    }
+
+    #[repr(C)]
+    struct StartupInfoExW {
+        base: StartupInfoW,
+        attribute_list: *mut c_void,
+    }
+
+    #[repr(C)]
+    struct ProcessInformation {
+        process: Handle,
+        thread: Handle,
+        process_id: Dword,
+        thread_id: Dword,
+    }
+
+    extern "system" {
+        fn CreatePipe(
+            read: *mut Handle,
+            write: *mut Handle,
+            attrs: *mut c_void,
+            size: Dword,
+        ) -> Bool;
+        fn CreatePseudoConsole(
+            size: Coord,
+            input: Handle,
+            output: Handle,
+            flags: Dword,
+            console: *mut Handle,
+        ) -> i32;
+        fn ResizePseudoConsole(console: Handle, size: Coord) -> i32;
+        fn ClosePseudoConsole(console: Handle);
+        fn DuplicateHandle(
+            source_process: Handle,
+            source: Handle,
+            target_process: Handle,
+            target: *mut Handle,
+            access: Dword,
+            inherit: Bool,
+            options: Dword,
+        ) -> Bool;
+        fn InitializeProcThreadAttributeList(
+            list: *mut c_void,
+            count: Dword,
+            flags: Dword,
+            size: *mut usize,
+        ) -> Bool;
+        fn UpdateProcThreadAttribute(
+            list: *mut c_void,
+            flags: Dword,
+            attribute: usize,
+            value: *mut c_void,
+            size: usize,
+            previous: *mut c_void,
+            return_size: *mut usize,
+        ) -> Bool;
+        fn DeleteProcThreadAttributeList(list: *mut c_void);
+        fn CreateProcessW(
+            application: *const u16,
+            command_line: *mut u16,
+            process_attributes: *mut c_void,
+            thread_attributes: *mut c_void,
+            inherit_handles: Bool,
+            flags: Dword,
+            environment: *mut c_void,
+            directory: *const u16,
+            startup_info: *mut StartupInfoExW,
+            information: *mut ProcessInformation,
+        ) -> Bool;
+        fn CloseHandle(handle: Handle) -> Bool;
+        fn WaitForSingleObject(handle: Handle, milliseconds: Dword) -> Dword;
+        fn GetExitCodeProcess(handle: Handle, code: *mut Dword) -> Bool;
+        fn TerminateProcess(handle: Handle, code: u32) -> Bool;
+        fn GetProcessHeap() -> Handle;
+        fn HeapAlloc(heap: Handle, flags: Dword, bytes: usize) -> *mut c_void;
+        fn HeapFree(heap: Handle, flags: Dword, memory: *mut c_void) -> Bool;
+    }
+
+    /// Something to call when the program has printed. Same shape as Unix.
+    pub type Wake = Arc<dyn Fn() + Send + Sync>;
+
+    /// A running program with a terminal attached. Same contract as Unix:
+    /// output arrives on a channel so a caller blocks on its own event loop.
+    pub struct Pty {
+        /// The write end of the console's input pipe.
+        input: File,
+        /// The pseudo-console, shared with the waiter thread that closes it
+        /// when the child exits on its own: that is the event that makes a
+        /// Unix PTY report end of file, and the only one that makes a ConPTY
+        /// output pipe report one.
+        console: Arc<ConsoleCell>,
+        /// The child's process handle, nulled once closed.
+        process: Handle,
+        output: Receiver<Vec<u8>>,
+    }
+
+    // The handles are owned by this value and only moved with it; the
+    // console handle is only used under the cell's lock.
+    unsafe impl Send for Pty {}
+
+    /// A duplicate of the child's process handle, owned by the waiter
+    /// thread so its wait never races the Pty's own handle.
+    struct WaitHandle(Handle);
+
+    // The handle is the thread's own duplicate and never leaves it.
+    unsafe impl Send for WaitHandle {}
+
+    /// A pseudo-console handle behind the lock that serializes the waiter
+    /// thread, `close`, and `Drop`.
+    struct ConsoleCell(Mutex<Handle>);
+
+    // The handle is owned by the cell and touched only under its lock.
+    unsafe impl Send for ConsoleCell {}
+    unsafe impl Sync for ConsoleCell {}
+
+    /// Closes the console in the cell exactly once, whoever runs first.
+    fn close_console(cell: &ConsoleCell) {
+        let mut console = cell.0.lock().expect("console lock");
+        if !console.is_null() {
+            // SAFETY: closed exactly once; the lock serializes every closer
+            // and nulling marks it done.
+            unsafe { ClosePseudoConsole(*console) };
+            *console = ptr::null_mut();
+        }
+    }
+
+    fn wide(text: &str) -> Vec<u16> {
+        std::ffi::OsStr::new(text)
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect()
+    }
+
+    fn close_handle(handle: Handle) {
+        if !handle.is_null() {
+            // SAFETY: the handle is one we created or were handed by
+            // CreateProcessW, still open, and closed at most once by the
+            // callers' nulling discipline.
+            unsafe { CloseHandle(handle) };
+        }
+    }
+
+    fn hresult(code: i32, context: &str) -> io::Error {
+        io::Error::new(
+            io::ErrorKind::Other,
+            format!("{context}: HRESULT {code:#010x}"),
+        )
+    }
+
+    struct ConsoleGuard(Handle);
+    impl Drop for ConsoleGuard {
+        fn drop(&mut self) {
+            if !self.0.is_null() {
+                // SAFETY: created by CreatePseudoConsole, closed exactly once.
+                unsafe { ClosePseudoConsole(self.0) };
+            }
+        }
+    }
+
+    impl Pty {
+        /// Starts `program` under a new pseudo-terminal of the given grid.
+        ///
+        /// The environment is replaced rather than inherited, matching the
+        /// Unix arm; on Windows a caller that wants DLL lookup to behave
+        /// normally should pass `SystemRoot` through.
+        ///
+        /// # Errors
+        ///
+        /// Returns the OS error from any step of the allocation, or from
+        /// starting the program.
+        pub fn spawn(
+            program: &str,
+            arguments: &[&str],
+            environment: &[(&str, &str)],
+            columns: u16,
+            rows: u16,
+        ) -> io::Result<Self> {
+            Self::spawn_with_wake(program, arguments, environment, columns, rows, None)
+        }
+
+        /// The same, with something to call whenever output has arrived.
+        ///
+        /// # Errors
+        ///
+        /// As [`Pty::spawn`].
+        pub fn spawn_with_wake(
+            program: &str,
+            arguments: &[&str],
+            environment: &[(&str, &str)],
+            columns: u16,
+            rows: u16,
+            wake: Option<Wake>,
+        ) -> io::Result<Self> {
+            let mut in_read: Handle = ptr::null_mut();
+            let mut in_write: Handle = ptr::null_mut();
+            let mut out_read: Handle = ptr::null_mut();
+            let mut out_write: Handle = ptr::null_mut();
+            // SAFETY: out-pointers to live locals, no attributes (the handles
+            // are not inheritable, which the extended-startupinfo child does
+            // not need: the console attaches its own std handles).
+            if unsafe { CreatePipe(&mut in_read, &mut in_write, ptr::null_mut(), 0) } == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            if unsafe { CreatePipe(&mut out_read, &mut out_write, ptr::null_mut(), 0) } == 0 {
+                let error = io::Error::last_os_error();
+                close_handle(in_read);
+                close_handle(in_write);
+                return Err(error);
+            }
+            let grid = Coord {
+                x: columns as i16,
+                y: rows as i16,
+            };
+            let mut console: Handle = ptr::null_mut();
+            // SAFETY: both pipe ends are live handles we own; the console
+            // out-pointer is a live local.
+            let created = unsafe { CreatePseudoConsole(grid, in_read, out_write, 0, &mut console) };
+            // The console holds its own references; our copies of the ends it
+            // consumed are closed whatever happened.
+            close_handle(in_read);
+            close_handle(out_write);
+            if created != 0 {
+                close_handle(out_read);
+                close_handle(in_write);
+                return Err(hresult(created, "create the pseudo-console"));
+            }
+            let console = ConsoleGuard(console);
+
+            let mut list_size = 0_usize;
+            // SAFETY: a sizing call with a null list; failure with the size
+            // written is the documented contract.
+            unsafe { InitializeProcThreadAttributeList(ptr::null_mut(), 1, 0, &mut list_size) };
+            // SAFETY: the heap is the process heap and the size came from the
+            // sizing call above; zeroed so the attribute list starts clean.
+            let list = unsafe { HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, list_size) };
+            if list.is_null() {
+                close_handle(out_read);
+                close_handle(in_write);
+                return Err(io::Error::last_os_error());
+            }
+            let mut startup = StartupInfoExW {
+                base: StartupInfoW {
+                    cb: size_of::<StartupInfoExW>() as Dword,
+                    // With the parent's std handles redirected (a test harness
+                    // or CI runner is exactly that), a child created without
+                    // STARTF_USESTDHANDLES attaches to the inherited console
+                    // instead of the pseudoconsole. Null std handles plus the
+                    // flag force the pseudoconsole to supply them.
+                    flags: STARTF_USESTDHANDLES,
+                    ..StartupInfoW::default()
+                },
+                attribute_list: list,
+            };
+            let prepared = unsafe {
+                // SAFETY: `list` is a live allocation of `list_size` bytes.
+                InitializeProcThreadAttributeList(list, 1, 0, &mut list_size) != 0
+                    // SAFETY: one attribute, the console handle by value.
+                    && UpdateProcThreadAttribute(
+                        list,
+                        0,
+                        PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE,
+                        console.0,
+                        size_of::<Handle>(),
+                        ptr::null_mut(),
+                        ptr::null_mut(),
+                    ) != 0
+            };
+            if !prepared {
+                let error = io::Error::last_os_error();
+                // SAFETY: list was allocated above and is ours to free.
+                unsafe {
+                    DeleteProcThreadAttributeList(list);
+                    HeapFree(GetProcessHeap(), 0, list)
+                };
+                close_handle(out_read);
+                close_handle(in_write);
+                return Err(error);
+            }
+
+            let command_line = std::iter::once(program)
+                .chain(arguments.iter().copied())
+                .map(quote_argument)
+                .collect::<Vec<_>>()
+                .join(" ");
+            let mut command_line = wide(&command_line);
+            let mut environment_block = environment_block(environment);
+            // An empty environment list means inherit: a null pointer hands
+            // the child the parent's block (SystemRoot among it, which cmd
+            // cannot start without). CREATE_UNICODE_ENVIRONMENT is ignored
+            // in that case.
+            let environment_pointer = if environment.is_empty() {
+                ptr::null_mut()
+            } else {
+                environment_block.as_mut_ptr().cast::<c_void>()
+            };
+            let mut information = ProcessInformation {
+                process: ptr::null_mut(),
+                thread: ptr::null_mut(),
+                process_id: 0,
+                thread_id: 0,
+            };
+            // SAFETY: every pointer names a live local or a NUL-terminated
+            // wide buffer that outlives the call; the environment pointer is
+            // either null (inherit the parent's block) or a live double-NUL
+            // terminated Unicode buffer.
+            let spawned = unsafe {
+                CreateProcessW(
+                    ptr::null(),
+                    command_line.as_mut_ptr(),
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                    0,
+                    EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT,
+                    environment_pointer,
+                    ptr::null(),
+                    &mut startup,
+                    &mut information,
+                )
+            };
+            // SAFETY: the attribute list is ours and no longer needed.
+            unsafe {
+                DeleteProcThreadAttributeList(list);
+                HeapFree(GetProcessHeap(), 0, list)
+            };
+            if spawned == 0 {
+                let error = io::Error::last_os_error();
+                close_handle(out_read);
+                close_handle(in_write);
+                return Err(error);
+            }
+            close_handle(information.thread);
+            // A second reference to the child for the waiter thread: waiting
+            // must not race the Pty's own close of its handle.
+            let mut wait_handle: Handle = ptr::null_mut();
+            // SAFETY: -1 is the current-process pseudo-handle on both sides,
+            // information.process is live and ours, and DUPLICATE_SAME_ACCESS
+            // fills wait_handle with an equivalent reference.
+            let duplicated = unsafe {
+                DuplicateHandle(
+                    (-1isize) as Handle,
+                    information.process,
+                    (-1isize) as Handle,
+                    &mut wait_handle,
+                    0,
+                    0,
+                    DUPLICATE_SAME_ACCESS,
+                )
+            };
+            if duplicated == 0 {
+                let error = io::Error::last_os_error();
+                close_handle(out_read);
+                close_handle(in_write);
+                close_handle(information.process);
+                return Err(error);
+            }
+            // The pipes' surviving ends become owned Files here.
+            // SAFETY: both handles are live, open, and uniquely owned.
+            let (input, mut reader) = unsafe {
+                (
+                    File::from_raw_handle(in_write as RawHandle),
+                    File::from_raw_handle(out_read as RawHandle),
+                )
+            };
+
+            let (sender, output) = mpsc::channel();
+            thread::spawn(move || {
+                let mut buffer = [0u8; CHUNK];
+                loop {
+                    match reader.read(&mut buffer) {
+                        // A closed console reports end of file or a broken
+                        // pipe; both mean the program has gone.
+                        Ok(0) | Err(_) => break,
+                        Ok(read) => {
+                            if sender.send(buffer[..read].to_vec()).is_err() {
+                                break;
+                            }
+                            if let Some(wake) = wake.as_ref() {
+                                wake();
+                            }
+                        }
+                    }
+                }
+            });
+
+            // Hand the console to the Pty without the guard closing it: the
+            // guard exists for the error paths above, and from here the cell
+            // owns the handle (the waiter thread, close(), and Drop manage it
+            // under the lock).
+            let console_handle = console.0;
+            std::mem::forget(console);
+            let console = Arc::new(ConsoleCell(Mutex::new(console_handle)));
+            let waiter_console = Arc::clone(&console);
+            let wait_handle = WaitHandle(wait_handle);
+            thread::spawn(move || {
+                // Bound whole first so the closure takes the wrapper: any
+                // field-shaped capture would move the bare raw handle, which
+                // is not Send.
+                let whole = wait_handle;
+                let WaitHandle(wait_handle) = whole;
+                // SAFETY: wait_handle is this thread's own reference; the
+                // wait ends when the child exits, which is when the console
+                // must go for readers to see the end of the stream.
+                unsafe { WaitForSingleObject(wait_handle, INFINITE) };
+                close_handle(wait_handle);
+                close_console(&waiter_console);
+            });
+            Ok(Self {
+                input,
+                console,
+                process: information.process,
+                output,
+            })
+        }
+
+        /// The channel every byte the program prints arrives on.
+        #[must_use]
+        pub const fn output(&self) -> &Receiver<Vec<u8>> {
+            &self.output
+        }
+
+        /// Sends keystrokes to the program.
+        ///
+        /// # Errors
+        ///
+        /// Returns the write error, including the one that means the program
+        /// has already gone.
+        pub fn write(&mut self, bytes: &[u8]) -> io::Result<()> {
+            self.input.write_all(bytes)
+        }
+
+        /// Tells the program its grid changed.
+        ///
+        /// # Errors
+        ///
+        /// Returns the HRESULT from `ResizePseudoConsole`.
+        pub fn resize(&self, columns: u16, rows: u16) -> io::Result<()> {
+            let grid = Coord {
+                x: columns as i16,
+                y: rows as i16,
+            };
+            let console = self.console.0.lock().expect("console lock");
+            if console.is_null() {
+                return Err(io::Error::new(
+                    io::ErrorKind::NotConnected,
+                    "the console went with the program",
+                ));
+            }
+            // SAFETY: the console handle is live under the lock.
+            let result = unsafe { ResizePseudoConsole(*console, grid) };
+            if result != 0 {
+                return Err(hresult(result, "resize the pseudo-console"));
+            }
+            Ok(())
+        }
+
+        /// Whether the program has finished, and with what status.
+        ///
+        /// # Errors
+        ///
+        /// Returns the error from waiting on the child.
+        pub fn finished(&mut self) -> io::Result<Option<i32>> {
+            // SAFETY: the process handle is live or the child already exited;
+            // a zero timeout only polls.
+            let state = unsafe { WaitForSingleObject(self.process, 0) };
+            if state != WAIT_OBJECT_0 {
+                return Ok(None);
+            }
+            let mut code: Dword = 0;
+            // SAFETY: the process handle is live and signaled.
+            if unsafe { GetExitCodeProcess(self.process, &mut code) } == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(Some(code as i32))
+        }
+
+        /// Stops the program and reaps it.
+        ///
+        /// # Errors
+        ///
+        /// Returns the error from waiting, except for a program that had
+        /// already exited, which is success.
+        pub fn close(&mut self) -> io::Result<()> {
+            if self.finished()?.is_none() {
+                // SAFETY: the process handle is live; terminating an already
+                // exited child fails harmlessly and is ignored, matching the
+                // Unix arm's sweep-after-exit.
+                unsafe { TerminateProcess(self.process, 1) };
+                // SAFETY: as above; waits for the termination to land.
+                unsafe { WaitForSingleObject(self.process, INFINITE) };
+            }
+            close_console(&self.console);
+            Ok(())
+        }
+    }
+
+    impl Drop for Pty {
+        fn drop(&mut self) {
+            close_console(&self.console);
+            close_handle(self.process);
+        }
+    }
+
+    /// Quotes one command-line word the way the C runtime parses it.
+    fn quote_argument(word: &str) -> String {
+        if !word.is_empty()
+            && !word
+                .chars()
+                .any(|character| character.is_whitespace() || character == '"')
+        {
+            return word.to_owned();
+        }
+        let mut quoted = String::from('"');
+        let mut backslashes = 0_usize;
+        for character in word.chars() {
+            match character {
+                '\\' => backslashes += 1,
+                '"' => {
+                    quoted.push_str(&"\\".repeat(backslashes * 2 + 1));
+                    backslashes = 0;
+                    quoted.push('"');
+                }
+                _ => {
+                    quoted.push_str(&"\\".repeat(backslashes));
+                    backslashes = 0;
+                    quoted.push(character);
+                }
+            }
+        }
+        quoted.push_str(&"\\".repeat(backslashes * 2));
+        quoted.push('"');
+        quoted
+    }
+
+    /// The double-NUL-terminated Unicode environment block, sorted as
+    /// CreateProcessW expects.
+    fn environment_block(environment: &[(&str, &str)]) -> Vec<u16> {
+        let mut pairs: Vec<String> = environment
+            .iter()
+            .map(|(name, value)| format!("{name}={value}"))
+            .collect();
+        pairs.sort_by_key(|pair| pair.to_uppercase());
+        let mut block: Vec<u16> = pairs
+            .join("\0")
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect();
+        block.push(0);
+        block
+    }
+}
+
+#[cfg(all(test, windows))]
+mod pty_windows_tests {
+    use super::pty::Pty;
+    use std::time::{Duration, Instant};
+
+    // Runs on the windows-2022 CI job: cmd under a real ConPTY must carry
+    // output over the channel, report its exit status, and close cleanly.
+    #[test]
+    fn conpty_carries_output_status_and_shutdown() {
+        let system_root = std::env::var("SystemRoot").expect("SystemRoot");
+        let mut pty = Pty::spawn(
+            "cmd.exe",
+            &["/c", "echo cobalt-pty-ok && exit 3"],
+            &[("SystemRoot", system_root.as_str())],
+            80,
+            24,
+        )
+        .expect("spawn cmd under ConPTY");
+        // Wait on the child first, then drain the channel until the reader
+        // hangs up: the exit status and the captured bytes diagnose attach
+        // and plumbing separately instead of conflating them in one timeout.
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let status = loop {
+            if let Some(code) = pty.finished().expect("poll the child") {
+                break code;
+            }
+            assert!(Instant::now() < deadline, "cmd did not exit");
+            std::thread::sleep(Duration::from_millis(50));
+        };
+        let mut output = String::new();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while Instant::now() < deadline {
+            match pty.output().recv_timeout(Duration::from_millis(250)) {
+                Ok(chunk) => output.push_str(&String::from_utf8_lossy(&chunk)),
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+            }
+            if output.contains("cobalt-pty-ok") {
+                break;
+            }
+        }
+        assert_eq!(status, 3, "cmd exit status (output so far: {output:?})");
+        assert!(output.contains("cobalt-pty-ok"), "output was: {output:?}");
+        pty.close().expect("close after exit");
+    }
+}
+
+#[cfg(all(test, unix))]
 mod pty_tests {
     use super::pty::Pty;
     use std::time::{Duration, Instant};
+
+    /// qemu-user has no real devpts, so `posix_openpt` intermittently answers
+    /// `EPERM` there, and the slave node can be missing (`ENOENT`) in the same
+    /// breath. Give the emulator a few attempts, then skip by name with
+    /// the reason if it keeps refusing: `KOBO_QEMU_EMULATED` is set only by the
+    /// device-emulated CI job, and these tests run for real in the host job.
+    fn spawn(
+        program: &str,
+        arguments: &[&str],
+        environment: &[(&str, &str)],
+        columns: u16,
+        rows: u16,
+    ) -> Option<Pty> {
+        for _ in 0..3 {
+            match Pty::spawn(program, arguments, environment, columns, rows) {
+                Ok(pty) => return Some(pty),
+                // qemu-user's devpts is unreliable beyond the open itself:
+                // ptsname can also come back as a NUL-filled buffer, which
+                // surfaces here as an invalid file name, and the slave node
+                // open can race devpts and answer NotFound.
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        std::io::ErrorKind::PermissionDenied
+                            | std::io::ErrorKind::InvalidInput
+                            | std::io::ErrorKind::NotFound
+                    ) && std::env::var_os("KOBO_QEMU_EMULATED").is_some() =>
+                {
+                    std::thread::sleep(Duration::from_millis(200));
+                }
+                Err(error) => panic!("a terminal: {error}"),
+            }
+        }
+        eprintln!(
+            "skipped under qemu-user: the emulated devpts keeps refusing a terminal (EPERM/ENOENT)"
+        );
+        None
+    }
 
     /// Collects output until `needle` appears or the patience runs out.
     fn wait_for(pty: &Pty, needle: &str) -> String {
@@ -2179,7 +3119,9 @@ mod pty_tests {
     fn a_program_started_on_a_terminal_answers_what_is_typed_at_it() {
         // The whole point, exercised for real rather than described: bytes
         // written go in as keystrokes and what the program prints comes back.
-        let mut pty = Pty::spawn("/bin/sh", &[], &[("PS1", "$ ")], 53, 20).expect("a terminal");
+        let Some(mut pty) = spawn("/bin/sh", &[], &[("PS1", "$ ")], 53, 20) else {
+            return;
+        };
         pty.write(b"echo COBALT_ONE\n").expect("typing");
         let seen = wait_for(&pty, "COBALT_ONE");
         assert!(seen.contains("COBALT_ONE"), "saw {seen:?}");
@@ -2190,7 +3132,9 @@ mod pty_tests {
     fn the_program_is_told_the_grid_it_has() {
         // A program that is not told its size assumes eighty columns and draws
         // off the side of a panel that has fifty-three.
-        let mut pty = Pty::spawn("/bin/sh", &[], &[("PS1", "$ ")], 53, 37).expect("a terminal");
+        let Some(mut pty) = spawn("/bin/sh", &[], &[("PS1", "$ ")], 53, 37) else {
+            return;
+        };
         pty.write(b"stty size\n").expect("typing");
         let seen = wait_for(&pty, "37 53");
         assert!(seen.contains("37 53"), "saw {seen:?}");
@@ -2199,7 +3143,9 @@ mod pty_tests {
 
     #[test]
     fn a_program_that_ends_is_reported_rather_than_read_forever() {
-        let mut pty = Pty::spawn("/bin/sh", &["-c", "exit 3"], &[], 53, 20).expect("a terminal");
+        let Some(mut pty) = spawn("/bin/sh", &["-c", "exit 3"], &[], 53, 20) else {
+            return;
+        };
         let deadline = Instant::now() + Duration::from_secs(10);
         let mut status = None;
         while Instant::now() < deadline && status.is_none() {
@@ -2211,14 +3157,15 @@ mod pty_tests {
 
     #[test]
     fn closing_stops_a_program_that_would_otherwise_run_forever() {
-        let mut pty = Pty::spawn(
+        let Some(mut pty) = spawn(
             "/bin/sh",
             &["-c", "while true; do sleep 1; done"],
             &[],
             53,
             20,
-        )
-        .expect("a terminal");
+        ) else {
+            return;
+        };
         assert_eq!(pty.finished().expect("waiting"), None);
         pty.close().expect("closing");
         assert!(pty.finished().expect("waiting").is_some());
@@ -2226,7 +3173,9 @@ mod pty_tests {
 
     #[test]
     fn the_grid_can_change_while_the_program_is_running() {
-        let mut pty = Pty::spawn("/bin/sh", &[], &[("PS1", "$ ")], 53, 20).expect("a terminal");
+        let Some(mut pty) = spawn("/bin/sh", &[], &[("PS1", "$ ")], 53, 20) else {
+            return;
+        };
         pty.resize(40, 10).expect("resizing");
         pty.write(b"stty size\n").expect("typing");
         let seen = wait_for(&pty, "10 40");

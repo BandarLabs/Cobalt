@@ -73,6 +73,8 @@ pub const UPDATE_TASK_VERSION: u8 = 14;
 /// Version with persistent selected grid cells, retained for installed apps.
 pub const SELECTED_GRID_VERSION: u8 = 13;
 mod board;
+pub mod channel;
+pub mod durability;
 mod pencil;
 
 /// Opt-in simulator callback boundary carried in an ordinary debug log frame.

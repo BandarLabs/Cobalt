@@ -667,6 +667,8 @@ mod tests {
         assert!(script.ends_with("exit\n"));
     }
 
+    // The fixture drives the renewal script through /bin/sh.
+    #[cfg(unix)]
     #[test]
     fn shell_renewal_always_writes_a_bounded_lease() {
         let root = std::env::temp_dir().join(format!("cobalt-wake-lease-{}", std::process::id()));

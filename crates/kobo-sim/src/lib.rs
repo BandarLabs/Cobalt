@@ -5,12 +5,15 @@
 use std::fs;
 use std::io::{self, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
+#[cfg(unix)]
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
-use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
+#[cfg(unix)]
 use std::process::Command;
 use std::sync::{Arc, LazyLock, Mutex};
 use std::thread;
+
+use kobo_protocol::channel;
 
 // Panel policy belongs to the runtime, but the simulator compiles the same
 // source so region and waveform decisions cannot drift.
@@ -576,10 +579,10 @@ impl Server {
 #[derive(Debug)]
 pub struct AppServer {
     http: TcpListener,
-    app: UnixListener,
+    app: channel::Listener,
     apps: Arc<Mutex<SimulatedApps>>,
     socket_path: PathBuf,
-    socket_identity: (u64, u64),
+    socket_identity: channel::SocketIdentity,
     manifest: Option<kobo_catalog::App>,
     capture_source: CaptureSource,
     time: clock::Time,
@@ -611,11 +614,16 @@ impl AppServer {
             Err(error) => return Err(error),
         }
         let http = TcpListener::bind(parse_local_address(address)?)?;
-        let app = UnixListener::bind(&socket_path)?;
-        let metadata = match fs::set_permissions(&socket_path, fs::Permissions::from_mode(0o600))
-            .and_then(|()| fs::symlink_metadata(&socket_path))
-        {
-            Ok(metadata) => metadata,
+        // The Unix half tightens the socket to the owner; the Windows address
+        // file inherits the user profile ACL, which is the same account
+        // boundary by the platform's own mechanism.
+        let app = channel::Listener::bind(&socket_path)?;
+        let identity = match (|| {
+            #[cfg(unix)]
+            fs::set_permissions(&socket_path, fs::Permissions::from_mode(0o600))?;
+            app.identity()
+        })() {
+            Ok(identity) => identity,
             Err(error) => {
                 drop(app);
                 let _ = fs::remove_file(&socket_path);
@@ -627,7 +635,7 @@ impl AppServer {
             app,
             apps: Arc::new(Mutex::new(apps)),
             socket_path,
-            socket_identity: (metadata.dev(), metadata.ino()),
+            socket_identity: identity,
             manifest: None,
             capture_source: CaptureSource::default(),
             time,
@@ -705,7 +713,7 @@ impl AppServer {
     /// Returns an error when accepting, handshaking, or creating the protocol
     /// reader fails.
     pub fn accept_app(&self) -> io::Result<AppSession> {
-        let (mut stream, _) = self.app.accept()?;
+        let mut stream = self.app.accept()?;
         self.start_session(&mut stream)
     }
 
@@ -720,7 +728,7 @@ impl AppServer {
     /// reader fails.
     pub fn try_accept_app(&self) -> io::Result<Option<AppSession>> {
         match self.app.accept() {
-            Ok((mut stream, _)) => {
+            Ok(mut stream) => {
                 stream.set_nonblocking(false)?;
                 self.start_session(&mut stream).map(Some)
             }
@@ -729,7 +737,7 @@ impl AppServer {
         }
     }
 
-    fn start_session(&self, stream: &mut UnixStream) -> io::Result<AppSession> {
+    fn start_session(&self, stream: &mut channel::Stream) -> io::Result<AppSession> {
         stream.set_read_timeout(Some(std::time::Duration::from_secs(10)))?;
         let hello = read_protocol_frame(stream)?;
         stream.set_read_timeout(None)?;
@@ -877,8 +885,8 @@ impl AppServer {
 
 impl Drop for AppServer {
     fn drop(&mut self) {
-        if fs::symlink_metadata(&self.socket_path)
-            .is_ok_and(|metadata| (metadata.dev(), metadata.ino()) == self.socket_identity)
+        if channel::socket_identity(&self.socket_path)
+            .is_ok_and(|identity| identity == self.socket_identity)
         {
             let _ = fs::remove_file(&self.socket_path);
         }
@@ -899,21 +907,31 @@ fn validate_socket_parent(socket_path: &Path) -> io::Result<()> {
             "SDK socket parent must be a directory",
         ));
     }
-    if metadata.uid() != current_user_id()? {
-        return Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            "SDK socket parent must be owned by the current user",
-        ));
+    // Ownership and mode checks are Unix answers; std has no stable owner or
+    // permission query on Windows. The parent there lives under the user
+    // profile, whose ACL already scopes it to the owning account, and the
+    // channel module documents the remaining loopback difference.
+    #[cfg(unix)]
+    {
+        if metadata.uid() != current_user_id()? {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "SDK socket parent must be owned by the current user",
+            ));
+        }
+        if metadata.mode() & 0o7777 != 0o700 {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "SDK socket parent must have mode 0700",
+            ));
+        }
     }
-    if metadata.mode() & 0o7777 != 0o700 {
-        return Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            "SDK socket parent must have mode 0700",
-        ));
-    }
+    #[cfg(not(unix))]
+    let _ = metadata;
     Ok(())
 }
 
+#[cfg(unix)]
 fn current_user_id() -> io::Result<u32> {
     let output = Command::new("/usr/bin/id").arg("-u").output()?;
     if !output.status.success() {
@@ -2429,7 +2447,7 @@ mod writer_tests {
     /// and the simulator stopped answering its own HTTP port.
     #[test]
     fn writing_to_an_application_that_is_not_reading_does_not_block_the_writer() {
-        let (ours, theirs) = std::os::unix::net::UnixStream::pair().expect("socket pair");
+        let (ours, theirs) = kobo_protocol::channel::pair().expect("socket pair");
         // Deliberately never read from.
         let writer = AppWriter::spawn_for(ours, kobo_protocol::VERSION);
         let frame = Frame {
@@ -2457,7 +2475,7 @@ mod writer_tests {
 
     #[test]
     fn a_legacy_session_receives_legacy_runtime_events() {
-        let (ours, mut theirs) = std::os::unix::net::UnixStream::pair().expect("socket pair");
+        let (ours, mut theirs) = kobo_protocol::channel::pair().expect("socket pair");
         let writer = AppWriter::spawn_for(ours, kobo_protocol::LEGACY_VERSION);
         let frame = Frame {
             version: kobo_protocol::VERSION,
@@ -2482,14 +2500,14 @@ struct AppWriter {
     /// The lock is only ever held across a queue push, which cannot block on
     /// anything, which is the entire point.
     sender: Mutex<std::sync::mpsc::Sender<Option<Frame>>>,
-    socket: Arc<UnixStream>,
+    socket: Arc<channel::Stream>,
     /// Fixed by Hello for the lifetime of this one-app session.
     version: u8,
     activity: Arc<Mutex<activity::Activity>>,
 }
 
 impl AppWriter {
-    fn spawn_for(stream: UnixStream, version: u8) -> Arc<Self> {
+    fn spawn_for(stream: channel::Stream, version: u8) -> Arc<Self> {
         let (sender, receiver) = std::sync::mpsc::channel::<Option<Frame>>();
         let activity = Arc::new(Mutex::new(activity::Activity::default()));
         let thread_activity = Arc::clone(&activity);
@@ -2721,7 +2739,7 @@ fn simulated_task_error(
     reason = "one exhaustive protocol message dispatcher"
 )]
 fn read_app_messages(
-    mut stream: UnixStream,
+    mut stream: channel::Stream,
     name: &str,
     declared: &kobo_policy::Declared,
     writer: &Arc<AppWriter>,
@@ -3189,11 +3207,11 @@ fn deliver_task_outcomes(
     Ok(())
 }
 
-fn read_protocol_frame(stream: &mut UnixStream) -> io::Result<Frame> {
+fn read_protocol_frame(stream: &mut channel::Stream) -> io::Result<Frame> {
     read_from(stream).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
 }
 
-fn write_protocol_frame(stream: &mut UnixStream, frame: &Frame) -> io::Result<()> {
+fn write_protocol_frame(stream: &mut channel::Stream, frame: &Frame) -> io::Result<()> {
     write_to(stream, frame).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
 }
 
@@ -3886,7 +3904,7 @@ mod tests {
     #[test]
     fn injected_failures_and_capacity_use_runner_delivery_without_duplicate_callbacks() {
         use kobo_protocol::{Task, TaskError, TaskId, TaskOutcome};
-        let (mut peer, socket) = UnixStream::pair().unwrap();
+        let (mut peer, socket) = channel::pair().unwrap();
         peer.set_read_timeout(Some(Duration::from_millis(250)))
             .unwrap();
         let writer = AppWriter::spawn_for(socket, kobo_protocol::VERSION);
@@ -3984,7 +4002,7 @@ mod tests {
     fn disconnect_reaps_session_workers_and_preserves_last_screen() {
         let root = private_temp_dir();
         let server = AppServer::bind("127.0.0.1:0", root.join("app.sock")).unwrap();
-        let mut peer = UnixStream::connect(root.join("app.sock")).unwrap();
+        let mut peer = channel::connect(&root.join("app.sock")).unwrap();
         peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
         write_protocol_frame(
             &mut peer,
@@ -4060,7 +4078,7 @@ mod tests {
     fn transfer_cancellation_reaches_the_app_once_and_new_work_remains_possible() {
         use kobo_protocol::{Task, TaskId, TaskOutcome};
         use std::sync::atomic::Ordering;
-        let (mut peer, socket) = UnixStream::pair().unwrap();
+        let (mut peer, socket) = channel::pair().unwrap();
         peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
         let (started_tx, started_rx) = mpsc::channel();
         let tasks = Arc::new(Mutex::new(
@@ -4170,7 +4188,7 @@ mod tests {
         // taking seconds used to be delivered only when the developer next
         // tapped something. Refusals arrived instantly, which is why nothing
         // noticed: the only tasks the simulator completed were refused ones.
-        let (client, server) = UnixStream::pair().expect("a socket pair");
+        let (client, server) = channel::pair().expect("a socket pair");
         let writer = AppWriter::spawn_for(server, kobo_protocol::VERSION);
         let state = Arc::new(Mutex::new(AppState::default()));
         let tasks = Arc::new(Mutex::new(
@@ -4249,6 +4267,9 @@ mod tests {
             NEXT_PRIVATE_DIR.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir(&root).expect("create private directory");
+        // Windows has no mode bits; the temp directory is already scoped to
+        // the owning account by the profile ACL.
+        #[cfg(unix)]
         fs::set_permissions(&root, fs::Permissions::from_mode(0o700))
             .expect("protect private directory");
         root
@@ -4457,7 +4478,7 @@ mod tests {
     #[test]
     fn storage_full_uses_policy_validation_and_correlated_ipc_replies() {
         use kobo_protocol::{StoreError, StoreRequest, StoreResult};
-        let (mut client, server) = UnixStream::pair().unwrap();
+        let (mut client, server) = channel::pair().unwrap();
         client
             .set_read_timeout(Some(Duration::from_secs(1)))
             .unwrap();
@@ -4642,7 +4663,7 @@ mod tests {
                 kobo_protocol::Task::Sleep { seconds: 30 },
             )
             .unwrap();
-        let (mut client, server) = UnixStream::pair().unwrap();
+        let (mut client, server) = channel::pair().unwrap();
         client
             .set_read_timeout(Some(Duration::from_secs(1)))
             .unwrap();
@@ -4703,7 +4724,7 @@ mod tests {
     #[test]
     fn hardware_controls_update_service_reads_and_only_emit_foreground_cover_edges() {
         use kobo_protocol::{DeviceRequest, DeviceResult};
-        let (mut client, server) = UnixStream::pair().unwrap();
+        let (mut client, server) = channel::pair().unwrap();
         client
             .set_read_timeout(Some(Duration::from_millis(50)))
             .unwrap();
@@ -4795,7 +4816,7 @@ mod tests {
             })
             .unwrap(),
         );
-        let (mut client, server) = UnixStream::pair().unwrap();
+        let (mut client, server) = channel::pair().unwrap();
         client
             .set_read_timeout(Some(Duration::from_millis(50)))
             .unwrap();
@@ -4835,7 +4856,7 @@ mod tests {
 
     #[test]
     fn lifecycle_control_sends_the_real_sdk_event() {
-        let (mut client, server) = UnixStream::pair().expect("socket pair");
+        let (mut client, server) = channel::pair().expect("socket pair");
         let session = AppSession {
             state: Arc::new(Mutex::new(AppState::default())),
             writer: AppWriter::spawn_for(server, kobo_protocol::VERSION),
@@ -4874,7 +4895,7 @@ mod tests {
             .rect_of_action(action)
             .expect("button");
         let physical = physical_rect(orientation, logical);
-        let (client, server) = UnixStream::pair().expect("socket pair");
+        let (client, server) = channel::pair().expect("socket pair");
         drop(client);
         let session = AppSession {
             state: Arc::new(Mutex::new(AppState {
@@ -5042,6 +5063,7 @@ mod tests {
         assert_eq!(&answer, b"HTTP/1.1 200 OK");
     }
 
+    #[cfg(unix)] // ownership and mode validation exist only on Unix
     #[test]
     fn app_server_rejects_non_private_socket_parent() {
         let root = private_temp_dir();
@@ -5058,6 +5080,7 @@ mod tests {
         let root = private_temp_dir();
         let socket_path = root.join("app.sock");
         let server = AppServer::bind("127.0.0.1:0", &socket_path).expect("bind app server");
+        #[cfg(unix)]
         assert_eq!(
             fs::symlink_metadata(&socket_path)
                 .expect("socket metadata")
@@ -5070,7 +5093,7 @@ mod tests {
         let (ready_sender, ready_receiver) = mpsc::channel();
         let app_socket_path = socket_path.clone();
         let app = thread::spawn(move || -> io::Result<ActionId> {
-            let mut stream = UnixStream::connect(&app_socket_path)?;
+            let mut stream = channel::connect(&app_socket_path)?;
             write_protocol_frame(
                 &mut stream,
                 &Frame {

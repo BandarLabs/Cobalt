@@ -772,7 +772,7 @@ fn atomic_file(
         set_file_mode(&temporary, mode)?;
         file.sync_all()?;
         fs::rename(&temporary, &destination)?;
-        fs::File::open(parent)?.sync_all()
+        kobo_protocol::durability::sync_directory(parent)
     })();
     if result.is_err() {
         let _ignored = fs::remove_file(&temporary);
@@ -847,9 +847,7 @@ fn clear_journal(
 }
 
 fn sync_directory(path: &Path) -> Result<(), DeviceError> {
-    fs::File::open(path)
-        .and_then(|directory| directory.sync_all())
-        .map_err(|_| DeviceError::Backend)
+    kobo_protocol::durability::sync_directory(path).map_err(|_| DeviceError::Backend)
 }
 
 fn sync_tree(path: &Path) -> Result<(), DeviceError> {
@@ -858,9 +856,7 @@ fn sync_tree(path: &Path) -> Result<(), DeviceError> {
         return Err(DeviceError::Backend);
     }
     if metadata.is_file() {
-        return fs::File::open(path)
-            .and_then(|file| file.sync_all())
-            .map_err(|_| DeviceError::Backend);
+        return kobo_protocol::durability::sync_file(path).map_err(|_| DeviceError::Backend);
     }
     for entry in fs::read_dir(path).map_err(|_| DeviceError::Backend)? {
         sync_tree(&entry.map_err(|_| DeviceError::Backend)?.path())?;
@@ -1135,6 +1131,7 @@ mod tests {
         let _ignored = fs::remove_dir_all(&adds);
     }
 
+    #[cfg(unix)]
     #[test]
     fn incomplete_launch_chain_is_rejected_before_owner_transaction() {
         let cases = [
@@ -1465,6 +1462,11 @@ mod tests {
         Ok(())
     }
 
+    /// Runs the launch chain for real. The chain being exercised is the
+    /// device's sh script trio (start.sh -> kobod -> kobo-launcher), so the
+    /// tests built on it are Unix-only; on Windows the candidate selection
+    /// and recovery logic above the scripts is what runs.
+    #[cfg(unix)]
     fn assert_launchable(adds: &std::path::Path) {
         let launched = adds.join("launched-release");
         let status = Command::new("/bin/sh")
@@ -1484,6 +1486,7 @@ mod tests {
         fs::remove_file(launched).expect("remove launch marker");
     }
 
+    #[cfg(unix)]
     #[test]
     fn bootstrap_quarantines_unusable_current_and_promotes_exact_candidate() {
         let adds = scratch("quarantine-current");
@@ -1508,6 +1511,7 @@ mod tests {
         let _ignored = fs::remove_dir_all(adds);
     }
 
+    #[cfg(unix)]
     #[test]
     fn bootstrap_finishes_promotion_after_crash_following_quarantine() {
         let adds = scratch("quarantine-interruption");
@@ -1530,6 +1534,7 @@ mod tests {
         let _ignored = fs::remove_dir_all(adds);
     }
 
+    #[cfg(unix)]
     #[test]
     fn bootstrap_ignores_incomplete_candidate_and_selects_complete_one() {
         let adds = scratch("incomplete-candidate");
@@ -1548,6 +1553,7 @@ mod tests {
         let _ignored = fs::remove_dir_all(adds);
     }
 
+    #[cfg(unix)]
     #[test]
     fn bootstrap_fails_closed_without_a_complete_candidate() {
         let adds = scratch("no-candidate");
@@ -1571,6 +1577,7 @@ mod tests {
         let _ignored = fs::remove_dir_all(adds);
     }
 
+    #[cfg(unix)]
     #[test]
     fn old_quarantines_never_block_candidate_and_current_owner_data_is_restored() {
         let adds = scratch("bounded-quarantine");
@@ -1636,6 +1643,7 @@ mod tests {
         assert!(!adds.join(JOURNAL).exists(), "journal was not cleared");
     }
 
+    #[cfg(unix)]
     #[test]
     fn stable_bootstrap_launches_and_startup_recovers_every_forward_boundary() {
         let trace_root = transaction_fixture("forward-trace");
@@ -1679,6 +1687,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     #[test]
     fn stable_bootstrap_launches_and_startup_recovers_every_rollback_boundary() {
         let trace_root = transaction_fixture("rollback-trace");

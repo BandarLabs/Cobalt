@@ -127,6 +127,7 @@ pub(crate) fn decode(bytes: &str) -> Option<Record> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
 
     #[test]
@@ -260,18 +261,21 @@ mod tests {
         let record = decode(&std::fs::read_to_string(&file).unwrap()).unwrap();
         assert_eq!(record.server, "https://first.example/library");
         assert_eq!(record.value, "reader:  password  ");
-        assert_eq!(
-            std::fs::metadata(&file).unwrap().permissions().mode() & 0o777,
-            0o600
-        );
-        assert_eq!(
-            std::fs::metadata(file.parent().unwrap())
-                .unwrap()
-                .permissions()
-                .mode()
-                & 0o777,
-            0o700
-        );
+        #[cfg(unix)]
+        {
+            assert_eq!(
+                std::fs::metadata(&file).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+            assert_eq!(
+                std::fs::metadata(file.parent().unwrap())
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o700
+            );
+        }
         install(
             &root,
             "panels",
