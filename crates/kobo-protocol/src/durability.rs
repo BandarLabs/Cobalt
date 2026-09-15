@@ -16,12 +16,16 @@ use std::io;
 use std::path::Path;
 
 /// Opens a directory for flushing.
+///
+/// `FlushFileBuffers` refuses a read-only directory handle with
+/// `ERROR_ACCESS_DENIED`, so the handle asks for write access as well.
 #[cfg(windows)]
 fn open_directory(path: &Path) -> io::Result<fs::File> {
     use std::os::windows::fs::OpenOptionsExt as _;
     const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
     fs::OpenOptions::new()
         .read(true)
+        .write(true)
         .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
         .open(path)
 }
