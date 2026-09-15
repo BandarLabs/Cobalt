@@ -1331,11 +1331,14 @@ mod tests {
     };
 
     fn root() -> PathBuf {
-        let root = std::env::temp_dir().join(format!(
-            "cobalt-app-store-{}-{}",
-            std::process::id(),
-            std::thread::current().name().unwrap_or("test")
-        ));
+        // The test name reads well in a path, but its `::` separators are
+        // illegal in Windows file names; dashes keep it readable everywhere.
+        let name = std::thread::current()
+            .name()
+            .unwrap_or("test")
+            .replace(':', "-");
+        let root =
+            std::env::temp_dir().join(format!("cobalt-app-store-{}-{name}", std::process::id()));
         let _ignored = fs::remove_dir_all(&root);
         root
     }
