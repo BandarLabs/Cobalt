@@ -1323,6 +1323,7 @@ mod tests {
         let left = kobo_ui::ensure_way_back(bare, &chrome, "Cobalt");
         assert!(left.top_bar.is_none());
     }
+    #[cfg(unix)]
     use super::validate_simulation_paths;
     use std::fs;
     #[cfg(unix)]
