@@ -2981,7 +2981,8 @@ mod pty_tests {
     use std::time::{Duration, Instant};
 
     /// qemu-user has no real devpts, so `posix_openpt` intermittently answers
-    /// `EPERM` there. Give the emulator a few attempts, then skip by name with
+    /// `EPERM` there, and the slave node can be missing (`ENOENT`) in the same
+    /// breath. Give the emulator a few attempts, then skip by name with
     /// the reason if it keeps refusing: `KOBO_QEMU_EMULATED` is set only by the
     /// device-emulated CI job, and these tests run for real in the host job.
     fn spawn(
@@ -2996,11 +2997,14 @@ mod pty_tests {
                 Ok(pty) => return Some(pty),
                 // qemu-user's devpts is unreliable beyond the open itself:
                 // ptsname can also come back as a NUL-filled buffer, which
-                // surfaces here as an invalid file name.
+                // surfaces here as an invalid file name, and the slave node
+                // open can race devpts and answer NotFound.
                 Err(error)
                     if matches!(
                         error.kind(),
-                        std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::InvalidInput
+                        std::io::ErrorKind::PermissionDenied
+                            | std::io::ErrorKind::InvalidInput
+                            | std::io::ErrorKind::NotFound
                     ) && std::env::var_os("KOBO_QEMU_EMULATED").is_some() =>
                 {
                     std::thread::sleep(Duration::from_millis(200));
@@ -3009,7 +3013,7 @@ mod pty_tests {
             }
         }
         eprintln!(
-            "skipped under qemu-user: posix_openpt keeps answering EPERM (no emulated devpts)"
+            "skipped under qemu-user: the emulated devpts keeps refusing a terminal (EPERM/ENOENT)"
         );
         None
     }
