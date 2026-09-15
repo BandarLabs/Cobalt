@@ -3,12 +3,18 @@
 //! Query operations are always available. Mutating panel requests are compiled
 //! only with the explicitly opt-in `device-write` feature.
 
-use std::ffi::{c_int, c_ulong, CString};
+use std::ffi::c_int;
+#[cfg(unix)]
+use std::ffi::{c_ulong, CString};
 use std::fs::File;
 use std::io;
+#[cfg(unix)]
 use std::mem::MaybeUninit;
+#[cfg(unix)]
 use std::os::fd::AsRawFd;
+#[cfg(unix)]
 use std::os::unix::ffi::OsStrExt;
+#[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 
@@ -21,11 +27,30 @@ use std::path::Path;
 ///
 /// Returns the operating system error when the path cannot be opened or its
 /// final component is a symbolic link.
+#[cfg(unix)]
 pub fn open_read_nofollow(path: &Path) -> io::Result<File> {
     File::options()
         .read(true)
         .custom_flags(libc::O_NOFOLLOW)
         .open(path)
+}
+
+/// Windows has no open-time equivalent of `O_NOFOLLOW`, so this checks the
+/// final component first and then opens it. That is a check-then-open pair,
+/// not the kernel's atomic refusal: a symlink swapped in between the two calls
+/// is still followed. The protection matters on the device, where the stock
+/// reader's files sit next to ours; a Windows host running the CLI against a
+/// mounted device accepts the smaller window rather than faking the atomic
+/// guarantee.
+#[cfg(windows)]
+pub fn open_read_nofollow(path: &Path) -> io::Result<File> {
+    if std::fs::symlink_metadata(path)?.file_type().is_symlink() {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "final path component is a symbolic link",
+        ));
+    }
+    File::options().read(true).open(path)
 }
 
 /// How many bytes are still free on the filesystem `path` lives on.
@@ -42,6 +67,7 @@ pub fn open_read_nofollow(path: &Path) -> io::Result<File> {
 /// as "do not know" rather than as "no room": refusing every write on a device
 /// whose `statvfs` is unusual would be worse than the problem being avoided.
 #[must_use]
+#[cfg(unix)]
 pub fn free_space(path: &Path) -> Option<u64> {
     let path = CString::new(path.as_os_str().as_bytes()).ok()?;
     let mut stats = MaybeUninit::<libc::statvfs>::zeroed();
@@ -65,6 +91,42 @@ pub fn free_space(path: &Path) -> Option<u64> {
     #[allow(clippy::unnecessary_fallible_conversions, clippy::useless_conversion)]
     let size = u64::try_from(stats.f_frsize).ok()?;
     blocks.checked_mul(size)
+}
+
+// `GetDiskFreeSpaceExW` answers the same question as `statvfs` and its
+// caller-available byte count matches `f_bavail` exactly: the reserve only
+// privileged accounts may use is already excluded.
+#[cfg(windows)]
+#[link(name = "kernel32")]
+unsafe extern "system" {
+    fn GetDiskFreeSpaceExW(
+        directory: *const u16,
+        free_bytes_available_to_caller: *mut u64,
+        total_number_of_bytes: *mut u64,
+        total_number_of_free_bytes: *mut u64,
+    ) -> i32;
+}
+
+/// The Windows half of [`free_space`]. `None` still means "do not know".
+#[must_use]
+#[cfg(windows)]
+pub fn free_space(path: &Path) -> Option<u64> {
+    use std::os::windows::ffi::OsStrExt;
+    let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+    let mut available: u64 = 0;
+    // SAFETY: `wide` is a NUL-terminated UTF-16 string that outlives the call.
+    // The output pointer names a live local of the ULARGE_INTEGER size, and a
+    // union of two u32 halves is written compatibly through it. The total
+    // counts are not asked for.
+    let ok = unsafe {
+        GetDiskFreeSpaceExW(
+            wide.as_ptr(),
+            &mut available,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        )
+    };
+    (ok != 0).then_some(available)
 }
 
 const IOC_NRBITS: u32 = 8;
@@ -99,14 +161,53 @@ pub const fn iowr(kind: u8, number: u8, size: u32) -> u64 {
     ioc(IOC_READ | IOC_WRITE, kind, number, size)
 }
 
+#[cfg(unix)]
 unsafe extern "C" {
     fn ioctl(fd: c_int, request: c_ulong, ...) -> c_int;
 }
 
+#[cfg(unix)]
 fn ioctl_request(request: u64) -> c_ulong {
     c_ulong::try_from(request).unwrap_or(c_ulong::MAX)
 }
 
+/// Every ioctl this crate issues names a Linux or Kobo kernel interface:
+/// framebuffer geometry, input axes, panel refreshes. A Windows host has no
+/// such interface, so the honest answer is an explicit unsupported error
+/// rather than a pretend result.
+#[cfg(windows)]
+fn unsupported_ioctl(_request: u64) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::Unsupported,
+        "ioctl requests name Linux/Kobo kernel interfaces and have no Windows equivalent",
+    )
+}
+
+#[cfg(windows)]
+fn query_ioctl<T>(file: &File, request: u64) -> io::Result<T> {
+    let _ = file;
+    Err(unsupported_ioctl(request))
+}
+
+#[cfg(windows)]
+fn query_ioctl_bytes(file: &File, request: u64, bytes: &mut [u8]) -> io::Result<()> {
+    let _ = (file, bytes);
+    Err(unsupported_ioctl(request))
+}
+
+#[cfg(all(windows, feature = "device-write"))]
+fn mutating_ioctl<T>(file: &File, request: u64, value: &mut T) -> io::Result<()> {
+    let _ = (file, value);
+    Err(unsupported_ioctl(request))
+}
+
+#[cfg(all(windows, feature = "device-write"))]
+fn value_ioctl(file: &File, request: u64, value: c_int) -> io::Result<()> {
+    let _ = (file, value);
+    Err(unsupported_ioctl(request))
+}
+
+#[cfg(unix)]
 fn query_ioctl<T>(file: &File, request: u64) -> io::Result<T> {
     let mut value = MaybeUninit::<T>::zeroed();
     // SAFETY: request is a query ioctl whose kernel ABI writes exactly one T.
@@ -125,6 +226,7 @@ fn query_ioctl<T>(file: &File, request: u64) -> io::Result<T> {
     }
 }
 
+#[cfg(unix)]
 fn query_ioctl_bytes(file: &File, request: u64, bytes: &mut [u8]) -> io::Result<()> {
     // SAFETY: bytes is a writable allocation of the size encoded in request.
     let result = unsafe {
@@ -141,7 +243,7 @@ fn query_ioctl_bytes(file: &File, request: u64, bytes: &mut [u8]) -> io::Result<
     }
 }
 
-#[cfg(feature = "device-write")]
+#[cfg(all(unix, feature = "device-write"))]
 fn mutating_ioctl<T>(file: &File, request: u64, value: &mut T) -> io::Result<()> {
     // SAFETY: callers supply the vendor request matching T; this is isolated
     // behind the non-default device-write feature.
@@ -162,7 +264,7 @@ fn mutating_ioctl<T>(file: &File, request: u64, value: &mut T) -> io::Result<()>
 /// Issues an ioctl whose argument is the integer itself rather than a pointer
 /// to it. `EVIOCGRAB` is the only such request we use, and passing a pointer
 /// instead would have the kernel interpret an address as a boolean.
-#[cfg(feature = "device-write")]
+#[cfg(all(unix, feature = "device-write"))]
 fn value_ioctl(file: &File, request: u64, value: c_int) -> io::Result<()> {
     // SAFETY: this request takes its argument by value; no memory is read
     // through it.
@@ -181,7 +283,7 @@ fn value_ioctl(file: &File, request: u64, value: c_int) -> io::Result<()> {
 /// it is the only place we act on a process we do not own. Callers must verify
 /// the target's identity immediately before signalling, because process ids are
 /// reused; nothing here does that for them.
-#[cfg(feature = "device-write")]
+#[cfg(all(unix, feature = "device-write"))]
 pub mod process {
     use super::{c_int, io};
 
@@ -216,6 +318,29 @@ pub mod process {
     }
 }
 
+/// Signalling a process this program did not create is a `kill(2)` shaped
+/// operation with no honest Windows equivalent (`TerminateProcess` cannot
+/// deliver `SIGTERM`/`SIGCONT` semantics), so the device-write-only entry
+/// point fails explicitly.
+#[cfg(all(windows, feature = "device-write"))]
+pub mod process {
+    use super::{c_int, io};
+
+    pub const SIGTERM: c_int = 15;
+    pub const SIGKILL: c_int = 9;
+    pub const SIGCONT: c_int = 18;
+
+    /// Always fails on Windows: POSIX signal delivery to an arbitrary process
+    /// has no equivalent.
+    pub fn signal(pid: c_int, signal_number: c_int) -> io::Result<()> {
+        let _ = (pid, signal_number);
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "POSIX signals to another process have no Windows equivalent",
+        ))
+    }
+}
+
 /// Noticing that this process has been asked to stop.
 ///
 /// A panel session owns the display, the touch panel, the stock reader and the
@@ -245,14 +370,48 @@ pub mod stop {
     const NONE: i32 = 0;
     static REQUESTED: AtomicI32 = AtomicI32::new(NONE);
 
+    #[cfg(unix)]
     unsafe extern "C" {
         fn signal(number: c_int, handler: usize) -> usize;
     }
 
+    #[cfg(unix)]
     const SIG_ERR: usize = usize::MAX;
 
+    #[cfg(unix)]
     extern "C" fn record(number: c_int) {
         REQUESTED.store(number, Ordering::Relaxed);
+    }
+
+    // Windows console processes receive termination requests as console
+    // control events rather than signals. They are mapped onto the Unix
+    // numbers this module reports so callers keep one code path:
+    // Ctrl-C arrives as `SIGINT`, a closed console window as `SIGHUP`, and
+    // break/logoff/shutdown as `SIGTERM`.
+    #[cfg(windows)]
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn SetConsoleCtrlHandler(
+            handler: Option<extern "system" fn(event: u32) -> i32>,
+            add: i32,
+        ) -> i32;
+    }
+
+    #[cfg(windows)]
+    extern "system" fn console_record(event: u32) -> i32 {
+        const CTRL_C: u32 = 0;
+        const CTRL_BREAK: u32 = 1;
+        const CTRL_CLOSE: u32 = 2;
+        const CTRL_LOGOFF: u32 = 5;
+        const CTRL_SHUTDOWN: u32 = 6;
+        let number = match event {
+            CTRL_C => SIGINT,
+            CTRL_CLOSE => SIGHUP,
+            CTRL_BREAK | CTRL_LOGOFF | CTRL_SHUTDOWN => SIGTERM,
+            _ => return 0,
+        };
+        REQUESTED.store(number, Ordering::Relaxed);
+        1
     }
 
     /// Asks the kernel to route termination signals here instead of killing
@@ -264,12 +423,22 @@ pub mod stop {
     /// should carry on regardless: without a handler the process dies the way
     /// it did before, which the recovery watchdog still covers.
     pub fn catch_requests() -> io::Result<()> {
+        #[cfg(unix)]
         for number in CAUGHT {
             // SAFETY: `record` is an `extern "C"` function of the right
             // signature that performs one relaxed atomic store, which is
             // async-signal-safe. The kernel keeps the handler installed.
             let previous = unsafe { signal(number, record as *const () as usize) };
             if previous == SIG_ERR {
+                return Err(io::Error::last_os_error());
+            }
+        }
+        #[cfg(windows)]
+        {
+            // SAFETY: `console_record` has the documented PHANDLER_ROUTINE
+            // shape and performs one relaxed atomic store, which is safe in a
+            // console control callback. The handler stays installed.
+            if unsafe { SetConsoleCtrlHandler(Some(console_record), 1) } == 0 {
                 return Err(io::Error::last_os_error());
             }
         }
@@ -859,6 +1028,7 @@ pub mod sandbox {
     use std::io;
     #[cfg(target_os = "linux")]
     use std::os::unix::fs::MetadataExt;
+    #[cfg(unix)]
     use std::os::unix::process::CommandExt;
     use std::path::Path;
     #[cfg(all(target_os = "linux", target_arch = "arm"))]
@@ -939,10 +1109,19 @@ pub mod sandbox {
             unsafe {
                 command.pre_exec(move || self.enter());
             }
-            #[cfg(not(target_os = "linux"))]
+            #[cfg(all(unix, not(target_os = "linux")))]
             {
                 let _ = self;
                 command.process_group(0);
+            }
+            #[cfg(windows)]
+            {
+                // There is no fork/exec boundary to hook on Windows, so the
+                // sandbox transition cannot run. The caller treats the false
+                // return as "no sandbox" and spawns unsandboxed instead, which
+                // is the honest answer rather than a pretend boundary.
+                let _ = &self;
+                let _ = command;
             }
             #[cfg(target_os = "linux")]
             {
@@ -1724,6 +1903,7 @@ pub mod process_group {
     #[cfg(target_os = "linux")]
     use std::fs;
     use std::io;
+    #[cfg(unix)]
     use std::os::unix::process::CommandExt;
     use std::process::Command;
 
@@ -1731,8 +1911,19 @@ pub mod process_group {
     pub const SIGKILL: i32 = 9;
 
     /// Makes `command` the leader of a new process group before exec.
+    ///
+    /// On Windows there is no POSIX process group; `CREATE_NEW_PROCESS_GROUP`
+    //  is the closest kernel concept and only matters to console CTRL event
+    //  routing, which this crate does not use. Group signalling stays
+    //  unsupported there rather than pretending the mapping is equivalent.
     pub fn configure(command: &mut Command) {
+        #[cfg(unix)]
         command.process_group(0);
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt as _;
+            command.creation_flags(0x0000_0200); // CREATE_NEW_PROCESS_GROUP
+        }
     }
 
     /// Sends `signal` to every process in the group whose id is `leader`.
@@ -1742,14 +1933,29 @@ pub mod process_group {
     /// Returns an error when the process identifier cannot be represented by
     /// the platform API or the signal cannot be delivered.
     pub fn signal(leader: u32, signal: i32) -> io::Result<()> {
-        let leader = i32::try_from(leader)
-            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "process id is too large"))?;
-        // SAFETY: a negative pid is the documented `kill(2)` process-group
-        // form. The caller created this group and supplies its leader.
-        if unsafe { libc::kill(-leader, signal) } < 0 {
-            Err(io::Error::last_os_error())
-        } else {
-            Ok(())
+        #[cfg(unix)]
+        {
+            let leader = i32::try_from(leader).map_err(|_| {
+                io::Error::new(io::ErrorKind::InvalidInput, "process id is too large")
+            })?;
+            // SAFETY: a negative pid is the documented `kill(2)` process-group
+            // form. The caller created this group and supplies its leader.
+            if unsafe { libc::kill(-leader, signal) } < 0 {
+                Err(io::Error::last_os_error())
+            } else {
+                Ok(())
+            }
+        }
+        #[cfg(windows)]
+        {
+            // GenerateConsoleCtrlEvent can reach a console process group, but
+            // it delivers CTRL events, not termination guarantees; callers use
+            // this for SIGKILL-grade cleanup, so mapping would fake parity.
+            let _ = (leader, signal);
+            Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "POSIX process-group signalling has no Windows equivalent",
+            ))
         }
     }
 
@@ -1802,14 +2008,20 @@ pub mod process_group {
                 signal(leader, signal_number)
             }
         }
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(all(unix, not(target_os = "linux")))]
         {
+            signal(leader, signal_number)
+        }
+        #[cfg(windows)]
+        {
+            // The group signal already answers unsupported on Windows; a
+            // session-wide sweep has no wider meaning to fall back to.
             signal(leader, signal_number)
         }
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod process_group_tests {
     use std::process::Command;
     use std::thread;
@@ -1851,6 +2063,7 @@ mod process_group_tests {
 /// `rustup target add`, and it forks behind the caller's back. The parts it is
 /// made of, `posix_openpt` through `TIOCSCTTY`, are all in plain libc on both
 /// the device and a development host.
+#[cfg(unix)]
 pub mod pty {
     use std::ffi::{c_char, c_int, c_ulong, c_void, CStr};
     use std::fs::File;
@@ -2154,7 +2367,91 @@ pub mod pty {
     }
 }
 
-#[cfg(test)]
+/// A pseudo-terminal on Windows would be a ConPTY pair, a different kernel
+/// object with its own creation dance (`CreatePseudoConsole`,
+/// `UpdateProcThreadAttribute`, pipes both ways). That port has not been done
+/// or runtime-verified, so every entry point here fails loudly instead of
+/// pretending a terminal exists.
+#[cfg(windows)]
+pub mod pty {
+    use std::io;
+    use std::sync::Arc;
+    use std::sync::mpsc::Receiver;
+
+    /// Something to call when the program has printed. Same shape as Unix.
+    pub type Wake = Arc<dyn Fn() + Send + Sync>;
+
+    /// UNVERIFIED on Windows: no instance can be created, because
+    /// [`Pty::spawn`] and [`Pty::spawn_with_wake`] always return an explicit
+    /// unsupported error. The type exists so callers compile against one API.
+    pub struct Pty {
+        output: Receiver<Vec<u8>>,
+    }
+
+    fn unsupported() -> io::Error {
+        io::Error::new(
+            io::ErrorKind::Unsupported,
+            "pseudo-terminals are not implemented on Windows yet (ConPTY port pending and unverified)",
+        )
+    }
+
+    impl Pty {
+        /// Always fails on Windows: no pseudo-terminal implementation exists.
+        pub fn spawn(
+            program: &str,
+            arguments: &[&str],
+            environment: &[(&str, &str)],
+            columns: u16,
+            rows: u16,
+        ) -> io::Result<Self> {
+            let _ = (program, arguments, environment, columns, rows);
+            Err(unsupported())
+        }
+
+        /// Always fails on Windows: no pseudo-terminal implementation exists.
+        pub fn spawn_with_wake(
+            program: &str,
+            arguments: &[&str],
+            environment: &[(&str, &str)],
+            columns: u16,
+            rows: u16,
+            wake: Option<Wake>,
+        ) -> io::Result<Self> {
+            let _ = (program, arguments, environment, columns, rows, wake);
+            Err(unsupported())
+        }
+
+        /// The output channel of a running terminal. Unreachable in practice:
+        /// no `Pty` can be constructed on Windows.
+        pub const fn output(&self) -> &Receiver<Vec<u8>> {
+            &self.output
+        }
+
+        /// Always fails on Windows.
+        pub fn write(&mut self, bytes: &[u8]) -> io::Result<()> {
+            let _ = bytes;
+            Err(unsupported())
+        }
+
+        /// Always fails on Windows.
+        pub fn resize(&self, columns: u16, rows: u16) -> io::Result<()> {
+            let _ = (columns, rows);
+            Err(unsupported())
+        }
+
+        /// Always fails on Windows.
+        pub fn finished(&mut self) -> io::Result<Option<i32>> {
+            Err(unsupported())
+        }
+
+        /// Always fails on Windows.
+        pub fn close(&mut self) -> io::Result<()> {
+            Err(unsupported())
+        }
+    }
+}
+
+#[cfg(all(test, unix))]
 mod pty_tests {
     use super::pty::Pty;
     use std::time::{Duration, Instant};
