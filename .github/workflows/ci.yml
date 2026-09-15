@@ -192,8 +192,11 @@ jobs:
               continue
             fi
             echo "== $bin --help =="
-            qemu-arm "$artifact" --help
-            status=$?
+            # An application error exit (a usage answer is typically 1) means
+            # the binary ran; only exec-level failure counts. `|| status=$?`
+            # keeps the step's -e shell from aborting on that expected exit.
+            status=0
+            qemu-arm "$artifact" --help || status=$?
             if [ "$status" -ge 126 ]; then
               echo "$bin did not execute under qemu-arm (exit $status)" >&2
               failed=true
