@@ -194,6 +194,13 @@ jobs:
           set -o pipefail
           release_tag="$(node tools/app-catalog-channel.mjs)"
           echo "Checking app versions against the $release_tag channel."
+          # Forks publish no app-catalog channel, so the gate's base release
+          # does not exist there; nothing can be compared and the gate skips.
+          # Upstream always has the release and stays enforced.
+          if ! gh release view "$release_tag" >/dev/null 2>&1; then
+            echo "No $release_tag release on this repository; skipping the app-version gate."
+            exit 0
+          fi
           mkdir -p published-state
           gh release download "$release_tag" \
             --dir published-state \
