@@ -380,7 +380,7 @@ mod tests {
 
     /// stty is a Unix program with no stock cmd counterpart that prints the
     /// grid back, so this is exercised on Unix only; on Windows the resize
-    /// path itself is what ConPTY reports to the hosted program.
+    /// path itself is what `ConPTY` reports to the hosted program.
     #[cfg(unix)]
     #[test]
     fn the_program_is_told_the_grid_the_panel_actually_has() {
