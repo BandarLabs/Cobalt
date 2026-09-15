@@ -724,6 +724,8 @@ pub const LIBRA_COLOUR_390_446: DeviceProfile = DeviceProfile {
     id: "libra-colour-390-4.46.23836",
     firmware_versions: &["4.46.23836"],
     write_ready: true,
+    leftover_radio_daemons: &["/bin/wpa_supplicant"],
+    reap_nickel_supplicant: true,
     ..LIBRA_COLOUR_390
 };
 
@@ -2323,7 +2325,7 @@ mod tests {
                 ("elipsa-2e-389", &[][..]),
                 ("libra-2-388", &["/bin/wpa_supplicant"][..]),
                 ("libra-colour-390", &[][..]),
-                ("libra-colour-390-4.46.23836", &[][..]),
+                ("libra-colour-390-4.46.23836", &["/bin/wpa_supplicant"][..]),
                 ("libra-h2o-384", &[][..]),
             ]
         );
@@ -2345,7 +2347,7 @@ mod tests {
                 ("elipsa-2e-389", false),
                 ("libra-2-388", true),
                 ("libra-colour-390", false),
-                ("libra-colour-390-4.46.23836", false),
+                ("libra-colour-390-4.46.23836", true),
                 ("libra-h2o-384", false),
             ]
         );
