@@ -491,6 +491,7 @@ pub fn is_launch_bootstrap(member: &Member) -> bool {
     member.path == LAUNCH_BOOTSTRAP
 }
 
+#[cfg(unix)]
 fn set_mode(path: &Path, mode: u32) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
     let mut permissions = fs::metadata(path)
@@ -498,6 +499,13 @@ fn set_mode(path: &Path, mode: u32) -> Result<(), String> {
         .permissions();
     permissions.set_mode(mode);
     fs::set_permissions(path, permissions).map_err(|error| format!("{}: {error}", path.display()))
+}
+
+/// Windows has no mode bits; packaged files keep the directory's default
+/// ACLs, which match the account boundary mode bits express on Unix.
+#[cfg(not(unix))]
+fn set_mode(_path: &Path, _mode: u32) -> Result<(), String> {
+    Ok(())
 }
 
 #[cfg(test)]

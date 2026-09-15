@@ -2,7 +2,10 @@
 use kobo_sdk::exports::{Offer, MAX_OFFER_BYTES, OFFER_KEY};
 use std::fs;
 use std::io::{Read, Write};
-use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+#[cfg(unix)]
+use std::os::unix::fs::MetadataExt;
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
@@ -65,7 +68,12 @@ fn bounded_file(path: &Path, maximum: usize) -> Result<Vec<u8>, String> {
     }
     let file = fs::File::open(path).map_err(|error| error.to_string())?;
     let opened = file.metadata().map_err(|error| error.to_string())?;
-    if before.dev() != opened.dev() || before.ino() != opened.ino() {
+    // The guard catches the file being swapped between the check and the
+    // open. Windows std offers no stable file index, so size plus
+    // modification time stand in there; a same-size rewrite within one
+    // timestamp tick is not detected on Windows.
+    let same = same_file(&before, &opened);
+    if !same {
         return Err("The export file changed. Try again.".into());
     }
     let mut bytes = Vec::new();
@@ -183,7 +191,12 @@ fn publish(folder: &Path, app: &str, offer: &Offer, bytes: &[u8]) -> Result<Path
         std::process::id(),
         offer.digest
     ));
-    let mut file = fs::OpenOptions::new().create_new(true).write(true).mode(0o600).open(&temporary)
+    #[allow(unused_mut)] // Windows has no mode bits to set.
+    let mut options = fs::OpenOptions::new();
+    options.create_new(true).write(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+    let mut file = options.open(&temporary)
         .map_err(|_| "A previous transfer may still be running. Choose another receiving folder or remove its unfinished .part file after checking it.")?;
     let result = (|| {
         file.write_all(bytes)
@@ -273,8 +286,11 @@ mod tests {
         let _ignored = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).unwrap();
         fs::write(root.join("original"), b"owner data").unwrap();
-        std::os::unix::fs::symlink(root.join("original"), root.join("link")).unwrap();
-        assert!(bounded_file(&root.join("link"), 100).is_err());
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(root.join("original"), root.join("link")).unwrap();
+            assert!(bounded_file(&root.join("link"), 100).is_err());
+        }
         assert!(bounded_file(&root.join("original"), 3).is_err());
         fs::remove_dir_all(root).unwrap();
     }
@@ -311,4 +327,16 @@ mod tests {
         assert!(script.contains("/state/todo/cobalt-export"));
         assert!(!script.contains("rm "));
     }
+}
+
+#[cfg(unix)]
+fn same_file(before: &fs::Metadata, opened: &fs::Metadata) -> bool {
+    before.dev() == opened.dev() && before.ino() == opened.ino()
+}
+
+/// See the call site: Windows substitutes size and modification time for the
+/// device/inode pair, a weaker same-file guard.
+#[cfg(not(unix))]
+fn same_file(before: &fs::Metadata, opened: &fs::Metadata) -> bool {
+    before.len() == opened.len() && before.modified().ok() == opened.modified().ok()
 }

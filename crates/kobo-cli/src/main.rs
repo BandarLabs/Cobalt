@@ -4,6 +4,7 @@ use std::ffi::OsStr;
 use std::fmt::Write as _;
 use std::fs;
 use std::io::{IsTerminal, Read, Write};
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitCode, ExitStatus, Stdio};
@@ -2585,6 +2586,9 @@ impl DevSessionGuard {
             socket: root.join("app.sock"),
             root,
         };
+        // Windows has no mode bits; the temp directory inherits the user
+        // profile ACL, which is the same account boundary.
+        #[cfg(unix)]
         if let Err(error) = fs::set_permissions(&session.root, fs::Permissions::from_mode(0o700)) {
             let message = format!("protect {}: {error}", session.root.display());
             drop(session);
@@ -6007,6 +6011,7 @@ impl SimulationGuard {
             daemon: None,
             daemon_frame_temporary: None,
         };
+        #[cfg(unix)]
         if let Err(error) = fs::set_permissions(&guard.root, fs::Permissions::from_mode(0o700)) {
             let message = format!("protect {}: {error}", guard.root.display());
             drop(guard);
@@ -7109,16 +7114,19 @@ fn secret_install_script(name: &str, value: &str) -> String {
 }
 
 fn publish_secret(path: &Path, value: &str) -> Result<(), String> {
-    use std::os::unix::fs::OpenOptionsExt;
+    #[cfg(unix)]
+    use std::os::unix::fs::OpenOptionsExt as _;
     let name = path
         .file_name()
         .and_then(|name| name.to_str())
         .ok_or("Invalid credential name")?;
     let partial = path.with_file_name(format!(".{name}.writing"));
-    let mut file = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
+    #[allow(unused_mut)] // Windows has no mode bits to set.
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+    let mut file = options
         .open(&partial)
         .map_err(|error| format!("Prepare credential (previous value unchanged): {error}"))?;
     let result = writeln!(file, "{value}")
@@ -8189,6 +8197,8 @@ mod tests {
     use std::process::Command;
     use std::time::Duration;
 
+    // The fixture drives /bin/sh and mode bits, so it is Unix-only.
+    #[cfg(unix)]
     #[test]
     fn secret_remote_publish_preserves_old_value_on_failed_or_occupied_stage() {
         use std::os::unix::fs::PermissionsExt;

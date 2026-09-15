@@ -1,4 +1,6 @@
-use command_group::{CommandGroup, GroupChild, Signal, UnixChildExt};
+use command_group::{CommandGroup, GroupChild};
+#[cfg(unix)]
+use command_group::{Signal, UnixChildExt};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -494,6 +496,7 @@ fn append_tail(tail: &mut Vec<u8>, bytes: &[u8]) {
     tail.extend_from_slice(bytes);
 }
 
+#[cfg(unix)]
 fn terminate(child: &mut GroupChild, grace: Duration) {
     let _ = child.signal(Signal::SIGTERM);
     let deadline = Instant::now() + grace;
@@ -503,6 +506,13 @@ fn terminate(child: &mut GroupChild, grace: Duration) {
         }
         std::thread::sleep(Duration::from_millis(25));
     }
+    let _ = child.kill();
+}
+
+/// Windows has no SIGTERM; command-group's kill ends the whole job-object
+/// tree, which is the same hard stop minus the graceful phase.
+#[cfg(not(unix))]
+fn terminate(child: &mut GroupChild, _grace: Duration) {
     let _ = child.kill();
 }
 

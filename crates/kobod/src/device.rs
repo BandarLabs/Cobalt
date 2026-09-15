@@ -47,6 +47,7 @@ use kobo_protocol::{Frame, Lifecycle, Message, TaskOutcome};
 use kobo_ui::{ActionId, CellStyle, Chrome, Layout, LayoutKind, PictureCache, Screen, Surface};
 use kobo_wifi_trace::{Lifecycle as WifiTraceEvent, TraceClient};
 use std::fs;
+#[cfg(unix)]
 use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -508,8 +509,11 @@ pub fn present(
     let reader = Reader::find().map_err(|error| error.to_string())?;
     let network = kobo_hal::network::Connection::capture();
     let state = PathBuf::from(format!("/tmp/kobo-session-{}", std::process::id()));
-    fs::DirBuilder::new()
-        .mode(0o700)
+    #[allow(unused_mut)] // Windows has no mode bits to set.
+    let mut state_builder = fs::DirBuilder::new();
+    #[cfg(unix)]
+    state_builder.mode(0o700);
+    state_builder
         .create(&state)
         .map_err(|error| format!("create private reader session: {error}"))?;
     reader
@@ -1426,7 +1430,7 @@ struct Hosted {
     /// Root-owned filesystem visible to this application on the device.
     jail: Option<PathBuf>,
     child: ApplicationChild,
-    stream: std::os::unix::net::UnixStream,
+    stream: kobo_protocol::channel::Stream,
     store: kobo_policy::store::Store,
     shelf: kobo_policy::shelf::Shelf,
     tasks: TaskRunner,
@@ -1526,7 +1530,7 @@ impl ApplicationChild {
 }
 
 struct AppLaunch {
-    listener: std::os::unix::net::UnixListener,
+    listener: kobo_protocol::channel::Listener,
     socket_path: PathBuf,
     child_socket: PathBuf,
     program: PathBuf,
@@ -1542,7 +1546,7 @@ impl AppLaunch {
         let socket_path =
             std::env::temp_dir().join(format!("kobo-session-{}-{id}.sock", std::process::id()));
         let _ignored = fs::remove_file(&socket_path);
-        let listener = std::os::unix::net::UnixListener::bind(&socket_path)
+        let listener = kobo_protocol::channel::Listener::bind(&socket_path)
             .map_err(|error| format!("bind application socket: {error}"))?;
         Ok(Self {
             listener,
@@ -1571,16 +1575,21 @@ impl AppLaunch {
         fs::create_dir(&root)
             .map_err(|error| format!("create application sandbox {}: {error}", root.display()))?;
         let prepared = (|| -> Result<Self, String> {
+            // Unreachable on Windows (is_root() is false there); mode bits
+            // are the Unix sandbox mechanism.
+            #[cfg(unix)]
             fs::set_permissions(&root, fs::Permissions::from_mode(0o755))
                 .map_err(|error| format!("protect application sandbox: {error}"))?;
             let program = root.join("app");
             fs::copy(path, &program)
                 .map_err(|error| format!("copy {} into sandbox: {error}", path.display()))?;
+            #[cfg(unix)]
             fs::set_permissions(&program, fs::Permissions::from_mode(0o555))
                 .map_err(|error| format!("protect sandboxed application: {error}"))?;
             let socket_path = root.join("runtime.sock");
-            let listener = std::os::unix::net::UnixListener::bind(&socket_path)
+            let listener = kobo_protocol::channel::Listener::bind(&socket_path)
                 .map_err(|error| format!("bind sandbox application socket: {error}"))?;
+            #[cfg(unix)]
             fs::set_permissions(&socket_path, fs::Permissions::from_mode(0o666))
                 .map_err(|error| format!("make sandbox socket connectable: {error}"))?;
             let sandbox = kobo_abi::sandbox::Sandbox::new(&root)
@@ -3793,6 +3802,9 @@ fn preflight(application: &Path) -> Result<(), String> {
             application.display()
         ));
     }
+    // Windows marks executability by extension, not mode bits; the check has
+    // no meaning there and the CLI's own packaging never reaches it.
+    #[cfg(unix)]
     if metadata.permissions().mode() & 0o111 == 0 {
         return Err(format!(
             "{} is not executable. Nothing was changed on the device",
@@ -4137,11 +4149,11 @@ fn trace_picture_evictions(handle: kobo_ui::PictureHandle, evicted: &[kobo_ui::P
 /// The application is told the panel size rather than discovering it, so an
 /// application binary is not tied to one model.
 fn greet(
-    listener: &std::os::unix::net::UnixListener,
+    listener: &kobo_protocol::channel::Listener,
     whole_screen: Rect,
     expected_name: &str,
-) -> Result<(std::os::unix::net::UnixStream, String, u8), String> {
-    let (mut stream, _) = listener
+) -> Result<(kobo_protocol::channel::Stream, String, u8), String> {
+    let mut stream = listener
         .accept()
         .map_err(|error| format!("application never connected: {error}"))?;
     let hello =
@@ -4238,7 +4250,7 @@ enum Tap {
     reason = "touch delivery needs the negotiated protocol, retained screen, and physical pose"
 )]
 fn deliver_touch(
-    stream: &mut std::os::unix::net::UnixStream,
+    stream: &mut kobo_protocol::channel::Stream,
     event: TouchEvent,
     current: Option<&Screen>,
     chrome: &Chrome,
@@ -4649,7 +4661,7 @@ fn watch_for_stale_software(sender: &Sender<Event>) {
 }
 
 fn pump_application(
-    stream: &std::os::unix::net::UnixStream,
+    stream: &kobo_protocol::channel::Stream,
     sender: &Sender<Event>,
     id: u64,
     version: u8,
@@ -5006,7 +5018,7 @@ mod tests {
         let root =
             std::env::temp_dir().join(format!("cobalt-native-power-host-{}", std::process::id()));
         std::fs::create_dir_all(&root).unwrap();
-        let (runtime, mut client) = std::os::unix::net::UnixStream::pair().unwrap();
+        let (runtime, mut client) = kobo_protocol::channel::pair().unwrap();
         client
             .set_read_timeout(Some(Duration::from_secs(1)))
             .unwrap();
@@ -5089,7 +5101,7 @@ mod tests {
 
     #[test]
     fn cancelled_touch_cannot_activate_an_app_control() {
-        let (mut writer, mut reader) = std::os::unix::net::UnixStream::pair().unwrap();
+        let (mut writer, mut reader) = kobo_protocol::channel::pair().unwrap();
         reader.set_nonblocking(true).unwrap();
         let result = super::deliver_touch(
             &mut writer,
@@ -5115,8 +5127,7 @@ mod tests {
 
     #[test]
     fn an_application_cannot_change_protocol_version_after_greeting() {
-        let (runtime, mut application) =
-            std::os::unix::net::UnixStream::pair().expect("socket pair");
+        let (runtime, mut application) = kobo_protocol::channel::pair().expect("socket pair");
         let (sender, receiver) = std::sync::mpsc::channel();
         super::pump_application(&runtime, &sender, 42, kobo_protocol::VERSION)
             .expect("start application pump");
@@ -5137,7 +5148,7 @@ mod tests {
         ));
     }
 
-    fn hosted_peer(protocol: u8) -> (super::Hosted, std::os::unix::net::UnixStream, PathBuf) {
+    fn hosted_peer(protocol: u8) -> (super::Hosted, kobo_protocol::channel::Stream, PathBuf) {
         use super::{ApplicationChild, Hosted};
         let root = std::env::temp_dir().join(format!(
             "cobalt-protocol-echo-{}-{}-{}",
@@ -5147,7 +5158,7 @@ mod tests {
         ));
         let _ignored = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).expect("scratch device");
-        let (runtime, client) = std::os::unix::net::UnixStream::pair().expect("socket pair");
+        let (runtime, client) = kobo_protocol::channel::pair().expect("socket pair");
         client
             .set_read_timeout(Some(Duration::from_secs(1)))
             .expect("read timeout");
@@ -5180,7 +5191,7 @@ mod tests {
     }
 
     fn assert_runtime_frame(
-        client: &mut std::os::unix::net::UnixStream,
+        client: &mut kobo_protocol::channel::Stream,
         protocol: u8,
         request_id: u32,
         expected: &Message,
@@ -5273,8 +5284,7 @@ mod tests {
         let tap = content_tap(&screen);
         let words = selectable_page();
         let word_tap = text_tap(&words);
-        let (mut runtime, mut app) =
-            std::os::unix::net::UnixStream::pair().expect("a pair of sockets");
+        let (mut runtime, mut app) = kobo_protocol::channel::pair().expect("a pair of sockets");
         app.set_read_timeout(Some(Duration::from_secs(1)))
             .expect("read timeout");
         assert_eq!(
@@ -5359,11 +5369,11 @@ mod tests {
         let _ignored = std::fs::remove_dir_all(&directory);
         std::fs::create_dir_all(&directory).expect("scratch");
         let socket = directory.join("runtime.sock");
-        let listener = std::os::unix::net::UnixListener::bind(&socket).expect("listen");
+        let listener = kobo_protocol::channel::Listener::bind(&socket).expect("listen");
         let client_socket = socket.clone();
         let client = thread::spawn(move || {
             let mut stream =
-                std::os::unix::net::UnixStream::connect(client_socket).expect("connect");
+                kobo_protocol::channel::Stream::connect(client_socket).expect("connect");
             stream
                 .set_read_timeout(Some(Duration::from_secs(2)))
                 .expect("timeout");
@@ -5676,17 +5686,22 @@ mod tests {
             .expect_err("a directory is refused")
             .contains("not a file"));
 
-        let unreadable = directory.join("not-executable");
-        fs::write(&unreadable, b"#!/bin/sh\n").expect("write a file");
-        fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o644))
-            .expect("clear the executable bits");
-        assert!(preflight(&unreadable)
-            .expect_err("a file that cannot be executed is refused")
-            .contains("not executable"));
+        // The executable-bit refusal is a Unix mode-bit check; Windows has no
+        // equivalent to test.
+        #[cfg(unix)]
+        {
+            let unreadable = directory.join("not-executable");
+            fs::write(&unreadable, b"#!/bin/sh\n").expect("write a file");
+            fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o644))
+                .expect("clear the executable bits");
+            assert!(preflight(&unreadable)
+                .expect_err("a file that cannot be executed is refused")
+                .contains("not executable"));
 
-        fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o755))
-            .expect("set the executable bits");
-        assert!(preflight(&unreadable).is_ok());
+            fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o755))
+                .expect("set the executable bits");
+            assert!(preflight(&unreadable).is_ok());
+        }
         let _ignored = fs::remove_dir_all(&directory);
     }
 
@@ -6027,8 +6042,7 @@ mod tests {
             y: u32::try_from(back.y + back.height / 2).expect("inside the panel"),
         };
 
-        let (mut runtime, mut app) =
-            std::os::unix::net::UnixStream::pair().expect("a pair of sockets");
+        let (mut runtime, mut app) = kobo_protocol::channel::pair().expect("a pair of sockets");
         assert_eq!(
             deliver_touch(
                 &mut runtime,
@@ -6325,6 +6339,7 @@ mod hosting_tests {
     }
     #[test]
     fn app_secret_installation_is_scoped_private_and_replaceable() {
+        #[cfg(unix)]
         use std::os::unix::fs::PermissionsExt;
 
         let directory =
@@ -6341,22 +6356,26 @@ mod hosting_tests {
             std::fs::read(directory.join("apps/zotero-reader/zotero")).expect("read credential"),
             b"first"
         );
-        assert_eq!(
-            std::fs::metadata(&directory)
-                .expect("secret directory")
-                .permissions()
-                .mode()
-                & 0o777,
-            0o700
-        );
-        assert_eq!(
-            std::fs::metadata(directory.join("apps/zotero-reader/zotero"))
-                .expect("secret file")
-                .permissions()
-                .mode()
-                & 0o777,
-            0o600
-        );
+        // Windows has no mode bits to assert; the profile ACL is the boundary.
+        #[cfg(unix)]
+        {
+            assert_eq!(
+                std::fs::metadata(&directory)
+                    .expect("secret directory")
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o700
+            );
+            assert_eq!(
+                std::fs::metadata(directory.join("apps/zotero-reader/zotero"))
+                    .expect("secret file")
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o600
+            );
+        }
         kobo_policy::credentials::install_app_secret(
             &directory,
             "zotero-reader",
