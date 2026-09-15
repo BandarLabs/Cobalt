@@ -183,8 +183,7 @@ fn private_directory(path: &Path) -> Result<(), kobo_protocol::DeviceError> {
         .map_err(|_| kobo_protocol::DeviceError::Backend)?;
     // The directory flushes go through the persistence boundary, whose Windows
     // half opens directories with FILE_FLAG_BACKUP_SEMANTICS.
-    crate::persistence::sync_directory(path)
-        .map_err(|_| kobo_protocol::DeviceError::Backend)?;
+    crate::persistence::sync_directory(path).map_err(|_| kobo_protocol::DeviceError::Backend)?;
     if let Some(parent) = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
@@ -710,6 +709,8 @@ mod tests {
         let _ignored = std::fs::remove_dir_all(root);
     }
 
+    // Symlink fixtures need Unix semantics.
+    #[cfg(unix)]
     #[test]
     fn app_identity_and_symlink_boundaries_fail_closed() {
         use std::os::unix::fs::symlink;
