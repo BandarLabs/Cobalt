@@ -94,6 +94,111 @@ jobs:
       - name: Test the standalone importer with its own lockfile
         run: cargo test --locked --manifest-path crates/kobo-flashcards-import/Cargo.toml
 
+  device-emulated:
+    # Runs the device-side suites under ARM user-mode emulation (qemu-arm).
+    # This verifies logic, syscalls and musl/ARM codegen for the companion
+    # binaries. It does not verify real device kernel behavior -
+    # framebuffer/input ioctls, Nickel integration, suspend timing, radio
+    # firmware - so hardware-coupled paths stay UNVERIFIED on real hardware;
+    # the matrix lives in docs/WINDOWS.md. Any test that cannot run under
+    # emulation gets an explicit named cfg skip with its reason, never a
+    # silent drop.
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: 1.85.1
+          targets: armv7-unknown-linux-musleabihf
+      - name: Install qemu-arm user-mode emulation
+        run: sudo apt-get update && sudo apt-get install --yes qemu-user
+      # The same pinned Zig musl cross-compiler device-build uses; see that
+      # job for why the device C cannot come from the armhf glibc toolchain.
+      - name: Install the musl cross-compiler the device C needs
+        run: |
+          set -eu
+          zig_downloaded=false
+          for zig_url in \
+            'https://pkg.hexops.org/zig/zig-x86_64-linux-0.16.0.tar.xz?source=cobalt-ci' \
+            'https://ziglang.freetls.fastly.net/zig-x86_64-linux-0.16.0.tar.xz?source=cobalt-ci' \
+            'https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz'; do
+            if curl -fL --connect-timeout 15 --max-time 120 \
+              --speed-limit 1024 --speed-time 20 -o /tmp/zig.tar.xz "$zig_url" \
+              && echo "70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00  /tmp/zig.tar.xz" \
+                | sha256sum -c -; then
+              zig_downloaded=true
+              break
+            fi
+            echo "::warning::Could not obtain the pinned Zig archive from $zig_url"
+          done
+          if [ "$zig_downloaded" != true ]; then
+            echo "No source supplied the pinned Zig archive" >&2
+            exit 1
+          fi
+          sudo tar -xJf /tmp/zig.tar.xz -C /opt
+          sudo tee /usr/local/bin/armv7-musl-cc >/dev/null <<'CC'
+          #!/bin/sh
+          # cc-rs passes --target=armv7-unknown-linux-musleabihf. Zig spells the
+          # same machine arm-linux-musleabihf and refuses "armv7", so the triple
+          # comes from here and the one we are handed is dropped.
+          zig=/opt/zig-x86_64-linux-0.16.0/zig
+          count=$#
+          index=0
+          while [ "$index" -lt "$count" ]; do
+            argument="$1"
+            shift
+            case "$argument" in
+              --target=*) ;;
+              *) set -- "$@" "$argument" ;;
+            esac
+            index=$((index + 1))
+          done
+          # Zig instruments with UBSan by default and does not link its runtime,
+          # so sqlite3.c ends up referencing __ubsan_handle_* that nothing
+          # defines. The device build is not a sanitiser run.
+          exec "$zig" cc -target arm-linux-musleabihf -fno-sanitize=undefined "$@"
+          CC
+          sudo chmod +x /usr/local/bin/armv7-musl-cc
+          armv7-musl-cc --version
+      - name: Test the device-side suites under qemu-arm
+        run: >-
+          cargo test --locked --target armv7-unknown-linux-musleabihf
+          -p kobo-abi -p kobo-hal -p kobod
+          -p kobo-tap -p kobo-guard -p kobo-handoff -p kobo-smoke
+          --all-features
+        env:
+          CC_armv7_unknown_linux_musleabihf: armv7-musl-cc
+          CARGO_TARGET_ARMV7_UNKNOWN_LINUX_MUSLEABIHF_RUNNER: qemu-arm
+      # Prove the shipped artifacts execute, not just link. An application
+      # error exit is a pass here - the binary ran; only an exec-level
+      # failure (127/126 or an emulator crash by signal) fails the step.
+      - name: Execute the device binaries under qemu-arm
+        run: |
+          set -u
+          cargo build --locked --target armv7-unknown-linux-musleabihf \
+            -p kobod -p kobo-tap -p kobo-guard -p kobo-handoff -p kobo-smoke \
+            --all-features
+          failed=false
+          for bin in kobod kobo-tap kobo-guard kobo-handoff kobo-smoke; do
+            artifact="target/armv7-unknown-linux-musleabihf/debug/$bin"
+            if [ ! -x "$artifact" ]; then
+              echo "missing artifact: $artifact" >&2
+              failed=true
+              continue
+            fi
+            echo "== $bin --help =="
+            qemu-arm "$artifact" --help
+            status=$?
+            if [ "$status" -ge 126 ]; then
+              echo "$bin did not execute under qemu-arm (exit $status)" >&2
+              failed=true
+            fi
+          done
+          [ "$failed" = false ]
+        env:
+          CC_armv7_unknown_linux_musleabihf: armv7-musl-cc
+
   device-build:
     runs-on: ubuntu-latest
     steps:
