@@ -300,6 +300,17 @@
           "compatible_blob": "d9bdea2f409157d3f5b3c598afeb8c47120fb94a"
         }
       ]
+    },
+    {
+      "protocol_version": 14,
+      "reason": "Take rustls 0.23.45 so TLS 1.3 handshake messages cannot be accepted across encryption-level boundaries (RUSTSEC-2026-0285). Store apps keep their existing messages; the patched stack reaches readers in the next platform package.",
+      "files": [
+        {
+          "path": "Cargo.lock",
+          "base_blob": "e07e1ade0355155e92ff024f4ae7518372cd1ce8",
+          "compatible_blob": "c1299c52106e82cfe7a45fb5f8101a07c89c4291"
+        }
+      ]
     }
   ]
 }
