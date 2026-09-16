@@ -1245,6 +1245,8 @@ dependencies = [
 name = "kobo-musicstand"
 version = "0.1.0"
 dependencies = [
+ "kobo-image",
+ "kobo-json",
  "kobo-sdk",
  "kobo-ui",
 ]
