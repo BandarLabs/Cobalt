@@ -584,12 +584,14 @@ impl Vault {
         let backlinks = self.backlinks(self.current).len();
         let mut screen = ScreenBuilder::new("vault-note")
             .top_bar(entry.title.clone())
-            .top_bar_action("backlinks", format!("Links ({backlinks})"))
             .reading(true)
             .page_position(
                 u16::try_from(index + 1).unwrap_or(u16::MAX),
                 u16::try_from(pages.len().max(1)).unwrap_or(u16::MAX),
             );
+        if backlinks > 0 {
+            screen = screen.top_bar_action("backlinks", format!("Links ({backlinks})"));
+        }
         if let Some(paragraphs) = pages.get(index) {
             for paragraph in paragraphs {
                 screen = screen.text(paragraph);
@@ -899,8 +901,8 @@ mod tests {
             id: id.to_owned(),
             path: path.to_owned(),
             title: title.to_owned(),
-            tags: tags.iter().map(|tag| tag.to_string()).collect(),
-            links: links.iter().map(|link| link.to_string()).collect(),
+            tags: tags.iter().map(|tag| (*tag).to_owned()).collect(),
+            links: links.iter().map(|link| (*link).to_owned()).collect(),
             digest: String::new(),
             bytes: 10,
             added: 1,
