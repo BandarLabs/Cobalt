@@ -351,7 +351,10 @@ impl Stand {
             Some(picture) => screen.unframed_picture(picture, 500),
             None => screen.activity("Turning the page", None),
         };
-        screen = screen.page_turns(PREVIOUS, NEXT).reading_menu(MENU);
+        screen = screen
+            .top_bar(&score.title)
+            .page_turns(PREVIOUS, NEXT)
+            .reading_menu(MENU);
         if self.menu_open {
             let half = if state.bottom_half {
                 "bottom half"
