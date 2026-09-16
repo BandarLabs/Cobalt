@@ -1773,11 +1773,20 @@ mod tests {
         let mut pty = kobo_abi::pty::Pty::spawn(program, arguments, environment, 24, 2)
             .expect("start PTY command");
         pty.write(b"yes\r").expect("write terminal input");
-        let output = pty
+        // ConPTY can deliver the echo in a later write than the first
+        // output burst, so collect until it arrives instead of trusting a
+        // single read; on Unix the whole echo lands in the first chunk.
+        let mut output = pty
             .output()
             .recv_timeout(Duration::from_secs(2))
             .expect("PTY echoed the answer");
-        assert!(String::from_utf8_lossy(&output).contains("yes"));
+        while !String::from_utf8_lossy(&output).contains("yes") {
+            output.extend_from_slice(
+                &pty.output()
+                    .recv_timeout(Duration::from_secs(2))
+                    .expect("PTY echoed the answer"),
+            );
+        }
         let _ = pty.finished().expect("reap PTY command");
     }
     #[test]
