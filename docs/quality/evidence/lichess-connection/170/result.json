@@ -1,0 +1,97 @@
+{
+  "status": "pass",
+  "build": {
+    "source_revision": "8f16ad6b4beb6c1b3843c2a2efe840e210194776",
+    "tracked_changes": true,
+    "cli_sha256": "26700b18bb396bc415e41c41bd785a9afc4ae2771fb457303cd0629ae8112bd5",
+    "toolchain": "1.85.1"
+  },
+  "scale": "170",
+  "profile": "clara-bw-391",
+  "requests": [
+    {
+      "method": "GET",
+      "path": "/api/account"
+    },
+    {
+      "method": "GET",
+      "path": "/api/account/playing"
+    },
+    {
+      "method": "GET",
+      "path": "/api/stream/event"
+    },
+    {
+      "method": "GET",
+      "path": "/api/account"
+    },
+    {
+      "method": "GET",
+      "path": "/api/account/playing"
+    },
+    {
+      "method": "POST",
+      "path": "/api/board/seek"
+    },
+    {
+      "method": "GET",
+      "path": "/api/board/game/stream/abcdEF12"
+    },
+    {
+      "method": "POST",
+      "path": "/api/board/game/abcdEF12/move/e2e4"
+    },
+    {
+      "method": "GET",
+      "path": "/api/board/game/stream/abcdEF12"
+    },
+    {
+      "method": "GET",
+      "path": "/api/account"
+    },
+    {
+      "method": "GET",
+      "path": "/api/account/playing"
+    },
+    {
+      "method": "GET",
+      "path": "/api/stream/event"
+    },
+    {
+      "method": "GET",
+      "path": "/api/board/game/stream/abcdEF12"
+    },
+    {
+      "method": "POST",
+      "path": "/api/board/game/abcdEF12/draw/yes"
+    },
+    {
+      "method": "GET",
+      "path": "/api/account"
+    },
+    {
+      "method": "GET",
+      "path": "/api/account/playing"
+    }
+  ],
+  "dropped_start_event": false,
+  "disconnected_board": true,
+  "start_events_sent": 1,
+  "matched_board_seconds": 0.66,
+  "checks": [
+    "pair through event stream",
+    "single move submission",
+    "POST success does not move the board",
+    "board stream acknowledgement",
+    "saved session survives process restart",
+    "fresh board stream opened",
+    "restored rendered piece positions",
+    "draw completion clears store",
+    "account polling resumes after completion",
+    "active clock follows side to move",
+    "disconnect retains board and hides unconfirmed clocks",
+    "no moves while disconnected",
+    "reconnect restores clocks and position"
+  ],
+  "scope": "Actual SDK app and simulator with private TLS fixture; no public Lichess requests or hardware validation"
+}

@@ -33,6 +33,12 @@ enum Connection {
     Verified,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Endpoint {
+    Account,
+    Public,
+}
+
 pub struct ProviderSetup {
     service: String,
     address: String,
@@ -46,6 +52,7 @@ pub struct ProviderSetup {
     needs_wifi: bool,
     sample: bool,
     server_accounts: bool,
+    endpoint: Endpoint,
     samples: Option<crate::samples::Collection>,
 }
 
@@ -94,8 +101,36 @@ impl ProviderSetup {
             needs_wifi: false,
             sample,
             server_accounts: false,
+            endpoint: Endpoint::Account,
             samples: None,
         })
+    }
+
+    /// Check a public HTTPS endpoint exactly as entered, without account UI
+    /// or a credential. The app must still validate the response before saving.
+    ///
+    /// # Errors
+    /// Rejects empty, overly long or control-containing service names.
+    pub fn public(service: &str) -> Result<Self, String> {
+        let mut setup = Self::new(service, "public", "/", false)?;
+        setup.endpoint = Endpoint::Public;
+        Ok(setup)
+    }
+
+    fn checked_address(&self, address: &str) -> Result<String, String> {
+        if self.endpoint == Endpoint::Account {
+            return normalize_address(address);
+        }
+        let address = address.trim();
+        if address.len() > 2048
+            || address.contains(['#', '\\'])
+            || address.chars().any(char::is_whitespace)
+        {
+            return Err("Enter the library's HTTPS address.".into());
+        }
+        kobo_net::parse(address)
+            .map_err(|_| "Enter the library's HTTPS address without account details.".to_owned())?;
+        Ok(address.to_owned())
     }
 
     /// Offer an original offline collection through the existing sample action.
@@ -146,7 +181,7 @@ impl ProviderSetup {
     /// # Errors
     /// Returns owner-facing guidance without echoing entered credentials.
     pub fn restore_address(&mut self, address: &str) -> Result<(), String> {
-        let address = normalize_address(address)?;
+        let address = self.checked_address(address)?;
         self.address = address;
         self.task = None;
         self.connection = Connection::Unchecked;
@@ -209,9 +244,10 @@ impl ProviderSetup {
         if let Some(advice) = &self.advice {
             screen = screen.banner(BannerLevel::Attention, advice);
         }
-        screen = screen
-            .field(ADDRESS, &self.address, "Add server address")
-            .button(ACCOUNT, "Account details");
+        screen = screen.field(ADDRESS, &self.address, "Add server address");
+        if self.endpoint == Endpoint::Account {
+            screen = screen.button(ACCOUNT, "Account details");
+        }
         screen = if self.task.is_some() || self.connection == Connection::AwaitingValidation {
             screen
                 .secondary("Checking connection…")
@@ -264,7 +300,7 @@ impl ProviderSetup {
         if action == action_id(ADDRESS) {
             self.cancel(context);
             self.entry.open_with(&self.address);
-        } else if action == action_id(ACCOUNT) {
+        } else if action == action_id(ACCOUNT) && self.endpoint == Endpoint::Account {
             self.cancel(context);
             self.connection = Connection::Unchecked;
             if self.server_accounts {
@@ -279,14 +315,23 @@ impl ProviderSetup {
             self.connection = Connection::Unchecked;
             self.advice = None;
             self.needs_wifi = false;
-            if let Err(reason) = normalize_address(&self.address) {
+            if let Err(reason) = self.checked_address(&self.address) {
                 self.advice = Some(reason);
             } else {
                 self.task = context.spawn(Task::Fetch {
-                    url: format!("{}{}", self.address, self.probe),
+                    url: if self.endpoint == Endpoint::Public {
+                        self.address.clone()
+                    } else {
+                        format!("{}{}", self.address, self.probe)
+                    },
                     offset: 0,
-                    max_bytes: 64 * 1024,
-                    credential: Some(self.credential.clone()),
+                    max_bytes: if self.endpoint == Endpoint::Public {
+                        256 * 1024
+                    } else {
+                        64 * 1024
+                    },
+                    credential: (self.endpoint == Endpoint::Account)
+                        .then(|| self.credential.clone()),
                     headers: Vec::new(),
                 });
                 if self.task.is_none() {
@@ -362,6 +407,49 @@ fn normalize_address(address: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn public_endpoint_preserves_catalog_paths_without_requesting_credentials() {
+        let mut setup = ProviderSetup::public("catalog").unwrap();
+        let address = "https://library.example/opds/?page=2";
+        setup.restore_address(address).unwrap();
+        assert_eq!(setup.address(), address);
+        let mut context = Context::default();
+        assert_eq!(setup.on_action(&mut context, action_id(ACCOUNT)), None);
+        setup.on_action(&mut context, action_id(TEST));
+        assert!(context.commands().iter().any(|command| matches!(command,
+            crate::Command::Spawn { work: Task::Fetch { url, credential: None, max_bytes: 262_144, .. }, .. }
+                if url == address)));
+        let task = setup.task.unwrap();
+        assert!(matches!(
+            setup.on_task(task, &TaskOutcome::Completed(b"catalog".to_vec())),
+            Some(Event::Response(_))
+        ));
+        assert!(!setup.is_connected());
+        assert!(setup.verified());
+        setup.on_action(&mut context, action_id(TEST));
+        let task = setup.task.unwrap();
+        setup.on_action(&mut context, action_id(CANCEL));
+        assert_eq!(setup.on_task(task, &TaskOutcome::Completed(vec![])), None);
+    }
+
+    #[test]
+    fn invalid_public_addresses_leave_the_previous_address_intact() {
+        let mut setup = ProviderSetup::public("catalog").unwrap();
+        let address = "https://library.example/book.opds";
+        setup.restore_address(address).unwrap();
+        for invalid in [
+            "http://library.example",
+            "https://private:password@library.example/",
+            "https://library.example/#private",
+            "https://library.example/\\private",
+            "not a URL",
+        ] {
+            let error = setup.restore_address(invalid).unwrap_err();
+            assert!(!error.contains("private"));
+            assert_eq!(setup.address(), address);
+        }
+    }
+
     #[test]
     fn bad_addresses_do_not_replace_a_working_server_or_echo_private_values() {
         let mut setup = ProviderSetup::new("Articles", "articles", "/api/account", true).unwrap();

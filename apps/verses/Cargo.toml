@@ -7,12 +7,11 @@ license.workspace = true
 publish = false
 
 [dependencies]
+kobo-image = { path = "../../crates/kobo-image" }
 kobo-sdk = { path = "../../crates/kobo-sdk" }
+kobo-ui = { path = "../../crates/kobo-ui" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-
-[dev-dependencies]
-kobo-ui = { path = "../../crates/kobo-ui" }
 
 [lints]
 workspace = true

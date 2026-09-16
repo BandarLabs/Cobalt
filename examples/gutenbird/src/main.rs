@@ -40,6 +40,7 @@ use kobo_bookview::{BookView, Step};
 use kobo_opds::{AcquisitionKind, Category, Feed, ImageSource, Link, Publication, SearchTemplate};
 use kobo_read::{Memory, Outcome, Reader};
 use kobo_sdk::keyboard::{Keyboard, Pressed};
+use kobo_sdk::provider::{Event as ProviderEvent, ProviderSetup};
 use kobo_sdk::{
     action_id, ActionId, BannerLevel, Chrome, Context, DiagnosticSeverity, Failure, FontHandle,
     Glyph, Header, KoboApp, LogLevel, PictureHandle, RowLead, ScreenBuilder, ShelfDownload,
@@ -47,6 +48,7 @@ use kobo_sdk::{
     TileShape, TileState, MAX_STORE_VALUE,
 };
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::fmt::Write as _;
 use std::process::ExitCode;
 
 /// The catalogs built in, and the only place any of them is named.
@@ -347,6 +349,7 @@ enum View {
     Shelf,
     Search,
     Details,
+    Formats,
     Reading,
     Lookup,
     Note,
@@ -366,6 +369,14 @@ enum FeedPurpose {
     More,
     /// One catalog's share of a search run against every catalog at once.
     Federated { catalog: usize },
+}
+
+struct CachedFeed {
+    key: String,
+    url: String,
+    purpose: FeedPurpose,
+    bytes: Option<Vec<u8>>,
+    failed: bool,
 }
 
 /// What one of the shelf's own background requests is for.
@@ -412,6 +423,29 @@ enum Awaiting {
     },
     /// A book's bytes, in pieces.
     Book,
+}
+
+/// Catalogs sometimes embed a complete metadata record in their prose field.
+/// Only extract a labeled synopsis when the surrounding record identifies it;
+/// ordinary descriptions and their provenance notes remain untouched.
+fn description_parts(text: &str) -> (&str, Option<&str>) {
+    let paragraphs: Vec<&str> = text.split("\n\n").map(str::trim).collect();
+    let metadata = paragraphs.iter().any(|part| part.starts_with("Title:"))
+        && paragraphs.iter().any(|part| part.starts_with("EBook No.:"));
+    if metadata {
+        if let Some(summary) = paragraphs
+            .iter()
+            .find_map(|part| part.strip_prefix("Summary:").map(str::trim))
+            .filter(|summary| !summary.is_empty())
+        {
+            let edition = paragraphs
+                .iter()
+                .copied()
+                .find(|part| part.starts_with("This edition "));
+            return (summary, edition);
+        }
+    }
+    (text, None)
 }
 
 /// One piece of a book's trailing description, so pages can be packed from
@@ -566,6 +600,8 @@ struct Gutenbird {
 
     /// The book on the details or reading screen, if any.
     open: Option<Publication>,
+    formats: Vec<kobo_opds::Acquisition>,
+    format_page: usize,
     open_cover: Option<TilePicture>,
     open_cover_task: Option<(TaskId, u8)>,
 
@@ -580,6 +616,7 @@ struct Gutenbird {
     federating: bool,
 
     task: Option<(TaskId, Awaiting)>,
+    cached_feed: Option<CachedFeed>,
     problem: Option<String>,
     trouble: Option<Failure>,
 
@@ -619,7 +656,7 @@ struct Gutenbird {
     failed: Option<String>,
     retryable: bool,
 
-    add_catalog_problem: Option<String>,
+    catalog_setup: ProviderSetup,
 }
 
 impl Default for Gutenbird {
@@ -644,6 +681,8 @@ impl Default for Gutenbird {
             current: 0,
             stack: Vec::new(),
             open: None,
+            formats: Vec::new(),
+            format_page: 0,
             open_cover: None,
             open_cover_task: None,
             search_all: false,
@@ -651,6 +690,7 @@ impl Default for Gutenbird {
             federated_query: None,
             federating: false,
             task: None,
+            cached_feed: None,
             problem: None,
             trouble: None,
             wanted: Vec::new(),
@@ -669,7 +709,7 @@ impl Default for Gutenbird {
             stored: BTreeMap::new(),
             failed: None,
             retryable: false,
-            add_catalog_problem: None,
+            catalog_setup: ProviderSetup::public("catalog").expect("static catalog setup"),
         }
     }
 }
@@ -702,6 +742,7 @@ impl Gutenbird {
             View::Shelf => self.shelf_screen(context),
             View::Search => self.search_screen(),
             View::Details => self.details_screen(context),
+            View::Formats => self.formats_screen(),
             View::Reading => self.reading_screen(context),
             View::Lookup => self.lookup_screen(),
             View::Note => self.note_screen(),
@@ -798,18 +839,45 @@ impl Gutenbird {
     }
 
     fn add_catalog_screen(&self) -> kobo_sdk::Screen {
-        let mut screen = ScreenBuilder::new("gutenbird-add-catalog")
-            .top_bar("Add a catalog")
-            .field(
-                "catalog-url",
-                self.keyboard.text(),
-                "https://example.org/opds",
-            )
-            .field_clear("catalog-url-clear");
-        if let Some(problem) = &self.add_catalog_problem {
-            screen = screen.banner(BannerLevel::Attention, problem.clone());
+        self.catalog_setup.screen()
+    }
+
+    fn finish_catalog_setup(&mut self, context: &mut Context, bytes: &[u8]) {
+        let url = self.catalog_setup.address().to_owned();
+        if kobo_opds::parse(bytes, &url).is_err() {
+            self.catalog_setup.invalid_response();
+            return;
         }
-        screen.keyboard(&self.keyboard, "Add").build()
+        if !self.catalog_setup.verified() {
+            return;
+        }
+        self.current =
+            if let Some(index) = self.catalogs.iter().position(|catalog| catalog.root == url) {
+                index
+            } else {
+                self.catalogs
+                    .push(Catalog::new(catalog_display_name(&url), url.clone(), true));
+                self.save_registry(context);
+                self.catalogs.len() - 1
+            };
+        self.save_last_open(context);
+        if bytes.len() <= MAX_STORE_VALUE {
+            context
+                .store()
+                .save(format!("catalog-{:08x}", stamp(&url)), bytes.to_vec());
+        }
+        self.stop_federating();
+        self.stack.clear();
+        self.back_to(View::Catalogs);
+        self.go(View::Shelf);
+        self.took_feed(
+            context,
+            bytes,
+            FeedPurpose::Root {
+                catalog: self.current,
+            },
+            url,
+        );
     }
 
     /// Whether a reader-typed address is worth trying at all.
@@ -824,30 +892,6 @@ impl Gutenbird {
         text.len() > "https://".len()
             && text.to_ascii_lowercase().starts_with("https://")
             && !text.contains(char::is_whitespace)
-    }
-
-    fn submit_catalog(&mut self, context: &mut Context) {
-        let url = self.keyboard.take();
-        self.add_catalog(context, url.trim());
-    }
-
-    /// Validates and stores a catalog address, then opens it. Kept apart
-    /// from [`Self::submit_catalog`] so the validation and storage this
-    /// answers for can be exercised directly, without having to type an
-    /// address key by key through the keyboard grid.
-    fn add_catalog(&mut self, context: &mut Context, url: &str) {
-        if !Self::looks_like_a_catalog_url(url) {
-            self.add_catalog_problem =
-                Some("That does not look like a catalog address.".to_owned());
-            self.show(context);
-            return;
-        }
-        self.add_catalog_problem = None;
-        let name = catalog_display_name(url);
-        self.catalogs.push(Catalog::new(name, url.to_owned(), true));
-        self.save_registry(context);
-        self.current = self.catalogs.len() - 1;
-        self.open_catalog(context);
     }
 
     fn open_catalog(&mut self, context: &mut Context) {
@@ -897,6 +941,15 @@ impl Gutenbird {
         // slot this needs, but a page the reader has left is not worth
         // finishing, so its pictures are dropped rather than waited for.
         self.abandon_hydration(context);
+        let key = format!("catalog-{:08x}", stamp(&url));
+        context.store().load(key.clone());
+        self.cached_feed = Some(CachedFeed {
+            key,
+            url: url.clone(),
+            purpose,
+            bytes: None,
+            failed: false,
+        });
         let headers = vec![Header::new("Accept", kobo_opds::ACCEPT)];
         if let Some(task) = context.spawn_retrying(Task::Fetch {
             url: url.clone(),
@@ -911,6 +964,26 @@ impl Gutenbird {
             context.log(LogLevel::Warn, format!("feed refused, lanes full: {url}"));
             self.problem = Some("Too much is already in flight.".to_owned());
         }
+    }
+
+    fn restore_cached_feed(&mut self, context: &mut Context) {
+        if !self
+            .cached_feed
+            .as_ref()
+            .is_some_and(|cache| cache.failed && cache.bytes.is_some())
+        {
+            return;
+        }
+        let cache = self.cached_feed.take().expect("cached response ready");
+        self.problem = None;
+        self.trouble = None;
+        self.took_feed(
+            context,
+            &cache.bytes.unwrap_or_default(),
+            cache.purpose,
+            cache.url,
+        );
+        self.show(context);
     }
 
     /// Follows a navigation row, or the current catalog's own root: fetches
@@ -935,54 +1008,14 @@ impl Gutenbird {
         self.spawn_feed(context, next, FeedPurpose::More);
     }
 
-    /// A feed with exactly one publication (or a few sharing one title, the
-    /// shape Gutenberg's `.images`/`.noimages` pair leaves behind) and no
-    /// navigation at all is a complete catalog entry document rather than a
-    /// page to browse -- OPDS 1.2 section 5.1.2's distinction between a
-    /// partial and a complete entry. This is what turns following one of
-    /// Gutenberg's `subsection` links into opening a book, without this
-    /// application ever having written Gutenberg's name to decide it.
+    /// Only a single-publication document opens directly. A title is not an
+    /// edition identity: catalogs can offer different images, translations or
+    /// downloads under the same title, and the reader must retain that choice.
     fn resolve_entry(feed: &Feed) -> Option<Publication> {
-        if !feed.navigation.is_empty() {
-            return None;
-        }
-        match feed.publications.len() {
-            0 => None,
-            1 => Some(feed.publications[0].clone()),
-            _ => {
-                let mut titles = feed
-                    .publications
-                    .iter()
-                    .map(|publication| publication.title.as_str());
-                let first = titles.next()?;
-                if !titles.all(|title| title == first) {
-                    return None;
-                }
-                // The illustrated edition, now that an illustration reaches
-                // the panel. This was the smaller one for as long as pictures
-                // were discarded on the way in, when Gutenberg's illustrated
-                // Pride and Prejudice was twenty-five megabytes to draw the
-                // same words as the five-hundred-kilobyte edition beside it.
-                // It costs radio time, and the download says how much as it
-                // goes, but a book's plates are part of the book.
-                feed.publications
-                    .iter()
-                    .find(|publication| {
-                        publication.acquisition.iter().any(|acquisition| {
-                            acquisition.href.contains(".images") && affordable(acquisition)
-                        })
-                    })
-                    .or_else(|| {
-                        // Nothing illustrated small enough to read, so the
-                        // plainest edition that will open. A book of words is
-                        // better than a book that takes the reader down.
-                        feed.publications
-                            .iter()
-                            .find(|publication| publication.acquisition.iter().any(affordable))
-                    })
-                    .or_else(|| feed.publications.first())
-                    .cloned()
-            }
+        if feed.navigation.is_empty() && feed.publications.len() == 1 {
+            feed.publications.first().cloned()
+        } else {
+            None
         }
     }
 
@@ -1081,6 +1114,17 @@ impl Gutenbird {
     }
 
     fn open_publication(&mut self, context: &mut Context, publication: Publication) {
+        self.formats = publication
+            .acquisition
+            .iter()
+            .filter(|acquisition| {
+                let mut candidate = publication.clone();
+                candidate.acquisition = vec![(*acquisition).clone()];
+                candidate.best_acquisition().is_some() && affordable(acquisition)
+            })
+            .cloned()
+            .collect();
+        self.format_page = 0;
         self.open = Some(publication);
         // Given back, not merely forgotten. Every book's cover is held against
         // the same handle, and the frame this page reserves names that handle
@@ -1419,21 +1463,17 @@ impl Gutenbird {
                 } else {
                     TileState::Normal
                 };
-                let author = publication.authors.first().cloned().unwrap_or_default();
+                let subtitle = publication_caption(
+                    publication,
+                    &entry.feed.publications,
+                    entry.sources.get(index).map(String::as_str),
+                );
                 let picture = *picture;
-                let source = entry.sources.get(index).cloned();
                 (
                     format!("book-{index}"),
                     publication.title.clone(),
                     Glyph::Book,
                     move |tile: Tile| {
-                        let subtitle = match source {
-                            Some(source) if !author.is_empty() => {
-                                format!("{author} \u{00b7} {source}")
-                            }
-                            Some(source) => source,
-                            None => author,
-                        };
                         let tile = tile.with_state(state).with_subtitle(subtitle);
                         match picture {
                             Some(picture) => tile.with_picture(picture),
@@ -1606,8 +1646,13 @@ impl Gutenbird {
     fn detail_blocks(publication: &Publication) -> Vec<DetailBlock> {
         let mut blocks = Vec::new();
         if let Some(summary) = &publication.summary {
+            let (description, edition) = description_parts(summary);
+            if let Some(edition) = edition {
+                blocks.push(DetailBlock::Section("Edition"));
+                blocks.push(DetailBlock::Text(edition.to_owned()));
+            }
             blocks.push(DetailBlock::Section("About"));
-            blocks.push(DetailBlock::Text(summary.clone()));
+            blocks.push(DetailBlock::Text(description.to_owned()));
         }
         if !publication.categories.is_empty() {
             blocks.push(DetailBlock::Section("Categories"));
@@ -1782,6 +1827,93 @@ impl Gutenbird {
             .all(|issue| issue.severity != DiagnosticSeverity::Error)
     }
 
+    fn formats_screen(&self) -> kobo_sdk::Screen {
+        let pages = self.formats.len().div_ceil(4).max(1);
+        let page = self.format_page.min(pages - 1);
+        let mut screen = ScreenBuilder::new("gutenbird-formats")
+            .top_bar("Choose download")
+            .secondary("Each download keeps its own reading position.");
+        let mut rows = Vec::new();
+        for (index, acquisition) in self.formats.iter().enumerate().skip(page * 4).take(4) {
+            let mut label = match download_kind(acquisition.media_type.as_deref()) {
+                DownloadKind::Epub => "EPUB".to_owned(),
+                DownloadKind::Text => "Plain text".to_owned(),
+            };
+            if acquisition.kind == AcquisitionKind::Sample {
+                label.push_str(" · Sample");
+            }
+            if let Some(length) = acquisition.length {
+                let _ = write!(label, " · {} KB", length.div_ceil(1024));
+            }
+            if self
+                .open
+                .as_ref()
+                .and_then(Publication::best_acquisition)
+                .is_some_and(|selected| selected.href == acquisition.href)
+            {
+                label.push_str(" · Selected");
+            }
+            rows.push((
+                format!("format-{index}"),
+                label,
+                acquisition.title.clone().unwrap_or_default(),
+                RowLead::Number(u16::try_from(index + 1).unwrap_or(u16::MAX)),
+            ));
+        }
+        screen = screen.rows(rows);
+        if pages > 1 {
+            screen = screen
+                .page_turns("formats-back", "formats-next")
+                .page_position(
+                    u16::try_from(page + 1).unwrap_or(u16::MAX),
+                    u16::try_from(pages).unwrap_or(u16::MAX),
+                );
+        }
+        screen.build()
+    }
+
+    fn format_action(&mut self, context: &mut Context, action: ActionId) -> bool {
+        if self.view == View::Details
+            && action == action_id("formats")
+            && self.formats.len() > 1
+            && self.task.is_none()
+            && self.loading.is_none()
+        {
+            self.go(View::Formats);
+        } else if self.view == View::Formats {
+            if action == action_id("formats-next") {
+                self.format_page =
+                    (self.format_page + 1).min(self.formats.len().saturating_sub(1) / 4);
+            } else if action == action_id("formats-back") {
+                self.format_page = self.format_page.saturating_sub(1);
+            } else if let Some(acquisition) = self
+                .formats
+                .iter()
+                .enumerate()
+                .find(|(index, _)| action == action_id(&format!("format-{index}")))
+                .map(|(_, acquisition)| acquisition.clone())
+            {
+                let Some(mut publication) = self.open.clone() else {
+                    return false;
+                };
+                let formats = self.formats.clone();
+                publication.acquisition = vec![acquisition];
+                self.back_to(View::Details);
+                if let Some((task, _)) = self.open_cover_task.take() {
+                    context.cancel(task);
+                }
+                self.open_publication(context, publication);
+                self.formats = formats;
+            } else {
+                return false;
+            }
+        } else {
+            return false;
+        }
+        self.show(context);
+        true
+    }
+
     fn detail_head(&self, publication: &Publication, first_page: bool) -> ScreenBuilder {
         let screen = ScreenBuilder::new("gutenbird-book").top_bar(publication.title.clone());
         if !first_page {
@@ -1795,12 +1927,21 @@ impl Gutenbird {
             subtitle,
             Vec::<(String, String)>::new(),
         );
+        let screen = match selected_edition(publication) {
+            Some(edition) => screen.secondary(edition),
+            None => screen,
+        };
         let screen = match &self.problem {
             Some(problem) => screen.banner(BannerLevel::Attention, problem.clone()),
             None => screen,
         };
         let screen = if self.is_kept(publication) {
             screen.secondary("Already on this device.")
+        } else {
+            screen
+        };
+        let screen = if self.formats.len() > 1 {
+            screen.button("formats", "Choose download")
         } else {
             screen
         };
@@ -1898,20 +2039,28 @@ impl Gutenbird {
         Some(self.filling.remove(at).1)
     }
 
-    /// Takes a followed row, and moves it to the shelf if it was a book.
-    ///
-    /// A row that turns out to be another feed is left exactly where it was:
-    /// "Authors" and "Subjects" sit among the books in a Gutenberg search
-    /// answer, and there is nothing in the address to tell them apart, which
-    /// is why this looks rather than guesses.
+    /// A shared cover identifies the navigation tile without choosing one of
+    /// its editions. Lists and entries with conflicting artwork keep a glyph.
+    fn entry_cover(feed: &Feed) -> Option<ImageSource> {
+        if !feed.navigation.is_empty() {
+            return None;
+        }
+        let first = feed.publications.first()?;
+        let cover = first.cover()?;
+        feed.publications
+            .iter()
+            .all(|book| {
+                book.title == first.title
+                    && book.cover().is_some_and(|image| image.href == cover.href)
+            })
+            .then(|| cover.href.clone())
+    }
+
     fn took_hydration(&mut self, context: &mut Context, bytes: &[u8], href: &str) {
         let cover = kobo_opds::parse(bytes, href)
             .ok()
             .as_ref()
-            .and_then(Self::resolve_entry)
-            .as_ref()
-            .and_then(Publication::cover)
-            .map(|image| image.href.clone());
+            .and_then(Self::entry_cover);
         if let Some(kobo_opds::ImageSource::Url(url)) = cover {
             self.ask_nav_cover(context, href.to_owned(), url);
         } else {
@@ -2127,6 +2276,7 @@ impl Gutenbird {
             return false;
         };
         if picture.width() < MIN_COVER_PX || picture.height() < MIN_COVER_PX {
+            self.set_a_cover(context, index, cell_width, cell_height);
             return false;
         }
         let Ok(mut picture) = picture.fit_enlarging(cell_width, cell_height) else {
@@ -2335,6 +2485,14 @@ impl Gutenbird {
             self.problem = Some("Nothing here can be read on this device.".to_owned());
             return;
         };
+        if !affordable(&acquisition) {
+            self.failed = Some(
+                "This download is too large for this device. Choose another download or edition."
+                    .to_owned(),
+            );
+            self.retryable = false;
+            return;
+        }
         let kind = download_kind(acquisition.media_type.as_deref());
         if self
             .download
@@ -2434,8 +2592,8 @@ impl Gutenbird {
         let Some(memory) = self.book.memory() else {
             return;
         };
-        let memory = memory.encode();
-        context.store().save(place, memory);
+        self.place = Some(memory.clone());
+        context.store().save(place, memory.encode());
     }
 
     fn keep_book(&mut self, context: &mut Context) {
@@ -2835,10 +2993,136 @@ fn decode_registry(bytes: &[u8]) -> Vec<Catalog> {
 /// The flat facts for the details page, said only when the catalog actually
 /// stated them. No invented reading time, no identifier relabelled as though
 /// it belonged to one catalog when the field is generic across all of them.
+fn publication_caption(
+    publication: &Publication,
+    books: &[Publication],
+    source: Option<&str>,
+) -> String {
+    let peers: Vec<_> = books
+        .iter()
+        .filter(|book| book.title == publication.title)
+        .collect();
+    let mut parts = Vec::new();
+    if peers
+        .iter()
+        .any(|book| book.language != publication.language)
+    {
+        parts.push(
+            publication
+                .language
+                .as_deref()
+                .map_or_else(|| "Language not listed".to_owned(), language_name),
+        );
+    }
+    if peers
+        .iter()
+        .any(|book| book.publisher != publication.publisher)
+    {
+        parts.push(
+            publication
+                .publisher
+                .clone()
+                .unwrap_or_else(|| "Publisher not listed".to_owned()),
+        );
+    }
+    if peers.iter().any(|book| book.issued != publication.issued) {
+        parts.push(
+            publication
+                .issued
+                .clone()
+                .unwrap_or_else(|| "Date not listed".to_owned()),
+        );
+    }
+    if peers.len() > 1 {
+        let notice = publication
+            .summary
+            .as_deref()
+            .and_then(|summary| description_parts(summary).1);
+        let image_label = match notice {
+            Some("This edition had all images removed.") => Some("No images"),
+            Some("This edition has images.") => Some("With images"),
+            _ => None,
+        };
+        if let Some(label) = image_label {
+            parts.push(label.to_owned());
+        } else if let Some(acquisition) = publication.best_acquisition() {
+            if let Some(title) = acquisition
+                .title
+                .as_deref()
+                .filter(|title| !title.trim().is_empty())
+            {
+                parts.push(title.to_owned());
+            } else if let Some(index) = peers.iter().position(|book| {
+                book.best_acquisition()
+                    .is_some_and(|link| link.href == acquisition.href)
+            }) {
+                parts.push(format!("Edition {}", index + 1));
+            }
+        }
+    }
+    if let Some(author) = publication
+        .authors
+        .first()
+        .filter(|author| !author.is_empty())
+    {
+        parts.push(author.clone());
+    }
+    if let Some(source) = source.filter(|source| !source.is_empty()) {
+        parts.push(source.to_owned());
+    }
+    parts.join(" · ")
+}
+
+fn language_name(code: &str) -> String {
+    let base = code
+        .split(['-', '_'])
+        .next()
+        .unwrap_or(code)
+        .to_ascii_lowercase();
+    let name = match base.as_str() {
+        "en" => "English",
+        "fr" => "French",
+        "de" => "German",
+        "es" => "Spanish",
+        "it" => "Italian",
+        "pt" => "Portuguese",
+        "nl" => "Dutch",
+        "pl" => "Polish",
+        "ru" => "Russian",
+        "uk" => "Ukrainian",
+        "ja" => "Japanese",
+        "zh" => "Chinese",
+        "ko" => "Korean",
+        "ar" => "Arabic",
+        "hi" => "Hindi",
+        "la" => "Latin",
+        _ => return code.to_owned(),
+    };
+    if code.contains(['-', '_']) {
+        format!("{name} ({code})")
+    } else {
+        name.to_owned()
+    }
+}
+
+fn selected_edition(publication: &Publication) -> Option<String> {
+    let acquisition = publication.best_acquisition()?;
+    let format = match download_kind(acquisition.media_type.as_deref()) {
+        DownloadKind::Epub => "EPUB",
+        DownloadKind::Text => "Plain text",
+    };
+    Some(match publication.language.as_deref() {
+        Some(language) if !language.trim().is_empty() => {
+            format!("{} · {format}", language_name(language))
+        }
+        _ => format.to_owned(),
+    })
+}
+
 fn detail_facts(publication: &Publication) -> Vec<(String, String)> {
     let mut facts = Vec::new();
     if let Some(language) = &publication.language {
-        facts.push(("Language".to_owned(), language.clone()));
+        facts.push(("Language".to_owned(), language_name(language)));
     }
     if let Some(issued) = publication
         .issued
@@ -3003,6 +3287,15 @@ impl KoboApp for Gutenbird {
 
     #[allow(clippy::too_many_lines)]
     fn on_store(&mut self, context: &mut Context, result: StoreResult) {
+        if let StoreResult::Loaded { key, value } = &result {
+            if let Some(cache) = self.cached_feed.as_mut().filter(|cache| cache.key == *key) {
+                cache.bytes = value.clone().filter(|bytes| {
+                    bytes.len() <= MAX_STORE_VALUE && kobo_opds::parse(bytes, &cache.url).is_ok()
+                });
+                self.restore_cached_feed(context);
+                return;
+            }
+        }
         if let Some(upload) = &mut self.keeping {
             match upload.advance(context, &result) {
                 ShelfProgress::Done => {
@@ -3102,8 +3395,9 @@ impl KoboApp for Gutenbird {
                 self.looked_for_cover(context, &key, value);
             }
             StoreResult::Loaded {
-                value: Some(value), ..
-            } => {
+                key,
+                value: Some(value),
+            } if self.open_keys().is_some_and(|(_, place)| place == key) => {
                 let memory = Memory::decode(&value);
                 if let Some(reader) = self.book.reader_mut() {
                     let metrics = context.metrics();
@@ -3173,6 +3467,17 @@ impl KoboApp for Gutenbird {
 
     #[allow(clippy::too_many_lines)]
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
+        if self.view == View::AddCatalog {
+            if let Some(event) = self.catalog_setup.on_action(context, action) {
+                if event == ProviderEvent::Closed {
+                    if let Some(previous) = self.step_back() {
+                        self.view = previous;
+                    }
+                }
+                self.show(context);
+                return;
+            }
+        }
         if action == ActionId::BACK {
             if self.view == View::Reading {
                 let metrics = context.metrics();
@@ -3293,20 +3598,6 @@ impl KoboApp for Gutenbird {
                 None => {}
             }
         }
-        if self.view == View::AddCatalog {
-            match self.keyboard.press(action) {
-                Some(Pressed::Submitted) => {
-                    self.submit_catalog(context);
-                    return;
-                }
-                Some(Pressed::Edited | Pressed::Shifted) => {
-                    self.show(context);
-                    return;
-                }
-                None => {}
-            }
-        }
-
         if action == action_id("catalogs") {
             self.stop_federating();
             self.go(View::Catalogs);
@@ -3314,8 +3605,12 @@ impl KoboApp for Gutenbird {
             return;
         }
         if action == action_id("add-catalog") {
-            self.keyboard.clear();
-            self.add_catalog_problem = None;
+            if let Some((task, _)) = self.task.take() {
+                context.cancel(task);
+            }
+            self.cached_feed = None;
+            self.abandon_hydration(context);
+            self.catalog_setup = ProviderSetup::public("catalog").expect("static catalog setup");
             self.go(View::AddCatalog);
             self.show(context);
             return;
@@ -3344,6 +3639,9 @@ impl KoboApp for Gutenbird {
         if action == action_id("annotation-note-clear") {
             self.keyboard.clear();
             self.show(context);
+            return;
+        }
+        if self.format_action(context, action) {
             return;
         }
         if action == action_id("read") {
@@ -3437,6 +3735,13 @@ impl KoboApp for Gutenbird {
 
     #[allow(clippy::too_many_lines)]
     fn on_task(&mut self, context: &mut Context, task: TaskId, outcome: TaskOutcome) {
+        if let Some(event) = self.catalog_setup.on_task(task, &outcome) {
+            if let ProviderEvent::Response(bytes) = event {
+                self.finish_catalog_setup(context, &bytes);
+            }
+            self.show(context);
+            return;
+        }
         if let Some(stage) = self.finish_filling(task) {
             context.log(
                 LogLevel::Debug,
@@ -3461,7 +3766,13 @@ impl KoboApp for Gutenbird {
         if let Some((index, tries)) = self.finish_cover(task) {
             match outcome {
                 TaskOutcome::Completed(bytes) => self.keep_cover(context, index, &bytes),
-                TaskOutcome::Failed(_) => self.retry_cover(index, tries),
+                TaskOutcome::Failed(_) if tries + 1 < COVER_TRIES => self.retry_cover(index, tries),
+                TaskOutcome::Failed(_) => {
+                    let (width, height) = context.metrics().tile_body(TileShape::Portrait);
+                    if let (Ok(width), Ok(height)) = (u32::try_from(width), u32::try_from(height)) {
+                        self.set_a_cover(context, index, width, height);
+                    }
+                }
                 TaskOutcome::Cancelled => {}
             }
             self.next_cover(context);
@@ -3538,7 +3849,15 @@ impl KoboApp for Gutenbird {
         );
         match outcome {
             TaskOutcome::Completed(bytes) => match awaiting {
-                Awaiting::Feed(purpose, base) => self.took_feed(context, &bytes, purpose, base),
+                Awaiting::Feed(purpose, base) => {
+                    self.cached_feed = None;
+                    if bytes.len() <= MAX_STORE_VALUE && kobo_opds::parse(&bytes, &base).is_ok() {
+                        context
+                            .store()
+                            .save(format!("catalog-{:08x}", stamp(&base)), bytes.clone());
+                    }
+                    self.took_feed(context, &bytes, purpose, base);
+                }
                 Awaiting::DiscoverRoot {
                     catalog,
                     query,
@@ -3598,6 +3917,10 @@ impl KoboApp for Gutenbird {
                     let failure = Failure::of(error);
                     self.trouble = Some(failure);
                     self.problem = Some(failure.advice.to_owned());
+                    if let Some(cache) = &mut self.cached_feed {
+                        cache.failed = true;
+                    }
+                    self.restore_cached_feed(context);
                 }
             },
             TaskOutcome::Cancelled => {
@@ -3962,10 +4285,41 @@ Please read this before you distribute or use this work.\n";
     }
 
     #[test]
-    fn gutenbergs_images_and_noimages_editions_of_one_entry_collapse_to_one_book() {
+    fn same_title_does_not_hide_a_different_language_author_or_edition() {
+        let mut first = publication(
+            "Selected poems",
+            vec![epub_acquisition("https://x/one.epub")],
+        );
+        first.language = Some("en".into());
+        first.authors = vec!["First author".into()];
+        let mut other = first.clone();
+        other.language = Some("fr".into());
+        let separate = |other| {
+            Gutenbird::resolve_entry(&Feed {
+                publications: vec![first.clone(), other],
+                ..Feed::default()
+            })
+            .is_none()
+        };
+        assert!(separate(other));
+        let mut other = first.clone();
+        other.authors = vec!["Second author".into()];
+        assert!(separate(other));
+        let mut other = first.clone();
+        other.publisher = Some("Another publisher".into());
+        assert!(separate(other));
+        let mut other = first.clone();
+        other.issued = Some("2020".into());
+        assert!(separate(other));
+        let mut other = first.clone();
+        other.language = None;
+        assert!(separate(other));
+    }
+
+    #[test]
+    fn gutenbergs_images_and_noimages_editions_remain_available() {
         // Gutenberg's per-book entry document answers with two publications
-        // sharing a title -- the `.images` and `.noimages` editions -- and
-        // one book is shown rather than the same title twice.
+        // sharing a title. Both must stay available to the reader.
         let feed = Feed {
             publications: vec![
                 publication(
@@ -3985,16 +4339,12 @@ Please read this before you distribute or use this work.\n";
             ],
             ..Feed::default()
         };
-        let resolved = Gutenbird::resolve_entry(&feed).expect("collapses to one book");
-        // The illustrated edition of this one is twenty-four megabytes, which
-        // is past what this device can parse, so the plain one is what opens.
-        assert!(resolved.acquisition[0].href.contains(".noimages"));
+        assert!(Gutenbird::resolve_entry(&feed).is_none());
     }
 
     #[test]
-    fn editions_that_name_no_pictures_fall_back_to_the_first() {
-        // Not every catalog spells its editions the way Gutenberg does, and
-        // one of two identical-looking books is better than neither.
+    fn unnamed_editions_are_not_silently_discarded() {
+        // Missing edition metadata does not prove two downloads are equal.
         let feed = Feed {
             publications: vec![
                 publication(
@@ -4008,8 +4358,7 @@ Please read this before you distribute or use this work.\n";
             ],
             ..Feed::default()
         };
-        let resolved = Gutenbird::resolve_entry(&feed).expect("collapses to one book");
-        assert_eq!(resolved.acquisition[0].length, Some(900_000));
+        assert!(Gutenbird::resolve_entry(&feed).is_none());
     }
 
     #[test]
@@ -4239,6 +4588,132 @@ Please read this before you distribute or use this work.\n";
     }
 
     #[test]
+    fn download_choices_exclude_unavailable_formats_and_page_without_losing_links() {
+        let mut choices: Vec<_> = (0..5)
+            .map(|index| epub_acquisition(&format!("https://x/{index}.epub")))
+            .collect();
+        choices[4].kind = AcquisitionKind::Sample;
+        let mut unavailable = epub_acquisition("https://x/unavailable.epub");
+        unavailable.available = false;
+        choices.extend([
+            unavailable,
+            acquisition(
+                AcquisitionKind::Buy,
+                "https://x/buy.epub",
+                "application/epub+zip",
+            ),
+            acquisition(
+                AcquisitionKind::OpenAccess,
+                "https://x/book.pdf",
+                "application/pdf",
+            ),
+            sized_epub("https://x/huge.epub", super::MAX_BOOK_BYTES + 1),
+        ]);
+        let mut app = Gutenbird::default();
+        app.open_publication(
+            &mut Context::default(),
+            publication("Format choices", choices),
+        );
+        assert_eq!(app.formats.len(), 5);
+        let mut runner = AppRunner::new(app);
+        runner.action(action_id("formats"));
+        runner.action(action_id("formats-next"));
+        runner.action(action_id("formats-next"));
+        assert_eq!(runner.app().format_page, 1);
+        runner.action(action_id("format-4"));
+        assert_eq!(
+            read_offer(runner.app().open.as_ref().unwrap()),
+            ReadOffer::Sample
+        );
+        assert_eq!(
+            runner
+                .app()
+                .open
+                .as_ref()
+                .unwrap()
+                .best_acquisition()
+                .unwrap()
+                .href,
+            "https://x/4.epub"
+        );
+        runner.action(action_id("formats"));
+        runner.action(kobo_sdk::ActionId::BACK);
+        assert_eq!(runner.app().view, View::Details);
+        assert_eq!(runner.app().formats.len(), 5);
+    }
+
+    #[test]
+    fn choosing_a_format_uses_its_own_download_and_saved_position() {
+        let epub = epub_acquisition("https://x/book.epub");
+        let text = text_acquisition("https://x/book.txt");
+        let book = publication("A Test Book", vec![epub, text]);
+        let epub_keys = book_keys(&book).unwrap();
+        let mut app = Gutenbird::default();
+        app.open_publication(&mut Context::default(), book);
+        let mut runner = AppRunner::new(app);
+        runner.action(action_id("formats"));
+        assert_eq!(runner.app().view, View::Formats);
+        let screen = runner.app().formats_screen();
+        let context = Context::default();
+        assert!(!screen
+            .diagnostics(&context.metrics(), &Chrome::with_back(true))
+            .issues
+            .iter()
+            .any(|issue| issue.severity == DiagnosticSeverity::Error));
+        if let Ok(directory) = std::env::var("KOBO_QUALITY_CAPTURE_DIR") {
+            kobo_text::install(CLARA_BW_METRICS).unwrap();
+            let screen = runner.app().formats_screen();
+            let metrics = context.metrics();
+            let mut surface = kobo_ui::Surface::new(
+                usize::try_from(metrics.width).unwrap(),
+                usize::try_from(metrics.height).unwrap(),
+            );
+            kobo_ui::render(&screen, &mut surface, None);
+            let png = kobo_image::encode_png_grey(
+                u32::try_from(metrics.width).unwrap(),
+                u32::try_from(metrics.height).unwrap(),
+                &surface.pixels,
+            )
+            .unwrap();
+            std::fs::create_dir_all(&directory).unwrap();
+            std::fs::write(
+                std::path::Path::new(&directory).join("download-choices.png"),
+                png,
+            )
+            .unwrap();
+        }
+        let commands = runner.action(action_id("format-1"));
+        assert_eq!(runner.app().view, View::Details);
+        let text_keys = runner.app().open_keys().unwrap();
+        assert_ne!(epub_keys, text_keys);
+        assert!(commands.iter().any(|command| matches!(command,
+            Command::Store(StoreRequest::Load { key }) if *key == text_keys.1)));
+        assert_eq!(runner.app().formats.len(), 2);
+        let commands = runner.action(action_id("read"));
+        assert!(commands.iter().any(|command| matches!(command,
+            Command::Spawn { work: Task::Fetch { url, offset: 0, .. }, .. } if url == "https://x/book.txt")));
+        assert_eq!(
+            runner.app().download.as_ref().unwrap().kind,
+            super::DownloadKind::Text
+        );
+        // The picker cannot replace an in-flight download.
+        runner.action(action_id("formats"));
+        assert_eq!(runner.app().view, View::Details);
+        runner.app_mut().task = None;
+        runner.app_mut().stored.insert(epub_keys.0.clone(), 4096);
+        runner.action(action_id("formats"));
+        runner.action(action_id("format-0"));
+        assert_eq!(runner.app().open_keys().unwrap(), epub_keys);
+        assert!(runner.app().download.is_none());
+        let commands = runner.action(action_id("read"));
+        assert!(!commands
+            .iter()
+            .any(|command| matches!(command, Command::Spawn { .. })));
+        assert!(commands.iter().any(|command| matches!(command,
+            Command::Store(StoreRequest::ShelfRead { name, .. }) if *name == epub_keys.0)));
+    }
+
+    #[test]
     fn a_whole_epub_is_opened_once_the_last_chunk_lands() {
         let book = publication("Whole", vec![epub_acquisition("https://x/book.epub")]);
         let mut runner = AppRunner::new(Gutenbird {
@@ -4427,6 +4902,105 @@ Please read this before you distribute or use this work.\n";
     }
 
     #[test]
+    fn failed_cover_downloads_leave_a_lettered_cover() {
+        let mut book = publication("Selected Poems", vec![]);
+        book.authors = vec!["A. Writer".into()];
+        book.images = vec![cover_url("https://x/cover.png")];
+        let mut app = app_with_stack(Feed {
+            publications: vec![book],
+            ..Feed::default()
+        });
+        app.covers = vec![(TaskId(17), 0, COVER_TRIES - 1)];
+        let mut runner = AppRunner::new(app);
+        let commands = runner.task_outcome(TaskId(17), TaskOutcome::Failed(TaskError::Unreachable));
+        assert!(runner.app().stack[0].covers[0].is_some());
+        assert!(runner.app().wanted.is_empty());
+        assert!(commands
+            .iter()
+            .any(|command| matches!(command, Command::PutPicture { .. })));
+        if let Ok(directory) = std::env::var("KOBO_QUALITY_CAPTURE_DIR") {
+            struct CapturedPictures<'a>(&'a [Command]);
+            impl kobo_ui::Pictures for CapturedPictures<'_> {
+                fn get(&self, wanted: PictureHandle) -> Option<kobo_ui::PicturePixels<'_>> {
+                    self.0.iter().find_map(|command| match command {
+                        Command::PutPicture {
+                            handle,
+                            width,
+                            height,
+                            pixels,
+                            ..
+                        } if *handle == wanted => Some(kobo_ui::PicturePixels {
+                            width: *width,
+                            height: *height,
+                            grey: pixels,
+                            colour: None,
+                        }),
+                        _ => None,
+                    })
+                }
+            }
+            kobo_text::install(CLARA_BW_METRICS).unwrap();
+            let context = Context::default();
+            let metrics = context.metrics();
+            let screen = runner.app().shelf_screen(&context);
+            assert!(!screen
+                .diagnostics(&metrics, &Chrome::with_back(true))
+                .issues
+                .iter()
+                .any(|issue| issue.severity == DiagnosticSeverity::Error));
+            let mut surface = kobo_ui::Surface::new(
+                usize::try_from(metrics.width).unwrap(),
+                usize::try_from(metrics.height).unwrap(),
+            );
+            kobo_ui::render_all(
+                &screen,
+                &metrics,
+                &Chrome::with_back(true),
+                &CapturedPictures(&commands),
+                &mut surface,
+                None,
+            );
+            let png = kobo_image::encode_png_grey(
+                u32::try_from(metrics.width).unwrap(),
+                u32::try_from(metrics.height).unwrap(),
+                &surface.pixels,
+            )
+            .unwrap();
+            std::fs::create_dir_all(&directory).unwrap();
+            std::fs::write(
+                std::path::Path::new(&directory).join("failed-cover.png"),
+                png,
+            )
+            .unwrap();
+        }
+    }
+
+    #[test]
+    fn multiple_editions_can_share_a_navigation_cover_without_selecting_an_edition() {
+        let bytes =
+            include_bytes!("../../../crates/kobo-opds/tests/fixtures/gutenberg/entry-564.xml");
+        let mut feed =
+            kobo_opds::parse(bytes, "https://www.gutenberg.org/ebooks/564.opds").unwrap();
+        assert!(Gutenbird::resolve_entry(&feed).is_none());
+        assert!(Gutenbird::entry_cover(&feed).is_some());
+        let mut app = Gutenbird::default();
+        app.took_hydration(
+            &mut Context::default(),
+            bytes,
+            "https://www.gutenberg.org/ebooks/564.opds",
+        );
+        assert!(app
+            .filling
+            .iter()
+            .any(|(_, stage)| matches!(stage, FillStage::Picture { .. })));
+        feed.publications[1].images = vec![cover_url("https://x/different.png")];
+        assert!(Gutenbird::entry_cover(&feed).is_none());
+        feed.publications[1].images = feed.publications[0].images.clone();
+        feed.publications[1].title = "Another book".into();
+        assert!(Gutenbird::entry_cover(&feed).is_none());
+    }
+
+    #[test]
     fn a_cover_that_did_not_arrive_is_asked_for_again_but_not_forever() {
         let mut app = Gutenbird::default();
         app.retry_cover(4, 0);
@@ -4476,9 +5050,12 @@ Please read this before you distribute or use this work.\n";
         let mut context = Context::default();
         app.want_covers(&mut context);
         assert!(
-            app.stack[0].covers[0].is_none(),
-            "a 1x1 icon was enlarged into a cover"
+            app.stack[0].covers[0].is_some(),
+            "a tiny icon should leave a lettered fallback"
         );
+        assert!(context.commands().iter().any(|command| matches!(command,
+            Command::PutPicture { width, height, pixels, .. }
+                if *pixels == kobo_sdk::typographic_cover("Tiny Icon", Some("Some Author"), *width, *height))));
     }
 
     #[test]
@@ -4773,31 +5350,94 @@ Please read this before you distribute or use this work.\n";
     // -----------------------------------------------------------------
 
     #[test]
-    fn adding_a_catalog_by_url_keeps_it_and_a_malformed_url_is_refused_before_it_is_stored() {
-        let mut app = Gutenbird {
+    fn adding_a_catalog_requires_a_valid_opds_response() {
+        let mut runner = AppRunner::new(Gutenbird {
             view: View::AddCatalog,
             ..Gutenbird::default()
-        };
-        let before = app.catalogs.len();
+        });
+        let before = runner.app().catalogs.len();
+        runner
+            .app_mut()
+            .catalog_setup
+            .restore_address("https://example.org/opds/")
+            .unwrap();
+        for valid in [false, true] {
+            let commands = runner.action(action_id(kobo_sdk::provider::TEST));
+            let task = commands
+                .iter()
+                .find_map(|command| match command {
+                    Command::Spawn {
+                        task,
+                        work:
+                            Task::Fetch {
+                                credential: None, ..
+                            },
+                        ..
+                    } => Some(*task),
+                    _ => None,
+                })
+                .unwrap();
+            assert_eq!(runner.app().catalogs.len(), before);
+            let bytes = if valid {
+                ENTRY_DOCUMENT.as_bytes()
+            } else {
+                b"<html>A website</html>"
+            };
+            let commands = runner.task_outcome(task, TaskOutcome::Completed(bytes.to_vec()));
+            if valid {
+                assert_eq!(runner.app().catalogs.len(), before + 1);
+                assert_eq!(
+                    runner.app().catalogs.last().unwrap().root,
+                    "https://example.org/opds/"
+                );
+                assert_eq!(runner.app().view, View::Details);
+                assert!(commands.iter().any(|command| matches!(command,
+                    Command::Store(StoreRequest::Save { key, .. }) if key == super::REGISTRY_KEY)));
+            } else {
+                assert_eq!(runner.app().catalogs.len(), before);
+                assert_eq!(runner.app().view, View::AddCatalog);
+                assert!(!commands.iter().any(|command| matches!(command,
+                    Command::Store(StoreRequest::Save { key, .. }) if key == super::REGISTRY_KEY)));
+            }
+        }
+    }
 
-        // A malformed address.
-        app.add_catalog(&mut Context::default(), "not a url");
-        assert_eq!(
-            app.catalogs.len(),
-            before,
-            "a malformed url was stored anyway"
+    #[test]
+    fn cancelling_catalog_setup_discards_a_late_valid_response() {
+        let mut runner = AppRunner::new(Gutenbird::default());
+        let count = runner.app().catalogs.len();
+        runner.action(action_id("add-catalog"));
+        runner
+            .app_mut()
+            .catalog_setup
+            .restore_address("https://example.org/opds/")
+            .unwrap();
+        let commands = runner.action(action_id(kobo_sdk::provider::TEST));
+        let task = commands
+            .iter()
+            .find_map(|command| match command {
+                Command::Spawn {
+                    task,
+                    work: Task::Fetch { .. },
+                    ..
+                } => Some(*task),
+                _ => None,
+            })
+            .unwrap();
+        let commands = runner.action(kobo_sdk::ActionId::BACK);
+        assert!(commands
+            .iter()
+            .any(|command| matches!(command, Command::Cancel(id) if *id == task)));
+        assert_eq!(runner.app().view, View::Catalogs);
+        let commands = runner.task_outcome(
+            task,
+            TaskOutcome::Completed(ENTRY_DOCUMENT.as_bytes().to_vec()),
         );
-        assert!(app.add_catalog_problem.is_some());
-
-        // A well formed one.
-        app.add_catalog(&mut Context::default(), "https://example.org/opds");
-        assert_eq!(app.catalogs.len(), before + 1);
-        assert_eq!(
-            app.catalogs.last().unwrap().root,
-            "https://example.org/opds"
-        );
-        assert!(app.catalogs.last().unwrap().added);
-        assert!(app.add_catalog_problem.is_none());
+        assert_eq!(runner.app().catalogs.len(), count);
+        assert_eq!(runner.app().view, View::Catalogs);
+        assert!(!commands
+            .iter()
+            .any(|command| matches!(command, Command::Store(StoreRequest::Save { .. }))));
     }
 
     #[test]
@@ -5377,6 +6017,64 @@ Please read this before you distribute or use this work.\n";
     }
 
     #[test]
+    fn cached_catalog_recovers_before_or_after_network_failure() {
+        for cache_first in [true, false] {
+            let mut app = Gutenbird::default();
+            app.spawn_feed(
+                &mut Context::default(),
+                BASE.into(),
+                FeedPurpose::Root { catalog: 0 },
+            );
+            let task = app.task.as_ref().unwrap().0;
+            let key = app.cached_feed.as_ref().unwrap().key.clone();
+            let cached = StoreResult::Loaded {
+                key,
+                value: Some(ENTRY_DOCUMENT.as_bytes().to_vec()),
+            };
+            let mut runner = AppRunner::new(app);
+            if cache_first {
+                runner.store_result(cached.clone());
+                assert!(runner.app().open.is_none());
+            }
+            runner.task_outcome(task, TaskOutcome::Failed(TaskError::Unreachable));
+            if !cache_first {
+                runner.store_result(cached);
+            }
+            assert_eq!(runner.app().view, View::Details);
+            assert_eq!(
+                runner.app().open.as_ref().unwrap().title,
+                "Pride and Prejudice"
+            );
+            assert!(runner.app().cached_feed.is_none());
+        }
+    }
+
+    #[test]
+    fn late_cached_catalog_cannot_replace_a_fresh_response() {
+        let mut app = Gutenbird::default();
+        app.spawn_feed(
+            &mut Context::default(),
+            BASE.into(),
+            FeedPurpose::Root { catalog: 0 },
+        );
+        let task = app.task.as_ref().unwrap().0;
+        let key = app.cached_feed.as_ref().unwrap().key.clone();
+        let mut runner = AppRunner::new(app);
+        runner.task_outcome(
+            task,
+            TaskOutcome::Completed(two_publication_feed_json().into_bytes()),
+        );
+        assert_eq!(runner.app().stack[0].feed.publications.len(), 2);
+        runner.store_result(StoreResult::Loaded {
+            key,
+            value: Some(ENTRY_DOCUMENT.as_bytes().to_vec()),
+        });
+        assert!(runner.app().open.is_none());
+        assert_eq!(runner.app().stack[0].feed.publications.len(), 2);
+        assert!(runner.app().place.is_none());
+    }
+
+    #[test]
     fn opening_a_book_asks_where_it_was_left() {
         let feed = two_publication_feed();
         let mut runner = AppRunner::new(Gutenbird {
@@ -5426,6 +6124,28 @@ Please read this before you distribute or use this work.\n";
             reader.page().iter().any(|piece| piece.block == 20),
             "the reader was not put back where they were left"
         );
+        // An earlier book's response must not restore its position here.
+        runner.store_result(StoreResult::Loaded {
+            key: "place-another-download".into(),
+            value: Some(Memory::default().encode()),
+        });
+        assert_eq!(runner.app().place.as_ref().unwrap().at, 20);
+        assert!(runner
+            .app()
+            .book
+            .reader()
+            .unwrap()
+            .page()
+            .iter()
+            .any(|piece| piece.block == 20));
+        // Saving also refreshes the position used for an in-session reopen.
+        runner.app_mut().place = Some(Memory::default());
+        let expected = runner.app().book.memory().unwrap().encode();
+        let mut context = runner.context();
+        runner.app_mut().save_place(&mut context);
+        assert_eq!(runner.app().place.as_ref().unwrap().encode(), expected);
+        assert!(context.commands().iter().any(|command| matches!(command,
+            Command::Store(StoreRequest::Save { value, .. }) if *value == expected)));
     }
 
     #[test]
@@ -5792,6 +6512,232 @@ Please read this before you distribute or use this work.\n";
     // Parity: the same catalog, twice
     // -----------------------------------------------------------------
 
+    #[test]
+    fn gutenberg_entry_offers_both_editions_and_reads_the_chosen_url() {
+        let bytes =
+            include_bytes!("../../../crates/kobo-opds/tests/fixtures/gutenberg/entry-564.xml");
+        let mut app = Gutenbird::default();
+        let mut context = Context::default();
+        app.took_feed(
+            &mut context,
+            bytes,
+            FeedPurpose::Push { catalog: 0 },
+            "https://www.gutenberg.org/ebooks/564.opds".into(),
+        );
+        assert_eq!(app.view, View::Shelf);
+        assert_eq!(app.stack.last().unwrap().feed.publications.len(), 2);
+        let books = &app.stack.last().unwrap().feed.publications;
+        let captions: Vec<_> = books
+            .iter()
+            .map(|book| super::publication_caption(book, books, None))
+            .collect();
+        assert!(captions[0].starts_with("No images"));
+        assert!(captions[1].starts_with("With images"));
+        assert_ne!(captions[0], captions[1]);
+        if let Ok(directory) = std::env::var("KOBO_QUALITY_CAPTURE_DIR") {
+            kobo_text::install(CLARA_BW_METRICS).unwrap();
+            let screen = app.shelf_screen(&context);
+            let metrics = context.metrics();
+            assert!(!screen
+                .diagnostics(&metrics, &Chrome::with_back(true))
+                .issues
+                .iter()
+                .any(|issue| issue.severity == DiagnosticSeverity::Error));
+            let mut surface = kobo_ui::Surface::new(
+                usize::try_from(metrics.width).unwrap(),
+                usize::try_from(metrics.height).unwrap(),
+            );
+            kobo_ui::render(&screen, &mut surface, None);
+            let png = kobo_image::encode_png_grey(
+                u32::try_from(metrics.width).unwrap(),
+                u32::try_from(metrics.height).unwrap(),
+                &surface.pixels,
+            )
+            .unwrap();
+            std::fs::create_dir_all(&directory).unwrap();
+            std::fs::write(
+                std::path::Path::new(&directory).join("edition-choices.png"),
+                png,
+            )
+            .unwrap();
+        }
+        let mut runner = AppRunner::new(app);
+        for index in 0..2 {
+            runner.app_mut().view = View::Shelf;
+            runner.app_mut().task = None;
+            let expected = runner.app().stack.last().unwrap().feed.publications[index]
+                .best_acquisition()
+                .unwrap()
+                .href
+                .clone();
+            runner.action(action_id(&format!("book-{index}")));
+            assert_eq!(runner.app().view, View::Details);
+            let commands = runner.action(action_id("read"));
+            assert!(commands.iter().any(|command| matches!(command,
+                Command::Spawn { work: Task::Fetch { url, .. }, .. } if url == &expected)));
+        }
+    }
+
+    #[test]
+    fn same_title_shelf_captions_lead_with_the_distinguishing_edition() {
+        let mut english = publication("Poems", vec![]);
+        english.language = Some("en".into());
+        english.authors = vec!["An author".into()];
+        let mut french = english.clone();
+        french.language = Some("fr".into());
+        let books = vec![english.clone(), french.clone()];
+        if let Ok(directory) = std::env::var("KOBO_QUALITY_CAPTURE_DIR") {
+            kobo_text::install(CLARA_BW_METRICS).unwrap();
+            let app = app_with_stack(Feed {
+                publications: books.clone(),
+                ..Feed::default()
+            });
+            let context = kobo_sdk::Context::default();
+            let screen = app.shelf_screen(&context);
+            let metrics = context.metrics();
+            let diagnostics = screen.diagnostics(&metrics, &Chrome::with_back(true));
+            assert!(!diagnostics
+                .issues
+                .iter()
+                .any(|issue| issue.severity == DiagnosticSeverity::Error));
+            let mut surface = kobo_ui::Surface::new(
+                usize::try_from(metrics.width).unwrap(),
+                usize::try_from(metrics.height).unwrap(),
+            );
+            kobo_ui::render(&screen, &mut surface, None);
+            let png = kobo_image::encode_png_grey(
+                u32::try_from(metrics.width).unwrap(),
+                u32::try_from(metrics.height).unwrap(),
+                &surface.pixels,
+            )
+            .unwrap();
+            std::fs::create_dir_all(&directory).unwrap();
+            std::fs::write(
+                std::path::Path::new(&directory).join("language-choices.png"),
+                png,
+            )
+            .unwrap();
+        }
+        assert_eq!(
+            super::publication_caption(&english, &books, Some("Library")),
+            "English · An author · Library"
+        );
+        assert_eq!(
+            super::publication_caption(&french, &books, None),
+            "French · An author"
+        );
+        assert_eq!(
+            super::publication_caption(&english, &[english.clone()], None),
+            "An author"
+        );
+        french.language = None;
+        let books = vec![english.clone(), french.clone()];
+        assert!(
+            super::publication_caption(&french, &books, None).starts_with("Language not listed")
+        );
+        let mut later = english.clone();
+        later.issued = Some("2020".into());
+        let books = vec![english, later.clone()];
+        assert!(super::publication_caption(&later, &books, None).starts_with("2020"));
+    }
+
+    #[test]
+    fn edition_label_matches_the_download_and_preserves_language_variants() {
+        let mut book = publication(
+            "Example",
+            vec![
+                text_acquisition("https://x/book.txt"),
+                epub_acquisition("https://x/book.epub"),
+            ],
+        );
+        book.language = Some("en".into());
+        assert_eq!(
+            super::selected_edition(&book).as_deref(),
+            Some("English · EPUB")
+        );
+        book.language = Some("pt-BR".into());
+        assert_eq!(
+            super::selected_edition(&book).as_deref(),
+            Some("Portuguese (pt-BR) · EPUB")
+        );
+        book.acquisition = vec![text_acquisition("https://x/book.txt")];
+        book.language = Some("qaa".into());
+        assert_eq!(
+            super::selected_edition(&book).as_deref(),
+            Some("qaa · Plain text")
+        );
+        book.acquisition.clear();
+        assert!(super::selected_edition(&book).is_none());
+    }
+
+    #[test]
+    fn catalog_metadata_is_not_presented_as_the_book_summary() {
+        let fixture =
+            include_bytes!("../../../crates/kobo-opds/tests/fixtures/gutenberg/entry-564.xml");
+        let feed = kobo_opds::parse(fixture, "https://www.gutenberg.org/ebooks/564.opds").unwrap();
+        assert!(!feed.publications.is_empty());
+        for book in &feed.publications {
+            let original = book.summary.as_deref().unwrap();
+            let (summary, edition) = super::description_parts(original);
+            assert!(
+                summary.starts_with("\"The Mystery of Edwin Drood\""),
+                "{summary}"
+            );
+            assert!(summary.contains("automatically generated summary"));
+            assert!(!summary.contains("EBook No.:"));
+            assert!(!summary.contains("Downloads:"));
+            if original.contains("This edition had all images removed.") {
+                assert_eq!(edition, Some("This edition had all images removed."));
+            }
+        }
+        if std::env::var_os("KOBO_QUALITY_CAPTURE_DIR").is_some() {
+            kobo_text::install(CLARA_BW_METRICS).expect("install runtime fonts for capture");
+        }
+        let book = feed.publications[0].clone();
+        let mut app = Gutenbird {
+            view: View::Details,
+            open: Some(book.clone()),
+            complete: true,
+            ..Gutenbird::default()
+        };
+        let context = kobo_sdk::Context::default();
+        let blocks = Gutenbird::detail_blocks(&book);
+        let pages = app.detail_pagination(&context, &book, &blocks);
+        for page in 0..pages.len() {
+            app.detail_page = page;
+            let screen = app.details_screen(&context);
+            let diagnostics = screen.diagnostics(&context.metrics(), &Chrome::with_back(true));
+            assert!(!diagnostics
+                .issues
+                .iter()
+                .any(|issue| issue.severity == DiagnosticSeverity::Error));
+            if let Ok(directory) = std::env::var("KOBO_QUALITY_CAPTURE_DIR") {
+                let metrics = context.metrics();
+                let mut surface = kobo_ui::Surface::new(
+                    usize::try_from(metrics.width).unwrap(),
+                    usize::try_from(metrics.height).unwrap(),
+                );
+                kobo_ui::render(&screen, &mut surface, None);
+                let png = kobo_image::encode_png_grey(
+                    u32::try_from(metrics.width).unwrap(),
+                    u32::try_from(metrics.height).unwrap(),
+                    &surface.pixels,
+                )
+                .unwrap();
+                std::fs::create_dir_all(&directory).unwrap();
+                std::fs::write(
+                    std::path::Path::new(&directory).join(format!("detail-{}.png", page + 1)),
+                    png,
+                )
+                .unwrap();
+            }
+        }
+        let ordinary = "Title: a story about a librarian\n\nSummary: this is ordinary prose.";
+        assert_eq!(super::description_parts(ordinary), (ordinary, None));
+        let unlabeled = "A novel.\n\nA second paragraph.";
+        assert_eq!(super::description_parts(unlabeled), (unlabeled, None));
+    }
+
     const PARITY_ATOM: &str = include_str!("../tests/fixtures/parity-1.2.xml");
     const PARITY_JSON: &str = include_str!("../tests/fixtures/parity-2.0.json");
 
@@ -5893,18 +6839,31 @@ Please read this before you distribute or use this work.\n";
             ],
             ..Feed::default()
         };
-        let resolved = Gutenbird::resolve_entry(&feed).expect("collapses to one book");
-        assert_eq!(
-            resolved.acquisition[0].length,
-            Some(558_547),
-            "took the edition that crashed the reader"
-        );
+        assert!(Gutenbird::resolve_entry(&feed).is_none());
+        let mut runner = AppRunner::new(Gutenbird {
+            open: Some(feed.publications[0].clone()),
+            view: View::Details,
+            ..Gutenbird::default()
+        });
+        let commands = runner.action(action_id("read"));
+        assert!(!commands
+            .iter()
+            .any(|command| matches!(command, Command::Spawn { .. })));
+        assert!(runner
+            .app()
+            .failed
+            .as_deref()
+            .unwrap()
+            .contains("too large"));
+        runner.app_mut().open = Some(feed.publications[1].clone());
+        let commands = runner.action(action_id("read"));
+        assert!(commands.iter().any(|command| matches!(command,
+            Command::Spawn { work: Task::Fetch { url, .. }, .. } if url.ends_with(".noimages"))));
     }
 
     #[test]
-    fn an_illustrated_edition_small_enough_to_read_is_still_preferred() {
-        // The ceiling is not a preference for plainness. A book whose plates
-        // fit is still the better book.
+    fn an_illustrated_edition_is_not_silently_chosen() {
+        // Both editions fit; the choice belongs to the reader.
         let feed = Feed {
             publications: vec![
                 publication(
@@ -5924,8 +6883,7 @@ Please read this before you distribute or use this work.\n";
             ],
             ..Feed::default()
         };
-        let resolved = Gutenbird::resolve_entry(&feed).expect("collapses to one book");
-        assert!(resolved.acquisition[0].href.contains(".images"));
+        assert!(Gutenbird::resolve_entry(&feed).is_none());
     }
 
     #[test]

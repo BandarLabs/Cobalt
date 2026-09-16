@@ -1,0 +1,424 @@
+{
+  "paints": 4,
+  "nodes": [
+    {
+      "kind": "TopBar",
+      "x": 0,
+      "y": 0,
+      "width": 1072,
+      "height": 100,
+      "centre": {
+        "x": 536,
+        "y": 50
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Back",
+      "x": 47,
+      "y": 0,
+      "width": 100,
+      "height": 100,
+      "centre": {
+        "x": 97,
+        "y": 50
+      },
+      "action": 4294967295,
+      "lines": []
+    },
+    {
+      "kind": "BarGlyph(ActionId(2359859083), Light)",
+      "x": 925,
+      "y": 0,
+      "width": 100,
+      "height": 100,
+      "centre": {
+        "x": 975,
+        "y": 50
+      },
+      "action": 2359859083,
+      "lines": [
+        "Front light"
+      ]
+    },
+    {
+      "kind": "BarAction(ActionId(282227963))",
+      "x": 781,
+      "y": 0,
+      "width": 120,
+      "height": 100,
+      "centre": {
+        "x": 841,
+        "y": 50
+      },
+      "action": 282227963,
+      "lines": [
+        "Aa"
+      ]
+    },
+    {
+      "kind": "TopBarTitle",
+      "x": 171,
+      "y": 10,
+      "width": 586,
+      "height": 79,
+      "centre": {
+        "x": 464,
+        "y": 49
+      },
+      "action": null,
+      "lines": [
+        "Walking Notes"
+      ]
+    },
+    {
+      "kind": "Divider",
+      "x": 0,
+      "y": 100,
+      "width": 1072,
+      "height": 4,
+      "centre": {
+        "x": 536,
+        "y": 102
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Heading(1)",
+      "x": 47,
+      "y": 116,
+      "width": 978,
+      "height": 136,
+      "centre": {
+        "x": 536,
+        "y": 184
+      },
+      "action": 282227963,
+      "lines": [
+        "Walking Notes"
+      ]
+    },
+    {
+      "kind": "RichText(TextPresentation { strong: false, emphasis: false, underline: false, superscript: false, subscript: false, highlighted: false })",
+      "x": 47,
+      "y": 264,
+      "width": 971,
+      "height": 55,
+      "centre": {
+        "x": 532,
+        "y": 291
+      },
+      "action": 282227963,
+      "lines": [
+        "Note 1. The path turns beside the river. A small bridge leads"
+      ]
+    },
+    {
+      "kind": "RichText(TextPresentation { strong: false, emphasis: false, underline: false, superscript: false, subscript: false, highlighted: false })",
+      "x": 47,
+      "y": 319,
+      "width": 957,
+      "height": 55,
+      "centre": {
+        "x": 525,
+        "y": 346
+      },
+      "action": 282227963,
+      "lines": [
+        "toward the garden, where the morning light falls across the"
+      ]
+    },
+    {
+      "kind": "RichText(TextPresentation { strong: false, emphasis: false, underline: false, superscript: false, subscript: false, highlighted: false })",
+      "x": 47,
+      "y": 374,
+      "width": 951,
+      "height": 55,
+      "centre": {
+        "x": 522,
+        "y": 401
+      },
+      "action": 282227963,
+      "lines": [
+        "stone steps. We stop to sketch the trees before continuing"
+      ]
+    },
+    {
+      "kind": "RichText(TextPresentation { strong: false, emphasis: false, underline: false, superscript: false, subscript: false, highlighted: false })",
+      "x": 47,
+      "y": 429,
+      "width": 99,
+      "height": 55,
+      "centre": {
+        "x": 96,
+        "y": 456
+      },
+      "action": 123572910,
+      "lines": [
+        "home."
+      ]
+    },
+    {
+      "kind": "RichText(TextPresentation { strong: false, emphasis: false, underline: false, superscript: false, subscript: false, highlighted: false })",
+      "x": 47,
+      "y": 264,
+      "width": 978,
+      "height": 220,
+      "centre": {
+        "x": 536,
+        "y": 374
+      },
+      "action": 282227963,
+      "lines": []
+    },
+    {
+      "kind": "RichText(TextPresentation { strong: false, emphasis: false, underline: false, superscript: false, subscript: false, highlighted: false })",
+      "x": 47,
+      "y": 496,
+      "width": 977,
+      "height": 55,
+      "centre": {
+        "x": 535,
+        "y": 523
+      },
+      "action": 282227963,
+      "lines": [
+        "Note 2. The path turns beside the river. A small bridge leads"
+      ]
+    },
+    {
+      "kind": "RichText(TextPresentation { strong: false, emphasis: false, underline: false, superscript: false, subscript: false, highlighted: false })",
+      "x": 47,
+      "y": 551,
+      "width": 957,
+      "height": 55,
+      "centre": {
+        "x": 525,
+        "y": 578
+      },
+      "action": 282227963,
+      "lines": [
+        "toward the garden, where the morning light falls across the"
+      ]
+    },
+    {
+      "kind": "RichText(TextPresentation { strong: false, emphasis: false, underline: false, superscript: false, subscript: false, highlighted: false })",
+      "x": 47,
+      "y": 606,
+      "width": 951,
+      "height": 55,
+      "centre": {
+        "x": 522,
+        "y": 633
+      },
+      "action": 282227963,
+      "lines": [
+        "stone steps. We stop to sketch the trees before continuing"
+      ]
+    },
+    {
+      "kind": "RichText(TextPresentation { strong: false, emphasis: false, underline: false, superscript: false, subscript: false, highlighted: false })",
+      "x": 47,
+      "y": 661,
+      "width": 99,
+      "height": 55,
+      "centre": {
+        "x": 96,
+        "y": 688
+      },
+      "action": 123572910,
+      "lines": [
+        "home."
+      ]
+    },
+    {
+      "kind": "RichText(TextPresentation { strong: false, emphasis: false, underline: false, superscript: false, subscript: false, highlighted: false })",
+      "x": 47,
+      "y": 496,
+      "width": 978,
+      "height": 220,
+      "centre": {
+        "x": 536,
+        "y": 606
+      },
+      "action": 282227963,
+      "lines": []
+    },
+    {
+      "kind": "RichText(TextPresentation { strong: false, emphasis: false, underline: false, superscript: false, subscript: false, highlighted: false })",
+      "x": 47,
+      "y": 728,
+      "width": 978,
+      "height": 55,
+      "centre": {
+        "x": 536,
+        "y": 755
+      },
+      "action": 282227963,
+      "lines": [
+        "Note 3. The path turns beside the river. A small bridge leads"
+      ]
+    },
+    {
+      "kind": "RichText(TextPresentation { strong: false, emphasis: false, underline: false, superscript: false, subscript: false, highlighted: false })",
+      "x": 47,
+      "y": 783,
+      "width": 957,
+      "height": 55,
+      "centre": {
+        "x": 525,
+        "y": 810
+      },
+      "action": 282227963,
+      "lines": [
+        "toward the garden, where the morning light falls across the"
+      ]
+    },
+    {
+      "kind": "RichText(TextPresentation { strong: false, emphasis: false, underline: false, superscript: false, subscript: false, highlighted: false })",
+      "x": 47,
+      "y": 838,
+      "width": 951,
+      "height": 55,
+      "centre": {
+        "x": 522,
+        "y": 865
+      },
+      "action": 282227963,
+      "lines": [
+        "stone steps. We stop to sketch the trees before continuing"
+      ]
+    },
+    {
+      "kind": "RichText(TextPresentation { strong: false, emphasis: false, underline: false, superscript: false, subscript: false, highlighted: false })",
+      "x": 47,
+      "y": 893,
+      "width": 99,
+      "height": 55,
+      "centre": {
+        "x": 96,
+        "y": 920
+      },
+      "action": 123572910,
+      "lines": [
+        "home."
+      ]
+    },
+    {
+      "kind": "RichText(TextPresentation { strong: false, emphasis: false, underline: false, superscript: false, subscript: false, highlighted: false })",
+      "x": 47,
+      "y": 728,
+      "width": 978,
+      "height": 220,
+      "centre": {
+        "x": 536,
+        "y": 838
+      },
+      "action": 282227963,
+      "lines": []
+    },
+    {
+      "kind": "RichText(TextPresentation { strong: false, emphasis: false, underline: false, superscript: false, subscript: false, highlighted: false })",
+      "x": 47,
+      "y": 960,
+      "width": 882,
+      "height": 55,
+      "centre": {
+        "x": 488,
+        "y": 987
+      },
+      "action": 282227963,
+      "lines": [
+        "Note 4. The path turns beside the river. A small bridge"
+      ]
+    },
+    {
+      "kind": "RichText(TextPresentation { strong: false, emphasis: false, underline: false, superscript: false, subscript: false, highlighted: false })",
+      "x": 47,
+      "y": 1015,
+      "width": 875,
+      "height": 55,
+      "centre": {
+        "x": 484,
+        "y": 1042
+      },
+      "action": 282227963,
+      "lines": [
+        "leads toward the garden, where the morning light falls"
+      ]
+    },
+    {
+      "kind": "RichText(TextPresentation { strong: false, emphasis: false, underline: false, superscript: false, subscript: false, highlighted: false })",
+      "x": 47,
+      "y": 1070,
+      "width": 947,
+      "height": 55,
+      "centre": {
+        "x": 520,
+        "y": 1097
+      },
+      "action": 282227963,
+      "lines": [
+        "across the stone steps. We stop to sketch the trees before"
+      ]
+    },
+    {
+      "kind": "RichText(TextPresentation { strong: false, emphasis: false, underline: false, superscript: false, subscript: false, highlighted: false })",
+      "x": 47,
+      "y": 1125,
+      "width": 282,
+      "height": 55,
+      "centre": {
+        "x": 188,
+        "y": 1152
+      },
+      "action": 123572910,
+      "lines": [
+        "continuing home."
+      ]
+    },
+    {
+      "kind": "RichText(TextPresentation { strong: false, emphasis: false, underline: false, superscript: false, subscript: false, highlighted: false })",
+      "x": 47,
+      "y": 960,
+      "width": 978,
+      "height": 220,
+      "centre": {
+        "x": 536,
+        "y": 1070
+      },
+      "action": 282227963,
+      "lines": []
+    },
+    {
+      "kind": "PagePosition",
+      "x": 47,
+      "y": 1318,
+      "width": 978,
+      "height": 83,
+      "centre": {
+        "x": 536,
+        "y": 1359
+      },
+      "action": null,
+      "lines": [
+        "1 of 21"
+      ]
+    },
+    {
+      "kind": "PageNext(ActionId(1727113454))",
+      "x": 907,
+      "y": 1318,
+      "width": 118,
+      "height": 83,
+      "centre": {
+        "x": 966,
+        "y": 1359
+      },
+      "action": 1727113454,
+      "lines": []
+    }
+  ]
+}

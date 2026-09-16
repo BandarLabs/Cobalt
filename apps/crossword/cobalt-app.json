@@ -4,8 +4,9 @@
   "short_label": "Crossword",
   "summary": "Solve a compact touch-first crossword with clue navigation.",
   "page_description": "Work through a compact crossword with cell-by-cell touch entry and clue navigation.",
-  "version": "0.1.3",
-  "release_notes": "Add numbered crossword grids, four offline puzzles, word entry, undo, check/reveal controls and confirmed saves.",
+  "minimum_cobalt_version": "0.3.14",
+  "version": "0.1.5",
+  "release_notes": "Clear active-word shading when a crossword is complete, while restoring it when an answer is edited again.",
   "glyph": "grid",
   "capabilities": []
 }

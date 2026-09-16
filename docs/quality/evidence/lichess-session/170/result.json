@@ -1,0 +1,85 @@
+{
+  "status": "pass",
+  "build": {
+    "source_revision": "b040e9cf8768bec7eb3a780af079ace9aa05d789",
+    "tracked_changes": true,
+    "cli_sha256": "d8df8b6575f0892f728f8c12c05d0e0c66f0af02cd076e7f539adb4574c04662",
+    "toolchain": "1.85.1"
+  },
+  "scale": "170",
+  "profile": "clara-bw-391",
+  "requests": [
+    {
+      "method": "GET",
+      "path": "/api/account"
+    },
+    {
+      "method": "GET",
+      "path": "/api/account/playing"
+    },
+    {
+      "method": "GET",
+      "path": "/api/stream/event"
+    },
+    {
+      "method": "GET",
+      "path": "/api/account"
+    },
+    {
+      "method": "GET",
+      "path": "/api/account/playing"
+    },
+    {
+      "method": "POST",
+      "path": "/api/board/seek"
+    },
+    {
+      "method": "GET",
+      "path": "/api/board/game/stream/abcdEF12"
+    },
+    {
+      "method": "POST",
+      "path": "/api/board/game/abcdEF12/move/e2e4"
+    },
+    {
+      "method": "GET",
+      "path": "/api/account"
+    },
+    {
+      "method": "GET",
+      "path": "/api/account/playing"
+    },
+    {
+      "method": "GET",
+      "path": "/api/stream/event"
+    },
+    {
+      "method": "GET",
+      "path": "/api/board/game/stream/abcdEF12"
+    },
+    {
+      "method": "POST",
+      "path": "/api/board/game/abcdEF12/draw/yes"
+    },
+    {
+      "method": "GET",
+      "path": "/api/account"
+    },
+    {
+      "method": "GET",
+      "path": "/api/account/playing"
+    }
+  ],
+  "checks": [
+    "pair through event stream",
+    "single move submission",
+    "POST success does not move the board",
+    "board stream acknowledgement",
+    "saved session survives process restart",
+    "fresh board stream opened",
+    "restored rendered piece positions",
+    "draw completion clears store",
+    "account polling resumes after completion"
+  ],
+  "scope": "Actual SDK app and simulator with private TLS fixture; no public Lichess requests or hardware validation"
+}

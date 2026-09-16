@@ -1,12 +1,15 @@
 expect Crossword
 tap-id puzzle-3
-tap-id cell-0
-type cat
+tap-id cell-1
+type put
 tap Enter
 expect Clues
 clean
 shot crossword-play
 tap-id clues
+expect Across
+clean
+shot crossword-clues
 tap-id clue-0
 expect Enter
 clean

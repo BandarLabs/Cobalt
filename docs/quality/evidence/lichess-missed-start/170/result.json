@@ -1,0 +1,92 @@
+{
+  "status": "pass",
+  "build": {
+    "source_revision": "b92643b68a645c495ad61ff7de83b51b46cca3a3",
+    "tracked_changes": true,
+    "cli_sha256": "a13dada5a0331a5f22105c39a239c6e2271b57e1df74bd9298ac0c16fdc98c7b",
+    "toolchain": "1.85.1"
+  },
+  "scale": "170",
+  "profile": "clara-bw-391",
+  "requests": [
+    {
+      "method": "GET",
+      "path": "/api/account"
+    },
+    {
+      "method": "GET",
+      "path": "/api/account/playing"
+    },
+    {
+      "method": "GET",
+      "path": "/api/stream/event"
+    },
+    {
+      "method": "GET",
+      "path": "/api/account"
+    },
+    {
+      "method": "GET",
+      "path": "/api/account/playing"
+    },
+    {
+      "method": "POST",
+      "path": "/api/board/seek"
+    },
+    {
+      "method": "GET",
+      "path": "/api/account/playing"
+    },
+    {
+      "method": "GET",
+      "path": "/api/board/game/stream/abcdEF12"
+    },
+    {
+      "method": "POST",
+      "path": "/api/board/game/abcdEF12/move/e2e4"
+    },
+    {
+      "method": "GET",
+      "path": "/api/account"
+    },
+    {
+      "method": "GET",
+      "path": "/api/account/playing"
+    },
+    {
+      "method": "GET",
+      "path": "/api/stream/event"
+    },
+    {
+      "method": "GET",
+      "path": "/api/board/game/stream/abcdEF12"
+    },
+    {
+      "method": "POST",
+      "path": "/api/board/game/abcdEF12/draw/yes"
+    },
+    {
+      "method": "GET",
+      "path": "/api/account"
+    },
+    {
+      "method": "GET",
+      "path": "/api/account/playing"
+    }
+  ],
+  "dropped_start_event": true,
+  "start_events_sent": 0,
+  "matched_board_seconds": 11.388,
+  "checks": [
+    "recover matched seek without a start event",
+    "single move submission",
+    "POST success does not move the board",
+    "board stream acknowledgement",
+    "saved session survives process restart",
+    "fresh board stream opened",
+    "restored rendered piece positions",
+    "draw completion clears store",
+    "account polling resumes after completion"
+  ],
+  "scope": "Actual SDK app and simulator with private TLS fixture; no public Lichess requests or hardware validation"
+}

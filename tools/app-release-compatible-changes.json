@@ -289,6 +289,28 @@
           "compatible_blob": "98f10e3c8c1d8c5b6a80b343963179ff91046f4b"
         }
       ]
+    },
+    {
+      "protocol_version": 14,
+      "reason": "Renderer-only improvements using existing wire messages: chess grids use joined alternating squares and visible selection borders; tile titles are drawn at the size they were measured at, so a two line book title no longer overflows its cell and collide with the book beside it; crossword squares share one rule per line instead of two and are held to a printed square's size, and their letters are set in body rather than heading. No protocol, node or action changes. Applications whose own sources changed are versioned separately.",
+      "files": [
+        {
+          "path": "crates/kobo-ui/src/lib.rs",
+          "base_blob": "ee95176aef1432bdd0f9374f86eb313ae47a88aa",
+          "compatible_blob": "d9bdea2f409157d3f5b3c598afeb8c47120fb94a"
+        }
+      ]
+    },
+    {
+      "protocol_version": 14,
+      "reason": "Take rustls 0.23.45 so TLS 1.3 handshake messages cannot be accepted across encryption-level boundaries (RUSTSEC-2026-0285), and advance workspace-local package versions to 0.3.15. Store apps keep their existing messages and dependency resolution; the patched stack reaches readers in the next platform package.",
+      "files": [
+        {
+          "path": "Cargo.lock",
+          "base_blob": "e07e1ade0355155e92ff024f4ae7518372cd1ce8",
+          "compatible_blob": "fce06cc11de5efa4a21f9d1757f755bc320bc6f9"
+        }
+      ]
     }
   ]
 }

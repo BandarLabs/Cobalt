@@ -11,6 +11,7 @@ pub struct Entry {
     pub site: String,
     pub reading_time: u64,
     pub content: String,
+    pub position: usize,
 }
 
 pub fn queue_url(server: &str, depth: u16) -> String {
@@ -36,17 +37,21 @@ pub fn archive(server: &str, credential: &str, id: u64) -> Task {
     }
 }
 
-pub fn parse_entries(bytes: &[u8]) -> Vec<Entry> {
-    let Ok(value) = kobo_json::parse(&String::from_utf8_lossy(bytes)) else {
-        return Vec::new();
-    };
+pub fn parse_entries(bytes: &[u8]) -> Option<Vec<Entry>> {
+    let value = kobo_json::parse(std::str::from_utf8(bytes).ok()?).ok()?;
     let entries = value
         .get("_embedded")
         .and_then(|v| v.get("items"))
         .or_else(|| value.get("items"))
-        .and_then(Value::as_array)
-        .unwrap_or(&[]);
-    entries.iter().filter_map(parse_entry).collect()
+        .and_then(Value::as_array)?;
+    let mut seen = std::collections::BTreeSet::new();
+    entries
+        .iter()
+        .map(|value| {
+            let entry = parse_entry(value)?;
+            seen.insert(entry.id).then_some(entry)
+        })
+        .collect()
 }
 
 pub fn parse_entry_document(bytes: &[u8]) -> Option<Entry> {
@@ -66,6 +71,7 @@ pub fn parse_entry(value: &Value) -> Option<Entry> {
                 .unwrap_or(0),
         )
         .unwrap_or(0),
+        position: 0,
         content: kobo_html::to_text(
             value
                 .get("content")
@@ -109,15 +115,30 @@ mod tests {
     }
 
     #[test]
+    fn invalid_lists_are_distinct_from_a_valid_empty_queue() {
+        assert_eq!(parse_entries(br#"{"items":[]}"#), Some(vec![]));
+        for invalid in [
+            b"not JSON".as_slice(),
+            b"{}",
+            br#"{"items":[{}]}"#,
+            br#"{"items":[{"id":1},{"id":1}]}"#,
+            &[255],
+        ] {
+            assert!(parse_entries(invalid).is_none());
+        }
+    }
+
+    #[test]
     fn parses_wallabag_embedded_items() {
-        let entries = parse_entries(br#"{"_embedded":{"items":[{"id":7,"title":"A piece","domain_name":"example.org","reading_time":4}]}}"#);
+        let entries = parse_entries(br#"{"_embedded":{"items":[{"id":7,"title":"A piece","domain_name":"example.org","reading_time":4}]}}"#).unwrap();
         assert_eq!(entries[0].title, "A piece");
         assert_eq!(entries[0].reading_time, 4);
     }
 
     #[test]
     fn metadata_queue_omits_article_bodies() {
-        let entries = parse_entries(include_bytes!("../tests/fixtures/entries-metadata.json"));
+        let entries =
+            parse_entries(include_bytes!("../tests/fixtures/entries-metadata.json")).unwrap();
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].title, "Why the Borrow Checker Exists");
         assert_eq!(entries[0].site, "example.com");

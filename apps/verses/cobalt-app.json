@@ -4,8 +4,8 @@
   "short_label": "Verses",
   "summary": "Read a public-domain poem each day.",
   "page_description": "Discover a daily poem, browse its source, and keep favorites for later.",
-  "version": "0.1.2",
-  "release_notes": "Rebuilt on a renderer that keeps every control reachable at the largest text sizes, and on a keyboard that can type every character this app asks for.",
+  "version": "0.1.5",
+  "release_notes": "Take a quote card away: the poem set as verse with its poet, year and edition drawn on it, saved as a picture for a paired computer. A poem for the day you are reading on, complete poems, and durable favourites.",
   "glyph": "note",
   "capabilities": [
     "network"

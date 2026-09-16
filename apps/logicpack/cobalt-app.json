@@ -4,7 +4,8 @@
   "short_label": "Logic Pack",
   "summary": "Play four familiar logic games offline.",
   "page_description": "Twenty original offline puzzles across four logic games, with difficulty guides, separate progress and undo.",
-  "version": "0.1.5",
+  "minimum_cobalt_version": "0.3.14",
+  "version": "0.1.6",
   "release_notes": "Choose from 20 original puzzles with difficulty guides, separate progress and direct Kakuro number entry.",
   "glyph": "grid",
   "capabilities": []

@@ -1,0 +1,20 @@
+{
+  "source_commit": "e33fe681800365156c2bd548adcd9919d6a9c346",
+  "status": "passed",
+  "app_tests": 107,
+  "live_requests": 0,
+  "live_moves": 0,
+  "visual_checks": [
+    "normal selected-square and legal-destination screenshot",
+    "170% selected-square and legal-destination screenshot"
+  ],
+  "completed_tasks": [
+    "LICHESS-03",
+    "LICHESS-04"
+  ],
+  "not_completed": [
+    "pairing/reconnection guidance",
+    "complete retained-session fixture acceptance",
+    "full live/hardware acceptance"
+  ]
+}

@@ -1,0 +1,69 @@
+{
+  "requests": [
+    {
+      "method": "GET",
+      "path": "/api/account"
+    },
+    {
+      "method": "GET",
+      "path": "/api/account/playing"
+    },
+    {
+      "method": "GET",
+      "path": "/api/stream/event"
+    },
+    {
+      "method": "GET",
+      "path": "/api/account"
+    },
+    {
+      "method": "GET",
+      "path": "/api/account/playing"
+    },
+    {
+      "method": "POST",
+      "path": "/api/board/seek"
+    },
+    {
+      "method": "GET",
+      "path": "/api/account/playing"
+    },
+    {
+      "method": "GET",
+      "path": "/api/board/game/stream/abcdEF12"
+    },
+    {
+      "method": "POST",
+      "path": "/api/board/game/abcdEF12/move/e2e4"
+    },
+    {
+      "method": "GET",
+      "path": "/api/account"
+    },
+    {
+      "method": "GET",
+      "path": "/api/stream/event"
+    },
+    {
+      "method": "GET",
+      "path": "/api/account/playing"
+    },
+    {
+      "method": "GET",
+      "path": "/api/board/game/stream/abcdEF12"
+    },
+    {
+      "method": "POST",
+      "path": "/api/board/game/abcdEF12/draw/yes"
+    },
+    {
+      "method": "GET",
+      "path": "/api/account"
+    },
+    {
+      "method": "GET",
+      "path": "/api/account/playing"
+    }
+  ],
+  "errors": []
+}

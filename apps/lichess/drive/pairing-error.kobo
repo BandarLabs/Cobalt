@@ -1,0 +1,11 @@
+expect 10+5
+expect Rapid · Rated
+expect Waiting to check again
+expect Could not check your game
+expect Cancel pairing
+clean
+shot pairing-error
+tap-id cancel-seek
+expect Cancelled.
+clean
+shot pairing-error-cancelled

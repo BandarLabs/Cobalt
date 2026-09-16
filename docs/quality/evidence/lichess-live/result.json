@@ -1,0 +1,11 @@
+{
+  "date": "2026-09-12",
+  "account_ready": true,
+  "seek_requests": 1,
+  "moves_sent": 0,
+  "live_board_observed": true,
+  "result_observed": "Game aborted",
+  "server_active_games_after_test": 0,
+  "abort_initiated_by_test": false,
+  "scope": "One live pairing and end-state check. Test harness missed BarGlyph menu detection; the result overlay correctly blocked underlying controls. No further seek sent."
+}

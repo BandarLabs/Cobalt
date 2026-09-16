@@ -413,7 +413,10 @@ if printf '%s\n' "$audit_symbols" |
   exit 1
 fi
 
-"$PYTHON3" -I - "$repo/apps/catalog.json" "$device" "$manifest" "$catalog" "$package" <<'PY'
+# Use the same contributed-app normalization and protocol minimums as releases.
+registry="$target_root/.flashcards-collected-registry.json"
+node "$repo/tools/collect-app-registry.mjs" --out "$registry"
+"$PYTHON3" -I - "$registry" "$device" "$manifest" "$catalog" "$package" <<'PY'
 import hashlib
 import json
 import sys
@@ -462,7 +465,7 @@ expected = (
     + "}"
 ).encode()
 if actual != expected:
-    raise SystemExit("artifact manifest differs from apps/catalog.json and device ELF")
+    raise SystemExit("artifact manifest differs from the collected app registry and device ELF")
 entries = validation_catalog.get("entries", [])
 if len(entries) != 1:
     raise SystemExit("validation catalog must contain exactly one entry")
@@ -476,6 +479,7 @@ if entry.get("package_bytes") != len(package):
 if entry.get("package_url") != "https://example.invalid/flashcards-validation.cobalt-app":
     raise SystemExit("validation catalog package URL differs")
 PY
+rm -f "$registry"
 
 "$trusted_cli" app-verify \
   --package "$package" \

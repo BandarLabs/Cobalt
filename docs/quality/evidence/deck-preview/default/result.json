@@ -1,0 +1,12 @@
+{
+  "status": "passed",
+  "scale": "default",
+  "cli_sha256": "6bee0c1f2dc5a7a1b09a2e3b6e9bb1032b6b15a90495f4495bfd908ba54ff154",
+  "checks": [
+    "fresh simulator opens static preview",
+    "preview tap does not claim execution",
+    "no layout errors after tap",
+    "subsequent push preserves real pairing bytes"
+  ],
+  "physical_reader_tested": false
+}

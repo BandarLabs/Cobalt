@@ -1,0 +1,15 @@
+{
+  "status": "passed",
+  "app_tests": 108,
+  "strict_clippy": "passed",
+  "checks": [
+    "SDK store-save bytes loaded into a fresh app",
+    "resume opens board stream with no in-memory game",
+    "authoritative opening position restored",
+    "no pending move/action fabricated",
+    "final board result removes stored session"
+  ],
+  "scope": "Deterministic application and SDK command-boundary tests; not live matchmaking or full restarted simulator transport acceptance",
+  "live_requests": 0,
+  "live_moves": 0
+}

@@ -1,0 +1,21 @@
+{
+  "provenance": {
+    "source_revision": "fc4c9b2a3fde3e3b7748ec165d05a9bf88c77aa4",
+    "tracked_changes": true,
+    "cli_sha256": "692ff658b5b467118c903685b249ea1ecb5b22fb0f3dd44b8a539d0e0af3e3cf",
+    "toolchain": "1.85.1"
+  },
+  "scale": "default",
+  "checks": [
+    "catalog saved only after shared setup check and reused without refetch",
+    "downloaded and paged original EPUB",
+    "reading position stored",
+    "reopened after full offline process restart"
+  ],
+  "status": "passed",
+  "requests": [
+    "/ebooks.opds/",
+    "/library/",
+    "/walking.epub"
+  ]
+}

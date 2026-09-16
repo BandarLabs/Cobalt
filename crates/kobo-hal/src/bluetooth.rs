@@ -43,6 +43,27 @@ const MTK_MARKERS: [&str; 4] = [
 ];
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(18);
 
+/// Whether the kernel has registered `hci0`, the controller every backend
+/// below talks to.
+///
+/// Takes the root so it can be tested without `/sys`. `/sys/class/bluetooth`
+/// existing is not enough: the directory is created by the kernel's
+/// Bluetooth subsystem itself, whether or not any controller ever attaches,
+/// so an empty directory is the same "no radio" case as a missing one. Only
+/// a successfully-read entry counts as proof -- a transient enumeration
+/// error (a controller disappearing mid-`readdir`, say) must not be read as
+/// an adapter being present -- and only `hci0` specifically, since every
+/// D-Bus path below (`ADAPTER`) is hardcoded to it rather than discovered: a
+/// system exposing only `hci1` would otherwise pass this gate and then send
+/// every request to an object nothing is listening on.
+fn adapter_present(root: &Path) -> bool {
+    std::fs::read_dir(root).is_ok_and(|entries| {
+        entries
+            .filter_map(Result::ok)
+            .any(|entry| entry.file_name() == "hci0")
+    })
+}
+
 /// The MTK driver is not safely re-initialised by Nickel in the same boot.
 ///
 /// Once Cobalt changes or scans the MTK stack, panel hand-back must reboot
@@ -59,6 +80,35 @@ enum Backend {
     Bluetoothctl(PathBuf),
 }
 
+/// Chooses a backend when [`adapter_present`] can prove one exists under
+/// `sys_root`, and never otherwise -- taking the root as a parameter, rather
+/// than hardcoding `/sys/class/bluetooth`, so a test can gate this on an
+/// empty directory and confirm no backend is chosen even when the marker
+/// files and tool binaries below it are found, the same as a Libra H2O
+/// running the exact firmware image a real Bluetooth-equipped device ships.
+fn select_backend(sys_root: &Path) -> Option<Backend> {
+    if !adapter_present(sys_root) {
+        return None;
+    }
+    let dbus = DBUS_TOOLS
+        .into_iter()
+        .map(Path::new)
+        .find(|path| path.is_file());
+    if let Some(tool) = dbus {
+        let mtk = MTK_MARKERS.iter().any(|marker| Path::new(marker).exists());
+        return Some(Backend::Dbus {
+            tool: tool.to_path_buf(),
+            bus: if mtk { MTK_BUS } else { BLUEZ_BUS },
+            mtk,
+        });
+    }
+    BLUETOOTHCTL_TOOLS
+        .into_iter()
+        .map(Path::new)
+        .find(|path| path.is_file())
+        .map(|tool| Backend::Bluetoothctl(tool.to_path_buf()))
+}
+
 #[derive(Clone, Debug)]
 pub struct Bluetooth {
     backend: Backend,
@@ -67,42 +117,23 @@ pub struct Bluetooth {
 
 impl Bluetooth {
     /// Opens a firmware Bluetooth control surface when one can be proven.
+    ///
+    /// Every backend below also requires [`adapter_present`]. The marker
+    /// files and tool binaries alone are not proof: a Libra H2O (which has no
+    /// Bluetooth radio at all) was found carrying two of the four MTK marker
+    /// paths as zero-byte stub files with epoch timestamps -- almost
+    /// certainly generic firmware-image scaffolding rather than a real
+    /// service -- which made this open the MTK D-Bus backend and then fail
+    /// every request against a destination nothing was ever listening on.
+    /// `/sys/class/bluetooth` carrying at least one adapter is the one signal
+    /// here that is not a name or a path a build process gets to leave behind
+    /// by accident: it is the kernel's own record that a controller attached.
     #[must_use]
     pub fn open() -> Option<Self> {
-        let dbus = DBUS_TOOLS
-            .into_iter()
-            .map(Path::new)
-            .find(|path| path.is_file());
-        if let Some(tool) = dbus {
-            if MTK_MARKERS.iter().any(|marker| Path::new(marker).exists()) {
-                return Some(Self {
-                    backend: Backend::Dbus {
-                        tool: tool.to_path_buf(),
-                        bus: MTK_BUS,
-                        mtk: true,
-                    },
-                    scanning: Arc::new(AtomicBool::new(false)),
-                });
-            }
-            if Path::new("/sys/class/bluetooth").exists() {
-                return Some(Self {
-                    backend: Backend::Dbus {
-                        tool: tool.to_path_buf(),
-                        bus: BLUEZ_BUS,
-                        mtk: false,
-                    },
-                    scanning: Arc::new(AtomicBool::new(false)),
-                });
-            }
-        }
-        BLUETOOTHCTL_TOOLS
-            .into_iter()
-            .map(Path::new)
-            .find(|path| path.is_file())
-            .map(|tool| Self {
-                backend: Backend::Bluetoothctl(tool.to_path_buf()),
-                scanning: Arc::new(AtomicBool::new(false)),
-            })
+        select_backend(Path::new("/sys/class/bluetooth")).map(|backend| Self {
+            backend,
+            scanning: Arc::new(AtomicBool::new(false)),
+        })
     }
 
     /// Current controller state and remembered/discovered devices.
@@ -762,8 +793,62 @@ fn clip(value: &str, bytes: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{classify, device_path, parse_ctl_devices, parse_managed_devices, property};
+    use super::{
+        adapter_present, classify, device_path, parse_ctl_devices, parse_managed_devices, property,
+        select_backend,
+    };
     use kobo_protocol::BluetoothDeviceKind;
+    use std::fs;
+    use std::path::PathBuf;
+
+    fn root(name: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "kobo-bluetooth-adapter-{name}-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&path);
+        fs::create_dir_all(&path).expect("a test directory");
+        path
+    }
+
+    #[test]
+    fn an_empty_bluetooth_class_directory_is_no_adapter() {
+        // The bug this pins: a Libra H2O has /sys/class/bluetooth (the kernel
+        // creates it whether or not any controller ever attaches) but no
+        // hci0 inside it, and no real Bluetooth radio. Marker files and tool
+        // binaries existing elsewhere must not override this.
+        let root = root("empty");
+        assert!(!adapter_present(&root.join("does-not-exist")));
+        assert!(!adapter_present(&root));
+    }
+
+    #[test]
+    fn an_adapter_entry_is_found() {
+        let root = root("with-hci0");
+        fs::create_dir_all(root.join("hci0")).expect("an adapter directory");
+        assert!(adapter_present(&root));
+    }
+
+    #[test]
+    fn a_non_hci0_entry_is_not_proof() {
+        // Every D-Bus path this module calls is hardcoded to hci0 (`ADAPTER`);
+        // a system that only ever registers hci1 must not pass this gate,
+        // since every request would then target an object nothing answers.
+        let root = root("with-hci1-only");
+        fs::create_dir_all(root.join("hci1")).expect("an adapter directory");
+        assert!(!adapter_present(&root));
+    }
+
+    #[test]
+    fn no_adapter_selects_no_backend_even_when_tools_and_markers_exist() {
+        // Exercises the actual gate in `select_backend` (what `Bluetooth::open`
+        // calls), not just `adapter_present` in isolation: a regression that
+        // removed or bypassed the early return would still leave
+        // `adapter_present`'s own tests green while restoring the Libra H2O
+        // failure this backend selection is meant to prevent.
+        let root = root("gate-empty");
+        assert!(select_backend(&root).is_none());
+    }
 
     #[test]
     fn bluez_device_lines_are_deduplicated() {

@@ -1,0 +1,162 @@
+[
+  {
+    "arguments": [
+      "status"
+    ],
+    "exit_code": 0,
+    "output": "Helper: <helper>\nflashcards-import 0.3.10\nSource: unrecorded-development-build\nflashcards-import is an unofficial host-only converter for the documented legacy Anki package subset. It links pinned Anki rslib under AGPL-3.0-or-later, is not affiliated with Ankitects, and contains no upstream logos. Its Cobalt bundle output is neutral and the Kobo app links no Anki code.\n"
+  },
+  {
+    "arguments": [
+      "formats"
+    ],
+    "exit_code": 0,
+    "output": "Supported imports: legacy APKG (merge) and COLPKG (explicit replace).\nThe archive must contain one collection.anki2 or collection.anki21 SQLite file,\na legacy JSON media map, and collection schema 11 or 14 through 18.\n\nNot supported: modern collection.anki21b/meta packages, schemas 12 and 13,\nencrypted archives, JavaScript or add-on template filters. Used media must be\nsupported by the reader; a card side with multiple images is refused.\n\nThe reader reviews the imported due queue. Grades are saved to a separate\nCobalt review log; exporting that log does not update Anki scheduling.\nFor full limits, see docs/FLASHCARDS_COMPATIBILITY.md.\n"
+  },
+  {
+    "arguments": [
+      "import",
+      "<fixture>/original study cards.apkg",
+      "--merge",
+      "<fixture>/collection.cobfc"
+    ],
+    "exit_code": 0,
+    "output": "imported apkg: 3 notes, 3 due cards (3 new, 0 learning, 0 review), 1 decks, 0 media files (0 bytes), 0 image-bearing notes resolved, 0 sound-bearing notes retained\nbundle sha256: d2856bb11f8f27737b1a9c604f81515beee7d815d96f64139180f2456e429d00\n"
+  },
+  {
+    "arguments": [
+      "verify",
+      "<fixture>/collection.cobfc"
+    ],
+    "exit_code": 0,
+    "output": "verified: 3 notes, 3 due cards (3 new, 0 learning, 0 review), 0 digest-verified media files; 0 image-bearing notes resolve to bundled bytes; 0 sound-bearing notes are retained\nbundle sha256: d2856bb11f8f27737b1a9c604f81515beee7d815d96f64139180f2456e429d00\n"
+  },
+  {
+    "arguments": [
+      "preview",
+      "<fixture>/collection.cobfc",
+      "--out",
+      "<fixture>/preview.html"
+    ],
+    "exit_code": 0,
+    "output": "Previewed card 1 of 3 at <fixture>/preview.html. Open this file in your browser. Use --card NUMBER to inspect another card.\n"
+  },
+  {
+    "arguments": [
+      "preview",
+      "<fixture>/collection.cobfc",
+      "--out",
+      "<fixture>/preview.html"
+    ],
+    "exit_code": 1,
+    "output": "flashcards-import: Create preview <fixture>/preview.html: File exists (os error 17). Choose a new output filename.\nkobo: The Flashcards importer did not complete (exit status: 1). Review its message above before retrying.\n"
+  },
+  {
+    "arguments": [
+      "preview",
+      "<fixture>/collection.cobfc",
+      "--out",
+      "<fixture>/invalid-card.html",
+      "--card",
+      "0"
+    ],
+    "exit_code": 1,
+    "output": "flashcards-import: Choose a card from 1 to 3\nkobo: The Flashcards importer did not complete (exit status: 1). Review its message above before retrying.\n"
+  },
+  {
+    "arguments": [
+      "stage",
+      "<fixture>/collection.cobfc",
+      "--kobo-root",
+      "<fixture>/reader"
+    ],
+    "exit_code": 0,
+    "output": "staged 3749 digest-verified bytes to <fixture>/reader/.adds/cobalt/data/flashcards/collection.cobfc\nbundle sha256: d2856bb11f8f27737b1a9c604f81515beee7d815d96f64139180f2456e429d00\n"
+  },
+  {
+    "arguments": [
+      "import",
+      "<fixture>/second deck.apkg",
+      "--merge",
+      "<fixture>/with-media.cobfc"
+    ],
+    "exit_code": 0,
+    "output": "imported apkg: 3 notes, 3 due cards (3 new, 0 learning, 0 review), 1 decks, 1 media files (67 bytes), 1 image-bearing notes resolved, 0 sound-bearing notes retained\nbundle sha256: eecdd6a8029bfc9a820f32c43c13086c824088c05bb7915fa6308000bcd04f09\n"
+  },
+  {
+    "arguments": [
+      "preview",
+      "<fixture>/with-media.cobfc",
+      "--out",
+      "<fixture>/with-media.html"
+    ],
+    "exit_code": 0,
+    "output": "Previewed card 1 of 3 at <fixture>/with-media.html. Open this file in your browser. Use --card NUMBER to inspect another card.\n"
+  },
+  {
+    "arguments": [
+      "import",
+      "<fixture>/second deck.apkg",
+      "--merge",
+      "<fixture>/merged.cobfc",
+      "--merge-into",
+      "<fixture>/collection.cobfc"
+    ],
+    "exit_code": 0,
+    "output": "imported apkg: 6 notes, 6 due cards (6 new, 0 learning, 0 review), 1 decks, 1 media files (67 bytes), 1 image-bearing notes resolved, 0 sound-bearing notes retained\nbundle sha256: 235c44935f0b26da11a6575f6e556b78d832628b1353d4e977562e6f493691b5\n"
+  },
+  {
+    "arguments": [
+      "verify",
+      "<fixture>/merged.cobfc"
+    ],
+    "exit_code": 0,
+    "output": "verified: 6 notes, 6 due cards (6 new, 0 learning, 0 review), 1 digest-verified media files; 1 image-bearing notes resolve to bundled bytes; 0 sound-bearing notes are retained\nbundle sha256: 235c44935f0b26da11a6575f6e556b78d832628b1353d4e977562e6f493691b5\n"
+  },
+  {
+    "arguments": [
+      "import",
+      "<fixture>/replacement.colpkg",
+      "--replace",
+      "<fixture>/merged.cobfc"
+    ],
+    "exit_code": 0,
+    "output": "imported colpkg: 3 notes, 3 due cards (3 new, 0 learning, 0 review), 1 decks, 0 media files (0 bytes), 0 image-bearing notes resolved, 0 sound-bearing notes retained\nbundle sha256: e211ee6f79944876daa017eb09c06e099ad9beb82d5fe374719af8da72ef1def\n"
+  },
+  {
+    "arguments": [
+      "verify",
+      "<fixture>/merged.cobfc"
+    ],
+    "exit_code": 0,
+    "output": "verified: 3 notes, 3 due cards (3 new, 0 learning, 0 review), 0 digest-verified media files; 0 image-bearing notes resolve to bundled bytes; 0 sound-bearing notes are retained\nbundle sha256: e211ee6f79944876daa017eb09c06e099ad9beb82d5fe374719af8da72ef1def\n"
+  },
+  {
+    "arguments": [
+      "import",
+      "<fixture>/broken.apkg",
+      "--merge",
+      "<fixture>/merged.cobfc"
+    ],
+    "exit_code": 1,
+    "output": "flashcards-import: invalid package archive: invalid Zip archive: Could not find EOCD\nkobo: The Flashcards importer did not complete (exit status: 1). Review its message above before retrying.\n"
+  },
+  {
+    "arguments": [
+      "verify",
+      "<fixture>/corrupt.cobfc"
+    ],
+    "exit_code": 1,
+    "output": "flashcards-import: bundle is truncated\nkobo: The Flashcards importer did not complete (exit status: 1). Review its message above before retrying.\n"
+  },
+  {
+    "arguments": [
+      "stage",
+      "<fixture>/corrupt.cobfc",
+      "--kobo-root",
+      "<fixture>/reader"
+    ],
+    "exit_code": 1,
+    "output": "flashcards-import: bundle is truncated\nkobo: The Flashcards importer did not complete (exit status: 1). Review its message above before retrying.\n"
+  }
+]

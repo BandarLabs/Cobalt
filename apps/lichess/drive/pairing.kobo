@@ -1,4 +1,5 @@
-expect 10+5 Rapid · Rated
+expect 10+5
+expect Rapid · Rated
 expect Waiting
 expect Cancel pairing
 shot waiting
