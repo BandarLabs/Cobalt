@@ -255,11 +255,16 @@ pub fn mount_roots() -> Vec<PathBuf> {
 /// no shared parent directory: each volume is its own drive-letter root, so
 /// the letters themselves are the candidates. Probing a letter with no drive
 /// behind it, or a drive with no card in it, fails fast and silently.
+/// Every drive-letter root, `A:\` through `Z:\`.
+fn drive_letter_roots() -> Vec<PathBuf> {
+    (b'A'..=b'Z')
+        .map(|letter| PathBuf::from(format!("{}:\\", char::from(letter))))
+        .collect()
+}
+
 fn candidates() -> Vec<PathBuf> {
     if cfg!(windows) {
-        return (b'A'..=b'Z')
-            .map(|letter| PathBuf::from(format!("{letter}:\\")))
-            .collect();
+        return drive_letter_roots();
     }
     let mut volumes = Vec::new();
     for root in mount_roots() {
@@ -1623,9 +1628,9 @@ pub fn wait_for_reader(
 
 #[cfg(test)]
 mod tests {
-    use super::candidates;
     #[cfg(target_os = "linux")]
     use super::mount_roots;
+    use super::{candidates, drive_letter_roots};
     use super::{
         carry_trust_from, clear_setting, install_profile, is_kobo_serial, next_steps,
         next_steps_for, parse_version, set_setting, wait_for_reader, Arrival, Mounted, Report, Ssh,
@@ -2077,12 +2082,19 @@ mod tests {
         assert!(mount_roots().contains(&PathBuf::from("/mnt")));
     }
 
+    #[test]
+    fn drive_letter_roots_cover_a_through_z() {
+        let roots = drive_letter_roots();
+        assert_eq!(roots.len(), 26);
+        assert_eq!(roots.first(), Some(&PathBuf::from("A:\\")));
+        assert!(roots.contains(&PathBuf::from("E:\\")));
+        assert_eq!(roots.last(), Some(&PathBuf::from("Z:\\")));
+    }
+
     #[cfg(windows)]
     #[test]
     fn windows_mount_discovery_probes_every_drive_letter_root() {
-        let volumes = candidates();
-        assert_eq!(volumes.len(), 26);
-        assert!(volumes.contains(&PathBuf::from("E:\\")));
+        assert_eq!(candidates(), drive_letter_roots());
     }
 
     #[cfg(not(windows))]
