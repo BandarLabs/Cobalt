@@ -45,6 +45,8 @@ uv run fugleramme-frame --detector http://127.0.0.1:8090 --host 127.0.0.1 --port
 
 `fugleramme-check` is worth running first: it reports whether the detector answers everything the frame needs, and separates "BirdNET-Go is not reachable" from "no bird has been heard yet". The frame logs `Inky library unavailable; running web-only`, which is the expected and wanted outcome on a computer, and Birds reads the same web endpoints the panel would have drawn. Once `curl http://127.0.0.1:8080/state` returns a token, that address is the `--source` the companion wants.
 
+**Turn the frame on its side before looking at the reader.** Fugleramme takes the page shape from the panel it is driving, and with no panel attached it composes for a landscape one. A Kobo is portrait, so a landscape collage arrives at a portrait screen and the app fills the panel with the middle of it: the outer birds lose their heads and their names lose their first letters. Nothing reports this, because a cropped picture is still a picture. Set `rotation` to 90 in Fugleramme's `detector/data/settings.json`, or from its admin page at `/admin`, and it lays the birds out for a tall page instead. A 1080x1440 collage against a 1072x1448 panel is the difference between losing four tenths of the picture and losing one hundredth of it.
+
 No bird has to have been heard for any of this to work. With an empty detection window Fugleramme still renders and the companion still publishes, so the whole path can be proved indoors before it is left running near a window.
 
 <img width="300" src="screenshots/birds.png" alt="A labelled collage of public-domain bird plates filling the Birds app on a Kobo">
