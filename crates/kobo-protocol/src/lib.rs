@@ -10693,6 +10693,49 @@ mod update_task_tests {
     }
 
     #[test]
+    fn an_application_published_before_this_protocol_still_speaks_to_it() {
+        // The case that must never break: a reader updates, and every
+        // application already installed on it carries on. Those binaries were
+        // built against protocol 14 and will never be rebuilt, so 14 has to
+        // keep working in a runtime that has moved on to 15.
+        let screen = Screen::new(
+            7,
+            vec![Node::Heading {
+                id: NodeId(1),
+                level: 1,
+                text: "Chapter".into(),
+            }],
+        )
+        .with_top_bar(TopBar::new(NodeId(2), "Books"))
+        .with_reading(true);
+        let frame = Frame {
+            version: SUSPEND_VERSION,
+            request_id: 5,
+            message: Message::SetScreen(screen),
+        };
+        assert_eq!(
+            decode(&encode(&frame).unwrap()).unwrap(),
+            frame,
+            "a protocol 14 screen must survive a protocol 15 runtime unchanged"
+        );
+
+        // The handshake decides the session, and the runtime answers in the
+        // version the application opened with rather than its own newest.
+        let hello = Frame {
+            version: SUSPEND_VERSION,
+            request_id: 1,
+            message: Message::Hello {
+                name: "books".into(),
+            },
+        };
+        let decoded = decode(&encode(&hello).unwrap()).unwrap();
+        assert_eq!(
+            decoded.version, SUSPEND_VERSION,
+            "the runtime must keep speaking the version the application opened with"
+        );
+    }
+
+    #[test]
     fn a_bar_hidden_by_a_protocol_that_has_no_such_flag_is_refused() {
         // Byte 4 is the version and the presence byte follows the screen id.
         // A payload that sets the auto-hide bit while naming protocol 14 is
