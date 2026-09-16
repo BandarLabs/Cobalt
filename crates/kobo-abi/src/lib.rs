@@ -3061,11 +3061,12 @@ mod pty_tests {
     use super::pty::Pty;
     use std::time::{Duration, Instant};
 
-    /// qemu-user has no real devpts, so `posix_openpt` intermittently answers
-    /// `EPERM` there, and the slave node can be missing (`ENOENT`) in the same
-    /// breath. Give the emulator a few attempts, then skip by name with
-    /// the reason if it keeps refusing: `KOBO_QEMU_EMULATED` is set only by the
-    /// device-emulated CI job, and these tests run for real in the host job.
+    /// devpts answers `EPERM` or a missing slave node (`ENOENT`) transiently
+    /// when the host is loaded, most often under qemu-user, which has no real
+    /// devpts at all. Give every environment a few attempts. Only qemu gets to
+    /// skip by name with the reason when a terminal keeps refusing, because
+    /// `KOBO_QEMU_EMULATED` is set only by the device-emulated CI job; on a
+    /// real host a pty that stays unavailable is a genuine failure.
     fn spawn(
         program: &str,
         arguments: &[&str],
@@ -3086,17 +3087,20 @@ mod pty_tests {
                         std::io::ErrorKind::PermissionDenied
                             | std::io::ErrorKind::InvalidInput
                             | std::io::ErrorKind::NotFound
-                    ) && std::env::var_os("KOBO_QEMU_EMULATED").is_some() =>
+                    ) =>
                 {
                     std::thread::sleep(Duration::from_millis(200));
                 }
                 Err(error) => panic!("a terminal: {error}"),
             }
         }
-        eprintln!(
-            "skipped under qemu-user: the emulated devpts keeps refusing a terminal (EPERM/ENOENT)"
-        );
-        None
+        if std::env::var_os("KOBO_QEMU_EMULATED").is_some() {
+            eprintln!(
+                "skipped under qemu-user: the emulated devpts keeps refusing a terminal (EPERM/ENOENT)"
+            );
+            return None;
+        }
+        panic!("a terminal: still unavailable after three attempts (EPERM/ENOENT)")
     }
 
     /// Collects output until `needle` appears or the patience runs out.
