@@ -27,6 +27,7 @@ mod frame_preview;
 mod frame_recovery;
 mod host_release;
 mod menu;
+mod musicstand;
 mod needles;
 mod nonograms;
 mod owner_start;
@@ -515,6 +516,7 @@ fn run(arguments: &[String]) -> Result<(), String> {
         "deck" => deck::command(&arguments[1..]),
         "flashcards" => flashcards::command(&arguments[1..]),
         "frame" => frame::command(&arguments[1..]),
+        "musicstand" => musicstand::command(&arguments[1..]),
         "birds" => birds::command(&arguments[1..]),
         "vault" => vault::command(&arguments[1..]),
         "sync" => sync::command(&arguments[1..]),

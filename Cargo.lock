@@ -924,6 +924,7 @@ dependencies = [
  "kobo-frame-host",
  "kobo-image",
  "kobo-json",
+ "kobo-music-host",
  "kobo-net",
  "kobo-opml",
  "kobo-profile",
@@ -1242,6 +1243,15 @@ version = "0.3.19"
 dependencies = [
  "kobo-sdk",
  "kobo-ui",
+]
+
+[[package]]
+name = "kobo-music-host"
+version = "0.3.17"
+dependencies = [
+ "blake3",
+ "kobo-image",
+ "kobo-json",
 ]
 
 [[package]]
