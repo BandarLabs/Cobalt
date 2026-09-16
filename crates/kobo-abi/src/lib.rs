@@ -98,6 +98,8 @@ pub fn free_space(path: &Path) -> Option<u64> {
 // privileged accounts may use is already excluded.
 #[cfg(windows)]
 #[link(name = "kernel32")]
+// SAFETY: this declaration matches the documented Windows signature; the
+// call site below upholds what each pointer parameter requires.
 unsafe extern "system" {
     fn GetDiskFreeSpaceExW(
         directory: *const u16,
@@ -390,6 +392,8 @@ pub mod stop {
     // break/logoff/shutdown as `SIGTERM`.
     #[cfg(windows)]
     #[link(name = "kernel32")]
+    // SAFETY: this declaration matches the documented Windows signature; the
+    // handler and flag passed below are the ones the contract describes.
     unsafe extern "system" {
         fn SetConsoleCtrlHandler(
             handler: Option<extern "system" fn(event: u32) -> i32>,
@@ -2554,22 +2558,23 @@ pub mod pty {
         output: Receiver<Vec<u8>>,
     }
 
-    // The handles are owned by this value and only moved with it; the
-    // console handle is only used under the cell's lock.
+    // SAFETY: the handles are owned by this value and only moved with it;
+    // the console handle is only used under the cell's lock.
     unsafe impl Send for Pty {}
 
     /// A duplicate of the child's process handle, owned by the waiter
     /// thread so its wait never races the Pty's own handle.
     struct WaitHandle(Handle);
 
-    // The handle is the thread's own duplicate and never leaves it.
+    // SAFETY: the handle is the thread's own duplicate and never leaves it.
     unsafe impl Send for WaitHandle {}
 
     /// A pseudo-console handle behind the lock that serializes the waiter
     /// thread, `close`, and `Drop`.
     struct ConsoleCell(Mutex<Handle>);
 
-    // The handle is owned by the cell and touched only under its lock.
+    // SAFETY: the handle is owned by the cell and touched only under its
+    // lock, so sending or sharing the cell cannot race the console.
     unsafe impl Send for ConsoleCell {}
     unsafe impl Sync for ConsoleCell {}
 
