@@ -190,6 +190,9 @@ jobs:
         if: github.ref_type == 'branch'
         env:
           GH_TOKEN: ${{ github.token }}
+          # Feature branches on forks do not carry the canonical signed app
+          # catalog releases. Always compare against the upstream channel.
+          GH_REPO: BandarLabs/Cobalt
         run: |
           set -o pipefail
           release_tag="$(node tools/app-catalog-channel.mjs)"

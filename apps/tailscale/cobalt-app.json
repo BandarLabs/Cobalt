@@ -1,0 +1,26 @@
+{
+  "id": "tailscale",
+  "display_name": "Tailscale",
+  "short_label": "Tailscale",
+  "summary": "Put this reader on your tailnet, with an on/off switch and the approval code on screen.",
+  "page_description": "EXPERIMENTAL: reach tailnet services - Calibre-Web, paperterm hosts, anything with a 100.x address - from any network. Not yet validated on hardware.",
+  "version": "0.1.0",
+  "release_notes": "First experimental cut: runtime-owned tailscaled, kernel TUN with netfilter off, /etc/hosts tailnet names, on-screen approval code.",
+  "glyph": "settings",
+  "capabilities": [
+    "scheduled-wake"
+  ],
+  "setup": {
+    "steps": [
+      {
+        "text": "The first time Tailscale runs it downloads the pinned upstream ARMv7 build over Wi-Fi and checks it against the digest the runtime requires, so the Kobo needs to be online once."
+      },
+      {
+        "text": "Turn Tailscale on. Within a minute the screen shows a short approval code; open the link on any phone or computer and approve this reader."
+      },
+      {
+        "text": "In the Tailscale admin console, disable key expiry for this device - node keys expire after 180 days by default and the connection would silently stop."
+      }
+    ]
+  }
+}
