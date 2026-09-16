@@ -329,7 +329,7 @@
         {
           "path": "crates/kobo-abi/src/lib.rs",
           "base_blob": "4fa8e3b953b67a55b077a3db360e9256b8fe0b88",
-          "compatible_blob": "14c1e075d54e0a246942e1fd304124caade08b70"
+          "compatible_blob": "7d02f721a42fc29d4d5255ff41c7c8bd8de88374"
         },
         {
           "path": "crates/kobo-net/tests/lichess_stream_mock.rs",
