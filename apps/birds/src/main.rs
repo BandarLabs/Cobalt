@@ -21,11 +21,16 @@ struct Snapshot {
     generated_at: u64,
     source: String,
     recent: Vec<String>,
+    image_checksum: Option<String>,
 }
 
 #[derive(Default)]
 struct Birds {
     snapshot: Option<Snapshot>,
+    // A freshly downloaded snapshot waits here until its image has arrived,
+    // decoded, and passed the pairing check; only then are both committed, so
+    // a failed update preserves the last complete view.
+    pending: Option<Snapshot>,
     picture: Option<TilePicture>,
     snapshot_load: Option<ShelfDownload>,
     image_load: Option<ShelfDownload>,
@@ -64,6 +69,17 @@ impl Birds {
                 .unframed_picture(picture, 500)
                 .page_turns(REFRESH, REFRESH)
                 .reading_menu(MENU);
+        } else {
+            // A snapshot without a usable image must not become an empty
+            // screen with no way out: say what happened and keep Refresh and
+            // Exit reachable.
+            let detail = self
+                .notice
+                .clone()
+                .unwrap_or_else(|| "The latest bird collage is unavailable.".into());
+            screen = screen
+                .splash(Some(Glyph::App), "The collage needs a refresh", &detail)
+                .buttons([(REFRESH, "Refresh"), (EXIT, "Exit")]);
         }
         if self.menu_open {
             let freshness = if age >= 24 * 60 * 60 {
@@ -111,7 +127,7 @@ impl Birds {
                 let bytes = self.snapshot_load.take().expect("active").take();
                 match decode_snapshot(&bytes) {
                     Ok(snapshot) => {
-                        self.snapshot = Some(snapshot);
+                        self.pending = Some(snapshot);
                         self.load_image(context);
                     }
                     Err(error) => {
@@ -150,7 +166,19 @@ impl Birds {
         } else {
             kobo_image::decode(bytes)
         };
-        match decoded.and_then(|picture| picture.cover(self.panel_width, self.panel_height)) {
+        // The picture byte budget (kobo_protocol::MAX_PICTURE_BYTES) counts
+        // RGB at 3 bytes per pixel, so a full-bleed cover of a Libra Colour
+        // panel (1264x1680) does not fit. Scale the target down until it
+        // does; the art stays full-bleed, just a touch below panel pixels.
+        let (mut width, mut height) = (self.panel_width, self.panel_height);
+        if colour {
+            const PICTURE_BYTE_BUDGET: u64 = 4 * 1072 * 1448;
+            while u64::from(width) * u64::from(height) * 3 > PICTURE_BYTE_BUDGET {
+                width = width * 99 / 100;
+                height = height * 99 / 100;
+            }
+        }
+        match decoded.and_then(|picture| picture.cover(width, height)) {
             Ok(picture) => {
                 let width = picture.width();
                 let height = picture.height();
@@ -179,13 +207,35 @@ impl Birds {
         match load.advance(context, result) {
             ShelfProgress::Done => {
                 let bytes = self.image_load.take().expect("active").take();
+                let pending_checksum = self
+                    .pending
+                    .as_ref()
+                    .and_then(|snapshot| snapshot.image_checksum.clone());
+                if let Some(expected) = pending_checksum {
+                    if fnv64(&bytes) != expected {
+                        // The snapshot and the image on the shelf came from
+                        // different generations; keep the last complete view.
+                        self.pending = None;
+                        self.loading = false;
+                        self.notice = Some(
+                            "The update is incomplete, so the last complete view is kept.".into(),
+                        );
+                        return true;
+                    }
+                }
                 self.image_bytes = Some(bytes);
                 self.install_picture(context);
+                if self.picture.is_some() {
+                    self.snapshot = self.pending.take();
+                } else {
+                    self.pending = None;
+                }
                 self.loading = false;
                 true
             }
             ShelfProgress::Failed(_) => {
                 self.image_load = None;
+                self.pending = None;
                 self.loading = false;
                 self.notice = Some("The bird collage is missing.".into());
                 true
@@ -269,11 +319,27 @@ fn decode_snapshot(bytes: &[u8]) -> Result<Snapshot, String> {
         .take(32)
         .map(|s| s.chars().take(100).collect())
         .collect();
+    let image_checksum = value
+        .get("image_checksum")
+        .and_then(kobo_json::Value::as_str)
+        .filter(|s| s.len() == 16 && s.chars().all(|c| c.is_ascii_hexdigit()))
+        .map(str::to_owned);
     Ok(Snapshot {
         generated_at,
         source,
         recent,
+        image_checksum,
     })
+}
+
+/// The same FNV-1a 64 the companion writes into `image_checksum`.
+fn fnv64(bytes: &[u8]) -> String {
+    let mut hash = 0xcbf2_9ce4_8422_2325_u64;
+    for b in bytes {
+        hash ^= u64::from(*b);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    format!("{hash:016x}")
 }
 fn unix_seconds() -> u64 {
     SystemTime::now()
@@ -313,6 +379,30 @@ mod tests {
         assert!(decode_snapshot(b"{}").is_err());
     }
     #[test]
+    fn snapshot_carries_the_pairing_checksum() {
+        let s = decode_snapshot(
+            br#"{"format":"cobalt-birds-v1","generated_at":1,"image_checksum":"af63dc4c8601ec8c"}"#,
+        )
+        .unwrap();
+        assert_eq!(s.image_checksum.as_deref(), Some("af63dc4c8601ec8c"));
+        // Missing or malformed checksums stay optional so older snapshots load.
+        assert!(
+            decode_snapshot(br#"{"format":"cobalt-birds-v1","generated_at":1}"#)
+                .unwrap()
+                .image_checksum
+                .is_none()
+        );
+        assert!(decode_snapshot(
+            br#"{"format":"cobalt-birds-v1","generated_at":1,"image_checksum":"zz"}"#
+        )
+        .unwrap()
+        .image_checksum
+        .is_none());
+        // The app and the companion must agree on the checksum function.
+        assert_eq!(fnv64(b""), "cbf29ce484222325");
+        assert_eq!(fnv64(b"a"), "af63dc4c8601ec8c");
+    }
+    #[test]
     fn age_is_readable() {
         assert_eq!(age_label(20), "just now");
         assert_eq!(age_label(7200), "2 hr");
@@ -334,6 +424,7 @@ mod tests {
                 generated_at: unix_seconds(),
                 source: "Garden Mac".into(),
                 recent: vec!["European Robin".into(), "Eurasian Wren".into()],
+                image_checksum: None,
             }),
             picture: Some(TilePicture::new(PICTURE, 800, 600)),
             ..Birds::default()
