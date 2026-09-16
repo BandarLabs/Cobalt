@@ -262,6 +262,91 @@ fn sim_root() -> PathBuf {
     kobo_sim::simulated_data_root("vault")
 }
 
+/// Key, record layout and cap of the packed index the pre-shelf Vault app
+/// reads. Pushes keep that index current so a reader still on the old app
+/// sees the vault until the multi-shelf app ships; the shelf stays the
+/// source of truth.
+const LEGACY_INDEX_KEY: &str = "vault-index-v1";
+const LEGACY_INDEX_SEPARATOR: &str = "\n\n---vault-note---\n\n";
+const LEGACY_MAX_INDEX: usize = 256 * 1024;
+const LEGACY_DEVICE_ROOT: &str = "/mnt/onboard/.adds/cobalt/state/vault";
+
+fn legacy_sim_root() -> PathBuf {
+    std::env::temp_dir().join("cobalt-sim-state").join("vault")
+}
+
+fn legacy_pack(notes: &[(String, String)]) -> Option<String> {
+    let packed = notes
+        .iter()
+        .map(|(path, body)| format!("{path}\n{body}"))
+        .collect::<Vec<_>>()
+        .join(LEGACY_INDEX_SEPARATOR);
+    (packed.len() <= LEGACY_MAX_INDEX).then_some(packed)
+}
+
+/// Rebuild the legacy packed index from every shelf manifest, in the format
+/// the pre-shelf app decodes. Over-cap vaults skip the index: the old app
+/// cannot hold them either way, and the new app never reads it.
+fn legacy_write_sim() -> Result<(), String> {
+    let mut notes: Vec<(String, String)> = Vec::new();
+    for manifest_name in [MANIFEST, SYNCED_MANIFEST] {
+        let manifest = read_local_manifest_named(manifest_name)?;
+        for note in &manifest.notes {
+            let file = sim_root().join(Push::note_name(&note.id));
+            let body = fs::read_to_string(&file)
+                .map_err(|error| format!("read Vault note {}: {error}", note.path))?;
+            notes.push((note.path.clone(), body));
+        }
+    }
+    let Some(packed) = legacy_pack(&notes) else {
+        println!("Vault exceeds the old app's packed-index cap; only the new app shows it.");
+        return Ok(());
+    };
+    let root = legacy_sim_root();
+    fs::create_dir_all(&root).map_err(|error| format!("create Vault simulator store: {error}"))?;
+    let dest = root.join(LEGACY_INDEX_KEY);
+    let partial = root.join(format!(".{LEGACY_INDEX_KEY}.writing"));
+    fs::write(&partial, packed)
+        .and_then(|()| fs::rename(&partial, &dest))
+        .map_err(|error| format!("publish Vault legacy index: {error}"))?;
+    Ok(())
+}
+
+/// Same index for a device push: every pushed note's body is still local, so
+/// the packed index ships in the same SSH session.
+fn legacy_write_device(
+    host: &str,
+    folder: &str,
+    notes: &[kobo_vault_host::NoteEntry],
+) -> Result<(), String> {
+    let mut packed_notes: Vec<(String, String)> = Vec::new();
+    for note in notes {
+        let body = fs::read_to_string(Path::new(folder).join(&note.path))
+            .map_err(|error| format!("read {}: {error}", note.path))?;
+        packed_notes.push((note.path.clone(), body));
+    }
+    let Some(packed) = legacy_pack(&packed_notes) else {
+        println!("Vault exceeds the old app's packed-index cap; only the new app shows it.");
+        return Ok(());
+    };
+    let encoded = super::base64_encode(packed.as_bytes());
+    let script = format!(
+        "set -eu\n\
+         root='{LEGACY_DEVICE_ROOT}'\n\
+         mkdir -p \"$root\"\n\
+         chmod 700 \"$root\"\n\
+         partial=\"$root/.{LEGACY_INDEX_KEY}.writing\"\n\
+         base64 -d > \"$partial\" <<'KOBO_VAULT_INDEX'\n\
+         {encoded}\n\
+         KOBO_VAULT_INDEX\n\
+         chmod 600 \"$partial\"\n\
+         mv -f \"$partial\" \"$root/{LEGACY_INDEX_KEY}\"\n\
+         sync\n"
+    );
+    remote(host, &script)?;
+    Ok(())
+}
+
 fn read_local_manifest() -> Result<Manifest, String> {
     read_local_manifest_named(MANIFEST)
 }
@@ -361,6 +446,7 @@ fn push(arguments: &[String], plan_only: bool) -> Result<(), String> {
     match &target {
         Target::Device(host) => {
             transfer(host, &push)?;
+            legacy_write_device(host, &folder, &push.manifest.notes)?;
             let actual = read_manifest(host)?;
             if actual.notes != push.manifest.notes {
                 return Err("the reader's Vault shelf does not match the published plan".to_owned());
@@ -376,6 +462,7 @@ fn push(arguments: &[String], plan_only: bool) -> Result<(), String> {
         }
         Target::Sim => {
             publish_local(&push)?;
+            legacy_write_sim()?;
             let actual = read_local_manifest()?;
             if actual.notes != push.manifest.notes {
                 return Err(
@@ -455,6 +542,7 @@ fn ingest(arguments: &[String]) -> Result<(), String> {
         }
         Target::Sim => {
             publish_local_named(&push, SYNCED_MANIFEST)?;
+            legacy_write_sim()?;
             let actual = read_local_manifest_named(SYNCED_MANIFEST)?;
             if actual.notes != push.manifest.notes {
                 return Err(
@@ -499,8 +587,14 @@ fn remove(arguments: &[String]) -> Result<(), String> {
         renamed: Vec::new(),
     };
     match &target {
-        Target::Device(host) => transfer(host, &push)?,
-        Target::Sim => publish_local(&push)?,
+        Target::Device(host) => {
+            transfer(host, &push)?;
+            println!("The old app's packed index refreshes on the next push.");
+        }
+        Target::Sim => {
+            publish_local(&push)?;
+            legacy_write_sim()?;
+        }
     }
     println!("Removed {} from the Vault shelf.", removed.path);
     Ok(())
