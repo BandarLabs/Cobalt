@@ -1379,6 +1379,7 @@ impl AppState {
         if let Some(state) = kobo_ui::top_bar_touch(
             &self.drawn_screen,
             &physical.oriented(self.orientation),
+            &self.chrome,
             self.top_bar,
             y,
         ) {

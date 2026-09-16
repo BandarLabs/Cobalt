@@ -193,33 +193,54 @@ mod folio_tests {
         let metrics = &CLARA_BW_METRICS;
         let asking = Screen::new(1, Vec::new()).with_auto_hidden_top_bar(true);
         let bar = metrics.top_bar_height();
+        let bare = Chrome::with_back(true);
 
         assert_eq!(
-            top_bar_touch(&asking, metrics, TopBarState::Hidden, bar / 2),
+            top_bar_touch(&asking, metrics, &bare, TopBarState::Hidden, bar / 2),
             Some(TopBarState::Shown),
             "touching where the bar would be asks for it back"
         );
         assert_eq!(
-            top_bar_touch(&asking, metrics, TopBarState::Hidden, bar + 1),
+            top_bar_touch(&asking, metrics, &bare, TopBarState::Hidden, bar + 1),
             None,
             "below the band the touch is the screen's own"
         );
         assert_eq!(
-            top_bar_touch(&asking, metrics, TopBarState::Shown, bar + 1),
+            top_bar_touch(&asking, metrics, &bare, TopBarState::Shown, bar + 1),
             Some(TopBarState::Hidden),
             "carrying on elsewhere puts it away"
         );
         assert_eq!(
-            top_bar_touch(&asking, metrics, TopBarState::Shown, bar / 2),
+            top_bar_touch(&asking, metrics, &bare, TopBarState::Shown, bar / 2),
             None,
             "a touch on a bar that is showing belongs to the bar, so Back works"
         );
 
         let ordinary = Screen::new(1, Vec::new());
         assert_eq!(
-            top_bar_touch(&ordinary, metrics, TopBarState::Hidden, bar / 2),
+            top_bar_touch(&ordinary, metrics, &bare, TopBarState::Hidden, bar / 2),
             None,
             "a screen that never asked must not have its top edge taken"
+        );
+
+        // With a status band the bar is not at the top of the panel, so the
+        // band is not claimed and the bar is never hidden in the first place.
+        let with_status = Chrome::with_back(true).with_status(Status::default());
+        assert_eq!(
+            top_bar_touch(&asking, metrics, &with_status, TopBarState::Hidden, bar / 2),
+            None,
+            "the top edge belongs to the status band when there is one"
+        );
+        assert!(
+            ensure_way_back_revealed(
+                Screen::new(1, Vec::new()).with_auto_hidden_top_bar(true),
+                &with_status,
+                "Birds",
+                TopBarState::Hidden
+            )
+            .top_bar
+            .is_some(),
+            "a bar under a status band stays drawn rather than hiding out of reach"
         );
     }
 
@@ -2416,7 +2437,11 @@ pub fn ensure_way_back_revealed(
     name: &str,
     state: TopBarState,
 ) -> Screen {
-    if screen.auto_hide_top_bar && state == TopBarState::Hidden {
+    // Never while the shell is drawing its status band. The band sits above
+    // the bar and shifts it down, so hiding underneath one would put the way
+    // back somewhere other than where the reader is told to reach for it.
+    // Full-bleed art is a reading screen, and a reading screen has no band.
+    if screen.auto_hide_top_bar && state == TopBarState::Hidden && chrome.status.is_none() {
         screen.top_bar = None;
         return screen;
     }
@@ -2436,10 +2461,13 @@ pub fn ensure_way_back_revealed(
 pub fn top_bar_touch(
     screen: &Screen,
     metrics: &DisplayMetrics,
+    chrome: &Chrome,
     state: TopBarState,
     y: i32,
 ) -> Option<TopBarState> {
-    if !screen.auto_hide_top_bar {
+    // The same condition the drawing side uses, so the band is only ever
+    // claimed on a screen whose bar really is at the top of the panel.
+    if !screen.auto_hide_top_bar || chrome.status.is_some() {
         return None;
     }
     let within_band = y >= 0 && y < metrics.top_bar_height();

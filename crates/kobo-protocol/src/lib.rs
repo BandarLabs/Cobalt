@@ -4976,7 +4976,7 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, ProtocolError> {
         25 => Message::DropFont {
             handle: FontHandle(reader.u32()?),
         },
-        tag @ (37..=40) if version >= VERSION => {
+        tag @ (37..=40) if version >= SUSPEND_VERSION => {
             let generation = reader.u64()?;
             if generation == 0 {
                 return Err(ProtocolError::InvalidValue("suspend generation"));
@@ -10690,6 +10690,31 @@ mod update_task_tests {
             !screen.auto_hide_top_bar,
             "a protocol that cannot hide a bar must not claim to have hidden one"
         );
+    }
+
+    #[test]
+    fn suspend_still_reaches_an_application_built_before_this_protocol() {
+        // Suspend arrived at protocol 14, and the guard that admits it was
+        // written as "the current version". Moving the current version left
+        // every published application unable to be told the cover had closed.
+        for message in [
+            Message::PrepareSuspend { generation: 4 },
+            Message::SuspendReady {
+                generation: 4,
+                ready: true,
+            },
+        ] {
+            let frame = Frame {
+                version: SUSPEND_VERSION,
+                request_id: 2,
+                message,
+            };
+            assert_eq!(
+                decode(&encode(&frame).unwrap()).unwrap(),
+                frame,
+                "a protocol 14 application must still be suspendable"
+            );
+        }
     }
 
     #[test]

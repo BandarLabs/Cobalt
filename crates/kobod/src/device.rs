@@ -2138,6 +2138,18 @@ fn host_applications(
                         || Chrome::with_back(!at_home),
                         |screen| chrome_for(screen, at_home, &mut status),
                     );
+                    // Laid out the way it was drawn. The retained screen is
+                    // the one the application drew, so the bar the shell adds
+                    // is not on it, and hit testing against that raw screen
+                    // would leave every runtime-added Back untappable.
+                    let screen = screen.map(|screen| {
+                        kobo_ui::ensure_way_back_revealed(
+                            screen,
+                            &chrome,
+                            &apps[index].name,
+                            apps[index].top_bar,
+                        )
+                    });
                     let orientation = apps[index].orientation;
                     let landscape_turn = apps[index].landscape_turn;
                     // A control shows that it has been touched, before
@@ -4258,6 +4270,7 @@ fn deliver_touch(
             kobo_ui::top_bar_touch(
                 screen,
                 &metrics_for(screen).oriented(orientation),
+                chrome,
                 top_bar,
                 y,
             )
