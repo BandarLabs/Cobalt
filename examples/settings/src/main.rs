@@ -40,7 +40,25 @@ const NETWORK_ACTIONS: [&str; 10] = [
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Where releases are published.
 const RELEASES: &str = "https://api.github.com/repos/BandarLabs/Cobalt/releases/latest";
-const BETA_RELEASES: &str = "https://api.github.com/repos/BandarLabs/Cobalt/releases?per_page=100";
+/// Only the newest few releases, because a hundred of them is a megabyte and
+/// a half of assets a reader downloads over their own Wi-Fi to learn one
+/// version number, and because that is how the feed outgrew its window.
+/// Betas and stables alternate, so fifteen always holds several betas.
+const BETA_RELEASES: &str = "https://api.github.com/repos/BandarLabs/Cobalt/releases?per_page=15";
+
+/// How much of a release feed this reader will take.
+///
+/// A fetch carries a byte range, and GitHub honours it: a feed longer than
+/// its window comes back as a 206 holding the first window of it, which is
+/// valid JSON up to the point it stops being any JSON at all. Nothing in the
+/// transport can tell that from a whole document, so the only defence is a
+/// window the feed cannot outgrow, and a sentence for the day it does.
+const fn release_window(channel: UpdateChannel) -> u32 {
+    match channel {
+        UpdateChannel::Stable => 256 * 1024,
+        UpdateChannel::Beta => 4 * 1024 * 1024,
+    }
+}
 
 const fn channel_name(channel: UpdateChannel) -> &'static str {
     match channel {
@@ -850,10 +868,7 @@ impl Settings {
             }
             .to_owned(),
             offset: 0,
-            max_bytes: match channel {
-                UpdateChannel::Stable => 256 * 1024,
-                UpdateChannel::Beta => 1024 * 1024,
-            },
+            max_bytes: release_window(channel),
             credential: None,
             headers: Vec::new(),
         });
@@ -1429,8 +1444,17 @@ fn archive_name(version: &str) -> String {
 /// Reads the selected GitHub release feed down to the two URLs this device
 /// needs. Beta selection is by numeric version rather than response order.
 fn latest_release(body: &str, channel: UpdateChannel) -> Result<Release, String> {
-    let value = kobo_json::parse(body)
-        .map_err(|_| "GitHub sent something that is not a release.".to_owned())?;
+    // A reply that filled its window and then failed to parse is a window
+    // into a longer feed, not a broken one, and telling the reader their
+    // release list is unreadable rubbish sends them looking for a fault at
+    // GitHub that is not there.
+    let value = kobo_json::parse(body).map_err(|_| {
+        if body.len() >= release_window(channel) as usize {
+            "GitHub's release list is longer than this reader can read.".to_owned()
+        } else {
+            "GitHub sent something that is not a release.".to_owned()
+        }
+    })?;
     match channel {
         UpdateChannel::Stable => stable_release(&value),
         UpdateChannel::Beta => value
@@ -2119,6 +2143,39 @@ mod tests {
     }
 
     #[test]
+    fn a_feed_cut_off_at_its_window_is_reported_as_too_long_not_as_nonsense() {
+        let window = super::release_window(UpdateChannel::Beta) as usize;
+        let cut_off = r#"[{"tag_name":"beta-v9.8.0","draft":false,"prerelease":true,"assets":[{"#
+            .to_owned()
+            + &" ".repeat(window);
+        assert!(
+            super::latest_release(&cut_off, UpdateChannel::Beta)
+                .expect_err("a window into a feed is not a feed")
+                .contains("longer than this reader can read"),
+            "a reply that filled its window names the length as the fault"
+        );
+        assert!(
+            super::latest_release("<html>", UpdateChannel::Beta)
+                .expect_err("not a feed at all")
+                .contains("not a release"),
+            "a short reply that is not a feed keeps its own sentence"
+        );
+    }
+
+    #[test]
+    fn the_beta_feed_asks_for_few_enough_releases_to_stay_inside_its_window() {
+        assert!(
+            super::BETA_RELEASES.ends_with("per_page=15"),
+            "the whole list outgrew the window once and must not be asked for again"
+        );
+        assert!(
+            super::release_window(UpdateChannel::Beta)
+                > 8 * super::release_window(UpdateChannel::Stable),
+            "the beta feed is the long one and needs room to grow"
+        );
+    }
+
+    #[test]
     fn beta_release_selection_orders_versions_and_excludes_other_releases() {
         let body = r#"[
           {"tag_name":"beta-v9.8.0","draft":false,"prerelease":true,"assets":[
@@ -2228,6 +2285,9 @@ mod tests {
                 version: "9.9.9".to_owned(),
             },
             super::UpdateFlow::Failed("The download did not match its digest.".to_owned()),
+            super::UpdateFlow::Failed(
+                "GitHub's release list is longer than this reader can read.".to_owned(),
+            ),
         ];
         for flow in flows {
             let settings = Settings {
