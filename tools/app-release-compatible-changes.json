@@ -308,7 +308,39 @@
         {
           "path": "Cargo.lock",
           "base_blob": "e07e1ade0355155e92ff024f4ae7518372cd1ce8",
-          "compatible_blob": "d87db6f43872e774cabd002c42dd7261f6b6870e"
+          "compatible_blob": "60d08ffa8e7cc9ca686a854e31761941fda370a5"
+        }
+      ]
+    },
+    {
+      "protocol_version": 14,
+      "reason": "Kitchen Card reads its Mealie server from owner-configured settings instead of a fixed address, so the credential policy validates the request by path shape (the recipe list and one recipe by slug) rather than one pinned URL, and the app gains a kobo-json dependency for response parsing. Protocol bytes are untouched; only the kitchencard package is rebuilt.",
+      "files": [
+        {
+          "path": "Cargo.lock",
+          "base_blob": "d87db6f43872e774cabd002c42dd7261f6b6870e",
+          "compatible_blob": "60d08ffa8e7cc9ca686a854e31761941fda370a5"
+        },
+        {
+          "path": "crates/kobo-policy/src/credentials.rs",
+          "base_blob": "9a44a782eb487e4546a4aa57609787100900bc3f",
+          "compatible_blob": "9c18d3ab4a47b7443c79b78e43de06ba2f74c663"
+        }
+      ]
+    },
+    {
+      "protocol_version": 14,
+      "reason": "Kitchen Card reads its Mealie server from owner-configured settings instead of a fixed address, so the credential policy validates the request by path shape (the recipe list and one recipe by slug) rather than one pinned URL, and the app gains a kobo-json dependency for response parsing. Protocol bytes are untouched; only the kitchencard package is rebuilt. Same change, pinned against the published catalog's source base while a catalog republish is pending.",
+      "files": [
+        {
+          "path": "Cargo.lock",
+          "base_blob": "36e8d8afe839919ba62b86bd28ae713c2c4bdf7a",
+          "compatible_blob": "60d08ffa8e7cc9ca686a854e31761941fda370a5"
+        },
+        {
+          "path": "crates/kobo-policy/src/credentials.rs",
+          "base_blob": "9a44a782eb487e4546a4aa57609787100900bc3f",
+          "compatible_blob": "9c18d3ab4a47b7443c79b78e43de06ba2f74c663"
         }
       ]
     }

@@ -470,8 +470,14 @@ fn store_app_credential_allowed(
             credential.secret == "mealie"
                 && credential.header == SecretHeader::Bearer
                 && usage == CredentialUse::Fetch
-                && url == "https://mealie.local/api/recipes?perPage=20"
-                && has_origin(url, "mealie.local", 443)
+                && parsed_path(url).is_some_and(|path| {
+                    let path = clean_path(&path);
+                    path.ends_with("/api/recipes")
+                        || path
+                            .rsplit("/api/recipes/")
+                            .next()
+                            .is_some_and(|slug| !slug.is_empty() && !slug.contains('/'))
+                })
         }
         "needles" => {
             credential.secret == "ravelry"
@@ -851,7 +857,13 @@ mod tests {
             (
                 "kitchencard",
                 Credential::bearer("mealie"),
-                "https://mealie.local/api/recipes?perPage=20",
+                "https://mealie.example/api/recipes?perPage=24&page=1",
+                CredentialUse::Fetch,
+            ),
+            (
+                "kitchencard",
+                Credential::bearer("mealie"),
+                "https://mealie.example/api/recipes/lemon-chickpeas",
                 CredentialUse::Fetch,
             ),
             (

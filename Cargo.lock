@@ -1190,6 +1190,7 @@ version = "0.3.17"
 name = "kobo-kitchencard"
 version = "0.1.0"
 dependencies = [
+ "kobo-json",
  "kobo-sdk",
  "kobo-ui",
 ]

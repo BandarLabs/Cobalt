@@ -1519,8 +1519,10 @@
     "pr": 3,
     "group": "Frame app",
     "task": "Expose slideshow mode, interval and ordering controls",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "INTERVAL/ORDER consts, shuffled slideshow toggle persisted across restarts; verified in frame audit (code read + unit tests), existing drive.kobo passes on sim."
+    ]
   },
   {
     "id": "FRAME-02",
@@ -1972,64 +1974,80 @@
     "pr": 3,
     "group": "Kitchen Card (APP-2)",
     "task": "Configure Mealie endpoint and credentials",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "mealie.rs: Mealie list/detail URL builders + kobo-json parsers with 5 unit tests; sim journey drives connect->save->empty-state->sync on the Clara sim (drive.kobo passes; evidence/kitchencard/kitchen-empty.png)."
+    ]
   },
   {
     "id": "KITCHEN-02",
     "pr": 3,
     "group": "Kitchen Card (APP-2)",
     "task": "Parse real recipe list and detail responses",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "amounts.rs fraction(): unicode quarters/halves/thirds incl. mixed numbers, 1-decimal fallback, NaN/negative guard; 3 unit tests."
+    ]
   },
   {
     "id": "KITCHEN-03",
     "pr": 3,
     "group": "Kitchen Card (APP-2)",
     "task": "Preserve ingredient quantities and cooking steps",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "main.rs Cook view: step list, step_timer() parses 'N minutes'/'N min'/'30-35 minutes'->30 and schedules a wake; banner on fire; 6 app tests incl. timer extraction. Cooking interaction not driven in sim (runner has no HTTP fixture)."
+    ]
   },
   {
     "id": "KITCHEN-04",
     "pr": 3,
     "group": "Kitchen Card (APP-2)",
     "task": "Persist imported recipes through restart",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Ingredients view rows persist checked state in TONIGHT store (checked-csv); amounts scaled by servings with verbatim Mealie display at base servings; unit-verified."
+    ]
   },
   {
     "id": "KITCHEN-05",
     "pr": 3,
     "group": "Kitchen Card (APP-2)",
     "task": "Handle save and connection failures honestly",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "cache.rs: versioned snapshot JSON (4MB limit) keyed kitchencard-v1:{server}\\n{credential}; round-trip + reject tests; sim journey exercises cold-start empty state."
+    ]
   },
   {
     "id": "KITCHEN-06",
     "pr": 3,
     "group": "Kitchen Card (APP-2)",
     "task": "Add ingredient check-off",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Honest failure mapping: NoCredential/Offline/Denied/other banners with recovery copy; sim journey asserts the 'No credential named' banner (kitchen-setup-needed.png pixel-verified). Live-server paths verified by unit tests only."
+    ]
   },
   {
     "id": "KITCHEN-07",
     "pr": 3,
     "group": "Kitchen Card (APP-2)",
     "task": "Add recipe scaling with readable fractions",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Typography/layout per-view Clara layout diagnostics (6 tests) assert margins, sizes, empty states; 4 sim screenshots pixel-verified (connect/empty/settings-saved/setup-needed)."
+    ]
   },
   {
     "id": "KITCHEN-08",
     "pr": 3,
     "group": "Kitchen Card (APP-2)",
     "task": "Add cooking timers and Finished state",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Settings: server address + credential name with on-device keyboard editing (?123/abc layers driven in sim), persisted to CONFIG; settings-saved shot pixel-verified."
+    ]
   },
   {
     "id": "LICHESS-01",

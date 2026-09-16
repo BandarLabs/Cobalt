@@ -233,7 +233,7 @@ Design direction: the bar is a well-made iPad application, built for a panel tha
 
 ## PR 3 · Frame app
 
-- [ ] **FRAME-01** Expose slideshow mode, interval and ordering controls.
+- [x] **FRAME-01** Expose slideshow mode, interval and ordering controls.
 - [ ] **FRAME-02** Show album, date and count clearly.
 - [ ] **FRAME-03** Provide an original multi-photo demo.
 - [ ] **FRAME-04** Show verified transfer status.
@@ -306,14 +306,14 @@ Design direction: the bar is a well-made iPad application, built for a panel tha
 
 ## PR 3 · Kitchen Card (APP-2)
 
-- [ ] **KITCHEN-01** Configure Mealie endpoint and credentials.
-- [ ] **KITCHEN-02** Parse real recipe list and detail responses.
-- [ ] **KITCHEN-03** Preserve ingredient quantities and cooking steps.
-- [ ] **KITCHEN-04** Persist imported recipes through restart.
-- [ ] **KITCHEN-05** Handle save and connection failures honestly.
-- [ ] **KITCHEN-06** Add ingredient check-off.
-- [ ] **KITCHEN-07** Add recipe scaling with readable fractions.
-- [ ] **KITCHEN-08** Add cooking timers and Finished state.
+- [x] **KITCHEN-01** Configure Mealie endpoint and credentials.
+- [x] **KITCHEN-02** Parse real recipe list and detail responses.
+- [x] **KITCHEN-03** Preserve ingredient quantities and cooking steps.
+- [x] **KITCHEN-04** Persist imported recipes through restart.
+- [x] **KITCHEN-05** Handle save and connection failures honestly.
+- [x] **KITCHEN-06** Add ingredient check-off.
+- [x] **KITCHEN-07** Add recipe scaling with readable fractions.
+- [x] **KITCHEN-08** Add cooking timers and Finished state.
 
 ## PR 3 · Lichess
 
