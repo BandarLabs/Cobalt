@@ -11,6 +11,33 @@ kobo birds status
 kobo birds stop
 ```
 
+## The two programs that must be running first
+
+That `--source` is not something Cobalt starts. Three programs are involved and only the last is ours: BirdNET-Go owns the microphone and the classifier, Fugleramme polls BirdNET-Go and renders the collage, and the companion polls Fugleramme and carries the picture to the reader. Install them in that order, because each is silent until the one before it answers.
+
+Both projects default to port 8080, so a computer running them side by side has to move one. Fugleramme's own appliance install expects the detector on 8090 and serves the frame on 8080, and following that here means the `--source` above is the one every other document already assumes.
+
+**BirdNET-Go** ([releases](https://github.com/tphakala/birdnet-go/releases)) carries two shared libraries beside the binary, and will not start until the dynamic linker can find them:
+
+```sh
+tar xzf birdnet-go-darwin-arm64-*.tar.gz
+DYLD_LIBRARY_PATH="$PWD" ./birdnet-go serve
+```
+
+It writes its configuration to `~/.config/birdnet-go/config.yaml` on the first run, wherever it was started from, and that is the copy to edit for the 8090 move and for your location. On macOS it asks the terminal it was started from for microphone permission; until that is granted it analyses silence and says nothing about it. `curl http://127.0.0.1:8090/api/v2/health` answers `healthy` once it is up, and the log names every sound it classifies, which is the quickest proof the microphone is really arriving.
+
+**Fugleramme** ([source](https://github.com/arnegiacomo/fugleramme)) is a Python project. Its `install.sh` and `run.sh` set up a Raspberry Pi appliance through systemd and do not apply here; on a Mac or a desktop Linux machine, run the service directly and let it find no panel:
+
+```sh
+uv sync
+uv run fugleramme-check --detector http://127.0.0.1:8090
+uv run fugleramme-frame --detector http://127.0.0.1:8090 --host 127.0.0.1 --port 8080
+```
+
+`fugleramme-check` is worth running first: it reports whether the detector answers everything the frame needs, and separates "BirdNET-Go is not reachable" from "no bird has been heard yet". The frame logs `Inky library unavailable; running web-only`, which is the expected and wanted outcome on a computer, and Birds reads the same web endpoints the panel would have drawn. Once `curl http://127.0.0.1:8080/state` returns a token, that address is the `--source` the companion wants.
+
+No bird has to have been heard for any of this to work. With an empty detection window Fugleramme still renders and the companion still publishes, so the whole path can be proved indoors before it is left running near a window.
+
 <img width="300" src="screenshots/birds.png" alt="A labelled collage of public-domain bird plates filling the Birds app on a Kobo">
 <img width="300" src="screenshots/birds-colour.png" alt="The same bird collage rendered in RGB for a Kobo Clara Colour">
 
