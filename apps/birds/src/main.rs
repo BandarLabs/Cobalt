@@ -22,6 +22,9 @@ struct Snapshot {
     source: String,
     recent: Vec<String>,
     image_checksum: Option<String>,
+    /// The content-addressed image this snapshot points at; snapshots written
+    /// before the pointer existed fall back to the shared name.
+    image: Option<String>,
 }
 
 #[derive(Default)]
@@ -49,6 +52,11 @@ impl Birds {
             let screen = ScreenBuilder::new("birds-home");
             return if self.loading {
                 screen.activity("Opening the latest birds", None).build()
+            } else if let Some(notice) = &self.notice {
+                screen
+                    .splash(Some(Glyph::App), "The snapshot could not be read", notice)
+                    .buttons([(REFRESH, "Refresh")])
+                    .build()
             } else {
                 screen
                     .splash(
@@ -114,7 +122,12 @@ impl Birds {
     }
 
     fn load_image(&mut self, context: &mut Context) {
-        self.image_load = Some(ShelfDownload::new(IMAGE).at_most(MAX_IMAGE));
+        let name = self
+            .pending
+            .as_ref()
+            .and_then(|snapshot| snapshot.image.clone())
+            .unwrap_or_else(|| IMAGE.to_owned());
+        self.image_load = Some(ShelfDownload::new(name).at_most(MAX_IMAGE));
         self.image_load.as_mut().expect("set").start(context);
     }
 
@@ -153,9 +166,9 @@ impl Birds {
         }
     }
 
-    fn install_picture(&mut self, context: &mut Context) {
+    fn install_picture(&mut self, context: &mut Context) -> bool {
         let Some(bytes) = self.image_bytes.as_deref() else {
-            return;
+            return false;
         };
         let colour = self
             .identity
@@ -182,22 +195,25 @@ impl Birds {
             Ok(picture) => {
                 let width = picture.width();
                 let height = picture.height();
-                self.picture = if colour {
+                let installed = if colour {
                     picture
                         .into_colour()
                         .and_then(|rgb| context.put_colour_picture(PICTURE, width, height, rgb))
                 } else {
                     Some(context.put_picture(PICTURE, width, height, picture.into_grey())).flatten()
                 };
-                if self.picture.is_none() {
-                    self.notice =
-                        Some("The bird collage exceeds this reader's picture budget.".into());
-                } else {
+                if let Some(installed) = installed {
+                    self.picture = Some(installed);
                     self.notice = None;
+                    return true;
                 }
+                self.notice = Some("The bird collage exceeds this reader's picture budget.".into());
             }
             Err(_) => self.notice = Some("The bird collage is damaged.".into()),
         }
+        // A failed attempt keeps the previous picture on screen, but reports
+        // failure so the caller does not commit new metadata over old art.
+        false
     }
 
     fn advance_image(&mut self, context: &mut Context, result: &StoreResult) -> bool {
@@ -224,8 +240,10 @@ impl Birds {
                     }
                 }
                 self.image_bytes = Some(bytes);
-                self.install_picture(context);
-                if self.picture.is_some() {
+                // Gate the commit on this decode, not on whatever picture a
+                // previous generation left behind: a damaged new image must
+                // keep the old snapshot's metadata with the old image.
+                if self.install_picture(context) {
                     self.snapshot = self.pending.take();
                 } else {
                     self.pending = None;
@@ -324,11 +342,21 @@ fn decode_snapshot(bytes: &[u8]) -> Result<Snapshot, String> {
         .and_then(kobo_json::Value::as_str)
         .filter(|s| s.len() == 16 && s.chars().all(|c| c.is_ascii_hexdigit()))
         .map(str::to_owned);
+    let image = value
+        .get("image")
+        .and_then(kobo_json::Value::as_str)
+        .filter(|s| {
+            s.len() <= 64
+                && s.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '.')
+        })
+        .map(str::to_owned);
     Ok(Snapshot {
         generated_at,
         source,
         recent,
         image_checksum,
+        image,
     })
 }
 
@@ -425,6 +453,7 @@ mod tests {
                 source: "Garden Mac".into(),
                 recent: vec!["European Robin".into(), "Eurasian Wren".into()],
                 image_checksum: None,
+                image: None,
             }),
             picture: Some(TilePicture::new(PICTURE, 800, 600)),
             ..Birds::default()
