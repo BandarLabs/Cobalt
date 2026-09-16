@@ -17,14 +17,23 @@ That `--source` is not something Cobalt starts. Three programs are involved and 
 
 Both projects default to port 8080, so a computer running them side by side has to move one. Fugleramme's own appliance install expects the detector on 8090 and serves the frame on 8080, and following that here means the `--source` above is the one every other document already assumes.
 
-**BirdNET-Go** ([releases](https://github.com/tphakala/birdnet-go/releases)) carries two shared libraries beside the binary, and will not start until the dynamic linker can find them:
+**BirdNET-Go** ([releases](https://github.com/tphakala/birdnet-go/releases)) publishes a build per platform, and not for every platform Birds runs against. There is `darwin-arm64`, `linux-amd64` and `linux-arm64`, and no Intel Mac build at all: an Intel Mac has to build it from source or run it in a container, neither of which is described here. Take the archive matching the computer that has the microphone.
+
+Each archive carries two shared libraries beside the binary, and the binary will not start until the dynamic linker can find them. On Apple Silicon macOS, which is where the steps below were run:
 
 ```sh
 tar xzf birdnet-go-darwin-arm64-*.tar.gz
 DYLD_LIBRARY_PATH="$PWD" ./birdnet-go serve
 ```
 
-It writes its configuration to `~/.config/birdnet-go/config.yaml` on the first run, wherever it was started from, and that is the copy to edit for the 8090 move and for your location. On macOS it asks the terminal it was started from for microphone permission; until that is granted it analyses silence and says nothing about it. `curl http://127.0.0.1:8090/api/v2/health` answers `healthy` once it is up, and the log names every sound it classifies, which is the quickest proof the microphone is really arriving.
+Linux is the same shape with the loader variable Linux uses, and upstream's own README covers installing the libraries properly rather than per session:
+
+```sh
+tar xzf birdnet-go-linux-amd64-*.tar.gz     # or linux-arm64
+LD_LIBRARY_PATH="$PWD" ./birdnet-go serve
+```
+
+It writes its configuration to `~/.config/birdnet-go/config.yaml` on the first run, wherever it was started from, and that is the copy to edit for the 8090 move and for your location. On macOS it also asks the terminal it was started from for microphone permission, and until that is granted it analyses silence and says nothing about it. `curl http://127.0.0.1:8090/api/v2/health` answers `healthy` once it is up, and the log names every sound it classifies, which is the quickest proof the microphone is really arriving.
 
 **Fugleramme** ([source](https://github.com/arnegiacomo/fugleramme)) is a Python project. Its `install.sh` and `run.sh` set up a Raspberry Pi appliance through systemd and do not apply here; on a Mac or a desktop Linux machine, run the service directly and let it find no panel:
 
