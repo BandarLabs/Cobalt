@@ -3,9 +3,11 @@
 //! This module never starts a second supplicant. Nickel and Cobalt would then
 //! be two owners of one interface, an arrangement already proven unsafe on the
 //! Clara BW. The backend is available only when the firmware's `wpa_cli` and
-//! `wlan0` are both present; all operations go through that existing owner.
+//! the device's wireless interface (detected by [`crate::network::wireless_link`],
+//! not assumed to be `wlan0`) are both present; all operations go through that
+//! existing owner.
 
-use crate::network::{signal_dbm, WIRELESS_LINK};
+use crate::network::{signal_dbm, wireless_link};
 use kobo_protocol::{DenyReason, DeviceError, DeviceResult, WifiNetwork, MAX_RADIO_DEVICES};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -30,10 +32,9 @@ pub struct Wifi {
 impl Wifi {
     #[must_use]
     pub fn open() -> Option<Self> {
-        if !Path::new("/sys/class/net/wlan0").exists() {
+        if !Path::new("/sys/class/net").join(wireless_link()).exists() {
             return None;
         }
-
         WPA_TOOLS
             .into_iter()
             .map(Path::new)
@@ -48,7 +49,7 @@ impl Wifi {
     pub fn unavailable_reason(profile: &kobo_profile::DeviceProfile) -> Option<DenyReason> {
         availability_reason(
             profile,
-            Path::new("/sys/class/net/wlan0").exists(),
+            Path::new("/sys/class/net").join(wireless_link()).exists(),
             WPA_TOOLS.iter().any(|path| Path::new(path).is_file()),
         )
     }
@@ -202,7 +203,7 @@ impl Wifi {
 
     fn command<const N: usize>(&self, arguments: [&str; N]) -> Result<String, DeviceError> {
         let output = Command::new(&self.wpa_cli)
-            .args(["-i", WIRELESS_LINK])
+            .args(["-i", wireless_link()])
             .args(arguments)
             .output()
             .map_err(|_| DeviceError::Backend)?;
@@ -220,7 +221,7 @@ impl Wifi {
     /// process inspecting `/proc/*/cmdline` cannot read the password.
     fn script(&self, commands: &str) -> Result<String, DeviceError> {
         let mut child = Command::new(&self.wpa_cli)
-            .args(["-i", WIRELESS_LINK])
+            .args(["-i", wireless_link()])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
@@ -245,21 +246,22 @@ impl Wifi {
 }
 
 fn interface_enabled() -> bool {
-    if let Ok(flags) = std::fs::read_to_string("/sys/class/net/wlan0/flags") {
+    let link = wireless_link();
+    if let Ok(flags) = std::fs::read_to_string(format!("/sys/class/net/{link}/flags")) {
         return u32::from_str_radix(flags.trim().trim_start_matches("0x"), 16)
             .is_ok_and(|flags| flags & 1 != 0);
     }
-    std::fs::read_to_string("/sys/class/net/wlan0/operstate")
+    std::fs::read_to_string(format!("/sys/class/net/{link}/operstate"))
         .is_ok_and(|state| state.trim() != "down")
 }
 
 fn set_interface(enabled: bool) -> bool {
     let state = if enabled { "up" } else { "down" };
     for (tool, arguments) in [
-        ("/sbin/ip", vec!["link", "set", WIRELESS_LINK, state]),
-        ("/bin/ip", vec!["link", "set", WIRELESS_LINK, state]),
-        ("/sbin/ifconfig", vec![WIRELESS_LINK, state]),
-        ("/bin/ifconfig", vec![WIRELESS_LINK, state]),
+        ("/sbin/ip", vec!["link", "set", wireless_link(), state]),
+        ("/bin/ip", vec!["link", "set", wireless_link(), state]),
+        ("/sbin/ifconfig", vec![wireless_link(), state]),
+        ("/bin/ifconfig", vec![wireless_link(), state]),
     ] {
         if Path::new(tool).is_file()
             && Command::new(tool)
@@ -288,7 +290,6 @@ fn parse_scan_results(output: &str, connected: Option<&str>) -> Vec<WifiNetwork>
         if fields.len() < 5 {
             continue;
         }
-
         let ssid = fields[4].trim();
         if ssid.is_empty() || ssid.len() > 32 {
             continue;
@@ -296,7 +297,7 @@ fn parse_scan_results(output: &str, connected: Option<&str>) -> Vec<WifiNetwork>
         let signal_dbm = fields[2]
             .parse::<i16>()
             .ok()
-            .or_else(|| signal_dbm(WIRELESS_LINK).and_then(|value| i16::try_from(value).ok()))
+            .or_else(|| signal_dbm(wireless_link()).and_then(|value| i16::try_from(value).ok()))
             .unwrap_or(-100);
         let flags = fields[3];
         if let Some(existing) = networks

@@ -3,7 +3,7 @@
 Part of [Cobalt](../README.md).
 
 Cobalt selects a device profile at runtime. The Clara BW, Clara Colour,
-Elipsa 2E, Clara HD, Libra 2, and Libra Colour profiles are fully
+Elipsa 2E, Clara HD, Libra 2, Libra Colour, and Libra H2O profiles are fully
 hardware-tested at their recorded identity and firmware boundaries. The
 current status and exact boundaries are recorded in the
 [device support matrix](DEVICES.md#device-support-matrix).

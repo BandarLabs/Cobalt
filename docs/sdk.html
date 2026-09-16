@@ -295,7 +295,7 @@ footer nav { display: flex; gap: 20px; flex-wrap: wrap; }
 <span class="kw">fn</span> <span class="fn">main</span>() {
     <span class="kw">let</span> _ = kobo_sdk::<span class="fn">run</span>(<span class="str">"counter"</span>, <span class="ty">Counter</span>::<span class="fn">default</span>());
 }</code></pre>
-      <div class="note"><strong>Hardware support.</strong> The Kobo Clara BW N365, device code 391; Kobo Clara Colour N367, device code 393; Kobo Elipsa 2E N605, device code 389; Kobo Clara HD N249, device code 376; Kobo Libra 2 N418, device code 388; and Kobo Libra Colour N428, device code 390 are fully hardware-tested at the exact firmware and kernel versions in the <a href="https://github.com/BandarLabs/Cobalt/blob/main/docs/DEVICES.md#device-support-matrix">device support matrix</a>.</div>
+      <div class="note"><strong>Hardware support.</strong> The Kobo Clara BW N365, device code 391; Kobo Clara Colour N367, device code 393; Kobo Elipsa 2E N605, device code 389; Kobo Clara HD N249, device code 376; Kobo Libra 2 N418, device code 388; Kobo Libra Colour N428, device code 390; and Kobo Libra H2O N873, device code 384 are fully hardware-tested at the exact firmware and kernel versions in the <a href="https://github.com/BandarLabs/Cobalt/blob/main/docs/DEVICES.md#device-support-matrix">device support matrix</a>.</div>
     </section>
 
     <section id="application-model">
@@ -519,6 +519,8 @@ footer nav { display: flex; gap: 20px; flex-wrap: wrap; }
             <tr><td><code>trust set/list/remove</code></td><td>Manage owner TLS roots for private HTTPS services.</td></tr>
             <tr><td><code>app-key --seed PATH</code></td><td>Print the Ed25519 public key for a Store release seed.</td></tr>
             <tr><td><code>app-bundle ...</code></td><td>Build one signed, pathless <code>.cobalt-app</code> package.</td></tr>
+            <tr><td><code>app-verify --package PATH --public-key PATH --manifest PATH --binary PATH</code></td><td>Verify a package signature and its exact expected manifest and ARM binary. The public-key file contains hexadecimal text.</td></tr>
+            <tr><td><code>app-catalog-verify --catalog PATH --signature PATH --public-key PATH --package PATH</code></td><td>Verify catalog and package signatures, then compare the catalog entry's manifest, digest and length with the package. Verification does not install or publish.</td></tr>
             <tr><td><code>app-catalog ...</code></td><td>Build and sign the public application catalog.</td></tr>
             <tr><td><code>app-list --registry PATH</code></td><td>List validated Store registry entries as JSON.</td></tr>
             <tr><td><code>app-check --registry PATH ...</code></td><td>Build and verify registered Store applications.</td></tr>

@@ -7,7 +7,9 @@ wait-for Todo
 expect Home
 expect Todo
 expect Example
-expect Running on this device
+# A pushed preview says it is a preview. It used to say "Running on this
+# device", which was a static layout claiming to be a live pairing.
+expect Preview only. Pair to run commands.
 expect-missing Pair with your computer
 expect-missing Opening
 expect-missing Refresh

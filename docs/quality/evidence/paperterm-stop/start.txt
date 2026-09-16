@@ -1,0 +1,15 @@
+Paperterm shares a computer terminal with your reader.
+
+Start with a connection check:
+  kobo stream demo
+
+Then choose a session:
+  kobo stream terminal    Open your usual shell
+  kobo stream monitor     Watch this computer's processes with top
+
+First use: run kobo stream init --host COMPUTER_ADDRESS, then
+kobo trust set stream --device READER_IP. Open Paperterm on the reader
+and enter the computer address and pairing code.
+
+Keep the computer awake. Press Ctrl+] on the computer to stop sharing.
+For custom commands and other advanced options: kobo stream --help

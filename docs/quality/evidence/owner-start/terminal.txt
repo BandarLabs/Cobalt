@@ -1,0 +1,12 @@
+Cobalt
+
+1. Set up a reader over USB
+2. Preview photos for Frame
+3. Check a feed subscription file
+4. Check a Paperterm connection
+5. Developer and release commands
+0. Exit
+Choose a number: 3
+OPML file path (blank cancels): <fixture>/Sample feeds.opml
+1 feed
+  Sample feed https://example.org/feed.xml

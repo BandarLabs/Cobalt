@@ -470,7 +470,7 @@ pub fn print_setup(id: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Registers the hook with one agent, or with every one that is installed.
+/// Registers the selected integration, or previews detected integrations.
 ///
 /// # Errors
 ///
@@ -479,6 +479,26 @@ pub fn print_setup(id: &str) -> Result<(), String> {
 pub fn setup(id: Option<&str>, dry_run: bool) -> Result<(), String> {
     if let Some(id) = id {
         agents::install(agents::find(id)?, dry_run)?;
+        return Ok(());
+    }
+    if !dry_run {
+        use std::io::IsTerminal;
+        if std::io::stdin().is_terminal() && std::io::stdout().is_terminal() {
+            let detected: Vec<bool> = agents::AGENTS
+                .iter()
+                .map(agents::Agent::is_installed)
+                .collect();
+            if let Some(index) = choose_integration(
+                &mut std::io::stdin().lock(),
+                &mut std::io::stdout().lock(),
+                &detected,
+            )? {
+                agents::install(&agents::AGENTS[index], false)?;
+            }
+        } else {
+            list()?;
+            println!("\nChoose an integration: kobo-sidekickd setup AGENT\nPreview changes first: kobo-sidekickd setup AGENT --dry-run\nNo configuration was changed.");
+        }
         return Ok(());
     }
     let installed: Vec<&agents::Agent> = agents::AGENTS
@@ -495,12 +515,62 @@ pub fn setup(id: Option<&str>, dry_run: bool) -> Result<(), String> {
     for agent in installed {
         agents::install(agent, dry_run)?;
     }
-    if dry_run {
-        println!("\nNothing was written. Run without --dry-run to do it.");
-    } else {
-        println!("\nStart the daemon with 'kobo-sidekickd run'.");
-    }
+    println!("\nNothing was written. Choose an integration with kobo-sidekickd setup AGENT.");
     Ok(())
+}
+
+fn choose_integration(
+    input: &mut impl std::io::BufRead,
+    output: &mut impl std::io::Write,
+    detected: &[bool],
+) -> Result<Option<usize>, String> {
+    writeln!(output, "Connect Sidekick to an integration\n").map_err(|error| error.to_string())?;
+    for (index, agent) in agents::AGENTS.iter().enumerate() {
+        let state = if detected.get(index) == Some(&true) {
+            "detected"
+        } else {
+            "not detected"
+        };
+        writeln!(
+            output,
+            "{}. {} ({state}) — ~/{}",
+            index + 1,
+            agent.name,
+            agent.config
+        )
+        .map_err(|error| error.to_string())?;
+    }
+    writeln!(
+        output,
+        "0. Cancel\nOnly the selected integration will be configured."
+    )
+    .map_err(|error| error.to_string())?;
+    loop {
+        write!(output, "Choose a number (blank cancels): ")
+            .and_then(|()| output.flush())
+            .map_err(|error| error.to_string())?;
+        let mut answer = String::new();
+        if input
+            .read_line(&mut answer)
+            .map_err(|error| error.to_string())?
+            == 0
+        {
+            return Ok(None);
+        }
+        let answer = answer.trim();
+        if answer.is_empty() || answer == "0" {
+            return Ok(None);
+        }
+        if let Some(index) = answer
+            .parse::<usize>()
+            .ok()
+            .and_then(|number| number.checked_sub(1))
+            .filter(|index| *index < agents::AGENTS.len())
+        {
+            return Ok(Some(index));
+        }
+        writeln!(output, "Choose one of the listed numbers.").map_err(|error| error.to_string())?;
+    }
 }
 
 /// Says, for every supported agent, whether it is here and whether it asks
@@ -534,6 +604,26 @@ mod tests {
         always, answered, decision_json, describe, describe_suggestion, session_identity, string,
         tool_name,
     };
+
+    #[test]
+    fn integration_choice_retries_and_cancels_without_selecting_everyone() {
+        let mut output = Vec::new();
+        assert_eq!(
+            super::choose_integration(&mut "99\n1\n".as_bytes(), &mut output, &[true, false])
+                .unwrap(),
+            Some(0)
+        );
+        let text = String::from_utf8(output).unwrap();
+        assert!(text.contains("detected") && text.contains("not detected"));
+        assert!(text.contains("Choose one of the listed numbers"));
+        for input in ["", "\n", "0\n"] {
+            assert_eq!(
+                super::choose_integration(&mut input.as_bytes(), &mut Vec::new(), &[true, true])
+                    .unwrap(),
+                None
+            );
+        }
+    }
 
     /// What the reader would be shown for one event.
     fn shown(event: &str) -> (String, String) {

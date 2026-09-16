@@ -40,7 +40,25 @@ const NETWORK_ACTIONS: [&str; 10] = [
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Where releases are published.
 const RELEASES: &str = "https://api.github.com/repos/BandarLabs/Cobalt/releases/latest";
-const BETA_RELEASES: &str = "https://api.github.com/repos/BandarLabs/Cobalt/releases?per_page=100";
+/// Only the newest few releases, because a hundred of them is a megabyte and
+/// a half of assets a reader downloads over their own Wi-Fi to learn one
+/// version number, and because that is how the feed outgrew its window.
+/// Betas and stables alternate, so fifteen always holds several betas.
+const BETA_RELEASES: &str = "https://api.github.com/repos/BandarLabs/Cobalt/releases?per_page=15";
+
+/// How much of a release feed this reader will take.
+///
+/// A fetch carries a byte range, and GitHub honours it: a feed longer than
+/// its window comes back as a 206 holding the first window of it, which is
+/// valid JSON up to the point it stops being any JSON at all. Nothing in the
+/// transport can tell that from a whole document, so the only defence is a
+/// window the feed cannot outgrow, and a sentence for the day it does.
+const fn release_window(channel: UpdateChannel) -> u32 {
+    match channel {
+        UpdateChannel::Stable => 256 * 1024,
+        UpdateChannel::Beta => 4 * 1024 * 1024,
+    }
+}
 
 const fn channel_name(channel: UpdateChannel) -> &'static str {
     match channel {
@@ -69,9 +87,17 @@ enum View {
     UpdateChannelConfirm,
 }
 
+/// `Unavailable` is a confirmed hardware fact: it is only ever produced by
+/// `new`, from a successful device reply reporting `available: false`. It
+/// must never be assumed from the absence of an answer -- `Unknown`, the
+/// default, is what every radio starts as before its first read replies, and
+/// what a failed or denied read leaves it as, precisely so a pending or
+/// backend-failed read can never be mistaken for a device that has no radio
+/// at all.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 enum RadioState {
     #[default]
+    Unknown,
     Unavailable,
     Off,
     On,
@@ -259,7 +285,8 @@ impl Settings {
 
     fn home(&self) -> Screen {
         let bluetooth = match self.bluetooth_state {
-            RadioState::Unavailable => "Unavailable on this firmware".to_owned(),
+            RadioState::Unknown => "Checking…".to_owned(),
+            RadioState::Unavailable => "Not available on this device".to_owned(),
             RadioState::Off => "Off".to_owned(),
             RadioState::On => {
                 let connected = self
@@ -271,7 +298,8 @@ impl Settings {
             }
         };
         let wifi = match (self.wifi_state, &self.connected_ssid) {
-            (RadioState::Unavailable, _) => "Unavailable on this firmware".to_owned(),
+            (RadioState::Unknown, _) => "Checking…".to_owned(),
+            (RadioState::Unavailable, _) => "Not available on this device".to_owned(),
             (RadioState::On, Some(ssid)) => format!("Connected to {ssid}"),
             (RadioState::On, None) => "On · Not connected".to_owned(),
             (RadioState::Off, _) => "Off".to_owned(),
@@ -491,6 +519,16 @@ impl Settings {
     }
 
     fn bluetooth(&self) -> Screen {
+        // No radio was found on this hardware. A toggle that only fails once
+        // tapped is worse than no toggle: it invites the exact action that
+        // cannot succeed. Say so plainly instead and stop there.
+        if self.bluetooth_state == RadioState::Unavailable {
+            return ScreenBuilder::new("settings-bluetooth")
+                .top_bar("Bluetooth")
+                .owns_back(true)
+                .text("This device has no Bluetooth hardware.")
+                .build();
+        }
         let mut screen = ScreenBuilder::new("settings-bluetooth")
             .top_bar("Bluetooth")
             .owns_back(true)
@@ -569,6 +607,15 @@ impl Settings {
     }
 
     fn wifi(&self) -> Screen {
+        // Same reasoning as the Bluetooth screen: a toggle that can only fail
+        // is worse than no toggle.
+        if self.wifi_state == RadioState::Unavailable {
+            return ScreenBuilder::new("settings-wifi")
+                .top_bar("Wi-Fi")
+                .owns_back(true)
+                .text("This device has no Wi-Fi hardware.")
+                .build();
+        }
         let mut screen = ScreenBuilder::new("settings-wifi")
             .top_bar("Wi-Fi")
             .owns_back(true)
@@ -821,10 +868,7 @@ impl Settings {
             }
             .to_owned(),
             offset: 0,
-            max_bytes: match channel {
-                UpdateChannel::Stable => 256 * 1024,
-                UpdateChannel::Beta => 1024 * 1024,
-            },
+            max_bytes: release_window(channel),
             credential: None,
             headers: Vec::new(),
         });
@@ -1400,8 +1444,17 @@ fn archive_name(version: &str) -> String {
 /// Reads the selected GitHub release feed down to the two URLs this device
 /// needs. Beta selection is by numeric version rather than response order.
 fn latest_release(body: &str, channel: UpdateChannel) -> Result<Release, String> {
-    let value = kobo_json::parse(body)
-        .map_err(|_| "GitHub sent something that is not a release.".to_owned())?;
+    // A reply that filled its window and then failed to parse is a window
+    // into a longer feed, not a broken one, and telling the reader their
+    // release list is unreadable rubbish sends them looking for a fault at
+    // GitHub that is not there.
+    let value = kobo_json::parse(body).map_err(|_| {
+        if body.len() >= release_window(channel) as usize {
+            "GitHub's release list is longer than this reader can read.".to_owned()
+        } else {
+            "GitHub sent something that is not a release.".to_owned()
+        }
+    })?;
     match channel {
         UpdateChannel::Stable => stable_release(&value),
         UpdateChannel::Beta => value
@@ -1558,7 +1611,7 @@ fn main() -> ExitCode {
 mod tests {
     use super::{
         RadioState, Settings, View, AUTO_APPS, AUTO_COBALT, BETA_UPDATES, CANCEL_CHANNEL,
-        CONFIRM_CHANNEL, DEVICE_ACTIONS, MORE, NETWORK_ACTIONS, PREVIOUS, RESCAN, VERSION,
+        CONFIRM_CHANNEL, DEVICE_ACTIONS, MORE, NETWORK_ACTIONS, PREVIOUS, RESCAN, TOGGLE, VERSION,
     };
     use kobo_sdk::{
         action_id, BannerLevel, BatteryDetail, BluetoothDevice, BluetoothDeviceKind, Chrome,
@@ -1673,6 +1726,62 @@ mod tests {
         );
         assert_eq!(settings.update_channel, Some(UpdateChannel::Beta));
         assert_eq!(settings.update, super::UpdateFlow::Idle);
+    }
+
+    #[test]
+    fn a_reader_with_no_bluetooth_hardware_is_told_so_without_a_dead_end_toggle() {
+        // The bug this pins: a toggle drawn regardless of hardware invited
+        // the one action that could never succeed, and only failed once
+        // tapped, on a Libra H2O with no Bluetooth radio at all.
+        let settings = Settings {
+            bluetooth_state: RadioState::Unavailable,
+            ..Settings::default()
+        };
+        let screen = settings.bluetooth();
+        let issues = screen.validate(&CLARA_BW_METRICS);
+        assert!(issues.is_empty(), "{issues:?}");
+        assert!(text_of(&screen).contains("This device has no Bluetooth hardware."));
+        let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::with_back(true));
+        assert!(layout.rect_of_action(action_id(TOGGLE)).is_none());
+    }
+
+    #[test]
+    fn a_reader_with_no_wifi_hardware_is_told_so_without_a_dead_end_toggle() {
+        let settings = Settings {
+            wifi_state: RadioState::Unavailable,
+            ..Settings::default()
+        };
+        let screen = settings.wifi();
+        let issues = screen.validate(&CLARA_BW_METRICS);
+        assert!(issues.is_empty(), "{issues:?}");
+        assert!(text_of(&screen).contains("This device has no Wi-Fi hardware."));
+        let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::with_back(true));
+        assert!(layout.rect_of_action(action_id(TOGGLE)).is_none());
+    }
+
+    /// The bug this pins: `RadioState::Unavailable` is also the enum's
+    /// default before the first `read_bluetooth`/`read_wifi` reply, and what
+    /// a denied or failed read leaves it as. Before `Unknown` existed as a
+    /// separate state, both screens above claimed the reader's hardware
+    /// outright had no radio during that window -- true only once a
+    /// successful reply has actually said so.
+    #[test]
+    fn a_radio_with_no_answer_yet_is_not_claimed_absent() {
+        let settings = Settings::default();
+        assert_eq!(settings.bluetooth_state, RadioState::Unknown);
+        assert_eq!(settings.wifi_state, RadioState::Unknown);
+        let bluetooth = settings.bluetooth();
+        assert!(!text_of(&bluetooth).contains("no Bluetooth hardware"));
+        let wifi = settings.wifi();
+        assert!(!text_of(&wifi).contains("no Wi-Fi hardware"));
+    }
+
+    #[test]
+    fn a_failed_bluetooth_read_leaves_hardware_state_unknown_not_absent() {
+        let mut settings = Settings::default();
+        settings.fail(super::Topic::Bluetooth, "backend unavailable");
+        assert_eq!(settings.bluetooth_state, RadioState::Unknown);
+        assert!(!text_of(&settings.bluetooth()).contains("no Bluetooth hardware"));
     }
 
     #[test]
@@ -2034,6 +2143,39 @@ mod tests {
     }
 
     #[test]
+    fn a_feed_cut_off_at_its_window_is_reported_as_too_long_not_as_nonsense() {
+        let window = super::release_window(UpdateChannel::Beta) as usize;
+        let cut_off = r#"[{"tag_name":"beta-v9.8.0","draft":false,"prerelease":true,"assets":[{"#
+            .to_owned()
+            + &" ".repeat(window);
+        assert!(
+            super::latest_release(&cut_off, UpdateChannel::Beta)
+                .expect_err("a window into a feed is not a feed")
+                .contains("longer than this reader can read"),
+            "a reply that filled its window names the length as the fault"
+        );
+        assert!(
+            super::latest_release("<html>", UpdateChannel::Beta)
+                .expect_err("not a feed at all")
+                .contains("not a release"),
+            "a short reply that is not a feed keeps its own sentence"
+        );
+    }
+
+    #[test]
+    fn the_beta_feed_asks_for_few_enough_releases_to_stay_inside_its_window() {
+        assert!(
+            super::BETA_RELEASES.ends_with("per_page=15"),
+            "the whole list outgrew the window once and must not be asked for again"
+        );
+        assert!(
+            super::release_window(UpdateChannel::Beta)
+                > 8 * super::release_window(UpdateChannel::Stable),
+            "the beta feed is the long one and needs room to grow"
+        );
+    }
+
+    #[test]
     fn beta_release_selection_orders_versions_and_excludes_other_releases() {
         let body = r#"[
           {"tag_name":"beta-v9.8.0","draft":false,"prerelease":true,"assets":[
@@ -2143,6 +2285,9 @@ mod tests {
                 version: "9.9.9".to_owned(),
             },
             super::UpdateFlow::Failed("The download did not match its digest.".to_owned()),
+            super::UpdateFlow::Failed(
+                "GitHub's release list is longer than this reader can read.".to_owned(),
+            ),
         ];
         for flow in flows {
             let settings = Settings {

@@ -125,3 +125,14 @@ command over USB. The other apps:
 [Todo](../todo/README.md) ·
 [Tic-tac-toe](../tictactoe/README.md) ·
 [Magnet Sensor](../magnet/README.md)
+
+
+## Connection sample
+
+With pairing initialized and the normal daemon stopped, run
+`kobo-sidekickd sample`. Open Sidekick and choose **Received**. The reader's
+last-answer line records the selected answer; the computer confirms receipt.
+The sample does not run commands or need an agent integration.
+
+![Sample question](../../docs/quality/evidence/sidekick-sample/default/sample-question.png)
+![Sample answered at larger text size](../../docs/quality/evidence/sidekick-sample/170/sample-answered.png)

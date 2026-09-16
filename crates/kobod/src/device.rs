@@ -202,9 +202,6 @@ const POLL_FOR_STOP: Duration = Duration::from_millis(100);
 /// inside half a minute, so nothing is lost.
 const BATTERY_INTERVAL: Duration = Duration::from_secs(30);
 
-/// The wireless interface every Kobo names the same thing.
-const WIFI_LINK: &str = "wlan0";
-
 /// How often the band is re-read.
 ///
 /// Separate from how often it is allowed to *change*, which is the mistake
@@ -339,8 +336,8 @@ fn read_status() -> kobo_ui::Status {
         // strong the association is, so reachability is checked before
         // strength. Showing three arcs on a device that cannot load a page is
         // the one thing this mark must never do.
-        signal: if kobo_hal::network::is_online(WIFI_LINK) {
-            kobo_hal::network::signal_dbm(WIFI_LINK)
+        signal: if kobo_hal::network::is_online(kobo_hal::network::wireless_link()) {
+            kobo_hal::network::signal_dbm(kobo_hal::network::wireless_link())
                 .map_or(kobo_ui::Signal::Weak, kobo_ui::Signal::from_dbm)
         } else {
             kobo_ui::Signal::Off
@@ -641,7 +638,7 @@ pub fn present(
         "launch: network recovery finished after {} ms",
         launch_started.elapsed().as_millis()
     ));
-    if network.was_online() && kobo_hal::network::is_online(kobo_hal::network::WIRELESS_LINK) {
+    if network.was_online() && kobo_hal::network::is_online(kobo_hal::network::wireless_link()) {
         wifi_trace.checkpoint(WifiTraceEvent::RecoveryFirstSuccess);
     }
     trace(&format!(
@@ -965,7 +962,7 @@ fn restore_reader_wifi(was_online: bool, within: Duration, wifi_trace: &mut Trac
         if let Some(wifi) = kobo_hal::wifi::Wifi::open() {
             let associated = wifi.associated().unwrap_or(false);
             let healthy =
-                associated && kobo_hal::network::is_online(kobo_hal::network::WIRELESS_LINK);
+                associated && kobo_hal::network::is_online(kobo_hal::network::wireless_link());
             if healthy {
                 let first_success = healthy_since.is_none();
                 let since = healthy_since.get_or_insert_with(Instant::now);
@@ -2258,13 +2255,13 @@ fn host_applications(
                     let protocol = apps[index].protocol;
                     let disposition = deliver_touch(
                         &mut apps[index].stream,
-                        protocol,
                         event,
                         screen.as_ref(),
                         &chrome,
                         held,
                         orientation,
                         landscape_turn,
+                        protocol,
                     )?;
                     match disposition {
                         Tap::Handled => {}
@@ -4208,13 +4205,13 @@ enum Tap {
 )]
 fn deliver_touch(
     stream: &mut std::os::unix::net::UnixStream,
-    protocol: u8,
     event: TouchEvent,
     current: Option<&Screen>,
     chrome: &Chrome,
     held: bool,
     orientation: kobo_ui::Orientation,
     landscape_turn: kobo_ui::LandscapeTurn,
+    protocol: u8,
 ) -> Result<Tap, String> {
     let logical_event = match event {
         TouchEvent::Up { x, y } => {
@@ -4629,8 +4626,8 @@ fn pump_application(
 mod tests {
     use kobo_policy::{Capability, TaskRunner};
     use kobo_protocol::{
-        Credential, CredentialUse, DenyReason, DeviceRequest, Frame, Header, Message, Task, TaskId,
-        TaskOutcome,
+        Credential, CredentialUse, DenyReason, DeviceRequest, DeviceResult, Frame, Header, Message,
+        Task, TaskId, TaskOutcome,
     };
     use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
     use rustls::{ServerConfig, ServerConnection, StreamOwned};
@@ -4649,6 +4646,7 @@ mod tests {
         include_bytes!("../../kobo-net/tests/fixtures/localhost-key.der");
     const SEEK_BODY: &str = "rated=true&time=10&increment=0&variant=standard&color=random";
     const FORM: &str = "application/x-www-form-urlencoded";
+    static HOSTED_PEER: AtomicUsize = AtomicUsize::new(0);
 
     #[test]
     fn wifi_startup_guidance_does_not_change_other_refusals() {
@@ -5082,13 +5080,13 @@ mod tests {
         reader.set_nonblocking(true).unwrap();
         let result = super::deliver_touch(
             &mut writer,
-            kobo_protocol::VERSION,
             kobo_hal::touch::TouchEvent::Cancel,
             None,
             &kobo_ui::Chrome::default(),
             false,
             kobo_ui::Orientation::Portrait,
             kobo_ui::LandscapeTurn::Clockwise,
+            kobo_protocol::VERSION,
         )
         .unwrap();
         assert!(matches!(result, super::Tap::Handled));
@@ -5123,6 +5121,265 @@ mod tests {
                 .expect("application rejection"),
             super::Event::AppGone(42)
         ));
+    }
+
+    fn hosted_peer(protocol: u8) -> (super::Hosted, std::os::unix::net::UnixStream, PathBuf) {
+        use super::{ApplicationChild, Hosted};
+        let root = std::env::temp_dir().join(format!(
+            "cobalt-protocol-echo-{}-{}-{}",
+            protocol,
+            std::process::id(),
+            HOSTED_PEER.fetch_add(1, Ordering::SeqCst)
+        ));
+        let _ignored = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("scratch device");
+        let (runtime, client) = std::os::unix::net::UnixStream::pair().expect("socket pair");
+        client
+            .set_read_timeout(Some(Duration::from_secs(1)))
+            .expect("read timeout");
+        let child = std::process::Command::new("/usr/bin/true")
+            .spawn()
+            .expect("a stand-in process");
+        let hosted = Hosted {
+            id: 1,
+            protocol,
+            name: "todo".into(),
+            path: root.join("todo"),
+            jail: None,
+            child: ApplicationChild::ordinary(child),
+            stream: runtime,
+            store: kobo_policy::store::Store::new(root.join("state")),
+            shelf: kobo_policy::shelf::Shelf::new(root.join("shelf")),
+            tasks: TaskRunner::simulated(root.join("data")),
+            declared: kobo_policy::Declared::all(),
+            shells: kobo_shell::Shells::new(&[]),
+            screen: None,
+            pictures: super::PictureCache::default(),
+            fonts: kobod::fonts::FontOwner::default(),
+            orientation: kobo_ui::Orientation::Portrait,
+            landscape_turn: kobo_ui::LandscapeTurn::Clockwise,
+            painted: 0,
+            used: std::time::Instant::now(),
+        };
+        (hosted, client, root)
+    }
+
+    fn assert_runtime_frame(
+        client: &mut std::os::unix::net::UnixStream,
+        protocol: u8,
+        request_id: u32,
+        expected: &Message,
+    ) {
+        let frame = kobo_protocol::read_from(client).expect("runtime frame");
+        assert_eq!(frame.version, protocol, "wire version");
+        assert_eq!(frame.request_id, request_id, "request id");
+        assert_eq!(&frame.message, expected);
+    }
+
+    fn reading_page() -> kobo_ui::Screen {
+        kobo_ui::Screen::new(
+            1,
+            vec![kobo_ui::Node::Text {
+                id: kobo_ui::NodeId(1),
+                text: "A page of a book.".to_owned(),
+                links: Vec::new(),
+            }],
+        )
+        .with_page_turns(kobo_ui::ActionId(11), kobo_ui::ActionId(12))
+        .with_hold(kobo_ui::ActionId(13))
+    }
+
+    fn content_tap(screen: &kobo_ui::Screen) -> kobo_hal::touch::TouchEvent {
+        let metrics = super::metrics_for(screen);
+        let content = screen
+            .layout_with(&metrics, &kobo_ui::Chrome::default())
+            .content;
+        kobo_hal::touch::TouchEvent::Up {
+            x: u32::try_from(metrics.width / 2).expect("inside the panel"),
+            y: u32::try_from(content.y + content.height / 2).expect("inside the panel"),
+        }
+    }
+
+    fn selectable_page() -> kobo_ui::Screen {
+        kobo_ui::Screen::new(
+            1,
+            vec![kobo_ui::Node::RichText {
+                id: kobo_ui::NodeId(1),
+                text: "naïve café".into(),
+                spans: Vec::new(),
+                links: Vec::new(),
+                presentation: kobo_ui::ParagraphPresentation::default(),
+                selection: Some(kobo_ui::TextSelection {
+                    context: 19,
+                    offset: 100,
+                }),
+                formulae: Vec::new(),
+            }],
+        )
+        .with_reading(true)
+        .with_hold(kobo_ui::ActionId(13))
+    }
+
+    fn text_tap(screen: &kobo_ui::Screen) -> kobo_hal::touch::TouchEvent {
+        let metrics = super::metrics_for(screen);
+        let layout = screen.layout_with(&metrics, &kobo_ui::Chrome::default());
+        let (rect, _) = layout.text_hits.first().expect("selectable word");
+        kobo_hal::touch::TouchEvent::Up {
+            x: u32::try_from(rect.x + rect.width / 2).expect("inside the word"),
+            y: u32::try_from(rect.y + rect.height / 2).expect("inside the word"),
+        }
+    }
+
+    fn runtime_keeps_protocol_on_send_and_reply(protocol: u8) {
+        let (mut hosted, mut client, root) = hosted_peer(protocol);
+        hosted
+            .send(Message::Lifecycle(kobo_protocol::Lifecycle::Foreground))
+            .expect("send");
+        assert_runtime_frame(
+            &mut client,
+            protocol,
+            0,
+            &Message::Lifecycle(kobo_protocol::Lifecycle::Foreground),
+        );
+        super::reply(&mut hosted, 7, Message::DeviceResult(DeviceResult::Done)).expect("reply");
+        assert_runtime_frame(
+            &mut client,
+            protocol,
+            7,
+            &Message::DeviceResult(DeviceResult::Done),
+        );
+        hosted.child.process.wait().ok();
+        let _ignored = std::fs::remove_dir_all(root);
+    }
+
+    fn runtime_keeps_protocol_on_tap_and_hold(protocol: u8) {
+        let screen = reading_page();
+        let chrome = kobo_ui::Chrome::default();
+        let tap = content_tap(&screen);
+        let words = selectable_page();
+        let word_tap = text_tap(&words);
+        let (mut runtime, mut app) =
+            std::os::unix::net::UnixStream::pair().expect("a pair of sockets");
+        app.set_read_timeout(Some(Duration::from_secs(1)))
+            .expect("read timeout");
+        assert_eq!(
+            super::deliver_touch(
+                &mut runtime,
+                tap,
+                Some(&screen),
+                &chrome,
+                false,
+                kobo_ui::Orientation::Portrait,
+                kobo_ui::LandscapeTurn::Clockwise,
+                protocol,
+            )
+            .expect("page turn"),
+            super::Tap::Handled
+        );
+        let turned = kobo_protocol::read_from(&mut app).expect("action");
+        assert_eq!(turned.version, protocol);
+        assert_eq!(turned.request_id, 0);
+        assert_eq!(
+            turned.message,
+            Message::Action {
+                action: kobo_ui::ActionId(12)
+            }
+        );
+
+        assert_eq!(
+            super::deliver_touch(
+                &mut runtime,
+                word_tap,
+                Some(&words),
+                &chrome,
+                true,
+                kobo_ui::Orientation::Portrait,
+                kobo_ui::LandscapeTurn::Clockwise,
+                protocol,
+            )
+            .expect("text hold"),
+            super::Tap::Handled
+        );
+        let hold_frame = kobo_protocol::read_from(&mut app).expect("hold");
+        assert_eq!(hold_frame.version, protocol);
+        assert_eq!(hold_frame.request_id, 0);
+        assert!(
+            matches!(hold_frame.message, Message::TextHold { action, .. } if action == kobo_ui::ActionId(13)),
+            "{:?}",
+            hold_frame.message
+        );
+    }
+
+    #[test]
+    fn a_protocol_13_app_keeps_receiving_protocol_13() {
+        // #191: Todo compiled for 13 died with UnsupportedVersion(14) on the
+        // first runtime-originated frame. Elipsa rotation session-rotation1.log
+        // is the same shape with 13: tictactoe ended after a tap.
+        runtime_keeps_protocol_on_send_and_reply(kobo_protocol::SELECTED_GRID_VERSION);
+        runtime_keeps_protocol_on_tap_and_hold(kobo_protocol::SELECTED_GRID_VERSION);
+    }
+
+    #[test]
+    fn a_protocol_14_app_keeps_receiving_protocol_14() {
+        runtime_keeps_protocol_on_send_and_reply(kobo_protocol::VERSION);
+        runtime_keeps_protocol_on_tap_and_hold(kobo_protocol::VERSION);
+    }
+
+    #[test]
+    fn a_greeted_protocol_13_app_survives_the_first_runtime_frame() {
+        let directory =
+            std::env::temp_dir().join(format!("cobalt-protocol-greet-{}", std::process::id()));
+        let _ignored = std::fs::remove_dir_all(&directory);
+        std::fs::create_dir_all(&directory).expect("scratch");
+        let socket = directory.join("runtime.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&socket).expect("listen");
+        let client_socket = socket.clone();
+        let client = thread::spawn(move || {
+            let mut stream =
+                std::os::unix::net::UnixStream::connect(client_socket).expect("connect");
+            stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .expect("timeout");
+            kobo_protocol::write_to(
+                &mut stream,
+                &Frame {
+                    version: kobo_protocol::SELECTED_GRID_VERSION,
+                    request_id: 1,
+                    message: Message::Hello {
+                        name: "todo".to_owned(),
+                    },
+                },
+            )
+            .expect("hello");
+            let welcome = kobo_protocol::read_from(&mut stream).expect("welcome");
+            assert_eq!(welcome.version, kobo_protocol::SELECTED_GRID_VERSION);
+            assert!(matches!(welcome.message, Message::Welcome { .. }));
+            let first = kobo_protocol::read_from(&mut stream).expect("first runtime frame");
+            assert_eq!(first.version, kobo_protocol::SELECTED_GRID_VERSION);
+            assert_eq!(first.request_id, 0);
+            assert_eq!(
+                first.message,
+                Message::Lifecycle(kobo_protocol::Lifecycle::Foreground)
+            );
+        });
+        let panel = kobo_hal::Rect {
+            x: 0,
+            y: 0,
+            width: 1072,
+            height: 1448,
+        };
+        let (stream, name, version) = super::greet(&listener, panel, "todo").expect("greet");
+        assert_eq!(name, "todo");
+        assert_eq!(version, kobo_protocol::SELECTED_GRID_VERSION);
+        let (mut hosted, _unused, root) = hosted_peer(version);
+        hosted.stream = stream;
+        hosted
+            .send(Message::Lifecycle(kobo_protocol::Lifecycle::Foreground))
+            .expect("foreground");
+        client.join().expect("client");
+        hosted.child.process.wait().ok();
+        let _ignored = std::fs::remove_dir_all(root);
+        let _ignored = std::fs::remove_dir_all(directory);
     }
 
     #[test]
@@ -5471,34 +5728,20 @@ mod tests {
         // becomes a mark.
         let screen = Screen::new(
             1,
-            vec![kobo_ui::Node::RichText {
+            vec![kobo_ui::Node::Text {
                 id: kobo_ui::NodeId(1),
                 text: "A page of a book.".to_owned(),
                 links: Vec::new(),
-                spans: Vec::new(),
-                presentation: kobo_ui::ParagraphPresentation::default(),
-                selection: Some(kobo_ui::TextSelection {
-                    context: 19,
-                    offset: 100,
-                }),
-                formulae: Vec::new(),
             }],
         )
         .with_page_turns(ActionId(11), ActionId(12))
-        .with_hold(ActionId(13))
-        .with_reading(true);
+        .with_hold(ActionId(13));
         let chrome = Chrome::default();
         let metrics = metrics_for(&screen);
-        let layout = screen.layout_with(&metrics, &chrome);
-        let (text_rect, _) = layout.text_hits.first().expect("selectable text");
-        let text_touch = TouchEvent::Up {
-            x: u32::try_from(text_rect.x + text_rect.width / 2).expect("inside the panel"),
-            y: u32::try_from(text_rect.y + text_rect.height / 2).expect("inside the panel"),
-        };
+        let content = screen.layout_with(&metrics, &chrome).content;
         let touch = TouchEvent::Up {
             x: u32::try_from(metrics.width / 2).expect("inside the panel"),
-            y: u32::try_from(layout.content.y + layout.content.height / 2)
-                .expect("inside the panel"),
+            y: u32::try_from(content.y + content.height / 2).expect("inside the panel"),
         };
         assert_eq!(
             action_for(touch, Some(&screen), &chrome, true),
@@ -5514,26 +5757,6 @@ mod tests {
         assert_eq!(
             action_for(touch, Some(&no_hold), &chrome, true),
             Some(ActionId(12))
-        );
-        let (mut runtime, mut app) =
-            std::os::unix::net::UnixStream::pair().expect("a pair of sockets");
-        deliver_touch(
-            &mut runtime,
-            kobo_protocol::LEGACY_VERSION,
-            text_touch,
-            Some(&screen),
-            &chrome,
-            true,
-            kobo_ui::Orientation::Portrait,
-            kobo_ui::LandscapeTurn::Clockwise,
-        )
-        .expect("deliver the legacy text hold");
-        let frame = kobo_protocol::read_from(&mut app).expect("the application is told");
-        assert_eq!(frame.version, kobo_protocol::LEGACY_VERSION);
-        assert!(
-            matches!(frame.message, Message::TextHold { .. }),
-            "unexpected legacy touch frame: {:?}",
-            frame.message
         );
 
         let covered = screen.clone().with_overlay(kobo_ui::Overlay::modal(
@@ -5782,13 +6005,13 @@ mod tests {
         assert_eq!(
             deliver_touch(
                 &mut runtime,
-                kobo_protocol::LEGACY_VERSION,
                 tap,
                 Some(&screen),
                 &chrome,
                 false,
                 kobo_ui::Orientation::Portrait,
                 kobo_ui::LandscapeTurn::Clockwise,
+                kobo_protocol::VERSION,
             )
             .expect("route the tap"),
             Tap::Leave,
@@ -5799,13 +6022,13 @@ mod tests {
         assert_eq!(
             deliver_touch(
                 &mut runtime,
-                kobo_protocol::LEGACY_VERSION,
                 tap,
                 Some(&owning),
                 &chrome,
                 false,
                 kobo_ui::Orientation::Portrait,
                 kobo_ui::LandscapeTurn::Clockwise,
+                kobo_protocol::VERSION,
             )
             .expect("route the tap"),
             Tap::OfferedBack
@@ -5817,7 +6040,6 @@ mod tests {
                 action: ActionId::BACK
             }
         ));
-        assert_eq!(frame.version, kobo_protocol::LEGACY_VERSION);
     }
 
     fn catalogue() -> PathBuf {

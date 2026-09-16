@@ -1,0 +1,10 @@
+Cobalt — tools for your reader
+
+  kobo setup                 Set up a reader connected by USB
+  kobo frame --help          Prepare and send photos
+  kobo flashcards --help     Import flashcards and review progress
+  kobo feeds --help          Check and send a feed subscription list
+  kobo stream                Share a computer terminal with Paperterm
+
+Run kobo in a terminal for guided choices.
+Developer and release commands: kobo --help
