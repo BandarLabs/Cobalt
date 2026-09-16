@@ -207,6 +207,19 @@ mod tests {
         assert_eq!(detail.servings, 4);
         assert_eq!(detail.steps.len(), 4);
         assert!(detail.steps[2].contains("45-50 minutes"));
+        // The browse list's "serves N" subtitles read the same parse, so
+        // cover all three real recipes end to end.
+        for (slug, servings) in [
+            ("tomato-basil-pasta", 2),
+            ("overnight-oats-with-berries", 1),
+        ] {
+            let path = format!(
+                "{}/fixtures/mealie-detail-{slug}.json",
+                env!("CARGO_MANIFEST_DIR")
+            );
+            let bytes = std::fs::read(path).expect("fixture");
+            assert_eq!(parse_detail(&bytes).expect("detail").servings, servings);
+        }
     }
 
     #[test]
