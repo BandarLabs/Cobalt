@@ -835,6 +835,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "kobo-bible"
+version = "0.3.14"
+dependencies = [
+ "kobo-json",
+ "kobo-sdk",
+ "kobo-ui",
+]
+
+[[package]]
 name = "kobo-books"
 version = "0.3.15"
 dependencies = [

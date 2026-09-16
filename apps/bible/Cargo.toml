@@ -1,0 +1,15 @@
+[package]
+name = "kobo-bible"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+kobo-json = { path = "../../crates/kobo-json" }
+kobo-sdk = { path = "../../crates/kobo-sdk" }
+kobo-ui = { path = "../../crates/kobo-ui" }
+
+[lints]
+workspace = true

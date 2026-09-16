@@ -1,0 +1,935 @@
+﻿{
+    "translation":  {
+                        "id":  "BSB",
+                        "name":  "Berean Standard Bible",
+                        "website":  "https://berean.bible/",
+                        "licenseUrl":  "https://berean.bible/",
+                        "shortName":  "BSB",
+                        "englishName":  "Berean Standard Bible",
+                        "language":  "eng",
+                        "textDirection":  "ltr",
+                        "sha256":  "6cc5238e442b4204b0f617cc5c932bc04f3bae4a0658e6393b0e319653ebe37f",
+                        "availableFormats":  [
+                                                 "json"
+                                             ],
+                        "listOfBooksApiLink":  "/api/BSB/books.json",
+                        "completeTranslationApiLink":  "/api/BSB/complete.json",
+                        "simpleCompleteTranslationApiLink":  "/api/BSB/complete.simple.json",
+                        "numberOfBooks":  66,
+                        "totalNumberOfChapters":  1189,
+                        "totalNumberOfVerses":  31086,
+                        "languageName":  "English",
+                        "languageEnglishName":  "English"
+                    },
+    "book":  {
+                 "id":  "MRK",
+                 "translationId":  "BSB",
+                 "name":  "Mark",
+                 "commonName":  "Mark",
+                 "title":  "Mark",
+                 "order":  41,
+                 "numberOfChapters":  16,
+                 "sha256":  "2d36e67ab5278d172a50b7dbfb813f83da90d5ce936a52d0e3001a57a3ef75f7",
+                 "firstChapterNumber":  1,
+                 "firstChapterApiLink":  "/api/BSB/MRK/1.json",
+                 "firstChapterReference":  {
+                                               "translationId":  "BSB",
+                                               "book":  "MRK",
+                                               "chapter":  1
+                                           },
+                 "lastChapterNumber":  16,
+                 "lastChapterApiLink":  "/api/BSB/MRK/16.json",
+                 "lastChapterReference":  {
+                                              "translationId":  "BSB",
+                                              "book":  "MRK",
+                                              "chapter":  16
+                                          },
+                 "totalNumberOfVerses":  673
+             },
+    "thisChapterLink":  "/api/BSB/MRK/14.simple.json",
+    "thisChapterReference":  {
+                                 "translationId":  "BSB",
+                                 "book":  "MRK",
+                                 "chapter":  14
+                             },
+    "thisChapterAudioLinks":  {
+                                  "david":  "https://audio.bible.helloao.org/api/BSB/MRK/14/audio/david.mp3",
+                                  "gilbert":  "https://openbible.com/audio/gilbert/BSB_41_Mrk_014_G.mp3",
+                                  "hays":  "https://audio.bible.helloao.org/api/BSB/MRK/14/audio/hays.mp3",
+                                  "souer":  "https://audio.bible.helloao.org/api/BSB/MRK/14/audio/souer.mp3"
+                              },
+    "nextChapterApiLink":  "/api/BSB/MRK/15.simple.json",
+    "nextChapterReference":  {
+                                 "translationId":  "BSB",
+                                 "book":  "MRK",
+                                 "chapter":  15
+                             },
+    "nextChapterAudioLinks":  {
+                                  "david":  "https://audio.bible.helloao.org/api/BSB/MRK/15/audio/david.mp3",
+                                  "gilbert":  "https://openbible.com/audio/gilbert/BSB_41_Mrk_015_G.mp3",
+                                  "hays":  "https://audio.bible.helloao.org/api/BSB/MRK/15/audio/hays.mp3",
+                                  "souer":  "https://audio.bible.helloao.org/api/BSB/MRK/15/audio/souer.mp3"
+                              },
+    "previousChapterApiLink":  "/api/BSB/MRK/13.simple.json",
+    "previousChapterReference":  {
+                                     "translationId":  "BSB",
+                                     "book":  "MRK",
+                                     "chapter":  13
+                                 },
+    "previousChapterAudioLinks":  {
+                                      "david":  "https://audio.bible.helloao.org/api/BSB/MRK/13/audio/david.mp3",
+                                      "gilbert":  "https://openbible.com/audio/gilbert/BSB_41_Mrk_013_G.mp3",
+                                      "hays":  "https://audio.bible.helloao.org/api/BSB/MRK/13/audio/hays.mp3",
+                                      "souer":  "https://audio.bible.helloao.org/api/BSB/MRK/13/audio/souer.mp3"
+                                  },
+    "thisChapterAudioTimings":  {
+
+                                },
+    "nextChapterAudioTimings":  {
+
+                                },
+    "previousChapterAudioTimings":  {
+
+                                    },
+    "numberOfVerses":  72,
+    "chapter":  {
+                    "number":  14,
+                    "content":  [
+                                    {
+                                        "type":  "heading",
+                                        "text":  "The Plot to Kill Jesus"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  1,
+                                        "text":  "Now the Passover and the Feast of Unleavened Bread were two days away, and the chief priests and scribes were looking for a covert way to arrest Jesus and kill Him.",
+                                        "footnotes":  [
+                                                          {
+                                                              "noteId":  97,
+                                                              "offset":  50,
+                                                              "text":  "Literally and the Unleavened; see Exodus 12:14â20.",
+                                                              "caller":  "+"
+                                                          }
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  2,
+                                        "text":  "âBut not during the feast,â they said, âor there may be a riot among the people.â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "heading",
+                                        "text":  "Jesus Anointed at Bethany"
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  3,
+                                        "text":  "While Jesus was in Bethany reclining at the table in the home of Simon the Leper, a woman came with an alabaster jar of expensive perfume, made of pure nard. She broke open the jar and poured it on Jesusâ head.",
+                                        "footnotes":  [
+                                                          {
+                                                              "noteId":  98,
+                                                              "offset":  81,
+                                                              "text":  "Aramaic Simon the Potter or Simon the Jar Maker",
+                                                              "caller":  "+"
+                                                          }
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  4,
+                                        "text":  "Some of those present, however, expressed their indignation to one another: âWhy this waste of perfume?",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  5,
+                                        "text":  "It could have been sold for over three hundred denarii and the money given to the poor.â And they scolded her.",
+                                        "footnotes":  [
+                                                          {
+                                                              "noteId":  99,
+                                                              "offset":  54,
+                                                              "text":  "A denarius was customarily a dayâs wage for a laborer; see Matthew 20:2.",
+                                                              "caller":  "+"
+                                                          }
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  6,
+                                        "text":  "But Jesus said, âLeave her alone; why are you bothering her? She has done a beautiful deed to Me.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  7,
+                                        "text":  "The poor you will always have with you, and you can help them whenever you want. But you will not always have Me.",
+                                        "footnotes":  [
+                                                          {
+                                                              "noteId":  100,
+                                                              "offset":  39,
+                                                              "text":  "See Deuteronomy 15:11.",
+                                                              "caller":  "+"
+                                                          }
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  8,
+                                        "text":  "She has done what she could to anoint My body in advance of My burial.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  9,
+                                        "text":  "And truly I tell you, wherever the gospel is preached in all the world, what she has done will also be told in memory of her.â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "heading",
+                                        "text":  "Judas Agrees to Betray Jesus"
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  10,
+                                        "text":  "Then Judas Iscariot, one of the Twelve, went to the chief priests to betray Jesus to them.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  11,
+                                        "text":  "They were delighted to hear this, and they promised to give him money.\nSo Judas began to look for an opportunity to betray Jesus.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "heading",
+                                        "text":  "Preparing the Passover"
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  12,
+                                        "text":  "On the first day of the Feast of Unleavened Bread, when the Passover lamb was to be sacrificed, Jesusâ disciples asked Him, âWhere do You want us to prepare for You to eat the Passover?â",
+                                        "footnotes":  [
+                                                          {
+                                                              "noteId":  101,
+                                                              "offset":  50,
+                                                              "text":  "Literally On the first day of the Unleavened; see Exodus 12:14â20.",
+                                                              "caller":  "+"
+                                                          }
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  13,
+                                        "text":  "So He sent two of His disciples and told them, âGo into the city, and a man carrying a jug of water will meet you. Follow him,",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  14,
+                                        "text":  "and whichever house he enters, say to the owner, âThe Teacher asks: Where is My guest room, where I may eat the Passover with My disciples?â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  15,
+                                        "text":  "And he will show you a large upper room, furnished and ready. Make preparations for us there.â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  16,
+                                        "text":  "So the disciples left and went into the city, where they found everything as Jesus had described. And they prepared the Passover.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "heading",
+                                        "text":  "The Last Supper"
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  17,
+                                        "text":  "When evening came, Jesus arrived with the Twelve.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  18,
+                                        "text":  "And while they were reclining and eating, Jesus said, âTruly I tell you, one of you who is eating with Me will betray Me.â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  19,
+                                        "text":  "They began to be grieved and to ask Him one after another, âSurely not I?â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  20,
+                                        "text":  "He answered, âIt is one of the Twelveâthe one who is dipping his hand into the bowl with Me.",
+                                        "footnotes":  [
+                                                          {
+                                                              "noteId":  102,
+                                                              "offset":  69,
+                                                              "text":  "Literally the one who is dipping",
+                                                              "caller":  "+"
+                                                          }
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  21,
+                                        "text":  "The Son of Man will go just as it is written about Him, but woe to that man by whom He is betrayed! It would be better for him if he had not been born.â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  22,
+                                        "text":  "While they were eating, Jesus took bread, spoke a blessing and broke it, and gave it to the disciples, saying, âTake it; this is My body.â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  23,
+                                        "text":  "Then He took the cup, gave thanks, and gave it to them, and they all drank from it.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  24,
+                                        "text":  "He said to them, âThis is My blood of the covenant, which is poured out for many.",
+                                        "footnotes":  [
+                                                          {
+                                                              "noteId":  103,
+                                                              "offset":  51,
+                                                              "text":  "BYZ and TR the new covenant",
+                                                              "caller":  "+"
+                                                          }
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  25,
+                                        "text":  "Truly I tell you, I will no longer drink of the fruit of the vine until that day when I drink it anew in the kingdom of God.â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  26,
+                                        "text":  "And when they had sung a hymn, they went out to the Mount of Olives.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "heading",
+                                        "text":  "Jesus Predicts Peterâs Denial"
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  27,
+                                        "text":  "Then Jesus said to them, âYou will all fall away, for it is written:\nâI will strike the Shepherd,\nand the sheep will be scattered.â",
+                                        "footnotes":  [
+                                                          {
+                                                              "noteId":  104,
+                                                              "offset":  49,
+                                                              "text":  "BYZ and TR include on account of Me this night; see Matthew 26:31.",
+                                                              "caller":  "+"
+                                                          },
+                                                          {
+                                                              "noteId":  105,
+                                                              "offset":  131,
+                                                              "text":  "Zechariah 13:7",
+                                                              "caller":  "+"
+                                                          }
+                                                      ],
+                                        "poem":  [
+                                                     {
+                                                         "start":  69,
+                                                         "end":  97,
+                                                         "level":  1
+                                                     },
+                                                     {
+                                                         "start":  98,
+                                                         "end":  131,
+                                                         "level":  2
+                                                     }
+                                                 ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  28,
+                                        "text":  "But after I have risen, I will go ahead of you into Galilee.â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  29,
+                                        "text":  "Peter declared, âEven if all fall away, I never will.â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  30,
+                                        "text":  "âTruly I tell you,â Jesus replied, âthis very night, before the rooster crows twice, you will deny Me three times.â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  31,
+                                        "text":  "But Peter kept insisting, âEven if I have to die with You, I will never deny You.â And all the others said the same thing.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "heading",
+                                        "text":  "Jesus Prays at Gethsemane"
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  32,
+                                        "text":  "Then they came to a place called Gethsemane, and Jesus told His disciples, âSit here while I pray.â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  33,
+                                        "text":  "He took with Him Peter, James, and John, and began to be deeply troubled and distressed.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  34,
+                                        "text":  "Then He said to them, âMy soul is consumed with sorrow to the point of death. Stay here and keep watch.â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  35,
+                                        "text":  "Going a little farther, He fell to the ground and prayed that, if it were possible, the hour would pass from Him.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  36,
+                                        "text":  "âAbba, Father,â He said, âall things are possible for You. Take this cup from Me. Yet not what I will, but what You will.â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  37,
+                                        "text":  "Then Jesus returned and found them sleeping. âSimon, are you asleep?â He asked. âWere you not able to keep watch for one hour?",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  38,
+                                        "text":  "Watch and pray so that you will not enter into temptation. For the spirit is willing, but the body is weak.â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  39,
+                                        "text":  "Again He went away and prayed, saying the same thing.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  40,
+                                        "text":  "And again Jesus returned and found them sleeping, for their eyes were heavy. And they did not know what to answer Him.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  41,
+                                        "text":  "When Jesus returned the third time, He said, âAre you still sleeping and resting? That is enough! The hour has come. Look, the Son of Man is betrayed into the hands of sinners.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  42,
+                                        "text":  "Rise, let us go. See, My betrayer is approaching!â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "heading",
+                                        "text":  "The Betrayal of Jesus"
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  43,
+                                        "text":  "While Jesus was still speaking, Judas, one of the Twelve, arrived, accompanied by a crowd armed with swords and clubs, sent from the chief priests, scribes, and elders.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  44,
+                                        "text":  "Now the betrayer had arranged a signal with them: âThe One I kiss is the man; arrest Him and lead Him away securely.â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  45,
+                                        "text":  "Going directly to Jesus, he said, âRabbi!â and kissed Him.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  46,
+                                        "text":  "Then the men seized Jesus and arrested Him.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  47,
+                                        "text":  "And one of the bystanders drew his sword and struck the servant of the high priest, cutting off his ear.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  48,
+                                        "text":  "Jesus asked the crowd, âHave you come out with swords and clubs to arrest Me as you would an outlaw?",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  49,
+                                        "text":  "Every day I was with you, teaching in the temple courts, and you did not arrest Me. But this has happened that the Scriptures would be fulfilled.â",
+                                        "footnotes":  [
+                                                          {
+                                                              "noteId":  106,
+                                                              "offset":  56,
+                                                              "text":  "Literally the temple",
+                                                              "caller":  "+"
+                                                          }
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  50,
+                                        "text":  "Then everyone deserted Him and fled.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  51,
+                                        "text":  "One young man who had been following Jesus was wearing a linen cloth around his body. They caught hold of him,",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  52,
+                                        "text":  "but he pulled free of the linen cloth and ran away naked.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "heading",
+                                        "text":  "Jesus before the Sanhedrin"
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  53,
+                                        "text":  "They led Jesus away to the high priest, and all the chief priests, elders, and scribes assembled.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  54,
+                                        "text":  "Peter followed Him at a distance, right into the courtyard of the high priest. And he sat with the officers and warmed himself by the fire.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  55,
+                                        "text":  "Now the chief priests and the whole Sanhedrin were seeking testimony against Jesus to put Him to death, but they did not find any.",
+                                        "footnotes":  [
+                                                          {
+                                                              "noteId":  107,
+                                                              "offset":  45,
+                                                              "text":  "Or the whole Council",
+                                                              "caller":  "+"
+                                                          }
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  56,
+                                        "text":  "For many bore false witness against Jesus, but their testimony was inconsistent.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  57,
+                                        "text":  "Then some men stood up and testified falsely against Him:",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  58,
+                                        "text":  "âWe heard Him say, âI will destroy this man-made temple, and in three days I will build another that is made without hands.ââ",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  59,
+                                        "text":  "But even their testimony was inconsistent.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  60,
+                                        "text":  "So the high priest stood up before them and questioned Jesus, âHave You no answer? What are these men testifying against You?â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  61,
+                                        "text":  "But Jesus remained silent and made no reply.\nAgain the high priest questioned Him, âAre You the Christ, the Son of the Blessed One?â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  62,
+                                        "text":  "âI am,â said Jesus, âand you will see the Son of Man sitting at the right hand of Power and coming with the clouds of heaven.â",
+                                        "footnotes":  [
+                                                          {
+                                                              "noteId":  108,
+                                                              "offset":  87,
+                                                              "text":  "Or the right hand of the Mighty One",
+                                                              "caller":  "+"
+                                                          },
+                                                          {
+                                                              "noteId":  109,
+                                                              "offset":  126,
+                                                              "text":  "See Psalms 110:1 and Daniel 7:13.",
+                                                              "caller":  "+"
+                                                          }
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  63,
+                                        "text":  "At this, the high priest tore his clothes and declared, âWhy do we need any more witnesses?",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  64,
+                                        "text":  "You have heard the blasphemy. What is your verdict?â\nAnd they all condemned Him as deserving of death.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  65,
+                                        "text":  "Then some of them began to spit on Him. They blindfolded Him, struck Him with their fists, and said to Him, âProphesy!â And the officers received Him with slaps in His face.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "heading",
+                                        "text":  "Peter Denies Jesus"
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  66,
+                                        "text":  "While Peter was in the courtyard below, one of the servant girls of the high priest came down",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  67,
+                                        "text":  "and saw him warming himself there. She looked at Peter and said, âYou also were with Jesus the Nazarene.â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  68,
+                                        "text":  "But he denied it. âI do not know or even understand what you are talking about,â he said. Then he went out to the gateway, and the rooster crowed.",
+                                        "footnotes":  [
+                                                          {
+                                                              "noteId":  110,
+                                                              "offset":  146,
+                                                              "text":  "NE and WH do not include and the rooster crowed.",
+                                                              "caller":  "+"
+                                                          }
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  69,
+                                        "text":  "There the servant girl saw him and again said to those standing nearby, âThis man is one of them.â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  70,
+                                        "text":  "But he denied it again.\nAfter a little while, those standing nearby said once more to Peter, âSurely you are one of them, for you too are a Galilean.â",
+                                        "footnotes":  [
+                                                          {
+                                                              "noteId":  111,
+                                                              "offset":  150,
+                                                              "text":  "BYZ and TR include and your speech is similar.",
+                                                              "caller":  "+"
+                                                          }
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  71,
+                                        "text":  "But he began to curse and swear, âI do not know this man of whom you speak!â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  72,
+                                        "text":  "And immediately the rooster crowed a second time.\nThen Peter remembered the word that Jesus had spoken to him: âBefore the rooster crows twice, you will deny Me three times.â And he broke down and wept.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    }
+                                ],
+                    "footnotes":  [
+
+                                  ]
+                },
+    "fullChapterApiLink":  "/api/BSB/MRK/14.json"
+}

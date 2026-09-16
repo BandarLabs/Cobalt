@@ -1,0 +1,892 @@
+﻿{
+    "translation":  {
+                        "id":  "BSB",
+                        "name":  "Berean Standard Bible",
+                        "website":  "https://berean.bible/",
+                        "licenseUrl":  "https://berean.bible/",
+                        "shortName":  "BSB",
+                        "englishName":  "Berean Standard Bible",
+                        "language":  "eng",
+                        "textDirection":  "ltr",
+                        "sha256":  "6cc5238e442b4204b0f617cc5c932bc04f3bae4a0658e6393b0e319653ebe37f",
+                        "availableFormats":  [
+                                                 "json"
+                                             ],
+                        "listOfBooksApiLink":  "/api/BSB/books.json",
+                        "completeTranslationApiLink":  "/api/BSB/complete.json",
+                        "simpleCompleteTranslationApiLink":  "/api/BSB/complete.simple.json",
+                        "numberOfBooks":  66,
+                        "totalNumberOfChapters":  1189,
+                        "totalNumberOfVerses":  31086,
+                        "languageName":  "English",
+                        "languageEnglishName":  "English"
+                    },
+    "book":  {
+                 "id":  "PRO",
+                 "translationId":  "BSB",
+                 "name":  "Proverbs",
+                 "commonName":  "Proverbs",
+                 "title":  "Proverbs",
+                 "order":  20,
+                 "numberOfChapters":  31,
+                 "sha256":  "d944b87af27b3ebe7b1c8859689f255314f45b6d848dba1f49664b8f6baf5ac9",
+                 "firstChapterNumber":  1,
+                 "firstChapterApiLink":  "/api/BSB/PRO/1.json",
+                 "firstChapterReference":  {
+                                               "translationId":  "BSB",
+                                               "book":  "PRO",
+                                               "chapter":  1
+                                           },
+                 "lastChapterNumber":  31,
+                 "lastChapterApiLink":  "/api/BSB/PRO/31.json",
+                 "lastChapterReference":  {
+                                              "translationId":  "BSB",
+                                              "book":  "PRO",
+                                              "chapter":  31
+                                          },
+                 "totalNumberOfVerses":  915
+             },
+    "thisChapterLink":  "/api/BSB/PRO/3.simple.json",
+    "thisChapterReference":  {
+                                 "translationId":  "BSB",
+                                 "book":  "PRO",
+                                 "chapter":  3
+                             },
+    "thisChapterAudioLinks":  {
+                                  "david":  "https://audio.bible.helloao.org/api/BSB/PRO/3/audio/david.mp3",
+                                  "gilbert":  "https://openbible.com/audio/gilbert/BSB_20_Pro_003_G.mp3",
+                                  "hays":  "https://audio.bible.helloao.org/api/BSB/PRO/3/audio/hays.mp3",
+                                  "souer":  "https://audio.bible.helloao.org/api/BSB/PRO/3/audio/souer.mp3"
+                              },
+    "nextChapterApiLink":  "/api/BSB/PRO/4.simple.json",
+    "nextChapterReference":  {
+                                 "translationId":  "BSB",
+                                 "book":  "PRO",
+                                 "chapter":  4
+                             },
+    "nextChapterAudioLinks":  {
+                                  "david":  "https://audio.bible.helloao.org/api/BSB/PRO/4/audio/david.mp3",
+                                  "gilbert":  "https://openbible.com/audio/gilbert/BSB_20_Pro_004_G.mp3",
+                                  "hays":  "https://audio.bible.helloao.org/api/BSB/PRO/4/audio/hays.mp3",
+                                  "souer":  "https://audio.bible.helloao.org/api/BSB/PRO/4/audio/souer.mp3"
+                              },
+    "previousChapterApiLink":  "/api/BSB/PRO/2.simple.json",
+    "previousChapterReference":  {
+                                     "translationId":  "BSB",
+                                     "book":  "PRO",
+                                     "chapter":  2
+                                 },
+    "previousChapterAudioLinks":  {
+                                      "david":  "https://audio.bible.helloao.org/api/BSB/PRO/2/audio/david.mp3",
+                                      "gilbert":  "https://openbible.com/audio/gilbert/BSB_20_Pro_002_G.mp3",
+                                      "hays":  "https://audio.bible.helloao.org/api/BSB/PRO/2/audio/hays.mp3",
+                                      "souer":  "https://audio.bible.helloao.org/api/BSB/PRO/2/audio/souer.mp3"
+                                  },
+    "thisChapterAudioTimings":  {
+
+                                },
+    "nextChapterAudioTimings":  {
+
+                                },
+    "previousChapterAudioTimings":  {
+
+                                    },
+    "numberOfVerses":  35,
+    "chapter":  {
+                    "number":  3,
+                    "content":  [
+                                    {
+                                        "type":  "heading",
+                                        "text":  "Trust in the LORD with All Your Heart"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  1,
+                                        "text":  "My son, do not forget my teaching,\nbut let your heart keep my commandments;",
+                                        "footnotes":  [
+
+                                                      ],
+                                        "poem":  [
+                                                     {
+                                                         "start":  0,
+                                                         "end":  34,
+                                                         "level":  1
+                                                     },
+                                                     {
+                                                         "start":  35,
+                                                         "end":  75,
+                                                         "level":  2
+                                                     }
+                                                 ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  2,
+                                        "text":  "for they will add length to your days,\nyears and peace to your life.",
+                                        "footnotes":  [
+
+                                                      ],
+                                        "poem":  [
+                                                     {
+                                                         "start":  0,
+                                                         "end":  38,
+                                                         "level":  1
+                                                     },
+                                                     {
+                                                         "start":  39,
+                                                         "end":  68,
+                                                         "level":  2
+                                                     }
+                                                 ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  3,
+                                        "text":  "Never let loving devotion\nor faithfulness leave you;\nbind them around your neck,\nwrite them on the tablet of your heart.",
+                                        "footnotes":  [
+                                                          {
+                                                              "noteId":  6,
+                                                              "offset":  25,
+                                                              "text":  "Forms of the Hebrew chesed are translated here and in most cases throughout the Scriptures as loving devotion; the range of meaning includes love, goodness, kindness, faithfulness, and mercy, as well as loyalty to a covenant.",
+                                                              "caller":  "+"
+                                                          }
+                                                      ],
+                                        "poem":  [
+                                                     {
+                                                         "start":  0,
+                                                         "end":  25,
+                                                         "level":  1
+                                                     },
+                                                     {
+                                                         "start":  26,
+                                                         "end":  52,
+                                                         "level":  1
+                                                     },
+                                                     {
+                                                         "start":  53,
+                                                         "end":  80,
+                                                         "level":  2
+                                                     },
+                                                     {
+                                                         "start":  81,
+                                                         "end":  120,
+                                                         "level":  2
+                                                     }
+                                                 ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  4,
+                                        "text":  "Then you will find favor and high regard\nin the sight of God and man.",
+                                        "footnotes":  [
+
+                                                      ],
+                                        "poem":  [
+                                                     {
+                                                         "start":  0,
+                                                         "end":  40,
+                                                         "level":  1
+                                                     },
+                                                     {
+                                                         "start":  41,
+                                                         "end":  69,
+                                                         "level":  2
+                                                     }
+                                                 ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  5,
+                                        "text":  "Trust in the LORD with all your heart,\nand lean not on your own understanding;",
+                                        "footnotes":  [
+
+                                                      ],
+                                        "poem":  [
+                                                     {
+                                                         "start":  0,
+                                                         "end":  38,
+                                                         "level":  1
+                                                     },
+                                                     {
+                                                         "start":  39,
+                                                         "end":  78,
+                                                         "level":  2
+                                                     }
+                                                 ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  6,
+                                        "text":  "in all your ways acknowledge Him,\nand He will make your paths straight.",
+                                        "footnotes":  [
+
+                                                      ],
+                                        "poem":  [
+                                                     {
+                                                         "start":  0,
+                                                         "end":  33,
+                                                         "level":  1
+                                                     },
+                                                     {
+                                                         "start":  34,
+                                                         "end":  71,
+                                                         "level":  2
+                                                     }
+                                                 ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  7,
+                                        "text":  "Be not wise in your own eyes;\nfear the LORD and turn away from evil.",
+                                        "footnotes":  [
+
+                                                      ],
+                                        "poem":  [
+                                                     {
+                                                         "start":  0,
+                                                         "end":  29,
+                                                         "level":  1
+                                                     },
+                                                     {
+                                                         "start":  30,
+                                                         "end":  68,
+                                                         "level":  2
+                                                     }
+                                                 ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  8,
+                                        "text":  "This will bring healing to your body\nand refreshment\nto your bones.",
+                                        "footnotes":  [
+                                                          {
+                                                              "noteId":  7,
+                                                              "offset":  36,
+                                                              "text":  "Hebrew navel",
+                                                              "caller":  "+"
+                                                          },
+                                                          {
+                                                              "noteId":  8,
+                                                              "offset":  52,
+                                                              "text":  "Or medicine",
+                                                              "caller":  "+"
+                                                          }
+                                                      ],
+                                        "poem":  [
+                                                     {
+                                                         "start":  0,
+                                                         "end":  36,
+                                                         "level":  1
+                                                     },
+                                                     {
+                                                         "start":  37,
+                                                         "end":  52,
+                                                         "level":  2
+                                                     },
+                                                     {
+                                                         "start":  53,
+                                                         "end":  67,
+                                                         "level":  2
+                                                     }
+                                                 ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  9,
+                                        "text":  "Honor the LORD with your wealth\nand with the firstfruits of all your crops;",
+                                        "footnotes":  [
+
+                                                      ],
+                                        "poem":  [
+                                                     {
+                                                         "start":  0,
+                                                         "end":  31,
+                                                         "level":  1
+                                                     },
+                                                     {
+                                                         "start":  32,
+                                                         "end":  75,
+                                                         "level":  2
+                                                     }
+                                                 ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  10,
+                                        "text":  "then your barns will be filled with plenty,\nand your vats will overflow with new wine.",
+                                        "footnotes":  [
+
+                                                      ],
+                                        "poem":  [
+                                                     {
+                                                         "start":  0,
+                                                         "end":  43,
+                                                         "level":  1
+                                                     },
+                                                     {
+                                                         "start":  44,
+                                                         "end":  86,
+                                                         "level":  2
+                                                     }
+                                                 ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  11,
+                                        "text":  "My son, do not reject the discipline of the LORD,\nand do not loathe His rebuke;",
+                                        "footnotes":  [
+                                                          {
+                                                              "noteId":  9,
+                                                              "offset":  79,
+                                                              "text":  "LXX and do not lose heart when He rebukes; cited in Hebrews 12:5",
+                                                              "caller":  "+"
+                                                          }
+                                                      ],
+                                        "poem":  [
+                                                     {
+                                                         "start":  0,
+                                                         "end":  49,
+                                                         "level":  1
+                                                     },
+                                                     {
+                                                         "start":  50,
+                                                         "end":  79,
+                                                         "level":  2
+                                                     }
+                                                 ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  12,
+                                        "text":  "for the LORD disciplines the one He loves,\nas does a father the son in whom he delights.",
+                                        "footnotes":  [
+                                                          {
+                                                              "noteId":  10,
+                                                              "offset":  88,
+                                                              "text":  "LXX and He flogs every son He receives; cited in Hebrews 12:6",
+                                                              "caller":  "+"
+                                                          }
+                                                      ],
+                                        "poem":  [
+                                                     {
+                                                         "start":  0,
+                                                         "end":  42,
+                                                         "level":  1
+                                                     },
+                                                     {
+                                                         "start":  43,
+                                                         "end":  88,
+                                                         "level":  2
+                                                     }
+                                                 ]
+                                    },
+                                    {
+                                        "type":  "heading",
+                                        "text":  "The Blessings of Wisdom"
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  13,
+                                        "text":  "Blessed is the man who finds wisdom,\nthe man who acquires understanding,",
+                                        "footnotes":  [
+
+                                                      ],
+                                        "poem":  [
+                                                     {
+                                                         "start":  0,
+                                                         "end":  36,
+                                                         "level":  1
+                                                     },
+                                                     {
+                                                         "start":  37,
+                                                         "end":  72,
+                                                         "level":  2
+                                                     }
+                                                 ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  14,
+                                        "text":  "for she is more profitable than silver,\nand her gain is better than fine gold.",
+                                        "footnotes":  [
+
+                                                      ],
+                                        "poem":  [
+                                                     {
+                                                         "start":  0,
+                                                         "end":  39,
+                                                         "level":  1
+                                                     },
+                                                     {
+                                                         "start":  40,
+                                                         "end":  78,
+                                                         "level":  2
+                                                     }
+                                                 ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  15,
+                                        "text":  "She is more precious than rubies;\nnothing you desire compares with her.",
+                                        "footnotes":  [
+
+                                                      ],
+                                        "poem":  [
+                                                     {
+                                                         "start":  0,
+                                                         "end":  33,
+                                                         "level":  1
+                                                     },
+                                                     {
+                                                         "start":  34,
+                                                         "end":  71,
+                                                         "level":  2
+                                                     }
+                                                 ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  16,
+                                        "text":  "Long life is in her right hand;\nin her left hand are riches and honor.",
+                                        "footnotes":  [
+
+                                                      ],
+                                        "poem":  [
+                                                     {
+                                                         "start":  0,
+                                                         "end":  31,
+                                                         "level":  1
+                                                     },
+                                                     {
+                                                         "start":  32,
+                                                         "end":  70,
+                                                         "level":  2
+                                                     }
+                                                 ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  17,
+                                        "text":  "All her ways are pleasant,\nand all her paths are peaceful.",
+                                        "footnotes":  [
+
+                                                      ],
+                                        "poem":  [
+                                                     {
+                                                         "start":  0,
+                                                         "end":  26,
+                                                         "level":  1
+                                                     },
+                                                     {
+                                                         "start":  27,
+                                                         "end":  58,
+                                                         "level":  2
+                                                     }
+                                                 ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  18,
+                                        "text":  "She is a tree of life to those who embrace her,\nand those who lay hold of her are blessed.",
+                                        "footnotes":  [
+
+                                                      ],
+                                        "poem":  [
+                                                     {
+                                                         "start":  0,
+                                                         "end":  47,
+                                                         "level":  1
+                                                     },
+                                                     {
+                                                         "start":  48,
+                                                         "end":  90,
+                                                         "level":  2
+                                                     }
+                                                 ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  19,
+                                        "text":  "The LORD founded the earth by wisdom\nand established the heavens by understanding.",
+                                        "footnotes":  [
+
+                                                      ],
+                                        "poem":  [
+                                                     {
+                                                         "start":  0,
+                                                         "end":  36,
+                                                         "level":  1
+                                                     },
+                                                     {
+                                                         "start":  37,
+                                                         "end":  82,
+                                                         "level":  2
+                                                     }
+                                                 ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  20,
+                                        "text":  "By His knowledge the watery depths were broken open,\nand the clouds dripped with dew.",
+                                        "footnotes":  [
+
+                                                      ],
+                                        "poem":  [
+                                                     {
+                                                         "start":  0,
+                                                         "end":  52,
+                                                         "level":  1
+                                                     },
+                                                     {
+                                                         "start":  53,
+                                                         "end":  85,
+                                                         "level":  2
+                                                     }
+                                                 ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  21,
+                                        "text":  "My son, do not lose sight of this:\nPreserve sound judgment and discernment.",
+                                        "footnotes":  [
+
+                                                      ],
+                                        "poem":  [
+                                                     {
+                                                         "start":  0,
+                                                         "end":  34,
+                                                         "level":  1
+                                                     },
+                                                     {
+                                                         "start":  35,
+                                                         "end":  75,
+                                                         "level":  2
+                                                     }
+                                                 ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  22,
+                                        "text":  "They will be life to your soul\nand adornment to your neck.",
+                                        "footnotes":  [
+
+                                                      ],
+                                        "poem":  [
+                                                     {
+                                                         "start":  0,
+                                                         "end":  30,
+                                                         "level":  1
+                                                     },
+                                                     {
+                                                         "start":  31,
+                                                         "end":  58,
+                                                         "level":  2
+                                                     }
+                                                 ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  23,
+                                        "text":  "Then you will go on your way in safety,\nand your foot will not stumble.",
+                                        "footnotes":  [
+
+                                                      ],
+                                        "poem":  [
+                                                     {
+                                                         "start":  0,
+                                                         "end":  39,
+                                                         "level":  1
+                                                     },
+                                                     {
+                                                         "start":  40,
+                                                         "end":  71,
+                                                         "level":  2
+                                                     }
+                                                 ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  24,
+                                        "text":  "When you lie down, you will not be afraid;\nwhen you rest, your sleep will be sweet.",
+                                        "footnotes":  [
+
+                                                      ],
+                                        "poem":  [
+                                                     {
+                                                         "start":  0,
+                                                         "end":  42,
+                                                         "level":  1
+                                                     },
+                                                     {
+                                                         "start":  43,
+                                                         "end":  83,
+                                                         "level":  2
+                                                     }
+                                                 ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  25,
+                                        "text":  "Do not fear sudden danger\nor the ruin that overtakes the wicked,",
+                                        "footnotes":  [
+
+                                                      ],
+                                        "poem":  [
+                                                     {
+                                                         "start":  0,
+                                                         "end":  25,
+                                                         "level":  1
+                                                     },
+                                                     {
+                                                         "start":  26,
+                                                         "end":  64,
+                                                         "level":  2
+                                                     }
+                                                 ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  26,
+                                        "text":  "for the LORD will be your confidence\nand will keep your foot from the snare.",
+                                        "footnotes":  [
+
+                                                      ],
+                                        "poem":  [
+                                                     {
+                                                         "start":  0,
+                                                         "end":  36,
+                                                         "level":  1
+                                                     },
+                                                     {
+                                                         "start":  37,
+                                                         "end":  76,
+                                                         "level":  2
+                                                     }
+                                                 ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  27,
+                                        "text":  "Do not withhold good from the deserving\nwhen it is within your power to act.",
+                                        "footnotes":  [
+                                                          {
+                                                              "noteId":  11,
+                                                              "offset":  39,
+                                                              "text":  "Or from its owners",
+                                                              "caller":  "+"
+                                                          }
+                                                      ],
+                                        "poem":  [
+                                                     {
+                                                         "start":  0,
+                                                         "end":  39,
+                                                         "level":  1
+                                                     },
+                                                     {
+                                                         "start":  40,
+                                                         "end":  76,
+                                                         "level":  2
+                                                     }
+                                                 ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  28,
+                                        "text":  "Do not tell your neighbor,\nâCome back tomorrow and I will provideââ\nwhen you already have the means.",
+                                        "footnotes":  [
+
+                                                      ],
+                                        "poem":  [
+                                                     {
+                                                         "start":  0,
+                                                         "end":  26,
+                                                         "level":  1
+                                                     },
+                                                     {
+                                                         "start":  27,
+                                                         "end":  67,
+                                                         "level":  2
+                                                     },
+                                                     {
+                                                         "start":  68,
+                                                         "end":  100,
+                                                         "level":  2
+                                                     }
+                                                 ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  29,
+                                        "text":  "Do not devise evil against your neighbor,\nfor he trustfully dwells beside you.",
+                                        "footnotes":  [
+
+                                                      ],
+                                        "poem":  [
+                                                     {
+                                                         "start":  0,
+                                                         "end":  41,
+                                                         "level":  1
+                                                     },
+                                                     {
+                                                         "start":  42,
+                                                         "end":  78,
+                                                         "level":  2
+                                                     }
+                                                 ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  30,
+                                        "text":  "Do not accuse a man without cause,\nwhen he has done you no harm.",
+                                        "footnotes":  [
+
+                                                      ],
+                                        "poem":  [
+                                                     {
+                                                         "start":  0,
+                                                         "end":  34,
+                                                         "level":  1
+                                                     },
+                                                     {
+                                                         "start":  35,
+                                                         "end":  64,
+                                                         "level":  2
+                                                     }
+                                                 ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  31,
+                                        "text":  "Do not envy a violent man\nor choose any of his ways;",
+                                        "footnotes":  [
+
+                                                      ],
+                                        "poem":  [
+                                                     {
+                                                         "start":  0,
+                                                         "end":  25,
+                                                         "level":  1
+                                                     },
+                                                     {
+                                                         "start":  26,
+                                                         "end":  52,
+                                                         "level":  2
+                                                     }
+                                                 ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  32,
+                                        "text":  "for the LORD detests the perverse,\nbut He is a friend to the upright.",
+                                        "footnotes":  [
+
+                                                      ],
+                                        "poem":  [
+                                                     {
+                                                         "start":  0,
+                                                         "end":  34,
+                                                         "level":  1
+                                                     },
+                                                     {
+                                                         "start":  35,
+                                                         "end":  69,
+                                                         "level":  2
+                                                     }
+                                                 ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  33,
+                                        "text":  "The curse of the LORD is on the house of the wicked,\nbut He blesses the home of the righteous.",
+                                        "footnotes":  [
+
+                                                      ],
+                                        "poem":  [
+                                                     {
+                                                         "start":  0,
+                                                         "end":  52,
+                                                         "level":  1
+                                                     },
+                                                     {
+                                                         "start":  53,
+                                                         "end":  94,
+                                                         "level":  2
+                                                     }
+                                                 ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  34,
+                                        "text":  "He mocks the mockers,\nbut gives grace to the humble.",
+                                        "footnotes":  [
+                                                          {
+                                                              "noteId":  12,
+                                                              "offset":  52,
+                                                              "text":  "LXX The Lord opposes the proud, but gives grace to the humble; cited in James 4:6 and 1 Peter 5:5",
+                                                              "caller":  "+"
+                                                          }
+                                                      ],
+                                        "poem":  [
+                                                     {
+                                                         "start":  0,
+                                                         "end":  21,
+                                                         "level":  1
+                                                     },
+                                                     {
+                                                         "start":  22,
+                                                         "end":  52,
+                                                         "level":  2
+                                                     }
+                                                 ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  35,
+                                        "text":  "The wise will inherit honor,\nbut fools are held up to shame.",
+                                        "footnotes":  [
+
+                                                      ],
+                                        "poem":  [
+                                                     {
+                                                         "start":  0,
+                                                         "end":  28,
+                                                         "level":  1
+                                                     },
+                                                     {
+                                                         "start":  29,
+                                                         "end":  60,
+                                                         "level":  2
+                                                     }
+                                                 ]
+                                    }
+                                ],
+                    "footnotes":  [
+
+                                  ]
+                },
+    "fullChapterApiLink":  "/api/BSB/PRO/3.json"
+}
