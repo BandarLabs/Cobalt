@@ -11,7 +11,6 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const ROOT: &str = "/mnt/onboard/.adds/cobalt/data/birds";
 const SNAPSHOT: &str = "current.json";
-const IMAGE: &str = "current.png";
 const MAX_JSON: usize = 64 * 1024;
 const MAX_IMAGE: usize = 4 * 1024 * 1024;
 const USAGE: &str = "usage: kobo birds listen --source http://HOST:PORT (--device IP | --sim) [--interval SECONDS]\n\
@@ -280,8 +279,13 @@ fn poll_once(o: &Listen, token: &mut String) -> Result<(), String> {
     match http_get(&format!("{}/state", o.source), MAX_JSON).and_then(|b| state_token(&b)) {
         Ok(next) if next != *token => {
             let image = http_get(&format!("{}/collage.png", o.source), MAX_IMAGE)?;
-            if !image.starts_with(b"\x89PNG\r\n\x1a\n") {
-                return Err("Fugleramme collage is not PNG".into());
+            // The token and the collage arrive in separate requests; if
+            // Fugleramme re-rendered meanwhile, this pair mixes generations.
+            // Re-read the state and skip the cycle rather than consume it.
+            let still =
+                http_get(&format!("{}/state", o.source), MAX_JSON).and_then(|b| state_token(&b))?;
+            if still != next {
+                return Ok(());
             }
             let generated = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -333,8 +337,8 @@ fn validate(json: &[u8], image: &[u8]) -> Result<(), String> {
     if json.len() > MAX_JSON {
         return Err("Birds snapshot exceeds 64 KiB".into());
     }
-    if image.len() > MAX_IMAGE || !image.starts_with(b"\x89PNG\r\n\x1a\n") {
-        return Err("Birds image must be a PNG no larger than 4 MiB".into());
+    if image.len() > MAX_IMAGE || !png_complete(image) {
+        return Err("Birds image must be a complete PNG no larger than 4 MiB".into());
     }
     let v: Value = serde_json::from_slice(json).map_err(|_| "Birds snapshot is invalid JSON")?;
     if v.get("format").and_then(Value::as_str) != Some("cobalt-birds-v1")
@@ -345,21 +349,27 @@ fn validate(json: &[u8], image: &[u8]) -> Result<(), String> {
     Ok(())
 }
 fn push_bytes(json: &[u8], image: &[u8], target: Target) -> Result<(), String> {
-    let paired = pair_checksum(json, image)?;
+    let (image_name, paired) = pair_checksum(json, image)?;
     validate(&paired, image)?;
     match target {
         Target::Sim => {
             let root = kobo_sim::simulated_data_root("birds");
             fs::create_dir_all(&root).map_err(|e| e.to_string())?;
-            // The image lands first and the snapshot last: the snapshot is the
-            // commit point, and the app only trusts a snapshot whose recorded
-            // checksum matches the image on the shelf.
-            atomic_write(&root.join(IMAGE), image)?;
+            // The image is content-addressed and lands first under its own
+            // name, so the previous generation's file is never overwritten;
+            // the snapshot commits last as the pointer. If the pointer commit
+            // fails, the old snapshot still names the old, intact image, and
+            // an orphaned new image is pruned by the next successful publish.
+            let image_path = root.join(&image_name);
+            if !image_path.exists() {
+                atomic_write(&image_path, image)?;
+            }
             atomic_write(&root.join(SNAPSHOT), &paired)?;
+            prune_images(&root, &image_name);
         }
         Target::Device(host) => {
             let script = format!(
-                "set -eu\nroot='{ROOT}'\nmkdir -p \"$root\"\nchmod 700 \"$root\"\nbase64 -d > \"$root/.{IMAGE}.writing\" <<'BIRDS_IMAGE'\n{}\nBIRDS_IMAGE\nbase64 -d > \"$root/.{SNAPSHOT}.writing\" <<'BIRDS_JSON'\n{}\nBIRDS_JSON\nchmod 600 \"$root/.{IMAGE}.writing\" \"$root/.{SNAPSHOT}.writing\"\nmv -f \"$root/.{IMAGE}.writing\" \"$root/{IMAGE}\"\nmv -f \"$root/.{SNAPSHOT}.writing\" \"$root/{SNAPSHOT}\"\nsync\n",
+                "set -eu\nroot='{ROOT}'\nmkdir -p \"$root\"\nchmod 700 \"$root\"\nbase64 -d > \"$root/.{image_name}.writing\" <<'BIRDS_IMAGE'\n{}\nBIRDS_IMAGE\nbase64 -d > \"$root/.{SNAPSHOT}.writing\" <<'BIRDS_JSON'\n{}\nBIRDS_JSON\nchmod 600 \"$root/.{image_name}.writing\" \"$root/.{SNAPSHOT}.writing\"\nmv -f \"$root/.{image_name}.writing\" \"$root/{image_name}\"\nmv -f \"$root/.{SNAPSHOT}.writing\" \"$root/{SNAPSHOT}\"\nfor old in \"$root\"/img-*.png; do [ \"$old\" = \"$root/{image_name}\" ] || rm -f \"$old\"; done\nsync\n",
                 base64(image),
                 base64(&paired)
             );
@@ -375,6 +385,23 @@ fn push_bytes(json: &[u8], image: &[u8], target: Target) -> Result<(), String> {
     }
     println!("Birds snapshot published atomically.");
     Ok(())
+}
+
+/// Drops unreferenced content-addressed images after a successful commit;
+/// the referenced one stays.
+fn prune_images(root: &Path, keep: &str) {
+    if let Ok(entries) = fs::read_dir(root) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else { continue };
+            if name.starts_with("img-")
+                && name.to_ascii_lowercase().ends_with(".png")
+                && name != keep
+            {
+                let _ = fs::remove_file(entry.path());
+            }
+        }
+    }
 }
 fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
     // Stage beside the destination under its own name: with_extension would
@@ -402,15 +429,21 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
     fs::rename(&tmp, path).map_err(|e| format!("publish {}: {e}", path.display()))
 }
 
-/// Records the image's checksum inside the snapshot so the reader can prove
-/// the two files it holds came from the same publish, never a mixed pair.
-fn pair_checksum(json: &[u8], image: &[u8]) -> Result<Vec<u8>, String> {
+/// Points the snapshot at a content-addressed image name and records the
+/// image's checksum, so the reader can prove the two files it holds came from
+/// the same publish, never a mixed pair. A caller-supplied pointer never
+/// survives: both fields are recomputed from the bytes being shipped.
+fn pair_checksum(json: &[u8], image: &[u8]) -> Result<(String, Vec<u8>), String> {
     let mut v: Value =
         serde_json::from_slice(json).map_err(|_| "Birds snapshot is invalid JSON")?;
-    v["image_checksum"] = json!(fnv64(image));
-    serde_json::to_string(&v)
+    let checksum = fnv64(image);
+    let image_name = format!("img-{checksum}.png");
+    v["image"] = json!(image_name);
+    v["image_checksum"] = json!(checksum);
+    let paired = serde_json::to_string(&v)
         .map(String::into_bytes)
-        .map_err(|e| format!("encode Birds snapshot: {e}"))
+        .map_err(|e| format!("encode Birds snapshot: {e}"))?;
+    Ok((image_name, paired))
 }
 
 /// FNV-1a 64, hex: cheap on the reader and sufficient to detect a generation
@@ -485,15 +518,79 @@ fn http_get(url: &str, max: usize) -> Result<Vec<u8>, String> {
         return Err("Fugleramme did not return 200".into());
     }
     let body = all.split_off(split + 4);
+    // A connection closed midway must not pass as a complete response: when
+    // the server declared a length, receive exactly that many bytes.
+    let headers = String::from_utf8_lossy(&all);
+    if let Some(line) = headers
+        .lines()
+        .find(|l| l.to_ascii_lowercase().starts_with("content-length:"))
+    {
+        let declared: usize = line[15..]
+            .trim()
+            .parse()
+            .map_err(|_| "Fugleramme sent a malformed Content-Length".to_owned())?;
+        if body.len() != declared {
+            return Err(format!(
+                "Fugleramme response truncated: declared {declared} bytes, received {}",
+                body.len()
+            ));
+        }
+    }
     if body.len() > max {
         return Err("Fugleramme response exceeds the Birds limit".into());
     }
     Ok(body)
 }
 
+/// The whole PNG must parse: 8-byte signature, IHDR first, well-formed
+/// chunks, and an IEND exactly at the end. A file that stops early keeps its
+/// prefix, so the signature alone proves nothing about completeness.
+fn png_complete(bytes: &[u8]) -> bool {
+    if !bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        return false;
+    }
+    let mut offset = 8;
+    let mut first = true;
+    loop {
+        if offset + 12 > bytes.len() {
+            return false;
+        }
+        let length = u32::from_be_bytes(bytes[offset..offset + 4].try_into().expect("4")) as usize;
+        let kind = &bytes[offset + 4..offset + 8];
+        let Some(end) = offset.checked_add(12).and_then(|v| v.checked_add(length)) else {
+            return false;
+        };
+        if end > bytes.len() {
+            return false;
+        }
+        if first && kind != b"IHDR" {
+            return false;
+        }
+        first = false;
+        if kind == b"IEND" {
+            return length == 0 && end == bytes.len();
+        }
+        offset = end;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The smallest structurally complete PNG: signature, IHDR, IEND.
+    fn minimal_png() -> Vec<u8> {
+        let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
+        png.extend_from_slice(&13_u32.to_be_bytes());
+        png.extend_from_slice(b"IHDR");
+        png.extend_from_slice(&[0; 13]);
+        png.extend_from_slice(&[0; 4]);
+        png.extend_from_slice(&0_u32.to_be_bytes());
+        png.extend_from_slice(b"IEND");
+        png.extend_from_slice(&[0; 4]);
+        png
+    }
+
     #[test]
     fn options_are_bounded() {
         assert_eq!(
@@ -512,8 +609,9 @@ mod tests {
     #[test]
     fn snapshot_validation() {
         let j = br#"{"format":"cobalt-birds-v1","generated_at":1,"recent":[]}"#;
-        assert!(validate(j, b"\x89PNG\r\n\x1a\nrest").is_ok());
-        assert!(validate(b"{}", b"\x89PNG\r\n\x1a\nrest").is_err());
+        assert!(validate(j, &minimal_png()).is_ok());
+        assert!(validate(b"{}", &minimal_png()).is_err());
+        assert!(validate(j, b"\x89PNG\r\n\x1a\nrest").is_err());
     }
     #[test]
     fn state_requires_token() {
@@ -521,22 +619,36 @@ mod tests {
         assert!(state_token(b"{}").is_err());
     }
     #[test]
-    fn pairing_records_the_image_checksum() {
+    fn pairing_records_the_content_addressed_image() {
         let json = br#"{"format":"cobalt-birds-v1","generated_at":1,"recent":[]}"#;
-        let image = b"\x89PNG\r\n\x1a\nrest";
-        let paired = pair_checksum(json, image).unwrap();
+        let image = minimal_png();
+        let (name, paired) = pair_checksum(json, &image).unwrap();
+        assert_eq!(name, format!("img-{}.png", fnv64(&image)));
         let v: Value = serde_json::from_slice(&paired).unwrap();
+        assert_eq!(v["image"].as_str().unwrap(), name);
         assert_eq!(
             v["image_checksum"].as_str().unwrap(),
-            fnv64(image),
+            fnv64(&image),
             "the snapshot must name the exact image bytes it ships with"
         );
-        // A caller-supplied checksum never survives: the pair is recomputed.
+        // A caller-supplied pointer never survives: the pair is recomputed.
         let lying =
-            br#"{"format":"cobalt-birds-v1","generated_at":1,"image_checksum":"0000000000000000"}"#;
-        let paired = pair_checksum(lying, image).unwrap();
+            br#"{"format":"cobalt-birds-v1","generated_at":1,"image":"old.png","image_checksum":"0000000000000000"}"#;
+        let (name, paired) = pair_checksum(lying, &image).unwrap();
         let v: Value = serde_json::from_slice(&paired).unwrap();
-        assert_eq!(v["image_checksum"].as_str().unwrap(), fnv64(image));
+        assert_eq!(v["image"].as_str().unwrap(), name);
+        assert_eq!(v["image_checksum"].as_str().unwrap(), fnv64(&image));
+    }
+    #[test]
+    fn png_must_be_complete() {
+        let good = minimal_png();
+        assert!(png_complete(&good));
+        // Truncated mid-chunk, trailing garbage after IEND, missing IHDR.
+        assert!(!png_complete(&good[..good.len() - 3]));
+        let mut trailing = good.clone();
+        trailing.push(0);
+        assert!(!png_complete(&trailing));
+        assert!(!png_complete(b"\x89PNG\r\n\x1a\nIEND-only-prefix"));
     }
     #[test]
     fn staging_names_are_destination_specific_and_exclusive() {
