@@ -613,6 +613,7 @@ impl KoboApp for Stand {
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
         if action == ActionId::BACK {
             match self.view {
+                View::Stand if self.menu_open => self.menu_open = false,
                 View::Stand => self.leave_stand(context),
                 View::Library => context.exit(),
                 _ => self.view = View::Library,
@@ -659,6 +660,7 @@ impl KoboApp for Stand {
                 let state = self.state_mut(&id);
                 state.zoomed = !state.zoomed;
             }
+            self.menu_open = false;
             self.save(context);
             self.page = None;
             self.page_key = None;
@@ -668,6 +670,7 @@ impl KoboApp for Stand {
                 let state = self.state_mut(&id);
                 state.marked = !state.marked;
             }
+            self.menu_open = false;
             self.save(context);
         } else if action == action_id(LIBRARY) {
             self.leave_stand(context);

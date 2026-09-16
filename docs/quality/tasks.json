@@ -2256,56 +2256,70 @@
     "pr": 3,
     "group": "Music Stand (APP-4)",
     "task": "Replace text placeholders with actual score pages",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "apps/musicstand/src/main.rs renders the real host-pushed pages via ShelfDownload + kobo_image decode (no placeholder strings remain); sim journey scripts/quality/check-musicstand-shelf-sim.py pushed a real 6-page public-domain score (BWV 1007, Mutopia A4 PDF) with the companion CLI and the app opened it: evidence musicstand-stand-page.png pixel-verified, engraved notation crisp at whole-page size."
+    ]
   },
   {
     "id": "MUSIC-02",
     "pr": 3,
     "group": "Music Stand (APP-4)",
     "task": "Render overlapping half-page crops correctly",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Half-page turns crop top/bottom with a 1/14-page overlap so the last visible line repeats; bottom crop reaches the page foot exactly (odd heights unit-covered). Pixel-verified: musicstand-stand-page.png shows measures 1-11, musicstand-half-turn.png after one physical-button turn shows measures 9-19 with the overlap visible."
+    ]
   },
   {
     "id": "MUSIC-03",
     "pr": 3,
     "group": "Music Stand (APP-4)",
     "task": "Create and edit setlists and rehearsal order",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Setlists: create-from-library, per-entry resume positions, remove-last, and turning past a score's last page advances rehearsal to the next entry. Driven in sim (musicstand-setlists.png, musicstand-setlist.png) and round-trip unit-tested."
+    ]
   },
   {
     "id": "MUSIC-04",
     "pr": 3,
     "group": "Music Stand (APP-4)",
     "task": "Persist per-score page, crop and marks",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Per-score page, half, zoom and corner mark persist in the app store across sessions (v1 blob, save/restore round-trip unit test); library shows 'page N marked' after marking (musicstand-library-marked.png pixel-verified)."
+    ]
   },
   {
     "id": "MUSIC-05",
     "pr": 3,
     "group": "Music Stand (APP-4)",
     "task": "Provide usable zoom and full-screen controls",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Two-level zoom: whole page fit or staff-width centre crop (2/3 width, margins dropped first), unit-tested; full-bleed stand view with reading menu (Page/Zoom/Mark facts + controls). musicstand-zoom-staff.png pixel-verified legible engraved notation at staff width."
+    ]
   },
   {
     "id": "MUSIC-06",
     "pr": 3,
     "group": "Music Stand (APP-4)",
     "task": "Support reachable physical/page-button turns",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Physical page buttons drive turns: sim journey sends raw GPIO events (input gpio 1 194 1 forward / 1 193 1 back) through the declared page-turn actions; layout test asserts the declared turns and menu affordance on Clara BW metrics."
+    ]
   },
   {
     "id": "MUSIC-07",
     "pr": 3,
     "group": "Music Stand (APP-4)",
     "task": "Read host-prepared scores and report import failures",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Shelf contract owned by crates/kobo-music-host (companion PR-B); the app carries a decode-only codec (apps/musicstand/src/shelf.rs) tested against the real manifest shape, shows import failures as library banners ('did not import: reason'), and the empty shelf gives the exact kobo musicstand init/push commands (empty-shelf.png). Sim run pushed and read a real 6-page score end to end."
+    ]
   },
   {
     "id": "NEEDLES-01",

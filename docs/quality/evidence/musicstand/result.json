@@ -1,0 +1,21 @@
+{
+  "provenance": {
+    "source_revision": "4927507620f0ca56e9c44c3ed1763a2551a2900c",
+    "tracked_changes": true,
+    "cli_sha256": "b05550783836e868eaec34e3a2088ac7dfad3bddc8d080268564a48eafc6bc83",
+    "toolchain": "1.85.1"
+  },
+  "scale": "default",
+  "shelf": {
+    "scores": 1,
+    "pages": 6
+  },
+  "checks": [
+    {
+      "name": "shelf-driven journey",
+      "detail": "CLI pushed a real 6-page score; the app opened it, turned pages by GPIO button, zoomed, marked, resumed and built a setlist",
+      "status": "passed"
+    }
+  ],
+  "status": "passed"
+}

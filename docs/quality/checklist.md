@@ -350,13 +350,13 @@ Design direction: the bar is a well-made iPad application, built for a panel tha
 
 ## PR 3 · Music Stand (APP-4)
 
-- [ ] **MUSIC-01** Replace text placeholders with actual score pages.
-- [ ] **MUSIC-02** Render overlapping half-page crops correctly.
-- [ ] **MUSIC-03** Create and edit setlists and rehearsal order.
-- [ ] **MUSIC-04** Persist per-score page, crop and marks.
-- [ ] **MUSIC-05** Provide usable zoom and full-screen controls.
-- [ ] **MUSIC-06** Support reachable physical/page-button turns.
-- [ ] **MUSIC-07** Read host-prepared scores and report import failures.
+- [x] **MUSIC-01** Replace text placeholders with actual score pages.
+- [x] **MUSIC-02** Render overlapping half-page crops correctly.
+- [x] **MUSIC-03** Create and edit setlists and rehearsal order.
+- [x] **MUSIC-04** Persist per-score page, crop and marks.
+- [x] **MUSIC-05** Provide usable zoom and full-screen controls.
+- [x] **MUSIC-06** Support reachable physical/page-button turns.
+- [x] **MUSIC-07** Read host-prepared scores and report import failures.
 
 ## PR 3 · Needles
 

@@ -1,4 +1,5 @@
-tap Cello Suite No. 1
-expect Half-page mode
+wait 800
+wait-for Your stand is empty
+expect kobo musicstand init
 clean
-shot stand
+shot empty-shelf
