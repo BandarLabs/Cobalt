@@ -370,8 +370,8 @@ fn push_bytes(json: &[u8], image: &[u8], target: Target) -> Result<(), String> {
         Target::Device(host) => {
             let script = format!(
                 "set -eu\nroot='{ROOT}'\nmkdir -p \"$root\"\nchmod 700 \"$root\"\nbase64 -d > \"$root/.{image_name}.writing\" <<'BIRDS_IMAGE'\n{}\nBIRDS_IMAGE\nbase64 -d > \"$root/.{SNAPSHOT}.writing\" <<'BIRDS_JSON'\n{}\nBIRDS_JSON\nchmod 600 \"$root/.{image_name}.writing\" \"$root/.{SNAPSHOT}.writing\"\nmv -f \"$root/.{image_name}.writing\" \"$root/{image_name}\"\nmv -f \"$root/.{SNAPSHOT}.writing\" \"$root/{SNAPSHOT}\"\nfor old in \"$root\"/img-*.png; do [ \"$old\" = \"$root/{image_name}\" ] || rm -f \"$old\"; done\nsync\n",
-                base64(image),
-                base64(&paired)
+                super::base64_encode(image),
+                super::base64_encode(&paired)
             );
             let out =
                 super::run_remote_shell(&format!("root@{host}"), &script, Duration::from_secs(60))?;
@@ -455,27 +455,6 @@ fn fnv64(bytes: &[u8]) -> String {
         hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
     }
     format!("{hash:016x}")
-}
-fn base64(bytes: &[u8]) -> String {
-    const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut o = String::new();
-    for c in bytes.chunks(3) {
-        let n = (u32::from(c[0]) << 16)
-            | (u32::from(*c.get(1).unwrap_or(&0)) << 8)
-            | u32::from(*c.get(2).unwrap_or(&0));
-        for s in [18, 12, 6, 0] {
-            o.push(T[((n >> s) & 63) as usize] as char);
-        }
-        if c.len() < 3 {
-            o.pop();
-            o.push('=');
-        }
-        if c.len() < 2 {
-            o.pop();
-            o.push('=');
-        }
-    }
-    o
 }
 fn parse_http(url: &str) -> Result<(String, u16, String), String> {
     let r = url
@@ -617,6 +596,30 @@ mod tests {
     fn state_requires_token() {
         assert_eq!(state_token(br#"{"token":"abc"}"#).unwrap(), "abc");
         assert!(state_token(b"{}").is_err());
+    }
+    #[test]
+    fn the_transfer_encoding_never_lengthens_a_picture_by_a_trailing_zero() {
+        // A hand-rolled encoder here padded a one-byte tail as though it were
+        // two, so the reader's `base64 -d` wrote one extra zero byte onto the
+        // end of the file. The picture still opened, but its checksum no
+        // longer matched the pointer the snapshot shipped with, and the app
+        // correctly refused every such update and kept the previous view
+        // forever. One picture in three has a length that hits it.
+        assert_eq!(crate::base64_encode(b"\x01\x02\x03"), "AQID");
+        assert_eq!(crate::base64_encode(b"\x01\x02\x03\x04"), "AQIDBA==");
+        assert_eq!(crate::base64_encode(b"\x01\x02\x03\x04\x05"), "AQIDBAU=");
+        // Every length, because only those one past a group boundary were wrong.
+        for length in 1..200_usize {
+            let bytes = vec![0x5a_u8; length];
+            let encoded = crate::base64_encode(&bytes);
+            let characters = encoded.chars().filter(|c| !c.is_whitespace()).count();
+            let padding = encoded.chars().filter(|c| *c == '=').count();
+            assert_eq!(
+                (characters - padding) * 3 / 4,
+                length,
+                "{length} bytes must decode back to {length} bytes, not more"
+            );
+        }
     }
     #[test]
     fn pairing_records_the_content_addressed_image() {
