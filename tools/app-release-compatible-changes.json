@@ -34,7 +34,7 @@
         {
           "path": "crates/kobo-abi/src/lib.rs",
           "base_blob": "a6b9cd1a21eb5a52afc53822af0c1e7fae170fcb",
-          "compatible_blob": "a6b9cd1a21eb5a52afc53822af0c1e7fae170fcb"
+          "compatible_blob": "12f23e757e33c6d54f60727dc198227e56a59fac"
         },
         {
           "path": "crates/kobo-net/src/lib.rs",
@@ -160,7 +160,7 @@
         {
           "path": "crates/kobo-abi/src/lib.rs",
           "base_blob": "a6b9cd1a21eb5a52afc53822af0c1e7fae170fcb",
-          "compatible_blob": "a6b9cd1a21eb5a52afc53822af0c1e7fae170fcb"
+          "compatible_blob": "12f23e757e33c6d54f60727dc198227e56a59fac"
         },
         {
           "path": "crates/kobo-net/src/lib.rs",
@@ -329,7 +329,7 @@
         {
           "path": "crates/kobo-abi/src/lib.rs",
           "base_blob": "4fa8e3b953b67a55b077a3db360e9256b8fe0b88",
-          "compatible_blob": "7d02f721a42fc29d4d5255ff41c7c8bd8de88374"
+          "compatible_blob": "12f23e757e33c6d54f60727dc198227e56a59fac"
         },
         {
           "path": "crates/kobo-net/tests/lichess_stream_mock.rs",
