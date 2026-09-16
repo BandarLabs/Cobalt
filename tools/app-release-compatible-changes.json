@@ -303,12 +303,83 @@
     },
     {
       "protocol_version": 14,
-      "reason": "Take rustls 0.23.45 so TLS 1.3 handshake messages cannot be accepted across encryption-level boundaries (RUSTSEC-2026-0285), and advance workspace-local package versions to 0.3.15, then to 0.3.16 for the Birds companion, then to 0.3.17 so the corrected Birds transfer and update feed reach readers. Store apps keep their existing messages and dependency resolution; the patched stack reaches readers in the next platform package.",
+      "reason": "Take rustls 0.23.45 so TLS 1.3 handshake messages cannot be accepted across encryption-level boundaries (RUSTSEC-2026-0285), and advance workspace-local package versions to 0.3.15, then to 0.3.16 for the Birds companion. Re-pinned over the Windows host support: the lock also gains the kobo-sdk to kobo-abi edge and Windows-target packages for the CLI, sidekickd, and wifi-trace, none of which resolves differently for a Unix build. Store apps keep their existing messages; the patched stack reaches readers in the next platform package.",
       "files": [
         {
           "path": "Cargo.lock",
-          "base_blob": "e07e1ade0355155e92ff024f4ae7518372cd1ce8",
-          "compatible_blob": "d87db6f43872e774cabd002c42dd7261f6b6870e"
+          "base_blob": "36e8d8afe839919ba62b86bd28ae713c2c4bdf7a",
+          "compatible_blob": "7b26b2005aba71f693b7fa29ca68da397871bf9a"
+        }
+      ]
+    },
+    {
+      "protocol_version": 14,
+      "reason": "Windows host support for the CLI and simulator. The SDK's host channel moves behind kobo_protocol::channel, which stays an AF_UNIX socket on Unix, and OS entropy behind kobo-abi, whose Unix arm reads /dev/urandom exactly as the SDK did before; directory and file flushes share kobo_protocol::durability with the same open-and-fsync behavior on Unix. Every platform difference is cfg-gated to Windows arms. The wire protocol, its version, and Unix build behavior are unchanged, so published Store apps are unaffected.",
+      "files": [
+        {
+          "path": "crates/kobo-abi/src/entropy.rs",
+          "base_blob": null,
+          "compatible_blob": "531655700176c9b01cd38f0fc61a81eb3c39339a"
+        },
+        {
+          "path": "crates/kobo-abi/src/lib.rs",
+          "base_blob": "4fa8e3b953b67a55b077a3db360e9256b8fe0b88",
+          "compatible_blob": "14c1e075d54e0a246942e1fd304124caade08b70"
+        },
+        {
+          "path": "crates/kobo-net/tests/lichess_stream_mock.rs",
+          "base_blob": "d3a38bababc85d720ac33d9208db7037ed6c1120",
+          "compatible_blob": "ea9d096f89417240268e2bc509b211bd68ed8f55"
+        },
+        {
+          "path": "crates/kobo-policy/src/credential_servers.rs",
+          "base_blob": "ad519237796a31a2b587487b8a8f77e311c030f6",
+          "compatible_blob": "a57f0a1ed2ab89cef25981bd3eb02b16fac80464"
+        },
+        {
+          "path": "crates/kobo-policy/src/credentials.rs",
+          "base_blob": "9a44a782eb487e4546a4aa57609787100900bc3f",
+          "compatible_blob": "72e8b1895c02266ee208f8be93cf239ce02d7a0c"
+        },
+        {
+          "path": "crates/kobo-policy/src/persistence.rs",
+          "base_blob": "9b93e0d803738261d02e79282d230960d38cb105",
+          "compatible_blob": "7d3038e3f2210f42f36116bd4bc59913d1e145b2"
+        },
+        {
+          "path": "crates/kobo-policy/src/tasks.rs",
+          "base_blob": "011425614aeb9f85ac435db1bce8da6aa37f369b",
+          "compatible_blob": "fea7ca16fe3a0016735b1dfca80d8b62e82c2a54"
+        },
+        {
+          "path": "crates/kobo-protocol/src/channel.rs",
+          "base_blob": null,
+          "compatible_blob": "0f56374e01489a59c21a4704483d9c848966fef2"
+        },
+        {
+          "path": "crates/kobo-protocol/src/durability.rs",
+          "base_blob": null,
+          "compatible_blob": "c8e8fd49487587d0e2b605b7facd0088bf820d2d"
+        },
+        {
+          "path": "crates/kobo-protocol/src/lib.rs",
+          "base_blob": "5e43bf13fba972a7f395001e7f093ea6064474b0",
+          "compatible_blob": "3db27fcef9b1c2ac45b81d36e6866412a980e09e"
+        },
+        {
+          "path": "crates/kobo-sdk/Cargo.toml",
+          "base_blob": "a8bd10dbafc3ba8e4ded6a2b8e812f532f03f1e3",
+          "compatible_blob": "cfe6a5571dd1ed76958cd45891b07de4c6fba890"
+        },
+        {
+          "path": "crates/kobo-sdk/src/entropy.rs",
+          "base_blob": "a200e99d7cf78cde2d73cc14ea22b2e83c42c129",
+          "compatible_blob": "eafecffa4dbb5f3fe724cd8a0b54fda538966780"
+        },
+        {
+          "path": "crates/kobo-sdk/src/lib.rs",
+          "base_blob": "ff20655ce9538a06735590dc31513f555218e7a3",
+          "compatible_blob": "b30ac620cdb3e717e38cba8f3d23fc18ed71b929"
         }
       ]
     }
