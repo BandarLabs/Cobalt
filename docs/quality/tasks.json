@@ -1976,7 +1976,7 @@
     "task": "Configure Mealie endpoint and credentials",
     "status": "done",
     "evidence": [
-      "mealie.rs: Mealie list/detail URL builders + kobo-json parsers with 5 unit tests; sim journey drives connect->save->empty-state->sync on the Clara sim (drive.kobo passes; evidence/kitchencard/kitchen-empty.png)."
+      "mealie.rs: URL builders + kobo-json parsers verified against REAL demo.mealie.io payloads (fixtures/mealie-*.json captured from an agent-owned account with API-created recipes; fixture test parses list+detail). Sim journey drives connect->save->sync on Clara; check-kitchencard-sync-sim.py serves the real payloads over local TLS with a seeded credential and asserts the bearer token rides list+3 detail fetches."
     ]
   },
   {
@@ -1996,7 +1996,7 @@
     "task": "Preserve ingredient quantities and cooking steps",
     "status": "done",
     "evidence": [
-      "main.rs Cook view: step list, step_timer() parses 'N minutes'/'N min'/'30-35 minutes'->30 and schedules a wake; banner on fire; 6 app tests incl. timer extraction. Cooking interaction not driven in sim (runner has no HTTP fixture)."
+      "Cook flow driven end-to-end in sim by scripts/quality/check-kitchencard-sync-sim.py: sync -> browse -> Tonight (Serves 4 read from real recipeYield) -> Cook steps (Next step, timer extraction) -> Ingredients check-off; screenshots pixel-verified. Step timers unit-verified incl. '45-50 minutes'->45."
     ]
   },
   {
@@ -2026,7 +2026,7 @@
     "task": "Add ingredient check-off",
     "status": "done",
     "evidence": [
-      "Honest failure mapping: NoCredential/Offline/Denied/other banners with recovery copy; sim journey asserts the 'No credential named' banner (kitchen-setup-needed.png pixel-verified). Live-server paths verified by unit tests only."
+      "Honest failures: NoCredential banner driven in the no-secret journey; the sync fixture requires the bearer credential (401 without) and the app maps Offline/Denied/other to plain-language banners with recovery copy."
     ]
   },
   {

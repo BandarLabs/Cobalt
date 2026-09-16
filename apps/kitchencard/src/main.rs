@@ -505,12 +505,14 @@ impl Kitchen {
                         format!("Timer running: {minutes} min, set on step {}.", on + 1),
                     );
                 }
-                screen = Self::banner(screen, self.note.as_ref()).text(&recipe.steps[step]);
+                screen = screen.text(&recipe.steps[step]);
+                let mut has_primary = false;
                 if self.timer.is_none() {
                     if let Some(minutes) = step_timer(&recipe.steps[step]) {
                         screen = if last {
                             screen.button("timer", format!("Start {minutes} min timer"))
                         } else {
+                            has_primary = true;
                             screen.primary_button("timer", format!("Start {minutes} min timer"))
                         };
                     }
@@ -520,6 +522,8 @@ impl Kitchen {
                 }
                 if last {
                     screen = screen.primary_button("finish", "Finish");
+                } else if !has_primary {
+                    screen = screen.primary_button("next", "Next step");
                 }
                 screen
                     .page_turns("previous", "next")
@@ -549,14 +553,15 @@ impl Kitchen {
                 screen
                     .rows(recipe.ingredients.iter().enumerate().map(|(index, ingredient)| {
                         let amount = amounts::amount(ingredient, self.servings, recipe.servings);
+                        let detail = if amount.is_empty() || amount == ingredient.label() {
+                            String::new()
+                        } else {
+                            amount
+                        };
                         (
                             format!("ingredient-{index}"),
                             ingredient.label().to_owned(),
-                            if amount.is_empty() {
-                                "As written".to_owned()
-                            } else {
-                                amount
-                            },
+                            detail,
                             if self.checked.contains(&index) {
                                 Glyph::Check
                             } else {

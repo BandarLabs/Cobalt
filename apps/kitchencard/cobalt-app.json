@@ -4,8 +4,8 @@
   "short_label": "Kitchen",
   "summary": "Keep Mealie recipes handy in a counter-friendly cooking view.",
   "page_description": "A Mealie companion that keeps tonight's recipe legible, awake, and usable offline at the counter.",
-  "version": "0.1.3",
-  "release_notes": "Connects to your own Mealie address instead of a fixed one, imports the real recipe list, keeps recipes through restarts, and adds ingredient check-off, readable scaled amounts, step timers, and a finished state.",
+  "version": "0.1.4",
+  "release_notes": "Reads servings from real Mealie recipeYield text, keeps ingredient rows single-line, shows a visible Next step button while cooking, and carries parser fixtures captured from a live Mealie account.",
   "glyph": "reader",
   "capabilities": [
     "network",

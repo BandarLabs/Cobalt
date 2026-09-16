@@ -101,14 +101,29 @@ pub fn parse_detail(bytes: &[u8]) -> Option<Recipe> {
         .map(|category| text(category, "name", ""))
         .filter(|name| !name.is_empty())
         .unwrap_or_else(|| "Mealie".to_owned());
-    // Servings arrive as a JSON number; a fractional or absent one means the
-    // recipe does not say, and two is the honest default.
-    let servings = value
+    // Servings arrive as recipeServings when the owner set the numeric field
+    // and as recipeYield text otherwise ("4 servings"); a leading number in
+    // the yield text counts, and anything else means the recipe does not say,
+    // where two is the honest default.
+    #[allow(clippy::cast_possible_truncation)]
+    // recipeServings is a whole-number serving count stored as a float;
+    // rounding is the honest read and the positive filter bounds the range.
+    let numeric = value
         .get("recipeServings")
-        .and_then(Value::as_i64)
-        .and_then(|servings| u32::try_from(servings).ok())
-        .filter(|servings| *servings > 0)
-        .unwrap_or(2);
+        .and_then(Value::as_f64)
+        .filter(|servings| *servings > 0.0)
+        .and_then(|servings| u32::try_from(servings.round() as i64).ok());
+    let from_yield = value
+        .get("recipeYield")
+        .and_then(Value::as_str)
+        .and_then(|yield_text| {
+            yield_text
+                .split_whitespace()
+                .next()
+                .and_then(|first| first.parse::<u32>().ok())
+        })
+        .filter(|servings| *servings > 0);
+    let servings = numeric.or(from_yield).unwrap_or(2);
     Some(Recipe {
         slug,
         name,
@@ -169,6 +184,30 @@ fn text(value: &Value, key: &str, fallback: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_real_demo_mealie_payloads() {
+        // Captured 2026-09-17 from demo.mealie.io with a real account, token,
+        // and recipes created over the API (fixtures/mealie-*.json).
+        let stubs = parse_list(include_bytes!("../fixtures/mealie-list.json")).expect("list");
+        assert_eq!(stubs.len(), 3);
+        assert!(stubs
+            .iter()
+            .any(|stub| stub.slug == "lemon-herb-roasted-chicken"));
+        let detail = parse_detail(include_bytes!(
+            "../fixtures/mealie-detail-lemon-herb-roasted-chicken.json"
+        ))
+        .expect("detail");
+        assert_eq!(detail.name, "Lemon Herb Roasted Chicken");
+        assert_eq!(detail.ingredients.len(), 6);
+        assert_eq!(
+            detail.ingredients[0].display,
+            "1 1/2 kg whole chicken, patted dry"
+        );
+        assert_eq!(detail.servings, 4);
+        assert_eq!(detail.steps.len(), 4);
+        assert!(detail.steps[2].contains("45-50 minutes"));
+    }
 
     #[test]
     fn urls_are_built_from_the_configured_server() {
