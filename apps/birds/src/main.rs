@@ -119,7 +119,16 @@ impl Birds {
                 }
             });
         }
-        screen.build().with_reading(true)
+        // Fugleramme renders the names into the plate, so a bar across the top
+        // of it is somebody else's furniture laid over the art. Only while
+        // there is art: the screens that say why there is none keep their bar,
+        // because a reader looking at an explanation wants the way out in
+        // sight. Touching where the bar would be brings it back, and the shell
+        // owns both the hiding and the bringing back.
+        screen
+            .build()
+            .with_reading(true)
+            .with_auto_hidden_top_bar(self.picture.is_some())
     }
 
     fn show(&self, context: &mut Context) {

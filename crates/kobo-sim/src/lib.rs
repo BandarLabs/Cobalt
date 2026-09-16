@@ -1045,6 +1045,12 @@ fn is_picture_message(message: &Message) -> bool {
 #[derive(Debug)]
 struct AppState {
     screen: Screen,
+    /// The screen as the application drew it, before the shell added its way
+    /// back. Kept so the bar can be taken off and put back without asking the
+    /// application to draw anything.
+    drawn_screen: Screen,
+    /// Whether an auto-hiding top bar is currently showing.
+    top_bar: kobo_ui::TopBarState,
     app_name: String,
     capture_source: CaptureSource,
     time: clock::Time,
@@ -1107,6 +1113,8 @@ impl AppState {
         let clock_snapshot = time.now().expect("host clock must be in 1970..9999");
         Self {
             screen: Screen::new(0, Vec::new()),
+            drawn_screen: Screen::new(0, Vec::new()),
+            top_bar: kobo_ui::TopBarState::Hidden,
             app_name: "app".into(),
             capture_source: CaptureSource::default(),
             time,
@@ -1365,6 +1373,20 @@ impl AppState {
             i32::try_from(x).ok()?,
             i32::try_from(y).ok()?,
         );
+        // Showing and hiding the bar is the shell's, and is answered before
+        // anything is offered to the application: the band belongs to the way
+        // out, and an application cannot take it.
+        if let Some(state) = kobo_ui::top_bar_touch(
+            &self.drawn_screen,
+            &physical.oriented(self.orientation),
+            self.top_bar,
+            y,
+        ) {
+            self.top_bar = state;
+            self.compose_chrome();
+            self.commit_frame();
+            return None;
+        }
         let layout = self
             .screen
             .layout_with(&physical.oriented(self.orientation), &self.chrome);
@@ -1430,6 +1452,17 @@ impl AppState {
             kobo_ui::Chrome::for_screen(&self.screen, self.app_name == "launcher", Some(status));
     }
 
+    /// Rebuilds the displayed screen from the one the application drew, for
+    /// the bar state the shell is currently in.
+    fn compose_chrome(&mut self) {
+        self.screen = kobo_ui::ensure_way_back_revealed(
+            self.drawn_screen.clone(),
+            &self.chrome,
+            &self.app_name,
+            self.top_bar,
+        );
+    }
+
     fn record(&mut self, mut message: String) {
         if let Some((end, _)) = message.char_indices().nth(4096) {
             message.truncate(end);
@@ -1445,9 +1478,14 @@ impl AppState {
             .reading_font
             .and_then(|local| self.fonts.resolve(local));
         self.back_offer.answer(1);
+        // A screen that has just been drawn starts with its bar hidden, if it
+        // asked to hide it. Carrying the shown state across would leave the
+        // bar up over art the reader had already dismissed it from.
+        self.top_bar = kobo_ui::TopBarState::Hidden;
+        self.drawn_screen = screen.clone();
         self.screen = screen;
         self.update_chrome();
-        self.screen = kobo_ui::ensure_way_back(self.screen.clone(), &self.chrome, &self.app_name);
+        self.compose_chrome();
         self.paints = self.paints.saturating_add(1);
         self.record(format!("screen: {} paint: {}", self.screen.id, self.paints));
         self.commit_frame();

@@ -2362,6 +2362,9 @@ impl ScreenBuilder {
         Screen {
             id: self.id,
             top_bar: self.top_bar,
+            // Off unless the finished screen asks for it, so nothing loses a
+            // bar by being built through the builder.
+            auto_hide_top_bar: false,
             nodes: self.nodes,
             nav_bar: self.nav_bar,
             bottom_action: self.bottom_action,
