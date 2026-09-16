@@ -2,7 +2,8 @@
 
 use kobo_sdk::{
     action_id, ActionId, BannerLevel, Context, Glyph, KoboApp, PictureHandle, Screen,
-    ScreenBuilder, ShelfDownload, ShelfProgress, StoreResult, TilePicture,
+    ScreenBuilder, ShelfDownload, ShelfProgress, StoreResult, Task, TaskId, TaskOutcome,
+    TilePicture,
 };
 use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -15,6 +16,15 @@ const PICTURE: PictureHandle = PictureHandle(1);
 const REFRESH: &str = "refresh";
 const MENU: &str = "menu";
 const EXIT: &str = "exit";
+/// How often the shelf is looked at again.
+///
+/// The companion polls the station every five seconds and publishes the
+/// moment the birds change, so a reader who has to tap to see that is the
+/// only still point in a live chain. Ten seconds keeps the page close to the
+/// garden without waking a single-core reader more than it has to; the poll
+/// itself reads a two-hundred-byte pointer, and the megabyte of collage
+/// behind it is only opened when that pointer names a different picture.
+const POLL_SECONDS: u32 = 10;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct Snapshot {
@@ -44,6 +54,8 @@ struct Birds {
     menu_open: bool,
     panel_width: u32,
     panel_height: u32,
+    /// The sleep that becomes the next look at the shelf.
+    tick: Option<TaskId>,
 }
 
 impl Birds {
@@ -114,6 +126,18 @@ impl Birds {
         context.set_screen(self.screen());
     }
 
+    /// Queues the next look at the shelf.
+    ///
+    /// Always from the end of the last one rather than on a fixed clock, so a
+    /// slow read can never stack polls on a reader that is already busy.
+    fn schedule_poll(&mut self, context: &mut Context) {
+        if self.tick.is_none() {
+            self.tick = context.spawn(Task::Sleep {
+                seconds: POLL_SECONDS,
+            });
+        }
+    }
+
     fn reload(&mut self, context: &mut Context) {
         self.loading = true;
         self.notice = None;
@@ -139,6 +163,15 @@ impl Birds {
             ShelfProgress::Done => {
                 let bytes = self.snapshot_load.take().expect("active").take();
                 match decode_snapshot(&bytes) {
+                    // A poll that finds the same pointer stops here. Opening
+                    // and decoding a megabyte of collage every ten seconds to
+                    // arrive at the picture already on the panel would cost a
+                    // single-core reader its battery and show nothing new.
+                    Ok(snapshot)
+                        if self.picture.is_some() && self.snapshot.as_ref() == Some(&snapshot) =>
+                    {
+                        self.loading = false;
+                    }
                     Ok(snapshot) => {
                         self.pending = Some(snapshot);
                         self.load_image(context);
@@ -270,6 +303,27 @@ impl KoboApp for Birds {
         self.panel_height = u32::try_from(context.metrics().height).unwrap_or_default();
         context.device().read_identity();
         self.reload(context);
+        self.schedule_poll(context);
+        self.show(context);
+    }
+
+    /// The shelf is looked at again on every tick, so a collage published
+    /// while the reader is watching arrives on its own. A reader who never
+    /// touches the panel still sees the birds change.
+    fn on_task(&mut self, context: &mut Context, task: TaskId, outcome: TaskOutcome) {
+        if self.tick != Some(task) {
+            return;
+        }
+        self.tick = None;
+        if matches!(outcome, TaskOutcome::Cancelled) {
+            return;
+        }
+        // A read already in flight is left to finish; the next tick will find
+        // whatever it committed.
+        if self.snapshot_load.is_none() && self.image_load.is_none() {
+            self.reload(context);
+        }
+        self.schedule_poll(context);
         self.show(context);
     }
     fn on_device_result(
@@ -445,6 +499,51 @@ mod tests {
         runner.action(action_id(REFRESH));
         assert!(runner.app().loading);
     }
+    #[test]
+    fn the_shelf_is_looked_at_again_without_anybody_touching_the_panel() {
+        // The companion publishes every few seconds, so a reader who had to
+        // tap to see that was the only still point in a live chain.
+        let mut runner = AppRunner::new(Birds::default());
+        runner.start();
+        let first = runner.app().tick.expect("a poll is queued on opening");
+        runner.store_result(StoreResult::Denied(kobo_sdk::StoreError::Missing));
+        assert!(!runner.app().loading);
+        assert!(runner.app().snapshot_load.is_none());
+
+        runner.task_outcome(first, TaskOutcome::Completed(Vec::new()));
+        assert!(
+            runner.app().snapshot_load.is_some(),
+            "a tick must read the shelf again on its own"
+        );
+        let second = runner.app().tick.expect("the next poll is queued");
+        assert_ne!(second, first, "each tick queues the following one");
+    }
+
+    #[test]
+    fn a_cancelled_poll_is_not_replaced_and_a_busy_reader_is_not_asked_twice() {
+        let mut runner = AppRunner::new(Birds::default());
+        runner.start();
+        let tick = runner.app().tick.expect("queued");
+        // A read is still in flight from opening, so this tick must not start
+        // a second one on top of it.
+        let before = runner.outstanding_requests();
+        runner.task_outcome(tick, TaskOutcome::Completed(Vec::new()));
+        assert_eq!(
+            runner.outstanding_requests(),
+            before,
+            "a tick during a read must not queue the same read again"
+        );
+
+        let mut runner = AppRunner::new(Birds::default());
+        runner.start();
+        let tick = runner.app().tick.expect("queued");
+        runner.task_outcome(tick, TaskOutcome::Cancelled);
+        assert!(
+            runner.app().tick.is_none(),
+            "a cancelled poll is the runtime saying stop, not a reason to ask again"
+        );
+    }
+
     #[test]
     fn layouts_are_clean() {
         let birds = Birds {
