@@ -110,6 +110,10 @@ fn parse_listen(args: &[String]) -> Result<Listen, String> {
 fn listen(args: &[String]) -> Result<(), String> {
     let options = parse_listen(args)?;
     fs::create_dir_all(home()?).map_err(|e| format!("create Birds state: {e}"))?;
+    // The running check, spawn and PID write must be one critical section:
+    // two concurrent listens may otherwise both spawn workers and overwrite
+    // the single PID file, leaving one worker untracked.
+    let _lock = OperationLock::acquire(&home()?)?;
     if running()? {
         return Err("Birds listener is already running; use 'kobo birds status'".into());
     }
@@ -157,6 +161,14 @@ fn stop() -> Result<(), String> {
         return Err("Birds listener is not running".into());
     };
     if process_alive(pid) {
+        // A PID alone is not identity: the worker may have exited and the OS
+        // may have reused the number, so SIGTERM could hit a stranger.
+        if !worker_process(pid) {
+            return Err(format!(
+                "PID {pid} is not the Birds listener; the PID file is stale. Remove {} by hand if no listener is running.",
+                pid_path()?.display()
+            ));
+        }
         let s = Command::new("kill")
             .arg(pid.to_string())
             .status()
@@ -164,10 +176,74 @@ fn stop() -> Result<(), String> {
         if !s.success() {
             return Err("the Birds listener did not stop".into());
         }
+        // Wait for this worker to exit before clearing the PID file, so a
+        // following listen cannot run alongside the old worker.
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while process_alive(pid) {
+            if std::time::Instant::now() >= deadline {
+                return Err(
+                    "the Birds listener accepted SIGTERM but did not exit within 5 seconds".into(),
+                );
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
     }
     let _ = fs::remove_file(pid_path()?);
     println!("Birds listener stopped.");
     Ok(())
+}
+
+/// The PID must name this binary running the Birds worker, checked through
+/// ps so it holds on both macOS and Linux.
+fn worker_process(pid: u32) -> bool {
+    Command::new("ps")
+        .args(["-p", &pid.to_string(), "-o", "args="])
+        .output()
+        .map(|o| {
+            o.status.success() && {
+                let args = String::from_utf8_lossy(&o.stdout);
+                args.contains("birds") && args.contains("_worker")
+            }
+        })
+        .unwrap_or(false)
+}
+
+/// Serializes listener start/stop across concurrent invocations. Mirrors the
+/// dedicated Sync peer's operation lock: an exclusively created file that a
+/// stale-holder check may clear.
+struct OperationLock {
+    path: PathBuf,
+}
+impl OperationLock {
+    fn acquire(home: &Path) -> Result<Self, String> {
+        let path = home.join("listener.lock");
+        for _attempt in 0..2 {
+            match OpenOptions::new().write(true).create_new(true).open(&path) {
+                Ok(mut file) => {
+                    writeln!(file, "{}", std::process::id())
+                        .map_err(|e| format!("write Birds listener lock: {e}"))?;
+                    return Ok(Self { path });
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                    let pid = fs::read_to_string(&path)
+                        .ok()
+                        .and_then(|v| v.trim().parse::<u32>().ok());
+                    if pid.is_some_and(process_alive) {
+                        return Err("another 'kobo birds listen' is starting".into());
+                    }
+                    fs::remove_file(&path)
+                        .map_err(|e| format!("remove stale Birds listener lock: {e}"))?;
+                }
+                Err(e) => return Err(format!("create Birds listener lock: {e}")),
+            }
+        }
+        Err("another 'kobo birds listen' is starting".into())
+    }
+}
+impl Drop for OperationLock {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
 }
 fn read_pid() -> Result<Option<u32>, String> {
     match fs::read_to_string(pid_path()?) {
@@ -190,25 +266,35 @@ fn worker(args: &[String]) -> Result<(), String> {
     let o = parse_listen(args)?;
     let mut token = String::new();
     loop {
-        match http_get(&format!("{}/state", o.source), MAX_JSON).and_then(|b| state_token(&b)) {
-            Ok(next) if next != token => {
-                let image = http_get(&format!("{}/collage.png", o.source), MAX_IMAGE)?;
-                if !image.starts_with(b"\x89PNG\r\n\x1a\n") {
-                    return Err("Fugleramme collage is not PNG".into());
-                }
-                let generated = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .map_err(|_| "clock is before 1970")?
-                    .as_secs();
-                let snapshot = json!({"format":"cobalt-birds-v1","generated_at":generated,"source":o.source,"token":next,"recent":[]});
-                push_bytes(snapshot.to_string().as_bytes(), &image, o.target.clone())?;
-                token = next;
-            }
-            Ok(_) => {}
-            Err(e) => eprintln!("Birds source unavailable; keeping the last snapshot: {e}"),
+        // One bad poll (a transient timeout, a 503 while Fugleramme
+        // re-renders) must never kill the long-lived worker: log it and
+        // retry on the next interval.
+        if let Err(e) = poll_once(&o, &mut token) {
+            eprintln!("Birds update failed; retrying in {}s: {e}", o.interval);
         }
         std::thread::sleep(Duration::from_secs(o.interval));
     }
+}
+
+fn poll_once(o: &Listen, token: &mut String) -> Result<(), String> {
+    match http_get(&format!("{}/state", o.source), MAX_JSON).and_then(|b| state_token(&b)) {
+        Ok(next) if next != *token => {
+            let image = http_get(&format!("{}/collage.png", o.source), MAX_IMAGE)?;
+            if !image.starts_with(b"\x89PNG\r\n\x1a\n") {
+                return Err("Fugleramme collage is not PNG".into());
+            }
+            let generated = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_err(|_| "clock is before 1970")?
+                .as_secs();
+            let snapshot = json!({"format":"cobalt-birds-v1","generated_at":generated,"source":o.source,"token":next,"recent":[]});
+            push_bytes(snapshot.to_string().as_bytes(), &image, o.target.clone())?;
+            *token = next;
+        }
+        Ok(_) => {}
+        Err(e) => eprintln!("Birds source unavailable; keeping the last snapshot: {e}"),
+    }
+    Ok(())
 }
 fn state_token(bytes: &[u8]) -> Result<String, String> {
     let v: Value =
@@ -259,17 +345,26 @@ fn validate(json: &[u8], image: &[u8]) -> Result<(), String> {
     Ok(())
 }
 fn push_bytes(json: &[u8], image: &[u8], target: Target) -> Result<(), String> {
-    validate(json, image)?;
+    let paired = pair_checksum(json, image)?;
+    validate(&paired, image)?;
     match target {
         Target::Sim => {
             let root = kobo_sim::simulated_data_root("birds");
             fs::create_dir_all(&root).map_err(|e| e.to_string())?;
+            // The image lands first and the snapshot last: the snapshot is the
+            // commit point, and the app only trusts a snapshot whose recorded
+            // checksum matches the image on the shelf.
             atomic_write(&root.join(IMAGE), image)?;
-            atomic_write(&root.join(SNAPSHOT), json)?;
+            atomic_write(&root.join(SNAPSHOT), &paired)?;
         }
         Target::Device(host) => {
-            let script=format!("set -eu\nroot='{ROOT}'\nmkdir -p \"$root\"\nchmod 700 \"$root\"\nbase64 -d > \"$root/.{IMAGE}.writing\" <<'BIRDS_IMAGE'\n{}\nBIRDS_IMAGE\nbase64 -d > \"$root/.{SNAPSHOT}.writing\" <<'BIRDS_JSON'\n{}\nBIRDS_JSON\nchmod 600 \"$root/.{IMAGE}.writing\" \"$root/.{SNAPSHOT}.writing\"\nmv -f \"$root/.{IMAGE}.writing\" \"$root/{IMAGE}\"\nmv -f \"$root/.{SNAPSHOT}.writing\" \"$root/{SNAPSHOT}\"\nsync\n",base64(image),base64(json));
-            let out = super::run_remote_shell(&host, &script, Duration::from_secs(60))?;
+            let script = format!(
+                "set -eu\nroot='{ROOT}'\nmkdir -p \"$root\"\nchmod 700 \"$root\"\nbase64 -d > \"$root/.{IMAGE}.writing\" <<'BIRDS_IMAGE'\n{}\nBIRDS_IMAGE\nbase64 -d > \"$root/.{SNAPSHOT}.writing\" <<'BIRDS_JSON'\n{}\nBIRDS_JSON\nchmod 600 \"$root/.{IMAGE}.writing\" \"$root/.{SNAPSHOT}.writing\"\nmv -f \"$root/.{IMAGE}.writing\" \"$root/{IMAGE}\"\nmv -f \"$root/.{SNAPSHOT}.writing\" \"$root/{SNAPSHOT}\"\nsync\n",
+                base64(image),
+                base64(&paired)
+            );
+            let out =
+                super::run_remote_shell(&format!("root@{host}"), &script, Duration::from_secs(60))?;
             if !out.status.success() {
                 return Err(format!(
                     "Birds transfer failed: {}",
@@ -282,15 +377,51 @@ fn push_bytes(json: &[u8], image: &[u8], target: Target) -> Result<(), String> {
     Ok(())
 }
 fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
-    let tmp = path.with_extension("writing");
-    if tmp.exists() {
-        return Err(format!(
-            "{} is occupied by another operation",
-            tmp.display()
-        ));
-    }
-    fs::write(&tmp, bytes).map_err(|e| format!("write {}: {e}", tmp.display()))?;
+    // Stage beside the destination under its own name: with_extension would
+    // map both current.png and current.json to the same current.writing, and
+    // an occupied check without exclusive creation races a concurrent push.
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| format!("{} has no file name", path.display()))?;
+    let tmp = path.with_file_name(format!(".{name}.writing"));
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&tmp)
+        .map_err(|e| {
+            if e.kind() == std::io::ErrorKind::AlreadyExists {
+                format!("{} is occupied by another operation", tmp.display())
+            } else {
+                format!("write {}: {e}", tmp.display())
+            }
+        })?;
+    file.write_all(bytes)
+        .map_err(|e| format!("write {}: {e}", tmp.display()))?;
+    drop(file);
     fs::rename(&tmp, path).map_err(|e| format!("publish {}: {e}", path.display()))
+}
+
+/// Records the image's checksum inside the snapshot so the reader can prove
+/// the two files it holds came from the same publish, never a mixed pair.
+fn pair_checksum(json: &[u8], image: &[u8]) -> Result<Vec<u8>, String> {
+    let mut v: Value =
+        serde_json::from_slice(json).map_err(|_| "Birds snapshot is invalid JSON")?;
+    v["image_checksum"] = json!(fnv64(image));
+    serde_json::to_string(&v)
+        .map(String::into_bytes)
+        .map_err(|e| format!("encode Birds snapshot: {e}"))
+}
+
+/// FNV-1a 64, hex: cheap on the reader and sufficient to detect a generation
+/// mismatch between current.png and current.json.
+fn fnv64(bytes: &[u8]) -> String {
+    let mut hash = 0xcbf2_9ce4_8422_2325_u64;
+    for b in bytes {
+        hash ^= u64::from(*b);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    format!("{hash:016x}")
 }
 fn base64(bytes: &[u8]) -> String {
     const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -388,5 +519,39 @@ mod tests {
     fn state_requires_token() {
         assert_eq!(state_token(br#"{"token":"abc"}"#).unwrap(), "abc");
         assert!(state_token(b"{}").is_err());
+    }
+    #[test]
+    fn pairing_records_the_image_checksum() {
+        let json = br#"{"format":"cobalt-birds-v1","generated_at":1,"recent":[]}"#;
+        let image = b"\x89PNG\r\n\x1a\nrest";
+        let paired = pair_checksum(json, image).unwrap();
+        let v: Value = serde_json::from_slice(&paired).unwrap();
+        assert_eq!(
+            v["image_checksum"].as_str().unwrap(),
+            fnv64(image),
+            "the snapshot must name the exact image bytes it ships with"
+        );
+        // A caller-supplied checksum never survives: the pair is recomputed.
+        let lying =
+            br#"{"format":"cobalt-birds-v1","generated_at":1,"image_checksum":"0000000000000000"}"#;
+        let paired = pair_checksum(lying, image).unwrap();
+        let v: Value = serde_json::from_slice(&paired).unwrap();
+        assert_eq!(v["image_checksum"].as_str().unwrap(), fnv64(image));
+    }
+    #[test]
+    fn staging_names_are_destination_specific_and_exclusive() {
+        let root = std::env::temp_dir().join(format!("birds-test-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let png = root.join("current.png");
+        let json = root.join("current.json");
+        atomic_write(&png, b"png").unwrap();
+        atomic_write(&json, b"json").unwrap();
+        // Distinct staging files: neither destination reused the other's name.
+        assert!(!root.join("current.writing").exists());
+        // An occupied staging path fails without touching the destination.
+        fs::write(root.join(".current.json.writing"), b"other").unwrap();
+        assert!(atomic_write(&json, b"new").is_err());
+        assert_eq!(fs::read(&json).unwrap(), b"json");
+        let _ = fs::remove_dir_all(&root);
     }
 }
