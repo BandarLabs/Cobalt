@@ -324,7 +324,7 @@
         {
           "path": "crates/kobo-abi/src/entropy.rs",
           "base_blob": null,
-          "compatible_blob": "531655700176c9b01cd38f0fc61a81eb3c39339a"
+          "compatible_blob": "830985f15812fc529fd475f0bbdd890d894d6b48"
         },
         {
           "path": "crates/kobo-abi/src/lib.rs",

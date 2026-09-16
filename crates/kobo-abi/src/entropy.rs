@@ -55,7 +55,11 @@ pub fn random_bytes(bytes: &mut [u8]) -> io::Result<()> {
     if status == 0 {
         Ok(())
     } else {
-        Err(io::Error::from_raw_os_error(status))
+        // `from_raw_os_error` reads a Win32 error code; `BCryptGenRandom`
+        // answers an NTSTATUS, and a Win32 rendering of one misleads.
+        Err(io::Error::other(format!(
+            "BCryptGenRandom failed with NTSTATUS {status:#010X}"
+        )))
     }
 }
 
