@@ -249,6 +249,28 @@ pub fn mount_roots() -> Vec<PathBuf> {
     }
 }
 
+/// Every volume worth checking for a reader, one per mount point.
+///
+/// On Unix the mount points are the children of [`mount_roots`]. Windows has
+/// no shared parent directory: each volume is its own drive-letter root, so
+/// the letters themselves are the candidates. Probing a letter with no drive
+/// behind it, or a drive with no card in it, fails fast and silently.
+fn candidates() -> Vec<PathBuf> {
+    if cfg!(windows) {
+        return (b'A'..=b'Z')
+            .map(|letter| PathBuf::from(format!("{letter}:\\")))
+            .collect();
+    }
+    let mut volumes = Vec::new();
+    for root in mount_roots() {
+        let Ok(entries) = fs::read_dir(&root) else {
+            continue;
+        };
+        volumes.extend(entries.flatten().map(|entry| entry.path()));
+    }
+    volumes
+}
+
 /// Every mounted reader this machine can see.
 ///
 /// A volume qualifies when it has a readable `.kobo/version` naming a Kobo
@@ -257,17 +279,10 @@ pub fn mount_roots() -> Vec<PathBuf> {
 /// for.
 #[must_use]
 pub fn mounted_readers() -> Vec<Mounted> {
-    let mut found = Vec::new();
-    for root in mount_roots() {
-        let Ok(entries) = fs::read_dir(&root) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            if let Some(reader) = read_reader(&entry.path()) {
-                found.push(reader);
-            }
-        }
-    }
+    let mut found: Vec<Mounted> = candidates()
+        .iter()
+        .filter_map(|volume| read_reader(volume))
+        .collect();
     found.sort_by(|left, right| left.volume.cmp(&right.volume));
     found.dedup_by(|left, right| left.volume == right.volume);
     found
@@ -1564,6 +1579,7 @@ pub fn wait_for_reader(
 
 #[cfg(test)]
 mod tests {
+    use super::candidates;
     #[cfg(target_os = "linux")]
     use super::mount_roots;
     use super::{
@@ -1995,6 +2011,24 @@ mod tests {
     #[test]
     fn linux_mount_discovery_includes_wsl_drive_roots() {
         assert!(mount_roots().contains(&PathBuf::from("/mnt")));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_mount_discovery_probes_every_drive_letter_root() {
+        let volumes = candidates();
+        assert_eq!(volumes.len(), 26);
+        assert!(volumes.contains(&PathBuf::from("E:\\")));
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn unix_mount_discovery_scans_the_children_of_the_mount_roots() {
+        // The Windows arm probes drive-letter roots themselves; everywhere
+        // else the candidates are the entries inside the mount roots.
+        assert!(!candidates()
+            .iter()
+            .any(|volume| volume == Path::new("/media")));
     }
 
     #[test]
