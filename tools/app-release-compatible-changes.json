@@ -308,7 +308,7 @@
         {
           "path": "Cargo.lock",
           "base_blob": "36e8d8afe839919ba62b86bd28ae713c2c4bdf7a",
-          "compatible_blob": "7b26b2005aba71f693b7fa29ca68da397871bf9a"
+          "compatible_blob": "0bbe491a5b371d90665ba4eba3270eaff09f003a"
         }
       ]
     },
@@ -316,6 +316,11 @@
       "protocol_version": 14,
       "reason": "Windows host support for the CLI and simulator. The SDK's host channel moves behind kobo_protocol::channel, which stays an AF_UNIX socket on Unix, and OS entropy behind kobo-abi, whose Unix arm reads /dev/urandom exactly as the SDK did before; directory and file flushes share kobo_protocol::durability with the same open-and-fsync behavior on Unix. Every platform difference is cfg-gated to Windows arms. The wire protocol, its version, and Unix build behavior are unchanged, so published Store apps are unaffected.",
       "files": [
+        {
+          "path": "Cargo.lock",
+          "base_blob": "d87db6f43872e774cabd002c42dd7261f6b6870e",
+          "compatible_blob": "0bbe491a5b371d90665ba4eba3270eaff09f003a"
+        },
         {
           "path": "crates/kobo-abi/src/entropy.rs",
           "base_blob": null,
