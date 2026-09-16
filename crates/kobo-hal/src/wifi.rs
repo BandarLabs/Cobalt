@@ -8,7 +8,7 @@
 //! existing owner.
 
 use crate::network::{signal_dbm, wireless_link};
-use kobo_protocol::{DeviceError, DeviceResult, WifiNetwork, MAX_RADIO_DEVICES};
+use kobo_protocol::{DenyReason, DeviceError, DeviceResult, WifiNetwork, MAX_RADIO_DEVICES};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -42,6 +42,16 @@ impl Wifi {
             .map(|path| Self {
                 wpa_cli: path.to_path_buf(),
             })
+    }
+
+    /// Explains a missing backend without trying to initialize a driver.
+    #[must_use]
+    pub fn unavailable_reason(profile: &kobo_profile::DeviceProfile) -> Option<DenyReason> {
+        availability_reason(
+            profile,
+            Path::new("/sys/class/net").join(wireless_link()).exists(),
+            WPA_TOOLS.iter().any(|path| Path::new(path).is_file()),
+        )
     }
 
     #[must_use]
@@ -311,6 +321,26 @@ fn parse_scan_results(output: &str, connected: Option<&str>) -> Vec<WifiNetwork>
     networks
 }
 
+fn availability_reason(
+    profile: &kobo_profile::DeviceProfile,
+    interface_present: bool,
+    tool_present: bool,
+) -> Option<DenyReason> {
+    if interface_present && tool_present {
+        None
+    } else if !interface_present
+        && tool_present
+        && profile
+            .compatible_fragments
+            .iter()
+            .any(|value| value.starts_with("mediatek,"))
+    {
+        Some(DenyReason::WifiNeedsNickel)
+    } else {
+        Some(DenyReason::Unsupported)
+    }
+}
+
 fn value<'a>(status: &'a str, wanted: &str) -> Option<&'a str> {
     status.lines().find_map(|line| {
         let (name, value) = line.split_once('=')?;
@@ -344,6 +374,31 @@ mod tests {
     use super::{
         association_recovery_commands, parse_scan_results, quote, valid_credentials, value,
     };
+    use kobo_protocol::DenyReason;
+
+    #[test]
+    fn startup_guidance_requires_a_known_mediatek_radio_and_the_firmware_tool() {
+        use kobo_profile::{ELIPSA_2E_389, LIBRA_2_388};
+        assert_eq!(
+            super::availability_reason(&ELIPSA_2E_389, false, true),
+            Some(DenyReason::WifiNeedsNickel)
+        );
+        for profile in [&ELIPSA_2E_389, &LIBRA_2_388] {
+            assert_eq!(super::availability_reason(profile, true, true), None);
+            assert_eq!(
+                super::availability_reason(profile, true, false),
+                Some(DenyReason::Unsupported)
+            );
+            assert_eq!(
+                super::availability_reason(profile, false, false),
+                Some(DenyReason::Unsupported)
+            );
+        }
+        assert_eq!(
+            super::availability_reason(&LIBRA_2_388, false, true),
+            Some(DenyReason::Unsupported)
+        );
+    }
 
     #[test]
     fn association_recovery_matches_the_stock_network_screen_sequence() {

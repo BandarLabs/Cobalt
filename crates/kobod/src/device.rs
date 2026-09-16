@@ -1676,6 +1676,8 @@ fn host_applications(
         backends.push(Capability::BluetoothControl);
     }
     let wifi = kobo_hal::wifi::Wifi::open();
+    let wifi_unavailable = kobo_hal::wifi::Wifi::unavailable_reason(display.profile())
+        .unwrap_or(kobo_protocol::DenyReason::Unsupported);
     if wifi.is_some() {
         backends.push(Capability::WifiControl);
         backends.push(Capability::Network);
@@ -2500,7 +2502,11 @@ fn host_applications(
                             ) {
                                 result
                             } else if let Some(reason) = services.refusal_for(&request) {
-                                kobo_protocol::DeviceResult::Denied(reason)
+                                kobo_protocol::DeviceResult::Denied(wifi_refusal(
+                                    &request,
+                                    reason,
+                                    wifi_unavailable,
+                                ))
                             } else {
                                 match &request {
                                     kobo_protocol::DeviceRequest::ReadBluetooth => {
@@ -3165,6 +3171,28 @@ fn reply(app: &mut Hosted, request_id: u32, message: Message) -> Result<(), Stri
         },
     )
     .map_err(|error| format!("answer {}: {error}", app.name))
+}
+
+fn wifi_refusal(
+    request: &kobo_protocol::DeviceRequest,
+    reason: kobo_protocol::DenyReason,
+    unavailable: kobo_protocol::DenyReason,
+) -> kobo_protocol::DenyReason {
+    use kobo_protocol::{DenyReason, DeviceRequest};
+    if reason == DenyReason::Unsupported
+        && matches!(
+            request,
+            DeviceRequest::ReadWifi
+                | DeviceRequest::SetWifi { .. }
+                | DeviceRequest::ScanWifi
+                | DeviceRequest::JoinWifi { .. }
+                | DeviceRequest::DisconnectWifi
+        )
+    {
+        unavailable
+    } else {
+        reason
+    }
 }
 
 /// One line describing how the session ended and what ran during it.
@@ -4598,7 +4626,8 @@ fn pump_application(
 mod tests {
     use kobo_policy::{Capability, TaskRunner};
     use kobo_protocol::{
-        Credential, CredentialUse, DeviceResult, Frame, Header, Message, Task, TaskId, TaskOutcome,
+        Credential, CredentialUse, DenyReason, DeviceRequest, DeviceResult, Frame, Header, Message,
+        Task, TaskId, TaskOutcome,
     };
     use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
     use rustls::{ServerConfig, ServerConnection, StreamOwned};
@@ -4618,6 +4647,45 @@ mod tests {
     const SEEK_BODY: &str = "rated=true&time=10&increment=0&variant=standard&color=random";
     const FORM: &str = "application/x-www-form-urlencoded";
     static HOSTED_PEER: AtomicUsize = AtomicUsize::new(0);
+
+    #[test]
+    fn wifi_startup_guidance_does_not_change_other_refusals() {
+        for request in [
+            DeviceRequest::ReadWifi,
+            DeviceRequest::ScanWifi,
+            DeviceRequest::SetWifi { enabled: true },
+            DeviceRequest::JoinWifi {
+                ssid: "test".into(),
+                password: String::new(),
+            },
+            DeviceRequest::DisconnectWifi,
+        ] {
+            assert_eq!(
+                super::wifi_refusal(
+                    &request,
+                    DenyReason::Unsupported,
+                    DenyReason::WifiNeedsNickel
+                ),
+                DenyReason::WifiNeedsNickel
+            );
+            assert_eq!(
+                super::wifi_refusal(
+                    &request,
+                    DenyReason::NotDeclared,
+                    DenyReason::WifiNeedsNickel
+                ),
+                DenyReason::NotDeclared
+            );
+        }
+        assert_eq!(
+            super::wifi_refusal(
+                &DeviceRequest::ReadBattery,
+                DenyReason::Unsupported,
+                DenyReason::WifiNeedsNickel
+            ),
+            DenyReason::Unsupported
+        );
+    }
 
     #[test]
     fn launch_splash_covers_the_panel_and_centres_the_mark_without_chrome() {
