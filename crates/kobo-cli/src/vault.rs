@@ -5,7 +5,8 @@
 //! here exports them back.
 
 use kobo_vault_host::{
-    digest, plan, title_for, ImportFailure, IncomingNote, Manifest, Push, MANIFEST, MAX_NOTES,
+    digest, links_for, plan_prefixed, tags_for, title_for, ImportFailure, IncomingNote, Manifest,
+    Push, MANIFEST, MAX_NOTES, SYNCED_MANIFEST, SYNCED_PREFIX,
 };
 use std::fmt::Write as _;
 use std::fs;
@@ -19,6 +20,7 @@ const SKIP_DIRS: &[&str] = &[".obsidian", ".trash", ".git", "node_modules"];
 const USAGE: &str = "usage: kobo vault init (--sim | --device IP)\n\
                      \x20      kobo vault push VAULT_DIR [--exclude TEXT]... (--sim | --device IP)\n\
                      \x20      kobo vault plan VAULT_DIR [--exclude TEXT]... (--sim | --device IP)\n\
+                     \x20      kobo vault ingest SYNCED_DIR [--exclude TEXT]... (--sim | --device IP)\n\
                      \x20      kobo vault preview NOTE.md\n\
                      \x20      kobo vault ls (--sim | --device IP)\n\
                      \x20      kobo vault rm ID (--sim | --device IP)\n\
@@ -26,7 +28,11 @@ const USAGE: &str = "usage: kobo vault init (--sim | --device IP)\n\
                      The host folder is the source of truth: push mirrors it onto the\n\
                      shelf. Notes the folder no longer offers leave the shelf, and a\n\
                      renamed note keeps its place without a second transfer. Vault\n\
-                     reads Markdown; edits made on the reader are not exported.";
+                     reads Markdown; edits made on the reader are not exported.\n\
+                     \n\
+                     ingest packs a folder Sync has delivered (pair it with\n\
+                     kobo sync setup <dir> --folder vault for ongoing delivery) onto\n\
+                     the synced shelf; push and ingest never overwrite each other.";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum Target {
@@ -42,6 +48,7 @@ pub fn command(arguments: &[String]) -> Result<(), String> {
         Some("init") => init(&arguments[1..]),
         Some("push") => push(&arguments[1..], false),
         Some("plan") => push(&arguments[1..], true),
+        Some("ingest") => ingest(&arguments[1..]),
         Some("preview") => preview(&arguments[1..]),
         Some("ls") => list(&arguments[1..]),
         Some("rm") => remove(&arguments[1..]),
@@ -187,6 +194,8 @@ fn walk(folder: &Path, excludes: &[String]) -> Result<Walk, String> {
                         .map_or(0, |duration| duration.as_secs());
                     walk.offered.push(IncomingNote {
                         title: title_for(&relative, &body),
+                        tags: tags_for(&body),
+                        links: links_for(&body),
                         digest: digest(body.as_bytes()),
                         added,
                         body: body.into_bytes(),
@@ -254,7 +263,11 @@ fn sim_root() -> PathBuf {
 }
 
 fn read_local_manifest() -> Result<Manifest, String> {
-    let path = sim_root().join(MANIFEST);
+    read_local_manifest_named(MANIFEST)
+}
+
+fn read_local_manifest_named(manifest_name: &str) -> Result<Manifest, String> {
+    let path = sim_root().join(manifest_name);
     match fs::read(&path) {
         Ok(bytes) => Manifest::decode(&bytes)
             .map_err(|error| format!("the simulator Vault manifest is invalid: {error}")),
@@ -264,6 +277,10 @@ fn read_local_manifest() -> Result<Manifest, String> {
 }
 
 fn publish_local(push: &Push) -> Result<(), String> {
+    publish_local_named(push, MANIFEST)
+}
+
+fn publish_local_named(push: &Push, manifest_name: &str) -> Result<(), String> {
     let root = sim_root();
     fs::create_dir_all(&root).map_err(|error| format!("create Vault simulator shelf: {error}"))?;
     for prepared in &push.notes {
@@ -275,8 +292,8 @@ fn publish_local(push: &Push) -> Result<(), String> {
         fs::rename(&partial, &dest)
             .map_err(|error| format!("publish Vault note {name}: {error}"))?;
     }
-    let dest = root.join(MANIFEST);
-    let partial = root.join(format!(".{MANIFEST}.writing"));
+    let dest = root.join(manifest_name);
+    let partial = root.join(format!(".{manifest_name}.writing"));
     fs::write(&partial, push.manifest.encode())
         .map_err(|error| format!("write Vault manifest: {error}"))?;
     fs::rename(&partial, &dest).map_err(|error| format!("publish Vault manifest: {error}"))?;
@@ -332,7 +349,7 @@ fn push(arguments: &[String], plan_only: bool) -> Result<(), String> {
     };
     let failures = std::mem::take(&mut walk.failures);
     let offered = std::mem::take(&mut walk.offered);
-    let push = plan(&existing, offered, failures)?;
+    let push = plan_prefixed(&existing, offered, failures, "note-")?;
     print_plan(&push, &walk);
     if push.manifest.notes.len() > MAX_NOTES {
         return Err(format!("Vault holds at most {MAX_NOTES} notes"));
@@ -376,18 +393,80 @@ fn push(arguments: &[String], plan_only: bool) -> Result<(), String> {
 }
 
 fn list(arguments: &[String]) -> Result<(), String> {
-    let manifest = match parse_target(arguments)? {
-        Target::Device(host) => read_manifest(&host)?,
-        Target::Sim => read_local_manifest()?,
+    let (pushed, synced) = match parse_target(arguments)? {
+        Target::Device(host) => (
+            read_manifest_named(&host, MANIFEST)?,
+            read_manifest_named(&host, SYNCED_MANIFEST)?,
+        ),
+        Target::Sim => (
+            read_local_manifest_named(MANIFEST)?,
+            read_local_manifest_named(SYNCED_MANIFEST)?,
+        ),
     };
-    if manifest.notes.is_empty() {
+    if pushed.notes.is_empty() && synced.notes.is_empty() {
         println!("The Vault shelf is empty.");
     }
-    for note in &manifest.notes {
+    for note in &pushed.notes {
         println!("{} · {} · {} byte(s)", note.id, note.path, note.bytes);
     }
-    for failure in &manifest.failures {
+    for note in &synced.notes {
+        println!(
+            "{} · {} · {} byte(s) · synced",
+            note.id, note.path, note.bytes
+        );
+    }
+    for failure in pushed.failures.iter().chain(synced.failures.iter()) {
         println!("could not import {}: {}", failure.input, failure.reason);
+    }
+    Ok(())
+}
+
+/// Pack a folder Sync has delivered onto the synced shelf. The same walk,
+/// plan and atomic publish as push, against the separate synced manifest so
+/// a sync drop and a hand push never overwrite each other.
+fn ingest(arguments: &[String]) -> Result<(), String> {
+    let (folder, excludes, target) = parse_push(arguments)?;
+    let mut walk = walk(Path::new(&folder), &excludes)?;
+    let existing = match &target {
+        Target::Device(host) => read_manifest_named(host, SYNCED_MANIFEST)?,
+        Target::Sim => read_local_manifest_named(SYNCED_MANIFEST)?,
+    };
+    let failures = std::mem::take(&mut walk.failures);
+    let offered = std::mem::take(&mut walk.offered);
+    let push = plan_prefixed(&existing, offered, failures, SYNCED_PREFIX)?;
+    print_plan(&push, &walk);
+    if push.manifest.notes.len() > MAX_NOTES {
+        return Err(format!("Vault holds at most {MAX_NOTES} synced notes"));
+    }
+    match &target {
+        Target::Device(host) => {
+            transfer_named(host, &push, SYNCED_MANIFEST)?;
+            let actual = read_manifest_named(host, SYNCED_MANIFEST)?;
+            if actual.notes != push.manifest.notes {
+                return Err(
+                    "the reader's synced Vault shelf does not match the ingestion plan".to_owned(),
+                );
+            }
+            println!(
+                "Ingested {} synced note file(s); the reader's synced shelf matches the plan.",
+                push.notes.len()
+            );
+            println!("Vault indexes the synced shelf when it next opens.");
+        }
+        Target::Sim => {
+            publish_local_named(&push, SYNCED_MANIFEST)?;
+            let actual = read_local_manifest_named(SYNCED_MANIFEST)?;
+            if actual.notes != push.manifest.notes {
+                return Err(
+                    "the simulator synced Vault shelf does not match the ingestion plan".to_owned(),
+                );
+            }
+            println!(
+                "Ingested {} synced note file(s); the simulator synced shelf matches the plan.",
+                push.notes.len()
+            );
+            println!("Vault indexes the synced shelf when it next opens.");
+        }
     }
     Ok(())
 }
@@ -467,13 +546,20 @@ fn render_markdown(markdown: &str) -> String {
     );
     // The shelf format's own note ceiling: a note the shelf accepted is a
     // document, not a feed field, so the preview measures all of it.
-    kobo_html::to_text_within(&html, usize::try_from(kobo_vault_host::MAX_NOTE_BYTES).unwrap_or(usize::MAX))
+    kobo_html::to_text_within(
+        &html,
+        usize::try_from(kobo_vault_host::MAX_NOTE_BYTES).unwrap_or(usize::MAX),
+    )
 }
 
 fn read_manifest(host: &str) -> Result<Manifest, String> {
+    read_manifest_named(host, MANIFEST)
+}
+
+fn read_manifest_named(host: &str, manifest_name: &str) -> Result<Manifest, String> {
     let output = remote(
         host,
-        &format!("cat '{ROOT}/{MANIFEST}' 2>/dev/null || true\n"),
+        &format!("cat '{ROOT}/{manifest_name}' 2>/dev/null || true\n"),
     )?;
     let text = String::from_utf8_lossy(&output.stdout);
     if text.trim().is_empty() {
@@ -484,6 +570,10 @@ fn read_manifest(host: &str) -> Result<Manifest, String> {
 }
 
 fn transfer(host: &str, push: &Push) -> Result<(), String> {
+    transfer_named(host, push, MANIFEST)
+}
+
+fn transfer_named(host: &str, push: &Push, manifest_name: &str) -> Result<(), String> {
     let mut script = format!("set -eu\nroot='{ROOT}'\nmkdir -p \"$root\"\nchmod 700 \"$root\"\n");
     for prepared in &push.notes {
         let name = Push::note_name(&prepared.note_id);
@@ -496,7 +586,7 @@ fn transfer(host: &str, push: &Push) -> Result<(), String> {
     let encoded = super::base64_encode(&push.manifest.encode());
     let _ = write!(
         script,
-        "partial=\"$root/.{MANIFEST}.writing\"\nbase64 -d > \"$partial\" <<'COBALT_VAULT_MANIFEST'\n{encoded}\nCOBALT_VAULT_MANIFEST\nchmod 600 \"$partial\"\nmv -f \"$partial\" \"$root/{MANIFEST}\"\nsync\n"
+        "partial=\"$root/.{manifest_name}.writing\"\nbase64 -d > \"$partial\" <<'COBALT_VAULT_MANIFEST'\n{encoded}\nCOBALT_VAULT_MANIFEST\nchmod 600 \"$partial\"\nmv -f \"$partial\" \"$root/{manifest_name}\"\nsync\n"
     );
     for removed in &push.removed {
         let _ = writeln!(script, "rm -f \"$root/{}\"", Push::note_name(&removed.id));

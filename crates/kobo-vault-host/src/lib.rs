@@ -6,6 +6,11 @@ use kobo_json::{ObjectBuilder, Value};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub const MANIFEST: &str = "manifest.v1";
+/// The shelf the Sync ingestion writes: same codec, separate manifest, so a
+/// synced drop never has to touch what `kobo vault push` published.
+pub const SYNCED_MANIFEST: &str = "synced.v1";
+/// Note ids on the synced shelf, distinct from pushed `note-` ids.
+pub const SYNCED_PREFIX: &str = "synced-note-";
 pub const MAX_MANIFEST: usize = 1024 * 1024;
 pub const MAX_NOTES: usize = 2048;
 pub const MAX_NOTE_BYTES: u64 = 512 * 1024;
@@ -16,6 +21,12 @@ pub struct NoteEntry {
     pub id: String,
     pub path: String,
     pub title: String,
+    /// Deduped `#tags` found in the note, so the reader can list and filter
+    /// tags without opening every note.
+    pub tags: Vec<String>,
+    /// Deduped Markdown and wiki-link targets, so backlinks answer from the
+    /// manifest alone.
+    pub links: Vec<String>,
     pub digest: String,
     pub bytes: u64,
     pub added: u64,
@@ -43,6 +54,8 @@ impl Manifest {
                     .set("id", note.id.clone())
                     .set("path", note.path.clone())
                     .set("title", note.title.clone())
+                    .set("tags", note.tags.clone())
+                    .set("links", note.links.clone())
                     .set("digest", note.digest.clone())
                     .set("bytes", note.bytes.to_string())
                     .set("added", note.added.to_string())
@@ -100,10 +113,24 @@ impl Manifest {
                     .parse()
                     .map_err(|_| format!("a shelf note has an invalid {key}"))
             };
+            let strings = |key: &str| -> Vec<String> {
+                entry
+                    .get(key)
+                    .and_then(Value::as_array)
+                    .map(|values| {
+                        values
+                            .iter()
+                            .filter_map(|value| value.as_str().map(str::to_owned))
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            };
             notes.push(NoteEntry {
                 id: text("id")?,
                 path: text("path")?,
                 title: text("title")?,
+                tags: strings("tags"),
+                links: strings("links"),
                 digest: text("digest")?,
                 bytes: number("bytes")?,
                 added: number("added")?,
@@ -153,11 +180,88 @@ pub fn title_for(path: &str, body: &str) -> String {
         .replace(['-', '_'], " ")
 }
 
+/// The deduped `#tags` a note carries, in first-seen order. A tag keeps the
+/// slashes and dashes a nested tag uses and drops trailing punctuation.
+#[must_use]
+pub fn tags_for(body: &str) -> Vec<String> {
+    let mut tags: Vec<String> = Vec::new();
+    for tag in body
+        .split_whitespace()
+        .filter_map(|word| word.strip_prefix('#'))
+        .map(|tag| {
+            tag.trim_matches(|c: char| !c.is_alphanumeric() && c != '/' && c != '-')
+                .to_owned()
+        })
+        .filter(|tag| !tag.is_empty())
+    {
+        if !tags.contains(&tag) {
+            tags.push(tag);
+        }
+    }
+    tags
+}
+
+/// The deduped note targets a note links to, Markdown links and wiki-links
+/// together, attachments and transclusions left out.
+#[must_use]
+pub fn links_for(body: &str) -> Vec<String> {
+    let mut links: Vec<String> = Vec::new();
+    let mut push = |target: &str| {
+        if !target.is_empty()
+            && !looks_like_attachment(target)
+            && !links.iter().any(|link| link == target)
+        {
+            links.push(target.to_owned());
+        }
+    };
+    for (start, _) in body.match_indices("](") {
+        if let Some(link) = body[start + 2..].split(')').next() {
+            if link.to_ascii_lowercase().ends_with(".md") {
+                push(link);
+            }
+        }
+    }
+    let mut from = 0;
+    while let Some(open) = body[from..].find("[[") {
+        let rest = &body[from + open + 2..];
+        let Some(close) = rest.find("]]") else {
+            break;
+        };
+        let inner = &rest[..close];
+        from += open + 2 + close + 2;
+        if inner.starts_with('{') {
+            continue;
+        }
+        let target = inner
+            .split('|')
+            .next()
+            .unwrap_or(inner)
+            .split('#')
+            .next()
+            .unwrap_or(inner)
+            .trim();
+        push(target);
+    }
+    links
+}
+
+fn looks_like_attachment(target: &str) -> bool {
+    let Some((_, ext)) = target.rsplit_once('.') else {
+        return false;
+    };
+    matches!(
+        ext.to_ascii_lowercase().as_str(),
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "pdf" | "mp3" | "mp4" | "canvas" | "svg"
+    )
+}
+
 /// One note offered by the CLI after the folder walk.
 #[derive(Clone)]
 pub struct IncomingNote {
     pub path: String,
     pub title: String,
+    pub tags: Vec<String>,
+    pub links: Vec<String>,
     pub digest: String,
     pub added: u64,
     pub body: Vec<u8>,
@@ -197,7 +301,17 @@ impl Push {
 pub fn plan(
     existing: &Manifest,
     incoming: Vec<IncomingNote>,
+    failures: Vec<ImportFailure>,
+) -> Result<Push, String> {
+    plan_prefixed(existing, incoming, failures, "note-")
+}
+
+/// The same plan against another id prefix, for the synced shelf.
+pub fn plan_prefixed(
+    existing: &Manifest,
+    incoming: Vec<IncomingNote>,
     mut failures: Vec<ImportFailure>,
+    id_prefix: &str,
 ) -> Result<Push, String> {
     let old_by_digest: BTreeMap<&str, &NoteEntry> = existing
         .notes
@@ -233,6 +347,8 @@ pub fn plan(
                 id: old.id.clone(),
                 path: offer.path,
                 title: offer.title,
+                tags: offer.tags,
+                links: offer.links,
                 digest: offer.digest,
                 bytes,
                 added: old.added,
@@ -246,13 +362,15 @@ pub fn plan(
                 id: id.clone(),
                 path: offer.path,
                 title: offer.title,
+                tags: offer.tags,
+                links: offer.links,
                 digest: offer.digest,
                 bytes,
                 added: *first_added,
             });
             continue;
         }
-        let base = format!("note-{}", &offer.digest[..16.min(offer.digest.len())]);
+        let base = format!("{id_prefix}{}", &offer.digest[..16.min(offer.digest.len())]);
         let mut id = base.clone();
         let mut suffix = 2_u32;
         while !used_ids.insert(id.clone()) {
@@ -269,6 +387,8 @@ pub fn plan(
             id,
             path: offer.path,
             title: offer.title,
+            tags: offer.tags,
+            links: offer.links,
             digest: offer.digest,
             bytes,
             added: offer.added,
@@ -296,6 +416,8 @@ mod tests {
         IncomingNote {
             path: path.to_owned(),
             title: title_for(path, body),
+            tags: tags_for(body),
+            links: links_for(body),
             digest: digest(body.as_bytes()),
             added,
             body: body.as_bytes().to_vec(),
@@ -309,6 +431,8 @@ mod tests {
                 id: "note-abc".to_owned(),
                 path: "Projects/Alpha.md".to_owned(),
                 title: "Alpha".to_owned(),
+                tags: vec!["project".to_owned()],
+                links: vec!["Welcome".to_owned()],
                 digest: "ff00".to_owned(),
                 bytes: 42,
                 added: 7,
@@ -419,11 +543,20 @@ mod tests {
     }
 
     #[test]
+    fn tags_and_links_come_out_deduped_and_clean() {
+        let body = "See [[Welcome|the home note]] and [[sheet.pdf]]. #project #project, #area/work
+                    [a note](Other.md) and [a picture](pic.png) and {{embed}}.";
+        assert_eq!(tags_for(body), vec!["project", "area/work"]);
+        assert_eq!(links_for(body), vec!["Other.md", "Welcome"]);
+    }
+
     fn oversized_notes_fail_honestly() {
         let big = vec![b'x'; (MAX_NOTE_BYTES + 1) as usize];
         let offer = IncomingNote {
             path: "big.md".to_owned(),
             title: "big".to_owned(),
+            tags: Vec::new(),
+            links: Vec::new(),
             digest: digest(&big),
             added: 1,
             body: big,
