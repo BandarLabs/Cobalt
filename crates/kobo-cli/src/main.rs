@@ -13,6 +13,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 mod apps;
 mod authorize;
 mod beta_store_smoke;
+mod birds;
 mod bootstrap;
 mod connect;
 mod deck;
@@ -513,6 +514,7 @@ fn run(arguments: &[String]) -> Result<(), String> {
         "deck" => deck::command(&arguments[1..]),
         "flashcards" => flashcards::command(&arguments[1..]),
         "frame" => frame::command(&arguments[1..]),
+        "birds" => birds::command(&arguments[1..]),
         "vault" => vault::command(&arguments[1..]),
         "sync" => sync::command(&arguments[1..]),
         "sidekick" => sidekick::command(&arguments[1..]),
