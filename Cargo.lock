@@ -1643,6 +1643,7 @@ version = "0.1.0"
 dependencies = [
  "kobo-html",
  "kobo-image",
+ "kobo-json",
  "kobo-sdk",
  "kobo-ui",
  "pulldown-cmark",
