@@ -613,13 +613,13 @@ Design direction: the bar is a well-made iPad application, built for a panel tha
 
 ## PR 4 · Vault companion
 
-- [ ] **VAULTCLI-01** Pick folder and preview included/excluded notes.
-- [ ] **VAULTCLI-02** Preview a long note at reader dimensions.
-- [ ] **VAULTCLI-03** Package incrementally with scalable index.
-- [ ] **VAULTCLI-04** Separate transfer acknowledgement from indexing completion.
-- [ ] **VAULTCLI-05** Handle rename without duplicating the whole library.
-- [ ] **VAULTCLI-06** Explain direction and supported reader-edit export honestly.
-- [ ] **VAULTCLI-07** Enable optional ongoing sync after a successful import.
+- [x] **VAULTCLI-01** Pick folder and preview included/excluded notes.
+- [x] **VAULTCLI-02** Preview a long note at reader dimensions.
+- [x] **VAULTCLI-03** Package incrementally with scalable index.
+- [x] **VAULTCLI-04** Separate transfer acknowledgement from indexing completion.
+- [x] **VAULTCLI-05** Handle rename without duplicating the whole library.
+- [x] **VAULTCLI-06** Explain direction and supported reader-edit export honestly.
+- [x] **VAULTCLI-07** Enable optional ongoing sync after a successful import.
 
 ## PR 4 · Sync companion
 

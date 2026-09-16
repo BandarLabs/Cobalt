@@ -24,6 +24,9 @@ kobo-stream = { path = "../kobo-stream" }
 kobo-doc = { path = "../kobo-doc" }
 kobo-frame-host = { path = "../kobo-frame-host" }
 kobo-music-host = { path = "../kobo-music-host" }
+kobo-vault-host = { path = "../kobo-vault-host" }
+kobo-html = { path = "../kobo-html" }
+pulldown-cmark = { version = "0.13.4", default-features = false, features = ["html"] }
 kobo-profile = { path = "../kobo-profile" }
 kobo-protocol = { path = "../kobo-protocol" }
 kobod = { path = "../kobod" }
