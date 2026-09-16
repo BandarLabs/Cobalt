@@ -167,8 +167,16 @@ impl Birds {
                     // and decoding a megabyte of collage every ten seconds to
                     // arrive at the picture already on the panel would cost a
                     // single-core reader its battery and show nothing new.
+                    //
+                    // Only a content-addressed pointer may be trusted this
+                    // way. A snapshot with no `image` names the shared
+                    // `current.png`, whose bytes can change underneath an
+                    // unchanged snapshot, and skipping the read on that one
+                    // would leave the panel stale for as long as it is open.
                     Ok(snapshot)
-                        if self.picture.is_some() && self.snapshot.as_ref() == Some(&snapshot) =>
+                        if snapshot.image.is_some()
+                            && self.picture.is_some()
+                            && self.snapshot.as_ref() == Some(&snapshot) =>
                     {
                         self.loading = false;
                     }
@@ -315,6 +323,10 @@ impl KoboApp for Birds {
             return;
         }
         self.tick = None;
+        // Sleep is paused and cancelled for the whole application when the
+        // reader closes the cover, and queueing another one against a paused
+        // manager is answered by cancelling that too. So a cancelled poll is
+        // not rearmed here; waking is what rearms it, in `on_resume`.
         if matches!(outcome, TaskOutcome::Cancelled) {
             return;
         }
@@ -326,6 +338,19 @@ impl KoboApp for Birds {
         self.schedule_poll(context);
         self.show(context);
     }
+
+    /// Suspending cancels the poll, so waking has to start it again, and a
+    /// reader who closed the cover on one bird and opened it on another is
+    /// exactly who this app is for: read the shelf now rather than ten
+    /// seconds into being awake.
+    fn on_resume(&mut self, context: &mut Context) {
+        if self.snapshot_load.is_none() && self.image_load.is_none() {
+            self.reload(context);
+        }
+        self.schedule_poll(context);
+        self.show(context);
+    }
+
     fn on_device_result(
         &mut self,
         context: &mut Context,
@@ -540,7 +565,33 @@ mod tests {
         runner.task_outcome(tick, TaskOutcome::Cancelled);
         assert!(
             runner.app().tick.is_none(),
-            "a cancelled poll is the runtime saying stop, not a reason to ask again"
+            "queueing a poll against a paused manager only earns another cancellation"
+        );
+    }
+
+    #[test]
+    fn waking_starts_the_poll_the_cover_cancelled() {
+        // Closing the cover pauses this application's tasks, which cancels
+        // the sleep in flight. Without this the first sleep of the reader's
+        // day was the last poll of it, and the app went quietly back to
+        // needing a tap.
+        let mut runner = AppRunner::new(Birds::default());
+        runner.start();
+        let tick = runner.app().tick.expect("queued");
+        runner.store_result(StoreResult::Denied(kobo_sdk::StoreError::Missing));
+        runner.suspend();
+        runner.task_outcome(tick, TaskOutcome::Cancelled);
+        assert!(runner.app().tick.is_none());
+
+        runner.resume();
+        assert!(
+            runner.app().tick.is_some(),
+            "waking must start the poll again"
+        );
+        assert!(
+            runner.app().snapshot_load.is_some(),
+            "a reader who closed the cover on one bird and opened it on another \
+             should not wait a further ten seconds"
         );
     }
 
