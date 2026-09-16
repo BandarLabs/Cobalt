@@ -13,6 +13,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 mod apps;
 mod authorize;
 mod beta_store_smoke;
+mod birds;
 mod bootstrap;
 mod connect;
 mod deck;
@@ -93,6 +94,7 @@ const STORE_PACKAGES: &[&str] = &[
     "kobo-arxiv",
     "kobo-audiobook",
     "kobo-backgammon",
+    "kobo-birds",
     "kobo-brief",
     "kobo-calibre-web",
     "kobo-chat",
@@ -513,6 +515,7 @@ fn run(arguments: &[String]) -> Result<(), String> {
         "deck" => deck::command(&arguments[1..]),
         "flashcards" => flashcards::command(&arguments[1..]),
         "frame" => frame::command(&arguments[1..]),
+        "birds" => birds::command(&arguments[1..]),
         "vault" => vault::command(&arguments[1..]),
         "sync" => sync::command(&arguments[1..]),
         "sidekick" => sidekick::command(&arguments[1..]),
@@ -6881,6 +6884,7 @@ fn print_help() {
            deck ls|show [--json]                 List the assigned pads, or print the layout JSON\n\
            deck push (--sim | --device IP | --out PATH)  Publish that layout to the reader or simulator\n\
            flashcards --help                     Prepare, verify, stage, and export card bundles\n\
+           birds listen|status|stop|push   Mirror a Fugleramme bird collage to the reader\n\
            frame init (--sim | --device IP)      Create the Frame shelf\n\
            frame push INPUT (--sim | --device IP) [--fit crop|pad] [--delete]\n\
                                              Prepare and atomically push Frame photos\n\
