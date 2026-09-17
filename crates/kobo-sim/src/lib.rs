@@ -1694,7 +1694,7 @@ impl AppSession {
     }
 
     fn change_clock(&self, command: &str) -> io::Result<()> {
-        let tasks = {
+        let (tasks, due_wake) = {
             let mut state = self
                 .state
                 .lock()
@@ -1703,10 +1703,30 @@ impl AppSession {
             state.record(format!("clock: {command}"));
             state.update_chrome();
             state.commit_frame();
-            state.tasks.clone()
+            let now = state.time.now()?.monotonic_millis;
+            let due_wake = match state.scheduled_wake {
+                Some(due) if due <= now => {
+                    state.scheduled_wake = None;
+                    Some(due)
+                }
+                _ => None,
+            };
+            (state.tasks.clone(), due_wake)
         };
         if let Some(tasks) = tasks {
             deliver_task_outcomes(&tasks, &self.writer, &self.state)?;
+        }
+        // A clock crossing a scheduled wake wakes the app that asked for it,
+        // the same crossing that completes sleeps that came due.
+        if let Some(occurrence) = due_wake {
+            write_shared(
+                &self.writer,
+                &Frame {
+                    version: kobo_protocol::VERSION,
+                    request_id: 0,
+                    message: Message::ScheduledWake { occurrence },
+                },
+            )?;
         }
         Ok(())
     }
@@ -1944,12 +1964,25 @@ impl AppSession {
                     .state
                     .lock()
                     .map_err(|_| io::Error::other("app state unavailable"))?;
-                write_response(
-                    &mut stream,
-                    200,
-                    "application/json",
-                    state.power_status.to_json().as_bytes(),
-                )
+                let body = match &state.power_status {
+                    kobo_json::Value::Null => {
+                        let now = state.time.now()?.monotonic_millis;
+                        kobo_json::ObjectBuilder::new()
+                            .set("monotonicMillis", now.to_string())
+                            .set("wakeUntil", state.wake_until.to_string())
+                            .set("wakeHeld", state.wake_until > now)
+                            .set(
+                                "scheduledWake",
+                                state
+                                    .scheduled_wake
+                                    .map_or(kobo_json::Value::Null, |due| due.to_string().into()),
+                            )
+                            .build()
+                            .to_json()
+                    }
+                    status => status.to_json(),
+                };
+                write_response(&mut stream, 200, "application/json", body.as_bytes())
             }
             ("POST", "/power") => {
                 let mut state = self
