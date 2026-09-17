@@ -1437,64 +1437,80 @@
   "pr": 3,
   "group": "Fieldbook (APP-3)",
   "task": "Label starter data truthfully",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "Placeholder replaced by a rebuild that ships no fabricated starter data: an empty shelf shows an honest empty state and the app tells the user packs come from the kobo fieldbook companion. Proven in scripts/quality/check-fieldbook-sim.py; captures in docs/quality/evidence/fieldbook."
+  ]
  },
  {
   "id": "FIELD-02",
   "pr": 3,
   "group": "Fieldbook (APP-3)",
   "task": "Import actual field/species packs and search them",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "Real packs import via the companion CLI contract (packs.v1, fieldbook-shelf v1, 512 KiB bound, decode-only app side) and are searchable by common name, scientific name and banding code, scoped per pack. End-to-end proof with a real 12-species GBIF Central Park pack pushed by the CLI is in docs/quality/evidence/fieldbook-companion-real-pack (pr6); app-side sim proof in docs/quality/evidence/fieldbook."
+  ]
  },
  {
   "id": "FIELD-03",
   "pr": 3,
   "group": "Fieldbook (APP-3)",
   "task": "Record outing, location, date and time with sightings",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "Outings record a keyboard-named place plus clock-stamped date and start time; sightings tally against the open outing. Sim E2E: scripts/quality/check-fieldbook-sim.py (naming, dating, tally), evidence docs/quality/evidence/fieldbook."
+  ]
  },
  {
   "id": "FIELD-04",
   "pr": 3,
   "group": "Fieldbook (APP-3)",
   "task": "Edit, delete and undo sightings",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "Sightings can be deleted with undo, and the tally decrements accordingly; proven step-by-step in the sim E2E script (docs/quality/evidence/fieldbook)."
+  ]
  },
  {
   "id": "FIELD-05",
   "pr": 3,
   "group": "Fieldbook (APP-3)",
   "task": "Show per-outing totals",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "Per-outing totals are shown on the Outing view (per-species counts plus total, correct singular/plural); verified in the sim E2E captures."
+  ]
  },
  {
   "id": "FIELD-06",
   "pr": 3,
   "group": "Fieldbook (APP-3)",
   "task": "Produce a real downloadable checklist",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "Export writes a real eBird Checklist Format CSV (export-checklist.csv) to the device store, asserted row-by-row in the sim E2E. Companion CLI received the file intact in the joint proof (docs/quality/evidence/fieldbook-companion-real-pack). The column layout follows the published format; eBird-side import acceptance is not verified."
+  ]
  },
  {
   "id": "FIELD-07",
   "pr": 3,
   "group": "Fieldbook (APP-3)",
   "task": "Report save/sync failure instead of fictitious success",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "Store, shelf and export failures surface as honest banners; no success is claimed on failure paths. Failure-state captures verified in docs/quality/evidence/fieldbook."
+  ]
  },
  {
   "id": "FIELD-08",
   "pr": 3,
   "group": "Fieldbook (APP-3)",
   "task": "Keep local logging independent of service availability",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "Logging works fully offline: manual log-by-name works with zero packs installed and no network; restart persistence of outings, sightings and life list proven in the sim E2E."
+  ]
  },
  {
   "id": "CARDS-01",

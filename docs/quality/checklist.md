@@ -213,14 +213,14 @@ Design direction: the bar is a well-made iPad application, built for a panel tha
 
 ## PR 3 · Fieldbook (APP-3)
 
-- [ ] **FIELD-01** Label starter data truthfully.
-- [ ] **FIELD-02** Import actual field/species packs and search them.
-- [ ] **FIELD-03** Record outing, location, date and time with sightings.
-- [ ] **FIELD-04** Edit, delete and undo sightings.
-- [ ] **FIELD-05** Show per-outing totals.
-- [ ] **FIELD-06** Produce a real downloadable checklist.
-- [ ] **FIELD-07** Report save/sync failure instead of fictitious success.
-- [ ] **FIELD-08** Keep local logging independent of service availability.
+- [x] **FIELD-01** Label starter data truthfully.
+- [x] **FIELD-02** Import actual field/species packs and search them.
+- [x] **FIELD-03** Record outing, location, date and time with sightings.
+- [x] **FIELD-04** Edit, delete and undo sightings.
+- [x] **FIELD-05** Show per-outing totals.
+- [x] **FIELD-06** Produce a real downloadable checklist.
+- [x] **FIELD-07** Report save/sync failure instead of fictitious success.
+- [x] **FIELD-08** Keep local logging independent of service availability.
 
 ## PR 3 · Flashcards app
 
