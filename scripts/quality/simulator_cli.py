@@ -1,5 +1,10 @@
 """Build and identify the checkout's CLI before collecting simulator evidence."""
 
+# Evidence is harness output: sidecars carry per-run timings, and a live
+# feed drifts between runs. Changes confined to the evidence tree therefore
+# say nothing about the sources under test, and every harness excludes it
+# from the build-time dirt check by default.
+
 import hashlib
 import json
 import os
@@ -15,7 +20,7 @@ def fingerprint(path):
     return digest.hexdigest()
 
 
-def build_cli(root, target, ignore_prefix=None):
+def build_cli(root, target, ignore_prefix="docs/quality/evidence"):
     build = subprocess.run(
         ["cargo", "+1.85.1", "build", "-p", "kobo-cli", "--message-format=json"],
         cwd=root,

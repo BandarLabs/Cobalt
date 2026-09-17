@@ -37,8 +37,7 @@ def main():
     # The whole evidence tree is harness output: sidecars carry
     # per-run timings, and a live feed drifts between runs. Only
     # changes outside it say anything about the sources under test.
-    cli, provenance = build_cli(ROOT, target,
-                                ignore_prefix="docs/quality/evidence")
+    cli, provenance = build_cli(ROOT, target)
     verify_cli(cli, provenance)
 
     with tempfile.TemporaryDirectory(prefix="cobalt-arxiv-live-", dir="/tmp") as temporary:
