@@ -1585,7 +1585,8 @@ mod tests {
     use kobo_read::Memory;
     use kobo_sdk::StoreResult;
     use kobo_sdk::{
-        action_id, is_valid_key, ActionId, AppRunner, Command, Task, TaskId, TaskOutcome,
+        action_id, is_valid_key, ActionId, AppRunner, Command, StoreRequest, Task, TaskError,
+        TaskId, TaskOutcome,
     };
 
     fn paper() -> Paper {
@@ -2005,6 +2006,55 @@ mod tests {
                 .iter()
                 .any(|url| url == "https://arxiv.org/html/2609.00077v1/x1.png"),
             "the figure was not fetched from beside its paper: {fetched:?}"
+        );
+    }
+
+    /// A figure that will not fetch costs the paper nothing: the page reads
+    /// on past it, no error is raised, and the reader's place still saves on
+    /// the way out.
+    ///
+    /// The reader draws what the caption said the figure shows, which is what
+    /// a document with a missing plate should look like; the failure belongs
+    /// to the figure, not to the paper around it.
+    #[test]
+    fn a_failed_figure_fetch_leaves_the_paper_readable_and_its_place_saved() {
+        let mut runner = AppRunner::new(Arxiv::default());
+        let commands = opened_on(
+            &mut runner,
+            "<article><p>Before the figure.</p>             <figure><img src=\"2609.00077v1/x2.png\" alt=\"A missing plot\">             <figcaption>Figure 2.</figcaption></figure>             <p>After the figure.</p></article>",
+        );
+        let fetch = commands
+            .iter()
+            .find_map(|command| match command {
+                Command::Spawn {
+                    task,
+                    work: Task::Fetch { url, .. },
+                } if url.ends_with("x2.png") => Some(*task),
+                _ => None,
+            })
+            .expect("the figure was never asked for");
+        let _ = runner.task_outcome(fetch, TaskOutcome::Failed(TaskError::NotFound));
+
+        assert!(
+            runner.app().trouble.is_none(),
+            "a missing figure was raised as an error"
+        );
+        let reader = runner.app().book.reader().expect("the paper is not open");
+        assert!(
+            reader.document().blocks.iter().any(|block| matches!(
+                block,
+                kobo_doc::Block::Paragraph(text) if text == "After the figure."
+            )),
+            "the paper stopped reading at the missing figure"
+        );
+
+        let commands = runner.action(ActionId::BACK);
+        assert!(
+            commands.iter().any(|command| matches!(
+                command,
+                Command::Store(StoreRequest::Save { key, .. }) if key.starts_with("place.")
+            )),
+            "leaving the paper saved no place"
         );
     }
 

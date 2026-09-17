@@ -1,4 +1,4 @@
-Kobo app simulator: http://127.0.0.1:41365
+Kobo app simulator: http://127.0.0.1:46161
 drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/arxiv
 drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/arxiv
 shot /home/sandbox/cobalt/docs/quality/evidence/arxiv/arxiv-listing.png
@@ -25,6 +25,7 @@ drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evide
 drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/arxiv
 drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/arxiv
 drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/arxiv
+task 9 failed: NotFound
 drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/arxiv
 drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/arxiv
 drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/arxiv
@@ -41,4 +42,22 @@ drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evide
 drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/arxiv
 drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/arxiv
 shot /home/sandbox/cobalt/docs/quality/evidence/arxiv/arxiv-figure.png
+drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/arxiv
+drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/arxiv
+drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/arxiv
+drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/arxiv
+drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/arxiv
+drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/arxiv
+shot /home/sandbox/cobalt/docs/quality/evidence/arxiv/arxiv-figure-missing.png
+drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/arxiv
+drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/arxiv
+drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/arxiv
+drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/arxiv
+Kobo app simulator: http://127.0.0.1:40159
+drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/arxiv
+drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/arxiv
+shot /home/sandbox/cobalt/docs/quality/evidence/arxiv/arxiv-restart-library.png
+drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/arxiv
+drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/arxiv
+shot /home/sandbox/cobalt/docs/quality/evidence/arxiv/arxiv-restart-reopened.png
 drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/arxiv

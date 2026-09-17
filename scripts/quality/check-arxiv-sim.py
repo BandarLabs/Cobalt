@@ -99,6 +99,10 @@ PAPER_RICH_HTML = (
     )
     + '<figure><img src="2609.00077v1/x1.png" alt="A fixture plot">'
     "<figcaption>Figure 1: A fixture plot.</figcaption></figure>"
+    "<p>The second figure is one the fixture never serves.</p>"
+    '<figure><img src="2609.00077v1/x2.png" alt="A missing plot">'
+    "<figcaption>Figure 2: A missing plot.</figcaption></figure>"
+    "<p>The paper reads on past it.</p>"
     "</article></body></html>"
 )
 
@@ -138,6 +142,7 @@ class Archive:
         self.feeds = 0
         self.htmls = 0
         self.pngs = 0
+        self.misses = 0
 
 
 def handler_for(archive):
@@ -170,6 +175,10 @@ def handler_for(archive):
             if re.fullmatch(r"/2609\.00077v1/x1\.png", path):
                 archive.pngs += 1
                 self._send(200, FIGURE_PNG, "image/png")
+                return
+            if re.fullmatch(r"/2609\.00077v1/x2\.png", path):
+                archive.misses += 1
+                self._send(404, b"not found", "text/plain")
                 return
             self._send(404, b"not found", "text/plain")
 
@@ -393,6 +402,43 @@ def main():
                            "from its LaTeX, the table read as rows and the "
                            "figure fetched over TLS and drawn (panel shots "
                            "arxiv-formula/-table/-figure)"))
+                # A figure that never comes reads as its caption, and the
+                # paper around it is untouched.
+                turn_until("Figure 2", "arxiv-figure-missing", settle=4)
+                assert archive.misses == 1, "the missing figure was asked for once"
+                result["checks"].append(dict(
+                    name="a failed figure fetch degrades to the caption",
+                    status="passed",
+                    detail="the figure the fixture 404s drew no error and no "
+                           "placeholder frame - the page reads the caption and "
+                           "the text after it (panel shot arxiv-figure-missing)"))
+
+                # Everything the reader was holding survives the application
+                # being restarted outright: the kept paper is still in the
+                # library with its progress, and opening it lands at the
+                # saved place, not at the top.
+                drive("tap Back", "wait-for Keep for offline", "wait-idle",
+                      timeout=300)
+                drive("tap Back", "wait-for offline", "wait-idle", timeout=300)
+                drive("tap Back", "wait-for Artificial Intelligence",
+                      "wait-idle", timeout=300)
+                stop()
+                start()
+                drive("wait-for Artificial Intelligence", "wait-idle",
+                      timeout=300)
+                drive("tap Library", "wait-for 74%", "wait-idle", timeout=300)
+                capture("arxiv-restart-library")
+                drive("tap Attention Reconsidered", "clock advance 1500",
+                      "wait-for 4 of 5", "wait-idle", timeout=300)
+                capture("arxiv-restart-reopened")
+                result["checks"].append(dict(
+                    name="kept reading survives a simulator restart",
+                    status="passed",
+                    detail="after the simulator process was killed and started "
+                           "again, the library still listed the kept paper at "
+                           "74% and opening it landed on page 4 of 5, the "
+                           "place saved before the restart (panel shots "
+                           "arxiv-restart-library/-reopened)"))
                 result["status"] = "passed"
             finally:
                 stop()

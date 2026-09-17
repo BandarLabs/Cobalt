@@ -1,7 +1,7 @@
 {
   "provenance": {
-    "source_revision": "9b20b75dbafbee433406336f44766bdb2cc92425",
-    "tracked_changes": false,
+    "source_revision": "d79ebce4f6c22e4c58f4b2c05234e22d46f2562f",
+    "tracked_changes": true,
     "cli_sha256": "00df2b4ec6c7a43f55d3bd55bb3cbc6ebeb0d774868453e861e61af679384d66",
     "toolchain": "1.85.1"
   },
@@ -37,6 +37,16 @@
       "name": "formulas, tables and figures survive",
       "status": "passed",
       "detail": "a paper with a displayed formula, a columnar table and a figure kept all three: the formula typeset from its LaTeX, the table read as rows and the figure fetched over TLS and drawn (panel shots arxiv-formula/-table/-figure)"
+    },
+    {
+      "name": "a failed figure fetch degrades to the caption",
+      "status": "passed",
+      "detail": "the figure the fixture 404s drew no error and no placeholder frame - the page reads the caption and the text after it (panel shot arxiv-figure-missing)"
+    },
+    {
+      "name": "kept reading survives a simulator restart",
+      "status": "passed",
+      "detail": "after the simulator process was killed and started again, the library still listed the kept paper at 74% and opening it landed on page 4 of 5, the place saved before the restart (panel shots arxiv-restart-library/-reopened)"
     }
   ],
   "status": "passed"

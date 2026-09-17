@@ -994,8 +994,10 @@
     "pr": 3,
     "group": "arXiv",
     "task": "Retain saved reading through reopen and failed figure fetch",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Both halves validated end-to-end in the simulator against the local TLS fixture (scripts/quality/check-arxiv-sim.py). Failed figure fetch: the rich paper's second figure is one the fixture 404s; the page drew no error and no placeholder frame - it reads the alt text and caption ('A missing plot' / 'Figure 2: A missing plot.') and the text after it, and the fixture logged exactly one fetch attempt (panel shot docs/quality/evidence/arxiv/arxiv-figure-missing.png). Restart retention: the simulator process was then killed and started again against the same on-disk state; the library still listed the kept paper with its authors, size and 74% progress, and opening it landed on page 4 of 5 - the place saved before the restart - served from the shelf with no refetch (fixture html count unchanged across the restart; panel shots arxiv-restart-library.png, arxiv-restart-reopened.png). Unit-level: a_failed_figure_fetch_leaves_the_paper_readable_and_its_place_saved answers the figure fetch with TaskError::NotFound and asserts no error surfaces, the text after the figure still reads, and leaving the paper still saves the place (50/50 kobo-arxiv tests)."
+    ]
   },
   {
     "id": "AUDIO-01",
