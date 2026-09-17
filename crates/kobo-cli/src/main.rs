@@ -5541,7 +5541,10 @@ fn find_device_cc() -> Result<String, String> {
     Err(format!(
         "no ARM C cross-compiler was found, and one is needed because the TLS \
          stack builds C for the reader. Tried: {}, and zig.\n  Windows: winget \
-         install zig.zig (then open a new terminal)\n  macOS:  brew install \
+         install zig.zig, then open a new terminal. If winget itself is \
+         missing, install App Installer from the Microsoft Store first, or \
+         download zig from https://ziglang.org/download/ and put it on PATH.\n  \
+         macOS:  brew install \
          messense/macos-cross-toolchains/armv7-unknown-linux-musleabihf (or: \
          brew install zig)\n  Debian: sudo apt-get install \
          gcc-arm-linux-gnueabihf (or: download zig from \
@@ -5567,8 +5570,11 @@ fn find_device_ar() -> Result<String, String> {
     }
     Err(format!(
         "no ARM cross-archiver was found, and one is needed for C dependencies. \
-         Tried: {}, and zig.\n  Windows: winget install zig.zig (then open a \
-         new terminal)\n  macOS:  brew install zig\n  Debian: download zig from \
+         Tried: {}, and zig.\n  Windows: winget install zig.zig (if winget \
+         itself is missing, install App Installer from the Microsoft Store \
+         first, or download zig from https://ziglang.org/download/ and put it \
+         on PATH), then open a new terminal\n  macOS:  brew install zig\n  \
+         Debian: download zig from \
          https://ziglang.org/download/\nSet AR_armv7_unknown_linux_musleabihf \
          to override.",
         NAMES.join(", ")
@@ -5606,7 +5612,9 @@ fn zig_device_wrapper_dir() -> PathBuf {
 /// Zig speaks its own target spelling (`arm-linux-musleabihf`), while cc-rs
 /// appends the Rust triple as `--target=armv7-unknown-linux-musleabihf`, which
 /// zig rejects outright. The `cc` wrapper filters that flag out and supplies
-/// zig's target itself; the `ar` wrapper only adapts the name. Written under
+/// zig's target itself, with `UBSan` off: current zig instruments by default
+/// and does not link its runtime, which leaves C dependencies referencing
+/// undefined `__ubsan_handle_*` symbols. The `ar` wrapper only adapts the name. Written under
 /// the target directory so a stale wrapper is never picked up across
 /// checkouts. Returns the (cc, ar) wrapper paths.
 fn write_zig_device_wrappers(dir: &Path) -> Result<(PathBuf, PathBuf), String> {
@@ -5615,14 +5623,14 @@ fn write_zig_device_wrappers(dir: &Path) -> Result<(PathBuf, PathBuf), String> {
         (
             "zig-cc.cmd",
             "zig-ar.cmd",
-            "@echo off\r\nrem cc-rs appends a Rust-style --target triple that zig cannot parse; drop it.\r\nset kept=\r\n:filter\r\nif \"%~1\"==\"\" goto build\r\nset arg=%~1\r\nif not \"%arg:~0,9%\"==\"--target=\" set kept=%kept% \"%~1\"\r\nshift\r\ngoto filter\r\n:build\r\nzig cc -target arm-linux-musleabihf -mcpu=cortex_a7 %kept%\r\nexit /b %errorlevel%\r\n",
+            "@echo off\r\nrem cc-rs appends a Rust-style --target triple that zig cannot parse; drop it.\r\nset kept=\r\n:filter\r\nif \"%~1\"==\"\" goto build\r\nset arg=%~1\r\nif not \"%arg:~0,9%\"==\"--target=\" set kept=%kept% \"%~1\"\r\nshift\r\ngoto filter\r\n:build\r\nzig cc -target arm-linux-musleabihf -fno-sanitize=undefined %kept%\r\nexit /b %errorlevel%\r\n",
             "@echo off\r\nzig ar %*\r\n",
         )
     } else {
         (
             "zig-cc",
             "zig-ar",
-            "#!/bin/sh\n# cc-rs appends a Rust-style --target triple that zig cannot parse; drop it.\ncount=$#\nwhile [ $count -gt 0 ]; do\n    arg=$1\n    shift\n    case $arg in\n        --target=*) ;;\n        *) set -- \"$@\" \"$arg\" ;;\n    esac\n    count=$((count - 1))\ndone\nexec zig cc -target arm-linux-musleabihf -mcpu=cortex_a7 \"$@\"\n",
+            "#!/bin/sh\n# cc-rs appends a Rust-style --target triple that zig cannot parse; drop it.\ncount=$#\nwhile [ $count -gt 0 ]; do\n    arg=$1\n    shift\n    case $arg in\n        --target=*) ;;\n        *) set -- \"$@\" \"$arg\" ;;\n    esac\n    count=$((count - 1))\ndone\nexec zig cc -target arm-linux-musleabihf -fno-sanitize=undefined \"$@\"\n",
             "#!/bin/sh\nexec zig ar \"$@\"\n",
         )
     };
@@ -9024,7 +9032,7 @@ mod tests {
             let (cc, ar) = write_zig_device_wrappers(&volume.path).expect("wrappers");
             let cc_body = std::fs::read_to_string(&cc).expect("cc wrapper");
             assert!(cc_body.contains("-target arm-linux-musleabihf"));
-            assert!(cc_body.contains("-mcpu=cortex_a7"));
+            assert!(cc_body.contains(""));
             assert!(cc_body.contains("--target=*)"));
             assert!(std::fs::read_to_string(&ar)
                 .expect("ar wrapper")
@@ -9088,7 +9096,7 @@ mod tests {
                     "cc",
                     "-target",
                     "arm-linux-musleabihf",
-                    "-mcpu=cortex_a7",
+                    "-fno-sanitize=undefined",
                     "-O2",
                     "two words"
                 ]
