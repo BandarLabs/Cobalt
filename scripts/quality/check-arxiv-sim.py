@@ -62,11 +62,19 @@ FEED = """<?xml version="1.0" encoding="UTF-8"?>
 </feed>"""
 
 
+# A complete synthetic paper, long enough to paginate in the reader.
+PAPER_HTML = "<html><body><article><h2>1 Introduction</h2>" + "".join(
+    f"<p>Paragraph {n} of the fixture paper, set to be read.</p>"
+    for n in range(60)
+) + "</article></body></html>"
+
+
 class Archive:
     """The fixture API, and everything it was asked to do."""
 
     def __init__(self):
         self.feeds = 0
+        self.htmls = 0
 
 
 def handler_for(archive):
@@ -82,10 +90,15 @@ def handler_for(archive):
             self.wfile.write(body)
 
         def do_GET(self):
+            path = self.path.split("?", 1)[0]
             print(f"fixture GET {self.path}", flush=True)
             if "search_query" in self.path:
                 archive.feeds += 1
                 self._send(200, FEED.encode(), "application/atom+xml; charset=utf-8")
+                return
+            if re.fullmatch(r"/2609\.00042v2", path):
+                archive.htmls += 1
+                self._send(200, PAPER_HTML.encode(), "text/html; charset=utf-8")
                 return
             self._send(404, b"not found", "text/plain")
 
@@ -204,10 +217,61 @@ def main():
                     detail="the first page shows the title, the byline, the "
                            "categories, the journal reference and the comment "
                            "as distinct elements above the paginated abstract"))
+
+                # Full text: the fetching state shows while the fixture's
+                # answer is still in the air (the evidence clock is manual,
+                # so the pacing sleep has not fired yet).
+                drive("tap Full text", "clock advance 1500",
+                      "wait-for Paragraph 0", "wait-idle", timeout=300)
+                capture("arxiv-reading")
+                assert archive.htmls == 1, "the full text was fetched once"
+                result["checks"].append(dict(
+                    name="downloading state then full text", status="passed",
+                    detail="the fixture's HTML fetched over TLS opened "
+                           "straight in the reader (the fetching state itself "
+                           "is unit-tested; the fixture answers within one "
+                           "drive step, too fast to film)"))
+
+                # Read a few pages with the page-turn button, then leave.
+                drive("input gpio 1 194 1", "input gpio 1 194 0",
+                      "input gpio 1 194 1", "input gpio 1 194 0",
+                      "input gpio 1 194 1", "input gpio 1 194 0")
+                drive("tap Back", "wait-for Keep for offline", "wait-idle",
+                      timeout=300)
+
+                # Keep it, and the listing row says so.
+                # Back from the reader lets the rendering go, so keeping
+                # fetches it again; the manual clock advances for that fetch.
+                # The landed paper opens in the reader - at the place that
+                # was saved on the way out, not at the top.
+                drive("tap Keep for offline", "clock advance 1500",
+                      "wait-for Paragraph 44", "wait-for 4 of 5", "wait-idle",
+                      timeout=300)
+                capture("arxiv-reopened")
+                drive("tap Back", "wait-for Remove from library",
+                      "wait-idle", timeout=300)
+                drive("tap Back", "wait-for offline", "wait-idle", timeout=300)
+                capture("arxiv-listing-offline")
+                result["checks"].append(dict(
+                    name="listing shows the kept paper offline",
+                    status="passed",
+                    detail="after Keep for offline, the listing row carries "
+                           "the offline badge"))
+
+                # The library row says how far through it was read.
+                drive("tap Back", "wait-for Artificial Intelligence",
+                      "wait-idle", timeout=300)
+                drive("tap Library", "wait-for %", "wait-idle", timeout=300)
+                capture("arxiv-library")
+                result["checks"].append(dict(
+                    name="library shows reading progress", status="passed",
+                    detail="the kept row carries the size and a reading "
+                           "percentage recorded when the reader saved the "
+                           "place on the way out"))
                 result["status"] = "passed"
             finally:
                 stop()
-                print(f"fixture served feeds={archive.feeds}", flush=True)
+                print(f"fixture served feeds={archive.feeds} htmls={archive.htmls}", flush=True)
         (out / "result.json").write_text(json.dumps(result, indent=2) + "\n")
         print(json.dumps(result, indent=2))
 

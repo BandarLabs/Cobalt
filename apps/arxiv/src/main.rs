@@ -733,10 +733,12 @@ impl Arxiv {
         }));
         // Offered only on the last page, and only when there is more behind
         // it. Anywhere else it is a control that fetches something the reader
-        // has not finished looking at.
+        // has not finished looking at. It goes in the top bar: the bottom
+        // band holds one control, and that one is the window the listing is
+        // narrowed to.
         let more_behind = self.offset + self.papers.len() < self.total as usize;
         if page + 1 == pages.len() && more_behind {
-            screen = screen.bottom_action_marked(MORE, "Older papers", Glyph::Download);
+            screen = screen.top_bar_action(MORE, "Older papers");
         }
         screen
             .bottom_action_marked(narrowing.0, narrowing.1, narrowing.2)
@@ -775,13 +777,15 @@ impl Arxiv {
         // Keeping is offered from the paper rather than from the reader,
         // because the reader's bar belongs to reading and every application
         // sharing it has the same one. Whether this paper is kept is a fact
-        // about this application's library, not about the page.
+        // about this application's library, not about the page. It sits in
+        // the top bar: the bottom band holds one control, and that one is
+        // the way into the full text.
         let kept = self.paper().is_some_and(|paper| self.is_kept(&paper.id));
         screen = screen.fill();
         screen = if kept {
-            screen.bottom_action_marked(DISCARD, "Remove from library", Glyph::Trash)
+            screen.top_bar_glyph(DISCARD, "Remove from library", Glyph::Trash)
         } else {
-            screen.bottom_action_marked(KEEP, "Keep for offline", Glyph::Download)
+            screen.top_bar_glyph(KEEP, "Keep for offline", Glyph::Download)
         };
         screen
             .bottom_action_marked(FULL_TEXT, "Full text", Glyph::Book)
@@ -1666,6 +1670,57 @@ mod tests {
             };
             assert!(url.contains(&format!("search_query=cat:{code}")), "{url}");
         }
+    }
+
+    /// While the full text is in the air, the paper screen says so.
+    #[test]
+    fn fetching_the_full_text_shows_a_fetching_state() {
+        let mut runner = AppRunner::new(Arxiv::default());
+        runner.app_mut().papers = vec![paper()];
+        runner.start();
+        runner.action(action_id("paper-0"));
+        runner.action(action_id(FULL_TEXT));
+        let rendered = format!("{:?}", runner.app().reading());
+        assert!(rendered.contains("Fetching the full text"), "{rendered}");
+    }
+
+    /// Both ways off the abstract stay reachable: the bottom band is a
+    /// single slot, so Keep lives in the top bar and Full text in the band -
+    /// a second bottom control would silently replace the first.
+    #[test]
+    fn the_paper_screen_keeps_keep_and_full_text_reachable() {
+        let mut runner = AppRunner::new(Arxiv::default());
+        runner.app_mut().papers = vec![paper()];
+        runner.start();
+        runner.action(action_id("paper-0"));
+        let rendered = format!("{:?}", runner.app().reading());
+        assert!(rendered.contains("Keep for offline"), "{rendered}");
+        assert!(rendered.contains("Full text"), "{rendered}");
+
+        runner.app_mut().library.push(Kept {
+            id: paper().id.clone(),
+            title: paper().title.clone(),
+            authors: String::new(),
+            bytes: 1,
+            progress: None,
+        });
+        let rendered = format!("{:?}", runner.app().reading());
+        assert!(rendered.contains("Remove from library"), "{rendered}");
+        assert!(!rendered.contains("Keep for offline"), "{rendered}");
+    }
+
+    /// Older papers stay reachable from the listing's last page, from the
+    /// top bar, without costing the window control its band.
+    #[test]
+    fn the_listing_keeps_older_papers_and_the_window_reachable() {
+        let app = Arxiv {
+            papers: vec![paper()],
+            total: 50,
+            ..Arxiv::default()
+        };
+        let rendered = format!("{:?}", app.listing(&kobo_sdk::Context::default()));
+        assert!(rendered.contains("Older papers"), "{rendered}");
+        assert!(rendered.contains("Any time"), "{rendered}");
     }
 
     /// The facts above an abstract are the ones that decide whether to read

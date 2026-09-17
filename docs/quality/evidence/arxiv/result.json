@@ -1,8 +1,8 @@
 {
   "provenance": {
-    "source_revision": "a6a5c9fd33f160d5b9691ed890f1d7c2eabde097",
-    "tracked_changes": false,
-    "cli_sha256": "43248926477c3f17073b75dc795770c0cd7d59c53cfd6c790b851739bfbfb895",
+    "source_revision": "3f58bb47c2019aa85124a1cb62eb25ee4526235f",
+    "tracked_changes": true,
+    "cli_sha256": "58dbf88b976639a05c7ad2c01df72cf428fcb02ea39329f04fa2f891676dc21d",
     "toolchain": "1.85.1"
   },
   "scale": "default",
@@ -17,6 +17,21 @@
       "name": "abstract separates title, facts and prose",
       "status": "passed",
       "detail": "the first page shows the title, the byline, the categories, the journal reference and the comment as distinct elements above the paginated abstract"
+    },
+    {
+      "name": "downloading state then full text",
+      "status": "passed",
+      "detail": "the fixture's HTML fetched over TLS opened straight in the reader (the fetching state itself is unit-tested; the fixture answers within one drive step, too fast to film)"
+    },
+    {
+      "name": "listing shows the kept paper offline",
+      "status": "passed",
+      "detail": "after Keep for offline, the listing row carries the offline badge"
+    },
+    {
+      "name": "library shows reading progress",
+      "status": "passed",
+      "detail": "the kept row carries the size and a reading percentage recorded when the reader saved the place on the way out"
     }
   ],
   "status": "passed"

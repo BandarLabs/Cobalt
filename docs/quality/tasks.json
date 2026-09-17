@@ -974,8 +974,10 @@
     "pr": 3,
     "group": "arXiv",
     "task": "Show downloading, available offline and reading progress",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Downloading, offline and reading-progress states validated end-to-end in the simulator against a local TLS fixture (scripts/quality/check-arxiv-sim.py): the full text fetched over TLS and opened in the reader; three page-turn buttons moved through it; leaving saved the place; Keep for offline re-fetched the rendering, wrote it to the shelf and reopened the paper AT THE SAVED PLACE (page 4 of 5, not page 1); the listing row then carried the ' \u00b7 offline' badge and the library row showed '2609.00042v2 \u00b7 Ada Lovelace, Alan Turing \u00b7 3 KB \u00b7 74%' - progress recorded as a percentage of the paper's blocks each time the reader saves a place, so type-size changes never move it. The catalogue's tab-separated encoding gained a fifth field; pre-upgrade catalogues still decode (unit-tested). The fetching activity state is unit-tested (the fixture answers within one drive step, too fast to film). Pixel-verified: docs/quality/evidence/arxiv/arxiv-listing-offline.png, arxiv-library.png, arxiv-reopened.png (result.json, simulator.log alongside). The harness also caught a real bug this row fixed: the bottom band holds ONE control, so 'Keep for offline' and 'Older papers' were silently replaced by 'Full text'/'Any time' and unreachable - Keep/Remove moved to the paper screen's top bar, Older papers to the listing's top bar, with regression tests asserting both stay reachable."
+    ]
   },
   {
     "id": "ARXIV-04",
