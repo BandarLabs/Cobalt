@@ -6147,7 +6147,11 @@ fn rust_lld_candidate(target_dir: &Path) -> PathBuf {
 /// The C cross-compiler `ring` needs to build its own sources for the reader.
 ///
 /// Several distributions and taps spell the same toolchain differently, so
-/// every name in use is tried before the build is refused.
+/// every name in use is tried. When none of them exists, `zig cc` is the
+/// fallback: zig is a single download on every host (winget on Windows), and
+/// it cross-compiles C for armv7 musl out of the box. cc-rs appends a
+/// Rust-style `--target` triple that zig rejects, so the zig path is offered
+/// through a small wrapper script that drops that flag.
 fn find_device_cc() -> Result<String, String> {
     const NAMES: [&str; 4] = [
         "armv7-unknown-linux-musleabihf-gcc",
@@ -6155,23 +6159,22 @@ fn find_device_cc() -> Result<String, String> {
         "arm-linux-musleabihf-gcc",
         "arm-linux-gnueabihf-gcc",
     ];
-    for name in NAMES {
-        let found = Command::new(name)
-            .arg("--version")
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .is_ok_and(|status| status.success());
-        if found {
-            return Ok(name.to_owned());
-        }
+    if let Some(name) = probe_tool(&NAMES) {
+        return Ok(name);
+    }
+    if zig_available() {
+        let (cc, _) = write_zig_device_wrappers(&zig_device_wrapper_dir())?;
+        return Ok(cc.to_string_lossy().into_owned());
     }
     Err(format!(
         "no ARM C cross-compiler was found, and one is needed because the TLS \
-         stack builds C for the reader. Tried: {}.\n  macOS:  brew install \
-         messense/macos-cross-toolchains/armv7-unknown-linux-musleabihf\n  \
-         Debian: sudo apt-get install gcc-arm-linux-gnueabihf\nSet \
-         CC_armv7_unknown_linux_musleabihf to override.",
+         stack builds C for the reader. Tried: {}, and zig.\n  Windows: winget \
+         install zig.zig (then open a new terminal)\n  macOS:  brew install \
+         messense/macos-cross-toolchains/armv7-unknown-linux-musleabihf (or: \
+         brew install zig)\n  Debian: sudo apt-get install \
+         gcc-arm-linux-gnueabihf (or: download zig from \
+         https://ziglang.org/download/)\nSet CC_armv7_unknown_linux_musleabihf \
+         to override.",
         NAMES.join(", ")
     ))
 }
@@ -6183,7 +6186,25 @@ fn find_device_ar() -> Result<String, String> {
         "arm-linux-musleabihf-ar",
         "arm-linux-gnueabihf-ar",
     ];
-    for name in NAMES {
+    if let Some(name) = probe_tool(&NAMES) {
+        return Ok(name);
+    }
+    if zig_available() {
+        let (_, ar) = write_zig_device_wrappers(&zig_device_wrapper_dir())?;
+        return Ok(ar.to_string_lossy().into_owned());
+    }
+    Err(format!(
+        "no ARM cross-archiver was found, and one is needed for C dependencies. \
+         Tried: {}, and zig.\n  Windows: winget install zig.zig (then open a \
+         new terminal)\n  macOS:  brew install zig\n  Debian: download zig from \
+         https://ziglang.org/download/\nSet AR_armv7_unknown_linux_musleabihf \
+         to override.",
+        NAMES.join(", ")
+    ))
+}
+
+fn probe_tool(names: &[&str]) -> Option<String> {
+    for name in names {
         let found = Command::new(name)
             .arg("--version")
             .stdout(Stdio::null())
@@ -6191,14 +6212,61 @@ fn find_device_ar() -> Result<String, String> {
             .status()
             .is_ok_and(|status| status.success());
         if found {
-            return Ok(name.to_owned());
+            return Some((*name).to_owned());
         }
     }
-    Err(format!(
-        "no ARM cross-archiver was found, and one is needed for C dependencies. \
-         Tried: {}.\nSet AR_armv7_unknown_linux_musleabihf to override.",
-        NAMES.join(", ")
-    ))
+    None
+}
+
+fn zig_available() -> bool {
+    Command::new("zig")
+        .arg("version")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+fn zig_device_wrapper_dir() -> PathBuf {
+    workspace_target_directory().join("device-toolchain")
+}
+
+/// Zig speaks its own target spelling (`arm-linux-musleabihf`), while cc-rs
+/// appends the Rust triple as `--target=armv7-unknown-linux-musleabihf`, which
+/// zig rejects outright. The `cc` wrapper filters that flag out and supplies
+/// zig's target itself; the `ar` wrapper only adapts the name. Written under
+/// the target directory so a stale wrapper is never picked up across
+/// checkouts. Returns the (cc, ar) wrapper paths.
+fn write_zig_device_wrappers(dir: &Path) -> Result<(PathBuf, PathBuf), String> {
+    fs::create_dir_all(dir).map_err(|error| format!("create {}: {error}", dir.display()))?;
+    let (cc_name, ar_name, cc_body, ar_body) = if cfg!(windows) {
+        (
+            "zig-cc.cmd",
+            "zig-ar.cmd",
+            "@echo off\r\nrem cc-rs appends a Rust-style --target triple that zig cannot parse; drop it.\r\nset kept=\r\n:filter\r\nif \"%~1\"==\"\" goto build\r\nset arg=%~1\r\nif not \"%arg:~0,9%\"==\"--target=\" set kept=%kept% \"%~1\"\r\nshift\r\ngoto filter\r\n:build\r\nzig cc -target arm-linux-musleabihf -mcpu=cortex_a7 %kept%\r\nexit /b %errorlevel%\r\n",
+            "@echo off\r\nzig ar %*\r\n",
+        )
+    } else {
+        (
+            "zig-cc",
+            "zig-ar",
+            "#!/bin/sh\n# cc-rs appends a Rust-style --target triple that zig cannot parse; drop it.\ncount=$#\nwhile [ $count -gt 0 ]; do\n    arg=$1\n    shift\n    case $arg in\n        --target=*) ;;\n        *) set -- \"$@\" \"$arg\" ;;\n    esac\n    count=$((count - 1))\ndone\nexec zig cc -target arm-linux-musleabihf -mcpu=cortex_a7 \"$@\"\n",
+            "#!/bin/sh\nexec zig ar \"$@\"\n",
+        )
+    };
+    let cc = dir.join(cc_name);
+    let ar = dir.join(ar_name);
+    fs::write(&cc, cc_body).map_err(|error| format!("write {}: {error}", cc.display()))?;
+    fs::write(&ar, ar_body).map_err(|error| format!("write {}: {error}", ar.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        for path in [&cc, &ar] {
+            fs::set_permissions(path, fs::Permissions::from_mode(0o755))
+                .map_err(|error| format!("chmod {}: {error}", path.display()))?;
+        }
+    }
+    Ok((cc, ar))
 }
 
 fn verify_arm_elf(path: &Path) -> Result<(), String> {
@@ -9630,8 +9698,8 @@ mod tests {
         use super::super::{
             choose_reader_list, confirmation_answer, dry_run_plan, gzip,
             load_release_package_from_manifest, parse_setup, prompt_confirmation,
-            rust_lld_candidate, setup, setup_device_with_confirmation, undo_setup, SetupMode,
-            SetupPayload,
+            rust_lld_candidate, setup, setup_device_with_confirmation, undo_setup,
+            write_zig_device_wrappers, SetupMode, SetupPayload,
         };
         use std::path::{Path, PathBuf};
 
@@ -9748,6 +9816,83 @@ mod tests {
             assert_eq!(name, "rust-lld.exe");
             #[cfg(not(windows))]
             assert_eq!(name, "rust-lld");
+        }
+
+        #[test]
+        fn zig_cc_wrapper_carries_zigs_target_and_drops_the_rust_one() {
+            let volume = TempVolume::new("zigwrap");
+            let (cc, ar) = write_zig_device_wrappers(&volume.path).expect("wrappers");
+            let cc_body = std::fs::read_to_string(&cc).expect("cc wrapper");
+            assert!(cc_body.contains("-target arm-linux-musleabihf"));
+            assert!(cc_body.contains("-mcpu=cortex_a7"));
+            assert!(cc_body.contains("--target=*)"));
+            assert!(std::fs::read_to_string(&ar)
+                .expect("ar wrapper")
+                .contains("zig ar"));
+            #[cfg(windows)]
+            assert_eq!(cc.extension().and_then(|e| e.to_str()), Some("cmd"));
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                assert_eq!(
+                    cc.metadata().expect("metadata").permissions().mode() & 0o111,
+                    0o111
+                );
+                assert_eq!(cc.extension(), None);
+            }
+        }
+
+        /// The shell wrapper must drop cc-rs's Rust-style `--target` and keep
+        /// every other argument intact, including ones with spaces.
+        #[cfg(unix)]
+        #[test]
+        fn zig_cc_wrapper_filters_only_the_target_flag() {
+            use std::os::unix::fs::PermissionsExt;
+            let volume = TempVolume::new("zigwrap-exec");
+            let (cc, _) = write_zig_device_wrappers(&volume.path).expect("wrappers");
+            let bin = volume.path.join("bin");
+            std::fs::create_dir_all(&bin).expect("bin");
+            std::fs::write(
+                bin.join("zig"),
+                "#!/bin/sh\nfor a in \"$@\"; do printf '%s\\n' \"$a\"; done\n",
+            )
+            .expect("stub zig");
+            std::fs::set_permissions(bin.join("zig"), std::fs::Permissions::from_mode(0o755))
+                .expect("chmod stub");
+            let output = std::process::Command::new("sh")
+                .arg(&cc)
+                .args([
+                    "-O2",
+                    "--target=armv7-unknown-linux-musleabihf",
+                    "two words",
+                ])
+                .env(
+                    "PATH",
+                    format!(
+                        "{}:{}",
+                        bin.display(),
+                        std::env::var("PATH").unwrap_or_default()
+                    ),
+                )
+                .output()
+                .expect("run wrapper");
+            assert!(output.status.success());
+            let args: Vec<String> = String::from_utf8(output.stdout)
+                .expect("utf8")
+                .lines()
+                .map(str::to_owned)
+                .collect();
+            assert_eq!(
+                args,
+                vec![
+                    "cc",
+                    "-target",
+                    "arm-linux-musleabihf",
+                    "-mcpu=cortex_a7",
+                    "-O2",
+                    "two words"
+                ]
+            );
         }
 
         #[test]
