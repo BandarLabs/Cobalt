@@ -1,8 +1,6 @@
 # Birds
 
-Inspired by the awesome [fugleramme](https://github.com/arnegiacomo/fugleramme) project by Arne Giacomo Munthe-Kaas. Its artwork-first, quiet e-ink design is the reason this companion exists.
-
-Birds is an offline Kobo viewer for a microphone and BirdNET-Go running on a Mac or Linux computer. The Kobo has no microphone and never runs the model. The collage fills the reading surface; its bird names are part of Fugleramme's rendered plate. On a colour Kobo, Birds keeps and paints the source RGB through Cobalt's colour-picture path; greyscale models decode only luminance.
+An offline Kobo viewer for the birds [BirdNET-Go](https://github.com/tphakala/birdnet-go) hears on your computer's microphone, drawn as [Fugleramme](https://github.com/arnegiacomo/fugleramme)'s labelled plates. The reader has no microphone and never runs the model.
 
 <p>
   <a href="../../docs/media/apps/birds/birds-on-a-clara-bw.mp4">
@@ -11,40 +9,41 @@ Birds is an offline Kobo viewer for a microphone and BirdNET-Go running on a Mac
   <img src="../../docs/media/apps/birds/birds-on-a-clara-bw.jpg" height="420" alt="The same reader held still, its screen filled edge to edge with a collage of twelve birds named in Latin beneath each plate">
 </p>
 
-A Clara BW, not a simulation: twelve species heard that afternoon, drawn edge to edge with nothing of the application's own on the glass. The bar is there, waiting at the top edge for a touch. [The clip](../../docs/media/apps/birds/birds-on-a-clara-bw.mp4) has sound; the animation beside it cannot, because GIF carries no audio.
+A Clara BW showing twelve species heard that afternoon. [The clip](../../docs/media/apps/birds/birds-on-a-clara-bw.mp4) has sound; the GIF beside it cannot.
 
-```sh
-kobo setup --enable-ssh
-kobo birds listen --source http://garden-computer.local:8080 --device 192.168.1.42
-kobo birds status
-kobo birds stop
-```
+## Requirements
 
-## The two programs that must be running first
+| | |
+| --- | --- |
+| A computer with a microphone | macOS on Apple Silicon, or Linux on x86-64 or arm64 |
+| [BirdNET-Go](https://github.com/tphakala/birdnet-go/releases) | owns the microphone and the classifier |
+| [Fugleramme](https://github.com/arnegiacomo/fugleramme) | polls BirdNET-Go and renders the collage |
+| A Kobo running Cobalt | with SSH enabled: `kobo setup --enable-ssh` |
 
-That `--source` is not something Cobalt starts. Three programs are involved and only the last is ours: BirdNET-Go owns the microphone and the classifier, Fugleramme polls BirdNET-Go and renders the collage, and the companion polls Fugleramme and carries the picture to the reader. Install them in that order, because each is silent until the one before it answers.
+Upstream publishes no Intel Mac build of BirdNET-Go. Windows is out of scope; the host CLI relies on Unix process and filesystem behaviour.
 
-Both projects default to port 8080, so a computer running them side by side has to move one. Fugleramme's own appliance install expects the detector on 8090 and serves the frame on 8080, and following that here means the `--source` above is the one every other document already assumes.
+Install in the order below. Each stage is silent until the one before it answers.
 
-**BirdNET-Go** ([releases](https://github.com/tphakala/birdnet-go/releases)) publishes a build per platform, and not for every platform Birds runs against. There is `darwin-arm64`, `linux-amd64` and `linux-arm64`, and no Intel Mac build at all: an Intel Mac has to build it from source or run it in a container, neither of which is described here. Take the archive matching the computer that has the microphone.
+## 1. BirdNET-Go
 
-Each archive carries two shared libraries beside the binary, and the binary will not start until the dynamic linker can find them. On Apple Silicon macOS, which is where the steps below were run:
+Each archive carries two shared libraries beside the binary, and the binary will not start until the dynamic linker finds them.
 
 ```sh
 tar xzf birdnet-go-darwin-arm64-*.tar.gz
-DYLD_LIBRARY_PATH="$PWD" ./birdnet-go serve
+DYLD_LIBRARY_PATH="$PWD" ./birdnet-go serve      # LD_LIBRARY_PATH on Linux
 ```
 
-Linux is the same shape with the loader variable Linux uses, and upstream's own README covers installing the libraries properly rather than per session:
+Then, before going further:
 
-```sh
-tar xzf birdnet-go-linux-amd64-*.tar.gz     # or linux-arm64
-LD_LIBRARY_PATH="$PWD" ./birdnet-go serve
-```
+- **Move the web port to 8090** in `~/.config/birdnet-go/config.yaml`, written on first run wherever it was started from. BirdNET-Go and Fugleramme both default to 8080.
+- **Set your location** in the same file. Without it the range filter admits every species on earth.
+- **Grant microphone permission** when macOS asks. Until you do it analyses silence and says nothing about it.
 
-It writes its configuration to `~/.config/birdnet-go/config.yaml` on the first run, wherever it was started from, and that is the copy to edit for the 8090 move and for your location. On macOS it also asks the terminal it was started from for microphone permission, and until that is granted it analyses silence and says nothing about it. `curl http://127.0.0.1:8090/api/v2/health` answers `healthy` once it is up, and the log names every sound it classifies, which is the quickest proof the microphone is really arriving.
+`curl http://127.0.0.1:8090/api/v2/health` answers `healthy` once it is up, and the log names every sound it classifies.
 
-**Fugleramme** ([source](https://github.com/arnegiacomo/fugleramme)) is a Python project. Its `install.sh` and `run.sh` set up a Raspberry Pi appliance through systemd and do not apply here; on a Mac or a desktop Linux machine, run the service directly and let it find no panel:
+## 2. Fugleramme
+
+A Python project. Its `install.sh` and `run.sh` build a Raspberry Pi appliance through systemd and do not apply here; run the service directly and let it find no panel.
 
 ```sh
 uv sync
@@ -52,34 +51,51 @@ uv run fugleramme-check --detector http://127.0.0.1:8090
 uv run fugleramme-frame --detector http://127.0.0.1:8090 --host 127.0.0.1 --port 8080
 ```
 
-`fugleramme-check` is worth running first: it reports whether the detector answers everything the frame needs, and separates "BirdNET-Go is not reachable" from "no bird has been heard yet". The frame logs `Inky library unavailable; running web-only`, which is the expected and wanted outcome on a computer, and Birds reads the same web endpoints the panel would have drawn. Once `curl http://127.0.0.1:8080/state` returns a token, that address is the `--source` the companion wants.
+`fugleramme-check` separates "BirdNET-Go is not reachable" from "no bird has been heard yet". The frame logs `Inky library unavailable; running web-only`, which is what you want on a computer.
 
-**Turn the frame on its side before looking at the reader.** Fugleramme takes the page shape from the panel it is driving, and with no panel attached it composes for a landscape one. A Kobo is portrait, so a landscape collage arrives at a portrait screen and the app fills the panel with the middle of it: the outer birds lose their heads and their names lose their first letters. Nothing reports this, because a cropped picture is still a picture. Set `rotation` to 90 in Fugleramme's `detector/data/settings.json`, or from its admin page at `/admin`, and it lays the birds out for a tall page instead. A 1080x1440 collage against a 1072x1448 panel is the difference between losing four tenths of the picture and losing one hundredth of it.
+**Set `rotation` to 90** in `detector/data/settings.json`, or from `/admin`. Fugleramme takes its page shape from the panel it drives, and headless it composes for a landscape one; a Kobo is portrait, and the reader would show you the middle of a wide collage with the outer birds cropped.
 
-No bird has to have been heard for any of this to work. With an empty detection window Fugleramme still renders and the companion still publishes, so the whole path can be proved indoors before it is left running near a window.
+Once `curl http://127.0.0.1:8080/state` returns a token, that address is the `--source` below.
+
+## 3. Birds
+
+Install Birds from the Store on the reader, then start the companion on the computer:
+
+```sh
+kobo birds listen --source http://garden-computer.local:8080 --device 192.168.1.42
+kobo birds status
+kobo birds stop
+```
+
+No bird has to have been heard for this to work. With an empty detection window Fugleramme still renders and the companion still publishes, so the whole path can be proved indoors.
+
+## How it works
+
+Fugleramme exposes `/state` and `/collage.png`. The companion polls `/state` and pushes a new snapshot only when the token changes, over Cobalt's owner-attended SSH route. Each publication writes the collage to a content-addressed file first and commits `current.json` last as the pointer, so the reader sees either the old complete snapshot or the new one; an interrupted publish never overwrites the image the old snapshot still names.
+
+On the reader, the collage fills the screen with no bar over it; touch the top edge to bring the bar back. The names are part of Fugleramme's rendered plate. Colour Kobos keep and paint the source RGB; greyscale models decode luminance only.
+
+If the host, microphone or network disappears, the last complete page remains. A snapshot older than a day is marked stale. Refresh reopens local files and does not turn on Wi-Fi.
+
+Fugleramme does not expose recent detections as machine-readable JSON, so the automatic bridge leaves that list empty. A hand-prepared `kobo birds push SNAPSHOT.json IMAGE.png` may include it.
 
 <img width="300" src="screenshots/birds.png" alt="A labelled collage of public-domain bird plates filling the Birds app on a Kobo">
 <img width="300" src="screenshots/birds-colour.png" alt="The same bird collage rendered in RGB for a Kobo Clara Colour">
 
-`--source` is Fugleramme's local web endpoint. Fugleramme polls BirdNET-Go, renders the collage, and exposes `/state` plus `/collage.png`; the companion pushes a new snapshot only when that state token changes. Transfer uses Cobalt's established owner-attended SSH route. Each publication writes the collage to a content-addressed image file first and commits `current.json` last as the pointer, so the app sees either the old complete snapshot or the new one; an interrupted publish never overwrites the image the old snapshot still names, and orphaned images are pruned by the next successful publish.
+## Licensing
 
-If the host, microphone or network disappears, the last complete page remains. A snapshot older than one day is marked stale. Refresh reopens local shelf files; it does not turn on Wi-Fi. Fugleramme does not expose recent detections as machine-readable JSON, so the automatic bridge leaves that optional list empty; a manually prepared `kobo birds push SNAPSHOT.json IMAGE.png` snapshot may include it.
+Birds bundles no Fugleramme source, artwork or fonts, and no BirdNET-Go binary or model. It is an API client and transfer tool.
 
-Native Windows is out of scope. Cobalt's host CLI currently relies on Unix process and filesystem behavior.
+- Fugleramme's code is MIT; the notice is in `licenses/FUGLERAMME-MIT.txt` for downstream work that copies it.
+- Fugleramme's classic artwork is CC BY-SA 4.0 and is not bundled. Anyone redistributing it must carry its per-image manifest and attribution.
+- The photographs and clip at the top show that artwork on a screen, so those three files carry CC BY-SA 4.0 with attribution to Fugleramme. `THIRD-PARTY.md` says which plates and where their sources are listed.
+- The fixture collage and screenshots are public-domain 19th-century plates from Wikimedia Commons. `THIRD-PARTY.md` lists every source; `scripts/fixtures/birds/build-collage.py` rebuilds them.
+- BirdNET-Go and the BirdNET model are CC BY-NC-SA 4.0, non-commercial, and are not part of Cobalt.
 
-## Licenses
-
-No Fugleramme source, artwork, fonts, BirdNET-Go binary, or BirdNET model is bundled in this app. The companion is an API client and transfer tool written for Cobalt.
-
-- Fugleramme code is MIT. If downstream work copies its code, retain the notice in `licenses/FUGLERAMME-MIT.txt`.
-- Fugleramme classic artwork is CC BY-SA 4.0 and is not bundled. Users who add it to a distribution must carry its per-image manifest and attribution.
-- The checked-in fixture collage and screenshots are a composite of public-domain 19th-century ornithological plates from Wikimedia Commons; `THIRD-PARTY.md` lists every source plate, and `scripts/fixtures/birds/build-collage.py` rebuilds the fixture.
-- BirdNET-Go and its BirdNET model are separately distributed under CC BY-NC-SA 4.0 for non-commercial use. They are not part of the Cobalt package.
-
-See `THIRD-PARTY.md` and `licenses/`.
+Birds exists because of [Fugleramme](https://github.com/arnegiacomo/fugleramme) by Arne Giacomo Munthe-Kaas, whose artwork-first e-ink design it follows. See `THIRD-PARTY.md` and `licenses/`.
 
 ## Validation
 
-The real model-to-screen acceptance chain is recorded in [`docs/quality/birds-e2e.md`](../../docs/quality/birds-e2e.md), and it is a host and simulator run: that is what the report claims and all it claims. Default and extra-large text-scale screenshots are checked in under `screenshots/`.
+[`docs/quality/birds-e2e.md`](../../docs/quality/birds-e2e.md) records the model-to-screen chain as a host and simulator run, which is all it claims. Text-scale screenshots are under `screenshots/`.
 
-The pictures at the top are a Clara BW, so the part a simulation cannot answer is answered: a live microphone reached BirdNET-Go, Fugleramme drew the plate, the companion carried it over, and the reader painted it with nothing of the application's own on the glass. A full acceptance run against a physical reader, with every route driven and recorded the way the report above records the simulated one, has still not been done.
+The pictures above are a Clara BW: a live microphone reached BirdNET-Go, Fugleramme drew the plate, the companion carried it over and the reader painted it. A full acceptance run against physical hardware, driven and recorded the way the report records the simulated one, has not been done.

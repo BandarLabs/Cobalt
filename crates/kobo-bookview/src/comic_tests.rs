@@ -140,3 +140,52 @@ fn colour_page_larger_than_wire_budget_is_resized_without_losing_its_channels() 
     assert!(pixels.len() <= kobo_sdk::MAX_PICTURE_BYTES);
     assert!(pixels.chunks_exact(3).all(|pixel| pixel == [210, 40, 90]));
 }
+
+/// Every control the comic draws has to be one it answers.
+///
+/// `act` matches the incoming identifier against a hand-kept list of names,
+/// and a control whose name is missing from it is simply not recognised: the
+/// arm that would have handled it is never reached and the tap does nothing at
+/// all. Nothing else catches that, because a screen is free to draw any name
+/// it likes, and the harness above turns an unanswered tap into a failure.
+#[test]
+fn every_control_the_comic_draws_is_one_it_answers() {
+    let metrics = DisplayMetrics {
+        width: 1072,
+        height: 1448,
+        pixels_per_inch: 300,
+        text_scale: kobo_ui::TextScale::Default,
+    };
+    kobo_text::install(metrics).unwrap();
+    let mut runner = AppRunner::with_metrics(App::default(), metrics);
+    runner.start();
+
+    let drawn_on = |runner: &AppRunner<App>| {
+        let screen = runner.app().view.as_ref().unwrap().screen();
+        screen
+            .layout_with(&metrics, &kobo_ui::Chrome::with_back(true))
+            .nodes
+            .iter()
+            .filter_map(|node| match node.kind {
+                kobo_ui::LayoutKind::Button(action, ..)
+                | kobo_ui::LayoutKind::Cell(action, ..)
+                | kobo_ui::LayoutKind::BarAction(action, ..) => Some(action),
+                _ => None,
+            })
+            .filter(|action| *action != ActionId::BACK)
+            .collect::<Vec<_>>()
+    };
+
+    for opener in ["comic-controls", "comic-options"] {
+        runner.action(action_id(opener));
+        for control in drawn_on(&runner) {
+            // A fresh reader for each one. A control that navigates leaves a
+            // different screen behind it, and walking back from wherever it
+            // went would test the walk rather than the control.
+            let mut probe = AppRunner::with_metrics(App::default(), metrics);
+            probe.start();
+            probe.action(action_id(opener));
+            probe.action(control);
+        }
+    }
+}

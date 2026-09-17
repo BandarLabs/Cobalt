@@ -34,3 +34,22 @@ is marked public domain on its file page. Rebuild the composite with
 | Merlin | John Gould | https://commons.wikimedia.org/wiki/File:Falco_Aesalon.tif |
 | Bluethroat | John Gerrard Keulemans | https://commons.wikimedia.org/wiki/File:Bluethroat_Keulemans.jpg |
 | Razorbill | John Gerrard Keulemans | https://commons.wikimedia.org/wiki/File:Alca_torda_Keulemans.jpg |
+
+## Photographs of a reader in use
+
+`docs/media/apps/birds/birds-on-a-clara-bw.{jpg,gif,mp4}` are photographs and a
+recording of a Kobo Clara BW running Birds. What is on the screen in them is a
+collage rendered by a separately installed Fugleramme from its **classic**
+artwork, which is not the public-domain fixture above.
+
+That artwork is offered under
+[CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) as digital
+restorations edited for Fugleramme, over source plates by the von Wright
+brothers, John Gould and others. Per-plate sources are listed in Fugleramme's
+own [`assets/artwork/classic/ATTRIBUTION.md`](https://github.com/arnegiacomo/fugleramme/blob/main/assets/artwork/classic/ATTRIBUTION.md)
+and `manifest.json`, which name the work each file came from.
+
+These three files therefore carry CC BY-SA 4.0 with attribution to Fugleramme
+by Arne Giacomo Munthe-Kaas. They are documentation of the application and are
+not part of the Birds package: no Fugleramme artwork is compiled into, shipped
+with, or installed by Birds itself.
