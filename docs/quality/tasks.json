@@ -1920,56 +1920,70 @@
   "pr": 3,
   "group": "Home Panel",
   "task": "Guide server discovery and connection setup",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "Guided setup walks URL entry (symbols layer for digits/punct), a Test connection step, and per-failure guidance: each TaskError names its fix (unreachable, unauthorized, offline, missing credential, too large, not found, denied, rate limited). Discovery runs through POST /api/template because the platform credential policy (crates/kobo-policy/src/credentials.rs) does not allow homepanel GET /api/states; the previous discovery never worked on device. Proven in scripts/quality/check-homepanel-sim.py against a TLS fixture Home Assistant; captures in docs/quality/evidence/homepanel. Physical device flow UNVERIFIED."
+  ]
  },
  {
   "id": "HOME-02",
   "pr": 3,
   "group": "Home Panel",
   "task": "Show online/stale/last-updated states",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "Grid header shows 'Updated 22:53.' after a successful poll and 'Offline since 22:53. Readings may be stale.' after a failed one; last-ok snapshot is persisted and reloaded on restart. Drop and recovery both asserted in the sim journey (server killed -> offline banner with stale readings; server back -> banner clears)."
+  ]
  },
  {
   "id": "HOME-03",
   "pr": 3,
   "group": "Home Panel",
   "task": "Acknowledge each tile action and failure",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "Every toggle/service call gets a named ack ('desk is now off.') that survives quiet polls (poll_failed flag keeps poll refreshes from clearing acks) and a named failure ('did not change') on error. Asserted in sim: toggle ack visible across subsequent polls."
+  ]
  },
  {
   "id": "HOME-04",
   "pr": 3,
   "group": "Home Panel",
   "task": "Provide compact tile editing",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "Edit view lists tiles paged six per screen with a 'more' row, supports remove and move-up, renders banners (previously missing), and persists order/removal across restart. Asserted in sim journey."
+  ]
  },
  {
   "id": "HOME-05",
   "pr": 3,
   "group": "Home Panel",
   "task": "Add usable climate controls",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "Climate screen shows room temperature and target, adjusts target in 0.5 degree steps via climate/set_temperature, and offers Power. Entry clears stale acks from other tiles. Asserted in sim: 21 -> 21.5 round trip against the fixture."
+  ]
  },
  {
   "id": "HOME-06",
   "pr": 3,
   "group": "Home Panel",
   "task": "Provide an optional wall-panel mode",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "Wall-panel mode switches the grid to a persisted one-column layout suited to a mounted panel; toggled from settings and restored on restart. Asserted in sim journey and captured in the wall screenshot."
+  ]
  },
  {
   "id": "HOME-07",
   "pr": 3,
   "group": "Home Panel",
   "task": "Validate against local service fixtures",
-  "status": "todo",
-  "evidence": []
+  "status": "done",
+  "evidence": [
+   "scripts/quality/check-homepanel-sim.py stands up a TLS fixture Home Assistant (kobo stream init cert, KOBO_SIM_TRUST_DIR trust, plain bearer secret at TMPDIR/cobalt-sim-secrets/apps/homepanel/homeassistant), drives the full journey (guided setup, discovery of 4 tiles, toggle ack, climate adjust, tile edit, wall panel, outage, recovery, restart persistence), and asserts every server request carried Bearer fixture-ha-token. Result: passed; evidence in docs/quality/evidence/homepanel."
+  ]
  },
  {
   "id": "INK-01",

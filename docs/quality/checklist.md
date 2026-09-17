@@ -286,13 +286,13 @@ Design direction: the bar is a well-made iPad application, built for a panel tha
 
 ## PR 3 · Home Panel
 
-- [ ] **HOME-01** Guide server discovery and connection setup.
-- [ ] **HOME-02** Show online/stale/last-updated states.
-- [ ] **HOME-03** Acknowledge each tile action and failure.
-- [ ] **HOME-04** Provide compact tile editing.
-- [ ] **HOME-05** Add usable climate controls.
-- [ ] **HOME-06** Provide an optional wall-panel mode.
-- [ ] **HOME-07** Validate against local service fixtures.
+- [x] **HOME-01** Guide server discovery and connection setup.
+- [x] **HOME-02** Show online/stale/last-updated states.
+- [x] **HOME-03** Acknowledge each tile action and failure.
+- [x] **HOME-04** Provide compact tile editing.
+- [x] **HOME-05** Add usable climate controls.
+- [x] **HOME-06** Provide an optional wall-panel mode.
+- [x] **HOME-07** Validate against local service fixtures.
 
 ## PR 3 · Inkling
 
