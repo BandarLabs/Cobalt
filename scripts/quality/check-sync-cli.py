@@ -35,6 +35,9 @@ def main():
     result = {'server': 'stub syncthing + stub ssh', 'checks': []}
     checks = result['checks']
 
+    # The stub binds one fixed loopback port; never start against a leftover.
+    subprocess.run(['pkill', '-f', 'sync-cli-stub/syncthing'], capture_output=True)
+    time.sleep(.5)
     with tempfile.TemporaryDirectory(prefix='cobalt-sync-cli-', dir='/tmp') as temporary:
         base = Path(temporary)
         home = base / 'home'
@@ -44,6 +47,16 @@ def main():
         notes.mkdir()
         (notes / 'Alpha.md').write_text('# Alpha\nsee [[Beta]]\n')
         (notes / 'Beta.md').write_text('Beta body\n')
+        photos = base / 'photos'
+        photos.mkdir()
+        # A valid 1x1 PNG.
+        (photos / 'photo-one.png').write_bytes(bytes([
+            0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48,
+            0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00,
+            0x00, 0x1f, 0x15, 0xc4, 0x89, 0x00, 0x00, 0x00, 0x0a, 0x49, 0x44, 0x41, 0x54, 0x78,
+            0x9c, 0x63, 0x00, 0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0d, 0x0a, 0x2d, 0xb4, 0x00,
+            0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+        ]))
         env = dict(os.environ,
                    PATH=f"{STUBBIN}:{os.environ['PATH']}",
                    HOME=str(home), KOBO_SYNC_HOME=str(sync_home))
@@ -141,6 +154,20 @@ def main():
         probe = json.loads(run_cli('status', '--json').stdout)
         assert probe['running'] is False
         checks.append({'name': 'stop leaves the dedicated peer stopped'})
+
+
+        # 7. frame publish packs a manifest.v1 album without re-ingesting itself.
+        run_cli('setup', str(photos), '--folder', 'frame', '--device', '192.168.7.1')
+        packed = run_cli('publish', '--folder', 'frame').stdout
+        assert 'Packed 1 photo(s) into manifest.v1' in packed, packed
+        lines = (photos / 'manifest.v1').read_text().splitlines()
+        assert lines[0] == 'cobalt-frame-v1' and len(lines) == 2
+        shelf_name = f"{lines[1].split(chr(9))[0]}.png"
+        assert (photos / shelf_name).is_file()
+        again = run_cli('publish', '--folder', 'frame').stdout
+        assert 'Packed 1 photo(s)' in again
+        assert (photos / 'manifest.v1').read_text().splitlines()[1].split(chr(9))[0] == lines[1].split(chr(9))[0]
+        checks.append({'name': 'frame publish packs a manifest.v1 album, idempotently'})
 
     (output / 'result.json').write_text(json.dumps(result, indent=2) + '\n')
     for check in checks:

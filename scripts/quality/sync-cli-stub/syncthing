@@ -73,7 +73,9 @@ elif sys.argv[1] == 'serve':
             path = self.path.split('?')[0]
             if path == '/rest/system/shutdown':
                 self.reply({})
-                threading.Thread(target=self.server.shutdown).start()
+                # Exit decisively: threading through server.shutdown() races
+                # slow stops against the next launch on the same fixed port.
+                threading.Timer(0.05, lambda: os._exit(0)).start()
                 return
             if path in ('/rest/system/pause', '/rest/system/resume'):
                 note({path.rsplit('/', 1)[1]: self.path})

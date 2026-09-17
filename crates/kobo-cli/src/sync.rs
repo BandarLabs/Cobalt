@@ -1414,10 +1414,7 @@ fn publish(arguments: &[String]) -> Result<(), String> {
     })?;
     match folder {
         "vault" => publish_vault(&mapping.path),
-        "frame" => Err(
-            "Frame album publishing over Sync is not built yet; use 'kobo frame push --device IP' meanwhile"
-                .to_owned(),
-        ),
+        "frame" => publish_frame(&mapping.path),
         _ => Err(format!(
             "folder {folder} syncs as plain files; no application package is needed"
         )),
@@ -1471,6 +1468,76 @@ fn publish_vault(folder: &Path) -> Result<(), String> {
     )?;
     println!(
         "Packed {offered} note(s) into {SYNCED_MANIFEST}; the next sync window carries the package and Vault imports it."
+    );
+    Ok(())
+}
+
+/// Packs the images in the mapped frame folder into a whole `manifest.v1`
+/// album, prepared for the reader's default panel. The shelf lives inside
+/// the source folder, so the walk skips its own output: the manifest, the
+/// sidecars and every photo the manifest already lists. Mirror semantics
+/// hold for the owner's sources - a removed photo leaves the album - and
+/// owner files are never modified.
+fn publish_frame(folder: &Path) -> Result<(), String> {
+    use kobo_frame_host::{
+        prepare_for_panel_excluding, Fit, Manifest, DEFAULT_PANEL, DIGEST_MANIFEST, FIT_MANIFEST,
+        MANIFEST, MAX_FRAME_CAPACITY,
+    };
+    let existing = match fs::read(folder.join(MANIFEST)) {
+        Ok(bytes) => Manifest::decode(&bytes)
+            .map_err(|error| format!("existing {MANIFEST} in the sync folder: {error}"))?,
+        Err(_) => Manifest { photos: Vec::new() },
+    };
+    let mut exclude = existing
+        .photos
+        .iter()
+        .map(kobo_frame_host::Photo::shelf_name)
+        .collect::<std::collections::BTreeSet<_>>();
+    for sidecar in [MANIFEST, DIGEST_MANIFEST, FIT_MANIFEST] {
+        exclude.insert(sidecar.to_owned());
+    }
+    let push =
+        prepare_for_panel_excluding(folder, Fit::Crop, &existing, true, DEFAULT_PANEL, &exclude)?;
+    let mut total = 0_usize;
+    for photo in &push.manifest.photos {
+        total = total.saturating_add(match fs::metadata(folder.join(photo.shelf_name())) {
+            Ok(metadata) => usize::try_from(metadata.len()).unwrap_or(usize::MAX),
+            Err(_) => push
+                .photos
+                .iter()
+                .find(|prepared| prepared.photo.id == photo.id)
+                .and_then(|prepared| prepared.png.as_ref())
+                .map_or(0, Vec::len),
+        });
+    }
+    if total > MAX_FRAME_CAPACITY {
+        return Err(format!(
+            "this would use {} MB for Frame photos; its capacity is {} MB",
+            total / (1024 * 1024),
+            MAX_FRAME_CAPACITY / (1024 * 1024)
+        ));
+    }
+    for prepared in push.photos.iter().filter(|prepared| prepared.png.is_some()) {
+        let name = prepared.photo.shelf_name();
+        let partial = folder.join(format!(".{name}.writing"));
+        fs::write(&partial, prepared.png.as_ref().expect("filtered"))
+            .map_err(|error| format!("write Frame photo {name}: {error}"))?;
+        fs::rename(&partial, folder.join(&name))
+            .map_err(|error| format!("publish Frame photo {name}: {error}"))?;
+    }
+    let partial = folder.join(format!(".{MANIFEST}.writing"));
+    fs::write(&partial, push.manifest.encode())
+        .map_err(|error| format!("write Frame manifest: {error}"))?;
+    fs::rename(&partial, folder.join(MANIFEST))
+        .map_err(|error| format!("publish Frame manifest: {error}"))?;
+    for photo in &push.removed {
+        let _ignored = fs::remove_file(folder.join(photo.shelf_name()));
+    }
+    println!(
+        "Packed {} photo(s) into {MANIFEST} for the {}x{} panel; the next sync window carries the album and Frame adopts it.",
+        push.manifest.photos.len(),
+        DEFAULT_PANEL.width,
+        DEFAULT_PANEL.height
     );
     Ok(())
 }
@@ -1597,6 +1664,51 @@ mod tests {
         assert_eq!(final_manifest.notes.len(), 1);
         assert!(!root.join(format!("{dropped}.md")).exists());
         assert!(root.join("Beta.md").is_file());
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    // A valid 1x1 PNG.
+    const TINY_PNG: [u8; 67] = [
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44,
+        0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f,
+        0x15, 0xc4, 0x89, 0x00, 0x00, 0x00, 0x0a, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0x00,
+        0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0d, 0x0a, 0x2d, 0xb4, 0x00, 0x00, 0x00, 0x00, 0x49,
+        0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+    ];
+
+    #[test]
+    fn publish_frame_packs_an_album_and_never_reingests_its_own_output() {
+        let root =
+            std::env::temp_dir().join(format!("cobalt-sync-frame-test-{}", std::process::id()));
+        fs::create_dir_all(&root).expect("root");
+        fs::write(root.join("photo-one.png"), TINY_PNG).expect("photo");
+        publish_frame(&root).expect("first publish");
+        let manifest = kobo_frame_host::Manifest::decode(
+            &fs::read(root.join("manifest.v1")).expect("manifest"),
+        )
+        .expect("decode");
+        assert_eq!(manifest.photos.len(), 1);
+        assert!(root.join(manifest.photos[0].shelf_name()).is_file());
+        // A second publish walks the same folder, skips its own shelf and
+        // changes nothing.
+        publish_frame(&root).expect("idempotent publish");
+        let again = kobo_frame_host::Manifest::decode(
+            &fs::read(root.join("manifest.v1")).expect("manifest"),
+        )
+        .expect("decode");
+        assert_eq!(again.photos.len(), 1);
+        assert_eq!(again.photos[0].id, manifest.photos[0].id);
+        // Removing the source drops the photo and its shelf file; the raw
+        // file was never modified.
+        assert_eq!(fs::read(root.join("photo-one.png")).expect("raw"), TINY_PNG);
+        fs::remove_file(root.join("photo-one.png")).expect("remove source");
+        publish_frame(&root).expect("mirror publish");
+        let final_manifest = kobo_frame_host::Manifest::decode(
+            &fs::read(root.join("manifest.v1")).expect("manifest"),
+        )
+        .expect("decode");
+        assert!(final_manifest.photos.is_empty());
+        assert!(!root.join(manifest.photos[0].shelf_name()).exists());
         fs::remove_dir_all(root).expect("cleanup");
     }
 

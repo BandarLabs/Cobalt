@@ -234,13 +234,42 @@ pub fn prepare_for_panel(
     delete_missing: bool,
     panel: Panel,
 ) -> Result<Push, String> {
+    prepare_for_panel_excluding(
+        input,
+        fit,
+        existing,
+        delete_missing,
+        panel,
+        &BTreeSet::new(),
+    )
+}
+
+/// The same preparation, skipping input files by relative name. A publisher
+/// that keeps its shelf inside the source folder uses this to leave its own
+/// manifest, sidecars and previously prepared photos out of the next walk.
+///
+/// # Errors
+///
+/// Returns an error when the panel dimensions or prepared shelf are invalid.
+#[allow(clippy::too_many_lines)]
+pub fn prepare_for_panel_excluding(
+    input: &Path,
+    fit: Fit,
+    existing: &Manifest,
+    delete_missing: bool,
+    panel: Panel,
+    exclude: &BTreeSet<String>,
+) -> Result<Push, String> {
     if panel.width == 0
         || panel.height == 0
         || u64::from(panel.width) * u64::from(panel.height) > 8_000_000
     {
         return Err("Frame received unsupported panel dimensions".to_owned());
     }
-    let paths = input_paths(input)?;
+    let paths = input_paths_excluding(input, exclude)?;
+    if paths.is_empty() && !delete_missing {
+        return Err(format!("{} has no supported images", input.display()));
+    }
     if paths.len() > MAX_PHOTOS {
         return Err(format!(
             "{} has {} supported images; Frame accepts at most {MAX_PHOTOS}",
@@ -363,7 +392,7 @@ pub fn prepare_for_panel(
     })
 }
 
-fn input_paths(input: &Path) -> Result<Vec<PathBuf>, String> {
+fn input_paths_excluding(input: &Path, exclude: &BTreeSet<String>) -> Result<Vec<PathBuf>, String> {
     let metadata =
         fs::metadata(input).map_err(|error| format!("read {}: {error}", input.display()))?;
     let mut paths = Vec::new();
@@ -372,6 +401,12 @@ fn input_paths(input: &Path) -> Result<Vec<PathBuf>, String> {
         paths.push(input.to_path_buf());
     } else if metadata.is_dir() {
         collect(input, &mut paths)?;
+        paths.retain(|path| {
+            path.strip_prefix(input)
+                .ok()
+                .and_then(|relative| relative.to_str())
+                .is_none_or(|relative| !exclude.contains(relative))
+        });
     } else {
         return Err(format!(
             "{} is not a regular file or directory",
@@ -379,9 +414,6 @@ fn input_paths(input: &Path) -> Result<Vec<PathBuf>, String> {
         ));
     }
     paths.sort();
-    if paths.is_empty() {
-        return Err(format!("{} has no supported images", input.display()));
-    }
     Ok(paths)
 }
 
