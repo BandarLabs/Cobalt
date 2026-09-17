@@ -1,0 +1,29 @@
+{
+    "provenance": {
+        "source_revision": "9d2365ed1fc923ecfb8cb52a9b20a49ebf94bff1",
+        "tracked_changes": false,
+        "cli_sha256": "1e3f4bef7f7126d0a26d365238eff0f20e9695ba78b63803821ded5e117804c8",
+        "toolchain": "1.85.1"
+    },
+    "scale": "default",
+    "server": "live arXiv API (export.arxiv.org, arxiv.org)",
+    "paper": "Ahmetcan Yavuz, Clara Meister, Tiago Pimentel \u00b7\u2026",
+    "checks": [
+        {
+            "name": "live subject listing",
+            "status": "passed",
+            "detail": "tapping Artificial Intelligence fetched the real arXiv feed; the first rows are today's papers (first: '11:11')"
+        },
+        {
+            "name": "live abstract and full text",
+            "status": "passed",
+            "detail": "opened 'Ahmetcan Yavuz, Clara Meister, Tiago Pimentel \u00b7\u2026': abstract from the live feed, then the real HTML from arxiv.org/html fetched over TLS and opened in the reader"
+        },
+        {
+            "name": "live figure reached in the reader",
+            "status": "unverified",
+            "detail": "paged the real paper to its first figure caption (arxiv-live-figure, page 4 of 90), but pixel verification shows the Figure 1 graphic itself did not draw - the app fell back to its alt+caption path. Live images do fetch and draw (the author badges on arxiv-live-reading page 1 came over TLS). Why this figure's image did not draw is open."
+        }
+    ],
+    "status": "passed"
+}
