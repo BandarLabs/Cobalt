@@ -263,13 +263,15 @@ impl Game {
     }
     pub(super) fn help_pages(&self, context: &Context) -> Vec<Vec<String>> {
         context.paginate(if self.route == Route::PhotoHelp {
-            "Send a photo
+            "Send photos
 
 On your computer, run:
 
 kobo nonograms push IMAGE --size N --device READER
 
-Replace IMAGE with your image file, N with 5, 7 or 9, and READER with your reader address. Choose the same size in Photo puzzle, then Open.
+Replace IMAGE with your image file, N with a grid size from 5 to 25, and READER with your reader address. Choose the same size in Photo puzzles, then Import.
+
+To send several at once, write imported.txt beside the photos, one line per puzzle: file name, puzzle name and grid size, separated by tabs. The list sets the sizes.
 
 Only puzzles solvable by row and column deductions are accepted. Try another photo or size if the clues need guessing.
 
