@@ -132,11 +132,10 @@ pub fn parse_work_page(id: &str, body: &str) -> ParsedWork {
     let author = attribute_text(body, "rel", "author", AUTHOR_MAX)
         .or_else(|| class_text(body, "byline heading", AUTHOR_MAX))
         .unwrap_or_else(|| "Anonymous".to_owned());
-    let fandom =
-        dd_class_text(body, "fandom tags", FANDOM_MAX).unwrap_or_else(|| "Unspecified".into());
+    let fandom = dd_list(body, "fandom tags", FANDOM_MAX).unwrap_or_else(|| "Unspecified".into());
     let rating =
         dd_class_text(body, "rating tags", RATING_MAX).unwrap_or_else(|| "Not Rated".into());
-    let warnings = dd_class_text(body, "warning tags", WARNINGS_MAX)
+    let warnings = dd_list(body, "warning tags", WARNINGS_MAX)
         .unwrap_or_else(|| "Creator Chose Not To Use Archive Warnings".into());
     let summary = class_text(body, "summary module", SUMMARY_MAX).unwrap_or_default();
     let updated = dd_class_text(body, "updated", DATE_MAX)
@@ -226,6 +225,56 @@ fn class_text(body: &str, class: &str, limit: usize) -> Option<String> {
 /// is why this only showed against the live archive.
 fn dd_class_text(body: &str, class: &str, limit: usize) -> Option<String> {
     tagged_class_text(body, "dd", class, limit)
+}
+
+/// The raw markup of the `<dd>` carrying a class.
+///
+/// Fandoms and warnings arrive as one `<li>` per entry, and a plain text
+/// scrape would join them with nothing but a space: "Jane Austen Pride and
+/// Prejudice" reads as one long name when it is two. `dd_list` lifts the
+/// items out and comma-joins them, the way the archive presents them.
+fn dd_cell(body: &str, class: &str) -> Option<String> {
+    let mut rest = body;
+    while let Some(at) = rest.find('<') {
+        rest = &rest[at..];
+        let end = rest.find('>')?;
+        let head = &rest[..=end];
+        let name = head[1..]
+            .trim_start_matches('/')
+            .split(|character: char| character.is_whitespace() || character == '>')
+            .next()?;
+        if name == "dd" {
+            if let Some(value) = attribute_value(head, "class") {
+                if class
+                    .split_whitespace()
+                    .all(|wanted| value.split_whitespace().any(|part| part == wanted))
+                {
+                    let tail = &rest[end + 1..];
+                    let close_at = tail.find("</dd>")?;
+                    return Some(tail[..close_at].to_owned());
+                }
+            }
+        }
+        rest = &rest[end + 1..];
+    }
+    None
+}
+
+fn dd_list(body: &str, class: &str, limit: usize) -> Option<String> {
+    let cell = dd_cell(body, class)?;
+    if !cell.contains("<li") {
+        return Some(plain(&cell, limit));
+    }
+    let items: Vec<String> = cell
+        .split("<li")
+        .skip(1)
+        .map(|item| plain(item, limit))
+        .filter(|item| !item.is_empty())
+        .collect();
+    if items.is_empty() {
+        return None;
+    }
+    Some(bounded(&items.join(", "), limit))
 }
 
 fn tagged_class_text(body: &str, tag: &str, class: &str, limit: usize) -> Option<String> {
@@ -698,7 +747,7 @@ mod tests {
       <dt class="warning tags">Archive Warning:</dt>
       <dd class="warning tags"><ul><li><a>No Archive Warnings Apply</a></li></ul></dd>
       <dt class="fandom tags">Fandoms:</dt>
-      <dd class="fandom tags"><ul><li><a>Public Domain Fairy Tales</a></li></ul></dd>
+      <dd class="fandom tags"><ul><li><a>Public Domain Fairy Tales</a></li><li><a>Whispered Cartographies</a></li></ul></dd>
       <blockquote class="userstuff summary module"><p>A synthetic fixture.</p></blockquote>
       <dt class="updated">Updated:</dt>
       <dd class="updated">2026-09-01</dd>
@@ -715,7 +764,7 @@ mod tests {
         };
         assert_eq!(work.title, "The Lantern Library");
         assert_eq!(work.author, "River Quill");
-        assert_eq!(work.fandom, "Public Domain Fairy Tales");
+        assert_eq!(work.fandom, "Public Domain Fairy Tales, Whispered Cartographies");
         assert_eq!(work.rating, "Teen And Up Audiences");
         assert_eq!(work.warnings, "No Archive Warnings Apply");
         assert_eq!(work.chapters_label(), "12/? WIP");
