@@ -299,6 +299,9 @@ enum View {
     FullText,
     /// The papers kept for reading without a network.
     Library,
+    /// The searches saved and the subjects followed, so either can be run
+    /// again without being typed or found a second time.
+    Saved,
 }
 
 /// One paper the reader kept, as the library lists it.
@@ -320,6 +323,7 @@ struct Kept {
     progress: Option<u8>,
 }
 
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Default)]
 struct Arxiv {
     view: View,
@@ -367,6 +371,15 @@ struct Arxiv {
     /// listing, which is what Back has to know.
     from_library: bool,
     library_page: usize,
+    /// Word searches the reader saved to run again, newest first.
+    saved: Vec<String>,
+    /// Subject codes the reader follows, pinned to the top of the subject
+    /// list in the order they were followed.
+    followed: Vec<String>,
+    saved_page: usize,
+    /// Whether the saved list is removing rather than running: Manage turns
+    /// every row into the removal of itself, and Done turns them back.
+    managing: bool,
     /// The rendering of the open paper, held while it is on the panel so that
     /// keeping it does not mean fetching it a second time.
     ///
@@ -397,6 +410,42 @@ fn blob_key(id: &str) -> String {
 
 /// The store key the library's catalogue is written under.
 const LIBRARY_KEY: &str = "library";
+
+/// The store keys the saved searches and the followed subjects are written
+/// under.
+const SEARCHES_KEY: &str = "searches";
+const FOLLOWED_KEY: &str = "followed";
+
+/// How many saved searches and followed subjects each list holds. A saved
+/// list is a shortcut, not an archive: past a screenful or two of rows the
+/// answer to "which one was it" is the search box, not more scrolling.
+const MAX_SAVED: usize = 24;
+
+/// Writes a list of short strings out, one to a line.
+///
+/// The same shape as the library catalogue, for the same reasons: readable
+/// over the shell when somebody reports a lost entry, and a line that cannot
+/// be understood costs one entry rather than the whole list. Tabs are
+/// scrubbed on the way in, so nothing can forge a second field or a second
+/// line.
+fn encode_list(list: &[String]) -> Vec<u8> {
+    let mut text = String::new();
+    for entry in list.iter().take(MAX_SAVED) {
+        let _ = writeln!(text, "{}", untabbed(entry));
+    }
+    text.into_bytes()
+}
+
+fn decode_list(bytes: &[u8]) -> Vec<String> {
+    let Ok(text) = std::str::from_utf8(bytes) else {
+        return Vec::new();
+    };
+    text.lines()
+        .take(MAX_SAVED)
+        .filter(|line| !line.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
 
 /// What a kept paper's row says under its title.
 fn kept_summary(kept: &Kept) -> String {
@@ -519,6 +568,16 @@ const KEEP: &str = "keep";
 const DISCARD: &str = "discard";
 const KEPT: &str = "kept-";
 const WINDOW: &str = "window";
+const SAVED: &str = "saved";
+const MANAGE: &str = "manage";
+const DONE: &str = "done";
+const SAVE_SEARCH: &str = "save-search";
+const FOLLOW: &str = "follow";
+const UNFOLLOW: &str = "unfollow";
+const SSEARCH: &str = "ssearch-";
+const FROW: &str = "frow-";
+const SAVED_BACK: &str = "saved-back";
+const SAVED_NEXT: &str = "saved-next";
 
 impl Arxiv {
     fn paper(&self) -> Option<&Paper> {
@@ -613,22 +672,52 @@ impl Arxiv {
         if let Some(trouble) = &self.trouble {
             screen = screen.banner(BannerLevel::Attention, trouble.clone());
         }
-        let rows: Vec<(&str, &str)> = SUBJECTS.iter().map(|(code, name)| (*name, *code)).collect();
+        // Followed subjects lead, in the order they were followed, and carry
+        // the follow mark; the rest keep the catalogue's own order behind
+        // them. The row ids still name the catalogue index, so the action
+        // that opens a subject does not care where the row stood.
+        let order: Vec<usize> = self
+            .followed
+            .iter()
+            .filter_map(|code| SUBJECTS.iter().position(|(known, _)| known == code))
+            .chain(
+                SUBJECTS
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(index, (code, _))| {
+                        (!self.followed.iter().any(|followed| followed == code)).then_some(index)
+                    }),
+            )
+            .collect();
+        let rows: Vec<(&str, &str)> = order
+            .iter()
+            .map(|index| {
+                let (code, name) = SUBJECTS[*index];
+                (name, code)
+            })
+            .collect();
         let pages = context.paginate_rows(&rows, true);
         let page = self.subject_page.min(pages.len().saturating_sub(1));
         let shown = pages.get(page).map(Vec::as_slice).unwrap_or_default();
         screen
-            .rows(shown.iter().filter_map(|index| {
-                SUBJECTS.get(*index).map(|(code, name)| {
+            .rows(shown.iter().filter_map(|position| {
+                let index = *order.get(*position)?;
+                SUBJECTS.get(index).map(|(code, name)| {
+                    let lead = if self.followed.iter().any(|followed| followed == code) {
+                        Glyph::Heart
+                    } else {
+                        Glyph::Note
+                    };
                     (
                         format!("{SUBJECT}{index}"),
                         (*name).to_owned(),
                         (*code).to_owned(),
-                        RowLead::Icon(Glyph::Note),
+                        RowLead::Icon(lead),
                     )
                 })
             }))
             .top_bar_glyph(LIBRARY, "Library", Glyph::Bookmark)
+            .top_bar_glyph(SAVED, "Saved", Glyph::Heart)
             .page_turns(SUBJECTS_BACK, SUBJECTS_NEXT)
             .page_position(page_number(page), page_total(pages.len()))
             .bottom_action_marked(SEARCH, "Search arXiv", Glyph::Search)
@@ -705,6 +794,77 @@ impl Arxiv {
             .build()
     }
 
+    /// The searches saved and the subjects followed, in one list.
+    ///
+    /// Reachable from the subject list beside the library, because both
+    /// answer "where are the things I set aside" before any listing exists
+    /// to ask it from.
+    fn saved(&self, context: &Context) -> Screen {
+        let mut screen = ScreenBuilder::new("arxiv-saved").top_bar("Saved");
+        if let Some(trouble) = &self.trouble {
+            screen = screen.banner(BannerLevel::Attention, trouble.clone());
+        }
+        if self.saved.is_empty() && self.followed.is_empty() {
+            return screen
+                .splash(
+                    Some(Glyph::Heart),
+                    "Nothing saved",
+                    "Save a search or follow a subject to see it here.",
+                )
+                .build();
+        }
+        // Searches first: they are the more specific shortcut. A search
+        // phrase is free text, so the rows are clamped here for the usual
+        // reason - a row that does not fit is a refused screen.
+        let rows: Vec<(String, String)> = self
+            .saved
+            .iter()
+            .map(|words| {
+                (
+                    context.clamped_row(&format!("\u{201c}{words}\u{201d}"), 2, false),
+                    "Saved search".to_owned(),
+                )
+            })
+            .chain(self.followed.iter().filter_map(|code| {
+                SUBJECTS
+                    .iter()
+                    .find(|(known, _)| known == code)
+                    .map(|(code, name)| (context.one_line_row(name, false), (*code).to_owned()))
+            }))
+            .collect();
+        let borrowed: Vec<(&str, &str)> = rows
+            .iter()
+            .map(|(title, summary)| (title.as_str(), summary.as_str()))
+            .collect();
+        let pages = context.paginate_rows(&borrowed, true);
+        let page = self.saved_page.min(pages.len().saturating_sub(1));
+        let shown = pages.get(page).map(Vec::as_slice).unwrap_or_default();
+        let searches = self.saved.len();
+        screen = screen.rows(shown.iter().filter_map(|position| {
+            let (title, summary) = rows.get(*position)?;
+            let (id, lead) = if *position < searches {
+                (format!("{SSEARCH}{position}"), Glyph::Search)
+            } else {
+                (format!("{FROW}{}", position - searches), Glyph::Heart)
+            };
+            let lead = if self.managing { Glyph::Trash } else { lead };
+            Some((id, title.clone(), summary.clone(), RowLead::Icon(lead)))
+        }));
+        // Manage turns every row into the removal of itself. There is no
+        // confirm: a removal costs one tap to undo, because saving and
+        // following are one tap each to redo.
+        let managing = if self.managing {
+            (DONE, "Done", Glyph::Check)
+        } else {
+            (MANAGE, "Manage", Glyph::Settings)
+        };
+        screen
+            .page_turns(SAVED_BACK, SAVED_NEXT)
+            .page_position(page_number(page), page_total(pages.len()))
+            .bottom_action_marked(managing.0, managing.1, managing.2)
+            .build()
+    }
+
     fn listing(&self, context: &Context) -> Screen {
         let title = self
             .query
@@ -772,6 +932,24 @@ impl Arxiv {
         let more_behind = self.offset + self.papers.len() < self.total as usize;
         if page + 1 == pages.len() && more_behind {
             screen = screen.top_bar_action(MORE, "Older papers");
+        }
+        // Saving and following are offered where the thing they keep is on
+        // screen: "run this again" is a fact about the listing behind the
+        // rows, and the listing is the only place that says what it is. The
+        // bar holds two actions and "Older papers" can be one, so this is
+        // the other.
+        match &self.query {
+            Some(Query::Words(words)) if !self.saved.contains(words) => {
+                screen = screen.top_bar_glyph(SAVE_SEARCH, "Save this search", Glyph::Bookmark);
+            }
+            Some(Query::Subject { code, .. }) => {
+                screen = if self.followed.contains(code) {
+                    screen.top_bar_glyph(UNFOLLOW, "Stop following", Glyph::Check)
+                } else {
+                    screen.top_bar_glyph(FOLLOW, "Follow this subject", Glyph::Heart)
+                };
+            }
+            _ => {}
         }
         screen
             .bottom_action_marked(narrowing.0, narrowing.1, narrowing.2)
@@ -852,6 +1030,7 @@ impl Arxiv {
             View::Paper => self.reading(),
             View::FullText => self.full_text(),
             View::Library => self.library(context),
+            View::Saved => self.saved(context),
         };
         // Every view but the subject list was reached from another one, so
         // Back has somewhere to go from all of them and nowhere to go from it.
@@ -865,6 +1044,7 @@ impl Arxiv {
             View::Subjects => &mut self.subject_page,
             View::Listing => &mut self.listing_page,
             View::Library => &mut self.library_page,
+            View::Saved => &mut self.saved_page,
             View::Paper => &mut self.page,
             // The reader turns its own pages, and the taps that ask it to are
             // its own actions rather than this application's.
@@ -1075,6 +1255,54 @@ impl Arxiv {
             .save(LIBRARY_KEY, encode_library(&self.library));
     }
 
+    /// Saves the listing's word search so Saved can run it again.
+    fn save_search(&mut self, context: &mut Context) {
+        let Some(Query::Words(words)) = &self.query else {
+            return;
+        };
+        if self.saved.contains(words) {
+            return;
+        }
+        if self.saved.len() >= MAX_SAVED {
+            self.trouble = Some(format!(
+                "Saved searches hold {MAX_SAVED}. Remove one in Saved."
+            ));
+            return;
+        }
+        self.saved.insert(0, words.clone());
+        context.store().save(SEARCHES_KEY, encode_list(&self.saved));
+    }
+
+    /// Follows the listing's subject, pinning it to the top of the list.
+    fn follow_subject(&mut self, context: &mut Context) {
+        let Some(Query::Subject { code, .. }) = &self.query else {
+            return;
+        };
+        if self.followed.contains(code) {
+            return;
+        }
+        if self.followed.len() >= MAX_SAVED {
+            self.trouble = Some(format!(
+                "Followed subjects hold {MAX_SAVED}. Remove one in Saved."
+            ));
+            return;
+        }
+        self.followed.push(code.clone());
+        context
+            .store()
+            .save(FOLLOWED_KEY, encode_list(&self.followed));
+    }
+
+    fn unfollow_subject(&mut self, context: &mut Context) {
+        let Some(Query::Subject { code, .. }) = &self.query else {
+            return;
+        };
+        self.followed.retain(|followed| followed != code);
+        context
+            .store()
+            .save(FOLLOWED_KEY, encode_list(&self.followed));
+    }
+
     /// Opens a kept paper from the shelf instead of the network.
     fn open_kept(&mut self, context: &mut Context, index: usize) {
         let Some(kept) = self.library.get(index).cloned() else {
@@ -1221,6 +1449,8 @@ fn page_total(pages: usize) -> u16 {
 impl KoboApp for Arxiv {
     fn on_start(&mut self, context: &mut Context) {
         context.store().load(LIBRARY_KEY);
+        context.store().load(SEARCHES_KEY);
+        context.store().load(FOLLOWED_KEY);
         self.show(context);
     }
 
@@ -1254,7 +1484,7 @@ impl KoboApp for Arxiv {
             self.trouble = None;
             match self.view {
                 View::Subjects => return,
-                View::Search | View::Listing | View::Library => {
+                View::Search | View::Listing | View::Library | View::Saved => {
                     self.view = View::Subjects;
                     self.listing_page = 0;
                 }
@@ -1362,11 +1592,55 @@ impl KoboApp for Arxiv {
             return;
         }
 
-        if action == action_id(SUBJECTS_BACK) || action == action_id(LIST_BACK) {
+        if action == action_id(SAVED) {
+            self.saved_page = 0;
+            self.managing = false;
+            self.view = View::Saved;
+            self.show(context);
+            return;
+        }
+
+        if action == action_id(MANAGE) {
+            self.managing = true;
+            self.show(context);
+            return;
+        }
+
+        if action == action_id(DONE) {
+            self.managing = false;
+            self.show(context);
+            return;
+        }
+
+        if action == action_id(SAVE_SEARCH) {
+            self.save_search(context);
+            self.show(context);
+            return;
+        }
+
+        if action == action_id(FOLLOW) {
+            self.follow_subject(context);
+            self.show(context);
+            return;
+        }
+
+        if action == action_id(UNFOLLOW) {
+            self.unfollow_subject(context);
+            self.show(context);
+            return;
+        }
+
+        if action == action_id(SUBJECTS_BACK)
+            || action == action_id(LIST_BACK)
+            || action == action_id(SAVED_BACK)
+        {
             self.turn(context, false);
             return;
         }
-        if action == action_id(SUBJECTS_NEXT) || action == action_id(LIST_NEXT) {
+        if action == action_id(SUBJECTS_NEXT)
+            || action == action_id(LIST_NEXT)
+            || action == action_id(SAVED_NEXT)
+        {
             self.turn(context, true);
             return;
         }
@@ -1427,6 +1701,53 @@ impl KoboApp for Arxiv {
                     },
                     0,
                 );
+                self.show(context);
+                return;
+            }
+        }
+
+        for index in 0..self.saved.len() {
+            if action == action_id(&format!("{SSEARCH}{index}")) {
+                if self.managing {
+                    self.saved.remove(index);
+                    context.store().save(SEARCHES_KEY, encode_list(&self.saved));
+                    self.show(context);
+                    return;
+                }
+                let words = self.saved[index].clone();
+                self.papers.clear();
+                self.listing_page = 0;
+                self.managing = false;
+                self.view = View::Listing;
+                self.ask_listing(context, Query::Words(words), 0);
+                self.show(context);
+                return;
+            }
+        }
+
+        for index in 0..self.followed.len() {
+            if action == action_id(&format!("{FROW}{index}")) {
+                if self.managing {
+                    self.followed.remove(index);
+                    context
+                        .store()
+                        .save(FOLLOWED_KEY, encode_list(&self.followed));
+                    self.show(context);
+                    return;
+                }
+                let code = self.followed[index].clone();
+                let Some((code, name)) = SUBJECTS
+                    .iter()
+                    .find(|(known, _)| *known == code)
+                    .map(|(code, name)| ((*code).to_owned(), (*name).to_owned()))
+                else {
+                    return;
+                };
+                self.papers.clear();
+                self.listing_page = 0;
+                self.managing = false;
+                self.view = View::Listing;
+                self.ask_listing(context, Query::Subject { code, name }, 0);
                 self.show(context);
                 return;
             }
@@ -1559,6 +1880,12 @@ impl KoboApp for Arxiv {
             if key == LIBRARY_KEY {
                 self.library = value.as_deref().map(decode_library).unwrap_or_default();
                 self.show(context);
+            } else if key == SEARCHES_KEY {
+                self.saved = value.as_deref().map(decode_list).unwrap_or_default();
+                self.show(context);
+            } else if key == FOLLOWED_KEY {
+                self.followed = value.as_deref().map(decode_list).unwrap_or_default();
+                self.show(context);
             } else if self
                 .paper()
                 .is_some_and(|paper| place_key(&paper.id) == key)
@@ -1614,9 +1941,10 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::{
-        blob_key, decode_library, encode_library, escape, escape_path, fact_lines, kept_summary,
-        paper_body, place_key, row_summary, stamp, Arxiv, Kept, Query, View, Window, ABSTRACT,
-        DISCARD, FULL_TEXT, KEEP, LIBRARY_KEY, SUBJECTS, WINDOW,
+        blob_key, decode_library, decode_list, encode_library, encode_list, escape, escape_path,
+        fact_lines, kept_summary, paper_body, place_key, row_summary, stamp, Arxiv, Kept, Query,
+        View, Window, ABSTRACT, DISCARD, DONE, FOLLOW, FOLLOWED_KEY, FULL_TEXT, KEEP, LIBRARY_KEY,
+        MANAGE, MAX_SAVED, SAVED, SAVE_SEARCH, SEARCHES_KEY, SSEARCH, SUBJECTS, UNFOLLOW, WINDOW,
     };
     use crate::atom::Paper;
     use kobo_read::Memory;
@@ -2733,6 +3061,224 @@ mod tests {
         assert!(
             url.contains("start=0"),
             "the window kept an old offset: {url}"
+        );
+    }
+    /// The titles of a screen's rows, top to bottom.
+    fn row_titles(screen: &kobo_sdk::Screen) -> Vec<String> {
+        let mut titles = Vec::new();
+        for node in &screen.nodes {
+            if let kobo_sdk::Node::Rows { rows, .. } = node {
+                titles.extend(rows.iter().map(|row| row.title.clone()));
+            }
+        }
+        titles
+    }
+
+    /// Saved searches and followed subjects ride the store the way the
+    /// library does: a line each, tabs scrubbed, the cap honest.
+    #[test]
+    fn saved_lists_survive_the_round_trip_through_the_store() {
+        let saved = vec!["deep learning".to_owned(), "attention".to_owned()];
+        assert_eq!(decode_list(&encode_list(&saved)), saved);
+
+        let over: Vec<String> = (0..MAX_SAVED + 4).map(|n| format!("search {n}")).collect();
+        assert_eq!(decode_list(&encode_list(&over)).len(), MAX_SAVED);
+
+        // A tab in a phrase would forge a second line on the way back, so it
+        // is a space before it ever reaches the store.
+        let tabbed = vec!["a\tphrase\twith\ttabs".to_owned()];
+        assert_eq!(
+            decode_list(&encode_list(&tabbed)),
+            vec!["a phrase with tabs".to_owned()]
+        );
+    }
+
+    /// Both lists come back when the store answers, which is the whole point
+    /// of writing them down.
+    #[test]
+    fn saved_lists_come_back_when_the_store_answers() {
+        let mut runner = AppRunner::new(Arxiv::default());
+        runner.start();
+        runner.store_result(StoreResult::Loaded {
+            key: SEARCHES_KEY.to_owned(),
+            value: Some(encode_list(&["deep learning".to_owned()])),
+        });
+        runner.store_result(StoreResult::Loaded {
+            key: FOLLOWED_KEY.to_owned(),
+            value: Some(encode_list(&["cs.LG".to_owned()])),
+        });
+        assert_eq!(runner.app().saved, vec!["deep learning".to_owned()]);
+        assert_eq!(runner.app().followed, vec!["cs.LG".to_owned()]);
+    }
+
+    /// Saving the listing's search writes it to the store once, and Saved
+    /// runs it again without the keyboard.
+    #[test]
+    fn a_saved_search_is_stored_once_and_runs_again_from_saved() {
+        let mut runner = AppRunner::new(Arxiv::default());
+        runner.start();
+        runner.app_mut().view = View::Listing;
+        runner.app_mut().papers = vec![paper()];
+        runner.app_mut().query = Some(Query::Words("deep learning".into()));
+
+        let commands = runner.action(action_id(SAVE_SEARCH));
+        assert_eq!(runner.app().saved, vec!["deep learning".to_owned()]);
+        assert!(
+            commands.iter().any(|command| matches!(
+                command,
+                Command::Store(StoreRequest::Save { key, value })
+                    if key == SEARCHES_KEY && value == &encode_list(&["deep learning".to_owned()])
+            )),
+            "the saved list was not written out"
+        );
+
+        // Saving what is already saved keeps one of it.
+        let _ = runner.action(action_id(SAVE_SEARCH));
+        assert_eq!(runner.app().saved.len(), 1);
+
+        let _ = runner.action(action_id(SAVED));
+        assert_eq!(runner.app().view, View::Saved);
+        let commands = runner.action(action_id(&format!("{SSEARCH}0")));
+        assert_eq!(runner.app().view, View::Listing);
+        assert!(
+            matches!(&runner.app().query, Some(Query::Words(words)) if words == "deep learning"),
+            "the saved search did not come back as the query"
+        );
+        assert!(
+            commands.iter().any(|command| matches!(
+                command,
+                Command::Spawn {
+                    work: Task::Fetch { url, .. },
+                    ..
+                } if url.contains("deep%20learning")
+            )),
+            "the saved search asked arXiv for nothing"
+        );
+    }
+
+    /// Following pins the subject to the top of the list with its mark, and
+    /// unfollowing puts the catalogue's order back.
+    #[test]
+    fn a_followed_subject_leads_the_subject_list() {
+        let last = SUBJECTS.len() - 1;
+        let (code, name) = SUBJECTS[last];
+        let mut runner = AppRunner::new(Arxiv::default());
+        runner.start();
+        runner.app_mut().view = View::Listing;
+        runner.app_mut().papers = vec![paper()];
+        runner.app_mut().query = Some(Query::Subject {
+            code: code.into(),
+            name: name.into(),
+        });
+
+        let commands = runner.action(action_id(FOLLOW));
+        assert_eq!(runner.app().followed, vec![code.to_owned()]);
+        assert!(
+            commands.iter().any(|command| matches!(
+                command,
+                Command::Store(StoreRequest::Save { key, .. }) if key == FOLLOWED_KEY
+            )),
+            "the followed list was not written out"
+        );
+
+        let _ = runner.action(ActionId::BACK);
+        assert_eq!(runner.app().view, View::Subjects);
+        let context = runner.context();
+        let screen = runner.app().subjects(&context);
+        assert_eq!(
+            row_titles(&screen).first().map(String::as_str),
+            Some(name),
+            "the followed subject was not pinned to the top"
+        );
+
+        let _ = runner.action(action_id(UNFOLLOW));
+        assert!(runner.app().followed.is_empty());
+        let context = runner.context();
+        let screen = runner.app().subjects(&context);
+        assert_eq!(
+            row_titles(&screen).first().map(String::as_str),
+            Some(SUBJECTS[0].1),
+            "the catalogue's order did not come back"
+        );
+    }
+
+    /// A full list says so rather than dropping the oldest or growing past
+    /// what the rows can hold.
+    #[test]
+    fn a_full_saved_list_says_so_instead_of_growing_quietly() {
+        let mut runner = AppRunner::new(Arxiv::default());
+        runner.start();
+        runner.app_mut().saved = (0..MAX_SAVED).map(|n| format!("search {n}")).collect();
+        runner.app_mut().view = View::Listing;
+        runner.app_mut().papers = vec![paper()];
+        runner.app_mut().query = Some(Query::Words("one more".into()));
+
+        let _ = runner.action(action_id(SAVE_SEARCH));
+        assert_eq!(runner.app().saved.len(), MAX_SAVED);
+        assert!(
+            runner
+                .app()
+                .trouble
+                .as_deref()
+                .is_some_and(|trouble| trouble.contains("hold")),
+            "the cap was hit without a word"
+        );
+    }
+
+    /// Manage turns a row into the removal of itself, and Done turns the
+    /// rows back into shortcuts.
+    #[test]
+    fn manage_removes_and_done_restores() {
+        let mut runner = AppRunner::new(Arxiv::default());
+        runner.start();
+        runner.app_mut().saved = vec!["alpha".to_owned(), "beta".to_owned()];
+
+        let _ = runner.action(action_id(SAVED));
+        let _ = runner.action(action_id(MANAGE));
+        assert!(runner.app().managing);
+        let commands = runner.action(action_id(&format!("{SSEARCH}0")));
+        assert_eq!(runner.app().saved, vec!["beta".to_owned()]);
+        assert!(
+            commands.iter().any(|command| matches!(
+                command,
+                Command::Store(StoreRequest::Save { key, value })
+                    if key == SEARCHES_KEY && value == &encode_list(&["beta".to_owned()])
+            )),
+            "the removal was not written out"
+        );
+        let _ = runner.action(action_id(DONE));
+        assert!(!runner.app().managing);
+    }
+
+    /// Live search phrases run long, and a row whose text does not fit is a
+    /// screen the renderer refuses outright -- so the saved list is checked
+    /// at live length, not fixture length.
+    #[test]
+    fn a_live_length_saved_search_does_not_overflow_its_row() {
+        let mut runner = AppRunner::new(Arxiv::default());
+        runner.app_mut().saved = vec![
+            "Comparative Analysis of Transformer-Based Language Models and Bayesian Deep Learning at Scale"
+                .to_owned(),
+        ];
+        runner.app_mut().followed = vec![SUBJECTS[0].0.to_owned()];
+        let context = runner.context();
+        let screen = runner.app().saved(&context);
+        let issues = screen.validate(&kobo_sdk::CLARA_BW_METRICS);
+        assert!(
+            !issues
+                .iter()
+                .any(|issue| matches!(issue.kind, kobo_sdk::LayoutIssueKind::TextOverflow)),
+            "the saved rows overflowed under a live-length phrase: {issues:?}"
+        );
+
+        let context = runner.context();
+        let screen = runner.app().subjects(&context);
+        let issues = screen.validate(&kobo_sdk::CLARA_BW_METRICS);
+        assert!(
+            !issues
+                .iter()
+                .any(|issue| matches!(issue.kind, kobo_sdk::LayoutIssueKind::TextOverflow)),
+            "the subject list overflowed with a followed subject pinned: {issues:?}"
         );
     }
 }
