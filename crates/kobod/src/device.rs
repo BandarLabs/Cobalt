@@ -2018,7 +2018,9 @@ fn host_applications(
                                         // one resolves the press against a
                                         // screen the reader cannot see.
                                         let chrome = chrome_for(current, at_home, &mut status);
-                                        page_key_message(current, &chrome, forward)
+                                        let shown =
+                                            shown_screen(&apps[index], current.clone(), &chrome);
+                                        page_key_message(&shown, &chrome, forward)
                                     }
                                     // Nothing painted yet, so there is nothing
                                     // to resolve against and the application
@@ -2389,12 +2391,13 @@ fn host_applications(
                         Message::SetOrientation(orientation) => {
                             apps[index].orientation = orientation;
                             if id == front {
-                                if let Some(screen) = apps[index].screen.as_ref() {
+                                if let Some(screen) = apps[index].screen.clone() {
                                     let chrome =
-                                        chrome_for(screen, apps[index].path == home, &mut status);
+                                        chrome_for(&screen, apps[index].path == home, &mut status);
+                                    let screen = shown_screen(&apps[index], screen, &chrome);
                                     kobo_ui::render_oriented_with_turn(
-                                        screen,
-                                        &metrics_for(screen),
+                                        &screen,
+                                        &metrics_for(&screen),
                                         &chrome,
                                         &apps[index].pictures,
                                         &mut surface,
