@@ -9,6 +9,7 @@ pub fn may_set(app: &str, name: &str) -> bool {
     (app == "panels" && name == "komga")
         || (app == "calibre-web" && name == "calibre")
         || (app == "rss-miniflux" && name == "miniflux")
+        || (app == "readlater" && name == "wallabag")
 }
 
 pub(crate) fn path(root: &Path, app: &str, name: &str) -> Option<PathBuf> {
@@ -128,6 +129,20 @@ pub(crate) fn decode(bytes: &str) -> Option<Record> {
 mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn may_set_lists_each_supported_pair() {
+        for (app, name) in [
+            ("panels", "komga"),
+            ("calibre-web", "calibre"),
+            ("rss-miniflux", "miniflux"),
+            ("readlater", "wallabag"),
+        ] {
+            assert!(may_set(app, name), "{app}/{name}");
+            assert!(!may_set(app, "other"), "{app} set an undeclared name");
+            assert!(!may_set("other", name), "another app set {name}");
+        }
+    }
 
     #[test]
     fn calibre_account_follows_catalog_and_book_links_only_within_saved_server() {

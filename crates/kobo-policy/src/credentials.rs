@@ -246,7 +246,9 @@ pub fn allowed_request_with_server(
     server.map_or_else(
         || allowed_request(app, credential, url, usage, body, content_type),
         |server| {
-            if app == "rss-miniflux" {
+            if app == "readlater" {
+                readlater_server_allowed(credential, server, url, usage)
+            } else if app == "rss-miniflux" {
                 miniflux::allowed(credential, server, url, usage, body, content_type)
             } else {
                 servers::allowed(app, credential, server, url, usage)
@@ -538,6 +540,29 @@ fn store_app_credential_allowed(
     Some(allowed)
 }
 
+/// A server-bound wallabag account keeps its bearer token on its own host:
+/// the same entry routes an owner-installed token may use, never another
+/// server, however the application was pointed at it.
+fn readlater_server_allowed(
+    credential: &Credential,
+    server: &str,
+    url: &str,
+    usage: CredentialUse,
+) -> bool {
+    credential.secret == "wallabag"
+        && credential.header == SecretHeader::Bearer
+        && servers::contains(server, url)
+        && parsed_path(url).is_some_and(|path| match usage {
+            CredentialUse::Fetch => {
+                (clean_path(&path).ends_with("/api/entries.json")
+                    && path.contains("detail=metadata"))
+                    || wallabag_entry_document(&path)
+            }
+            CredentialUse::Post => wallabag_entry_document(&path),
+            CredentialUse::Put | CredentialUse::Patch => false,
+        })
+}
+
 fn wallabag_entry_document(path: &str) -> bool {
     let path = clean_path(path);
     path.contains("/api/entries/")
@@ -640,7 +665,10 @@ fn zotero_key(value: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{allowed, allowed_request, install_app_secret, may_set, AUDIOBOOK_VOICES};
+    use super::{
+        allowed, allowed_request, allowed_request_with_server, install_app_secret, may_set,
+        AUDIOBOOK_VOICES,
+    };
     use kobo_protocol::{Credential, CredentialUse};
 
     #[test]
@@ -910,6 +938,57 @@ mod tests {
                 "another app used {app}'s credential"
             );
         }
+    }
+
+    #[test]
+    fn server_bound_wallabag_stays_on_its_server_and_routes() {
+        let credential = Credential::bearer("wallabag");
+        let server = "https://read.example";
+        assert!(allowed_request_with_server(
+            "readlater",
+            &credential,
+            "https://read.example/api/entries.json?detail=metadata&page=1",
+            CredentialUse::Fetch,
+            None,
+            None,
+            Some(server)
+        ));
+        assert!(allowed_request_with_server(
+            "readlater",
+            &credential,
+            "https://read.example/api/entries/7.json",
+            CredentialUse::Post,
+            None,
+            None,
+            Some(server)
+        ));
+        assert!(!allowed_request_with_server(
+            "readlater",
+            &credential,
+            "https://other.example/api/entries/7.json",
+            CredentialUse::Fetch,
+            None,
+            None,
+            Some(server)
+        ));
+        assert!(!allowed_request_with_server(
+            "readlater",
+            &credential,
+            "https://read.example/api/user.json",
+            CredentialUse::Fetch,
+            None,
+            None,
+            Some(server)
+        ));
+        assert!(!allowed_request_with_server(
+            "readlater",
+            &Credential::basic("wallabag"),
+            "https://read.example/api/entries/7.json",
+            CredentialUse::Fetch,
+            None,
+            None,
+            Some(server)
+        ));
     }
 
     #[test]
