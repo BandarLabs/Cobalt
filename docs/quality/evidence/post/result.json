@@ -1,0 +1,41 @@
+{
+  "server": "local TLS fixture",
+  "checks": [
+    {
+      "name": "first page of the inbox",
+      "status": "passed",
+      "detail": "the first paginated fetch showed the newest letters"
+    },
+    {
+      "name": "inbox pagination",
+      "status": "passed",
+      "detail": "Older fetched page two from the gateway and Newer returned"
+    },
+    {
+      "name": "long letters page",
+      "status": "passed",
+      "detail": "the long letter paged forward inside the panel"
+    },
+    {
+      "name": "reply delivered",
+      "status": "passed",
+      "detail": "the reply reached the gateway and shows Delivered"
+    },
+    {
+      "name": "retry with duplicate protection",
+      "status": "passed",
+      "detail": "the first attempt failed at the gateway; the retry reused the same reply key and the gateway holds exactly one copy"
+    },
+    {
+      "name": "rejection is distinct",
+      "status": "passed",
+      "detail": "a 404 marks the reply Rejected instead of retrying forever"
+    },
+    {
+      "name": "restart restores drafts and inbox",
+      "status": "passed",
+      "detail": "after a full simulator restart the cached inbox and the unsent draft came back from the store"
+    }
+  ],
+  "status": "passed"
+}

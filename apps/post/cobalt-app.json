@@ -4,8 +4,8 @@
   "short_label": "Post",
   "summary": "Read and reply to letters from Hermes.",
   "page_description": "A calm, letter-style inbox for thoughtful messages you can read anywhere.",
-  "version": "0.1.2",
-  "release_notes": "Rebuilt on a renderer that keeps every control reachable at the largest text sizes, and on a keyboard that can type every character this app asks for.",
+  "version": "0.2.0",
+  "release_notes": "Paginated inbox, letter paging, durable drafts, and a reply outbox with queued, sending, delivered and rejected states; retries carry an idempotency key so a repeated send can never deliver twice.",
   "glyph": "chat",
   "capabilities": [
     "network"

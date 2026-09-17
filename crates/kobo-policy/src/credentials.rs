@@ -13,6 +13,8 @@ use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 
 #[path = "miniflux_credentials.rs"]
 mod miniflux;
+#[path = "post_credentials.rs"]
+mod post;
 #[path = "credential_servers.rs"]
 pub mod servers;
 use std::path::{Path, PathBuf};
@@ -250,6 +252,8 @@ pub fn allowed_request_with_server(
                 readlater_server_allowed(credential, server, url, usage, body)
             } else if app == "rss-miniflux" {
                 miniflux::allowed(credential, server, url, usage, body, content_type)
+            } else if app == "post" {
+                post::allowed(credential, server, url, usage, body, content_type)
             } else {
                 servers::allowed(app, credential, server, url, usage)
             }

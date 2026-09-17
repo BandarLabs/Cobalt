@@ -2711,24 +2711,30 @@
     "pr": 3,
     "group": "Post",
     "task": "Paginate inbox and letters",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "docs/quality/evidence/post/result.json (scripts/quality/check-post-sim.py against a local TLS fixture gateway through the real simulator): the inbox paginates by page with Newer/Older controls and a page caption; a 12-letter corpus fetched page two on Older and returned on Newer, and a long letter pages inside the panel. Nine app tests and strict Clippy pass; the policy module admits only the two reviewed routes with bounded queries and exact reply bodies."
+    ]
   },
   {
     "id": "POST-02",
     "pr": 3,
     "group": "Post",
     "task": "Persist interrupted drafts",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "docs/quality/evidence/post/result.json (scripts/quality/check-post-sim.py against a local TLS fixture gateway through the real simulator): an unsent draft typed into the compose screen survived a full simulator restart and reopened for continuation. Nine app tests and strict Clippy pass; the policy module admits only the two reviewed routes with bounded queries and exact reply bodies."
+    ]
   },
   {
     "id": "POST-03",
     "pr": 3,
     "group": "Post",
     "task": "Distinguish queued, sending, delivered and rejected",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "docs/quality/evidence/post/result.json (scripts/quality/check-post-sim.py against a local TLS fixture gateway through the real simulator): the letter view names each reply state: queued for the next connection, sending, delivered, and rejected by the gateway. Nine app tests and strict Clippy pass; the policy module admits only the two reviewed routes with bounded queries and exact reply bodies."
+    ]
   },
   {
     "id": "POST-04",
@@ -2743,16 +2749,20 @@
     "pr": 3,
     "group": "Post",
     "task": "Retry with duplicate protection",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "docs/quality/evidence/post/result.json (scripts/quality/check-post-sim.py against a local TLS fixture gateway through the real simulator): the gateway dropped the first send; the retry reused the same content-derived reply key and the gateway held exactly one copy. The duplicate answer is treated as delivered. Nine app tests and strict Clippy pass; the policy module admits only the two reviewed routes with bounded queries and exact reply bodies."
+    ]
   },
   {
     "id": "POST-06",
     "pr": 3,
     "group": "Post",
     "task": "Verify delivery/retry against a local mock",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "docs/quality/evidence/post/result.json (scripts/quality/check-post-sim.py against a local TLS fixture gateway through the real simulator): delivery, retry, rejection and restart were all verified against the fixture gateway with assertions on its received requests. Nine app tests and strict Clippy pass; the policy module admits only the two reviewed routes with bounded queries and exact reply bodies."
+    ]
   },
   {
     "id": "QUIZ-01",
