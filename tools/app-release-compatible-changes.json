@@ -29,7 +29,7 @@
         {
           "path": "Cargo.lock",
           "base_blob": "2abdcc318538b63f16e492beb19b112a1134f105",
-          "compatible_blob": "aa0961448d78f0e07d62e283a92969e700b1330c"
+          "compatible_blob": "b112458df088f7fbf40132879d3e38b9309a5a4b"
         },
         {
           "path": "crates/kobo-abi/src/lib.rs",
@@ -155,7 +155,7 @@
         {
           "path": "Cargo.lock",
           "base_blob": "2abdcc318538b63f16e492beb19b112a1134f105",
-          "compatible_blob": "aa0961448d78f0e07d62e283a92969e700b1330c"
+          "compatible_blob": "b112458df088f7fbf40132879d3e38b9309a5a4b"
         },
         {
           "path": "crates/kobo-abi/src/lib.rs",
@@ -308,7 +308,7 @@
         {
           "path": "Cargo.lock",
           "base_blob": "e07e1ade0355155e92ff024f4ae7518372cd1ce8",
-          "compatible_blob": "a11c3adbe3547a92c627822de946105bd9c21e95"
+          "compatible_blob": "b112458df088f7fbf40132879d3e38b9309a5a4b"
         }
       ]
     },
@@ -319,7 +319,7 @@
         {
           "path": "Cargo.lock",
           "base_blob": "d87db6f43872e774cabd002c42dd7261f6b6870e",
-          "compatible_blob": "a11c3adbe3547a92c627822de946105bd9c21e95"
+          "compatible_blob": "b112458df088f7fbf40132879d3e38b9309a5a4b"
         },
         {
           "path": "crates/kobo-policy/src/credentials.rs",
@@ -335,7 +335,7 @@
         {
           "path": "Cargo.lock",
           "base_blob": "36e8d8afe839919ba62b86bd28ae713c2c4bdf7a",
-          "compatible_blob": "a11c3adbe3547a92c627822de946105bd9c21e95"
+          "compatible_blob": "b112458df088f7fbf40132879d3e38b9309a5a4b"
         },
         {
           "path": "crates/kobo-policy/src/credentials.rs",
@@ -351,7 +351,7 @@
         {
           "path": "Cargo.lock",
           "base_blob": "d87db6f43872e774cabd002c42dd7261f6b6870e",
-          "compatible_blob": "a11c3adbe3547a92c627822de946105bd9c21e95"
+          "compatible_blob": "b112458df088f7fbf40132879d3e38b9309a5a4b"
         }
       ]
     },
@@ -362,7 +362,7 @@
         {
           "path": "Cargo.lock",
           "base_blob": "36e8d8afe839919ba62b86bd28ae713c2c4bdf7a",
-          "compatible_blob": "a11c3adbe3547a92c627822de946105bd9c21e95"
+          "compatible_blob": "b112458df088f7fbf40132879d3e38b9309a5a4b"
         }
       ]
     }
