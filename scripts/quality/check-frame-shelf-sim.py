@@ -148,20 +148,21 @@ def main():
                 start()
                 # Oldest first: the birds panorama, pushed with --fit pad.
                 drive("wait-for Photographs", "wait-for 1 of 6",
-                      "expect " + taken_line("birds-on-a-wire.jpg", PAD["birds-on-a-wire.jpg"]))
+                      "expect " + taken_line("birds-on-a-wire.jpg", PAD["birds-on-a-wire.jpg"]),
+                      "wait 2500", "wait-idle")
                 capture("frame-home")
                 drive("tap Open")
-                drive("wait 2500")
+                drive("wait 2500", "wait-idle")
                 capture("frame-show-pad")
                 drive("tap-at 536 724", "wait-for Verified against the manifest",
-                      "expect Taken", "expect 5 Nov 2024")
+                      "expect Taken", "expect 5 Nov 2024", "wait 1200", "wait-idle")
                 capture("frame-facts")
-                drive("tap Next", "wait 2500", "expect 2 of 6")
+                drive("tap Next", "wait 2500", "tap-at 536 724", "wait-for city-skyline.jpg", "expect 20 Jan 2025")
                 capture("frame-next")
-                drive("tap back", "wait-for Photographs")
+                drive("tap Exit", "wait-for Photographs")
                 drive("tap-at 536 724", "wait-for Settings", "expect Frame mode")
                 capture("frame-settings")
-                drive("tap back", "wait-for Photographs")
+                drive("tap-at 536 724", "wait-for Photographs")
                 result["checks"].append(dict(
                     name="shelf-driven journey",
                     detail="CLI pushed a 6-photo album in two passes (crop then pad); the "

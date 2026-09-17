@@ -1,0 +1,21 @@
+{
+  "provenance": {
+    "source_revision": "c058f5dacb8158dff15747a5e46dd4a4065fce56",
+    "tracked_changes": true,
+    "cli_sha256": "d61ddf1440158ed4f034b172ba4634a214bfb99362f38b698d03907e9b4052de",
+    "toolchain": "1.85.1"
+  },
+  "scale": "default",
+  "shelf": {
+    "photos": 6,
+    "fits": 6
+  },
+  "checks": [
+    {
+      "name": "shelf-driven journey",
+      "detail": "CLI pushed a 6-photo album in two passes (crop then pad); the app listed the album with count, name and taken date, showed the pad-fit panorama letterboxed, reported the photo verified against the transfer manifest, advanced to the next photo and opened settings",
+      "status": "passed"
+    }
+  ],
+  "status": "passed"
+}

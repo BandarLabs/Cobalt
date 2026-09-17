@@ -1529,32 +1529,40 @@
     "pr": 3,
     "group": "Frame app",
     "task": "Show album, date and count clearly",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "apps/frame Home shows the position count (1 of 6) and the selected photo's name, album and formatted taken date; shelf-driven sim journey scripts/quality/check-frame-shelf-sim.py, evidence frame-home.png pixel-verified (birds-on-a-wire.jpg \u00b7 Demo Album \u00b7 5 Nov 2024)."
+    ]
   },
   {
     "id": "FRAME-03",
     "pr": 3,
     "group": "Frame app",
     "task": "Provide an original multi-photo demo",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "scripts/fixtures/frame/generate.py draws an original six-photo album (hills, lighthouse, leaf study, skyline, birds on a wire, mountain lake) with e-ink-friendly contrast; the committed JPEGs are pushed by the real companion CLI in the proof harness."
+    ]
   },
   {
     "id": "FRAME-04",
     "pr": 3,
     "group": "Frame app",
     "task": "Show verified transfer status",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "apps/frame verifies each loaded photo against digests.v1, the companion CLI's sidecar of shelf-byte digests, and skips a mismatch with a re-push notice; the photo overlay reports Verified against the manifest / Not yet checked (frame-facts.png, frame-next.png pixel-verified); unit tests cover the mismatch and absent-sidecar paths."
+    ]
   },
   {
     "id": "FRAME-05",
     "pr": 3,
     "group": "Frame app",
     "task": "Integrate shared fit/crop behavior",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "kobo frame push --fit crop|pad records each photo's fit in fit.v1 (merged across pushes, pruned on removal); the app honors pad vs crop when a photo does not match the panel - frame-show-pad.png shows the wide panorama letterboxed instead of cropped."
+    ]
   },
   {
     "id": "FRAME-06",

@@ -241,6 +241,7 @@ impl Frame {
         };
         let mut screen = ScreenBuilder::new("frame-show")
             .unframed_picture(picture, 500)
+            .top_bar(self.selected().map_or("Frame", |photo| photo.name.as_str()))
             .page_turns(PREVIOUS, NEXT)
             .reading_menu(MENU);
         if self.overlay {
