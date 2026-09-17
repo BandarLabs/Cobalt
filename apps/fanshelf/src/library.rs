@@ -95,13 +95,17 @@ pub fn place_key(id: &str) -> String {
     format!("place.{id}")
 }
 
+pub fn ao3_base() -> String {
+    std::env::var("FANSHELF_AO3_BASE").unwrap_or_else(|_| "https://archiveofourown.org".to_owned())
+}
+
 pub fn work_url(id: &str, adult: bool) -> String {
     let suffix = if adult { "?view_adult=true" } else { "" };
-    format!("https://archiveofourown.org/works/{id}{suffix}")
+    format!("{}/works/{id}{suffix}", ao3_base())
 }
 
 pub fn feed_url(tag: &FollowedTag) -> String {
-    format!("https://archiveofourown.org/tags/{}/feeds.atom", tag.slug)
+    format!("{}/tags/{}/feeds.atom", ao3_base(), tag.slug)
 }
 
 pub fn parse_work_page(id: &str, body: &str) -> ParsedWork {
@@ -195,10 +199,10 @@ fn epub_url(body: &str) -> Option<String> {
         if !href.contains("/downloads/") || !href.contains(".epub") {
             continue;
         }
-        let absolute = if href.starts_with("https://archiveofourown.org/") {
+        let absolute = if href.starts_with("https://") || href.starts_with("http://") {
             href
         } else if href.starts_with('/') {
-            format!("https://archiveofourown.org{href}")
+            format!("{}{href}", ao3_base())
         } else {
             continue;
         };

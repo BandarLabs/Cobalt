@@ -1417,8 +1417,10 @@
     "pr": 3,
     "group": "Fanshelf",
     "task": "Validate EPUB reading with synthetic owned content",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "End-to-end EPUB reading validated in the simulator against a local TLS archive fixture (scripts/quality/check-fanshelf-epub-sim.py): work 4242 looked up by numeric ID over TLS, its page parsed (title, byline, rating, warnings, chapters), the relative EPUB link resolved and all 9,954 bytes of the repository's synthetic river.epub downloaded to the shelf, the book auto-opened in BookView on page 1 of 12 with real chapter text, and the shelf row showed the reading badge after leaving the reader. Pixel-verified: docs/quality/evidence/fanshelf/fanshelf-epub-work.png, fanshelf-epub-reading.png, fanshelf-epub-shelf.png (fanshelf-epub-result.json, fanshelf-epub-simulator.log alongside). Adds FANSHELF_AO3_BASE override in apps/fanshelf/src/library.rs so the harness can point the app at the fixture; production default unchanged."
+    ]
   },
   {
     "id": "FIELD-01",

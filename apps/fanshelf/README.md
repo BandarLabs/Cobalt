@@ -18,11 +18,13 @@ failing quietly.
 
 ![A work screen naming the last manual update check](screenshots/work.png)
 
-![The manual updates screen listing unread and never-checked works](screenshots/updates.png)
+![The updates screen listing unread and never-checked works](screenshots/updates.png)
 
 ![The shelf narrowed to one fandom](screenshots/fandom-filter.png)
 
 ![Bulk shelf management with update and copy counts](screenshots/manage.png)
+
+![A downloaded EPUB open in the reader](screenshots/reading.png)
 
 ## What v1 does
 
@@ -83,6 +85,10 @@ cargo run -p kobo-cli -- drive --ideal \
   --script apps/fanshelf/drive.kobo \
   --shots apps/fanshelf/screenshots
 ```
+
+`scripts/quality/check-fanshelf-epub-sim.py` drives the whole download-and-read
+path against a local TLS fixture that serves a synthetic work page and the
+repository's sample EPUB, and produces the reading screenshot above.
 
 Without `FANSHELF_DEMO`, simulator fetches are real network requests:
 
