@@ -4439,25 +4439,39 @@ fn confirmed_setup(
     if options.non_interactive {
         return Err("noninteractive setup was not explicitly confirmed with --yes".to_owned());
     }
-    let tty = fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open("/dev/tty")
-        .map_err(|error| {
-            format!(
-                "open /dev/tty for confirmation: {error}; pass --yes only after reviewing --dry-run"
-            )
-        })?;
-    let mut writer = &tty;
+    // The prompt bypasses stdio so a piped install still asks on the
+    // controlling terminal. /dev/tty is a Unix device; on Windows the
+    // console is reached through stdin and stdout themselves.
+    #[cfg(unix)]
+    {
+        let tty = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open("/dev/tty")
+            .map_err(|error| {
+                format!(
+                    "open /dev/tty for confirmation: {error}; pass --yes only after reviewing --dry-run"
+                )
+            })?;
+        prompt_confirmation(&tty, &tty)
+    }
+    #[cfg(windows)]
+    prompt_confirmation(std::io::stdin(), std::io::stdout())
+}
+
+fn prompt_confirmation(
+    reader: impl std::io::Read,
+    mut writer: impl std::io::Write,
+) -> Result<bool, String> {
     writer
         .write_all(b"Continue? [y/N] ")
         .map_err(|error| format!("write confirmation prompt: {error}"))?;
     writer
         .flush()
         .map_err(|error| format!("flush confirmation prompt: {error}"))?;
-    let mut reader_tty = std::io::BufReader::new(tty);
+    let mut buffered = std::io::BufReader::new(reader);
     let mut answer = String::new();
-    std::io::BufRead::read_line(&mut reader_tty, &mut answer)
+    std::io::BufRead::read_line(&mut buffered, &mut answer)
         .map_err(|error| format!("read confirmation: {error}"))?;
     Ok(confirmation_answer(&answer))
 }
@@ -8805,8 +8819,8 @@ mod tests {
     mod preparing {
         use super::super::{
             choose_reader_list, confirmation_answer, dry_run_plan, gzip,
-            load_release_package_from_manifest, parse_setup, setup, setup_device_with_confirmation,
-            undo_setup, SetupMode, SetupPayload,
+            load_release_package_from_manifest, parse_setup, prompt_confirmation, setup,
+            setup_device_with_confirmation, undo_setup, SetupMode, SetupPayload,
         };
         use std::path::PathBuf;
 
@@ -8899,6 +8913,20 @@ mod tests {
                 assert!(!confirmation_answer(declined));
             }
             assert!(confirmation_answer("yes\n"));
+        }
+
+        #[test]
+        fn confirmation_prompts_and_reads_the_given_streams() {
+            let mut prompt = Vec::new();
+            let accepted = prompt_confirmation(&b"y\n"[..], &mut prompt).expect("answered");
+            assert!(accepted);
+            assert_eq!(prompt, b"Continue? [y/N] ");
+
+            // An empty line is a decline, including the end of a closed pipe.
+            let declined = prompt_confirmation(&b"\n"[..], Vec::new()).expect("empty line");
+            assert!(!declined);
+            let closed = prompt_confirmation(&b""[..], Vec::new()).expect("closed pipe");
+            assert!(!closed);
         }
 
         #[test]
