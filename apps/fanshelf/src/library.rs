@@ -133,15 +133,16 @@ pub fn parse_work_page(id: &str, body: &str) -> ParsedWork {
         .or_else(|| class_text(body, "byline heading", AUTHOR_MAX))
         .unwrap_or_else(|| "Anonymous".to_owned());
     let fandom =
-        class_text(body, "fandom tags", FANDOM_MAX).unwrap_or_else(|| "Unspecified".into());
-    let rating = class_text(body, "rating tags", RATING_MAX).unwrap_or_else(|| "Not Rated".into());
-    let warnings = class_text(body, "warning tags", WARNINGS_MAX)
+        dd_class_text(body, "fandom tags", FANDOM_MAX).unwrap_or_else(|| "Unspecified".into());
+    let rating =
+        dd_class_text(body, "rating tags", RATING_MAX).unwrap_or_else(|| "Not Rated".into());
+    let warnings = dd_class_text(body, "warning tags", WARNINGS_MAX)
         .unwrap_or_else(|| "Creator Chose Not To Use Archive Warnings".into());
     let summary = class_text(body, "summary module", SUMMARY_MAX).unwrap_or_default();
-    let updated = class_text(body, "updated", DATE_MAX)
-        .or_else(|| class_text(body, "published", DATE_MAX))
+    let updated = dd_class_text(body, "updated", DATE_MAX)
+        .or_else(|| dd_class_text(body, "published", DATE_MAX))
         .unwrap_or_default();
-    let chapter_text = class_text(body, "chapters", 32).unwrap_or_else(|| "1/1".into());
+    let chapter_text = dd_class_text(body, "chapters", 32).unwrap_or_else(|| "1/1".into());
     let (chapters, total_chapters) = parse_chapters(&chapter_text);
     let complete = total_chapters.is_some_and(|total| chapters >= total);
     let epub = epub_url(body).unwrap_or_default();
@@ -213,6 +214,46 @@ fn epub_url(body: &str) -> Option<String> {
 
 fn class_text(body: &str, class: &str, limit: usize) -> Option<String> {
     attribute_text(body, "class", class, limit)
+}
+
+/// The text of the `<dd>` carrying a class, never the `<dt>` label that
+/// shares it.
+///
+/// A real work page marks up its facts as label and value cells with the
+/// same class - `<dt class="rating tags">Rating:</dt>` then `<dd
+/// class="rating tags">General Audiences</dd>` - and a first-match search
+/// harvests the label. The fixture page carried only the value cells, which
+/// is why this only showed against the live archive.
+fn dd_class_text(body: &str, class: &str, limit: usize) -> Option<String> {
+    tagged_class_text(body, "dd", class, limit)
+}
+
+fn tagged_class_text(body: &str, tag: &str, class: &str, limit: usize) -> Option<String> {
+    let mut rest = body;
+    while let Some(at) = rest.find('<') {
+        rest = &rest[at..];
+        let end = rest.find('>')?;
+        let head = &rest[..=end];
+        let name = head[1..]
+            .trim_start_matches('/')
+            .split(|character: char| character.is_whitespace() || character == '>')
+            .next()?;
+        if name == tag {
+            if let Some(value) = attribute_value(head, "class") {
+                if class
+                    .split_whitespace()
+                    .all(|wanted| value.split_whitespace().any(|part| part == wanted))
+                {
+                    let close = format!("</{name}>");
+                    let tail = &rest[end + 1..];
+                    let close_at = tail.find(&close)?;
+                    return Some(plain(&tail[..close_at], limit));
+                }
+            }
+        }
+        rest = &rest[end + 1..];
+    }
+    None
 }
 
 fn attribute_text(body: &str, attribute: &str, wanted: &str, limit: usize) -> Option<String> {
@@ -652,11 +693,17 @@ mod tests {
       <html><head><title>Fallback | Archive of Our Own</title></head><body>
       <h2 class="title heading">The Lantern Library</h2>
       <h3 class="byline heading"><a rel="author">River Quill</a></h3>
+      <dt class="rating tags">Rating:</dt>
       <dd class="rating tags"><ul><li><a>Teen And Up Audiences</a></li></ul></dd>
+      <dt class="warning tags">Archive Warning:</dt>
       <dd class="warning tags"><ul><li><a>No Archive Warnings Apply</a></li></ul></dd>
+      <dt class="fandom tags">Fandoms:</dt>
       <dd class="fandom tags"><ul><li><a>Public Domain Fairy Tales</a></li></ul></dd>
       <blockquote class="userstuff summary module"><p>A synthetic fixture.</p></blockquote>
-      <dd class="updated">2026-09-01</dd><dd class="chapters">12/?</dd>
+      <dt class="updated">Updated:</dt>
+      <dd class="updated">2026-09-01</dd>
+      <dt class="chapters">Chapters:</dt>
+      <dd class="chapters">12/?</dd>
       <a href="/downloads/4242/The_Lantern_Library.epub?updated_at=1">EPUB</a>
       </body></html>
     "#;
@@ -673,6 +720,22 @@ mod tests {
         assert_eq!(work.warnings, "No Archive Warnings Apply");
         assert_eq!(work.chapters_label(), "12/? WIP");
         assert!(work.epub.ends_with(".epub?updated_at=1"));
+    }
+
+    #[test]
+    fn label_cells_are_never_harvested_as_values() {
+        // The fixture above carries the real archive's shape: every fact is
+        // a <dt> label and a <dd> value sharing one class. A first-match
+        // search reads the label - the live work page rendered
+        // "Rating: Rating:" until the parser learned to read value cells.
+        let ParsedWork::Work(work) = parse_work_page("4242", WORK) else {
+            panic!("work was not parsed");
+        };
+        for field in [&work.rating, &work.warnings, &work.fandom, &work.updated] {
+            assert!(!field.ends_with(':'), "a label leaked into {field}");
+        }
+        assert_eq!(work.updated, "2026-09-01");
+        assert_eq!(work.chapters_label(), "12/? WIP");
     }
 
     #[test]

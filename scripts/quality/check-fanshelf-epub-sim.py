@@ -32,11 +32,17 @@ WORK_PAGE = """
   <html><head><title>The Lantern Library | Archive of Our Own</title></head><body>
   <h2 class="title heading">The Lantern Library</h2>
   <h3 class="byline heading"><a rel="author">River Quill</a></h3>
+  <dt class="rating tags">Rating:</dt>
   <dd class="rating tags"><ul><li><a>Teen And Up Audiences</a></li></ul></dd>
+  <dt class="warning tags">Archive Warning:</dt>
   <dd class="warning tags"><ul><li><a>No Archive Warnings Apply</a></li></ul></dd>
+  <dt class="fandom tags">Fandoms:</dt>
   <dd class="fandom tags"><ul><li><a>Public Domain Fairy Tales</a></li></ul></dd>
   <blockquote class="userstuff summary module"><p>A synthetic fixture.</p></blockquote>
-  <dd class="updated">2026-09-01</dd><dd class="chapters">12/?</dd>
+  <dt class="updated">Updated:</dt>
+  <dd class="updated">2026-09-01</dd>
+  <dt class="chapters">Chapters:</dt>
+  <dd class="chapters">12/?</dd>
   <a href="/downloads/4242/The_Lantern_Library.epub?updated_at=1">EPUB</a>
   </body></html>
 """
