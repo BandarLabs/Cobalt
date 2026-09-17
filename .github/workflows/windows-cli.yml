@@ -17,6 +17,17 @@ jobs:
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
         with:
           toolchain: 1.85.1
+          targets: armv7-unknown-linux-musleabihf
+
+      # The contributor path for the reader build: with no ARM gcc on the
+      # runner, setup's zig fallback must find zig, wrap it, and compile the
+      # TLS stack's C for armv7 musl. This is the exact journey the setup
+      # error text sends Windows users on, so it runs here on every push.
+      - name: Install zig the way the setup error text describes
+        run: winget install --id zig.zig -e --source winget --accept-package-agreements --accept-source-agreements
+
+      - name: Build the device binaries through the zig fallback
+        run: cargo run --locked -p kobo-cli -- build --device
 
       # Native MSVC build: the tests execute on the runner, so every
       # cfg(windows) path that has unit coverage is runtime-verified here,
