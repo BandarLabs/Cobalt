@@ -384,3 +384,18 @@ the real cover, saved the import receipt, and opened page 1 of 5. The host
 preview plus app preview, receipt and reader frames were pixel-inspected: the
 cover and first comic page are sharp and readable with no clipping or overlap.
 MISSINGCLI-03 is complete. Physical-reader transfer remains unverified.
+
+#### Deck harmless-action acknowledgement
+
+With the app-side result watch from Deck 0.2.4, the companion journey now runs
+through the full primary outcome. The actual CLI created the Build preset,
+replaced pad 1 with a harmless `printf` check, added URL and app picks, and
+pushed it to the simulator. The running app used real `kobo-sidekickd`, showed
+the paired CLI-driven grid, ran Check on one tap, and automatically showed
+`Check finished.` when the helper's result arrived. The helper's exact output
+was `deck companion check passed`.
+
+Both 1072×1448 frames were pixel-inspected. The paired grid and completion line
+are clear with no clipping or overlap. Evidence is under
+`evidence/deck-companion-acknowledgement`. DECKCLI-06 is complete; physical
+reader execution remains unverified.
