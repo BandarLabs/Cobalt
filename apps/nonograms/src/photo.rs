@@ -237,9 +237,11 @@ mod tests {
     #[test]
     fn a_manifest_is_refused_rather_than_stretched() {
         // Over the bound.
-        let long = (0..MAX_IMPORTED + 1)
-            .map(|n| format!("p{n}.png\tPuzzle {n}\t5\n"))
-            .collect::<String>();
+        let long = (0..=MAX_IMPORTED).fold(String::new(), |mut text, n| {
+            use std::fmt::Write as _;
+            let _ = writeln!(text, "p{n}.png\tPuzzle {n}\t5");
+            text
+        });
         assert!(parse_manifest(long.as_bytes())
             .unwrap_err()
             .contains("more than"));
