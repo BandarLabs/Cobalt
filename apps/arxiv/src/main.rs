@@ -401,15 +401,19 @@ const LIBRARY_KEY: &str = "library";
 /// What a kept paper's row says under its title.
 fn kept_summary(kept: &Kept) -> String {
     let size = kept.bytes / 1024;
-    let mut summary = if kept.authors.is_empty() {
+    let facts = if kept.authors.is_empty() {
         format!("{} \u{b7} {size} KB", kept.id)
     } else {
         format!("{} \u{b7} {} \u{b7} {size} KB", kept.id, kept.authors)
     };
+    // Progress leads, for the same reason the offline badge does: the
+    // row clamps to one line, and the tail is what the clamp eats.
+    // "How far through am I" is the fact a library row exists to show.
     if let Some(progress) = kept.progress.filter(|progress| *progress > 0) {
-        let _ = write!(summary, " \u{b7} {progress}%");
+        format!("{progress}% \u{b7} {facts}")
+    } else {
+        facts
     }
-    summary
 }
 
 /// Writes the library catalogue out.
@@ -2332,7 +2336,7 @@ mod tests {
         let summary = kept_summary(&kept);
         assert!(summary.contains("2401.00001v2"), "{summary}");
         assert!(summary.contains("89 KB"), "{summary}");
-        assert!(summary.ends_with(" \u{b7} 42%"), "{summary}");
+        assert!(summary.starts_with("42% \u{b7} "), "{summary}");
         // Never opened says nothing, rather than claiming nought percent.
         let unread = Kept {
             progress: None,
