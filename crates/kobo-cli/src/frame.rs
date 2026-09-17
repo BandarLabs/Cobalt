@@ -1,7 +1,8 @@
 //! Owner-attended Frame shelf management over the already-paired SSH channel.
 
 use kobo_frame_host::{
-    prepare_for_panel, Fit, Manifest, Panel, Push, MANIFEST, MAX_FRAME_CAPACITY,
+    decode_fit_map, encode_fit_map, prepare_for_panel, Fit, Manifest, Panel, Push, FIT_MANIFEST,
+    MANIFEST, MAX_FRAME_CAPACITY,
 };
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -98,6 +99,7 @@ fn push(arguments: &[String], plan_only: bool) -> Result<(), String> {
             }
         }
     }
+    let fits = merged_fits(&target, &push, fit)?;
     print_plan(&push);
     if plan_only {
         println!("Plan only. No photos were transferred or removed.");
@@ -113,7 +115,7 @@ fn push(arguments: &[String], plan_only: bool) -> Result<(), String> {
                 );
                 remote(host, &script)?;
             }
-            transfer(host, &push)?;
+            transfer(host, &push, &fits)?;
             let actual = read_manifest(host)?;
             let ids = push
                 .manifest
@@ -128,7 +130,7 @@ fn push(arguments: &[String], plan_only: bool) -> Result<(), String> {
             if push.manifest != existing {
                 super::frame_recovery::save(&sim_root(), &existing)?;
             }
-            publish_local(&push)?;
+            publish_local(&push, &fits)?;
             let actual = read_local_manifest()?;
             let ids = push
                 .manifest
@@ -230,6 +232,11 @@ fn remove(arguments: &[String]) -> Result<(), String> {
         photos: Vec::new(),
         removed: vec![photo],
     };
+    let mut fits = match &target {
+        Target::Device(host) => read_fit_map(host)?,
+        Target::Sim => read_local_fit_map()?,
+    };
+    fits.remove(&id);
     match target {
         Target::Device(host) => {
             remote(
@@ -239,11 +246,11 @@ fn remove(arguments: &[String]) -> Result<(), String> {
                     super::frame_recovery::save_script(&existing)
                 ),
             )?;
-            transfer(&host, &push)?;
+            transfer(&host, &push, &fits)?;
         }
         Target::Sim => {
             super::frame_recovery::save(&sim_root(), &existing)?;
-            publish_local(&push)?;
+            publish_local(&push, &fits)?;
         }
     }
     println!("Removed Frame photo {id}. Use `kobo frame restore` with the same target to undo.");
@@ -424,6 +431,56 @@ fn sim_panel() -> Panel {
     }
 }
 
+fn merged_fits(target: &Target, push: &Push, fit: Fit) -> Result<BTreeMap<String, Fit>, String> {
+    let map = match target {
+        Target::Device(host) => read_fit_map(host)?,
+        Target::Sim => read_local_fit_map()?,
+    };
+    Ok(merge_fit_map(map, push, fit))
+}
+
+fn merge_fit_map(mut map: BTreeMap<String, Fit>, push: &Push, fit: Fit) -> BTreeMap<String, Fit> {
+    for prepared in &push.photos {
+        map.insert(prepared.photo.id.clone(), fit);
+    }
+    for photo in &push.removed {
+        map.remove(&photo.id);
+    }
+    map.retain(|id, _| push.manifest.photos.iter().any(|photo| &photo.id == id));
+    map
+}
+
+fn read_fit_map(host: &str) -> Result<BTreeMap<String, Fit>, String> {
+    let output = remote(
+        host,
+        &format!(
+            "set -eu\nif [ -f '{ROOT}/{FIT_MANIFEST}' ]; then base64 '{ROOT}/{FIT_MANIFEST}'; fi\n"
+        ),
+    )?;
+    if output.stdout.iter().all(u8::is_ascii_whitespace) {
+        return Ok(BTreeMap::new());
+    }
+    let bytes = base64_decode(&String::from_utf8_lossy(&output.stdout))?;
+    Ok(decode_fit_map(&bytes))
+}
+
+fn read_local_fit_map() -> Result<BTreeMap<String, Fit>, String> {
+    match fs::read(sim_root().join(FIT_MANIFEST)) {
+        Ok(bytes) => Ok(decode_fit_map(&bytes)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(BTreeMap::new()),
+        Err(error) => Err(format!("read Frame fit sidecar: {error}")),
+    }
+}
+
+fn write_local_fit_map(map: &BTreeMap<String, Fit>) -> Result<(), String> {
+    let root = sim_root();
+    let dest = root.join(FIT_MANIFEST);
+    let partial = root.join(format!(".{FIT_MANIFEST}.writing"));
+    fs::write(&partial, encode_fit_map(map))
+        .map_err(|error| format!("write Frame fit sidecar: {error}"))?;
+    fs::rename(&partial, &dest).map_err(|error| format!("publish Frame fit sidecar: {error}"))
+}
+
 fn read_local_manifest() -> Result<Manifest, String> {
     let path = sim_root().join(MANIFEST);
     match fs::read(&path) {
@@ -434,7 +491,7 @@ fn read_local_manifest() -> Result<Manifest, String> {
     }
 }
 
-fn publish_local(push: &Push) -> Result<(), String> {
+fn publish_local(push: &Push, fits: &BTreeMap<String, Fit>) -> Result<(), String> {
     let root = sim_root();
     fs::create_dir_all(&root).map_err(|error| format!("create Frame simulator shelf: {error}"))?;
     for prepared in push.photos.iter().filter(|prepared| prepared.png.is_some()) {
@@ -451,6 +508,7 @@ fn publish_local(push: &Push) -> Result<(), String> {
     fs::write(&partial, push.manifest.encode())
         .map_err(|error| format!("write Frame manifest: {error}"))?;
     fs::rename(&partial, &dest).map_err(|error| format!("publish Frame manifest: {error}"))?;
+    write_local_fit_map(fits)?;
     for photo in &push.removed {
         let _ = fs::remove_file(root.join(format!("{}.png", photo.id)));
     }
@@ -602,13 +660,13 @@ fn frame_sizes(host: &str, ids: &[&str]) -> Result<BTreeMap<String, usize>, Stri
         .collect())
 }
 
-fn transfer(host: &str, push: &Push) -> Result<(), String> {
-    let script = transfer_script(push);
+fn transfer(host: &str, push: &Push, fits: &BTreeMap<String, Fit>) -> Result<(), String> {
+    let script = transfer_script(push, fits);
     let _ = remote(host, &script)?;
     Ok(())
 }
 
-fn transfer_script(push: &Push) -> String {
+fn transfer_script(push: &Push, fits: &BTreeMap<String, Fit>) -> String {
     let mut script = format!("set -eu\nroot='{ROOT}'\nmkdir -p \"$root\"\nchmod 700 \"$root\"\n");
     for prepared in push.photos.iter().filter(|prepared| prepared.png.is_some()) {
         let png = prepared.png.as_ref().expect("filtered");
@@ -623,6 +681,11 @@ fn transfer_script(push: &Push) -> String {
     let _ = write!(
         script,
         "partial=\"$root/.{MANIFEST}.writing\"\nbase64 -d > \"$partial\" <<'COBALT_FRAME_MANIFEST'\n{encoded}\nCOBALT_FRAME_MANIFEST\nchmod 600 \"$partial\"\nmv -f \"$partial\" \"$root/{MANIFEST}\"\nsync\n"
+    );
+    let encoded = super::base64_encode(&encode_fit_map(fits));
+    let _ = write!(
+        script,
+        "partial=\"$root/.{FIT_MANIFEST}.writing\"\nbase64 -d > \"$partial\" <<'COBALT_FRAME_FIT'\n{encoded}\nCOBALT_FRAME_FIT\nchmod 600 \"$partial\"\nmv -f \"$partial\" \"$root/{FIT_MANIFEST}\"\nsync\n"
     );
     for photo in &push.removed {
         let _ = writeln!(script, "rm -f \"$root/{}.png\"", photo.id);
@@ -698,10 +761,10 @@ fn base64_value(byte: u8) -> Result<u8, String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        base64_decode, capacity_bytes, parse_push, parse_remove, parse_target, transfer_script,
-        Target, MANIFEST,
+        base64_decode, capacity_bytes, merge_fit_map, parse_push, parse_remove, parse_target,
+        transfer_script, Target, MANIFEST,
     };
-    use kobo_frame_host::{Fit, Manifest, Photo, PreparedPhoto, Push};
+    use kobo_frame_host::{Fit, Manifest, Photo, PreparedPhoto, Push, FIT_MANIFEST};
     use std::collections::BTreeMap;
 
     #[test]
@@ -794,7 +857,8 @@ mod tests {
                 name: "Old".to_owned(),
             }],
         };
-        let script = transfer_script(&push);
+        let fits = BTreeMap::from([("photo-kept".to_owned(), Fit::Pad)]);
+        let script = transfer_script(&push, &fits);
         let publish = script
             .find(&format!("mv -f \"$partial\" \"$root/{MANIFEST}\""))
             .expect("manifest publication");
@@ -802,6 +866,38 @@ mod tests {
             .find("rm -f \"$root/photo-old.png\"")
             .expect("old photo deletion");
         assert!(publish < deletion);
+        let fit = script
+            .find(&format!("mv -f \"$partial\" \"$root/{FIT_MANIFEST}\""))
+            .expect("fit sidecar publication");
+        assert!(publish < fit && fit < deletion);
+    }
+
+    #[test]
+    fn merged_fits_track_the_push_and_prune_the_departed() {
+        let existing = BTreeMap::from([
+            ("photo-stay".to_owned(), Fit::Crop),
+            ("photo-gone".to_owned(), Fit::Pad),
+        ]);
+        let mut prepared = photo("photo-new");
+        prepared.id = "photo-new".to_owned();
+        let push = Push {
+            manifest: Manifest {
+                photos: vec![photo("photo-stay"), prepared.clone()],
+            },
+            photos: vec![PreparedPhoto {
+                photo: prepared,
+                png: Some(vec![1]),
+            }],
+            removed: vec![photo("photo-gone")],
+        };
+        let merged = merge_fit_map(existing, &push, Fit::Pad);
+        assert_eq!(
+            merged,
+            BTreeMap::from([
+                ("photo-stay".to_owned(), Fit::Crop),
+                ("photo-new".to_owned(), Fit::Pad),
+            ])
+        );
     }
 
     #[test]

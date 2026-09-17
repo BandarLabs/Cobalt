@@ -20,6 +20,8 @@ pub const MAX_FRAME_BYTES: usize = 4 * 1024 * 1024;
 pub const MAX_FRAME_CAPACITY: usize = 150 * 1024 * 1024;
 pub const MANIFEST: &str = "manifest.v1";
 pub const MANIFEST_HEADER: &str = "cobalt-frame-v1";
+/// Sidecar recording each photo's panel fit; older app builds ignore it.
+pub const FIT_MANIFEST: &str = "fit.v1";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Panel {
@@ -45,6 +47,37 @@ impl Fit {
             _ => Err("--fit must be crop or pad".to_owned()),
         }
     }
+}
+
+/// Encode the per-photo fit sidecar as `id<TAB>crop|pad` lines, ordered by id.
+#[must_use]
+pub fn encode_fit_map(map: &BTreeMap<String, Fit>) -> Vec<u8> {
+    let mut output = String::new();
+    for (id, fit) in map {
+        let value = match fit {
+            Fit::Crop => "crop",
+            Fit::Pad => "pad",
+        };
+        let _ = writeln!(output, "{id}\t{value}");
+    }
+    output.into_bytes()
+}
+
+/// Decode a fit sidecar, skipping lines that are not `id<TAB>crop|pad`.
+#[must_use]
+pub fn decode_fit_map(bytes: &[u8]) -> BTreeMap<String, Fit> {
+    let Ok(text) = std::str::from_utf8(bytes) else {
+        return BTreeMap::new();
+    };
+    text.lines()
+        .filter_map(|line| {
+            let (id, fit) = line.split_once('\t')?;
+            if !valid_id(id) {
+                return None;
+            }
+            Fit::parse(fit).ok().map(|fit| (id.to_owned(), fit))
+        })
+        .collect()
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -532,6 +565,16 @@ fn album_name(input: &Path) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn fit_map_round_trips() {
+        let mut map = std::collections::BTreeMap::new();
+        map.insert("photo-bbbb".to_owned(), Fit::Pad);
+        map.insert("photo-aaaa".to_owned(), Fit::Crop);
+        let encoded = encode_fit_map(&map);
+        assert_eq!(encoded, b"photo-aaaa\tcrop\nphoto-bbbb\tpad\n".to_vec());
+        assert_eq!(decode_fit_map(&encoded), map);
+    }
+
     use super::*;
     use image::{GenericImageView, ImageBuffer, Rgb};
 
