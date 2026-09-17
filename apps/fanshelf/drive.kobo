@@ -31,6 +31,21 @@ clean
 shot updates
 
 tap Shelf
+tap Filter
+expect Fandoms
+expect Public Domain Fairy Tales
+expect Synthetic Library Stories
+clean
+shot fandoms
+
+tap Public Domain Fairy Tales
+expect The Clockwork Garden
+expect All
+clean
+shot fandom-filter
+
+tap All
+expect A Field Guide to Small Hours
 tap Followed tags
 expect Public Domain Fairy Tales
 expect Synthetic Library Stories

@@ -20,6 +20,8 @@ failing quietly.
 
 ![The manual updates screen listing unread and never-checked works](screenshots/updates.png)
 
+![The shelf narrowed to one fandom](screenshots/fandom-filter.png)
+
 ## What v1 does
 
 - Stores bounded metadata for up to 96 works: title, author, fandom, rating,
@@ -36,6 +38,8 @@ failing quietly.
 - Opens downloaded EPUBs through `BookView`; page position, type settings,
   highlights, notes, and other reader memory are stored separately and survive
   a re-download when the updated document still has compatible anchors.
+- Filters the shelf by fandom: **Filter** lists each fandom with its work
+  count, and **All** returns to the whole shelf.
 - Checks WIPs only when **Check updates** or **Check all** is pressed. A newer
   chapter sets an unread badge and enables an explicit re-download.
 - Follows up to 24 AO3 tags through `/tags/<tag>/feeds.atom`, parsed with

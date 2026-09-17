@@ -1371,8 +1371,12 @@
     "pr": 3,
     "group": "Fanshelf",
     "task": "Improve fandom/filter organization",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Shelf Filter action opens a Fandoms screen (each fandom with its work count); picking one narrows the shelf, the title bar names the fandom, and All restores the whole shelf (shelf_filter_groups_by_fandom unit test; 19/19 green)",
+      "check-fanshelf-sim.py passed: filter narrowed the demo shelf to one fandom (expect-missing proved the other work was hidden) and All restored it (docs/quality/evidence/fanshelf/fanshelf-fandoms.png, fanshelf-fandom-filter.png)",
+      "apps/fanshelf/drive.kobo replayed against a pristine sim state with the new Filter/Fandoms steps: every step passed"
+    ]
   },
   {
     "id": "FANS-03",

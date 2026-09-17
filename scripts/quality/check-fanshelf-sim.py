@@ -90,12 +90,22 @@ def main():
                       "wait-for Nothing runs in the background", "wait-for Unread update",
                       "wait-for Never checked")
                 drive("clean", "shot fanshelf-updates")
+                # The shelf narrows to one fandom and widens again.
+                drive("tap Shelf", "tap Filter", "wait-for Fandoms",
+                      "wait-for 2 works")
+                drive("clean", "shot fanshelf-fandoms")
+                drive("tap Synthetic Library Stories", "wait-for Synthetic Library Stories",
+                      "wait-for A Field Guide to Small Hours")
+                drive("clean", "shot fanshelf-fandom-filter")
+                drive("expect-missing The Clockwork Garden")
+                drive("tap All", "wait-for The Clockwork Garden")
                 result["checks"].append(dict(
                     name="update-check journey",
                     detail="Demo shelf showed the update, reading and never-checked "
                            "badges; each work screen named its last manual check; the "
                            "updates screen listed unread, never-checked and current "
-                           "states",
+                           "states; the fandom filter narrowed the shelf to one fandom "
+                           "(hiding the other work) and All restored it",
                     status="passed"))
                 result["status"] = "passed"
             finally:

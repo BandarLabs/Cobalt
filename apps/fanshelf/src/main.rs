@@ -41,6 +41,7 @@ enum View {
     Adult,
     Follow,
     AddTag,
+    Fandoms,
     Feed,
     Updates,
     Reading,
@@ -95,6 +96,8 @@ struct Fanshelf {
     place: Option<Memory>,
     message: Option<String>,
     reading: std::collections::BTreeSet<String>,
+    filter: Option<String>,
+    fandom_page: usize,
     works_loaded: bool,
     tags_loaded: bool,
     #[cfg(not(target_arch = "arm"))]
@@ -130,6 +133,8 @@ impl Default for Fanshelf {
             place: None,
             message: None,
             reading: std::collections::BTreeSet::new(),
+            filter: None,
+            fandom_page: 0,
             works_loaded: false,
             tags_loaded: false,
             #[cfg(not(target_arch = "arm"))]
@@ -303,6 +308,7 @@ impl Fanshelf {
                 .owns_back(true)
                 .build(),
             View::Follow => self.follow_screen(),
+            View::Fandoms => self.fandoms_screen(),
             View::AddTag => ScreenBuilder::new("fs-add-tag")
                 .top_bar("Follow tag")
                 .heading("Follow an AO3 tag")
@@ -335,11 +341,66 @@ impl Fanshelf {
         }
     }
 
+    /// Distinct fandoms on the shelf, each with its work count.
+    fn fandoms(&self) -> Vec<(String, usize)> {
+        let mut counts: std::collections::BTreeMap<String, usize> =
+            std::collections::BTreeMap::new();
+        for work in &self.works {
+            *counts.entry(work.fandom.clone()).or_default() += 1;
+        }
+        counts.into_iter().collect()
+    }
+
+    /// Shelf indexes in display order, narrowed to the chosen fandom.
+    fn visible(&self) -> Vec<usize> {
+        self.works
+            .iter()
+            .enumerate()
+            .filter(|(_, work)| self.filter.as_ref().is_none_or(|f| *f == work.fandom))
+            .map(|(index, _)| index)
+            .collect()
+    }
+
+    fn fandoms_screen(&self) -> Screen {
+        let mut screen = ScreenBuilder::new("fs-fandoms")
+            .top_bar("Fandoms")
+            .top_bar_action("shelf", "Shelf");
+        let fandoms = self.fandoms();
+        if fandoms.is_empty() {
+            screen = screen.splash(
+                Some(Glyph::Book),
+                "No works on the shelf",
+                "Fandoms appear once works are added.",
+            );
+        } else {
+            let (start, end) = Self::page_bounds(self.fandom_page, fandoms.len());
+            screen = screen.rows(fandoms[start..end].iter().enumerate().map(
+                |(offset, (fandom, count))| {
+                    let index = start + offset;
+                    (
+                        format!("fandom-{index}"),
+                        display(fandom, 74),
+                        format!("{count} work{}", if *count == 1 { "" } else { "s" }),
+                        Glyph::Book,
+                    )
+                },
+            ));
+            screen = Self::paged(screen, self.fandom_page, fandoms.len());
+        }
+        screen.owns_back(true).build()
+    }
+
     fn shelf_screen(&self) -> Screen {
+        let title = self.filter.clone().unwrap_or_else(|| "Fanshelf".to_owned());
         let mut screen = ScreenBuilder::new("fs-shelf")
-            .top_bar("Fanshelf")
-            .top_bar_action("add", "Add")
-            .buttons([("follow", "Followed tags"), ("updates", "Updates")]);
+            .top_bar(display(&title, 60))
+            .top_bar_action("add", "Add");
+        screen = if self.filter.is_some() {
+            screen.top_bar_action("all", "All")
+        } else {
+            screen.top_bar_action("filter", "Filter")
+        };
+        screen = screen.buttons([("follow", "Followed tags"), ("updates", "Updates")]);
         if !self.ready() {
             return screen.secondary("Loading shelf…").build();
         }
@@ -350,10 +411,17 @@ impl Fanshelf {
                 "Add an AO3 work, review its rating and warnings, then download it.",
             );
         } else {
-            let (start, end) = Self::page_bounds(self.shelf_page, self.works.len());
-            screen = screen.rows(self.works[start..end].iter().enumerate().map(
-                |(offset, work)| {
-                    let index = start + offset;
+            let visible = self.visible();
+            if visible.is_empty() {
+                screen = screen.splash(
+                    Some(Glyph::Book),
+                    "No works in this fandom",
+                    "All shows the whole shelf.",
+                );
+            } else {
+                let (start, end) = Self::page_bounds(self.shelf_page, visible.len());
+                screen = screen.rows(visible[start..end].iter().map(|index| {
+                    let work = &self.works[*index];
                     let badge = Self::badge(work, &self.reading);
                     (
                         format!("work-{index}"),
@@ -366,9 +434,9 @@ impl Fanshelf {
                         ),
                         Glyph::Book,
                     )
-                },
-            ));
-            screen = Self::paged(screen, self.shelf_page, self.works.len());
+                }));
+                screen = Self::paged(screen, self.shelf_page, visible.len());
+            }
         }
         if let Some(message) = &self.message {
             screen = screen.banner(BannerLevel::Info, message);
@@ -1032,6 +1100,22 @@ impl KoboApp for Fanshelf {
             self.keyboard.clear();
             self.view = View::Add;
             self.message = None;
+        } else if action == action_id("filter") {
+            self.fandom_page = 0;
+            self.view = View::Fandoms;
+            self.message = None;
+        } else if action == action_id("all") {
+            self.filter = None;
+            self.shelf_page = 0;
+            self.message = None;
+        } else if let Some(fandom) = (0..self.fandoms().len())
+            .find(|index| action == action_id(&format!("fandom-{index}")))
+            .and_then(|index| self.fandoms().get(index).map(|(fandom, _)| fandom.clone()))
+        {
+            self.filter = Some(fandom);
+            self.shelf_page = 0;
+            self.view = View::Shelf;
+            self.message = None;
         } else if action == action_id("follow") {
             self.view = View::Follow;
             self.tag_page = 0;
@@ -1116,6 +1200,7 @@ impl KoboApp for Fanshelf {
             match self.view {
                 View::Shelf => self.shelf_page = self.shelf_page.saturating_sub(1),
                 View::Follow => self.tag_page = self.tag_page.saturating_sub(1),
+                View::Fandoms => self.fandom_page = self.fandom_page.saturating_sub(1),
                 View::Feed => self.feed_page = self.feed_page.saturating_sub(1),
                 View::Updates => self.updates_page = self.updates_page.saturating_sub(1),
                 _ => {}
@@ -1124,6 +1209,7 @@ impl KoboApp for Fanshelf {
             match self.view {
                 View::Shelf => self.shelf_page = self.shelf_page.saturating_add(1),
                 View::Follow => self.tag_page = self.tag_page.saturating_add(1),
+                View::Fandoms => self.fandom_page = self.fandom_page.saturating_add(1),
                 View::Feed => self.feed_page = self.feed_page.saturating_add(1),
                 View::Updates => self.updates_page = self.updates_page.saturating_add(1),
                 _ => {}
@@ -1148,7 +1234,12 @@ impl KoboApp for Fanshelf {
             }
         } else if action == ActionId::BACK {
             match self.view {
-                View::Work | View::Follow | View::Updates | View::Add | View::Adult => {
+                View::Work
+                | View::Follow
+                | View::Updates
+                | View::Add
+                | View::Adult
+                | View::Fandoms => {
                     self.view = View::Shelf;
                 }
                 View::Feed | View::AddTag => self.view = View::Follow,
@@ -1403,6 +1494,31 @@ mod tests {
             }
         )));
         assert_eq!(runner.app().message.as_deref(), Some(SLOW_DOWN));
+    }
+
+    #[test]
+    fn shelf_filter_groups_by_fandom_and_restores_the_whole_shelf() {
+        let mut app = Fanshelf::default();
+        let mut fairy = work();
+        fairy.fandom = "Fairy Tales".into();
+        let mut stars = work();
+        stars.id = "42".into();
+        stars.fandom = "Star Stories".into();
+        app.works = vec![fairy, stars];
+        assert_eq!(
+            app.fandoms(),
+            [
+                ("Fairy Tales".to_owned(), 1),
+                ("Star Stories".to_owned(), 1),
+            ]
+        );
+        assert_eq!(app.visible(), [0, 1]);
+        app.filter = Some("Star Stories".to_owned());
+        assert_eq!(app.visible(), [1]);
+        app.filter = Some("Unknown".to_owned());
+        assert!(app.visible().is_empty());
+        app.filter = None;
+        assert_eq!(app.visible(), [0, 1]);
     }
 
     #[test]
