@@ -6915,6 +6915,10 @@ fn report_trust_names<'a>(names: impl Iterator<Item = &'a str>) {
     }
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "the flat command reference stays grep-friendly and one line per command"
+)]
 fn print_help() {
     println!(
         "Kobo application SDK\n\n\
@@ -6930,6 +6934,12 @@ fn print_help() {
            deck ls|show [--json]                 List the assigned pads, or print the layout JSON\n\
            deck push (--sim | --device IP | --out PATH)  Publish that layout to the reader or simulator\n\
            flashcards --help                     Prepare, verify, stage, and export card bundles\n\
+           musicstand --help                      Convert and send score pages
+\
+           post --help                            Check and install a Hermes account
+\
+           readlater --help                       Sign in to a Wallabag account
+\
            birds listen|status|stop|push   Mirror a Fugleramme bird collage to the reader\n\
            frame init (--sim | --device IP)      Create the Frame shelf\n\
            frame push INPUT (--sim | --device IP) [--fit crop|pad] [--delete]\n\
@@ -6949,11 +6959,12 @@ fn print_help() {
            sidekick test                        Ask the reader a harmless question, print the answer\n\
            feeds check FILE                     Read an OPML subscription list here\n\
            feeds push FILE (--device IP | --sim)  Stage that list on the reader for Feeds\n\
-           needles prepare PATTERN --out FILE   Turn a pattern PDF or text into Needles Markdown\n\
-           needles preview PATTERN              See the outline and charts a pattern will make\n\
-           needles push PATTERN (--sim | --device IP | --out PATH)\n\
-                                             Put a pattern and its charts on a Needles shelf\n\
-           needles setup                        Install the PDF text extractor\n\
+           fieldbook --help                       Send field packs and receive eBird CSV files
+\
+           panels --help                          Inspect, preview and send CBZ comics
+\
+           needles prepare PDF --out FILE       Extract a user-owned PDF for Needles\n\
+           needles push FILE --device IP        Transfer a prepared pattern to Needles\n\
            nonograms push IMAGE --size 5|7|9 (--device IP | --out photo.png)\n\
                                              Prepare and atomically transfer a photo puzzle\n\
            parser check FILE             Validate a .z3/.z5/.z8 story on the host\n\
@@ -6962,8 +6973,6 @@ fn print_help() {
            stream [--grid CxR] -- COMMAND   Serve host rows to Paperterm; the reader has no shell\n\
            shot [--device HOST]   Save a PNG of the panel (device or simulator)\n\
            record --device IP [--seconds N] [--fps F] [--out DIR]  Film the panel, read-only\n\
-           present <app> --device IP [--seconds N]  Run one app on the panel\n\
-           stop --device IP       Hand the panel back to the reader now\n\
            build [--device]       Build host workspace or ARM safe doctor, disabled kobod, and sample app\n\
            doctor [--device IP] [--json]   Run read-only device diagnostics\n\
            devices [--subnet A.B.C]  Find every reader on the local network\n\
@@ -7029,7 +7038,11 @@ fn print_other_names() {
          tap --device IP X,Y [MS:X,Y ...]  Tap the real panel through the real touch node.\n  \
          \x20                              Several steps run in one upload, timed on the\n  \
          \x20                              device, which is how an application is driven.\n  \
-         smoke-display --device IP --confirm ...  Attended display checks, one at a time";
+         smoke-display --device IP --confirm ...  Attended display checks, one at a time
+  \
+         present <app> --device IP [--seconds N]  Run one app on the panel
+  \
+         stop --device IP       Hand the panel back to the reader now";
     #[cfg(not(feature = "device-write"))]
     const WRITING: &str = "\n\nBuilt without --features device-write, so the commands that write \
          to a panel\n(tap, smoke-display) are not in this binary.";
@@ -7043,6 +7056,44 @@ fn print_other_names() {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn owner_help_names_every_shipped_companion_and_never_advertises_compiled_out_panel_writes() {
+        let source = include_str!("main.rs");
+        let help_start = source.find("fn print_help()").unwrap();
+        let other_start = source.find("fn print_other_names()").unwrap();
+        let help = &source[help_start..other_start];
+        for command in [
+            "apps",
+            "deck",
+            "flashcards",
+            "frame",
+            "musicstand",
+            "post",
+            "readlater",
+            "birds",
+            "vault",
+            "sync",
+            "sidekick",
+            "export",
+            "feeds",
+            "fieldbook",
+            "needles",
+            "nonograms",
+            "parser",
+            "panels",
+        ] {
+            assert!(help.contains(command), "public help omitted {command}");
+        }
+        assert!(!help.contains("present <app>"));
+        assert!(!help.contains("stop --device IP"));
+        #[cfg(feature = "device-write")]
+        {
+            let conditional = &source[other_start..];
+            assert!(conditional.contains("present <app>"));
+            assert!(conditional.contains("stop --device IP"));
+        }
+    }
+
     #[test]
     fn stream_init_refuses_a_reader_it_cannot_reach_before_minting_anything() {
         // A typo used to be found after the certificate had been minted and

@@ -686,8 +686,8 @@ Design direction: the bar is a well-made iPad application, built for a panel tha
 - [x] **MISSINGCLI-01** Implement scores import/push with real score conversion.
 - [x] **MISSINGCLI-02** Implement Fieldbook pack import and checklist export.
 - [ ] **MISSINGCLI-03** Provide Panels CBZ import with page/cover preview and clear CBR guidance.
-- [ ] **MISSINGCLI-04** Generate setup instructions and command references from shared capabilities.
-- [ ] **MISSINGCLI-05** Remove obsolete commands and false availability claims.
+- [x] **MISSINGCLI-04** Generate setup instructions and command references from shared capabilities.
+- [x] **MISSINGCLI-05** Remove obsolete commands and false availability claims.
 
 ## PR 4 · Owner experience and final validation
 
