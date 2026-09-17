@@ -518,6 +518,7 @@ impl ComicView {
             "comic-down",
             "comic-direction",
             "comic-spreads",
+            "comic-full-page",
             "comic-next",
             "comic-previous",
             "comic-thumbs-next",

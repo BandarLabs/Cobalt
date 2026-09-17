@@ -88,6 +88,7 @@ Birds bundles no Fugleramme source, artwork or fonts, and no BirdNET-Go binary o
 
 - Fugleramme's code is MIT; the notice is in `licenses/FUGLERAMME-MIT.txt` for downstream work that copies it.
 - Fugleramme's classic artwork is CC BY-SA 4.0 and is not bundled. Anyone redistributing it must carry its per-image manifest and attribution.
+- The photographs and clip at the top show that artwork on a screen, so those three files carry CC BY-SA 4.0 with attribution to Fugleramme. `THIRD-PARTY.md` says which plates and where their sources are listed.
 - The fixture collage and screenshots are public-domain 19th-century plates from Wikimedia Commons. `THIRD-PARTY.md` lists every source; `scripts/fixtures/birds/build-collage.py` rebuilds them.
 - BirdNET-Go and the BirdNET model are CC BY-NC-SA 4.0, non-commercial, and are not part of Cobalt.
 

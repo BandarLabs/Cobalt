@@ -272,6 +272,13 @@ pub struct Memory {
     /// Off unless asked for, and asked for from the panel rather than guessed
     /// at: the bar is what teaches the middle-column tap, so a reader who has
     /// not yet learned the gesture must not be the one it is taken from.
+    ///
+    /// Kept here, so it belongs to this book the way the type size does. A
+    /// reader who wants a bare page for a novel and the bar for a manual gets
+    /// both; a reader who wants it everywhere asks for it once per book. An
+    /// application-wide preference would be a better answer to the second
+    /// reader and a worse one to the first, and this record is the only
+    /// storage the reader itself has.
     pub full_page: bool,
 }
 
@@ -1354,9 +1361,8 @@ impl Reader {
     ///
     /// The panel goes away with it: the setting is about what the page looks
     /// like, and a reader cannot see what they changed through the panel that
-    /// changed it. Saved rather than merely repainted, because it is a
-    /// preference and somebody who sets it once should not meet the bar again
-    /// at the next book.
+    /// changed it. Saved rather than merely repainted, so the book reopens the
+    /// way it was left.
     fn turn_full_page_over(&mut self, panel: &DisplayMetrics) -> Outcome {
         self.memory.full_page = !self.memory.full_page;
         self.set_chrome(Chrome::Hidden, panel);
@@ -4003,7 +4009,7 @@ mod tests {
     /// book has to be on it. The bar it replaced carried five things and
     /// dropped the sixth without saying so.
     #[test]
-    fn a_full_page_is_asked_for_from_the_panel_and_kept_across_books() {
+    fn a_full_page_is_asked_for_from_the_panel_and_kept_with_the_book() {
         // The bar is what teaches the middle-column tap, so it is never taken
         // from a reader who has not gone looking for the setting themselves.
         let mut reader = reader(40);
@@ -4021,7 +4027,7 @@ mod tests {
         assert_eq!(
             outcome,
             Outcome::Save,
-            "a preference outlives the book it was set in, so it is written down"
+            "the book has to reopen the way it was left, so it is written down"
         );
         assert!(reader.memory().full_page);
         let screen = reader.screen("Pride and Prejudice");
@@ -4035,6 +4041,14 @@ mod tests {
         // the setting simply skips the line rather than losing the record.
         let carried = Memory::decode(&reader.memory().encode());
         assert!(carried.full_page);
+
+        // This record belongs to one book, so the next book starts with the
+        // bar. That is the same place the type size is kept, and it is worth
+        // being plain about: setting it here does not set it everywhere.
+        assert!(
+            !Memory::default().full_page,
+            "another book opens with its bar until it is asked otherwise"
+        );
 
         // And it is a setting, not a trap: the same control gives the bar back.
         reader.act(action::CONTROLS, &panel());
