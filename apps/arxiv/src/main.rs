@@ -655,10 +655,19 @@ impl Arxiv {
                 )
                 .build();
         }
+        // Clamped here rather than left to the renderer: a real title runs
+        // to two dozen words, and a row's text that does not fit is a screen
+        // the renderer refuses outright. Two lines for the title, one for
+        // the facts, measured against the same width the layout uses.
         let rows: Vec<(String, String)> = self
             .library
             .iter()
-            .map(|kept| (kept.title.clone(), kept_summary(kept)))
+            .map(|kept| {
+                (
+                    context.clamped_row(&kept.title, 2, false),
+                    context.one_line_row(&kept_summary(kept), false),
+                )
+            })
             .collect();
         let borrowed: Vec<(&str, &str)> = rows
             .iter()
@@ -668,14 +677,17 @@ impl Arxiv {
         let page = self.library_page.min(pages.len().saturating_sub(1));
         let shown = pages.get(page).map(Vec::as_slice).unwrap_or_default();
         screen = screen.rows(shown.iter().filter_map(|index| {
-            self.library.get(*index).map(|kept| {
-                (
-                    format!("{KEPT}{index}"),
-                    kept.title.clone(),
-                    kept_summary(kept),
-                    RowLead::Icon(Glyph::Bookmark),
-                )
-            })
+            self.library
+                .get(*index)
+                .zip(rows.get(*index))
+                .map(|(_kept, (title, summary))| {
+                    (
+                        format!("{KEPT}{index}"),
+                        title.clone(),
+                        summary.clone(),
+                        RowLead::Icon(Glyph::Bookmark),
+                    )
+                })
         }));
         screen
             .page_turns(LIB_BACK, LIB_NEXT)
@@ -709,10 +721,18 @@ impl Arxiv {
                 .bottom_action_marked(narrowing.0, narrowing.1, narrowing.2)
                 .build();
         }
+        // Clamped for the same reason the library's rows are: live titles
+        // and bylines are far longer than anything a fixture needs, and an
+        // overflowing row is a refused screen.
         let rows: Vec<(String, String)> = self
             .papers
             .iter()
-            .map(|paper| (paper.title.clone(), self.listing_summary(paper)))
+            .map(|paper| {
+                (
+                    context.clamped_row(&paper.title, 2, false),
+                    context.one_line_row(&self.listing_summary(paper), false),
+                )
+            })
             .collect();
         let borrowed: Vec<(&str, &str)> = rows
             .iter()
@@ -722,14 +742,17 @@ impl Arxiv {
         let page = self.listing_page.min(pages.len().saturating_sub(1));
         let shown = pages.get(page).map(Vec::as_slice).unwrap_or_default();
         screen = screen.rows(shown.iter().filter_map(|index| {
-            self.papers.get(*index).map(|paper| {
-                (
-                    format!("{PAPER}{index}"),
-                    paper.title.clone(),
-                    self.listing_summary(paper),
-                    RowLead::Number(u16::try_from(self.offset + index + 1).unwrap_or(u16::MAX)),
-                )
-            })
+            self.papers
+                .get(*index)
+                .zip(rows.get(*index))
+                .map(|(_paper, (title, summary))| {
+                    (
+                        format!("{PAPER}{index}"),
+                        title.clone(),
+                        summary.clone(),
+                        RowLead::Number(u16::try_from(self.offset + index + 1).unwrap_or(u16::MAX)),
+                    )
+                })
         }));
         // Offered only on the last page, and only when there is more behind
         // it. Anywhere else it is a control that fetches something the reader
@@ -2055,6 +2078,52 @@ mod tests {
                 Command::Store(StoreRequest::Save { key, .. }) if key.starts_with("place.")
             )),
             "leaving the paper saved no place"
+        );
+    }
+
+    /// Live titles and bylines run far longer than anything a fixture needs,
+    /// and a row whose text does not fit is a screen the renderer refuses
+    /// outright -- which is what the first run against the real arXiv feed
+    /// did. Rows clamp to the width the layout engine measures, two lines
+    /// for a title and one for the facts beneath it.
+    #[test]
+    fn rows_clamp_live_length_titles_and_bylines() {
+        let mut runner = AppRunner::new(Arxiv::default());
+        let long_title = "Transformers Are Secretly ".repeat(12);
+        let long_authors = vec![
+            "Bartholomew Featherstonehaugh".to_owned(),
+            "Alexandrina Konstantinopoulos".to_owned(),
+            "Wolfgang Amadeus".to_owned(),
+        ];
+        let mut live = paper();
+        live.title = long_title.clone();
+        live.authors = long_authors.clone();
+        runner.app_mut().papers = vec![live];
+        runner.app_mut().view = View::Listing;
+        let context = runner.context();
+        let screen = runner.app().listing(&context);
+        let issues = screen.validate(&kobo_sdk::CLARA_BW_METRICS);
+        assert!(
+            !issues
+                .iter()
+                .any(|issue| matches!(issue.kind, kobo_sdk::LayoutIssueKind::TextOverflow)),
+            "a live-length listing row still overflowed: {issues:?}"
+        );
+
+        runner.app_mut().library = vec![Kept {
+            id: "2609.00099v1".into(),
+            title: long_title,
+            authors: long_authors.join(", "),
+            bytes: 4096,
+            progress: Some(74),
+        }];
+        let screen = runner.app().library(&context);
+        let issues = screen.validate(&kobo_sdk::CLARA_BW_METRICS);
+        assert!(
+            !issues
+                .iter()
+                .any(|issue| matches!(issue.kind, kobo_sdk::LayoutIssueKind::TextOverflow)),
+            "a live-length library row still overflowed: {issues:?}"
         );
     }
 
