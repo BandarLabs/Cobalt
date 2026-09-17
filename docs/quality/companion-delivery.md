@@ -263,3 +263,20 @@ oversized input without changing the valid shelf, preserves an occupied
 staging file, and publishes valid replacement bytes. Transcript/result:
 `evidence/feeds-companion`. This tests OPML staging, not device import or
 offline article downloads. CLI-18 remains open for the broader operation engine.
+
+### Nonograms real preview and pre-transfer fairness gate
+
+`kobo nonograms preview IMAGE --out DIRECTORY` now prepares and displays the
+5×5, 7×7 and 9×9 versions before transfer. Each board shows its real row and
+column clues plus the number of productive bounded line-solving passes. Push
+runs the same check and refuses a puzzle that requires guessing before writing
+the output or contacting a reader. Seven focused CLI tests and strict all-target
+CLI Clippy pass.
+
+The checked-in proof under `evidence/nonograms-companion-preview` uses NASA
+image PIA13227, "The Earth from the Moon", rather than a synthetic fixture. The
+full browser capture was pixel-inspected: all three boards and their clues are
+visible without overlap or clipping. This is host-side evidence only. The
+CLI-driven app journey and NONOCLI-01/02 remain open until the app accepts the
+same named, multi-puzzle transfer contract; no side-by-side completion is
+claimed here.
