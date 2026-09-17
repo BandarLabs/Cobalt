@@ -34,10 +34,11 @@ def main():
     out = args.output.resolve()
     out.mkdir(parents=True, exist_ok=True)
     target = Path(os.environ.get("CARGO_TARGET_DIR", ROOT / "target")).resolve()
-    cli, provenance = build_cli(ROOT, target, ignore_prefix=(
-        os.path.relpath(out, ROOT)
-        if not os.path.relpath(out, ROOT).startswith("..")
-        else None))
+    # The whole evidence tree is harness output: sidecars carry
+    # per-run timings, and a live feed drifts between runs. Only
+    # changes outside it say anything about the sources under test.
+    cli, provenance = build_cli(ROOT, target,
+                                ignore_prefix="docs/quality/evidence")
     verify_cli(cli, provenance)
 
     with tempfile.TemporaryDirectory(prefix="cobalt-arxiv-live-", dir="/tmp") as temporary:
