@@ -321,3 +321,25 @@ NEEDLECLI-02/03/05/06 are complete. NEEDLECLI-01 remains open because converter
 status and install guidance do not yet manage a verified Poppler installation.
 NEEDLECLI-04 remains open because whole-book row detection is too weak to claim
 section/row selection. Physical-reader transfer remains unverified.
+
+#### Needles section selection and converter setup
+
+`kobo needles converter install` now owns PDF setup on supported Homebrew, apt,
+dnf and pacman hosts and verifies `pdftotext` after the package command. If no
+supported package manager exists it says that Markdown and text still work.
+This host already had working Poppler, so the privileged install itself was not
+rerun merely to manufacture proof.
+
+For section proof, the CLI used the public-domain *Bernat Handicrafter Book
+161*, Project Gutenberg ebook 62854, and selected only `Style No. 3547` from a
+Markdown copy with explicit `##` section headings. It found Rows 1 through 12,
+wrote only that section to the simulator shelf, and the already-running app
+opened it as `Style No. 3547`; the following `Style No. 3595` section was
+asserted absent. The 1072×1448 browser-preview and app frames were
+pixel-inspected: heading, materials and row instructions are clear with no
+clipping or overlap. The selected pattern references a chart, which remains
+text-only and is not claimed as transferred. Evidence and source hashes are in
+`evidence/needles-companion-section`.
+
+This closes NEEDLECLI-01 and NEEDLECLI-04. Physical-reader transfer remains
+unverified.

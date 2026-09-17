@@ -7,31 +7,30 @@ use std::ffi::OsStr;
 use std::fmt::Write as _;
 use std::io::Read;
 use std::path::Path;
+use std::process::Command as ProcessCommand;
 use std::process::{Command, Stdio};
 
 const MAX_PDF: usize = 32 * 1024 * 1024;
 const MAX_PATTERN: usize = 4 * 1024 * 1024;
 const BLOB: &str = "pattern.md";
-const USAGE: &str = "usage: kobo needles prepare PATTERN.pdf --out PATTERN.md\n\
-                     \x20      kobo needles push PATTERN.(pdf|md|txt) --device IP";
+const USAGE: &str = "usage: kobo needles converter status|install\n\
+                     \x20      kobo needles prepare PATTERN.(pdf|md|txt) --out PATTERN.md [--title TITLE] [--section HEADING]\n\
+                     \x20      kobo needles preview PATTERN.(pdf|md|txt) --out DIRECTORY [--title TITLE] [--section HEADING]\n\
+                     \x20      kobo needles push PATTERN.(pdf|md|txt) (--sim | --device IP | --out FILE) [--title TITLE] [--section HEADING]";
 
 pub fn command(arguments: &[String]) -> Result<(), String> {
     if super::wants_help(arguments) {
         return super::print_command_help(USAGE);
     }
-    if arguments == ["converter", "status"] {
-        let output=Command::new("pdftotext").arg("-v").output().map_err(|_|"Poppler pdftotext is not installed. Install the poppler package, then rerun this command.".to_owned())?;
-        if !output.status.success() {
-            return Err("Poppler pdftotext is installed but did not run successfully".to_owned());
-        }
-        println!("PDF converter ready: Poppler pdftotext");
-        return Ok(());
+    if arguments.first().map(String::as_str) == Some("converter") {
+        return converter_command(&arguments[1..]);
     }
     let verb = arguments.first().ok_or_else(|| USAGE.to_owned())?;
     let input = arguments.get(1).ok_or_else(|| USAGE.to_owned())?;
     let mut out = None;
     let mut target = None;
     let mut title = None;
+    let mut section = None;
     let mut index = 2;
     while index < arguments.len() {
         match arguments[index].as_str() {
@@ -46,6 +45,15 @@ pub fn command(arguments: &[String]) -> Result<(), String> {
             }
             "--title" => {
                 title = Some(
+                    arguments
+                        .get(index + 1)
+                        .ok_or_else(|| USAGE.to_owned())?
+                        .as_str(),
+                );
+                index += 2;
+            }
+            "--section" => {
+                section = Some(
                     arguments
                         .get(index + 1)
                         .ok_or_else(|| USAGE.to_owned())?
@@ -69,7 +77,7 @@ pub fn command(arguments: &[String]) -> Result<(), String> {
             _ => return Err(USAGE.to_owned()),
         }
     }
-    let report = prepare_any(Path::new(input), title)?;
+    let report = prepare_any(Path::new(input), title, section)?;
     match verb.as_str() {
         "prepare" => write_pattern(
             Path::new(out.ok_or_else(|| USAGE.to_owned())?),
@@ -86,6 +94,100 @@ pub fn command(arguments: &[String]) -> Result<(), String> {
     }
 }
 
+fn converter_command(arguments: &[String]) -> Result<(), String> {
+    match arguments {
+        [action] if action == "status" => converter_status(),
+        [action] if action == "install" => {
+            if converter_status().is_ok() {
+                return Ok(());
+            }
+            let (program, args): (&str, &[&str]) = if command_exists("brew") {
+                ("brew", &["install", "poppler"])
+            } else if command_exists("apt-get") {
+                ("sudo", &["apt-get", "install", "-y", "poppler-utils"])
+            } else if command_exists("dnf") {
+                ("sudo", &["dnf", "install", "-y", "poppler-utils"])
+            } else if command_exists("pacman") {
+                ("sudo", &["pacman", "-S", "--needed", "poppler"])
+            } else {
+                return Err("No supported package manager found. Needles can prepare Markdown and text now, but PDF preparation needs Poppler pdftotext.".to_owned());
+            };
+            println!(
+                "Installing Needles PDF support with {program} {}",
+                args.join(" ")
+            );
+            let status = ProcessCommand::new(program)
+                .args(args)
+                .status()
+                .map_err(|error| format!("could not start {program}: {error}"))?;
+            if !status.success() {
+                return Err("Poppler installation did not finish successfully".to_owned());
+            }
+            converter_status()
+        }
+        _ => Err(USAGE.to_owned()),
+    }
+}
+
+fn converter_status() -> Result<(), String> {
+    let output = Command::new("pdftotext").arg("-v").output().map_err(|_| {
+        "Needles PDF support is not installed. Run `kobo needles converter install`, or use a Markdown/text pattern now.".to_owned()
+    })?;
+    if !output.status.success() {
+        return Err("Poppler pdftotext is installed but did not run successfully".to_owned());
+    }
+    println!("PDF converter ready: Poppler pdftotext");
+    Ok(())
+}
+
+fn command_exists(name: &str) -> bool {
+    ProcessCommand::new(name)
+        .arg("--version")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+fn select_section(markdown: &[u8], wanted: &str) -> Result<Vec<u8>, String> {
+    let text = std::str::from_utf8(markdown).map_err(|_| "pattern is not UTF-8".to_owned())?;
+    let wanted = wanted.trim();
+    let mut selected = Vec::new();
+    let mut in_section = false;
+    for line in text.lines() {
+        let heading = line.strip_prefix("## ").map(str::trim);
+        if let Some(heading) = heading {
+            if in_section {
+                break;
+            }
+            if heading.eq_ignore_ascii_case(wanted) {
+                in_section = true;
+                selected.push(format!("# {heading}"));
+                continue;
+            }
+        }
+        if in_section {
+            selected.push(line.to_owned());
+        }
+    }
+    if !in_section {
+        let available = text
+            .lines()
+            .filter_map(|line| line.strip_prefix("## "))
+            .take(12)
+            .collect::<Vec<_>>();
+        return Err(if available.is_empty() {
+            "this pattern has no ## section headings to choose from".to_owned()
+        } else {
+            format!(
+                "section {wanted:?} was not found; available: {}",
+                available.join(", ")
+            )
+        });
+    }
+    Ok(format!("{}\n", selected.join("\n")).into_bytes())
+}
+
 struct Report {
     markdown: Vec<u8>,
     source: String,
@@ -96,7 +198,7 @@ struct Report {
     rows: Vec<String>,
 }
 
-fn prepare_any(input: &Path, title: Option<&str>) -> Result<Report, String> {
+fn prepare_any(input: &Path, title: Option<&str>, section: Option<&str>) -> Result<Report, String> {
     let source = if has_extension(input, "pdf") {
         "PDF"
     } else if has_extension(input, "md") {
@@ -113,6 +215,9 @@ fn prepare_any(input: &Path, title: Option<&str>) -> Result<Report, String> {
         let body = String::from_utf8(bytes).map_err(|_| "pattern is not UTF-8".to_owned())?;
         (normalize_text(input, &body, title), 1, Vec::new(), false)
     };
+    if let Some(wanted) = section {
+        markdown = select_section(&markdown, wanted)?;
+    }
     let text = String::from_utf8_lossy(&markdown);
     let sections = text
         .lines()
@@ -123,7 +228,11 @@ fn prepare_any(input: &Path, title: Option<&str>) -> Result<Report, String> {
         .lines()
         .filter(|line| {
             let l = line.to_ascii_lowercase();
-            l.starts_with("row ") || l.starts_with("round ") || l.starts_with("rnd ")
+            l.starts_with("row ")
+                || l.starts_with("rows ")
+                || l.starts_with("round ")
+                || l.starts_with("rounds ")
+                || l.starts_with("rnd ")
         })
         .map(str::to_owned)
         .take(200)
@@ -396,7 +505,9 @@ fn has_text_extension(path: &Path) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{has_extension, has_text_extension, read_limited, read_pattern, BLOB};
+    use super::{
+        has_extension, has_text_extension, read_limited, read_pattern, select_section, BLOB,
+    };
     use std::io::Cursor;
     use std::path::Path;
 
@@ -412,6 +523,17 @@ mod tests {
         assert!(has_text_extension(Path::new("Pattern.txt")));
         assert!(!has_text_extension(Path::new("Pattern.pdf")));
         assert_eq!(BLOB, "pattern.md");
+    }
+
+    #[test]
+    fn selects_one_named_section_and_its_rows() {
+        let pattern =
+            b"# Book\n\n## Scarf\n\nRow 1: Knit.\nRow 2: Purl.\n\n## Hat\n\nRound 1: Knit.\n";
+        assert_eq!(
+            String::from_utf8(select_section(pattern, "scarf").expect("section")).unwrap(),
+            "# Scarf\n\nRow 1: Knit.\nRow 2: Purl.\n\n"
+        );
+        assert!(select_section(pattern, "Socks").is_err());
     }
 
     #[test]
