@@ -297,3 +297,27 @@ so the app never sees a manifest that names incomplete files. Device publication
 also checks byte count and SHA-256 before the manifest boundary. Six focused
 tests and strict all-target CLI Clippy pass. NONOCLI-01/02/03/04 are complete.
 Physical-reader SSH remains unverified and is not claimed.
+
+### Needles public-PDF preview and app-driven transfer
+
+The CLI used the 1917 public-domain *Priscilla War Work Book* from the Internet
+Archive, SHA-256
+`f8cbe5401a7d4fa3a79a554f9ebf83a0cbd3719400deb62c1ff85f2143adcd27`.
+Its preview identifies the PDF and 36 pages, warns that images/charts exist,
+reports two row-like instructions and shows the exact text that will be sent.
+The preview was pixel-inspected; it is readable, and obvious OCR errors from the
+historic scan remain visible rather than being silently presented as clean.
+
+A side-by-side journey first showed the running Needles app had no pattern. The
+CLI then prepared this PDF and published it to the simulator target. Without an
+app restart, **Read synced pattern** opened the CLI output under the chosen
+"Priscilla War Work Book" title. Back returned to the row counter, and +1 row
+stored and displayed row 1. Both 922×1246 app frames were pixel-inspected: the
+reader and counter controls are clear, with no overlap or clipping. Evidence is
+under `evidence/needles-companion-public-pdf` and
+`evidence/needles-companion-side-by-side`.
+
+NEEDLECLI-02/03/05/06 are complete. NEEDLECLI-01 remains open because converter
+status and install guidance do not yet manage a verified Poppler installation.
+NEEDLECLI-04 remains open because whole-book row detection is too weak to claim
+section/row selection. Physical-reader transfer remains unverified.
