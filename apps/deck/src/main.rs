@@ -38,6 +38,8 @@ enum Pending {
     Wait,
     Press(String),
     Result(String),
+    /// Reading what a watched key said, only for the line under the deck.
+    Note(String),
 }
 
 /// How long to leave the computer alone between looks.
@@ -60,6 +62,8 @@ struct App {
     task: Option<TaskId>,
     pending: Option<Pending>,
     confirming: Option<String>,
+    /// The key this reader started, until its finish is acknowledged.
+    watching: Option<String>,
     result: Option<(String, RunResult)>,
     /// Whether the computer answered the last thing it was asked.
     ///
@@ -86,6 +90,7 @@ impl Default for App {
             task: None,
             pending: None,
             confirming: None,
+            watching: None,
             result: None,
             reachable: true,
             last: None,
@@ -287,6 +292,56 @@ impl App {
         });
         self.pending = Some(Pending::Result(id.to_owned()));
     }
+
+    fn poll_landed(&mut self, cx: &mut Context, raw: &str) {
+        if let Some(deck) = decode(raw) {
+            self.notice = deck.error.clone();
+            self.deck = deck;
+            self.page = self.page.min(self.deck.pages.len().saturating_sub(1));
+            cx.store().cache(CACHE, raw);
+        }
+        // A key this reader started has finished: read what it
+        // said so the line under the deck acknowledges it,
+        // without dragging the reader to the result screen.
+        if let Some(watched) = self.watching.take() {
+            let finished = self
+                .deck
+                .pages
+                .iter()
+                .flat_map(|page| page.keys.iter())
+                .any(|key| key.id == watched && (key.state == "ok" || key.state == "failed"));
+            if finished {
+                self.task = cx.spawn(Task::Fetch {
+                    url: format!(
+                        "https://{}/deck/result?key={watched}&token={}",
+                        self.address, self.code
+                    ),
+                    offset: 0,
+                    max_bytes: 4096,
+                    credential: None,
+                    headers: vec![],
+                });
+                self.pending = Some(Pending::Note(watched));
+            } else {
+                self.watching = Some(watched);
+            }
+        }
+        self.wait(cx);
+    }
+
+    fn note_landed(&mut self, cx: &mut Context, id: &str, raw: &str) {
+        if let Some(result) = decode_result(raw) {
+            let label = self
+                .deck
+                .pages
+                .iter()
+                .flat_map(|page| page.keys.iter())
+                .find(|key| key.id == id)
+                .map_or_else(|| "Command".to_owned(), |key| key.label.clone());
+            self.last = Some(summarise(&label, &result));
+        }
+        self.wait(cx);
+    }
 }
 impl KoboApp for App {
     fn on_start(&mut self, cx: &mut Context) {
@@ -331,13 +386,7 @@ impl KoboApp for App {
                 let raw = String::from_utf8_lossy(&bytes).into_owned();
                 match pending {
                     Some(Pending::Poll) => {
-                        if let Some(deck) = decode(&raw) {
-                            self.notice = deck.error.clone();
-                            self.deck = deck;
-                            self.page = self.page.min(self.deck.pages.len().saturating_sub(1));
-                            cx.store().cache(CACHE, raw);
-                        }
-                        self.wait(cx);
+                        self.poll_landed(cx, &raw);
                     }
                     Some(Pending::Wait) => self.poll(cx),
                     Some(Pending::Press(id)) => {
@@ -351,7 +400,10 @@ impl KoboApp for App {
                             })
                             .unwrap_or_else(|| "gone".to_owned());
                         match outcome.as_str() {
-                            "started" => self.notice = None,
+                            "started" => {
+                                self.notice = None;
+                                self.watching = Some(id);
+                            }
                             "needs-confirm" => self.confirming = Some(id),
                             "busy" => self.notice = Some("That command is still running.".into()),
                             _ => {
@@ -360,6 +412,9 @@ impl KoboApp for App {
                             }
                         }
                         self.poll(cx);
+                    }
+                    Some(Pending::Note(id)) => {
+                        self.note_landed(cx, &id, &raw);
                     }
                     Some(Pending::Result(id)) => {
                         if let Some(result) = decode_result(&raw) {
@@ -600,6 +655,43 @@ mod tests {
             "the deck asked the computer again immediately"
         );
         assert_eq!(runner.app().pending, Some(Pending::Wait));
+    }
+
+    #[test]
+    fn a_started_key_is_acknowledged_under_the_deck_when_it_finishes() {
+        let (mut runner, _) = paired();
+        runner.action(action_id("press-test"));
+        let post = in_flight(&runner).expect("the press went out");
+        runner.task_outcome(
+            post,
+            TaskOutcome::Completed(br#"{"outcome":"started"}"#.to_vec()),
+        );
+        assert_eq!(runner.app().watching.as_deref(), Some("test"));
+        let poll = in_flight(&runner).expect("the deck looked again after the start");
+        let finished = r#"{"version":"3","pages":[{"name":"Build","keys":[
+            {"id":"test","label":"Test","detail":"cargo test","confirm":false,"state":"ok"},
+            {"id":"deploy","label":"Deploy","detail":"ship it","confirm":true,"state":"idle"}]}]}"#;
+        let commands =
+            runner.task_outcome(poll, TaskOutcome::Completed(finished.as_bytes().to_vec()));
+        let note = started(&commands).expect("the deck asked what the key said");
+        match note {
+            Task::Fetch { url, .. } => assert!(url.contains("/deck/result?key=test"), "{url}"),
+            other => panic!("expected a result fetch, started {other:?}"),
+        }
+        assert_eq!(runner.app().pending, Some(Pending::Note("test".into())));
+        let note_task = in_flight(&runner).expect("the result read is in flight");
+        runner.task_outcome(
+            note_task,
+            TaskOutcome::Completed(
+                br#"{"status":"ok","exit":0,"tail":"deck companion check passed"}"#.to_vec(),
+            ),
+        );
+        assert_eq!(runner.app().last.as_deref(), Some("Test finished."));
+        assert_eq!(
+            runner.app().view,
+            View::Grid,
+            "the note must not drag the reader off the grid"
+        );
     }
 
     #[test]

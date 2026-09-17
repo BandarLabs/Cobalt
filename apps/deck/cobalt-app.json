@@ -4,8 +4,8 @@
   "short_label": "Deck",
   "summary": "Turn your Kobo into a remote control for your computer.",
   "page_description": "Pair with your computer and run favorite actions from large, clear controls.",
-  "version": "0.2.3",
-  "release_notes": "Say which deck is on screen and which computer is listening, and stop asking that computer for work several times a second.",
+  "version": "0.2.4",
+  "release_notes": "Acknowledge a command under the deck when it finishes, instead of only when its pad is tapped again.",
   "glyph": "grid",
   "capabilities": [
     "network"
