@@ -40,10 +40,9 @@ impl Game {
     }
     fn play_header(&self, wide: bool) -> ScreenBuilder {
         let side = self.puzzle().map_or(1, |puzzle| puzzle.side);
-        let position = self.focus.map_or_else(
-            || "Choose a square".into(),
-            |cell| format!("Row {} · Column {}", cell / side + 1, cell % side + 1),
-        );
+        // The focused square is visible on the board; the header carries
+        // coordinates only when a zoomed window leaves the focus outside the
+        // view and the window's place is otherwise invisible.
         let position = if let Some(view) = self
             .viewport
             .as_ref()
@@ -58,8 +57,10 @@ impl Game {
                 columns.start + 1,
                 columns.end
             )
+        } else if self.focus.is_none() {
+            "Choose a square".to_owned()
         } else {
-            position
+            String::new()
         };
         let status = match self.draft.status() {
             Status::Failed(_) => "Not saved · More to retry".into(),
@@ -73,7 +74,11 @@ impl Game {
                     .iter()
                     .filter(|mark| !matches!(mark, Mark::Blank))
                     .count();
-                format!("{position} · {marked}/{total}")
+                if position.is_empty() {
+                    format!("{marked}/{total}")
+                } else {
+                    format!("{position} · {marked}/{total}")
+                }
             }
         };
         let builder = ScreenBuilder::new("nonograms-play").top_bar("Nonograms");

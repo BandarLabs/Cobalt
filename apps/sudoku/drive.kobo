@@ -4,7 +4,7 @@ tap-id cell-0
 tap-id pencil
 tap-id digit-2
 wait-idle
-expect Row 1
+expect Notes
 shot sudoku-notes
 tap-id undo
 tap-id pencil

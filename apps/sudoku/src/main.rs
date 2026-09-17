@@ -122,7 +122,7 @@ impl Sudoku {
         if let Some(cell) = self.game.position.selected {
             let spec = &self.puzzles[self.game.puzzle];
             if spec.clues[cell] != 0 {
-                return format!("Row {} · Column {} · Given", cell / 9 + 1, cell % 9 + 1);
+                return format!("{} · Given", self.progress_label());
             }
             if self.game.checking
                 && self.game.position.board[cell] != 0
@@ -130,16 +130,11 @@ impl Sudoku {
             {
                 return "Check this answer".into();
             }
-            format!(
-                "Row {} · Column {} · {}",
-                cell / 9 + 1,
-                cell % 9 + 1,
-                if self.game.pencil {
-                    "Notes".into()
-                } else {
-                    self.progress_label()
-                }
-            )
+            if self.game.pencil {
+                format!("Notes · {}", self.progress_label())
+            } else {
+                self.progress_label()
+            }
         } else {
             format!("Choose a square · {}", self.progress_label())
         }
