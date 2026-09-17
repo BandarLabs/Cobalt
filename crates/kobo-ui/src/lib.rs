@@ -8335,7 +8335,7 @@ fn layout_node(
                 && requested == 12
                 && cells.len() == 24
                 && cells.iter().all(|cell| cell.label.starts_with("Point "));
-            let pad_deck = *square && requested == 5 && cells.len() == 15;
+            let pad_deck = *square && requested == 5 && cells.len() <= 15;
             let chess_board = *square
                 && requested == 8
                 && cells.len() == 64

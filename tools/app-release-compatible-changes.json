@@ -376,6 +376,17 @@
      "compatible_blob": "1c2b2ab4356de51a856508a480cc48c5f7323b9a"
     }
    ]
+  },
+  {
+   "protocol_version": 15,
+   "reason": "Deck pads are drawn from the keys the computer sent instead of a fixed fifteen-cell grid, so unassigned places stay paper rather than a wall of ruled boxes. Only the pads builder produced five-column square grids, so no published app's rendering changes.",
+   "files": [
+    {
+     "path": "crates/kobo-ui/src/lib.rs",
+     "base_blob": "8e34d50c89524ec1c921e02a2d206e161069459f",
+     "compatible_blob": "8e16c7bdff881c1051e0466b136592a01f63bc20"
+    }
+   ]
   }
  ]
 }

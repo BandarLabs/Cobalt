@@ -19,6 +19,7 @@ use kobo_sdk::{
     action_id, cache_key, ActionId, BannerLevel, Context, Glyph, KoboApp, Screen, ScreenBuilder,
     StoreResult, Task, TaskId, TaskOutcome,
 };
+use model::PAD_COLUMNS;
 use model::{decode, decode_result, pad_cells, Deck, RunResult};
 use std::process::ExitCode;
 const PAIRED: &str = "paired";
@@ -166,7 +167,10 @@ impl App {
         // longer listening, which is not a difference a reader can see in a
         // grid of squares.
         screen = screen.secondary(self.connection());
-        screen = screen.pads(pad_cells(page));
+        // A five-column board rather than the pads shortcut: the shortcut
+        // backfills every unassigned place with a blank key, and a reader
+        // with three commands saw a wall of ruled boxes that do nothing.
+        screen = screen.board_with_selection(PAD_COLUMNS, pad_cells(page));
         if let Some(last) = &self.last {
             // What the last key that finished did. The whole output is on the
             // result screen; this is the line that says there is one.
@@ -778,12 +782,8 @@ mod tests {
             drawn.contains("Test") && drawn.contains("Deploy"),
             "{drawn}"
         );
-        // The rest of the deck is places for keys nobody has assigned, and
-        // there are as many of them as the panel draws.
-        assert_eq!(
-            drawn.matches("label: \"\"").count(),
-            crate::model::PAD_COUNT - 2,
-            "{drawn}"
-        );
+        // Places nobody has assigned stay as paper: only the keys the
+        // computer sent are drawn.
+        assert_eq!(drawn.matches("label: \"\"").count(), 0, "{drawn}");
     }
 }
