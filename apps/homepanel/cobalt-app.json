@@ -4,8 +4,8 @@
   "short_label": "Home",
   "summary": "Control saved Home Assistant tiles from a low-power panel.",
   "page_description": "Keep your favorite Home Assistant controls on a simple, low-power panel.",
-  "version": "0.2.0",
-  "release_notes": "Adds climate tiles with a target temperature, tile editing, an optional wall-panel layout, and connection guidance that names the fix. Tiles now say when readings were last updated.",
+  "version": "0.2.1",
+  "release_notes": "Device discovery now works on the reader through the template endpoint the token policy allows, and action acknowledgements stay on screen until the next action.",
   "glyph": "light",
   "capabilities": [
     "network"

@@ -58,13 +58,25 @@ pub fn poll(base: &str, ids: &[String]) -> Task {
     }
 }
 
+/// Discovery goes through the template endpoint rather than /api/states:
+/// the credential policy allows the panel's bearer token on exactly the
+/// connection test, the template, and service calls, and a template can
+/// answer the same question.
 pub fn entities(base: &str) -> Task {
-    Task::Fetch {
-        url: endpoint(base, "/api/states"),
-        offset: 0,
-        max_bytes: 1024 * 1024,
+    let template = concat!(
+        "[{% for e in states %}",
+        "{\"id\":{{ e.entity_id|tojson }},",
+        "\"s\":{{ e.state|tojson }},",
+        "\"n\":{{ e.attributes.friendly_name|default(e.entity_id, true)|tojson }}}",
+        "{% if not loop.last %},{% endif %}{% endfor %}]"
+    );
+    Task::Post {
+        url: endpoint(base, "/api/template"),
+        body: template.to_owned(),
+        content_type: "text/plain".to_owned(),
         credential: Some(Credential::bearer(SECRET)),
         headers: Vec::new(),
+        max_bytes: 1024 * 1024,
     }
 }
 
@@ -147,12 +159,12 @@ pub fn entity_rows(bytes: &[u8]) -> Vec<Entity> {
         items
             .iter()
             .filter_map(|item| {
-                let id = item.get("entity_id")?.as_str()?.to_owned();
-                let state = item.get("state")?.as_str()?.to_owned();
+                let id = item.get("id")?.as_str()?.to_owned();
+                let state = item.get("s")?.as_str()?.to_owned();
                 let name = item
-                    .get("attributes")
-                    .and_then(|attributes| attributes.get("friendly_name"))
+                    .get("n")
                     .and_then(kobo_json::Value::as_str)
+                    .filter(|name| !name.is_empty())
                     .map_or_else(
                         || id.rsplit('.').next().unwrap_or(&id).replace('_', " "),
                         str::to_owned,
@@ -251,8 +263,8 @@ mod tests {
     fn entity_picker_uses_friendly_names_and_sorts_them() {
         let rows = entity_rows(
             br#"[
-                {"entity_id":"switch.z_desk","state":"off","attributes":{}},
-                {"entity_id":"light.kitchen","state":"on","attributes":{"friendly_name":"Kitchen"}}
+                {"id":"switch.z_desk","s":"off","n":""},
+                {"id":"light.kitchen","s":"on","n":"Kitchen"}
             ]"#,
         );
         assert_eq!(
@@ -270,5 +282,21 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn discovery_is_a_template_post_the_credential_policy_allows() {
+        let Task::Post {
+            url,
+            body,
+            credential,
+            ..
+        } = entities("https://ha.example/")
+        else {
+            panic!("a post")
+        };
+        assert_eq!(url, "https://ha.example/api/template");
+        assert!(body.contains("for e in states"), "{body}");
+        assert_eq!(credential.expect("secret").secret, SECRET);
     }
 }

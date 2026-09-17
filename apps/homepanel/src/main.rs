@@ -54,6 +54,7 @@ struct HomePanel {
     last_ok: Option<(i64, String)>,
     pending: Option<(String, String)>,
     edit_page: usize,
+    poll_failed: bool,
 }
 
 impl Default for HomePanel {
@@ -74,6 +75,7 @@ impl Default for HomePanel {
             last_ok: None,
             pending: None,
             edit_page: 0,
+            poll_failed: false,
         }
     }
 }
@@ -134,7 +136,14 @@ fn failure_message(error: TaskError) -> String {
         TaskError::RateLimited(seconds) => {
             format!("Home Assistant asked us to wait {seconds}s. Trying again shortly.")
         }
-        _ => "Could not reach Home Assistant. Check the address and Wi-Fi.".to_owned(),
+        TaskError::TooLarge => {
+            "Home Assistant answered with more than this panel can hold.".to_owned()
+        }
+        TaskError::NotFound => {
+            "Home Assistant answered not found. Check the address ends at the server root."
+                .to_owned()
+        }
+        TaskError::Denied => "The panel is not allowed to make that request.".to_owned(),
     }
 }
 
@@ -346,6 +355,9 @@ impl HomePanel {
                 entity_glyph(&self.tiles[index]),
             )
         }));
+        if let Some(b) = &self.banner {
+            s = s.banner(BannerLevel::Attention, b);
+        }
         if pages > 1 {
             s = s.button("more", format!("More tiles ({}/{pages})", page + 1));
         }
@@ -573,9 +585,12 @@ impl HomePanel {
             } else {
                 format!("{} is now {now}.", title(&id))
             });
-        } else {
+        } else if self.poll_failed {
+            // A recovery clears the outage banner; a quiet poll never erases a
+            // named acknowledgement such as "fan removed.".
             self.banner = None;
         }
+        self.poll_failed = false;
         self.show(context);
     }
     /// Chrome actions available across views: settings, add, search, and the
@@ -664,6 +679,7 @@ impl HomePanel {
             .cloned()
         {
             if is_climate(&id) {
+                self.banner = None;
                 self.view = View::Climate(id);
                 self.show(context);
             } else {
@@ -862,6 +878,7 @@ impl KoboApp for HomePanel {
                 self.on_poll(context, &bytes);
             }
             ("poll", TaskOutcome::Failed(error)) => {
+                self.poll_failed = true;
                 let mut message = failure_message(error);
                 if let Some((id, _)) = self.pending.take() {
                     message = format!("Couldn't confirm {}. {message}", title(&id));
