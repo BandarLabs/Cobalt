@@ -355,6 +355,17 @@
      "compatible_blob": "fe3b11f6082247b58abb4e0605de7943a2670b4a"
     }
    ]
+  },
+  {
+   "protocol_version": 15,
+   "reason": "Add the kobo-music-host, kobo-vault-host, and kobo-zstory workspace members for the companion CLIs, with their kobo-html and pulldown-cmark edges. Host tooling only: no package identity a published Store app resolves moved, and no app crate gains a dependency.",
+   "files": [
+    {
+     "path": "Cargo.lock",
+     "base_blob": "222f7b330431a22b5ec2a8071d0e7e55f36ec4a4",
+     "compatible_blob": "d606f3c0410e817b8f1ebc2e612c85c1d5e6f996"
+    }
+   ]
   }
  ]
 }
