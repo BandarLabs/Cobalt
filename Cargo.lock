@@ -1045,6 +1045,7 @@ dependencies = [
 name = "kobo-frame"
 version = "1.0.1"
 dependencies = [
+ "blake3",
  "kobo-image",
  "kobo-sdk",
  "kobo-ui",
