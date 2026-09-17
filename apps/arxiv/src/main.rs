@@ -30,8 +30,9 @@ use kobo_bookview::{BookView, Step};
 use kobo_read::{Memory, Outcome};
 use kobo_sdk::keyboard::{Keyboard, Pressed};
 use kobo_sdk::{
-    action_id, ActionId, BannerLevel, Context, Glyph, KoboApp, RowLead, Screen, ScreenBuilder,
-    ShelfDownload, ShelfProgress, ShelfUpload, StoreResult, Task, TaskError, TaskId, TaskOutcome,
+    action_id, ActionId, BannerLevel, Context, Glyph, KoboApp, QuoteRole, RowLead, Screen,
+    ScreenBuilder, ShelfDownload, ShelfProgress, ShelfUpload, StoreResult, Task, TaskError, TaskId,
+    TaskOutcome,
 };
 use std::fmt::Write as _;
 use std::process::ExitCode;
@@ -557,12 +558,24 @@ impl Arxiv {
         }
     }
 
-    /// Lays the open paper's abstract out as pages.
+    /// Lays the open paper's abstract out as pages, with the paper's title
+    /// and facts measured off the top of the first page and the prose given
+    /// the whole of every page after.
     fn open_abstract(&mut self, context: &Context) {
         let Some(paper) = self.paper() else {
             return;
         };
-        self.pages = context.paginate_reading(&abstract_text(paper), false);
+        let header = paper_header(paper);
+        let paragraphs: Vec<(u32, u8, QuoteRole, &str)> = paper
+            .summary
+            .split("\n\n")
+            .map(|paragraph| (0, 0, QuoteRole::Body, paragraph))
+            .collect();
+        self.pages = context
+            .paginate_tagged_under(&paragraphs, false, &header)
+            .into_iter()
+            .map(|page| page.into_iter().map(|(_, _, _, text)| text).collect())
+            .collect();
         self.page = 0;
         self.truncated = false;
     }
@@ -735,6 +748,9 @@ impl Arxiv {
             );
         }
         let page = self.page.min(self.pages.len().saturating_sub(1));
+        if page == 0 {
+            screen = with_paper_header(screen, paper);
+        }
         for line in self.pages.get(page).map(Vec::as_slice).unwrap_or_default() {
             screen = screen.text(line.clone());
         }
@@ -1048,22 +1064,23 @@ fn row_summary(paper: &Paper) -> String {
     parts.join(" \u{00b7} ")
 }
 
-/// The abstract, with the facts that only matter once you are considering
-/// reading the thing set above it.
-fn abstract_text(paper: &Paper) -> String {
-    let mut facts = Vec::new();
+/// The facts that decide whether a paper is worth reading, one per line, in
+/// the order a reader asks for them: who wrote it, where it sits, when it
+/// came, and anything the authors thought to add.
+fn fact_lines(paper: &Paper) -> Vec<String> {
+    let mut lines = Vec::new();
     let byline = paper.byline();
     if !byline.is_empty() {
-        facts.push(byline);
+        lines.push(byline);
     }
     if !paper.categories.is_empty() {
-        facts.push(paper.categories.join(", "));
+        lines.push(paper.categories.join(", "));
     }
     if !paper.published.is_empty() {
         // Both dates, but only when they differ: a paper revised twice is a
         // different thing from the one first posted, and saying so costs a
         // line only for the papers where it is true.
-        facts.push(
+        lines.push(
             if paper.updated.is_empty() || paper.updated == paper.published {
                 format!("Submitted {}", paper.published)
             } else {
@@ -1072,22 +1089,28 @@ fn abstract_text(paper: &Paper) -> String {
         );
     }
     if !paper.journal.is_empty() {
-        facts.push(format!("Published in {}", paper.journal));
+        lines.push(format!("Published in {}", paper.journal));
     }
     if !paper.comment.is_empty() {
-        facts.push(paper.comment.clone());
+        lines.push(paper.comment.clone());
     }
-    // Joined with a separator rather than newlines. The paginator treats a
-    // single newline as a soft wrap, so a fact per line came out as one
-    // run-on sentence -- "Lecheng Kong and 3 others cs.CL, cs.LG Submitted
-    // 2026-08-10" -- where the reader could not tell where the authors ended
-    // and the subjects began.
-    format!(
-        "{}\n\n{}\n\n{}",
-        paper.title,
-        facts.join(" \u{00b7} "),
-        paper.summary
-    )
+    lines
+}
+
+/// The head of a paper's first page: its title set as a heading and each fact
+/// about it on a muted line of its own, apart from the abstract that follows.
+fn with_paper_header(screen: ScreenBuilder, paper: &Paper) -> ScreenBuilder {
+    let mut screen = screen.heading(paper.title.clone());
+    for line in fact_lines(paper) {
+        screen = screen.secondary(line);
+    }
+    screen
+}
+
+/// The header on its own, so the abstract can be paginated in the space it
+/// leaves on the first page.
+fn paper_header(paper: &Paper) -> Screen {
+    with_paper_header(ScreenBuilder::new("arxiv-paper-head"), paper).build()
 }
 
 /// The identifier as it goes in a path.
@@ -1504,7 +1527,7 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::{
-        abstract_text, blob_key, decode_library, encode_library, escape, escape_path, paper_body,
+        blob_key, decode_library, encode_library, escape, escape_path, fact_lines, paper_body,
         place_key, row_summary, stamp, Arxiv, Kept, Query, View, Window, ABSTRACT, DISCARD,
         FULL_TEXT, KEEP, LIBRARY_KEY, SUBJECTS, WINDOW,
     };
@@ -1603,20 +1626,41 @@ mod tests {
     /// it, so they have to be there and be right.
     #[test]
     fn an_abstract_is_set_under_the_facts_that_decide_whether_to_read_it() {
-        let text = abstract_text(&paper());
-        assert!(
-            text.starts_with("Attention Is All You Need Again"),
-            "{text}"
+        let lines = fact_lines(&paper());
+        assert_eq!(
+            lines,
+            [
+                "Ada Lovelace, Alan Turing",
+                "cs.LG, cs.CL",
+                "Submitted 2024-01-01, revised 2024-01-09",
+                "12 pages",
+            ]
         );
-        assert!(text.contains("Ada Lovelace, Alan Turing"), "{text}");
-        assert!(text.contains("cs.LG, cs.CL"), "{text}");
-        assert!(text.contains("Submitted 2024-01-01, revised 2024-01-09"));
-        // The facts have to read as separate facts, not as one sentence.
-        assert!(
-            text.contains("Ada Lovelace, Alan Turing \u{00b7} cs.LG, cs.CL \u{00b7} Submitted"),
-            "{text}"
-        );
-        assert!(text.ends_with("We revisit the transformer."), "{text}");
+    }
+
+    /// Title, facts and abstract are three kinds of text and are set as
+    /// three: the title a heading, each fact a muted line of its own, and the
+    /// abstract prose paginated beneath them - never one run-on paragraph.
+    #[test]
+    fn the_first_page_separates_title_facts_and_prose_visually() {
+        let mut runner = AppRunner::new(Arxiv::default());
+        runner.app_mut().papers = vec![paper()];
+        runner.start();
+        runner.action(action_id("paper-0"));
+        let app = runner.app();
+        // The paginated prose carries the abstract and nothing else: the
+        // title and every fact live in the header above it.
+        let body = app.pages.concat().join("\n");
+        assert!(body.contains("We revisit the transformer."), "{body}");
+        assert!(!body.contains("Attention Is All You Need Again"), "{body}");
+        assert!(!body.contains("Submitted 2024-01-01"), "{body}");
+        // And the first page - heading, fact lines and prose together - fits
+        // the smallest panel the application ships to.
+        let issues = app
+            .reading()
+            .diagnostics(&kobo_sdk::CLARA_BW_METRICS, &kobo_sdk::Chrome::default())
+            .issues;
+        assert!(issues.is_empty(), "{issues:?}");
     }
 
     /// A revision date equal to the submission date is not news, and a line
@@ -1627,9 +1671,9 @@ mod tests {
             updated: "2024-01-01".into(),
             ..paper()
         };
-        let text = abstract_text(&never);
-        assert!(text.contains("Submitted 2024-01-01"), "{text}");
-        assert!(!text.contains("revised"), "{text}");
+        let lines = fact_lines(&never);
+        assert!(lines.iter().any(|line| line == "Submitted 2024-01-01"));
+        assert!(!lines.iter().any(|line| line.contains("revised")));
     }
 
     /// Taken from the real shape of an arXiv rendering: banner and issue form
