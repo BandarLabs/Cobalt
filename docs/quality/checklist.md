@@ -503,13 +503,13 @@ Design direction: the bar is a well-made iPad application, built for a panel tha
 
 ## PR 3 · Vault (APP-6)
 
-- [ ] **VAULT-01** Page library rows without clipped actions.
-- [ ] **VAULT-02** Paginate long notes through final sentence.
-- [ ] **VAULT-03** Wire tag filtering and deduplicate tags.
-- [ ] **VAULT-04** Build navigable folder hierarchy.
-- [ ] **VAULT-05** Replace single packed-index bottleneck with scalable indexed shelf.
-- [ ] **VAULT-06** Integrate Sync ingestion.
-- [ ] **VAULT-07** Preserve Back, list and reading positions.
+- [x] **VAULT-01** Page library rows without clipped actions.
+- [x] **VAULT-02** Paginate long notes through final sentence.
+- [x] **VAULT-03** Wire tag filtering and deduplicate tags.
+- [x] **VAULT-04** Build navigable folder hierarchy.
+- [x] **VAULT-05** Replace single packed-index bottleneck with scalable indexed shelf.
+- [x] **VAULT-06** Integrate Sync ingestion.
+- [x] **VAULT-07** Preserve Back, list and reading positions.
 
 ## PR 3 · Verses (APP-8)
 

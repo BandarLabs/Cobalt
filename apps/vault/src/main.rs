@@ -343,7 +343,7 @@ impl Vault {
                     rows.push((
                         format!("dir-{folder}"),
                         folder.clone(),
-                        format!("{count} note(s)"),
+                        format!("{} note{}", count, if count == 1 { "" } else { "s" }),
                         RowLead::Icon(Glyph::Folder),
                     ));
                 }
@@ -387,7 +387,7 @@ impl Vault {
                             (
                                 format!("tag-{tag}"),
                                 format!("#{tag}"),
-                                format!("{count} note(s)"),
+                                format!("{} note{}", count, if *count == 1 { "" } else { "s" }),
                                 RowLead::Icon(Glyph::Note),
                             )
                         })
@@ -512,7 +512,10 @@ impl Vault {
         if failures > 0 {
             screen = screen.banner(
                 kobo_sdk::BannerLevel::Attention,
-                format!("{failures} note(s) did not import; see About Vault."),
+                format!(
+                    "{failures} note{} did not import; see About Vault.",
+                    if failures == 1 { "" } else { "s" }
+                ),
             );
         }
         let mut heading = format!("{pushed} notes");

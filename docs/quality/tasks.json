@@ -3259,56 +3259,70 @@
     "pr": 3,
     "group": "Vault (APP-6)",
     "task": "Page library rows without clipped actions",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Library rows paginate with a 'Page X of N' indicator and Previous/Next buttons instead of clipping (cx.paginate_rows on Browse/Tags/Recent/Search). Pixel-verified in the one-run journey: vault-home.png and vault-tags.png show clean rows with nothing clipped."
+    ]
   },
   {
     "id": "VAULT-02",
     "pr": 3,
     "group": "Vault (APP-6)",
     "task": "Paginate long notes through final sentence",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Long notes paginate at reader size via paginate_reading over rendered Markdown (to_text_within at the 512KB note ceiling, not the 8KB feed ceiling). Verified in the same run: the 25.6KB 'Long Note' paged Next to its final sentence; vault-note.png and vault-note-final.png show page 1 and the closing line."
+    ]
   },
   {
     "id": "VAULT-03",
     "pr": 3,
     "group": "Vault (APP-6)",
     "task": "Wire tag filtering and deduplicate tags",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Tags are case-fold deduplicated with per-tag note counts, and tapping a tag opens the filtered note list. Pixel-verified: vault-tags.png lists six tags once each; vault-tag-notes.png shows #reading filtered to Reading List."
+    ]
   },
   {
     "id": "VAULT-04",
     "pr": 3,
     "group": "Vault (APP-6)",
     "task": "Build navigable folder hierarchy",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Browse drills into the folder hierarchy with per-folder counts and a breadcrumb top bar, and Back pops the stack. Pixel-verified: vault-browse.png shows Inbox/Projects/Reading folders plus the root Welcome note; vault-browse-folder.png shows Browse / Reading contents."
+    ]
   },
   {
     "id": "VAULT-05",
     "pr": 3,
     "group": "Vault (APP-6)",
     "task": "Replace single packed-index bottleneck with scalable indexed shelf",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "The packed index is replaced by the vault-shelf manifest + per-note files (kobo-vault-host codec, mirrored decode-only in src/shelf.rs; no 256KB blob). The legacy vault-index-v1 store still opens as a fallback, so older pushes and the CI seed keep working; the companion CLI rewrites it on every push for readers on the old app."
+    ]
   },
   {
     "id": "VAULT-06",
     "pr": 3,
     "group": "Vault (APP-6)",
     "task": "Integrate Sync ingestion",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Sync ingestion: `kobo vault ingest DIR` packs a Sync-delivered folder onto a separate synced shelf; the app merges both shelves with per-note source labels. Pixel-verified: vault-backlinks.png shows the synced note (Inbox/Synced-Note.md . synced) linking into the pushed vault, and vault-home.png counts '4 notes + 1 synced'."
+    ]
   },
   {
     "id": "VAULT-07",
     "pr": 3,
     "group": "Vault (APP-6)",
     "task": "Preserve Back, list and reading positions",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Back precedence Note->origin, Backlinks->Note, TagNotes->Tags, Browse pops its stack, else Home; per-note reading positions persist (vault-state-v2), so reopening a note resumes its page. Exercised in the one-run journey (back through note, folder, root, Home) and unit-covered in apps/vault/tests."
+    ]
   },
   {
     "id": "VERSE-01",

@@ -1,0 +1,21 @@
+{
+  "provenance": {
+    "source_revision": "b0dec9cabdc24d793b16731647b7ad57db812c75",
+    "tracked_changes": true,
+    "cli_sha256": "d61ddf1440158ed4f034b172ba4634a214bfb99362f38b698d03907e9b4052de",
+    "toolchain": "1.85.1"
+  },
+  "scale": "default",
+  "shelf": {
+    "notes": 4,
+    "synced": 1
+  },
+  "checks": [
+    {
+      "name": "shelf-driven journey",
+      "detail": "CLI pushed a real 5-note vault (one excluded) and ingested a synced drop; the app browsed folders, read a long note to its final sentence, filtered by tag, searched note bodies and saw the synced source",
+      "status": "passed"
+    }
+  ],
+  "status": "passed"
+}
