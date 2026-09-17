@@ -963,11 +963,15 @@ impl Arxiv {
     /// A listing row's second line: the facts that place the paper, and
     /// whether it is already on the shelf for reading without a network.
     fn listing_summary(&self, paper: &Paper) -> String {
-        let mut summary = row_summary(paper);
+        // The badge leads so that clamping a live-length byline to
+        // one line can never eat it: an "offline" the row no longer
+        // shows is a kept paper the reader cannot find again without
+        // a network.
         if self.is_kept(&paper.id) {
-            summary.push_str(" \u{b7} offline");
+            format!("offline \u{b7} {}", row_summary(paper))
+        } else {
+            row_summary(paper)
         }
-        summary
     }
 
     /// Writes the reading position of the open paper.
@@ -2139,8 +2143,18 @@ mod tests {
         live.authors = long_authors.clone();
         runner.app_mut().papers = vec![live];
         runner.app_mut().view = View::Listing;
+        runner.app_mut().library = vec![Kept {
+            id: "2609.00099v1".into(),
+            title: long_title.clone(),
+            authors: long_authors.join(", "),
+            bytes: 4096,
+            progress: None,
+        }];
         let context = runner.context();
         let screen = runner.app().listing(&context);
+        // The badge surviving the clamp is guaranteed by construction:
+        // listing_summary leads with it and one_line_row ellipsizes the
+        // tail. That ordering is pinned by the listing_summary tests.
         let issues = screen.validate(&kobo_sdk::CLARA_BW_METRICS);
         assert!(
             !issues
@@ -2340,7 +2354,7 @@ mod tests {
             progress: None,
         });
         let summary = app.listing_summary(&paper());
-        assert!(summary.ends_with(" \u{b7} offline"), "{summary}");
+        assert!(summary.starts_with("offline \u{b7} "), "{summary}");
         // And the facts that place the paper are still there ahead of it.
         assert!(summary.contains("Ada Lovelace, Alan Turing"), "{summary}");
     }
