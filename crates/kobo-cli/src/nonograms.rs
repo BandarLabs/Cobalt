@@ -1,5 +1,6 @@
 //! Safe host-side preparation and transfer for Nonograms photo puzzles.
 
+use std::fmt::Write as _;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::Path;
@@ -9,8 +10,10 @@ const BLOB: &str = "photo.png";
 const NORMALIZED_EDGE: u32 = 360;
 const MAX_TRANSFER_BYTES: usize = 256 * 1024;
 const PLAYABLE_SIDES: [usize; 3] = [5, 7, 9];
-const USAGE: &str =
-    "usage: kobo nonograms push IMAGE --size N (--device IP | --out photo.png)\nN is exactly 5, 7, or 9.";
+const USAGE: &str = "usage:
+  kobo nonograms preview IMAGE --out DIRECTORY
+  kobo nonograms push IMAGE --size N (--device IP | --out photo.png)
+N is exactly 5, 7, or 9. Preview checks all three sizes without transferring.";
 
 #[derive(Debug, Eq, PartialEq)]
 enum Destination<'a> {
@@ -29,14 +32,21 @@ pub fn command(arguments: &[String]) -> Result<(), String> {
     if super::wants_help(arguments) {
         return super::print_command_help(USAGE);
     }
+    if arguments.first().map(String::as_str) == Some("preview") {
+        return preview_command(arguments);
+    }
     let push = parse_push(arguments)?;
     let source = read_image(Path::new(push.input))?;
     let png = prepare(&source, push.side)?;
+    let analysis = analyse(&png, push.side)?;
     match push.destination {
         Destination::Device(host) => transfer(&png, host),
         Destination::Output(path) => {
             write_output(Path::new(path), &png)?;
-            println!("Prepared Nonograms photo: {path}");
+            println!(
+                "Prepared Nonograms photo: {path} ({} solving passes)",
+                analysis.rounds
+            );
             Ok(())
         }
     }
@@ -149,6 +159,274 @@ fn prepare(source: &[u8], side: usize) -> Result<Vec<u8>, String> {
         return Err("the prepared photo is too large for the reader".to_owned());
     }
     Ok(png)
+}
+
+#[derive(Clone, Debug)]
+struct Analysis {
+    side: usize,
+    answer: Vec<bool>,
+    row_clues: Vec<Vec<usize>>,
+    column_clues: Vec<Vec<usize>>,
+    rounds: usize,
+}
+
+fn preview_command(arguments: &[String]) -> Result<(), String> {
+    let [_, input, flag, output] = arguments else {
+        return Err(USAGE.to_owned());
+    };
+    if flag != "--out" {
+        return Err(USAGE.to_owned());
+    }
+    let output = Path::new(output);
+    if output.exists() {
+        return Err(format!(
+            "preview directory {} already exists",
+            output.display()
+        ));
+    }
+    let source = read_image(Path::new(input))?;
+    let mut prepared = Vec::new();
+    for side in PLAYABLE_SIDES {
+        let png = prepare(&source, side)?;
+        let analysis = analyse(&png, side)?;
+        prepared.push((png, analysis));
+    }
+    fs::create_dir(output)
+        .map_err(|error| format!("create preview directory {}: {error}", output.display()))?;
+    if let Err(error) = write_preview(output, &prepared) {
+        let _ = fs::remove_dir_all(output);
+        return Err(error);
+    }
+    println!(
+        "Previewed a fair Nonograms puzzle at 5 × 5, 7 × 7 and 9 × 9. Open {}.",
+        output.join("index.html").display()
+    );
+    Ok(())
+}
+
+fn analyse(png: &[u8], side: usize) -> Result<Analysis, String> {
+    let picture =
+        kobo_image::decode(png).map_err(|error| format!("decode prepared image: {error}"))?;
+    let width = picture.width() as usize;
+    let height = picture.height() as usize;
+    let pixels = picture.grey();
+    let samples = (0..side)
+        .flat_map(|y| {
+            (0..side).map(move |x| {
+                let left = x * width / side;
+                let right = ((x + 1) * width / side).max(left + 1);
+                let top = y * height / side;
+                let bottom = ((y + 1) * height / side).max(top + 1);
+                let mut total = 0_u64;
+                let mut count = 0_u64;
+                for row in top..bottom {
+                    for column in left..right {
+                        total += u64::from(pixels[row * width + column]);
+                        count += 1;
+                    }
+                }
+                u8::try_from(total / count.max(1)).unwrap_or(u8::MAX)
+            })
+        })
+        .collect::<Vec<_>>();
+    let mean = samples.iter().map(|value| u32::from(*value)).sum::<u32>()
+        / u32::try_from(samples.len()).unwrap_or(1);
+    for offset in [-48_i32, -32, -16, 0, 16, 32, 48] {
+        let threshold = u8::try_from((i32::try_from(mean).unwrap_or(128) + offset).clamp(16, 239))
+            .unwrap_or(128);
+        let answer = samples
+            .iter()
+            .map(|value| *value < threshold)
+            .collect::<Vec<_>>();
+        let row_clues = (0..side)
+            .map(|row| runs(&answer[row * side..(row + 1) * side]))
+            .collect::<Vec<_>>();
+        let column_clues = (0..side)
+            .map(|column| {
+                runs(
+                    (0..side)
+                        .map(|row| answer[row * side + column])
+                        .collect::<Vec<_>>()
+                        .as_slice(),
+                )
+            })
+            .collect::<Vec<_>>();
+        if let Some(rounds) = solve(side, &row_clues, &column_clues) {
+            return Ok(Analysis {
+                side,
+                answer,
+                row_clues,
+                column_clues,
+                rounds,
+            });
+        }
+    }
+    Err(format!(
+        "This photo does not make a fair {side} × {side} puzzle without guessing"
+    ))
+}
+
+fn runs(line: &[bool]) -> Vec<usize> {
+    let mut output = Vec::new();
+    let mut count = 0;
+    for filled in line.iter().copied().chain(std::iter::once(false)) {
+        if filled {
+            count += 1;
+        } else if count != 0 {
+            output.push(count);
+            count = 0;
+        }
+    }
+    output
+}
+
+fn line_candidates(length: usize, clues: &[usize], known: &[Option<bool>]) -> Vec<Vec<bool>> {
+    fn place(
+        at: usize,
+        clue: usize,
+        clues: &[usize],
+        line: &mut [bool],
+        known: &[Option<bool>],
+        out: &mut Vec<Vec<bool>>,
+    ) {
+        if clue == clues.len() {
+            for cell in &mut line[at..] {
+                *cell = false;
+            }
+            if line
+                .iter()
+                .zip(known)
+                .all(|(cell, known)| known.is_none_or(|value| value == *cell))
+            {
+                out.push(line.to_vec());
+            }
+            return;
+        }
+        let run = clues[clue];
+        let later = clues[clue + 1..].iter().sum::<usize>() + clues.len().saturating_sub(clue + 2);
+        for start in at..=line.len().saturating_sub(run + later) {
+            let saved = line.to_vec();
+            for cell in &mut line[at..start] {
+                *cell = false;
+            }
+            for cell in &mut line[start..start + run] {
+                *cell = true;
+            }
+            let next = start + run;
+            if clue + 1 < clues.len() {
+                line[next] = false;
+                place(next + 1, clue + 1, clues, line, known, out);
+            } else {
+                place(next, clue + 1, clues, line, known, out);
+            }
+            line.copy_from_slice(&saved);
+        }
+    }
+    let mut output = Vec::new();
+    place(0, 0, clues, &mut vec![false; length], known, &mut output);
+    output
+}
+
+fn solve(side: usize, rows: &[Vec<usize>], columns: &[Vec<usize>]) -> Option<usize> {
+    let mut board = vec![None; side * side];
+    let mut rounds = 0;
+    loop {
+        let mut changed = false;
+        for vertical in [false, true] {
+            let groups = if vertical { columns } else { rows };
+            for (line, clues) in groups.iter().enumerate() {
+                let known = (0..side)
+                    .map(|index| {
+                        board[if vertical {
+                            index * side + line
+                        } else {
+                            line * side + index
+                        }]
+                    })
+                    .collect::<Vec<_>>();
+                let candidates = line_candidates(side, clues, &known);
+                let first = candidates.first()?;
+                for index in 0..side {
+                    if candidates
+                        .iter()
+                        .all(|candidate| candidate[index] == first[index])
+                    {
+                        let at = if vertical {
+                            index * side + line
+                        } else {
+                            line * side + index
+                        };
+                        if board[at].is_none() {
+                            board[at] = Some(first[index]);
+                            changed = true;
+                        }
+                    }
+                }
+            }
+        }
+        if !changed {
+            return board.iter().all(Option::is_some).then_some(rounds);
+        }
+        rounds += 1;
+    }
+}
+
+fn write_preview(output: &Path, puzzles: &[(Vec<u8>, Analysis)]) -> Result<(), String> {
+    let mut html = String::from(
+        "<!doctype html><html lang=\"en\"><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Nonograms preview</title><style>body{font:17px/1.45 system-ui,sans-serif;max-width:940px;margin:auto;padding:24px;color:#222;background:#f5f3ed}section{margin:32px 0}.grid{display:grid;width:min(70vw,420px);aspect-ratio:1;border:2px solid #222}.cell{border:1px solid #aaa;background:white}.fill{background:#222}.clues{overflow-wrap:anywhere}</style><main><h1>Nonograms preview</h1><p>These puzzles passed the same bounded line-solving rule used by the reader. Nothing was transferred.</p>",
+    );
+    for (png, puzzle) in puzzles {
+        let filename = format!("photo-{}.png", puzzle.side);
+        fs::write(output.join(&filename), png)
+            .map_err(|error| format!("write preview image: {error}"))?;
+        write!(html, "<section><h2>{0} × {0}</h2><p>{1} solving passes</p><div class=\"grid\" style=\"grid-template-columns:repeat({0},1fr)\">", puzzle.side, puzzle.rounds).unwrap();
+        for filled in &puzzle.answer {
+            html.push_str(if *filled {
+                "<span class=\"cell fill\"></span>"
+            } else {
+                "<span class=\"cell\"></span>"
+            });
+        }
+        html.push_str("</div><p class=\"clues\">Rows: ");
+        for (index, clues) in puzzle.row_clues.iter().enumerate() {
+            if index != 0 {
+                html.push_str(" · ");
+            }
+            write!(
+                html,
+                "{}",
+                clues
+                    .iter()
+                    .map(usize::to_string)
+                    .collect::<Vec<_>>()
+                    .join(",")
+            )
+            .unwrap();
+        }
+        html.push_str("</p><p class=\"clues\">Columns: ");
+        for (index, clues) in puzzle.column_clues.iter().enumerate() {
+            if index != 0 {
+                html.push_str(" · ");
+            }
+            write!(
+                html,
+                "{}",
+                clues
+                    .iter()
+                    .map(usize::to_string)
+                    .collect::<Vec<_>>()
+                    .join(",")
+            )
+            .unwrap();
+        }
+        write!(
+            html,
+            "</p><p><a href=\"{filename}\">Prepared reader image</a></p></section>"
+        )
+        .unwrap();
+    }
+    fs::write(output.join("index.html"), format!("{html}</main></html>"))
+        .map_err(|error| format!("write preview page: {error}"))
 }
 
 fn size_error() -> String {
@@ -288,9 +566,11 @@ fn transfer_script(png: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_push, prepare, size_error, transfer_script, Destination, Push, BLOB, NORMALIZED_EDGE,
+        analyse, parse_push, prepare, preview_command, size_error, transfer_script, Destination,
+        Push, BLOB, NORMALIZED_EDGE,
     };
     use kobo_image::Picture;
+    use std::fs;
 
     #[test]
     fn parses_a_bounded_push_destination_and_size() {
@@ -348,7 +628,7 @@ mod tests {
         super::super::run(&["nonograms".to_owned(), "--help".to_owned()]).expect("help");
         let error =
             super::super::run(&["nonograms".to_owned(), "look".to_owned()]).expect_err("usage");
-        assert!(error.starts_with("usage: kobo nonograms push"));
+        assert!(error.starts_with("usage:\n  kobo nonograms preview"));
     }
 
     #[test]
@@ -385,6 +665,62 @@ mod tests {
         assert!(!script.contains(".photo.png.writing"));
         assert!(script.contains("KOBO_NONOGRAMS_PHOTO"));
         assert_eq!(BLOB, "photo.png");
+    }
+
+    #[test]
+    fn analyses_fair_sizes_and_refuses_guessing_patterns() {
+        let grey = (0..100)
+            .map(|index| if index / 10 < 5 { 24 } else { 232 })
+            .collect::<Vec<_>>();
+        let source = grey_png(10, 10, &grey);
+        for side in [5, 7, 9] {
+            let prepared = prepare(&source, side).expect("prepare");
+            let analysis = analyse(&prepared, side).expect("fair analysis");
+            assert_eq!(analysis.side, side);
+            assert_eq!(analysis.answer.len(), side * side);
+        }
+        let diagonal = grey_png(
+            5,
+            5,
+            &(0..25)
+                .map(|index| if index / 5 == index % 5 { 0 } else { 255 })
+                .collect::<Vec<_>>(),
+        );
+        let prepared = prepare(&diagonal, 5).expect("prepare diagonal");
+        assert!(analyse(&prepared, 5).is_err());
+    }
+
+    #[test]
+    fn preview_is_atomic_and_contains_all_supported_sizes() {
+        let root = std::env::temp_dir().join(format!("nonograms-preview-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir(&root).unwrap();
+        let input = root.join("source.png");
+        let grey = (0..100)
+            .map(|index| if index / 10 < 5 { 24 } else { 232 })
+            .collect::<Vec<_>>();
+        fs::write(&input, grey_png(10, 10, &grey)).unwrap();
+        let output = root.join("preview");
+        preview_command(&[
+            "preview".into(),
+            input.display().to_string(),
+            "--out".into(),
+            output.display().to_string(),
+        ])
+        .unwrap();
+        let html = fs::read_to_string(output.join("index.html")).unwrap();
+        for side in [5, 7, 9] {
+            assert!(html.contains(&format!("{side} × {side}")));
+            assert!(output.join(format!("photo-{side}.png")).is_file());
+        }
+        assert!(preview_command(&[
+            "preview".into(),
+            input.display().to_string(),
+            "--out".into(),
+            output.display().to_string(),
+        ])
+        .is_err());
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
