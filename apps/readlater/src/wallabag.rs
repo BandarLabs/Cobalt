@@ -41,9 +41,10 @@ pub fn entry_url(server: &str, id: u64) -> String {
 
 #[cfg(test)]
 pub fn archive(server: &str, credential: &str, id: u64) -> Task {
-    Task::Post {
+    Task::Update {
+        method: kobo_sdk::UpdateMethod::Patch,
         url: entry_url(server, id),
-        body: "{\"archive\":1}".to_owned(),
+        body: archive_body(true),
         content_type: "application/json".to_owned(),
         credential: Some(Credential::bearer(credential)),
         headers: Vec::new(),
@@ -128,12 +129,16 @@ mod tests {
         );
         assert!(queue_url("https://bag.example/", 20, true, false).contains("starred=1"));
         assert!(queue_url("https://bag.example/", 100, false, true).contains("archive=1"));
-        let Task::Post {
-            body, credential, ..
+        let Task::Update {
+            method,
+            body,
+            credential,
+            ..
         } = archive("https://bag.example", "wallabag", 9)
         else {
             panic!()
         };
+        assert_eq!(method, kobo_sdk::UpdateMethod::Patch);
         assert_eq!(body, "{\"archive\":1}");
         assert_eq!(credential, Some(Credential::bearer("wallabag")));
     }

@@ -7,7 +7,7 @@ use kobo_sdk::snapshot::{Snapshot, SnapshotEvent};
 use kobo_sdk::keyboard::{Keyboard, Pressed};
 use kobo_sdk::{
     action_id, ActionId, BannerLevel, Context, Credential, DeviceRequest, DeviceResult, Glyph,
-    KoboApp, ScreenBuilder, StoreResult, Task, TaskError, TaskId, TaskOutcome,
+    KoboApp, ScreenBuilder, StoreResult, Task, TaskError, TaskId, TaskOutcome, UpdateMethod,
 };
 use std::process::ExitCode;
 use wallabag::Entry;
@@ -449,7 +449,9 @@ impl ReadLater {
             self.pending.len(),
             if self.pending.len() == 1 { "" } else { "s" }
         ));
-        if let Some(id) = context.spawn_retrying(Task::Post {
+        // Wallabag applies entry flags by PATCH; POST is refused there.
+        if let Some(id) = context.spawn_retrying(Task::Update {
+            method: UpdateMethod::Patch,
             url: wallabag::entry_url(&self.server(), action.id),
             body: action.body(),
             content_type: "application/json".to_owned(),
@@ -605,10 +607,7 @@ impl KoboApp for ReadLater {
 
     fn on_shelf(&mut self, context: &mut Context, name: &str, result: StoreResult) {
         if name == session::SHELF_FILE {
-            if let StoreResult::Loaded {
-                value: Some(bytes), ..
-            } = result
-            {
+            if let StoreResult::ShelfRead { bytes, .. } = result {
                 match session::decode_import(&bytes) {
                     Some(import) => {
                         let server = import.session.server.clone();

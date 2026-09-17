@@ -324,7 +324,7 @@
         {
           "path": "crates/kobo-policy/src/credentials.rs",
           "base_blob": "9a44a782eb487e4546a4aa57609787100900bc3f",
-          "compatible_blob": "e7e48bf2162088c65a0970ba5d54245104c04383"
+          "compatible_blob": "cd8926bfe381bba3e0a83f4cfbb01920c42ea787"
         }
       ]
     },
@@ -340,7 +340,7 @@
         {
           "path": "crates/kobo-policy/src/credentials.rs",
           "base_blob": "9a44a782eb487e4546a4aa57609787100900bc3f",
-          "compatible_blob": "e7e48bf2162088c65a0970ba5d54245104c04383"
+          "compatible_blob": "cd8926bfe381bba3e0a83f4cfbb01920c42ea787"
         }
       ]
     },

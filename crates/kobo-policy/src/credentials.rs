@@ -247,7 +247,7 @@ pub fn allowed_request_with_server(
         || allowed_request(app, credential, url, usage, body, content_type),
         |server| {
             if app == "readlater" {
-                readlater_server_allowed(credential, server, url, usage)
+                readlater_server_allowed(credential, server, url, usage, body)
             } else if app == "rss-miniflux" {
                 miniflux::allowed(credential, server, url, usage, body, content_type)
             } else {
@@ -277,7 +277,7 @@ pub fn allowed_request(
     if app == "zotero-reader" {
         return usage == CredentialUse::Fetch && zotero_credential_allowed(credential, url);
     }
-    if let Some(allowed) = store_app_credential_allowed(app, credential, url, usage) {
+    if let Some(allowed) = store_app_credential_allowed(app, credential, url, usage, body) {
         return allowed;
     }
     // Historical fixed-provider policies predate update tasks. None grants
@@ -437,6 +437,7 @@ fn store_app_credential_allowed(
     credential: &Credential,
     url: &str,
     usage: CredentialUse,
+    body: Option<&str>,
 ) -> Option<bool> {
     let allowed = match app {
         "calibre-web" => {
@@ -519,7 +520,12 @@ fn store_app_credential_allowed(
                             || wallabag_entry_document(&path)
                     }
                     CredentialUse::Post => wallabag_entry_document(&path),
-                    CredentialUse::Put | CredentialUse::Patch => false,
+                    // Wallabag updates an entry by PATCH; the outbox writes
+                    // only these four flag bodies.
+                    CredentialUse::Patch => {
+                        wallabag_entry_document(&path) && wallabag_flag_body(body)
+                    }
+                    CredentialUse::Put => false,
                 })
         }
         "rss-miniflux" => {
@@ -548,6 +554,7 @@ fn readlater_server_allowed(
     server: &str,
     url: &str,
     usage: CredentialUse,
+    body: Option<&str>,
 ) -> bool {
     credential.secret == "wallabag"
         && credential.header == SecretHeader::Bearer
@@ -559,8 +566,19 @@ fn readlater_server_allowed(
                     || wallabag_entry_document(&path)
             }
             CredentialUse::Post => wallabag_entry_document(&path),
-            CredentialUse::Put | CredentialUse::Patch => false,
+            CredentialUse::Patch => {
+                wallabag_entry_document(&path) && wallabag_flag_body(body)
+            }
+            CredentialUse::Put => false,
         })
+}
+
+/// The outbox's whole vocabulary: an entry's archive or star flag, either way.
+fn wallabag_flag_body(body: Option<&str>) -> bool {
+    matches!(
+        body,
+        Some(r#"{"archive":0}"# | r#"{"archive":1}"# | r#"{"star":0}"# | r#"{"star":1}"#)
+    )
 }
 
 fn wallabag_entry_document(path: &str) -> bool {
@@ -938,6 +956,73 @@ mod tests {
                 "another app used {app}'s credential"
             );
         }
+    }
+
+    #[test]
+    fn readlater_patches_only_entry_flags() {
+        let credential = Credential::bearer("wallabag");
+        let url = "https://read.example/api/entries/7.json";
+        for body in [
+            r#"{"archive":1}"#,
+            r#"{"archive":0}"#,
+            r#"{"star":1}"#,
+            r#"{"star":0}"#,
+        ] {
+            assert!(
+                allowed_request(
+                    "readlater",
+                    &credential,
+                    url,
+                    CredentialUse::Patch,
+                    Some(body),
+                    Some("application/json")
+                ),
+                "{body}"
+            );
+        }
+        for body in [
+            r#"{"title":"overwrite"}"#,
+            r#"{"archive":1,"star":1}"#,
+            r#"{"archive":2}"#,
+        ] {
+            assert!(
+                !allowed_request(
+                    "readlater",
+                    &credential,
+                    url,
+                    CredentialUse::Patch,
+                    Some(body),
+                    Some("application/json")
+                ),
+                "{body}"
+            );
+        }
+        assert!(!allowed_request(
+            "readlater",
+            &credential,
+            "https://read.example/api/entries.json?detail=metadata",
+            CredentialUse::Patch,
+            Some(r#"{"star":1}"#),
+            None
+        ));
+        assert!(allowed_request_with_server(
+            "readlater",
+            &credential,
+            url,
+            CredentialUse::Patch,
+            Some(r#"{"archive":1}"#),
+            Some("application/json"),
+            Some("https://read.example")
+        ));
+        assert!(!allowed_request_with_server(
+            "readlater",
+            &credential,
+            url,
+            CredentialUse::Patch,
+            Some(r#"{"title":"x"}"#),
+            Some("application/json"),
+            Some("https://read.example")
+        ));
     }
 
     #[test]
