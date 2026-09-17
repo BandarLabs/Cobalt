@@ -1,8 +1,8 @@
 {
   "provenance": {
-    "source_revision": "10fef6e4cf7bc998044b1faff6790fd627bf9c44",
+    "source_revision": "fc16c2125585045e3be4a39120a6b275353da22b",
     "tracked_changes": false,
-    "cli_sha256": "633408bf35c9dfb8895f72012b0246eceb034cb70fbe05256068038b20999c96",
+    "cli_sha256": "acd09fe2dc0cdff8ca274a20aba9b1c262883f020949fbfe82fc509061a2020e",
     "toolchain": "1.85.1"
   },
   "scale": "default",
@@ -47,6 +47,26 @@
       "name": "kept reading survives a simulator restart",
       "status": "passed",
       "detail": "after the simulator process was killed and started again, the library still listed the kept paper at 74% and opening it landed on page 4 of 5, the place saved before the restart (panel shots arxiv-restart-library/-reopened)"
+    },
+    {
+      "name": "following marks the subject",
+      "status": "passed",
+      "detail": "the listing offered Follow this subject and then said Stop following; the subject list carries the follow mark (panel shots arxiv-followed, arxiv-subjects-followed)"
+    },
+    {
+      "name": "Saved lists searches and subjects",
+      "status": "passed",
+      "detail": "the typed search saved from its listing and the followed subject are listed together in Saved (panel shot arxiv-saved)"
+    },
+    {
+      "name": "a saved search runs again",
+      "status": "passed",
+      "detail": "tapping the saved row fetched the same listing a second time, with no typing"
+    },
+    {
+      "name": "Manage removes a saved search",
+      "status": "passed",
+      "detail": "Manage turned the rows into removals and tapping the search removed it, leaving the followed subject (panel shots arxiv-saved-manage, arxiv-saved-removed)"
     }
   ],
   "status": "passed"

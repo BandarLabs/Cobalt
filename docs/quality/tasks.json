@@ -966,8 +966,10 @@
     "pr": 3,
     "group": "arXiv",
     "task": "Add saved searches and followed subjects",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Saved searches and followed subjects, driven end-to-end in the simulator against a local TLS fixture (scripts/quality/check-arxiv-sim.py) and against the live arXiv API (scripts/quality/check-arxiv-live.py). A word listing offers Save this search and a subject listing offers Follow this subject; followed subjects pin to the top of the subject list with the follow mark, and the new Saved view (from the subject list's top bar) lists searches first and followed subjects behind, running either without the keyboard. Manage turns a row into the removal of itself with no confirm, because saving and following are one tap each to redo. Both lists persist in the store (line-per-entry, tabs scrubbed, capped at 24 with a spoken message at the cap) and survive a simulator restart. Unit tests cover the store round-trip, dedup, cap, pinning order, removal, and live-length row clamping via CLARA_BW_METRICS validation (59/59). Pixel-verified: docs/quality/evidence/arxiv/arxiv-followed.png, arxiv-subjects-followed.png, arxiv-saved.png, arxiv-saved-manage.png, arxiv-saved-removed.png; live shots docs/quality/evidence/arxiv-live/arxiv-live-followed.png, arxiv-live-saved.png (real query 'attention is all you need' saved from its live results). arXiv 1.4.0."
+    ]
   },
   {
     "id": "ARXIV-03",
