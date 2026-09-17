@@ -2913,7 +2913,8 @@ fn signal_of(_status: ExitStatus) -> u8 {
 }
 
 fn parse_logs(arguments: &[String]) -> Result<LogRequest<'_>, String> {
-    const USAGE: &str = "usage: kobo logs --device <host> [--follow|-f] [--dump|-d] [--lines|-t <count>] \
+    const USAGE: &str =
+        "usage: kobo logs --device <host> [--follow|-f] [--dump|-d] [--lines|-t <count>] \
          [--clear|-c]";
     let (host, mut rest) = match arguments {
         [device, host, rest @ ..] if is_device_flag(device) => (host.as_str(), rest),
@@ -6286,7 +6287,8 @@ enum SecretTarget {
     Volume(PathBuf),
 }
 
-const SECRET_USAGE: &str = "usage: kobo secret set <name> [--from PATH] (--device IP | --volume PATH)\n\
+const SECRET_USAGE: &str =
+    "usage: kobo secret set <name> [--from PATH] (--device IP | --volume PATH)\n\
                             \x20      kobo secret list (--device IP | --volume PATH)\n\
                             \x20      kobo secret remove <name> (--device IP | --volume PATH)";
 
@@ -6665,7 +6667,8 @@ fn report_secret_names<'a>(names: impl Iterator<Item = &'a str>) {
 /// Where the runtime reads owner-installed TLS trust roots, from `kobod`.
 const DEVICE_TRUST_DIRECTORY: &str = "/mnt/onboard/.adds/cobalt/trust";
 
-const TRUST_USAGE: &str = "usage: kobo trust set <name> --from PATH (--device IP | --volume PATH)\n\
+const TRUST_USAGE: &str =
+    "usage: kobo trust set <name> --from PATH (--device IP | --volume PATH)\n\
                            \x20      kobo trust list (--device IP | --volume PATH)\n\
                            \x20      kobo trust remove <name> (--device IP | --volume PATH)";
 
@@ -7231,11 +7234,9 @@ mod tests {
         header[36..40].copy_from_slice(&0x400_u32.to_le_bytes());
         header[42..44].copy_from_slice(&32_u16.to_le_bytes());
         fs::write(&header_only, header).expect("write header-only binary");
-        assert!(
-            super::verify_arm_elf(&header_only)
-                .expect_err("an ELF header without a load segment was accepted")
-                .contains("executable load segment")
-        );
+        assert!(super::verify_arm_elf(&header_only)
+            .expect_err("an ELF header without a load segment was accepted")
+            .contains("executable load segment"));
 
         super::app_bundle(&[
             "--manifest".to_owned(),
@@ -7503,19 +7504,19 @@ mod tests {
 
     use super::package;
     use super::{
-        ALIASES, DEFAULT_TRACE_LINES, DEPLOY_TIMEOUT, DEVICE_PACKAGES, DevSessionGuard,
-        RemoteArtifact, SimulationGuard, TOUCH_PROBE_DEFAULT_SECONDS, TOUCH_PROBE_MAXIMUM_SECONDS,
         build_executables, canonical, configured_target_directory, is_device_flag,
         manifest_uses_sdk, normalise_secret_value, parse_deploy, parse_devices, parse_logs,
         parse_touch_probe, unreachable_device, valid_device_host, valid_slug, verify_arm_elf,
-        wait_for_remote_child, workspace_doctor_binary,
+        wait_for_remote_child, workspace_doctor_binary, DevSessionGuard, RemoteArtifact,
+        SimulationGuard, ALIASES, DEFAULT_TRACE_LINES, DEPLOY_TIMEOUT, DEVICE_PACKAGES,
+        TOUCH_PROBE_DEFAULT_SECONDS, TOUCH_PROBE_MAXIMUM_SECONDS,
     };
     #[cfg(feature = "device-write")]
     use super::{
-        GUARD_TEST_CHILD, GUARD_TEST_CONFIRMATION, REMOTE_CLEANUP_TIMEOUT, REMOTE_COMMAND_TIMEOUT,
-        REMOTE_CONNECT_TIMEOUT_SECONDS, REMOTE_SMOKE_TIMEOUT_SECONDS, RemoteArtifactSession,
-        RemoteProgram, SmokeStage, parse_guard_test, parse_smoke_display, run,
-        workspace_smoke_binary,
+        parse_guard_test, parse_smoke_display, run, workspace_smoke_binary, RemoteArtifactSession,
+        RemoteProgram, SmokeStage, GUARD_TEST_CHILD, GUARD_TEST_CONFIRMATION,
+        REMOTE_CLEANUP_TIMEOUT, REMOTE_COMMAND_TIMEOUT, REMOTE_CONNECT_TIMEOUT_SECONDS,
+        REMOTE_SMOKE_TIMEOUT_SECONDS,
     };
     use std::fs;
     use std::path::PathBuf;
@@ -7995,11 +7996,9 @@ mod tests {
         let uploaded = super::gunzip(&uploaded).expect("uploaded archive");
         let listed = package::list(&uploaded).expect("uploaded listing");
         assert_eq!(count, 1);
-        assert!(
-            listed
-                .iter()
-                .all(|entry| entry.path != package::LAUNCH_BOOTSTRAP)
-        );
+        assert!(listed
+            .iter()
+            .all(|entry| entry.path != package::LAUNCH_BOOTSTRAP));
         assert!(listed.iter().all(|entry| {
             let path = std::path::Path::new(entry.path.trim_end_matches('/'));
             let root = std::path::Path::new(package::INSTALL_ROOT);
@@ -8195,11 +8194,9 @@ mod tests {
         let artifact = RemoteArtifact::guard();
         assert_eq!(artifact.package, "kobo-guard");
         assert_eq!(artifact.features, Some("device-write"));
-        assert!(
-            artifact
-                .local_binary
-                .ends_with("armv7-unknown-linux-musleabihf/release/kobo-guard")
-        );
+        assert!(artifact
+            .local_binary
+            .ends_with("armv7-unknown-linux-musleabihf/release/kobo-guard"));
         // The child is an exact absolute path, never resolved through PATH.
         assert!(GUARD_TEST_CHILD.starts_with('/'));
     }
@@ -8322,7 +8319,7 @@ mod tests {
 
     #[test]
     fn dev_session_parsing_is_exact_and_host_checked() {
-        use super::{DevSessionAction, devsession::Switch};
+        use super::{devsession::Switch, DevSessionAction};
         let base = ["--device".to_owned(), "192.0.2.1".to_owned()];
         let parse = |extra: &[&str]| {
             let mut arguments = base.to_vec();
@@ -8546,18 +8543,14 @@ mod tests {
             story[0] = version;
             assert_eq!(super::validate_parser_story(&story), Ok(()));
         }
-        assert!(
-            super::validate_parser_story(b"Glul followed by bytes")
-                .expect_err("Glulx must be refused")
-                .contains("Glulx")
-        );
+        assert!(super::validate_parser_story(b"Glul followed by bytes")
+            .expect_err("Glulx must be refused")
+            .contains("Glulx"));
         let mut unsupported = vec![0; 64];
         unsupported[0] = 6;
-        assert!(
-            super::validate_parser_story(&unsupported)
-                .expect_err("v6 must be refused")
-                .contains("version 6")
-        );
+        assert!(super::validate_parser_story(&unsupported)
+            .expect_err("v6 must be refused")
+            .contains("version 6"));
     }
 
     #[test]
@@ -8620,7 +8613,7 @@ mod tests {
     }
 
     mod holding {
-        use super::super::{DevSessionAction, HOLD_MAXIMUM_MINUTES, parse_dev_session};
+        use super::super::{parse_dev_session, DevSessionAction, HOLD_MAXIMUM_MINUTES};
 
         fn arguments(values: &[&str]) -> Vec<String> {
             values.iter().map(|value| (*value).to_owned()).collect()
@@ -8734,8 +8727,8 @@ mod tests {
 
         mod app_registry {
             use super::super::super::{
-                STORE_PACKAGES, contributed_store_packages, read_release_registry,
-                workspace_manifest,
+                contributed_store_packages, read_release_registry, workspace_manifest,
+                STORE_PACKAGES,
             };
             use std::collections::BTreeSet;
 
@@ -8793,9 +8786,9 @@ mod tests {
 
     mod preparing {
         use super::super::{
-            SetupMode, SetupPayload, choose_reader_list, confirmation_answer, dry_run_plan, gzip,
+            choose_reader_list, confirmation_answer, dry_run_plan, gzip,
             load_release_package_from_manifest, parse_setup, setup, setup_device_with_confirmation,
-            undo_setup,
+            undo_setup, SetupMode, SetupPayload,
         };
         use std::path::PathBuf;
 
@@ -9215,7 +9208,7 @@ mod tests {
     }
 
     mod waiting {
-        use super::super::{DEVICE_WAIT_MAXIMUM_SECONDS, parse_wait};
+        use super::super::{parse_wait, DEVICE_WAIT_MAXIMUM_SECONDS};
 
         fn arguments(values: &[&str]) -> Vec<String> {
             values.iter().map(|value| (*value).to_owned()).collect()
