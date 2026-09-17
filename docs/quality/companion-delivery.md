@@ -280,3 +280,20 @@ visible without overlap or clipping. This is host-side evidence only. The
 CLI-driven app journey and NONOCLI-01/02 remain open until the app accepts the
 same named, multi-puzzle transfer contract; no side-by-side completion is
 claimed here.
+
+The app transfer contract is now integrated. A real side-by-side journey built
+the app from PR-A `d0b2b7ce` and used the PR-B CLI to sync two real NASA images
+as named 5×5 and 9×9 puzzles into the running simulator. The app announced two
+imports and listed both names with their sizes and solver ratings. A second CLI
+sync named only one puzzle; the app announced one import, removed the omitted
+puzzle and retained the named one. All four screens were pixel-inspected at
+922×1246: text, controls, counts, names, sizes and ratings are readable with no
+clipping or overlap. Evidence is in `evidence/nonograms-companion-side-by-side`.
+
+The CLI accepts 1–12 named puzzles, names up to 48 characters, grid sizes 5–25,
+and simulator, output-directory or reader targets. It validates every puzzle
+before creating or contacting a destination. Photos publish before the manifest,
+so the app never sees a manifest that names incomplete files. Device publication
+also checks byte count and SHA-256 before the manifest boundary. Six focused
+tests and strict all-target CLI Clippy pass. NONOCLI-01/02/03/04 are complete.
+Physical-reader SSH remains unverified and is not claimed.
