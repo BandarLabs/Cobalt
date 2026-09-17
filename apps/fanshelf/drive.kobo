@@ -46,6 +46,24 @@ shot fandom-filter
 
 tap All
 expect A Field Guide to Small Hours
+
+tap Manage
+expect Download all updates
+expect 1 waiting
+expect 2 on the shelf
+clean
+shot manage
+
+tap Remove downloaded copies
+expect Remove 2 downloaded copies?
+expect Reading places are kept
+clean
+shot manage-confirm
+
+tap Go back
+expect Download all updates
+tap Shelf
+
 tap Followed tags
 expect Public Domain Fairy Tales
 expect Synthetic Library Stories

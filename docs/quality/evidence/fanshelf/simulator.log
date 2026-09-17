@@ -1,4 +1,4 @@
-Kobo app simulator: http://127.0.0.1:33941
+Kobo app simulator: http://127.0.0.1:46067
 drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/fanshelf
 shot /home/sandbox/cobalt/docs/quality/evidence/fanshelf/fanshelf-shelf.png
 drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/fanshelf
@@ -18,5 +18,12 @@ drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evide
 drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/fanshelf
 shot /home/sandbox/cobalt/docs/quality/evidence/fanshelf/fanshelf-fandom-filter.png
 drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/fanshelf
+drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/fanshelf
+drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/fanshelf
+drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/fanshelf
+shot /home/sandbox/cobalt/docs/quality/evidence/fanshelf/fanshelf-manage.png
+drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/fanshelf
+drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/fanshelf
+shot /home/sandbox/cobalt/docs/quality/evidence/fanshelf/fanshelf-manage-confirm.png
 drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/fanshelf
 drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/fanshelf

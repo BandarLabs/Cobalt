@@ -99,13 +99,24 @@ def main():
                 drive("clean", "shot fanshelf-fandom-filter")
                 drive("expect-missing The Clockwork Garden")
                 drive("tap All", "wait-for The Clockwork Garden")
+                # Manage: bulk counts and the removal confirmation.
+                drive("tap Manage", "wait-for Download all updates", "wait-for 1 waiting",
+                      "wait-for 2 on the shelf")
+                drive("clean", "shot fanshelf-manage")
+                drive("tap Remove downloaded copies", "wait-for Remove 2 downloaded copies?",
+                      "wait-for Reading places are kept")
+                drive("clean", "shot fanshelf-manage-confirm")
+                drive("tap Go back", "wait-for Download all updates", "tap Shelf",
+                      "wait-for reading")
                 result["checks"].append(dict(
                     name="update-check journey",
                     detail="Demo shelf showed the update, reading and never-checked "
                            "badges; each work screen named its last manual check; the "
                            "updates screen listed unread, never-checked and current "
                            "states; the fandom filter narrowed the shelf to one fandom "
-                           "(hiding the other work) and All restored it",
+                           "(hiding the other work) and All restored it; Manage listed "
+                           "bulk counts and the removal confirmation kept the shelf "
+                           "intact after Go back",
                     status="passed"))
                 result["status"] = "passed"
             finally:

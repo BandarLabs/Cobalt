@@ -4,8 +4,8 @@
   "short_label": "Fanshelf",
   "summary": "Save public AO3 works to a shelf made for offline reading.",
   "page_description": "Add an AO3 work and keep it ready for comfortable reading on your Kobo.",
-  "version": "0.2.7",
-  "release_notes": "Filter the shelf by fandom.",
+  "version": "0.2.8",
+  "release_notes": "Manage the shelf in bulk: download every waiting update, or remove downloaded copies (with a confirmation) while works and reading places stay.",
   "glyph": "book",
   "capabilities": [
     "network"

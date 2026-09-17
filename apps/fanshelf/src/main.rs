@@ -42,6 +42,7 @@ enum View {
     Follow,
     AddTag,
     Fandoms,
+    Manage,
     Feed,
     Updates,
     Reading,
@@ -98,6 +99,7 @@ struct Fanshelf {
     reading: std::collections::BTreeSet<String>,
     filter: Option<String>,
     fandom_page: usize,
+    confirm_remove: bool,
     works_loaded: bool,
     tags_loaded: bool,
     #[cfg(not(target_arch = "arm"))]
@@ -135,6 +137,7 @@ impl Default for Fanshelf {
             reading: std::collections::BTreeSet::new(),
             filter: None,
             fandom_page: 0,
+            confirm_remove: false,
             works_loaded: false,
             tags_loaded: false,
             #[cfg(not(target_arch = "arm"))]
@@ -309,6 +312,7 @@ impl Fanshelf {
                 .build(),
             View::Follow => self.follow_screen(),
             View::Fandoms => self.fandoms_screen(),
+            View::Manage => self.manage_screen(),
             View::AddTag => ScreenBuilder::new("fs-add-tag")
                 .top_bar("Follow tag")
                 .heading("Follow an AO3 tag")
@@ -400,7 +404,11 @@ impl Fanshelf {
         } else {
             screen.top_bar_action("filter", "Filter")
         };
-        screen = screen.buttons([("follow", "Followed tags"), ("updates", "Updates")]);
+        screen = screen.buttons([
+            ("follow", "Followed tags"),
+            ("updates", "Updates"),
+            ("manage", "Manage"),
+        ]);
         if !self.ready() {
             return screen.secondary("Loading shelf…").build();
         }
@@ -442,6 +450,70 @@ impl Fanshelf {
             screen = screen.banner(BannerLevel::Info, message);
         }
         screen.build()
+    }
+
+    fn updates_waiting(&self) -> usize {
+        self.works
+            .iter()
+            .filter(|work| work.download == DownloadState::UpdateAvailable)
+            .count()
+    }
+
+    fn downloaded_count(&self) -> usize {
+        self.works
+            .iter()
+            .filter(|work| {
+                matches!(
+                    work.download,
+                    DownloadState::Downloaded | DownloadState::UpdateAvailable
+                )
+            })
+            .count()
+    }
+
+    fn manage_screen(&self) -> Screen {
+        let updates = self.updates_waiting();
+        let downloaded = self.downloaded_count();
+        let mut screen = ScreenBuilder::new("fs-manage")
+            .top_bar("Manage shelf")
+            .top_bar_action("shelf", "Shelf");
+        if self.confirm_remove {
+            return screen
+                .splash(
+                    Some(Glyph::Book),
+                    format!("Remove {downloaded} downloaded copies?"),
+                    "Works stay on the shelf and can be downloaded again. Reading places are kept.",
+                )
+                .buttons([("manage-cancel", "Go back"), ("remove-copies", "Remove")])
+                .owns_back(true)
+                .build();
+        }
+        if self.works.is_empty() {
+            screen = screen.splash(
+                Some(Glyph::Book),
+                "Nothing to manage",
+                "Downloaded copies and updates appear once works are added.",
+            );
+        } else {
+            screen = screen.rows([
+                (
+                    "download-all".to_owned(),
+                    "Download all updates".to_owned(),
+                    format!("{updates} waiting"),
+                    Glyph::Book,
+                ),
+                (
+                    "manage-remove".to_owned(),
+                    "Remove downloaded copies".to_owned(),
+                    format!("{downloaded} on the shelf"),
+                    Glyph::Book,
+                ),
+            ]);
+        }
+        if let Some(message) = &self.message {
+            screen = screen.banner(BannerLevel::Info, message);
+        }
+        screen.owns_back(true).build()
     }
 
     fn work_screen(&self) -> Screen {
@@ -1116,6 +1188,54 @@ impl KoboApp for Fanshelf {
             self.shelf_page = 0;
             self.view = View::Shelf;
             self.message = None;
+        } else if action == action_id("manage") {
+            self.confirm_remove = false;
+            self.view = View::Manage;
+            self.message = None;
+        } else if action == action_id("download-all") {
+            let waiting = self
+                .works
+                .iter()
+                .enumerate()
+                .filter(|(_, work)| work.download == DownloadState::UpdateAvailable)
+                .map(|(index, _)| index)
+                .collect::<Vec<_>>();
+            if waiting.is_empty() {
+                self.message = Some("No updates waiting.".into());
+            } else {
+                for index in &waiting {
+                    self.begin_download(context, *index, false);
+                }
+                self.message = Some(format!(
+                    "Downloading {} updates, one request at a time…",
+                    waiting.len()
+                ));
+            }
+        } else if action == action_id("manage-remove") {
+            self.confirm_remove = true;
+            self.message = None;
+        } else if action == action_id("manage-cancel") {
+            self.confirm_remove = false;
+            self.message = None;
+        } else if action == action_id("remove-copies") {
+            let mut removed = 0;
+            for work in &mut self.works {
+                if matches!(
+                    work.download,
+                    DownloadState::Downloaded | DownloadState::UpdateAvailable
+                ) {
+                    context.shelf().remove(shelf_name(&work.id));
+                    work.download = DownloadState::NotDownloaded;
+                    removed += 1;
+                }
+            }
+            self.confirm_remove = false;
+            if removed > 0 {
+                self.save_works(context);
+            }
+            self.message = Some(format!(
+                "Removed {removed} copies. Works stay on the shelf."
+            ));
         } else if action == action_id("follow") {
             self.view = View::Follow;
             self.tag_page = 0;
@@ -1239,7 +1359,8 @@ impl KoboApp for Fanshelf {
                 | View::Updates
                 | View::Add
                 | View::Adult
-                | View::Fandoms => {
+                | View::Fandoms
+                | View::Manage => {
                     self.view = View::Shelf;
                 }
                 View::Feed | View::AddTag => self.view = View::Follow,
@@ -1497,6 +1618,24 @@ mod tests {
     }
 
     #[test]
+    fn manage_counts_track_download_states() {
+        let mut app = Fanshelf {
+            works: vec![work()],
+            ..Fanshelf::default()
+        };
+        assert_eq!(app.updates_waiting(), 0);
+        assert_eq!(app.downloaded_count(), 0);
+        app.works[0].download = DownloadState::UpdateAvailable;
+        assert_eq!(app.updates_waiting(), 1);
+        assert_eq!(app.downloaded_count(), 1);
+        app.works[0].download = DownloadState::Downloaded;
+        assert_eq!(app.updates_waiting(), 0);
+        assert_eq!(app.downloaded_count(), 1);
+        app.works[0].download = DownloadState::Removed;
+        assert_eq!(app.downloaded_count(), 0);
+    }
+
+    #[test]
     fn shelf_filter_groups_by_fandom_and_restores_the_whole_shelf() {
         let mut app = Fanshelf::default();
         let mut fairy = work();
@@ -1632,6 +1771,8 @@ mod tests {
             View::Follow,
             View::Feed,
             View::Updates,
+            View::Fandoms,
+            View::Manage,
         ] {
             app.view = view;
             app.open = Some(0);

@@ -1383,8 +1383,12 @@
     "pr": 3,
     "group": "Fanshelf",
     "task": "Provide bulk shelf management",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "New Manage screen (third shelf button): Download all updates queues one spaced request per waiting work; Remove downloaded copies asks for confirmation, deletes each EPUB blob via context.shelf().remove, keeps works and reading places (manage_counts unit test; panel-fit test covers both new views; 20/20 green)",
+      "check-fanshelf-sim.py passed: Manage listed 1 waiting / 2 on the shelf, the confirmation named the count and kept the shelf intact after Go back (docs/quality/evidence/fanshelf/fanshelf-manage.png, fanshelf-manage-confirm.png)",
+      "apps/fanshelf/drive.kobo replayed against a pristine sim state with the Manage steps: every step passed"
+    ]
   },
   {
     "id": "FANS-04",

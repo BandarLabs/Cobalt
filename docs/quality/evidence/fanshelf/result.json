@@ -1,15 +1,15 @@
 {
   "provenance": {
-    "source_revision": "6542c1cf1665057dda7f2864ac24beb92e671e67",
+    "source_revision": "3a98a98f887c2e91c9d62961a1a58be3508c4abd",
     "tracked_changes": true,
-    "cli_sha256": "a40e6ab83be7e7171c4ebb4302d11f97d8bb1519a5d72fdbfd7838cae11d8fb0",
+    "cli_sha256": "d77cab37e0e11f98732be8ec365264bf51c115acdde9c85b674a9ad9c3df51c2",
     "toolchain": "1.85.1"
   },
   "scale": "default",
   "checks": [
     {
       "name": "update-check journey",
-      "detail": "Demo shelf showed the update, reading and never-checked badges; each work screen named its last manual check; the updates screen listed unread, never-checked and current states; the fandom filter narrowed the shelf to one fandom (hiding the other work) and All restored it",
+      "detail": "Demo shelf showed the update, reading and never-checked badges; each work screen named its last manual check; the updates screen listed unread, never-checked and current states; the fandom filter narrowed the shelf to one fandom (hiding the other work) and All restored it; Manage listed bulk counts and the removal confirmation kept the shelf intact after Go back",
       "status": "passed"
     }
   ],

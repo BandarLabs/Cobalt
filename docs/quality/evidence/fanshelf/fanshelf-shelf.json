@@ -29,7 +29,7 @@
   "frame": {
     "colourAppearance": "luminance",
     "format": "grey8",
-    "sha256": "9af0f3eedce5ef257da7fe3bdb7f451289e014869d4359a9936396b58a06b320",
+    "sha256": "9a63034226be998f9a12e241fda3268672c155b252f818679a8a14e95752ba9c",
     "view": "ideal"
   },
   "interfaceScalePercent": 100,
@@ -89,13 +89,13 @@
       "completed": "2",
       "contentsKnown": true,
       "failures": "0",
-      "finishedAtMillis": "606",
+      "finishedAtMillis": "585",
       "mode": "automatic",
       "queued": false,
       "status": "idle",
       "submissionMarker": null,
       "submitted": "2",
-      "submittedAtMillis": "600",
+      "submittedAtMillis": "580",
       "timing": "host control observations; not hardware calibration",
       "visibleFrame": "last confirmed completion with approximate residue"
     },
@@ -181,11 +181,11 @@
     }
   },
   "source": {
-    "binarySha256": "bf97daee9bceddcee913f22825f2cd02f9f1b2a8c34c7d0e853b52a4043b6b1a",
+    "binarySha256": "3dbfc00904ef04bb970efcda51380f95be208ae404060bf83089d474d00a0a6a",
     "dirty": true,
     "fixture": null,
     "requestedSeed": null,
-    "revision": "6542c1cf1665057dda7f2864ac24beb92e671e67"
+    "revision": "3a98a98f887c2e91c9d62961a1a58be3508c4abd"
   },
   "version": 1
 }
