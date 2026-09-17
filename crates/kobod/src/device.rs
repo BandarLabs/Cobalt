@@ -2142,14 +2142,7 @@ fn host_applications(
                     // the one the application drew, so the bar the shell adds
                     // is not on it, and hit testing against that raw screen
                     // would leave every runtime-added Back untappable.
-                    let screen = screen.map(|screen| {
-                        kobo_ui::ensure_way_back_revealed(
-                            screen,
-                            &chrome,
-                            &apps[index].name,
-                            apps[index].top_bar,
-                        )
-                    });
+                    let screen = screen.map(|screen| shown_screen(&apps[index], screen, &chrome));
                     let orientation = apps[index].orientation;
                     let landscape_turn = apps[index].landscape_turn;
                     // A control shows that it has been touched, before
@@ -2366,12 +2359,7 @@ fn host_applications(
                             // had already dismissed it from.
                             apps[index].top_bar = kobo_ui::TopBarState::Hidden;
                             apps[index].screen = Some(screen.clone());
-                            let screen = kobo_ui::ensure_way_back_revealed(
-                                screen,
-                                &chrome,
-                                &apps[index].name,
-                                apps[index].top_bar,
-                            );
+                            let screen = shown_screen(&apps[index], screen, &chrome);
                             if is_front {
                                 trace(&format!("screen {} received", screen.id));
                                 println!("screen {}", screen.id);
@@ -3272,6 +3260,18 @@ fn switch_to(
 
 /// Draws whatever the application on the panel last drew, with fresh chrome.
 ///
+/// The screen as the panel shows it: what the application drew, plus the way
+/// back the shell adds.
+///
+/// One function because routing and rendering must never disagree. They did
+/// once: the retained screen became the undecorated one, rendering was
+/// updated to compose it and tap routing was not, which left the Back the
+/// shell had drawn in a place no touch could reach. A tap is laid out against
+/// the same screen it was drawn from or it is laid out against a fiction.
+fn shown_screen(app: &Hosted, screen: Screen, chrome: &Chrome) -> Screen {
+    kobo_ui::ensure_way_back_revealed(screen, chrome, &app.name, app.top_bar)
+}
+
 /// Shared by the application switch and the status poll, which want the same
 /// thing for different reasons. Cheap when nothing moved: the frame planner
 /// compares the rendered surface against what is on the panel and declines to
@@ -3296,8 +3296,7 @@ fn repaint(
         return Ok(());
     };
     let chrome = chrome_for(&screen, apps[index].path == home, status);
-    let screen =
-        kobo_ui::ensure_way_back_revealed(screen, &chrome, &apps[index].name, apps[index].top_bar);
+    let screen = shown_screen(&apps[index], screen, &chrome);
     kobo_ui::render_oriented_with_turn(
         &screen,
         &metrics_for(&screen),
@@ -5330,6 +5329,16 @@ mod tests {
 
     #[test]
     fn a_protocol_14_app_keeps_receiving_protocol_14() {
+        // Named after the version it means, not after whichever version is
+        // newest: written as VERSION this stopped covering protocol 14 the
+        // moment the current version moved, and every published application
+        // is protocol 14.
+        runtime_keeps_protocol_on_send_and_reply(kobo_protocol::SUSPEND_VERSION);
+        runtime_keeps_protocol_on_tap_and_hold(kobo_protocol::SUSPEND_VERSION);
+    }
+
+    #[test]
+    fn an_application_built_today_keeps_receiving_the_current_protocol() {
         runtime_keeps_protocol_on_send_and_reply(kobo_protocol::VERSION);
         runtime_keeps_protocol_on_tap_and_hold(kobo_protocol::VERSION);
     }

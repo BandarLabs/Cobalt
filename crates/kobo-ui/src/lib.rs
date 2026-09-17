@@ -189,6 +189,47 @@ mod folio_tests {
     }
 
     #[test]
+    fn the_way_back_the_shell_draws_can_actually_be_reached_by_a_finger() {
+        // Composing and hit testing have to be done against the same screen.
+        // When they were not, the Back the shell had drawn sat in a place no
+        // touch resolved to, and every ordinary application lost its way out
+        // while still showing one.
+        let metrics = &CLARA_BW_METRICS;
+        let chrome = Chrome::with_back(true);
+        let drawn = Screen::new(1, Vec::new());
+
+        let shown = ensure_way_back_revealed(drawn.clone(), &chrome, "Books", TopBarState::Shown);
+        let layout = shown.layout_with(metrics, &chrome);
+        let rect = layout
+            .rect_of_action(ActionId::BACK)
+            .expect("the drawn way back must have a rectangle");
+        assert_eq!(
+            layout.hit_test(rect.x + rect.width / 2, rect.y + rect.height / 2),
+            Some(ActionId::BACK),
+            "a touch in the middle of the drawn Back must resolve to Back"
+        );
+
+        // And the hidden case: nothing to hit, because nothing is drawn.
+        let hiding = Screen::new(1, Vec::new()).with_auto_hidden_top_bar(true);
+        let hidden =
+            ensure_way_back_revealed(hiding.clone(), &chrome, "Birds", TopBarState::Hidden);
+        assert!(hidden
+            .layout_with(metrics, &chrome)
+            .rect_of_action(ActionId::BACK)
+            .is_none());
+        // Until it is asked for, and then it is reachable like any other.
+        let revealed = ensure_way_back_revealed(hiding, &chrome, "Birds", TopBarState::Shown);
+        let layout = revealed.layout_with(metrics, &chrome);
+        let rect = layout
+            .rect_of_action(ActionId::BACK)
+            .expect("asking for the bar back must draw one");
+        assert_eq!(
+            layout.hit_test(rect.x + rect.width / 2, rect.y + rect.height / 2),
+            Some(ActionId::BACK)
+        );
+    }
+
+    #[test]
     fn the_band_that_brings_the_bar_back_is_where_the_bar_would_be() {
         let metrics = &CLARA_BW_METRICS;
         let asking = Screen::new(1, Vec::new()).with_auto_hidden_top_bar(true);
