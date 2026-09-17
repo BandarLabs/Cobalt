@@ -24,7 +24,6 @@ shot work-unchecked
 
 tap Shelf
 tap Updates
-expect Manual updates
 expect Unread update
 expect Never checked
 clean

@@ -60,7 +60,7 @@
       "unixMillis": "1767265860000",
       "utcOffsetMinutes": 0
     },
-    "dirtyPixelsSinceClean": 814624,
+    "dirtyPixelsSinceClean": 800286,
     "hardware": {
       "batteryPercent": 72,
       "charging": false,
@@ -89,13 +89,13 @@
       "completed": "13",
       "contentsKnown": true,
       "failures": "0",
-      "finishedAtMillis": "4702",
+      "finishedAtMillis": "4695",
       "mode": "automatic",
       "queued": false,
       "status": "idle",
       "submissionMarker": null,
       "submitted": "13",
-      "submittedAtMillis": "4693",
+      "submittedAtMillis": "4686",
       "timing": "host control observations; not hardware calibration",
       "visibleFrame": "last confirmed completion with approximate residue"
     },
@@ -130,7 +130,7 @@
       }
     },
     "transition": {
-      "dirty": 814624,
+      "dirty": 800286,
       "full": false,
       "refresh": 13,
       "region": {
@@ -217,11 +217,11 @@
     }
   },
   "source": {
-    "binarySha256": "3dbfc00904ef04bb970efcda51380f95be208ae404060bf83089d474d00a0a6a",
+    "binarySha256": "8cf12e42a6dbb3bfe4cc3252cf73130b703091d109f0ccdb5f3fe2b731bfe904",
     "dirty": true,
     "fixture": null,
     "requestedSeed": null,
-    "revision": "3a98a98f887c2e91c9d62961a1a58be3508c4abd"
+    "revision": "fb94fedbae53e1158b3ca3d92f4036e32d0f3920"
   },
   "version": 1
 }

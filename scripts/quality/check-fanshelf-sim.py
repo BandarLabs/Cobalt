@@ -87,7 +87,7 @@ def main():
                 drive("clean", "shot fanshelf-work-unchecked")
                 # The updates screen is the manual schedule.
                 drive("tap back", "wait-for Updates", "tap Updates",
-                      "wait-for Nothing runs in the background", "wait-for Unread update",
+                      "wait-for Unread update",
                       "wait-for Never checked")
                 drive("clean", "shot fanshelf-updates")
                 # The shelf narrows to one fandom and widens again.

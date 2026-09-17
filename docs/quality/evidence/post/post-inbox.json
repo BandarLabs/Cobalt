@@ -1,5 +1,5 @@
 {
-  "app": "fanshelf",
+  "app": "post",
   "fonts": [
     {
       "role": "interface",
@@ -29,13 +29,13 @@
   "frame": {
     "colourAppearance": "luminance",
     "format": "grey8",
-    "sha256": "92b45a8bcf1d40a8666bb3112b33d6a3fca3724f0c34896a33099314d6e787ee",
+    "sha256": "973231bf49d9504a741959a4d553770507c6fd85151867e4c12a52f456df6497",
     "view": "ideal"
   },
   "interfaceScalePercent": 100,
   "mode": "single-app",
   "orientation": "portrait",
-  "paints": "3",
+  "paints": "4",
   "publisherFontHandle": null,
   "readingScalePercent": 100,
   "runtimeVersion": "0.3.17",
@@ -60,7 +60,7 @@
       "unixMillis": "1767265860000",
       "utcOffsetMinutes": 0
     },
-    "dirtyPixelsSinceClean": 124515,
+    "dirtyPixelsSinceClean": 302915,
     "hardware": {
       "batteryPercent": 72,
       "charging": false,
@@ -74,28 +74,28 @@
       "forwardKey": 194,
       "needsResynchronization": false,
       "quiescent": true,
-      "rawEvents": "7",
+      "rawEvents": "0",
       "source": "synthetic evdev replay"
     },
     "lifecycle": "foreground",
     "navigation": {
-      "app": "fanshelf",
+      "app": "post",
       "hosted": [],
       "mode": "single-app",
       "processId": null
     },
     "observation": null,
     "panel": {
-      "completed": "3",
+      "completed": "4",
       "contentsKnown": true,
       "failures": "0",
-      "finishedAtMillis": "1098",
+      "finishedAtMillis": "794",
       "mode": "automatic",
       "queued": false,
       "status": "idle",
       "submissionMarker": null,
-      "submitted": "3",
-      "submittedAtMillis": "1077",
+      "submitted": "4",
+      "submittedAtMillis": "774",
       "timing": "host control observations; not hardware calibration",
       "visibleFrame": "last confirmed completion with approximate residue"
     },
@@ -117,71 +117,71 @@
       },
       "width": 1072
     },
-    "refreshCount": 3,
+    "refreshCount": 4,
     "scenario": "normal",
-    "touch": {
-      "display": {
-        "x": 558,
-        "y": 352
-      },
-      "raw": {
-        "x": 352,
-        "y": 513
-      }
-    },
+    "touch": null,
     "transition": {
-      "dirty": 124515,
+      "dirty": 302915,
       "full": false,
-      "refresh": 3,
+      "refresh": 4,
       "region": {
-        "height": 768,
+        "height": 1072,
         "width": 992,
         "x": 40,
-        "y": 88
+        "y": 200
       },
       "regions": [
         {
           "region": {
-            "height": 40,
-            "width": 144,
-            "x": 168,
-            "y": 88
+            "height": 80,
+            "width": 664,
+            "x": 48,
+            "y": 200
           },
           "waveform": "GL16"
         },
         {
           "region": {
-            "height": 40,
-            "width": 224,
-            "x": 776,
-            "y": 88
-          },
-          "waveform": "GL16"
-        },
-        {
-          "region": {
-            "height": 136,
-            "width": 944,
-            "x": 40,
-            "y": 168
-          },
-          "waveform": "GL16"
-        },
-        {
-          "region": {
-            "height": 96,
-            "width": 744,
-            "x": 40,
+            "height": 24,
+            "width": 248,
+            "x": 112,
             "y": 320
           },
           "waveform": "GL16"
         },
         {
           "region": {
-            "height": 424,
+            "height": 8,
+            "width": 920,
+            "x": 112,
+            "y": 384
+          },
+          "waveform": "GL16"
+        },
+        {
+          "region": {
+            "height": 432,
             "width": 984,
             "x": 48,
-            "y": 432
+            "y": 424
+          },
+          "waveform": "GL16"
+        },
+        {
+          "region": {
+            "height": 160,
+            "width": 408,
+            "x": 48,
+            "y": 888
+          },
+          "waveform": "GL16"
+        },
+        {
+          "region": {
+            "height": 96,
+            "width": 992,
+            "x": 40,
+            "y": 1176
           },
           "waveform": "GL16"
         }
@@ -190,7 +190,7 @@
     }
   },
   "source": {
-    "binarySha256": "8cf12e42a6dbb3bfe4cc3252cf73130b703091d109f0ccdb5f3fe2b731bfe904",
+    "binarySha256": "a948084d3a0be8d0897767e0aca1d4a3831bce6cf1c92058a3398f43ad068b34",
     "dirty": true,
     "fixture": null,
     "requestedSeed": null,

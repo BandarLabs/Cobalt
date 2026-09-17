@@ -29,7 +29,7 @@
   "frame": {
     "colourAppearance": "luminance",
     "format": "grey8",
-    "sha256": "2f3e22eb72d0b5677663ea7e04727928e2283237559428086caae11531df8d85",
+    "sha256": "cdd0ec906a75ff25cd675130ff8af004beb45939c5f6ea4e2df581b83c489d83",
     "view": "ideal"
   },
   "interfaceScalePercent": 100,
@@ -60,7 +60,7 @@
       "unixMillis": "1767265860000",
       "utcOffsetMinutes": 0
     },
-    "dirtyPixelsSinceClean": 474406,
+    "dirtyPixelsSinceClean": 467237,
     "hardware": {
       "batteryPercent": 72,
       "charging": false,
@@ -89,13 +89,13 @@
       "completed": "7",
       "contentsKnown": true,
       "failures": "0",
-      "finishedAtMillis": "2426",
+      "finishedAtMillis": "2455",
       "mode": "automatic",
       "queued": false,
       "status": "idle",
       "submissionMarker": null,
       "submitted": "7",
-      "submittedAtMillis": "2410",
+      "submittedAtMillis": "2439",
       "timing": "host control observations; not hardware calibration",
       "visibleFrame": "last confirmed completion with approximate residue"
     },
@@ -130,7 +130,7 @@
       }
     },
     "transition": {
-      "dirty": 474406,
+      "dirty": 467237,
       "full": false,
       "refresh": 7,
       "region": {
@@ -143,18 +143,45 @@
         {
           "region": {
             "height": 40,
-            "width": 832,
-            "x": 176,
+            "width": 840,
+            "x": 168,
             "y": 88
           },
           "waveform": "GL16"
         },
         {
           "region": {
-            "height": 400,
-            "width": 992,
+            "height": 128,
+            "width": 944,
             "x": 40,
             "y": 168
+          },
+          "waveform": "GL16"
+        },
+        {
+          "region": {
+            "height": 8,
+            "width": 920,
+            "x": 112,
+            "y": 312
+          },
+          "waveform": "GL16"
+        },
+        {
+          "region": {
+            "height": 120,
+            "width": 984,
+            "x": 48,
+            "y": 336
+          },
+          "waveform": "GL16"
+        },
+        {
+          "region": {
+            "height": 80,
+            "width": 512,
+            "x": 48,
+            "y": 488
           },
           "waveform": "GL16"
         },
@@ -181,11 +208,11 @@
     }
   },
   "source": {
-    "binarySha256": "3dbfc00904ef04bb970efcda51380f95be208ae404060bf83089d474d00a0a6a",
+    "binarySha256": "8cf12e42a6dbb3bfe4cc3252cf73130b703091d109f0ccdb5f3fe2b731bfe904",
     "dirty": true,
     "fixture": null,
     "requestedSeed": null,
-    "revision": "3a98a98f887c2e91c9d62961a1a58be3508c4abd"
+    "revision": "fb94fedbae53e1158b3ca3d92f4036e32d0f3920"
   },
   "version": 1
 }

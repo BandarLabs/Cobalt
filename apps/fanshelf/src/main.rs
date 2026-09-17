@@ -584,7 +584,7 @@ impl Fanshelf {
             screen = screen.splash(
                 Some(Glyph::Bookmark),
                 "No followed tags",
-                "Follow a tag to read AO3's structured Atom feed. Fanshelf never scrapes search results.",
+                "Follow a tag to see its newest works.",
             );
         } else {
             let (start, end) = Self::page_bounds(self.tag_page, self.tags.len());
@@ -662,15 +662,14 @@ impl Fanshelf {
             .filter(|(_, work)| !work.complete)
             .collect::<Vec<_>>();
         let mut screen = ScreenBuilder::new("fs-updates")
-            .top_bar("Manual updates")
+            .top_bar("Updates")
             .top_bar_action("check-all", "Check all")
-            .top_bar_action("shelf", "Shelf")
-            .secondary("Updates are manual. Nothing runs in the background.");
+            .top_bar_action("shelf", "Shelf");
         if wips.is_empty() {
             screen = screen.splash(
                 Some(Glyph::Check),
                 "No works in progress",
-                "Completed works stay on the shelf without update polling.",
+                "Works in progress appear here.",
             );
         } else {
             let (start, end) = Self::page_bounds(self.updates_page, wips.len());
@@ -738,7 +737,7 @@ impl Fanshelf {
             self.sent_request = true;
             self.task = Some((task, Active::Fetching(request)));
         } else {
-            self.message = Some("One request at a time. Try again in a moment.".into());
+            self.message = Some("Try again in a moment.".into());
         }
     }
 
@@ -1206,10 +1205,7 @@ impl KoboApp for Fanshelf {
                 for index in &waiting {
                     self.begin_download(context, *index, false);
                 }
-                self.message = Some(format!(
-                    "Downloading {} updates, one request at a time…",
-                    waiting.len()
-                ));
+                self.message = Some(format!("Downloading {} updates…", waiting.len()));
             }
         } else if action == action_id("manage-remove") {
             self.confirm_remove = true;
@@ -1309,10 +1305,7 @@ impl KoboApp for Fanshelf {
                     adult: item.adult,
                 })
                 .collect::<Vec<_>>();
-            self.message = Some(format!(
-                "Checking {} works, one request at a time…",
-                requests.len()
-            ));
+            self.message = Some(format!("Checking {} works…", requests.len()));
             for request in requests {
                 self.enqueue(context, request);
             }

@@ -69,7 +69,7 @@ impl Post {
             .heading("Connect a Hermes gateway")
             .text("Post reads letters from a Hermes gateway you run. On your computer, finish the gateway setup, then install its token with:")
             .text("kobo post login --gateway <address> --token-file <path> --device <reader>")
-            .text("The token is pinned to your gateway and never enters this app. Then enter the same gateway address here.");
+            .text("Enter the same gateway address here.");
         if let Some(notice) = &self.notice {
             screen = screen.banner(BannerLevel::Attention, notice);
         }

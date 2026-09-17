@@ -1,5 +1,5 @@
 {
-  "app": "fanshelf",
+  "app": "post",
   "fonts": [
     {
       "role": "interface",
@@ -29,13 +29,13 @@
   "frame": {
     "colourAppearance": "luminance",
     "format": "grey8",
-    "sha256": "92b45a8bcf1d40a8666bb3112b33d6a3fca3724f0c34896a33099314d6e787ee",
+    "sha256": "4521ffacc01ad68dd0789299cefe4b57c5b7214e67b491ea346b733d3c74a4cc",
     "view": "ideal"
   },
   "interfaceScalePercent": 100,
   "mode": "single-app",
   "orientation": "portrait",
-  "paints": "3",
+  "paints": "37",
   "publisherFontHandle": null,
   "readingScalePercent": 100,
   "runtimeVersion": "0.3.17",
@@ -60,7 +60,7 @@
       "unixMillis": "1767265860000",
       "utcOffsetMinutes": 0
     },
-    "dirtyPixelsSinceClean": 124515,
+    "dirtyPixelsSinceClean": 2085064,
     "hardware": {
       "batteryPercent": 72,
       "charging": false,
@@ -74,28 +74,28 @@
       "forwardKey": 194,
       "needsResynchronization": false,
       "quiescent": true,
-      "rawEvents": "7",
+      "rawEvents": "217",
       "source": "synthetic evdev replay"
     },
     "lifecycle": "foreground",
     "navigation": {
-      "app": "fanshelf",
+      "app": "post",
       "hosted": [],
       "mode": "single-app",
       "processId": null
     },
     "observation": null,
     "panel": {
-      "completed": "3",
+      "completed": "33",
       "contentsKnown": true,
       "failures": "0",
-      "finishedAtMillis": "1098",
+      "finishedAtMillis": "6952",
       "mode": "automatic",
       "queued": false,
       "status": "idle",
       "submissionMarker": null,
-      "submitted": "3",
-      "submittedAtMillis": "1077",
+      "submitted": "33",
+      "submittedAtMillis": "6951",
       "timing": "host control observations; not hardware calibration",
       "visibleFrame": "last confirmed completion with approximate residue"
     },
@@ -117,71 +117,44 @@
       },
       "width": 1072
     },
-    "refreshCount": 3,
+    "refreshCount": 33,
     "scenario": "normal",
     "touch": {
       "display": {
-        "x": 558,
-        "y": 352
+        "x": 866,
+        "y": 1330
       },
       "raw": {
-        "x": 352,
-        "y": 513
+        "x": 1330,
+        "y": 205
       }
     },
     "transition": {
-      "dirty": 124515,
+      "dirty": 2085064,
       "full": false,
-      "refresh": 3,
+      "refresh": 33,
       "region": {
-        "height": 768,
-        "width": 992,
-        "x": 40,
-        "y": 88
+        "height": 136,
+        "width": 696,
+        "x": 80,
+        "y": 120
       },
       "regions": [
         {
           "region": {
             "height": 40,
-            "width": 144,
-            "x": 168,
-            "y": 88
+            "width": 168,
+            "x": 224,
+            "y": 120
           },
           "waveform": "GL16"
         },
         {
           "region": {
-            "height": 40,
-            "width": 224,
-            "x": 776,
-            "y": 88
-          },
-          "waveform": "GL16"
-        },
-        {
-          "region": {
-            "height": 136,
-            "width": 944,
-            "x": 40,
-            "y": 168
-          },
-          "waveform": "GL16"
-        },
-        {
-          "region": {
-            "height": 96,
-            "width": 744,
-            "x": 40,
-            "y": 320
-          },
-          "waveform": "GL16"
-        },
-        {
-          "region": {
-            "height": 424,
-            "width": 984,
-            "x": 48,
-            "y": 432
+            "height": 48,
+            "width": 696,
+            "x": 80,
+            "y": 208
           },
           "waveform": "GL16"
         }
@@ -190,7 +163,7 @@
     }
   },
   "source": {
-    "binarySha256": "8cf12e42a6dbb3bfe4cc3252cf73130b703091d109f0ccdb5f3fe2b731bfe904",
+    "binarySha256": "a948084d3a0be8d0897767e0aca1d4a3831bce6cf1c92058a3398f43ad068b34",
     "dirty": true,
     "fixture": null,
     "requestedSeed": null,
