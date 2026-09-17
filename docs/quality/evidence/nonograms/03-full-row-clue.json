@@ -35,10 +35,10 @@
   "interfaceScalePercent": 140,
   "mode": "single-app",
   "orientation": "portrait",
-  "paints": "6",
+  "paints": "7",
   "publisherFontHandle": null,
   "readingScalePercent": 100,
-  "runtimeVersion": "0.3.12",
+  "runtimeVersion": "0.3.17",
   "schema": "cobalt.simulator-capture",
   "simulation": {
     "appStore": {
@@ -60,7 +60,7 @@
       "unixMillis": "1788850860000",
       "utcOffsetMinutes": 0
     },
-    "dirtyPixelsSinceClean": 356607,
+    "dirtyPixelsSinceClean": 388958,
     "hardware": {
       "batteryPercent": 72,
       "charging": false,
@@ -74,7 +74,7 @@
       "forwardKey": 194,
       "needsResynchronization": false,
       "quiescent": true,
-      "rawEvents": "21",
+      "rawEvents": "28",
       "source": "synthetic evdev replay"
     },
     "lifecycle": "foreground",
@@ -86,16 +86,16 @@
     },
     "observation": null,
     "panel": {
-      "completed": "6",
+      "completed": "7",
       "contentsKnown": true,
       "failures": "0",
-      "finishedAtMillis": "1484",
+      "finishedAtMillis": "2445",
       "mode": "automatic",
       "queued": false,
       "status": "idle",
       "submissionMarker": null,
-      "submitted": "6",
-      "submittedAtMillis": "1465",
+      "submitted": "7",
+      "submittedAtMillis": "2403",
       "timing": "host control observations; not hardware calibration",
       "visibleFrame": "last confirmed completion with approximate residue"
     },
@@ -117,7 +117,7 @@
       },
       "width": 1072
     },
-    "refreshCount": 6,
+    "refreshCount": 7,
     "scenario": "normal",
     "touch": {
       "display": {
@@ -130,9 +130,9 @@
       }
     },
     "transition": {
-      "dirty": 356607,
+      "dirty": 388958,
       "full": false,
-      "refresh": 6,
+      "refresh": 7,
       "region": {
         "height": 1352,
         "width": 1072,
@@ -163,11 +163,11 @@
     }
   },
   "source": {
-    "binarySha256": "4ad616e0b698c56dcc92b2e49b4199b2e853d29d141a712ae2719920f790849c",
-    "dirty": true,
+    "binarySha256": "04fe8f6feb8c99cf392f56e14d2557af78db159846dbf2a94d12ea37a29d2b2b",
+    "dirty": false,
     "fixture": "original-nonograms-pack",
     "requestedSeed": "0",
-    "revision": "53787e5b018d8d7749eb14ebaff7f909bfe3722a"
+    "revision": "278694f45c5084a14aa5c33414f236cd48b214d3"
   },
   "version": 1
 }

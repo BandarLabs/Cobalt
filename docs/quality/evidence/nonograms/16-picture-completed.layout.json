@@ -1,5 +1,5 @@
 {
-  "paints": 7,
+  "paints": 70,
   "nodes": [
     {
       "kind": "StatusBand",
@@ -106,7 +106,7 @@
       },
       "action": null,
       "lines": [
-        "Row 1"
+        "Puzzle complete"
       ]
     },
     {
@@ -123,59 +123,46 @@
       "lines": []
     },
     {
-      "kind": "Text",
-      "x": 47,
+      "kind": "Picture(PictureHandle(41))",
+      "x": 268,
       "y": 175,
-      "width": 978,
-      "height": 64,
+      "width": 536,
+      "height": 536,
       "centre": {
         "x": 536,
-        "y": 207
-      },
-      "action": null,
-      "lines": [
-        "5"
-      ]
-    },
-    {
-      "kind": "Spacer",
-      "x": 0,
-      "y": 1306,
-      "width": 1072,
-      "height": 142,
-      "centre": {
-        "x": 536,
-        "y": 1377
-      },
-      "action": 4281967466,
-      "lines": []
-    },
-    {
-      "kind": "Divider",
-      "x": 0,
-      "y": 1306,
-      "width": 1072,
-      "height": 4,
-      "centre": {
-        "x": 536,
-        "y": 1308
+        "y": 443
       },
       "action": null,
       "lines": []
     },
     {
-      "kind": "Button(ActionId(4281967466), Enabled, Normal)",
-      "x": 47,
-      "y": 1320,
-      "width": 978,
+      "kind": "Button(ActionId(4057005743), Enabled, Normal)",
+      "x": 429,
+      "y": 723,
+      "width": 214,
       "height": 118,
       "centre": {
         "x": 536,
-        "y": 1379
+        "y": 782
       },
-      "action": 4281967466,
+      "action": 4057005743,
       "lines": [
-        "Back to puzzle"
+        "Undo"
+      ]
+    },
+    {
+      "kind": "Button(ActionId(1321307159), Enabled, Normal)",
+      "x": 404,
+      "y": 853,
+      "width": 263,
+      "height": 118,
+      "centre": {
+        "x": 535,
+        "y": 912
+      },
+      "action": 1321307159,
+      "lines": [
+        "Puzzles"
       ]
     }
   ]

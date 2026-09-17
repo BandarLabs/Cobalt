@@ -29,16 +29,16 @@
   "frame": {
     "colourAppearance": "luminance",
     "format": "grey8",
-    "sha256": "bcb3a9e859ff511c8fe7cb41e8fc693d348a5d427efe4c896cd897a04ab1222e",
+    "sha256": "e220a86064354fdb04ba94ccf7f292efc47d01dac2845a4973f39a4707c014f7",
     "view": "ideal"
   },
   "interfaceScalePercent": 140,
   "mode": "single-app",
   "orientation": "portrait",
-  "paints": "9",
+  "paints": "74",
   "publisherFontHandle": null,
   "readingScalePercent": 100,
-  "runtimeVersion": "0.3.12",
+  "runtimeVersion": "0.3.17",
   "schema": "cobalt.simulator-capture",
   "simulation": {
     "appStore": {
@@ -60,7 +60,7 @@
       "unixMillis": "1788850860000",
       "utcOffsetMinutes": 0
     },
-    "dirtyPixelsSinceClean": 756598,
+    "dirtyPixelsSinceClean": 3724315,
     "hardware": {
       "batteryPercent": 72,
       "charging": false,
@@ -74,7 +74,7 @@
       "forwardKey": 194,
       "needsResynchronization": false,
       "quiescent": true,
-      "rawEvents": "35",
+      "rawEvents": "280",
       "source": "synthetic evdev replay"
     },
     "lifecycle": "foreground",
@@ -86,16 +86,16 @@
     },
     "observation": null,
     "panel": {
-      "completed": "9",
+      "completed": "74",
       "contentsKnown": true,
       "failures": "0",
-      "finishedAtMillis": "1715",
+      "finishedAtMillis": "10675",
       "mode": "automatic",
       "queued": false,
       "status": "idle",
       "submissionMarker": null,
-      "submitted": "9",
-      "submittedAtMillis": "1696",
+      "submitted": "74",
+      "submittedAtMillis": "10674",
       "timing": "host control observations; not hardware calibration",
       "visibleFrame": "last confirmed completion with approximate residue"
     },
@@ -117,44 +117,35 @@
       },
       "width": 1072
     },
-    "refreshCount": 9,
+    "refreshCount": 74,
     "scenario": "normal",
     "touch": {
       "display": {
-        "x": 218,
-        "y": 473
+        "x": 786,
+        "y": 398
       },
       "raw": {
-        "x": 473,
-        "y": 853
+        "x": 398,
+        "y": 285
       }
     },
     "transition": {
-      "dirty": 756598,
+      "dirty": 3724315,
       "full": false,
-      "refresh": 9,
+      "refresh": 74,
       "region": {
-        "height": 1352,
-        "width": 1072,
-        "x": 0,
-        "y": 88
+        "height": 56,
+        "width": 600,
+        "x": 80,
+        "y": 368
       },
       "regions": [
         {
           "region": {
-            "height": 48,
-            "width": 256,
-            "x": 176,
-            "y": 88
-          },
-          "waveform": "GL16"
-        },
-        {
-          "region": {
-            "height": 1256,
-            "width": 1072,
-            "x": 0,
-            "y": 184
+            "height": 56,
+            "width": 600,
+            "x": 80,
+            "y": 368
           },
           "waveform": "GL16"
         }
@@ -163,11 +154,11 @@
     }
   },
   "source": {
-    "binarySha256": "4ad616e0b698c56dcc92b2e49b4199b2e853d29d141a712ae2719920f790849c",
-    "dirty": true,
+    "binarySha256": "04fe8f6feb8c99cf392f56e14d2557af78db159846dbf2a94d12ea37a29d2b2b",
+    "dirty": false,
     "fixture": "original-nonograms-pack",
     "requestedSeed": "0",
-    "revision": "53787e5b018d8d7749eb14ebaff7f909bfe3722a"
+    "revision": "278694f45c5084a14aa5c33414f236cd48b214d3"
   },
   "version": 1
 }

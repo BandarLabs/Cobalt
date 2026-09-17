@@ -1,5 +1,5 @@
 {
-  "paints": 7,
+  "paints": 81,
   "nodes": [
     {
       "kind": "StatusBand",
@@ -106,7 +106,7 @@
       },
       "action": null,
       "lines": [
-        "Row 1"
+        "Photo puzzles"
       ]
     },
     {
@@ -134,11 +134,99 @@
       },
       "action": null,
       "lines": [
-        "5"
+        "Choose the size used on your computer."
       ]
     },
     {
-      "kind": "Spacer",
+      "kind": "FactLabel",
+      "x": 47,
+      "y": 265,
+      "width": 76,
+      "height": 50,
+      "centre": {
+        "x": 85,
+        "y": 290
+      },
+      "action": null,
+      "lines": [
+        "Grid"
+      ]
+    },
+    {
+      "kind": "FactValue",
+      "x": 147,
+      "y": 251,
+      "width": 878,
+      "height": 64,
+      "centre": {
+        "x": 586,
+        "y": 283
+      },
+      "action": null,
+      "lines": [
+        "9\u00d79"
+      ]
+    },
+    {
+      "kind": "Banner(Attention)",
+      "x": 47,
+      "y": 339,
+      "width": 978,
+      "height": 112,
+      "centre": {
+        "x": 536,
+        "y": 395
+      },
+      "action": null,
+      "lines": [
+        "Imported 1 puzzle."
+      ]
+    },
+    {
+      "kind": "Band",
+      "x": 47,
+      "y": 463,
+      "width": 978,
+      "height": 118,
+      "centre": {
+        "x": 536,
+        "y": 522
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Button(ActionId(3793428019), Enabled, Normal)",
+      "x": 190,
+      "y": 463,
+      "width": 190,
+      "height": 118,
+      "centre": {
+        "x": 285,
+        "y": 522
+      },
+      "action": 3793428019,
+      "lines": [
+        "Size"
+      ]
+    },
+    {
+      "kind": "Button(ActionId(1680217650), Enabled, Normal)",
+      "x": 662,
+      "y": 463,
+      "width": 249,
+      "height": 118,
+      "centre": {
+        "x": 786,
+        "y": 522
+      },
+      "action": 1680217650,
+      "lines": [
+        "Import"
+      ]
+    },
+    {
+      "kind": "NavBar",
       "x": 0,
       "y": 1306,
       "width": 1072,
@@ -147,7 +235,7 @@
         "x": 536,
         "y": 1377
       },
-      "action": 4281967466,
+      "action": 659304583,
       "lines": []
     },
     {
@@ -160,22 +248,37 @@
         "x": 536,
         "y": 1308
       },
-      "action": null,
+      "action": 659304583,
       "lines": []
     },
     {
-      "kind": "Button(ActionId(4281967466), Enabled, Normal)",
-      "x": 47,
-      "y": 1320,
-      "width": 978,
-      "height": 118,
+      "kind": "NavDestination(ActionId(386339789), None)",
+      "x": 0,
+      "y": 1306,
+      "width": 536,
+      "height": 142,
       "centre": {
-        "x": 536,
-        "y": 1379
+        "x": 268,
+        "y": 1377
       },
-      "action": 4281967466,
+      "action": 386339789,
       "lines": [
-        "Back to puzzle"
+        "Help"
+      ]
+    },
+    {
+      "kind": "NavDestination(ActionId(659304583), None)",
+      "x": 536,
+      "y": 1306,
+      "width": 536,
+      "height": 142,
+      "centre": {
+        "x": 804,
+        "y": 1377
+      },
+      "action": 659304583,
+      "lines": [
+        "Puzzles"
       ]
     }
   ]

@@ -1,0 +1,504 @@
+{
+  "paints": 82,
+  "nodes": [
+    {
+      "kind": "StatusBand",
+      "x": 0,
+      "y": 0,
+      "width": 1072,
+      "height": 59,
+      "centre": {
+        "x": 536,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusClock",
+      "x": 47,
+      "y": 0,
+      "width": 112,
+      "height": 59,
+      "centre": {
+        "x": 103,
+        "y": 29
+      },
+      "action": null,
+      "lines": [
+        "07:01"
+      ]
+    },
+    {
+      "kind": "StatusBattery(Some(Percent(72)), false)",
+      "x": 955,
+      "y": 12,
+      "width": 70,
+      "height": 35,
+      "centre": {
+        "x": 990,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusSignal(Strong)",
+      "x": 896,
+      "y": 12,
+      "width": 35,
+      "height": 35,
+      "centre": {
+        "x": 913,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "StatusBluetooth",
+      "x": 837,
+      "y": 12,
+      "width": 35,
+      "height": 35,
+      "centre": {
+        "x": 854,
+        "y": 29
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "TopBar",
+      "x": 0,
+      "y": 59,
+      "width": 1072,
+      "height": 100,
+      "centre": {
+        "x": 536,
+        "y": 109
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Back",
+      "x": 47,
+      "y": 59,
+      "width": 100,
+      "height": 100,
+      "centre": {
+        "x": 97,
+        "y": 109
+      },
+      "action": 4294967295,
+      "lines": []
+    },
+    {
+      "kind": "TopBarTitle",
+      "x": 171,
+      "y": 77,
+      "width": 854,
+      "height": 64,
+      "centre": {
+        "x": 598,
+        "y": 109
+      },
+      "action": null,
+      "lines": [
+        "Nonograms"
+      ]
+    },
+    {
+      "kind": "Divider",
+      "x": 0,
+      "y": 159,
+      "width": 1072,
+      "height": 4,
+      "centre": {
+        "x": 536,
+        "y": 161
+      },
+      "action": null,
+      "lines": []
+    },
+    {
+      "kind": "Section",
+      "x": 47,
+      "y": 199,
+      "width": 978,
+      "height": 50,
+      "centre": {
+        "x": 536,
+        "y": 224
+      },
+      "action": 1112806980,
+      "lines": [
+        "Picture puzzles",
+        "19 puzzles"
+      ]
+    },
+    {
+      "kind": "Row(ActionId(2230066880))",
+      "x": 47,
+      "y": 273,
+      "width": 978,
+      "height": 162,
+      "centre": {
+        "x": 536,
+        "y": 354
+      },
+      "action": 2230066880,
+      "lines": []
+    },
+    {
+      "kind": "RowLead(Icon(Grid))",
+      "x": 47,
+      "y": 307,
+      "width": 44,
+      "height": 44,
+      "centre": {
+        "x": 69,
+        "y": 329
+      },
+      "action": 2230066880,
+      "lines": []
+    },
+    {
+      "kind": "RowTitle",
+      "x": 115,
+      "y": 297,
+      "width": 886,
+      "height": 64,
+      "centre": {
+        "x": 558,
+        "y": 329
+      },
+      "action": 2230066880,
+      "lines": [
+        "Anchor"
+      ]
+    },
+    {
+      "kind": "RowSummary",
+      "x": 115,
+      "y": 361,
+      "width": 886,
+      "height": 50,
+      "centre": {
+        "x": 558,
+        "y": 386
+      },
+      "action": 2230066880,
+      "lines": [
+        "Not started \u00b7 15\u00d715 \u00b7 Pan to play"
+      ]
+    },
+    {
+      "kind": "RowRule",
+      "x": 115,
+      "y": 447,
+      "width": 910,
+      "height": 4,
+      "centre": {
+        "x": 570,
+        "y": 449
+      },
+      "action": 1112806980,
+      "lines": []
+    },
+    {
+      "kind": "Row(ActionId(2280399737))",
+      "x": 47,
+      "y": 459,
+      "width": 978,
+      "height": 162,
+      "centre": {
+        "x": 536,
+        "y": 540
+      },
+      "action": 2280399737,
+      "lines": []
+    },
+    {
+      "kind": "RowLead(Icon(Grid))",
+      "x": 47,
+      "y": 493,
+      "width": 44,
+      "height": 44,
+      "centre": {
+        "x": 69,
+        "y": 515
+      },
+      "action": 2280399737,
+      "lines": []
+    },
+    {
+      "kind": "RowTitle",
+      "x": 115,
+      "y": 483,
+      "width": 886,
+      "height": 64,
+      "centre": {
+        "x": 558,
+        "y": 515
+      },
+      "action": 2280399737,
+      "lines": [
+        "Castle"
+      ]
+    },
+    {
+      "kind": "RowSummary",
+      "x": 115,
+      "y": 547,
+      "width": 886,
+      "height": 50,
+      "centre": {
+        "x": 558,
+        "y": 572
+      },
+      "action": 2280399737,
+      "lines": [
+        "Not started \u00b7 25\u00d725 \u00b7 Pan to play"
+      ]
+    },
+    {
+      "kind": "RowRule",
+      "x": 115,
+      "y": 633,
+      "width": 910,
+      "height": 4,
+      "centre": {
+        "x": 570,
+        "y": 635
+      },
+      "action": 1112806980,
+      "lines": []
+    },
+    {
+      "kind": "Row(ActionId(2263622118))",
+      "x": 47,
+      "y": 645,
+      "width": 978,
+      "height": 162,
+      "centre": {
+        "x": 536,
+        "y": 726
+      },
+      "action": 2263622118,
+      "lines": []
+    },
+    {
+      "kind": "RowLead(Icon(Grid))",
+      "x": 47,
+      "y": 679,
+      "width": 44,
+      "height": 44,
+      "centre": {
+        "x": 69,
+        "y": 701
+      },
+      "action": 2263622118,
+      "lines": []
+    },
+    {
+      "kind": "RowTitle",
+      "x": 115,
+      "y": 669,
+      "width": 886,
+      "height": 64,
+      "centre": {
+        "x": 558,
+        "y": 701
+      },
+      "action": 2263622118,
+      "lines": [
+        "Bridge"
+      ]
+    },
+    {
+      "kind": "RowSummary",
+      "x": 115,
+      "y": 733,
+      "width": 886,
+      "height": 50,
+      "centre": {
+        "x": 558,
+        "y": 758
+      },
+      "action": 2263622118,
+      "lines": [
+        "Not started \u00b7 25\u00d725 \u00b7 Pan to play"
+      ]
+    },
+    {
+      "kind": "RowRule",
+      "x": 115,
+      "y": 819,
+      "width": 910,
+      "height": 4,
+      "centre": {
+        "x": 570,
+        "y": 821
+      },
+      "action": 1112806980,
+      "lines": []
+    },
+    {
+      "kind": "Row(ActionId(2448175927))",
+      "x": 47,
+      "y": 831,
+      "width": 978,
+      "height": 162,
+      "centre": {
+        "x": 536,
+        "y": 912
+      },
+      "action": 2448175927,
+      "lines": []
+    },
+    {
+      "kind": "RowLead(Icon(Grid))",
+      "x": 47,
+      "y": 865,
+      "width": 44,
+      "height": 44,
+      "centre": {
+        "x": 69,
+        "y": 887
+      },
+      "action": 2448175927,
+      "lines": []
+    },
+    {
+      "kind": "RowTitle",
+      "x": 115,
+      "y": 855,
+      "width": 886,
+      "height": 64,
+      "centre": {
+        "x": 558,
+        "y": 887
+      },
+      "action": 2448175927,
+      "lines": [
+        "The Moon"
+      ]
+    },
+    {
+      "kind": "RowSummary",
+      "x": 115,
+      "y": 919,
+      "width": 886,
+      "height": 50,
+      "centre": {
+        "x": 558,
+        "y": 944
+      },
+      "action": 2448175927,
+      "lines": [
+        "Not started \u00b7 5\u00d75 \u00b7 Easy"
+      ]
+    },
+    {
+      "kind": "NavBar",
+      "x": 0,
+      "y": 1306,
+      "width": 1072,
+      "height": 142,
+      "centre": {
+        "x": 536,
+        "y": 1377
+      },
+      "action": 1524496950,
+      "lines": []
+    },
+    {
+      "kind": "Divider",
+      "x": 0,
+      "y": 1306,
+      "width": 1072,
+      "height": 4,
+      "centre": {
+        "x": 536,
+        "y": 1308
+      },
+      "action": 1524496950,
+      "lines": []
+    },
+    {
+      "kind": "NavDestination(ActionId(2166822627), None)",
+      "x": 0,
+      "y": 1306,
+      "width": 357,
+      "height": 142,
+      "centre": {
+        "x": 178,
+        "y": 1377
+      },
+      "action": 2166822627,
+      "lines": [
+        "Photos"
+      ]
+    },
+    {
+      "kind": "NavDestination(ActionId(1524496950), None)",
+      "x": 357,
+      "y": 1306,
+      "width": 357,
+      "height": 142,
+      "centre": {
+        "x": 535,
+        "y": 1377
+      },
+      "action": 1524496950,
+      "lines": [
+        "Help"
+      ]
+    },
+    {
+      "kind": "NavDestination(ActionId(3481538443), None)",
+      "x": 714,
+      "y": 1306,
+      "width": 358,
+      "height": 142,
+      "centre": {
+        "x": 893,
+        "y": 1377
+      },
+      "action": 3481538443,
+      "lines": [
+        "Earlier"
+      ]
+    },
+    {
+      "kind": "PagePosition",
+      "x": 47,
+      "y": 1223,
+      "width": 978,
+      "height": 83,
+      "centre": {
+        "x": 536,
+        "y": 1264
+      },
+      "action": null,
+      "lines": [
+        "4 of 4"
+      ]
+    },
+    {
+      "kind": "PagePrevious(ActionId(50142212))",
+      "x": 47,
+      "y": 1223,
+      "width": 118,
+      "height": 83,
+      "centre": {
+        "x": 106,
+        "y": 1264
+      },
+      "action": 50142212,
+      "lines": []
+    }
+  ]
+}

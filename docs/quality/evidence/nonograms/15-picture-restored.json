@@ -29,13 +29,13 @@
   "frame": {
     "colourAppearance": "luminance",
     "format": "grey8",
-    "sha256": "630bdf47ead81ef2506036d6d0eb3c76cda6dae3c4d17bfa7c07866403ac4c89",
+    "sha256": "a562def68d61d408cf79b500a32a59f4d0b1b59625568ea4496fb5d59a2e4a7e",
     "view": "ideal"
   },
   "interfaceScalePercent": 140,
   "mode": "single-app",
   "orientation": "portrait",
-  "paints": "4",
+  "paints": "3",
   "publisherFontHandle": null,
   "readingScalePercent": 100,
   "runtimeVersion": "0.3.17",
@@ -60,7 +60,7 @@
       "unixMillis": "1788850860000",
       "utcOffsetMinutes": 0
     },
-    "dirtyPixelsSinceClean": 230196,
+    "dirtyPixelsSinceClean": 190668,
     "hardware": {
       "batteryPercent": 72,
       "charging": false,
@@ -74,7 +74,7 @@
       "forwardKey": 194,
       "needsResynchronization": false,
       "quiescent": true,
-      "rawEvents": "14",
+      "rawEvents": "7",
       "source": "synthetic evdev replay"
     },
     "lifecycle": "foreground",
@@ -86,16 +86,16 @@
     },
     "observation": null,
     "panel": {
-      "completed": "4",
+      "completed": "3",
       "contentsKnown": true,
       "failures": "0",
-      "finishedAtMillis": "1230",
+      "finishedAtMillis": "910",
       "mode": "automatic",
       "queued": false,
       "status": "idle",
       "submissionMarker": null,
-      "submitted": "4",
-      "submittedAtMillis": "1194",
+      "submitted": "3",
+      "submittedAtMillis": "877",
       "timing": "host control observations; not hardware calibration",
       "visibleFrame": "last confirmed completion with approximate residue"
     },
@@ -117,7 +117,7 @@
       },
       "width": 1072
     },
-    "refreshCount": 4,
+    "refreshCount": 3,
     "scenario": "normal",
     "touch": {
       "display": {
@@ -130,9 +130,9 @@
       }
     },
     "transition": {
-      "dirty": 230196,
+      "dirty": 190668,
       "full": false,
-      "refresh": 4,
+      "refresh": 3,
       "region": {
         "height": 1128,
         "width": 928,

@@ -3,8 +3,8 @@
   "profile": "clara-bw-391",
   "scale": "extra-large",
   "original_fixture": true,
-  "source_head": "53787e5b018d8d7749eb14ebaff7f909bfe3722a",
-  "source_dirty": true,
+  "source_head": "278694f45c5084a14aa5c33414f236cd48b214d3",
+  "source_dirty": false,
   "checks": [
     "attached clues",
     "mark selection",
@@ -19,6 +19,12 @@
     "25x25 panning",
     "last square restart",
     "all help pages",
-    "committed route"
+    "committed route",
+    "new picture restart",
+    "earlier save preserved",
+    "new picture completion",
+    "manifest import",
+    "imported names listed",
+    "import sync removes missing photos"
   ]
 }

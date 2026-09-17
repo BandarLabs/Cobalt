@@ -29,16 +29,16 @@
   "frame": {
     "colourAppearance": "luminance",
     "format": "grey8",
-    "sha256": "162a32ba36474d42bd9b179771726ba641d37fc206695780d5b1d4ea918ba881",
+    "sha256": "bf749db71d3f9cc6b5ceedfaa667ed813f8814c27ab3d70bfef7bcda4daedfda",
     "view": "ideal"
   },
   "interfaceScalePercent": 140,
   "mode": "single-app",
   "orientation": "portrait",
-  "paints": "3",
+  "paints": "81",
   "publisherFontHandle": null,
   "readingScalePercent": 100,
-  "runtimeVersion": "0.3.12",
+  "runtimeVersion": "0.3.17",
   "schema": "cobalt.simulator-capture",
   "simulation": {
     "appStore": {
@@ -60,7 +60,7 @@
       "unixMillis": "1788850860000",
       "utcOffsetMinutes": 0
     },
-    "dirtyPixelsSinceClean": 203550,
+    "dirtyPixelsSinceClean": 4233246,
     "hardware": {
       "batteryPercent": 72,
       "charging": false,
@@ -74,7 +74,7 @@
       "forwardKey": 194,
       "needsResynchronization": false,
       "quiescent": true,
-      "rawEvents": "7",
+      "rawEvents": "322",
       "source": "synthetic evdev replay"
     },
     "lifecycle": "foreground",
@@ -86,16 +86,16 @@
     },
     "observation": null,
     "panel": {
-      "completed": "3",
+      "completed": "81",
       "contentsKnown": true,
       "failures": "0",
-      "finishedAtMillis": "529",
+      "finishedAtMillis": "13039",
       "mode": "automatic",
       "queued": false,
       "status": "idle",
       "submissionMarker": null,
-      "submitted": "3",
-      "submittedAtMillis": "516",
+      "submitted": "81",
+      "submittedAtMillis": "13038",
       "timing": "host control observations; not hardware calibration",
       "visibleFrame": "last confirmed completion with approximate residue"
     },
@@ -117,80 +117,35 @@
       },
       "width": 1072
     },
-    "refreshCount": 3,
+    "refreshCount": 81,
     "scenario": "normal",
     "touch": {
       "display": {
-        "x": 804,
-        "y": 1377
+        "x": 786,
+        "y": 398
       },
       "raw": {
-        "x": 1377,
-        "y": 267
+        "x": 398,
+        "y": 285
       }
     },
     "transition": {
-      "dirty": 203550,
+      "dirty": 4233246,
       "full": false,
-      "refresh": 3,
+      "refresh": 81,
       "region": {
-        "height": 1312,
-        "width": 992,
-        "x": 40,
-        "y": 88
+        "height": 56,
+        "width": 600,
+        "x": 80,
+        "y": 368
       },
       "regions": [
         {
           "region": {
-            "height": 48,
-            "width": 256,
-            "x": 176,
-            "y": 88
-          },
-          "waveform": "GL16"
-        },
-        {
-          "region": {
-            "height": 456,
-            "width": 992,
-            "x": 40,
-            "y": 184
-          },
-          "waveform": "GL16"
-        },
-        {
-          "region": {
-            "height": 320,
-            "width": 984,
-            "x": 48,
-            "y": 656
-          },
-          "waveform": "GL16"
-        },
-        {
-          "region": {
-            "height": 152,
-            "width": 992,
-            "x": 40,
-            "y": 1000
-          },
-          "waveform": "GL16"
-        },
-        {
-          "region": {
-            "height": 32,
-            "width": 112,
-            "x": 480,
-            "y": 1248
-          },
-          "waveform": "GL16"
-        },
-        {
-          "region": {
-            "height": 40,
-            "width": 760,
-            "x": 152,
-            "y": 1360
+            "height": 56,
+            "width": 600,
+            "x": 80,
+            "y": 368
           },
           "waveform": "GL16"
         }
@@ -199,11 +154,11 @@
     }
   },
   "source": {
-    "binarySha256": "4ad616e0b698c56dcc92b2e49b4199b2e853d29d141a712ae2719920f790849c",
-    "dirty": true,
+    "binarySha256": "04fe8f6feb8c99cf392f56e14d2557af78db159846dbf2a94d12ea37a29d2b2b",
+    "dirty": false,
     "fixture": "original-nonograms-pack",
     "requestedSeed": "0",
-    "revision": "53787e5b018d8d7749eb14ebaff7f909bfe3722a"
+    "revision": "278694f45c5084a14aa5c33414f236cd48b214d3"
   },
   "version": 1
 }

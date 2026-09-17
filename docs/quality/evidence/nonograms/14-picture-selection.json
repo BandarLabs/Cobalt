@@ -29,16 +29,16 @@
   "frame": {
     "colourAppearance": "luminance",
     "format": "grey8",
-    "sha256": "022ca334a49a6da7e95a7cb1fbde696bc6815f340cfe26c84993444abd2e1707",
+    "sha256": "a562def68d61d408cf79b500a32a59f4d0b1b59625568ea4496fb5d59a2e4a7e",
     "view": "ideal"
   },
   "interfaceScalePercent": 140,
   "mode": "single-app",
   "orientation": "portrait",
-  "paints": "14",
+  "paints": "13",
   "publisherFontHandle": null,
   "readingScalePercent": 100,
-  "runtimeVersion": "0.3.12",
+  "runtimeVersion": "0.3.17",
   "schema": "cobalt.simulator-capture",
   "simulation": {
     "appStore": {
@@ -60,7 +60,7 @@
       "unixMillis": "1788850860000",
       "utcOffsetMinutes": 0
     },
-    "dirtyPixelsSinceClean": 1487630,
+    "dirtyPixelsSinceClean": 1532537,
     "hardware": {
       "batteryPercent": 72,
       "charging": false,
@@ -86,16 +86,16 @@
     },
     "observation": null,
     "panel": {
-      "completed": "14",
+      "completed": "13",
       "contentsKnown": true,
       "failures": "0",
-      "finishedAtMillis": "2469",
+      "finishedAtMillis": "3458",
       "mode": "automatic",
       "queued": false,
       "status": "idle",
       "submissionMarker": null,
-      "submitted": "14",
-      "submittedAtMillis": "2453",
+      "submitted": "13",
+      "submittedAtMillis": "3423",
       "timing": "host control observations; not hardware calibration",
       "visibleFrame": "last confirmed completion with approximate residue"
     },
@@ -117,7 +117,7 @@
       },
       "width": 1072
     },
-    "refreshCount": 14,
+    "refreshCount": 13,
     "scenario": "normal",
     "touch": {
       "display": {
@@ -130,9 +130,9 @@
       }
     },
     "transition": {
-      "dirty": 1487630,
+      "dirty": 1532537,
       "full": false,
-      "refresh": 14,
+      "refresh": 13,
       "region": {
         "height": 1224,
         "width": 992,
@@ -163,11 +163,11 @@
     }
   },
   "source": {
-    "binarySha256": "4ad616e0b698c56dcc92b2e49b4199b2e853d29d141a712ae2719920f790849c",
-    "dirty": true,
+    "binarySha256": "04fe8f6feb8c99cf392f56e14d2557af78db159846dbf2a94d12ea37a29d2b2b",
+    "dirty": false,
     "fixture": "original-nonograms-pack",
     "requestedSeed": "0",
-    "revision": "53787e5b018d8d7749eb14ebaff7f909bfe3722a"
+    "revision": "278694f45c5084a14aa5c33414f236cd48b214d3"
   },
   "version": 1
 }
