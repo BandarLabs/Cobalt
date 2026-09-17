@@ -14,11 +14,13 @@ acknowledged. A failed save shows **Retry saving**; Settings remains available
 from the reading list. The collection is bounded to 8 MiB, and extracted article
 text is stored verbatim, including Unicode and paragraph breaks.
 
-Full simulator restart/recovery validation, acknowledged archive/star replay,
-filtering and reading pagination remain under LATER-01 through LATER-06. The app
-is not yet a complete offline Wallabag client.
-
 ![Read Later setup on the Clara BW simulator](screenshots/readlater-setup.png)
+
+![The unread reading list after a sync against a live Wallabag account](../../docs/quality/evidence/readlater/readlater-queue.png)
+
+![A full article body, paged, with star and archive controls](../../docs/quality/evidence/readlater/readlater-article.png)
+
+![The Starred tab reading the server's own filter](../../docs/quality/evidence/readlater/readlater-starred-tab.png)
 
 Sign in from a computer with `kobo readlater login`: it completes Wallabag's
 OAuth exchange and delivers the session to the reader, and the app renews the

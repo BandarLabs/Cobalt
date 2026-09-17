@@ -2807,10 +2807,11 @@
     "pr": 3,
     "group": "Read Later (APP-5/6)",
     "task": "Persist fetched full article bodies",
-    "status": "todo",
+    "status": "done",
     "evidence": [
       "Read Later 0.1.3 preserves fetched full bodies across same-server/credential metadata refreshes. Malformed, invalid-UTF-8, missing-list, invalid-entry and duplicate-ID responses are distinct from a valid empty list and cannot wipe current articles. Request origins reject replies after server/credential changes; body reuse is scoped to the same origin. Nine app/parser tests and strict Clippy pass. Durable disk storage remains open.",
-      "Read Later 0.1.4 writes full extracted article bodies through the shared acknowledged two-slot Snapshot, scoped to server and credential name and bounded to 8 MiB. Its versioned codec preserves literal markup, Unicode and paragraphs. Unit coverage verifies publication only after content/pointer acknowledgements, restore in a fresh app instance, previous-copy retention after a full-disk failure, and merging a late snapshot with fresh metadata. All 12 tests and strict Clippy pass. Complete simulator restart/recovery validation remains open."
+      "Read Later 0.1.4 writes full extracted article bodies through the shared acknowledged two-slot Snapshot, scoped to server and credential name and bounded to 8 MiB. Its versioned codec preserves literal markup, Unicode and paragraphs. Unit coverage verifies publication only after content/pointer acknowledgements, restore in a fresh app instance, previous-copy retention after a full-disk failure, and merging a late snapshot with fresh metadata. All 12 tests and strict Clippy pass. Complete simulator restart/recovery validation remains open.",
+      "docs/quality/evidence/readlater/result.json (scripts/quality/check-readlater-shelf-sim.py against the live app.wallabag.it account, session installed by the real `kobo readlater login` CLI): the 'full article bodies' check opened the 59-minute article with its whole extracted body; the 'restart restores the library' check brought the list, bodies and places back from the acknowledged two-slot Snapshot after a full simulator restart with no network read. 19 app tests, 144 policy tests and strict workspace Clippy pass."
     ]
   },
   {
@@ -2818,18 +2819,21 @@
     "pr": 3,
     "group": "Read Later (APP-5/6)",
     "task": "Implement acknowledged durable archive/star/read outbox",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "docs/quality/evidence/readlater/result.json (scripts/quality/check-readlater-shelf-sim.py against the live app.wallabag.it account, session installed by the real `kobo readlater login` CLI): the 'outbox drain' check queued a star and an archive locally, posted both to Wallabag with acknowledged PATCH writes on one Sync and read the list back only after the drain; the outbox persists in the device store across restarts. Wallabag has no separate read flag; archiving is the read flow. 19 app tests, 144 policy tests and strict workspace Clippy pass."
+    ]
   },
   {
     "id": "LATER-03",
     "pr": 3,
     "group": "Read Later (APP-5/6)",
     "task": "Wire all visible tabs and action controls",
-    "status": "todo",
+    "status": "done",
     "evidence": [
       "Restored the visible queue Sync action by setting the title before its action. The actual queue render in docs/quality/evidence/readlater-refresh/refresh-failed.png was inspected. Other tabs and article controls remain open.",
-      "Added Settings to the configured reading-list header alongside Sync, making the article-depth controls reachable. Other tab and article actions remain open."
+      "Added Settings to the configured reading-list header alongside Sync, making the article-depth controls reachable. Other tab and article actions remain open.",
+      "docs/quality/evidence/readlater/result.json (scripts/quality/check-readlater-shelf-sim.py against the live app.wallabag.it account, session installed by the real `kobo readlater login` CLI): the journey exercised every visible control: Unread/Starred/Archive tabs reading the server's own filters, article Star and Archive, Previous/Next paging and Reading list back-navigation. 19 app tests, 144 policy tests and strict workspace Clippy pass."
     ]
   },
   {
@@ -2837,18 +2841,21 @@
     "pr": 3,
     "group": "Read Later (APP-5/6)",
     "task": "Paginate and retain reading position",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "docs/quality/evidence/readlater/result.json (scripts/quality/check-readlater-shelf-sim.py against the live app.wallabag.it account, session installed by the real `kobo readlater login` CLI): the long article paged forward and back; the snapshot codec carries the word-offset reading position, and the restore check plus the acknowledged-snapshot unit test verify positions survive a process restart. 19 app tests, 144 policy tests and strict workspace Clippy pass."
+    ]
   },
   {
     "id": "LATER-05",
     "pr": 3,
     "group": "Read Later (APP-5/6)",
     "task": "Show pending/retry/offline state",
-    "status": "todo",
+    "status": "done",
     "evidence": [
       "Unreadable list responses now retain the current queue and explain that articles are unchanged, with a visible Sync control for retry. Local runtime-font fixture screenshot inspected; nine tests and strict Clippy pass. Full outbox/retry/offline state remains open.",
-      "Save failures retain the prior snapshot and expose Retry saving; changing server configuration waits for outstanding/failed snapshot writes to finish. Inspected the actual queue render with runtime fonts in docs/quality/evidence/readlater-cache/save-failed.png. Full recovery and action-outbox state remain open."
+      "Save failures retain the prior snapshot and expose Retry saving; changing server configuration waits for outstanding/failed snapshot writes to finish. Inspected the actual queue render with runtime fonts in docs/quality/evidence/readlater-cache/save-failed.png. Full recovery and action-outbox state remain open.",
+      "docs/quality/evidence/readlater/result.json (scripts/quality/check-readlater-shelf-sim.py against the live app.wallabag.it account, session installed by the real `kobo readlater login` CLI): the queue shows the pending-action count through the outbox drain and returns to zero after it. Refresh-failure and save-failure surfaces keep the prior articles and offer Retry, evidenced under docs/quality/evidence/readlater-refresh/ and readlater-cache/. 19 app tests, 144 policy tests and strict workspace Clippy pass."
     ]
   },
   {
@@ -2856,8 +2863,10 @@
     "pr": 3,
     "group": "Read Later (APP-5/6)",
     "task": "Verify reconnect, server effects and process restart",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "docs/quality/evidence/readlater/result.json (scripts/quality/check-readlater-shelf-sim.py against the live app.wallabag.it account, session installed by the real `kobo readlater login` CLI): the 'server-side effects verified' check read the Wallabag API directly and found the star and the archive the app sent (then restored both), and 'restart restores the library' reconnected a fresh process to the signed-in account. 19 app tests, 144 policy tests and strict workspace Clippy pass."
+    ]
   },
   {
     "id": "FEEDS-01",

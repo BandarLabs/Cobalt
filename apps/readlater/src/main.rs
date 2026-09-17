@@ -449,7 +449,9 @@ impl ReadLater {
             self.pending.len(),
             if self.pending.len() == 1 { "" } else { "s" }
         ));
-        // Wallabag applies entry flags by PATCH; POST is refused there.
+        // Wallabag applies entry flags by PATCH; POST is refused there. The
+        // answer echoes the whole entry, body included, so the ceiling is the
+        // fetch ceiling rather than a flag's size.
         if let Some(id) = context.spawn_retrying(Task::Update {
             method: UpdateMethod::Patch,
             url: wallabag::entry_url(&self.server(), action.id),
@@ -457,7 +459,7 @@ impl ReadLater {
             content_type: "application/json".to_owned(),
             credential: Some(Credential::bearer(CREDENTIAL)),
             headers: Vec::new(),
-            max_bytes: 16 * 1024,
+            max_bytes: 512 * 1024,
         }) {
             self.task = Some((id, PendingTask::Outbox));
             self.task_origin = Some(self.server());
@@ -656,6 +658,11 @@ impl KoboApp for ReadLater {
             if key == session::STORE_KEY {
                 if let Some(value) = &value {
                     self.session = session::decode(value);
+                }
+                // CONFIG and the session load concurrently; whichever arrives
+                // last opens the cache.
+                if self.snapshot.is_none() {
+                    self.open_cache(context);
                 }
             }
             if key == CONFIG {
@@ -1132,6 +1139,36 @@ mod tests {
         assert_eq!(reopened.entries, app.entries);
         assert_eq!(reopened.entries_origin, Some(app.server.clone()));
         failed_save_preserves_snapshot(&mut app, &mut context);
+    }
+
+    #[test]
+    fn session_loaded_after_config_still_opens_the_cache() {
+        let mut app = ReadLater::default();
+        let mut context = Context::default();
+        app.on_load(
+            &mut context,
+            CONFIG,
+            StoreResult::Loaded {
+                key: CONFIG.into(),
+                value: None,
+            },
+        );
+        assert!(app.snapshot.is_none());
+        let session = session::Session {
+            server: "https://bag.example".into(),
+            client_id: "id".into(),
+            client_secret: "secret".into(),
+            refresh_token: "refresh".into(),
+        };
+        app.on_load(
+            &mut context,
+            session::STORE_KEY,
+            StoreResult::Loaded {
+                key: session::STORE_KEY.into(),
+                value: Some(session::encode(&session)),
+            },
+        );
+        assert!(app.snapshot.is_some());
     }
 
     fn failed_save_preserves_snapshot(app: &mut ReadLater, context: &mut Context) {

@@ -566,9 +566,7 @@ fn readlater_server_allowed(
                     || wallabag_entry_document(&path)
             }
             CredentialUse::Post => wallabag_entry_document(&path),
-            CredentialUse::Patch => {
-                wallabag_entry_document(&path) && wallabag_flag_body(body)
-            }
+            CredentialUse::Patch => wallabag_entry_document(&path) && wallabag_flag_body(body),
             CredentialUse::Put => false,
         })
 }
@@ -577,7 +575,7 @@ fn readlater_server_allowed(
 fn wallabag_flag_body(body: Option<&str>) -> bool {
     matches!(
         body,
-        Some(r#"{"archive":0}"# | r#"{"archive":1}"# | r#"{"star":0}"# | r#"{"star":1}"#)
+        Some(r#"{"archive":0}"# | r#"{"archive":1}"# | r#"{"starred":0}"# | r#"{"starred":1}"#)
     )
 }
 
@@ -965,8 +963,8 @@ mod tests {
         for body in [
             r#"{"archive":1}"#,
             r#"{"archive":0}"#,
-            r#"{"star":1}"#,
-            r#"{"star":0}"#,
+            r#"{"starred":1}"#,
+            r#"{"starred":0}"#,
         ] {
             assert!(
                 allowed_request(
@@ -1002,7 +1000,7 @@ mod tests {
             &credential,
             "https://read.example/api/entries.json?detail=metadata",
             CredentialUse::Patch,
-            Some(r#"{"star":1}"#),
+            Some(r#"{"starred":1}"#),
             None
         ));
         assert!(allowed_request_with_server(

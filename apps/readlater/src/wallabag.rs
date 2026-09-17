@@ -32,7 +32,7 @@ pub fn archive_body(archived: bool) -> String {
 }
 
 pub fn star_body(starred: bool) -> String {
-    format!("{{\"star\":{}}}", u8::from(starred))
+    format!("{{\"starred\":{}}}", u8::from(starred))
 }
 
 pub fn entry_url(server: &str, id: u64) -> String {
@@ -188,7 +188,7 @@ mod tests {
         assert!(entry.starred);
         assert!(!entry.archived);
         assert_eq!(archive_body(true), r#"{"archive":1}"#);
-        assert_eq!(star_body(false), r#"{"star":0}"#);
+        assert_eq!(star_body(false), r#"{"starred":0}"#);
     }
 
     #[test]

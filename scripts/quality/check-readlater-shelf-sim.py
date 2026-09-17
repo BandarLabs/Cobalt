@@ -224,7 +224,7 @@ def main():
                 api(server, token, "PATCH", f"/api/entries/{ARCHIVE_ID}.json",
                     {"archive": 0})
                 api(server, token, "PATCH", f"/api/entries/{STAR_ID}.json",
-                    {"star": 0})
+                    {"starred": 0})
                 result["checks"].append(dict(
                     name="server-side effects verified",
                     detail="the Wallabag API showed the archive and the star, and both "
