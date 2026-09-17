@@ -40,7 +40,7 @@ const screenshots = {
   crossword: ["crossword.png", "Crossword grid on a Kobo with a selected cell containing C and touch controls for letters and clues."],
   deck: ["deck.png", "Deck showing six paired-computer controls in a two-column Kobo grid."],
   fanshelf: ["fanshelf.png", "Fanshelf's empty shelf, with Add, Followed tags, and Check updates controls."],
-  fieldbook: ["fieldbook.png", "Fieldbook sighting log showing a selected bird, count controls, and a saved lifer notice."],
+  fieldbook: ["fieldbook.png", "Fieldbook outing screen tallying an American Robin from a pushed field pack."],
   flashcards: ["flashcards.png", "Flashcards deck list showing four due cards, today's review count, and a Stats row."],
   frame: ["frame.png", "A full-area monochrome photograph in Frame on a Kobo Clara BW."],
   gallery: ["components.png", "Cobalt typography and interface components on a Kobo"],

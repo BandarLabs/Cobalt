@@ -46,6 +46,10 @@ def seed(app, state, kobo, env, log):
         shelf.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / 'scripts/fixtures/birds/current.json', shelf / 'current.json')
         shutil.copyfile(ROOT / 'scripts/fixtures/birds/current.png', shelf / 'current.png')
+    elif app == 'fieldbook':
+        shelf = Path(state) / 'cobalt-sim-data' / 'fieldbook'
+        shelf.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(ROOT / 'scripts/fixtures/fieldbook/packs.v1', shelf / 'packs.v1')
     elif app == 'vault':
         run('vault', 'init', '--sim')
         run('vault', 'push', str(ROOT / 'scripts/fixtures/vault'), '--sim')

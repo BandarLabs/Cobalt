@@ -1,0 +1,53 @@
+{
+  "format": "fieldbook-shelf",
+  "version": "1",
+  "packs": [
+    {
+      "id": "us-ca-sf",
+      "title": "San Francisco Bay",
+      "region": "US-CA-SF",
+      "issued": "2026-09-01",
+      "species": [
+        {
+          "code": "AMRO",
+          "common": "American Robin",
+          "scientific": "Turdus migratorius"
+        },
+        {
+          "code": "NOFL",
+          "common": "Northern Flicker",
+          "scientific": "Colaptes auratus"
+        },
+        {
+          "code": "CANG",
+          "common": "Canada Goose",
+          "scientific": "Branta canadensis"
+        }
+      ]
+    },
+    {
+      "id": "in-ka-bl",
+      "title": "Bengaluru Urban",
+      "region": "IN-KA-BL",
+      "issued": "2026-08-15",
+      "species": [
+        {
+          "code": "COMY",
+          "common": "Common Myna",
+          "scientific": "Acridotheres tristis"
+        },
+        {
+          "code": "RSPA",
+          "common": "Rose-ringed Parakeet",
+          "scientific": "Psittacula krameri"
+        }
+      ]
+    }
+  ],
+  "failures": [
+    {
+      "input": "legacy-pack.csv",
+      "reason": "unknown format"
+    }
+  ]
+}
