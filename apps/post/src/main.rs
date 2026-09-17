@@ -338,21 +338,20 @@ impl Post {
                 } else {
                     sent.state = ReplyState::Queued;
                     self.notice =
-                        Some("The gateway's answer made no sense; the reply stays queued.".into());
+                        Some("Couldn't read the gateway's answer. The reply stays queued.".into());
                 }
             }
             TaskOutcome::Failed(TaskError::NotFound) => {
                 sent.state = ReplyState::Rejected;
                 self.notice = Some(
-                    "The gateway rejected the reply: it no longer knows the letter. Edit it and send again."
+                    "Reply rejected: the letter no longer exists on the gateway. Edit and send again."
                         .into(),
                 );
             }
             TaskOutcome::Failed(TaskError::TooLarge) => {
                 sent.state = ReplyState::Rejected;
-                self.notice = Some(
-                    "The reply is too long for the gateway. Shorten it and send again.".into(),
-                );
+                self.notice =
+                    Some("Reply too long for the gateway. Shorten and send again.".into());
             }
             TaskOutcome::Failed(TaskError::NoCredential | TaskError::Unauthorized) => {
                 sent.state = ReplyState::Queued;
@@ -361,14 +360,12 @@ impl Post {
             }
             TaskOutcome::Failed(TaskError::RateLimited(_)) => {
                 sent.state = ReplyState::Queued;
-                self.notice = Some(
-                    "The gateway asked for a pause; the reply will send on the next check.".into(),
-                );
+                self.notice =
+                    Some("Rate limited by the gateway. The reply sends on the next check.".into());
             }
             TaskOutcome::Failed(_) | TaskOutcome::Cancelled => {
                 sent.state = ReplyState::Queued;
-                self.notice =
-                    Some("The reply is still queued; it will send on the next connection.".into());
+                self.notice = Some("Reply still queued. It sends on the next connection.".into());
             }
         }
         let delivered = completed && sent.state == ReplyState::Delivered;

@@ -412,7 +412,8 @@ impl ReadLater {
     /// places carry over only within one library, never across servers by id.
     fn queue_completed(&mut self, context: &mut Context, origin: &str, bytes: &[u8]) {
         let Some(mut entries) = wallabag::parse_entries(bytes) else {
-            self.notice = Some("The reading list could not be loaded. Your current articles are unchanged. Try syncing again.".into());
+            self.notice =
+                Some("Couldn't load the reading list. Current articles are unchanged.".into());
             return;
         };
         if self.entries_origin.as_deref() == Some(origin) {

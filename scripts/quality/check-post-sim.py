@@ -208,7 +208,7 @@ def main():
 
                 drive('tap Inbox', 'tap Flaky line', 'wait-for drops once')
                 drive('tap Write a reply', 'type Sending this twice would be wrong',
-                      'tap Send letter', 'wait-for still queued', timeout=300)
+                      'tap Send letter', 'wait-for Reply still queued', timeout=300)
                 drive('tap Inbox', 'tap Check', 'wait-for Sent to Hermes.',
                       timeout=300)
                 flaky = [r for r in gateway.replies if r['letter_id'] == 'l-03']
@@ -220,7 +220,7 @@ def main():
 
                 drive('tap Ghost letter', 'wait-for forgets this letter')
                 drive('tap Write a reply', 'type Anybody there',
-                      'tap Send letter', 'wait-for no longer knows the letter',
+                      'tap Send letter', 'wait-for no longer exists on the gateway',
                       'wait-idle', timeout=300)
                 capture('post-rejected')
                 result['checks'].append(dict(

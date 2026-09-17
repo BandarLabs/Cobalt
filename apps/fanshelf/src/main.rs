@@ -525,7 +525,7 @@ impl Fanshelf {
             .top_bar("Manual updates")
             .top_bar_action("check-all", "Check all")
             .top_bar_action("shelf", "Shelf")
-            .secondary("Nothing runs in the background. This button is the schedule.");
+            .secondary("Updates are manual. Nothing runs in the background.");
         if wips.is_empty() {
             screen = screen.splash(
                 Some(Glyph::Check),
@@ -598,7 +598,7 @@ impl Fanshelf {
             self.sent_request = true;
             self.task = Some((task, Active::Fetching(request)));
         } else {
-            self.message = Some("Fanshelf could not start another request yet.".into());
+            self.message = Some("One request at a time. Try again in a moment.".into());
         }
     }
 
@@ -657,7 +657,8 @@ impl Fanshelf {
             ParsedWork::Locked => self.message = Some(LOCKED.into()),
             ParsedWork::Missing => self.message = Some(REMOVED.into()),
             ParsedWork::Malformed => {
-                self.message = Some("AO3 returned a page Fanshelf could not safely parse.".into());
+                self.message =
+                    Some("Couldn't read AO3's answer. Nothing on the shelf changed.".into());
             }
         }
     }
@@ -700,7 +701,8 @@ impl Fanshelf {
                 self.message = Some(REMOVED.into());
             }
             ParsedWork::Malformed => {
-                self.message = Some("AO3 returned a page Fanshelf could not safely parse.".into());
+                self.message =
+                    Some("Couldn't read AO3's answer. Nothing on the shelf changed.".into());
             }
         }
     }
@@ -740,7 +742,7 @@ impl Fanshelf {
         upload.start(context);
         self.upload = Some(upload);
         self.upload_work = Some(work);
-        self.message = Some("Saving EPUB atomically…".into());
+        self.message = Some("Saving EPUB…".into());
     }
 
     fn start_read(&mut self, context: &mut Context, work: usize) {
@@ -942,9 +944,8 @@ impl KoboApp for Fanshelf {
                         if self.open_after_upload {
                             self.start_read(context, work);
                         } else {
-                            self.message = Some(
-                                "Updated EPUB saved; your reading position is preserved.".into(),
-                            );
+                            self.message =
+                                Some("Updated EPUB saved. Reading position kept.".into());
                         }
                     }
                     self.bytes.clear();
@@ -1017,7 +1018,7 @@ impl KoboApp for Fanshelf {
                         self.tags.push(tag);
                         self.save_tags(context);
                         self.view = View::Follow;
-                        self.message = Some("Tag followed. Open it to fetch its Atom feed.".into());
+                        self.message = Some("Tag followed. Open it to check for new works.".into());
                     }
                 } else {
                     self.message = Some("Enter an AO3 tag name or tag URL.".into());
