@@ -589,8 +589,14 @@ impl Arxiv {
             .split("\n\n")
             .map(|paragraph| (0, 0, QuoteRole::Body, paragraph))
             .collect();
+        // `true` because the paper screen's bottom band is a bottom action
+        // (Full text): the layout engine bounds content by it exactly as it
+        // does a navigation bar, so the pages are measured against that
+        // shorter area. Measured without it, a full first page overflows
+        // into the band and the renderer refuses the screen -- which only a
+        // real abstract, long enough to fill the page, ever showed.
         self.pages = context
-            .paginate_tagged_under(&paragraphs, false, &header)
+            .paginate_tagged_under(&paragraphs, true, &header)
             .into_iter()
             .map(|page| page.into_iter().map(|(_, _, _, text)| text).collect())
             .collect();
@@ -2078,6 +2084,39 @@ mod tests {
                 Command::Store(StoreRequest::Save { key, .. }) if key.starts_with("place.")
             )),
             "leaving the paper saved no place"
+        );
+    }
+
+    /// Reproduces the first live run's refused screen: a real title wraps
+    /// the heading to several lines and a real abstract fills every page,
+    /// and the first page still has to fit exactly.
+    #[test]
+    fn a_long_live_title_paginates_the_abstract_without_overflow() {
+        let mut runner = AppRunner::new(Arxiv::default());
+        let mut live = paper();
+        live.title = "Objective vs. Search: Decomposing What Makes a Good Tokeniser".into();
+        live.authors = vec![
+            "Ahmetcan Yavuz".into(),
+            "Clara Meister".into(),
+            "Tiago Pimentel".into(),
+        ];
+        live.categories = vec!["cs.CL".into(), "cs.AI".into()];
+        live.published = "2026-09-16".into();
+        live.comment = "Accepted at EMNLP 2026. 20 pages, 4 figures, 10 tables. Code: https://github.com/Ahmetcanyvz/comp-vs-like".into();
+        live.summary =
+            "Two dominant tokenisation algorithms are used by modern language models: byte-pair encoding (BPE) and UnigramLM. These differ along two orthogonal axes: their optimisation objective (compression vs. log-likelihood) and their search procedure (bottom-up merging vs. top-down pruning). Existing comparisons confound these axes, making it unclear whether their observed differences stem from what is being optimised vs. how it is being optimised. We disentangle the two by introducing two new tokenisation algorithms that complete this 2x2 design space: BottomUpLL, a bottom-up likelihood-based tokeniser, and TopDownComp, a top-down compression-based tokeniser. The remainder of the abstract carries the evaluation and the conclusions at the same length as the real paper's. ".into();
+        runner.app_mut().papers = vec![live];
+        runner.app_mut().open = Some(0);
+        runner.app_mut().view = View::Paper;
+        let context = runner.context();
+        runner.app_mut().open_abstract(&context);
+        let screen = runner.app().reading();
+        let issues = screen.validate(&kobo_sdk::CLARA_BW_METRICS);
+        assert!(
+            !issues
+                .iter()
+                .any(|issue| matches!(issue.kind, kobo_sdk::LayoutIssueKind::TextOverflow)),
+            "the abstract page overflowed under a live-length title: {issues:?}"
         );
     }
 
