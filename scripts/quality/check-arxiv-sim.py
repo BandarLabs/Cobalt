@@ -442,6 +442,87 @@ def main():
                            "74% and opening it landed on page 4 of 5, the "
                            "place saved before the restart (panel shots "
                            "arxiv-restart-library/-reopened)"))
+                # Saved searches and followed subjects. Back out of the
+                # paper to the library, then to the subjects.
+                drive("tap Back", "wait-for 74%", "wait-idle", timeout=300)
+                drive("tap Back", "wait-for Artificial Intelligence",
+                      "wait-idle", timeout=300)
+
+                # Following is offered on the subject's own listing, and the
+                # bar then says so.
+                drive("tap Artificial Intelligence", "clock advance 1500",
+                      "wait-for Attention Reconsidered", "wait-idle",
+                      timeout=300)
+                assert archive.feeds == 3, "the followed subject refetched"
+                drive("tap Follow this subject", "wait-for Stop following",
+                      "wait-idle", timeout=300)
+                capture("arxiv-followed")
+                drive("tap Back", "wait-for Artificial Intelligence",
+                      "wait-idle", timeout=300)
+                capture("arxiv-subjects-followed")
+                result["checks"].append(dict(
+                    name="following marks the subject",
+                    status="passed",
+                    detail="the listing offered Follow this subject and then "
+                           "said Stop following; the subject list carries the "
+                           "follow mark (panel shots arxiv-followed, "
+                           "arxiv-subjects-followed)"))
+
+                # A word search is saved from its own listing, and Saved
+                # lists it beside the followed subject.
+                drive("tap Search arXiv",
+                      "wait-for A phrase, an author, a title", "wait-idle",
+                      timeout=300)
+                drive("type neural fields", "wait-idle", timeout=300)
+                drive("tap Search", "clock advance 1500",
+                      "wait-for Attention Reconsidered", "wait-idle",
+                      timeout=300)
+                assert archive.feeds == 4, "the typed search fetched the feed"
+                drive("tap Save this search", "wait-idle", timeout=300)
+                drive("tap Back", "wait-for Artificial Intelligence",
+                      "wait-idle", timeout=300)
+                drive("tap Saved", "wait-for neural fields",
+                      "wait-for Artificial Intelligence", "wait-idle",
+                      timeout=300)
+                capture("arxiv-saved")
+                result["checks"].append(dict(
+                    name="Saved lists searches and subjects",
+                    status="passed",
+                    detail="the typed search saved from its listing and the "
+                           "followed subject are listed together in Saved "
+                           "(panel shot arxiv-saved)"))
+
+                # A saved row runs its search again, without the keyboard.
+                drive("tap neural fields", "clock advance 1500",
+                      "wait-for Attention Reconsidered", "wait-idle",
+                      timeout=300)
+                assert archive.feeds == 5, "the saved search ran again"
+                result["checks"].append(dict(
+                    name="a saved search runs again",
+                    status="passed",
+                    detail="tapping the saved row fetched the same listing a "
+                           "second time, with no typing"))
+
+                # Manage turns a row into the removal of itself; the subject
+                # stays.
+                drive("tap Back", "wait-for Artificial Intelligence",
+                      "wait-idle", timeout=300)
+                drive("tap Saved", "wait-for neural fields", "wait-idle",
+                      timeout=300)
+                drive("tap Manage", "wait-for Done", "wait-idle", timeout=300)
+                capture("arxiv-saved-manage")
+                drive("tap neural fields",
+                      "wait-for Artificial Intelligence", "wait-idle",
+                      timeout=300)
+                capture("arxiv-saved-removed")
+                drive("tap Done", "wait-idle", timeout=300)
+                result["checks"].append(dict(
+                    name="Manage removes a saved search",
+                    status="passed",
+                    detail="Manage turned the rows into removals and tapping "
+                           "the search removed it, leaving the followed "
+                           "subject (panel shots arxiv-saved-manage, "
+                           "arxiv-saved-removed)"))
                 result["status"] = "passed"
             finally:
                 stop()
