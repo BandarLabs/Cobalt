@@ -21,6 +21,7 @@ mod devsession;
 mod drive;
 mod exports;
 mod feeds;
+mod fieldbook;
 mod flashcards;
 mod frame;
 mod frame_preview;
@@ -528,6 +529,7 @@ fn run(arguments: &[String]) -> Result<(), String> {
         "sidekick" => sidekick::command(&arguments[1..]),
         "export" => exports::command(&arguments[1..]),
         "feeds" => feeds::command(&arguments[1..]),
+        "fieldbook" => fieldbook::command(&arguments[1..]),
         "needles" => needles::command(&arguments[1..]),
         "nonograms" => nonograms::command(&arguments[1..]),
         "parser" => parser_command(&arguments[1..]),
