@@ -234,7 +234,10 @@ def main():
                 # search from its live results, and see both in Saved. Back
                 # out of the reader to the listing first.
                 drive("tap Back", timeout=60, soft=True)
-                wait_until(lambda text: "Back" in text, seconds=60)
+                if not wait_until(
+                        lambda text: "Keep for offline" in text
+                        or "Remove from library" in text, seconds=60):
+                    raise RuntimeError("the abstract never came back")
                 drive("tap Back", timeout=60, soft=True)
                 if not wait_until(
                         lambda text: "Follow this subject" in text,
