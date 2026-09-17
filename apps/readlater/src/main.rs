@@ -1283,17 +1283,16 @@ mod tests {
         );
         assert!(app.refreshing);
         assert_eq!(app.resume, Some(PendingTask::Queue));
-        let posted = context
-            .commands()
-            .iter()
-            .any(|command| matches!(
+        let posted = context.commands().iter().any(|command| {
+            matches!(
                 command,
                 kobo_sdk::Command::Spawn {
                     work: Task::Post { url, credential: None, body, .. },
                     ..
                 }
                 if url == "https://bag.example/oauth/v2/token" && body.contains("refresh_token=ref")
-            ));
+            )
+        });
         assert!(posted, "an uncredentialed refresh was spawned");
         // A second refusal while refreshing must not spawn another.
         app.on_task(
