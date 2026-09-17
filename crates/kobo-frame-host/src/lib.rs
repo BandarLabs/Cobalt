@@ -22,6 +22,9 @@ pub const MANIFEST: &str = "manifest.v1";
 pub const MANIFEST_HEADER: &str = "cobalt-frame-v1";
 /// Sidecar recording each photo's panel fit; older app builds ignore it.
 pub const FIT_MANIFEST: &str = "fit.v1";
+/// Sidecar recording the digest of each pushed photo's shelf bytes, so the
+/// reader can verify a transfer; older app builds ignore it.
+pub const DIGEST_MANIFEST: &str = "digests.v1";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Panel {
@@ -76,6 +79,34 @@ pub fn decode_fit_map(bytes: &[u8]) -> BTreeMap<String, Fit> {
                 return None;
             }
             Fit::parse(fit).ok().map(|fit| (id.to_owned(), fit))
+        })
+        .collect()
+}
+
+/// Encode the transfer-digest sidecar as `id<TAB>hex` lines, ordered by id.
+#[must_use]
+pub fn encode_digest_map(map: &BTreeMap<String, String>) -> Vec<u8> {
+    let mut output = String::new();
+    for (id, digest) in map {
+        let _ = writeln!(output, "{id}\t{digest}");
+    }
+    output.into_bytes()
+}
+
+/// Decode a transfer-digest sidecar, skipping lines that are not
+/// `id<TAB>64 hex digits`.
+#[must_use]
+pub fn decode_digest_map(bytes: &[u8]) -> BTreeMap<String, String> {
+    let Ok(text) = std::str::from_utf8(bytes) else {
+        return BTreeMap::new();
+    };
+    text.lines()
+        .filter_map(|line| {
+            let (id, digest) = line.split_once('\t')?;
+            (valid_id(id)
+                && digest.len() == 64
+                && digest.bytes().all(|byte| byte.is_ascii_hexdigit()))
+            .then(|| (id.to_owned(), digest.to_owned()))
         })
         .collect()
 }
@@ -166,6 +197,9 @@ impl Manifest {
 pub struct PreparedPhoto {
     pub photo: Photo,
     pub png: Option<Vec<u8>>,
+    /// Digest of the prepared shelf bytes; `None` when the photo was
+    /// already on the shelf and its bytes were not re-prepared.
+    pub shelf_digest: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -237,6 +271,7 @@ pub fn prepare_for_panel(
             prepared.push(PreparedPhoto {
                 photo: (*old).clone(),
                 png: None,
+                shelf_digest: None,
             });
             continue;
         }
@@ -259,6 +294,7 @@ pub fn prepare_for_panel(
             .and_then(|name| name.to_str())
             .ok_or_else(|| format!("{} has no UTF-8 file name", path.display()))?
             .to_owned();
+        let shelf_digest = blake3::hash(&png).to_hex().to_string();
         prepared.push(PreparedPhoto {
             photo: Photo {
                 id,
@@ -268,6 +304,7 @@ pub fn prepare_for_panel(
                 name,
             },
             png: Some(png),
+            shelf_digest: Some(shelf_digest),
         });
     }
     let wanted = prepared
@@ -565,6 +602,17 @@ fn album_name(input: &Path) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn digest_map_round_trips() {
+        let digest = "a".repeat(64);
+        let map = BTreeMap::from([("photo-aaaa".to_owned(), digest.clone())]);
+        let encoded = encode_digest_map(&map);
+        assert_eq!(encoded, format!("photo-aaaa\t{digest}\n").into_bytes());
+        assert_eq!(decode_digest_map(&encoded), map);
+        assert!(decode_digest_map(b"photo-aaaa\tnothex\n").is_empty());
+        assert!(decode_digest_map(b"../bad\tabcdef\n").is_empty());
+    }
+
     #[test]
     fn fit_map_round_trips() {
         let mut map = std::collections::BTreeMap::new();
