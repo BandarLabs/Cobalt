@@ -317,6 +317,7 @@ impl Gallery {
                 Gallery::long_labels_page,
             ],
             (Tab::Lists, 1) => &[
+                Gallery::bleed_page,
                 Gallery::covers_page,
                 Gallery::marked_tiles,
                 Gallery::tiles_page,
@@ -1317,6 +1318,24 @@ impl Gallery {
     /// caught the first time this page was written.
     /// The covers, which used to have a page of their own. Two tiles are not
     /// a page; they are the end of the page about tiles.
+    /// A picture measured against the panel rather than the text column.
+    ///
+    /// Its own page because that is the shape it is for: a screen whose whole
+    /// content is one image, where the margins that keep prose off the bezel
+    /// only crop the art. Paired with a hidden top bar, the picture has the
+    /// panel to itself.
+    fn bleed_page(&self, screen: ScreenBuilder) -> ScreenBuilder {
+        let screen = screen.secondary(
+            "Measured against the panel, so it reaches both bezels. A picture \
+             that follows something still stays under it: the top edge is only \
+             taken when there is nothing above to cover.",
+        );
+        match self.swatch {
+            Some(swatch) => screen.full_bleed_picture(swatch, 60),
+            None => screen.skeleton(2),
+        }
+    }
+
     fn covers_page(&self, screen: ScreenBuilder) -> ScreenBuilder {
         let screen = match self.swatch {
             // The same picture, framed by the tile beside it and unframed

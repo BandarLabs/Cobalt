@@ -4,8 +4,8 @@
   "short_label": "Frame",
   "summary": "Show computer-pushed monochrome photos in awake or scheduled slideshow modes.",
   "page_description": "Turn a Kobo into a low-power monochrome photo frame with bounded, owner-pushed albums and awake or scheduled slideshow modes.",
-  "version": "1.1.0",
-  "release_notes": "Home names the current photo with its album and taken date. Photos pushed with --fit pad keep their whole composition, and each transfer is verified against the bytes that landed on the shelf.",
+  "version": "1.2.0",
+  "release_notes": "The photograph fills the screen; touch the top edge and the bar names the photo. Home lists album and taken date, padded photos keep their composition, and transfers verify against the bytes that landed.",
   "glyph": "app",
   "capabilities": [
     "keep-awake",

@@ -292,23 +292,23 @@
   },
   {
    "protocol_version": 14,
-   "reason": "Renderer-only improvements using existing wire messages: chess grids use joined alternating squares and visible selection borders; tile titles are drawn at the size they were measured at, so a two line book title no longer overflows its cell and collide with the book beside it; crossword squares share one rule per line instead of two and are held to a printed square's size, and their letters are set in body rather than heading. No protocol, node or action changes. Applications whose own sources changed are versioned separately; a selected board square's row and column clues are now marked with a chip sized to their numbers instead of a key field spanning the whole gutter, with clue data, actions and full-strip tap targets unchanged. Applications whose own sources changed are versioned separately. Pencil boards learn a candidates mark and a peer shading state for sudoku: on the wire these are mark tag 6 and selection value 2, so readers before 0.3.18 refuse such boards and Sudoku declares that minimum; a 9x9 all-digit board rules its 3x3 boxes heavier, a selected square inverts, dense single-line labels may stand a little taller than their box, and pencil boards shrink to their allocation instead of clipping. Applications whose own sources changed are versioned separately.",
+   "reason": "Renderer-only improvements using existing wire messages: chess grids use joined alternating squares and visible selection borders; tile titles are drawn at the size they were measured at, so a two line book title no longer overflows its cell and collide with the book beside it; crossword squares share one rule per line instead of two and are held to a printed square's size, and their letters are set in body rather than heading. No protocol, node or action changes. Applications whose own sources changed are versioned separately; a selected board square's row and column clues are now marked with a chip sized to their numbers instead of a key field spanning the whole gutter, with clue data, actions and full-strip tap targets unchanged. Applications whose own sources changed are versioned separately. Pencil boards learn a candidates mark and a peer shading state for sudoku: on the wire these are mark tag 6 and selection value 2, so readers before 0.3.18 refuse such boards and Sudoku declares that minimum; a 9x9 all-digit board rules its 3x3 boxes heavier, a selected square inverts, dense single-line labels may stand a little taller than their box, and pencil boards shrink to their allocation instead of clipping. Applications whose own sources changed are versioned separately. Re-pinned after merging the protocol-15 auto-hidden-top-bar work; the union remains additive for protocol-14 readers.",
    "files": [
     {
      "path": "crates/kobo-ui/src/lib.rs",
      "base_blob": "ee95176aef1432bdd0f9374f86eb313ae47a88aa",
-     "compatible_blob": "8a777682d9afea26862c36ed31aab8c8933082f4"
+     "compatible_blob": "170b890d7284f74e549cb9dae9ed7c3044fb852e"
     }
    ]
   },
   {
    "protocol_version": 14,
-   "reason": "Take rustls 0.23.45 so TLS 1.3 handshake messages cannot be accepted across encryption-level boundaries (RUSTSEC-2026-0285), and advance workspace-local package versions to 0.3.15, then to 0.3.16 for the Birds companion, then to 0.3.17 so the corrected Birds transfer and update feed reach readers. Store apps keep their existing messages and dependency resolution; the patched stack reaches readers in the next platform package.",
+   "reason": "Take rustls 0.23.45 so TLS 1.3 handshake messages cannot be accepted across encryption-level boundaries (RUSTSEC-2026-0285), and advance workspace-local package versions to 0.3.15, then to 0.3.16 for the Birds companion, then to 0.3.17 so the corrected Birds transfer and update feed reach readers, then to 0.3.18 for the protocol that lets a screen hide its top bar. Store apps keep their existing messages and dependency resolution; the patched stack reaches readers in the next platform package.",
    "files": [
     {
      "path": "Cargo.lock",
      "base_blob": "e07e1ade0355155e92ff024f4ae7518372cd1ce8",
-     "compatible_blob": "219ff2ba22a62be1bef96ce06361dd6af08579aa"
+     "compatible_blob": "1c2b2ab4356de51a856508a480cc48c5f7323b9a"
     }
    ]
   },
@@ -319,7 +319,7 @@
     {
      "path": "Cargo.lock",
      "base_blob": "d87db6f43872e774cabd002c42dd7261f6b6870e",
-     "compatible_blob": "219ff2ba22a62be1bef96ce06361dd6af08579aa"
+     "compatible_blob": "1c2b2ab4356de51a856508a480cc48c5f7323b9a"
     },
     {
      "path": "crates/kobo-policy/src/credentials.rs",
@@ -335,7 +335,7 @@
     {
      "path": "Cargo.lock",
      "base_blob": "36e8d8afe839919ba62b86bd28ae713c2c4bdf7a",
-     "compatible_blob": "219ff2ba22a62be1bef96ce06361dd6af08579aa"
+     "compatible_blob": "1c2b2ab4356de51a856508a480cc48c5f7323b9a"
     },
     {
      "path": "crates/kobo-policy/src/credentials.rs",
@@ -351,7 +351,7 @@
     {
      "path": "Cargo.lock",
      "base_blob": "d87db6f43872e774cabd002c42dd7261f6b6870e",
-     "compatible_blob": "219ff2ba22a62be1bef96ce06361dd6af08579aa"
+     "compatible_blob": "1c2b2ab4356de51a856508a480cc48c5f7323b9a"
     }
    ]
   },
@@ -362,7 +362,7 @@
     {
      "path": "Cargo.lock",
      "base_blob": "36e8d8afe839919ba62b86bd28ae713c2c4bdf7a",
-     "compatible_blob": "219ff2ba22a62be1bef96ce06361dd6af08579aa"
+     "compatible_blob": "1c2b2ab4356de51a856508a480cc48c5f7323b9a"
     }
    ]
   }

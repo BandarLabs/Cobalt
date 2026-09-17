@@ -4,6 +4,15 @@ Inspired by the awesome [fugleramme](https://github.com/arnegiacomo/fugleramme) 
 
 Birds is an offline Kobo viewer for a microphone and BirdNET-Go running on a Mac or Linux computer. The Kobo has no microphone and never runs the model. The collage fills the reading surface; its bird names are part of Fugleramme's rendered plate. On a colour Kobo, Birds keeps and paints the source RGB through Cobalt's colour-picture path; greyscale models decode only luminance.
 
+<p>
+  <a href="../../docs/media/apps/birds/birds-on-a-clara-bw.mp4">
+    <img src="../../docs/media/apps/birds/birds-on-a-clara-bw.gif" height="420" alt="A Kobo Clara BW on a wooden table showing twelve labelled bird plates filling the whole screen, with no application bar across the top">
+  </a>
+  <img src="../../docs/media/apps/birds/birds-on-a-clara-bw.jpg" height="420" alt="The same reader held still, its screen filled edge to edge with a collage of twelve birds named in Latin beneath each plate">
+</p>
+
+A Clara BW, not a simulation: twelve species heard that afternoon, drawn edge to edge with nothing of the application's own on the glass. The bar is there, waiting at the top edge for a touch. [The clip](../../docs/media/apps/birds/birds-on-a-clara-bw.mp4) has sound; the animation beside it cannot, because GIF carries no audio.
+
 ```sh
 kobo setup --enable-ssh
 kobo birds listen --source http://garden-computer.local:8080 --device 192.168.1.42
@@ -71,4 +80,6 @@ See `THIRD-PARTY.md` and `licenses/`.
 
 ## Validation
 
-The real model-to-screen acceptance chain is recorded in [`docs/quality/birds-e2e.md`](../../docs/quality/birds-e2e.md). Default and extra-large text-scale screenshots are checked in under `screenshots/`. Physical-Kobo acceptance remains open.
+The real model-to-screen acceptance chain is recorded in [`docs/quality/birds-e2e.md`](../../docs/quality/birds-e2e.md), and it is a host and simulator run: that is what the report claims and all it claims. Default and extra-large text-scale screenshots are checked in under `screenshots/`.
+
+The pictures at the top are a Clara BW, so the part a simulation cannot answer is answered: a live microphone reached BirdNET-Go, Fugleramme drew the plate, the companion carried it over, and the reader painted it with nothing of the application's own on the glass. A full acceptance run against a physical reader, with every route driven and recorded the way the report above records the simulated one, has still not been done.
