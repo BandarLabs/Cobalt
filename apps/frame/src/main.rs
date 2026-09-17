@@ -215,8 +215,13 @@ impl Frame {
                 .build()
                 .with_own_back(true);
         };
+        // A picture frame with a bar across the top of it is a picture frame
+        // with somebody else's label on the glass. The photograph is measured
+        // against the panel and the bar waits at the top edge until it is
+        // asked for; the centre tap already opens a way out that does not
+        // need it.
         let mut screen = ScreenBuilder::new("frame-show")
-            .unframed_picture(picture, 500)
+            .full_bleed_picture(picture, 500)
             .page_turns(PREVIOUS, NEXT)
             .reading_menu(MENU);
         if self.overlay {
@@ -231,7 +236,10 @@ impl Frame {
                     .buttons([(PREVIOUS, "Previous"), (NEXT, "Next"), (EXIT, "Exit")])
             });
         }
-        screen.build().with_own_back(true)
+        screen
+            .build()
+            .with_own_back(true)
+            .with_auto_hidden_top_bar(true)
     }
 
     fn selected(&self) -> Option<&Photo> {

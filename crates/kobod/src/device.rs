@@ -1440,6 +1440,13 @@ struct Hosted {
     /// is what makes coming back instant: the panel is repainted from this
     /// rather than the application being asked to draw itself again.
     screen: Option<Screen>,
+    /// Whether this application's auto-hiding top bar is currently showing.
+    ///
+    /// The shell's, never the application's, and paired with `screen` above:
+    /// both are what let the bar be taken off and put back by repainting what
+    /// is already held, without asking an application that may have stopped
+    /// answering to draw anything.
+    top_bar: kobo_ui::TopBarState,
     /// The pictures this application handed over, bounded and private to it.
     ///
     /// Per application rather than shared so that one application filling the
@@ -2011,7 +2018,9 @@ fn host_applications(
                                         // one resolves the press against a
                                         // screen the reader cannot see.
                                         let chrome = chrome_for(current, at_home, &mut status);
-                                        page_key_message(current, &chrome, forward)
+                                        let shown =
+                                            shown_screen(&apps[index], current.clone(), &chrome);
+                                        page_key_message(&shown, &chrome, forward)
                                     }
                                     // Nothing painted yet, so there is nothing
                                     // to resolve against and the application
@@ -2131,6 +2140,11 @@ fn host_applications(
                         || Chrome::with_back(!at_home),
                         |screen| chrome_for(screen, at_home, &mut status),
                     );
+                    // Laid out the way it was drawn. The retained screen is
+                    // the one the application drew, so the bar the shell adds
+                    // is not on it, and hit testing against that raw screen
+                    // would leave every runtime-added Back untappable.
+                    let screen = screen.map(|screen| shown_screen(&apps[index], screen, &chrome));
                     let orientation = apps[index].orientation;
                     let landscape_turn = apps[index].landscape_turn;
                     // A control shows that it has been touched, before
@@ -2251,6 +2265,7 @@ fn host_applications(
                     );
                     let orientation = apps[index].orientation;
                     let protocol = apps[index].protocol;
+                    let top_bar = apps[index].top_bar;
                     let disposition = deliver_touch(
                         &mut apps[index].stream,
                         event,
@@ -2260,9 +2275,27 @@ fn host_applications(
                         orientation,
                         landscape_turn,
                         protocol,
+                        top_bar,
                     )?;
                     match disposition {
                         Tap::Handled => {}
+                        Tap::TopBar(state) => {
+                            // Answered here and nowhere else: the application
+                            // is not told, and the panel is redrawn from the
+                            // screen already held, so the bar comes back even
+                            // from an application that has stopped drawing.
+                            apps[index].top_bar = state;
+                            repaint(
+                                &mut apps,
+                                front,
+                                display,
+                                whole_screen,
+                                &mut surface,
+                                &mut panel,
+                                &home,
+                                &mut status,
+                            )?;
+                        }
                         Tap::OfferedBack => back_offered.offer(
                             front,
                             u64::try_from(navigation_started.elapsed().as_millis())
@@ -2322,8 +2355,13 @@ fn host_applications(
                             // runtime asked of it.
                             back_offered.answer(id);
                             let chrome = chrome_for(&screen, apps[index].path == home, &mut status);
-                            let screen =
-                                kobo_ui::ensure_way_back(screen, &chrome, &apps[index].name);
+                            // A newly drawn screen starts with its bar hidden
+                            // if it asked to hide it: carrying the shown state
+                            // over would leave the bar up over art the reader
+                            // had already dismissed it from.
+                            apps[index].top_bar = kobo_ui::TopBarState::Hidden;
+                            apps[index].screen = Some(screen.clone());
+                            let screen = shown_screen(&apps[index], screen, &chrome);
                             if is_front {
                                 trace(&format!("screen {} received", screen.id));
                                 println!("screen {}", screen.id);
@@ -2349,17 +2387,17 @@ fn host_applications(
                             // Kept either way. A background application that
                             // finished its work has a finished screen waiting,
                             // rather than the reader watching it be rebuilt.
-                            apps[index].screen = Some(screen);
                         }
                         Message::SetOrientation(orientation) => {
                             apps[index].orientation = orientation;
                             if id == front {
-                                if let Some(screen) = apps[index].screen.as_ref() {
+                                if let Some(screen) = apps[index].screen.clone() {
                                     let chrome =
-                                        chrome_for(screen, apps[index].path == home, &mut status);
+                                        chrome_for(&screen, apps[index].path == home, &mut status);
+                                    let screen = shown_screen(&apps[index], screen, &chrome);
                                     kobo_ui::render_oriented_with_turn(
-                                        screen,
-                                        &metrics_for(screen),
+                                        &screen,
+                                        &metrics_for(&screen),
                                         &chrome,
                                         &apps[index].pictures,
                                         &mut surface,
@@ -3225,6 +3263,18 @@ fn switch_to(
 
 /// Draws whatever the application on the panel last drew, with fresh chrome.
 ///
+/// The screen as the panel shows it: what the application drew, plus the way
+/// back the shell adds.
+///
+/// One function because routing and rendering must never disagree. They did
+/// once: the retained screen became the undecorated one, rendering was
+/// updated to compose it and tap routing was not, which left the Back the
+/// shell had drawn in a place no touch could reach. A tap is laid out against
+/// the same screen it was drawn from or it is laid out against a fiction.
+fn shown_screen(app: &Hosted, screen: Screen, chrome: &Chrome) -> Screen {
+    kobo_ui::ensure_way_back_revealed(screen, chrome, &app.name, app.top_bar)
+}
+
 /// Shared by the application switch and the status poll, which want the same
 /// thing for different reasons. Cheap when nothing moved: the frame planner
 /// compares the rendered surface against what is on the panel and declines to
@@ -3249,6 +3299,7 @@ fn repaint(
         return Ok(());
     };
     let chrome = chrome_for(&screen, apps[index].path == home, status);
+    let screen = shown_screen(&apps[index], screen, &chrome);
     kobo_ui::render_oriented_with_turn(
         &screen,
         &metrics_for(&screen),
@@ -3634,6 +3685,7 @@ fn start_application(
         app_data_root
     };
     apps.push(Hosted {
+        top_bar: kobo_ui::TopBarState::Hidden,
         id,
         protocol: version,
         // Named explicitly, and only here. A shell on this device is root on a
@@ -4160,6 +4212,10 @@ enum Tap {
     /// on that, so the action was delivered instead. The runtime now waits for
     /// a screen, and leaves anyway if none arrives.
     OfferedBack,
+    /// The reader asked for an auto-hiding top bar, or put it away again.
+    /// Nothing is sent to the application: the shell repaints what it already
+    /// holds, so this answers even while the application is busy or stuck.
+    TopBar(kobo_ui::TopBarState),
 }
 
 /// Routes one tap. Reports what the runtime has to do about it.
@@ -4184,6 +4240,7 @@ fn deliver_touch(
     orientation: kobo_ui::Orientation,
     landscape_turn: kobo_ui::LandscapeTurn,
     protocol: u8,
+    top_bar: kobo_ui::TopBarState,
 ) -> Result<Tap, String> {
     let logical_event = match event {
         TouchEvent::Up { x, y } => {
@@ -4206,6 +4263,23 @@ fn deliver_touch(
         }
         other => other,
     };
+    // The band the bar occupies is the shell's before it is anybody's. Read
+    // here, ahead of holds and taps, so an application cannot bind over the
+    // way out and cannot lose it by being busy: nothing below this point runs
+    // for a touch that was asking for the bar.
+    if let (Some(screen), TouchEvent::Up { y, .. }) = (current, logical_event) {
+        if let Some(state) = i32::try_from(y).ok().and_then(|y| {
+            kobo_ui::top_bar_touch(
+                screen,
+                &metrics_for(screen).oriented(orientation),
+                chrome,
+                top_bar,
+                y,
+            )
+        }) {
+            return Ok(Tap::TopBar(state));
+        }
+    }
     if let Some((action, hit)) =
         text_hold_for_oriented(logical_event, current, chrome, held, orientation)
     {
@@ -4932,6 +5006,7 @@ mod tests {
             .unwrap();
         let child = std::process::Command::new("/usr/bin/true").spawn().unwrap();
         let mut apps = vec![Hosted {
+            top_bar: kobo_ui::TopBarState::Hidden,
             id: 1,
             protocol: kobo_protocol::VERSION,
             name: "fixture".into(),
@@ -5019,6 +5094,7 @@ mod tests {
             kobo_ui::Orientation::Portrait,
             kobo_ui::LandscapeTurn::Clockwise,
             kobo_protocol::VERSION,
+            kobo_ui::TopBarState::Hidden,
         )
         .unwrap();
         assert!(matches!(result, super::Tap::Handled));
@@ -5073,6 +5149,7 @@ mod tests {
             .spawn()
             .expect("a stand-in process");
         let hosted = Hosted {
+            top_bar: kobo_ui::TopBarState::Hidden,
             id: 1,
             protocol,
             name: "todo".into(),
@@ -5204,6 +5281,7 @@ mod tests {
                 kobo_ui::Orientation::Portrait,
                 kobo_ui::LandscapeTurn::Clockwise,
                 protocol,
+                kobo_ui::TopBarState::Hidden,
             )
             .expect("page turn"),
             super::Tap::Handled
@@ -5228,6 +5306,7 @@ mod tests {
                 kobo_ui::Orientation::Portrait,
                 kobo_ui::LandscapeTurn::Clockwise,
                 protocol,
+                kobo_ui::TopBarState::Hidden,
             )
             .expect("text hold"),
             super::Tap::Handled
@@ -5253,6 +5332,16 @@ mod tests {
 
     #[test]
     fn a_protocol_14_app_keeps_receiving_protocol_14() {
+        // Named after the version it means, not after whichever version is
+        // newest: written as VERSION this stopped covering protocol 14 the
+        // moment the current version moved, and every published application
+        // is protocol 14.
+        runtime_keeps_protocol_on_send_and_reply(kobo_protocol::SUSPEND_VERSION);
+        runtime_keeps_protocol_on_tap_and_hold(kobo_protocol::SUSPEND_VERSION);
+    }
+
+    #[test]
+    fn an_application_built_today_keeps_receiving_the_current_protocol() {
         runtime_keeps_protocol_on_send_and_reply(kobo_protocol::VERSION);
         runtime_keeps_protocol_on_tap_and_hold(kobo_protocol::VERSION);
     }
@@ -5944,6 +6033,7 @@ mod tests {
                 kobo_ui::Orientation::Portrait,
                 kobo_ui::LandscapeTurn::Clockwise,
                 kobo_protocol::VERSION,
+                kobo_ui::TopBarState::Hidden,
             )
             .expect("route the tap"),
             Tap::Leave,
@@ -5961,6 +6051,7 @@ mod tests {
                 kobo_ui::Orientation::Portrait,
                 kobo_ui::LandscapeTurn::Clockwise,
                 kobo_protocol::VERSION,
+                kobo_ui::TopBarState::Hidden,
             )
             .expect("route the tap"),
             Tap::OfferedBack
