@@ -314,6 +314,10 @@ struct Kept {
     authors: String,
     /// How big the stored rendering is, so the library can say what it costs.
     bytes: u32,
+    /// How far through anybody has read, as a percentage of the paper's
+    /// blocks, written down each time the reader saves a place. `None` means
+    /// kept but never opened.
+    progress: Option<u8>,
 }
 
 #[derive(Debug, Default)]
@@ -397,10 +401,15 @@ const LIBRARY_KEY: &str = "library";
 /// What a kept paper's row says under its title.
 fn kept_summary(kept: &Kept) -> String {
     let size = kept.bytes / 1024;
-    if kept.authors.is_empty() {
-        return format!("{} \u{b7} {size} KB", kept.id);
+    let mut summary = if kept.authors.is_empty() {
+        format!("{} \u{b7} {size} KB", kept.id)
+    } else {
+        format!("{} \u{b7} {} \u{b7} {size} KB", kept.id, kept.authors)
+    };
+    if let Some(progress) = kept.progress.filter(|progress| *progress > 0) {
+        let _ = write!(summary, " \u{b7} {progress}%");
     }
-    format!("{} \u{b7} {} \u{b7} {size} KB", kept.id, kept.authors)
+    summary
 }
 
 /// Writes the library catalogue out.
@@ -419,11 +428,14 @@ fn encode_library(library: &[Kept]) -> Vec<u8> {
     for kept in library.iter().take(MAX_KEPT) {
         let _ = writeln!(
             text,
-            "{}\t{}\t{}\t{}",
+            "{}\t{}\t{}\t{}\t{}",
             untabbed(&kept.id),
             kept.bytes,
             untabbed(&kept.title),
-            untabbed(&kept.authors)
+            untabbed(&kept.authors),
+            kept.progress
+                .map(|progress| progress.to_string())
+                .unwrap_or_default()
         );
     }
     text.into_bytes()
@@ -443,11 +455,17 @@ fn decode_library(bytes: &[u8]) -> Vec<Kept> {
         if id.is_empty() {
             continue;
         }
+        let authors = fields.next().unwrap_or_default();
+        let progress = fields
+            .next()
+            .filter(|field| !field.is_empty())
+            .and_then(|field| field.parse().ok());
         library.push(Kept {
             id: id.to_owned(),
             title: title.to_owned(),
-            authors: fields.next().unwrap_or_default().to_owned(),
+            authors: authors.to_owned(),
             bytes: bytes.parse().unwrap_or(0),
+            progress,
         });
     }
     library
@@ -694,7 +712,7 @@ impl Arxiv {
         let rows: Vec<(String, String)> = self
             .papers
             .iter()
-            .map(|paper| (paper.title.clone(), row_summary(paper)))
+            .map(|paper| (paper.title.clone(), self.listing_summary(paper)))
             .collect();
         let borrowed: Vec<(&str, &str)> = rows
             .iter()
@@ -708,7 +726,7 @@ impl Arxiv {
                 (
                     format!("{PAPER}{index}"),
                     paper.title.clone(),
-                    row_summary(paper),
+                    self.listing_summary(paper),
                     RowLead::Number(u16::try_from(self.offset + index + 1).unwrap_or(u16::MAX)),
                 )
             })
@@ -909,6 +927,16 @@ impl Arxiv {
         self.library.iter().any(|kept| kept.id == id)
     }
 
+    /// A listing row's second line: the facts that place the paper, and
+    /// whether it is already on the shelf for reading without a network.
+    fn listing_summary(&self, paper: &Paper) -> String {
+        let mut summary = row_summary(paper);
+        if self.is_kept(&paper.id) {
+            summary.push_str(" \u{b7} offline");
+        }
+        summary
+    }
+
     /// Writes the reading position of the open paper.
     ///
     /// Called on every save the reader asks for and again when the paper
@@ -923,6 +951,23 @@ impl Arxiv {
             return;
         };
         context.store().save(place_key(&id), memory.encode());
+        // The library row says how far through the paper anybody has read.
+        // Blocks, not pages: a block is content and stays put when the type
+        // size changes, which a page number does not.
+        let progress = self.book.reader_mut().and_then(|reader| {
+            let total = reader.document().blocks.len();
+            let at = reader.memory().at as usize;
+            let percent = u8::try_from((((at * 100) + (total / 2)) / total).min(100)).ok();
+            (total > 0).then_some(percent)?
+        });
+        if let Some(progress) = progress {
+            if let Some(kept) = self.library.iter_mut().find(|kept| kept.id == id) {
+                if kept.progress != Some(progress) {
+                    kept.progress = Some(progress);
+                    self.save_library(context);
+                }
+            }
+        }
     }
 
     /// Asks for the reading position of a paper about to be opened.
@@ -970,6 +1015,7 @@ impl Arxiv {
                 title: paper.title.clone(),
                 authors: paper.byline(),
                 bytes: size,
+                progress: None,
             },
         );
         self.save_library(context);
@@ -1527,9 +1573,9 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::{
-        blob_key, decode_library, encode_library, escape, escape_path, fact_lines, paper_body,
-        place_key, row_summary, stamp, Arxiv, Kept, Query, View, Window, ABSTRACT, DISCARD,
-        FULL_TEXT, KEEP, LIBRARY_KEY, SUBJECTS, WINDOW,
+        blob_key, decode_library, encode_library, escape, escape_path, fact_lines, kept_summary,
+        paper_body, place_key, row_summary, stamp, Arxiv, Kept, Query, View, Window, ABSTRACT,
+        DISCARD, FULL_TEXT, KEEP, LIBRARY_KEY, SUBJECTS, WINDOW,
     };
     use crate::atom::Paper;
     use kobo_read::Memory;
@@ -1915,12 +1961,14 @@ mod tests {
                 title: "On the Convergence of Things".into(),
                 authors: "A. Author and 3 others".into(),
                 bytes: 91_234,
+                progress: Some(42),
             },
             Kept {
                 id: "math.CO/0601001".into(),
                 title: "An Older Numbering Scheme".into(),
                 authors: "B. Bourbaki".into(),
                 bytes: 12,
+                progress: None,
             },
         ];
         let read_back = decode_library(&encode_library(&library));
@@ -1936,6 +1984,7 @@ mod tests {
             title: "Before\tAfter".into(),
             authors: "C. Cantor".into(),
             bytes: 7,
+            progress: None,
         }];
         let read_back = decode_library(&encode_library(&library));
         assert_eq!(read_back.len(), 1, "the entry should still be one entry");
@@ -1943,6 +1992,84 @@ mod tests {
         assert!(
             !read_back[0].title.contains('\t'),
             "the tab should not have survived into the stored title"
+        );
+    }
+
+    /// A catalogue written before progress was kept still reads, with every
+    /// paper simply never-opened.
+    #[test]
+    fn a_library_from_before_progress_was_kept_still_reads() {
+        let legacy = "2401.00001v2\t91234\tOn the Convergence of Things\tA. Author\n";
+        let read_back = decode_library(legacy.as_bytes());
+        assert_eq!(read_back.len(), 1);
+        assert_eq!(read_back[0].progress, None);
+        assert_eq!(read_back[0].title, "On the Convergence of Things");
+    }
+
+    /// The library row says what is on the shelf and how far it was read.
+    #[test]
+    fn a_kept_row_shows_size_and_reading_progress() {
+        let kept = Kept {
+            id: "2401.00001v2".into(),
+            title: "On the Convergence of Things".into(),
+            authors: "A. Author".into(),
+            bytes: 91_234,
+            progress: Some(42),
+        };
+        let summary = kept_summary(&kept);
+        assert!(summary.contains("2401.00001v2"), "{summary}");
+        assert!(summary.contains("89 KB"), "{summary}");
+        assert!(summary.ends_with(" \u{b7} 42%"), "{summary}");
+        // Never opened says nothing, rather than claiming nought percent.
+        let unread = Kept {
+            progress: None,
+            ..kept
+        };
+        assert!(!kept_summary(&unread).contains('%'));
+    }
+
+    /// A listing row says when the paper is already on the shelf.
+    #[test]
+    fn a_listing_row_says_when_the_paper_is_kept() {
+        let mut app = Arxiv::default();
+        assert!(!app.listing_summary(&paper()).contains("offline"));
+        app.library.push(Kept {
+            id: paper().id.clone(),
+            title: paper().title.clone(),
+            authors: String::new(),
+            bytes: 1,
+            progress: None,
+        });
+        let summary = app.listing_summary(&paper());
+        assert!(summary.ends_with(" \u{b7} offline"), "{summary}");
+        // And the facts that place the paper are still there ahead of it.
+        assert!(summary.contains("Ada Lovelace, Alan Turing"), "{summary}");
+    }
+
+    /// Reading a kept paper moves its library row along.
+    #[test]
+    fn reading_a_kept_paper_records_progress_in_the_library() {
+        let long = format!(
+            "<article>{}</article>",
+            "<p>A paragraph of text.</p>".repeat(400)
+        );
+        let mut runner = AppRunner::new(Arxiv::default());
+        let _ = opened_on(&mut runner, &long);
+        runner.action(action_id(KEEP));
+        for _ in 0..4 {
+            runner.action(action_id(kobo_read::action::FORWARD));
+        }
+        runner.action(kobo_sdk::ActionId::BACK);
+        let kept = runner
+            .app()
+            .library
+            .iter()
+            .find(|kept| kept.id == paper().id)
+            .expect("the paper is not in the library");
+        let progress = kept.progress.expect("no progress was recorded");
+        assert!(
+            progress > 0 && progress < 100,
+            "four pages into a long paper read {progress}%"
         );
     }
 
@@ -2026,6 +2153,7 @@ mod tests {
             title: "A Paper".into(),
             authors: "D. Dedekind".into(),
             bytes: 5,
+            progress: None,
         });
         assert!(app.is_kept("2401.00003"));
         assert!(!app.is_kept("2401.00004"));
