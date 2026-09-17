@@ -72,6 +72,10 @@ pub const MAGIC: [u8; 4] = *b"KOBO";
 /// the accepted set by name now that it is no longer the current version.
 pub const SUSPEND_VERSION: u8 = 14;
 
+/// The protocol a picture must be encoded at to say it is the page rather
+/// than something on it. Additive in the same way, and in the same version.
+pub const PICTURE_BLEED_VERSION: u8 = 15;
+
 pub const AUTO_HIDDEN_TOP_BAR_VERSION: u8 = 15;
 
 pub const VERSION: u8 = 15;
@@ -5772,6 +5776,7 @@ fn encode_node(
             source,
             max_height_tenths_mm,
             framed,
+            bleed,
         } => {
             output.push(17);
             push_u32(output, id.0);
@@ -5779,7 +5784,11 @@ fn encode_node(
             push_u32(output, source.0);
             push_u32(output, source.1);
             push_u16(output, *max_height_tenths_mm);
-            output.push(u8::from(*framed));
+            // Bit one beside the frame's bit zero, so a picture that does not
+            // bleed encodes the byte it always did and no published payload
+            // changes shape. Only protocol 15 may set it.
+            let bleeds = *bleed && version >= PICTURE_BLEED_VERSION;
+            output.push(u8::from(*framed) | (u8::from(bleeds) << 1));
         }
         Node::Table { id, rows, weights } => {
             output.push(30);
@@ -6861,13 +6870,23 @@ fn decode_node(
             page: reader.u16()?,
             of: reader.u16()?,
         }),
-        17 => Ok(Node::Picture {
-            id,
-            handle: PictureHandle(reader.u32()?),
-            source: (reader.u32()?, reader.u32()?),
-            max_height_tenths_mm: reader.u16()?,
-            framed: reader.u8()? != 0,
-        }),
+        17 => {
+            let handle = PictureHandle(reader.u32()?);
+            let source = (reader.u32()?, reader.u32()?);
+            let max_height_tenths_mm = reader.u16()?;
+            let flags = reader.u8()?;
+            if flags & !0b11 != 0 || (flags & 0b10 != 0 && version < PICTURE_BLEED_VERSION) {
+                return Err(ProtocolError::InvalidValue("picture flags"));
+            }
+            Ok(Node::Picture {
+                id,
+                handle,
+                source,
+                max_height_tenths_mm,
+                framed: flags & 0b1 != 0,
+                bleed: flags & 0b10 != 0,
+            })
+        }
         10 => {
             let prompt = reader.string()?;
             let len = usize::from(reader.u8()?);
@@ -10257,6 +10276,7 @@ mod picture_tests {
                     source: (190, 300),
                     max_height_tenths_mm: 600,
                     framed: true,
+                    bleed: false,
                 },
             ],
         );

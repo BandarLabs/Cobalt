@@ -4802,6 +4802,14 @@ pub enum Node {
         /// drawn rather than written, and a box around it would be as odd as
         /// a box around a sentence.
         framed: bool,
+        /// Whether the picture is the page rather than something on it.
+        ///
+        /// Measured against the panel instead of the text column, so it
+        /// reaches the bezel on every side. The margins exist to keep prose
+        /// off the edge of the glass; art that is the whole point of the
+        /// screen only loses by them, and a plate with a four millimetre
+        /// border reads as a photograph of a page rather than the page.
+        bleed: bool,
     },
     /// Work in flight, typically a network request.
     ///
@@ -8838,7 +8846,18 @@ fn layout_node(
             source,
             max_height_tenths_mm,
             framed,
+            bleed,
         } => {
+            // Against the panel, not the column. Pulled up to the top edge
+            // only when nothing has been placed above it: a picture that
+            // follows a heading bleeds sideways but must not climb over what
+            // it follows.
+            let (x, width, y, bottom) = if *bleed {
+                let top = if y <= metrics.screen_margin() { 0 } else { y };
+                (0, metrics.width, top, metrics.height)
+            } else {
+                (x, width, y, bottom)
+            };
             let ceiling = metrics
                 .tenth_mm(i32::from(*max_height_tenths_mm))
                 .min(bottom.saturating_sub(y).max(0));
@@ -13009,8 +13028,22 @@ fn validate_content_bounds(
 ) {
     let mut hidden = Vec::new();
     let mut clipped = Vec::new();
+    let panel = Rect {
+        x: 0,
+        y: 0,
+        width: metrics.width,
+        height: metrics.height,
+    };
     for node in nodes {
         let id = node.id();
+        // A picture that is the page is outside the content box on purpose,
+        // so it answers to the panel instead. Off the panel is still off the
+        // panel, which is the thing this check exists to catch.
+        let allowed = if matches!(node, Node::Picture { bleed: true, .. }) {
+            panel
+        } else {
+            layout.content
+        };
         let laid_out = layout
             .nodes
             .iter()
@@ -13049,16 +13082,13 @@ fn validate_content_bounds(
                     rect: None,
                 });
             }
-        } else if rects
-            .iter()
-            .any(|rect| !rect_is_inside(*rect, layout.content))
-            && !clipped.contains(&id)
+        } else if rects.iter().any(|rect| !rect_is_inside(*rect, allowed)) && !clipped.contains(&id)
         {
             clipped.push(id);
             let rect = rects
                 .iter()
                 .copied()
-                .find(|rect| !rect_is_inside(*rect, layout.content));
+                .find(|rect| !rect_is_inside(*rect, allowed));
             issues.push(LayoutIssue {
                 severity: DiagnosticSeverity::Error,
                 node: Some(id),
@@ -17152,6 +17182,7 @@ mod tests {
                     source: (10, 10),
                     max_height_tenths_mm: 100,
                     framed,
+                    bleed: false,
                 }],
             )
             .layout()
@@ -17188,6 +17219,7 @@ mod tests {
                             source: (1072, 1448),
                             max_height_tenths_mm: 5000,
                             framed: false,
+                            bleed: false,
                         },
                         Node::Grid {
                             id: NodeId(2),
@@ -17249,6 +17281,7 @@ mod tests {
                 source: (10, 10),
                 max_height_tenths_mm: 100,
                 framed: true,
+                bleed: false,
             }],
         );
         let diagnostics = screen.diagnostics_with_pictures(

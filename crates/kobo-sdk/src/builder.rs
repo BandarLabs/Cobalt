@@ -1601,7 +1601,7 @@ impl ScreenBuilder {
     /// and on an Elipsa.
     #[must_use]
     pub fn picture(self, picture: TilePicture, max_height_mm: u16) -> Self {
-        self.drawn_picture(picture, max_height_mm, true)
+        self.drawn_picture(picture, max_height_mm, true, false)
     }
 
     /// The same, without a rule around it.
@@ -1613,11 +1613,28 @@ impl ScreenBuilder {
     /// reader needs to know.
     #[must_use]
     pub fn unframed_picture(self, picture: TilePicture, max_height_mm: u16) -> Self {
-        self.drawn_picture(picture, max_height_mm, false)
+        self.drawn_picture(picture, max_height_mm, false, false)
+    }
+
+    /// A picture that is the page: measured against the panel, so it reaches
+    /// the bezel instead of sitting inside the margins prose needs.
+    ///
+    /// For a screen whose whole content is one image. Pair it with
+    /// [`Screen::with_auto_hidden_top_bar`] and the art has the panel to
+    /// itself.
+    #[must_use]
+    pub fn full_bleed_picture(self, picture: TilePicture, max_height_mm: u16) -> Self {
+        self.drawn_picture(picture, max_height_mm, false, true)
     }
 
     #[must_use]
-    fn drawn_picture(mut self, picture: TilePicture, max_height_mm: u16, framed: bool) -> Self {
+    fn drawn_picture(
+        mut self,
+        picture: TilePicture,
+        max_height_mm: u16,
+        framed: bool,
+        bleed: bool,
+    ) -> Self {
         let id = self.next_id();
         self.nodes.push(Node::Picture {
             id,
@@ -1625,6 +1642,7 @@ impl ScreenBuilder {
             source: picture.source,
             max_height_tenths_mm: max_height_mm.saturating_mul(10),
             framed,
+            bleed,
         });
         self
     }

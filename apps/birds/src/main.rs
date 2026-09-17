@@ -83,10 +83,11 @@ impl Birds {
         let age = unix_seconds().saturating_sub(snapshot.generated_at);
         let mut screen = ScreenBuilder::new("birds-home");
         if let Some(picture) = self.picture {
-            // Fugleramme renders the names into the plate. The art is the screen,
-            // with no app bar or facts pushing it into a card-sized window.
+            // Fugleramme renders the names into the plate. The art is the
+            // screen: no app bar over it and no margin around it, so the
+            // plate reaches the bezel the way it would in a frame.
             screen = screen
-                .unframed_picture(picture, 500)
+                .full_bleed_picture(picture, 500)
                 .page_turns(REFRESH, REFRESH)
                 .reading_menu(MENU);
         } else {
@@ -617,10 +618,10 @@ mod tests {
             picture: Some(TilePicture::new(PICTURE, 800, 600)),
             ..Birds::default()
         };
-        assert!(birds
+        let issues = birds
             .screen()
             .diagnostics(&CLARA_BW_METRICS, &Chrome::default())
-            .issues
-            .is_empty());
+            .issues;
+        assert!(issues.is_empty(), "{issues:?}");
     }
 }
