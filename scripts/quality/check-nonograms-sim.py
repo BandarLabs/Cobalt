@@ -218,10 +218,61 @@ def main():
                 drive('wait-for-id next-puzzle', 'wait-idle')
                 assert (store_root/'progress-pack-00').read_bytes() == earlier_bytes
                 capture('16-picture-completed')
+                # Imported photo puzzles arrive as a manifest plus images in
+                # the app's transfer directory.
+                def browser_text():
+                    return ' '.join(line for node in json.loads(get('layout'))['nodes'] for line in node['lines'])
+                data_root = Path(private)/'cobalt-sim-data/nonograms'
+                data_root.mkdir(parents=True, exist_ok=True)
+                rows_image = Image.new('L', (10, 10))
+                rows_image.putdata([24 if index//10 < 5 else 232 for index in range(100)])
+                rows_image.save(data_root/'moon.png')
+                columns_image = Image.new('L', (10, 10))
+                columns_image.putdata([24 if index%10 < 5 else 232 for index in range(100)])
+                columns_image.save(data_root/'eclipse.png')
+                (data_root/'imported.txt').write_text('moon.png\tThe Moon\t5\neclipse.png\tEclipse\t5\n')
+                drive('tap-id next-puzzle', 'wait-for-id photo')
+                drive('tap-id photo', 'wait-for-id photo-open')
+                drive('tap-id photo-open', 'wait-idle')
+                assert 'Imported 2 puzzles.' in browser_text(), browser_text()
+                capture('17-imported-notice')
+                drive('tap-id back-browser', 'wait-for-id photo')
+                if 'Picture puzzles' not in browser_text() and has('pack-toggle'):
+                    drive('tap-id pack-toggle', 'wait-idle')
+                seen = set()
+                for _ in range(30):
+                    seen.update(name for name in ['The Moon', 'Eclipse'] if name in browser_text())
+                    if len(seen) == 2 or not has('next-page'):
+                        break
+                    drive('tap-id next-page', 'wait-idle')
+                assert seen == {'The Moon', 'Eclipse'}, seen
+                capture('18-imported-puzzles')
+                # A push that no longer names a photo drops it from the shelf.
+                (data_root/'imported.txt').write_text('moon.png\tThe Moon\t5\n')
+                drive('tap-id photo', 'wait-for-id photo-open')
+                drive('tap-id photo-open', 'wait-idle')
+                assert 'Imported 1 puzzle.' in browser_text(), browser_text()
+                capture('19-import-synced-notice')
+                drive('tap-id back-browser', 'wait-for-id photo')
+                if 'Picture puzzles' not in browser_text() and has('pack-toggle'):
+                    drive('tap-id pack-toggle', 'wait-idle')
+                eclipse_gone = True
+                moon_found = False
+                for _ in range(30):
+                    page_text = browser_text()
+                    if 'Eclipse' in page_text:
+                        eclipse_gone = False
+                    if 'The Moon' in page_text:
+                        moon_found = True
+                    if not has('next-page'):
+                        break
+                    drive('tap-id next-page', 'wait-idle')
+                assert eclipse_gone and moon_found
+                capture('20-import-synced')
                 result = dict(status='passed',profile=args.profile,scale=args.scale,original_fixture=True,
                     source_head=subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip(),
                     source_dirty=bool(subprocess.check_output(['git','status','--porcelain'],cwd=ROOT)),
-                    checks=['attached clues','mark selection','full clue inspection','forced restart','persistent atomic run undo','failed-save preservation','explicit retry','confirmed restart undo','full completion','completion restart and undo','25x25 panning','last square restart','all help pages','committed route','new picture restart','earlier save preserved','new picture completion'])
+                    checks=['attached clues','mark selection','full clue inspection','forced restart','persistent atomic run undo','failed-save preservation','explicit retry','confirmed restart undo','full completion','completion restart and undo','25x25 panning','last square restart','all help pages','committed route','new picture restart','earlier save preserved','new picture completion','manifest import','imported names listed','import sync removes missing photos'])
                 (args.output/'result.json').write_text(json.dumps(result,indent=2)+'\n')
             finally:
                 if process is not None and process.poll() is None:
