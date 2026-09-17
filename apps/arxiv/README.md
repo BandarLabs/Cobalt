@@ -72,6 +72,17 @@ from library**, so keeping is a decision the reader can take back. This matters
 on a device that spends most of its life away from Wi-Fi: a paper found on a
 sofa is readable on a train.
 
+## Searches and subjects worth keeping
+
+A search worth running once is often worth running again, and retyping it is
+the worst way to find that out. A word listing offers **Save this search** and
+a subject listing offers **Follow this subject**; both live in **Saved**, a tap
+from the subject list. A row there runs its search or opens its subject without
+the keyboard, and **Manage** removes whatever stopped being worth keeping.
+Following also pins the subject to the top of the list.
+
+<img width="300" src="screenshots/saved.png" alt="A saved search and a followed subject in Saved">
+
 ## Newest first, always
 
 A preprint server sorted by relevance is a search engine; sorted by date it is
