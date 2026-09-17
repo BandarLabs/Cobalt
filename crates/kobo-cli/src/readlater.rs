@@ -4,13 +4,12 @@
 //! then on; the CLI is needed again only when the refresh grant is revoked.
 
 use std::fs;
-use std::path::PathBuf;
 use std::time::Duration;
 
 const DEVICE_ROOT: &str = "/mnt/onboard/.adds/cobalt/data/readlater";
 const SESSION_FILE: &str = "session.v1";
 const TRANSFER_TIMEOUT: Duration = Duration::from_secs(60);
-const USAGE: &str = "usage: kobo readlater login --server URL --client-id ID --client-secret SECRET \\\n                     \x20      --username EMAIL [--password-env VAR | --password-file PATH] \\\n                     \x20      (--sim | --device IP)\n\
+const USAGE: &str = "usage: kobo readlater login --server URL --client-id ID --client-secret-file PATH \\\n                     \x20      --username EMAIL [--password-env VAR | --password-file PATH] \\\n                     \x20      (--sim | --device IP)\n\
                      \n\
                      Signs Read Later in to a Wallabag server. The client id and\n\
                      secret come from the server's API client management page\n\
@@ -47,7 +46,7 @@ struct Options {
 fn parse_options(arguments: &[String]) -> Result<Options, String> {
     let mut server = None;
     let mut client_id = None;
-    let mut client_secret = None;
+    let mut client_secret_file = None;
     let mut username = None;
     let mut password_env = None;
     let mut password_file = None;
@@ -64,7 +63,11 @@ fn parse_options(arguments: &[String]) -> Result<Options, String> {
                 target = Some(Target::Device(ip.clone()));
                 (None, tail)
             }
-            "--server" | "--client-id" | "--client-secret" | "--username" | "--password-env"
+            "--server"
+            | "--client-id"
+            | "--client-secret-file"
+            | "--username"
+            | "--password-env"
             | "--password-file" => {
                 let (value, tail) = tail.split_first().ok_or_else(|| USAGE.to_owned())?;
                 (Some(value), tail)
@@ -75,7 +78,7 @@ fn parse_options(arguments: &[String]) -> Result<Options, String> {
             match flag.as_str() {
                 "--server" => server = Some(value.clone()),
                 "--client-id" => client_id = Some(value.clone()),
-                "--client-secret" => client_secret = Some(value.clone()),
+                "--client-secret-file" => client_secret_file = Some(value.clone()),
                 "--username" => username = Some(value.clone()),
                 "--password-env" => password_env = Some(value.clone()),
                 "--password-file" => password_file = Some(value.clone()),
@@ -88,10 +91,11 @@ fn parse_options(arguments: &[String]) -> Result<Options, String> {
     if !server.starts_with("https://") {
         return Err("the Wallabag server must be an https:// address".to_owned());
     }
+    let client_secret_file = client_secret_file.ok_or_else(|| USAGE.to_owned())?;
     Ok(Options {
         server: server.trim_end_matches('/').to_owned(),
         client_id: client_id.ok_or_else(|| USAGE.to_owned())?,
-        client_secret: client_secret.ok_or_else(|| USAGE.to_owned())?,
+        client_secret: secret_file(&client_secret_file, "client secret")?,
         username: username.ok_or_else(|| USAGE.to_owned())?,
         password: password(password_env, password_file)?,
         target: target.ok_or_else(|| USAGE.to_owned())?,
@@ -166,11 +170,24 @@ fn login(arguments: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+fn secret_file(file: &str, label: &str) -> Result<String, String> {
+    let metadata = fs::symlink_metadata(file).map_err(|error| format!("read {file}: {error}"))?;
+    if !metadata.file_type().is_file() || metadata.len() > 4096 {
+        return Err(format!(
+            "the {label} file must be a regular file no larger than 4 KiB"
+        ));
+    }
+    let value = fs::read_to_string(file).map_err(|error| format!("read {file}: {error}"))?;
+    let value = value.trim_end().to_owned();
+    if value.is_empty() {
+        return Err(format!("the {label} file is empty"));
+    }
+    Ok(value)
+}
+
 fn password(env: Option<String>, file: Option<String>) -> Result<String, String> {
     if let Some(file) = file {
-        return fs::read_to_string(PathBuf::from(&file))
-            .map_err(|error| format!("read {file}: {error}"))
-            .map(|password| password.trim_end().to_owned());
+        return secret_file(&file, "password");
     }
     let variable = env.unwrap_or_else(|| "KOBO_WALLABAG_PASSWORD".to_owned());
     std::env::var(&variable)
@@ -244,6 +261,26 @@ fn remote(host: &str, script: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn client_secret_is_never_accepted_as_a_command_line_value() {
+        let args = [
+            "--server",
+            "https://wallabag.example",
+            "--client-id",
+            "owner",
+            "--client-secret",
+            "visible-in-shell-history",
+            "--username",
+            "owner@example.com",
+            "--sim",
+        ]
+        .map(str::to_owned);
+        let Err(error) = parse_options(&args) else {
+            panic!("command-line secret was accepted")
+        };
+        assert!(error.contains("usage:"));
+    }
 
     #[test]
     fn token_answers_parse_and_bad_answers_do_not() {
