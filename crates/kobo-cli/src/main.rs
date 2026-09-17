@@ -612,69 +612,113 @@ fn run(arguments: &[String]) -> Result<(), String> {
 }
 
 fn parser_command(arguments: &[String]) -> Result<(), String> {
-    const USAGE: &str = "usage: kobo parser check FILE\n\
-                         \x20      kobo parser push FILE --device IP\n\
-                         check validates a .z3, .z5 or .z8 story on the host.\n\
-                         push transfers a checked story to the reader's Parser shelf.";
+    const USAGE: &str = "usage: kobo parser inspect FILE\n\
+                         \x20      kobo parser push FILE (--sim | --device IP) [--replace]\n\
+                         inspect reports format, title and Parser compatibility.\n\
+                         push validates with the interpreter's shared inspector first.";
     if wants_help(arguments) {
         return print_command_help(USAGE);
     }
     if let [verb, file] = arguments {
-        if verb == "check" {
+        if matches!(verb.as_str(), "inspect" | "check") {
             let path = Path::new(file);
             let bytes = fs::read(path)
                 .map_err(|error| format!("could not read {}: {error}", path.display()))?;
-            validate_parser_story(&bytes)?;
+            let info =
+                kobo_zstory::StoryInfo::inspect(&bytes, file).map_err(|error| error.to_string())?;
             println!(
-                "Parser story is a Z-machine v{} file ({} bytes).",
-                bytes[0],
-                bytes.len()
+                "Title: {}\nFormat: {}\nCompatibility: {}\nRelease: {}\nSerial: {}\nChecksum: {:04x}\nSize: {} bytes",
+                info.title,
+                info.format(),
+                info.compatibility(),
+                info.release,
+                String::from_utf8_lossy(&info.serial),
+                info.checksum,
+                info.bytes
             );
             return Ok(());
         }
     }
-    let [verb, file, device, host] = arguments else {
+    if arguments.first().map(String::as_str) != Some("push") {
         return Err(USAGE.to_owned());
-    };
-    if verb != "push" || !is_device_flag(device) {
-        return Err(USAGE.to_owned());
+    }
+    let file = arguments.get(1).ok_or_else(|| USAGE.to_owned())?;
+    let mut target: Option<String> = None;
+    let mut replace = false;
+    let mut index = 2;
+    while index < arguments.len() {
+        match arguments[index].as_str() {
+            "--sim" => {
+                if target.is_some() {
+                    return Err(USAGE.to_owned());
+                }
+                target = Some(String::new());
+                index += 1;
+            }
+            flag if is_device_flag(flag) => {
+                let host = arguments.get(index + 1).ok_or_else(|| USAGE.to_owned())?;
+                if !valid_device_host(host) {
+                    return Err("device host contains unsupported characters".to_owned());
+                }
+                if target.replace(host.clone()).is_some() {
+                    return Err(USAGE.to_owned());
+                }
+                index += 2;
+            }
+            "--replace" => {
+                replace = true;
+                index += 1;
+            }
+            _ => return Err(USAGE.to_owned()),
+        }
     }
     let path = Path::new(file);
     let bytes =
         fs::read(path).map_err(|error| format!("could not read {}: {error}", path.display()))?;
-    validate_parser_story(&bytes)?;
-    let file_name = path
-        .file_name()
-        .and_then(OsStr::to_str)
-        .ok_or("story file name is not valid UTF-8")?;
-    let mut safe = file_name
-        .chars()
-        .map(|character| {
-            if character.is_ascii_alphanumeric() || matches!(character, '.' | '-' | '_') {
-                character.to_ascii_lowercase()
-            } else {
-                '_'
-            }
-        })
-        .collect::<String>();
-    safe.truncate(50);
-    if safe.is_empty() {
-        return Err("story file name has no usable characters".to_owned());
+    let info = kobo_zstory::StoryInfo::inspect(&bytes, file).map_err(|error| error.to_string())?;
+    let name = info.shelf_name(file);
+    match target.ok_or_else(|| USAGE.to_owned())? {
+        host if host.is_empty() => parser_publish_local(&name, &bytes, replace)?,
+        host => parser_publish_remote(&host, &name, &bytes, replace)?,
     }
-    let name = format!("story-{safe}");
-    let encoded = base64_encode(&bytes);
+    println!(
+        "Parser story ready: {} ({}, {})",
+        info.title,
+        info.format(),
+        info.compatibility()
+    );
+    Ok(())
+}
+
+fn parser_publish_local(name: &str, bytes: &[u8], replace: bool) -> Result<(), String> {
+    let root = kobo_sim::simulated_data_root("parser");
+    fs::create_dir_all(&root).map_err(|e| format!("create Parser shelf: {e}"))?;
+    let final_path = root.join(name);
+    if final_path.exists() && !replace {
+        return Err(format!(
+            "{name} is already on the Parser shelf; use --replace to overwrite it"
+        ));
+    }
+    let partial = root.join(format!(".{name}.{}.writing", std::process::id()));
+    fs::write(&partial, bytes).map_err(|e| format!("write Parser staging file: {e}"))?;
+    fs::rename(&partial, &final_path).map_err(|e| format!("publish Parser story: {e}"))
+}
+fn parser_publish_remote(
+    host: &str,
+    name: &str,
+    bytes: &[u8],
+    replace: bool,
+) -> Result<(), String> {
+    let encoded = base64_encode(bytes);
+    let count = bytes.len();
+    let digest = kobo_net::sha256::hex_digest(bytes);
+    let overwrite = if replace {
+        "true"
+    } else {
+        "test ! -e \"$final\""
+    };
     let script = format!(
-        "set -e\n\
-         root=/mnt/onboard/.adds/cobalt/data/parser\n\
-         mkdir -p \"$root\"\n\
-         partial=\"$root/.{name}.writing\"\n\
-         base64 -d > \"$partial\" <<'KOBO_PARSER_STORY'\n\
-         {encoded}\n\
-         KOBO_PARSER_STORY\n\
-         chmod 600 \"$partial\"\n\
-         mv -f \"$partial\" \"$root/{name}\"\n\
-         sync\n\
-         printf 'Transferred {name}\\n'\n"
+        "set -eu\nroot=/mnt/onboard/.adds/cobalt/data/parser\nmkdir -p \"$root\"\npartial=\"$root/.{name}.$$.writing\"\nfinal=\"$root/{name}\"\n{overwrite}\ntrap 'rm -f \"$partial\"' EXIT HUP INT TERM\nbase64 -d > \"$partial\" <<'KOBO_PARSER_STORY'\n{encoded}\nKOBO_PARSER_STORY\ntest \"$(wc -c < \"$partial\")\" = '{count}'\nset -- $(sha256sum \"$partial\"); test \"$1\" = '{digest}'\nchmod 600 \"$partial\"\nmv -f \"$partial\" \"$final\"\nsync\n"
     );
     let output = run_remote_shell(&format!("root@{host}"), &script, REMOTE_COMMAND_TIMEOUT)
         .map_err(unreachable_device)?;
@@ -684,26 +728,14 @@ fn parser_command(arguments: &[String]) -> Result<(), String> {
             String::from_utf8_lossy(&output.stderr).trim()
         ));
     }
-    print!("{}", String::from_utf8_lossy(&output.stdout));
     Ok(())
 }
 
+#[cfg(test)]
 fn validate_parser_story(bytes: &[u8]) -> Result<(), String> {
-    if bytes.starts_with(b"Glul") {
-        return Err("this is a Glulx story — Parser does not support it yet".to_owned());
-    }
-    let Some(version) = bytes.first().copied() else {
-        return Err("the file is empty".to_owned());
-    };
-    if !matches!(version, 3 | 5 | 8) {
-        return Err(format!(
-            "unsupported story format: Z-machine version {version}; Parser accepts v3, v5 and v8"
-        ));
-    }
-    if bytes.len() < 64 {
-        return Err("the file is too short to contain a Z-machine header".to_owned());
-    }
-    Ok(())
+    kobo_zstory::StoryInfo::inspect(bytes, "story.z5")
+        .map(|_| ())
+        .map_err(|error| error.to_string())
 }
 
 /// Runs the host half of a Paperterm session.
@@ -893,7 +925,9 @@ fn stream_companion(arguments: &[String]) -> Result<(), String> {
             .filter(|port| *port > 0)
             .ok_or("--port must be 1 through 65535")?,
         _ => {
-            return Err("usage: kobo stream demo|terminal|monitor|pairing [--port PORT]".to_owned())
+            return Err(
+                "usage: kobo stream demo|terminal|monitor|pairing [--port PORT]".to_owned(),
+            );
         }
     };
     let pairing = kobo_stream::pairing_instructions(port)?;
@@ -2514,7 +2548,9 @@ fn dev_session(arguments: &[String]) -> Result<(), String> {
     print!("{}", String::from_utf8_lossy(&output.stdout));
     if output.status.success() {
         if matches!(action, DevSessionAction::KeepAwake(devsession::Switch::On)) {
-            println!("The reader can stay awake for two minutes. Use kobo session --device ADDRESS --hold MINUTES for a longer timed session.");
+            println!(
+                "The reader can stay awake for two minutes. Use kobo session --device ADDRESS --hold MINUTES for a longer timed session."
+            );
         }
         // Advising a restart is only true when something actually changed; the
         // reader already holds the intended value otherwise.
@@ -2877,8 +2913,7 @@ fn signal_of(_status: ExitStatus) -> u8 {
 }
 
 fn parse_logs(arguments: &[String]) -> Result<LogRequest<'_>, String> {
-    const USAGE: &str =
-        "usage: kobo logs --device <host> [--follow|-f] [--dump|-d] [--lines|-t <count>] \
+    const USAGE: &str = "usage: kobo logs --device <host> [--follow|-f] [--dump|-d] [--lines|-t <count>] \
          [--clear|-c]";
     let (host, mut rest) = match arguments {
         [device, host, rest @ ..] if is_device_flag(device) => (host.as_str(), rest),
@@ -6251,8 +6286,7 @@ enum SecretTarget {
     Volume(PathBuf),
 }
 
-const SECRET_USAGE: &str =
-    "usage: kobo secret set <name> [--from PATH] (--device IP | --volume PATH)\n\
+const SECRET_USAGE: &str = "usage: kobo secret set <name> [--from PATH] (--device IP | --volume PATH)\n\
                             \x20      kobo secret list (--device IP | --volume PATH)\n\
                             \x20      kobo secret remove <name> (--device IP | --volume PATH)";
 
@@ -6631,8 +6665,7 @@ fn report_secret_names<'a>(names: impl Iterator<Item = &'a str>) {
 /// Where the runtime reads owner-installed TLS trust roots, from `kobod`.
 const DEVICE_TRUST_DIRECTORY: &str = "/mnt/onboard/.adds/cobalt/trust";
 
-const TRUST_USAGE: &str =
-    "usage: kobo trust set <name> --from PATH (--device IP | --volume PATH)\n\
+const TRUST_USAGE: &str = "usage: kobo trust set <name> --from PATH (--device IP | --volume PATH)\n\
                            \x20      kobo trust list (--device IP | --volume PATH)\n\
                            \x20      kobo trust remove <name> (--device IP | --volume PATH)";
 
@@ -7198,9 +7231,11 @@ mod tests {
         header[36..40].copy_from_slice(&0x400_u32.to_le_bytes());
         header[42..44].copy_from_slice(&32_u16.to_le_bytes());
         fs::write(&header_only, header).expect("write header-only binary");
-        assert!(super::verify_arm_elf(&header_only)
-            .expect_err("an ELF header without a load segment was accepted")
-            .contains("executable load segment"));
+        assert!(
+            super::verify_arm_elf(&header_only)
+                .expect_err("an ELF header without a load segment was accepted")
+                .contains("executable load segment")
+        );
 
         super::app_bundle(&[
             "--manifest".to_owned(),
@@ -7468,19 +7503,19 @@ mod tests {
 
     use super::package;
     use super::{
+        ALIASES, DEFAULT_TRACE_LINES, DEPLOY_TIMEOUT, DEVICE_PACKAGES, DevSessionGuard,
+        RemoteArtifact, SimulationGuard, TOUCH_PROBE_DEFAULT_SECONDS, TOUCH_PROBE_MAXIMUM_SECONDS,
         build_executables, canonical, configured_target_directory, is_device_flag,
         manifest_uses_sdk, normalise_secret_value, parse_deploy, parse_devices, parse_logs,
         parse_touch_probe, unreachable_device, valid_device_host, valid_slug, verify_arm_elf,
-        wait_for_remote_child, workspace_doctor_binary, DevSessionGuard, RemoteArtifact,
-        SimulationGuard, ALIASES, DEFAULT_TRACE_LINES, DEPLOY_TIMEOUT, DEVICE_PACKAGES,
-        TOUCH_PROBE_DEFAULT_SECONDS, TOUCH_PROBE_MAXIMUM_SECONDS,
+        wait_for_remote_child, workspace_doctor_binary,
     };
     #[cfg(feature = "device-write")]
     use super::{
-        parse_guard_test, parse_smoke_display, run, workspace_smoke_binary, RemoteArtifactSession,
-        RemoteProgram, SmokeStage, GUARD_TEST_CHILD, GUARD_TEST_CONFIRMATION,
-        REMOTE_CLEANUP_TIMEOUT, REMOTE_COMMAND_TIMEOUT, REMOTE_CONNECT_TIMEOUT_SECONDS,
-        REMOTE_SMOKE_TIMEOUT_SECONDS,
+        GUARD_TEST_CHILD, GUARD_TEST_CONFIRMATION, REMOTE_CLEANUP_TIMEOUT, REMOTE_COMMAND_TIMEOUT,
+        REMOTE_CONNECT_TIMEOUT_SECONDS, REMOTE_SMOKE_TIMEOUT_SECONDS, RemoteArtifactSession,
+        RemoteProgram, SmokeStage, parse_guard_test, parse_smoke_display, run,
+        workspace_smoke_binary,
     };
     use std::fs;
     use std::path::PathBuf;
@@ -7960,9 +7995,11 @@ mod tests {
         let uploaded = super::gunzip(&uploaded).expect("uploaded archive");
         let listed = package::list(&uploaded).expect("uploaded listing");
         assert_eq!(count, 1);
-        assert!(listed
-            .iter()
-            .all(|entry| entry.path != package::LAUNCH_BOOTSTRAP));
+        assert!(
+            listed
+                .iter()
+                .all(|entry| entry.path != package::LAUNCH_BOOTSTRAP)
+        );
         assert!(listed.iter().all(|entry| {
             let path = std::path::Path::new(entry.path.trim_end_matches('/'));
             let root = std::path::Path::new(package::INSTALL_ROOT);
@@ -8158,9 +8195,11 @@ mod tests {
         let artifact = RemoteArtifact::guard();
         assert_eq!(artifact.package, "kobo-guard");
         assert_eq!(artifact.features, Some("device-write"));
-        assert!(artifact
-            .local_binary
-            .ends_with("armv7-unknown-linux-musleabihf/release/kobo-guard"));
+        assert!(
+            artifact
+                .local_binary
+                .ends_with("armv7-unknown-linux-musleabihf/release/kobo-guard")
+        );
         // The child is an exact absolute path, never resolved through PATH.
         assert!(GUARD_TEST_CHILD.starts_with('/'));
     }
@@ -8283,7 +8322,7 @@ mod tests {
 
     #[test]
     fn dev_session_parsing_is_exact_and_host_checked() {
-        use super::{devsession::Switch, DevSessionAction};
+        use super::{DevSessionAction, devsession::Switch};
         let base = ["--device".to_owned(), "192.0.2.1".to_owned()];
         let parse = |extra: &[&str]| {
             let mut arguments = base.to_vec();
@@ -8507,14 +8546,18 @@ mod tests {
             story[0] = version;
             assert_eq!(super::validate_parser_story(&story), Ok(()));
         }
-        assert!(super::validate_parser_story(b"Glul followed by bytes")
-            .expect_err("Glulx must be refused")
-            .contains("Glulx"));
+        assert!(
+            super::validate_parser_story(b"Glul followed by bytes")
+                .expect_err("Glulx must be refused")
+                .contains("Glulx")
+        );
         let mut unsupported = vec![0; 64];
         unsupported[0] = 6;
-        assert!(super::validate_parser_story(&unsupported)
-            .expect_err("v6 must be refused")
-            .contains("version 6"));
+        assert!(
+            super::validate_parser_story(&unsupported)
+                .expect_err("v6 must be refused")
+                .contains("version 6")
+        );
     }
 
     #[test]
@@ -8577,7 +8620,7 @@ mod tests {
     }
 
     mod holding {
-        use super::super::{parse_dev_session, DevSessionAction, HOLD_MAXIMUM_MINUTES};
+        use super::super::{DevSessionAction, HOLD_MAXIMUM_MINUTES, parse_dev_session};
 
         fn arguments(values: &[&str]) -> Vec<String> {
             values.iter().map(|value| (*value).to_owned()).collect()
@@ -8691,8 +8734,8 @@ mod tests {
 
         mod app_registry {
             use super::super::super::{
-                contributed_store_packages, read_release_registry, workspace_manifest,
-                STORE_PACKAGES,
+                STORE_PACKAGES, contributed_store_packages, read_release_registry,
+                workspace_manifest,
             };
             use std::collections::BTreeSet;
 
@@ -8750,9 +8793,9 @@ mod tests {
 
     mod preparing {
         use super::super::{
-            choose_reader_list, confirmation_answer, dry_run_plan, gzip,
+            SetupMode, SetupPayload, choose_reader_list, confirmation_answer, dry_run_plan, gzip,
             load_release_package_from_manifest, parse_setup, setup, setup_device_with_confirmation,
-            undo_setup, SetupMode, SetupPayload,
+            undo_setup,
         };
         use std::path::PathBuf;
 
@@ -9172,7 +9215,7 @@ mod tests {
     }
 
     mod waiting {
-        use super::super::{parse_wait, DEVICE_WAIT_MAXIMUM_SECONDS};
+        use super::super::{DEVICE_WAIT_MAXIMUM_SECONDS, parse_wait};
 
         fn arguments(values: &[&str]) -> Vec<String> {
             values.iter().map(|value| (*value).to_owned()).collect()

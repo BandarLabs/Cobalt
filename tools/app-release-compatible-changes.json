@@ -333,6 +333,28 @@
           "compatible_blob": "f929b097fe08ec583597e91c14c86ffff189b200"
         }
       ]
+    },
+    {
+      "protocol_version": 14,
+      "reason": "The Parser companion adds the pure kobo-zstory structural-inspection crate and points the host CLI at it. No Store app source or protocol bytes change on this branch; the lockfile only records the new workspace member. The Parser app adopts the same crate separately with its own versioned app change.",
+      "files": [
+        {
+          "path": "Cargo.lock",
+          "base_blob": "f929b097fe08ec583597e91c14c86ffff189b200",
+          "compatible_blob": "fe3b11f6082247b58abb4e0605de7943a2670b4a"
+        }
+      ]
+    },
+    {
+      "protocol_version": 14,
+      "reason": "The Parser companion adds the pure kobo-zstory structural-inspection crate and points the host CLI at it. No Store app source or protocol bytes change on this branch; the lockfile only records the new workspace member. The Parser app adopts the same crate separately with its own versioned app change.",
+      "files": [
+        {
+          "path": "Cargo.lock",
+          "base_blob": "36e8d8afe839919ba62b86bd28ae713c2c4bdf7a",
+          "compatible_blob": "fe3b11f6082247b58abb4e0605de7943a2670b4a"
+        }
+      ]
     }
   ]
 }
