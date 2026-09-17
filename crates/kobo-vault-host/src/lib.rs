@@ -550,6 +550,7 @@ mod tests {
         assert_eq!(links_for(body), vec!["Other.md", "Welcome"]);
     }
 
+    #[test]
     fn oversized_notes_fail_honestly() {
         let big = vec![b'x'; (MAX_NOTE_BYTES + 1) as usize];
         let offer = IncomingNote {
