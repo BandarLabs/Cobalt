@@ -1,0 +1,17 @@
+{
+  "provenance": {
+    "source_revision": "fc8eddb826119feaada2ecf99f674c3aba8bcabc",
+    "tracked_changes": true,
+    "cli_sha256": "41bb1f231e870afb7ee2bc4c45140d486cf1f8604e17b097d9912e3d35dd841a",
+    "toolchain": "1.85.1"
+  },
+  "scale": "default",
+  "checks": [
+    {
+      "name": "update-check journey",
+      "detail": "Demo shelf showed the update, offline and never-checked badges; each work screen named its last manual check; the updates screen listed unread, never-checked and current states",
+      "status": "passed"
+    }
+  ],
+  "status": "passed"
+}

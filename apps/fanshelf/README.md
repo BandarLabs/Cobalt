@@ -11,15 +11,21 @@ If the OTW asks for this behavior to change or stop, it should.
 Ratings and archive warnings are rendered before the download action. An AO3
 adult-content interstitial becomes an explicit Fanshelf confirmation screen;
 `view_adult=true` is never added until the reader continues. Archive-locked
-works are not supported.
+works cannot be downloaded; the app says so in plain words instead of
+failing quietly.
 
-![A synthetic Fanshelf shelf showing an unread WIP update and a non-Latin title](screenshots/shelf.png)
+![A synthetic Fanshelf shelf showing an unread WIP update, an offline work and a work whose updates were never checked](screenshots/shelf.png)
+
+![A work screen naming the last manual update check](screenshots/work.png)
+
+![The manual updates screen listing unread and never-checked works](screenshots/updates.png)
 
 ## What v1 does
 
 - Stores bounded metadata for up to 96 works: title, author, fandom, rating,
   archive warnings, summary, chapter count/status, updated date, EPUB URL,
-  adult confirmation, download state, unread update state, and archive removal.
+  adult confirmation, download state, unread update state, archive removal,
+  and the time of the last manual update check.
 - Downloads EPUBs in 256 KiB ranged chunks, spaces every AO3 request by at
   least one second, permits only one request in flight, and sends
   `kobo-fanshelf/0.2.0 (+https://github.com/BandarLabs/Cobalt)` on every request.

@@ -41,6 +41,8 @@ pub struct Work {
     pub epub: String,
     pub download: DownloadState,
     pub adult: bool,
+    /// Epoch seconds of the last completed update check; 0 = never checked.
+    pub last_checked: u64,
 }
 
 impl Work {
@@ -158,6 +160,7 @@ pub fn parse_work_page(id: &str, body: &str) -> ParsedWork {
         epub,
         download: DownloadState::NotDownloaded,
         adult: false,
+        last_checked: 0,
     }))
 }
 
@@ -466,7 +469,7 @@ pub fn work_id(text: &str) -> Option<String> {
 }
 
 pub fn encode_works(works: &[Work]) -> Vec<u8> {
-    let mut lines = vec!["v2".to_owned()];
+    let mut lines = vec!["v3".to_owned()];
     lines.extend(works.iter().take(MAX_WORKS).map(|work| {
         [
             work.id.clone(),
@@ -490,6 +493,7 @@ pub fn encode_works(works: &[Work]) -> Vec<u8> {
             }
             .to_owned(),
             u8::from(work.adult).to_string(),
+            work.last_checked.to_string(),
         ]
         .join("\t")
     }));
@@ -501,15 +505,23 @@ pub fn decode_works(bytes: &[u8]) -> Vec<Work> {
         return Vec::new();
     };
     let mut lines = text.lines();
-    if lines.next() != Some("v2") {
+    let version = lines.next();
+    if version != Some("v3") && version != Some("v2") {
         return decode_legacy(text);
     }
     lines
         .filter_map(|line| {
             // A fixed-size array rather than a length check and indexing, so a
             // short line is rejected by the conversion instead of by a rule a
-            // later reader has to notice before adding a field.
-            let fields: [&str; 14] = line.split('\t').collect::<Vec<_>>().try_into().ok()?;
+            // later reader has to notice before adding a field. v2 lines predate
+            // last_checked and decode as never-checked.
+            let width = if version == Some("v3") { 15 } else { 14 };
+            let mut fields = line.split('\t').collect::<Vec<_>>();
+            if fields.len() != width {
+                return None;
+            }
+            fields.resize(15, "0");
+            let fields: [&str; 15] = fields.try_into().ok()?;
             let id = fields[0];
             if work_id(id).as_deref() != Some(id) {
                 return None;
@@ -534,6 +546,7 @@ pub fn decode_works(bytes: &[u8]) -> Vec<Work> {
                     _ => DownloadState::NotDownloaded,
                 },
                 adult: fields[13] == "1",
+                last_checked: fields[14].parse().ok()?,
             })
         })
         .take(MAX_WORKS)
@@ -678,6 +691,27 @@ mod tests {
         assert_eq!(decode_works(&encode_works(&[work.clone()])), [work]);
         let tag = parse_tag("Public Domain Fairy Tales").unwrap();
         assert_eq!(decode_tags(&encode_tags(std::slice::from_ref(&tag))), [tag]);
+    }
+
+    #[test]
+    fn v2_shelves_decode_as_never_checked() {
+        let ParsedWork::Work(work) = parse_work_page("4242", WORK) else {
+            panic!("work was not parsed");
+        };
+        let v3 = String::from_utf8(encode_works(std::slice::from_ref(&work))).unwrap();
+        let line = v3.lines().nth(1).unwrap().to_owned();
+        assert_eq!(line.split('\t').count(), 15);
+        // A v2 line is the same record without the trailing last_checked field.
+        let v2_line = line.rsplit_once('\t').unwrap().0;
+        let v2 = format!("v2\n{v2_line}\n");
+        let decoded = decode_works(v2.as_bytes());
+        assert_eq!(decoded.len(), 1);
+        assert_eq!(decoded[0].id, work.id);
+        assert_eq!(decoded[0].title, work.title);
+        assert_eq!(decoded[0].last_checked, 0);
+        // v3 round-trips the stamp.
+        let stamped = decode_works(v3.as_bytes());
+        assert_eq!(stamped[0].last_checked, work.last_checked);
     }
 
     #[test]

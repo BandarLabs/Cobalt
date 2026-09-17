@@ -26,7 +26,8 @@ const FEED_BYTES: u32 = 512 * 1024;
 const MAX_EPUB: usize = 12 * 1024 * 1024;
 const ROWS_PER_PAGE: usize = 6;
 const UA: &str = "kobo-fanshelf/0.2.0 (+https://github.com/BandarLabs/Cobalt)";
-const LOCKED: &str = "This work requires an AO3 login, which this app doesn't do yet";
+const LOCKED: &str =
+    "Locked to AO3 members. Fanshelf has no account sign-in, so it cannot download this work.";
 const REMOVED: &str = "removed from the archive";
 const SLOW_DOWN: &str = "The archive asked us to slow down — try in a minute";
 
@@ -171,6 +172,68 @@ fn display(text: &str, bytes: usize) -> String {
     format!("{}…", text[..end].trim_end())
 }
 
+/// The reader's clock, at the offset the runtime was started with.
+fn reader_clock() -> Box<dyn kobo_sdk::clock::Clock> {
+    use kobo_sdk::clock::{ManualClock, Snapshot, SystemClock};
+    let minutes = std::env::var("KOBO_UTC_OFFSET_MINUTES")
+        .ok()
+        .and_then(|value| value.parse::<i16>().ok())
+        .unwrap_or(0);
+    SystemClock::new(minutes).map_or_else(
+        |_| {
+            Box::new(
+                ManualClock::new(Snapshot {
+                    unix_millis: 0,
+                    monotonic_millis: 0,
+                    utc_offset_minutes: 0,
+                })
+                .expect("a valid fixed clock"),
+            ) as Box<dyn kobo_sdk::clock::Clock>
+        },
+        |clock| Box::new(clock) as Box<dyn kobo_sdk::clock::Clock>,
+    )
+}
+
+fn now_seconds() -> u64 {
+    reader_clock()
+        .now()
+        .map_or(0, |snapshot| snapshot.unix_millis / 1000)
+}
+
+/// A short month-day stamp for update-check lines; the year is omitted
+/// because checks are always recent.
+fn format_checked(epoch: u64) -> String {
+    let Some(date) = reader_clock().now().ok().and_then(|reader| {
+        kobo_sdk::clock::Snapshot {
+            unix_millis: epoch.checked_mul(1000)?,
+            monotonic_millis: 0,
+            utc_offset_minutes: reader.utc_offset_minutes,
+        }
+        .date()
+    }) else {
+        return "unknown".to_owned();
+    };
+    let month = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ][usize::from(date.month.saturating_sub(1)) % 12];
+    format!("{month} {}", date.day)
+}
+
+/// One line naming the manual update state: never checked, current as of
+/// the last check, or an update waiting since the last check.
+fn update_label(work: &Work) -> String {
+    if work.download == DownloadState::UpdateAvailable {
+        format!("New chapters found {}", format_checked(work.last_checked))
+    } else if work.last_checked == 0 {
+        "Updates never checked".to_owned()
+    } else {
+        format!(
+            "No new chapters as of {}",
+            format_checked(work.last_checked)
+        )
+    }
+}
+
 impl Fanshelf {
     fn show(&self, context: &mut Context) {
         context.set_screen(self.screen());
@@ -280,6 +343,7 @@ impl Fanshelf {
                     let badge = match work.download {
                         DownloadState::UpdateAvailable => " · NEW",
                         DownloadState::Removed => " · removed from the archive",
+                        _ if !work.complete && work.last_checked == 0 => " · updates unchecked",
                         DownloadState::Downloaded => " · offline",
                         DownloadState::NotDownloaded => " · not downloaded",
                     };
@@ -327,13 +391,14 @@ impl Fanshelf {
                 display(&work.warnings, 180)
             ))
             .secondary(format!(
-                "Chapters {} · Updated {}",
+                "Chapters {} · Updated {} · {}",
                 work.chapters_label(),
                 if work.updated.is_empty() {
                     "unknown"
                 } else {
                     &work.updated
-                }
+                },
+                update_label(work)
             ));
         if work.download == DownloadState::Removed {
             screen = screen.banner(BannerLevel::Attention, REMOVED);
@@ -466,6 +531,8 @@ impl Fanshelf {
                     "Unread update"
                 } else if work.download == DownloadState::Removed {
                     REMOVED
+                } else if work.last_checked == 0 {
+                    "Never checked"
                 } else {
                     "Up to date at last manual check"
                 };
@@ -559,6 +626,7 @@ impl Fanshelf {
         match parse_work_page(&id, &text) {
             ParsedWork::Work(mut incoming) => {
                 incoming.adult = adult;
+                incoming.last_checked = now_seconds();
                 if let Some(index) = self.works.iter().position(|work| work.id == id) {
                     incoming.download = self.works[index].download;
                     self.works[index] = *incoming;
@@ -594,6 +662,7 @@ impl Fanshelf {
         match parse_work_page(&existing.id, &text) {
             ParsedWork::Work(mut incoming) => {
                 incoming.adult = adult || existing.adult;
+                incoming.last_checked = now_seconds();
                 let changed = incoming.chapters > existing.chapters
                     || (!incoming.updated.is_empty() && incoming.updated != existing.updated);
                 incoming.download = if changed && existing.downloaded() {
@@ -733,6 +802,7 @@ impl Fanshelf {
                 epub: "https://archiveofourown.org/downloads/9001/demo.epub".into(),
                 download: DownloadState::UpdateAvailable,
                 adult: false,
+                last_checked: 1_789_617_600,
             },
             Work {
                 id: "9002".into(),
@@ -749,6 +819,24 @@ impl Fanshelf {
                 epub: "https://archiveofourown.org/downloads/9002/demo.epub".into(),
                 download: DownloadState::Downloaded,
                 adult: false,
+                last_checked: 1_789_617_600,
+            },
+            Work {
+                id: "9003".into(),
+                title: "A Field Guide to Small Hours".into(),
+                author: "North Star".into(),
+                fandom: "Synthetic Library Stories".into(),
+                rating: "General Audiences".into(),
+                warnings: "No Archive Warnings Apply".into(),
+                summary: "A synthetic work in progress.".into(),
+                chapters: 4,
+                total_chapters: None,
+                complete: false,
+                updated: "2026-09-10".into(),
+                epub: "https://archiveofourown.org/downloads/9003/demo.epub".into(),
+                download: DownloadState::NotDownloaded,
+                adult: false,
+                last_checked: 0,
             },
         ];
         self.tags = vec![
@@ -1151,6 +1239,7 @@ mod tests {
             epub: "https://archiveofourown.org/downloads/42/work.epub".into(),
             download: DownloadState::NotDownloaded,
             adult: false,
+            last_checked: 0,
         }
     }
 
@@ -1297,6 +1386,16 @@ mod tests {
     }
 
     #[test]
+    fn update_label_distinguishes_never_checked_current_and_waiting() {
+        let mut work = work();
+        assert_eq!(update_label(&work), "Updates never checked");
+        work.last_checked = 1_789_617_600;
+        assert!(update_label(&work).starts_with("No new chapters as of "));
+        work.download = DownloadState::UpdateAvailable;
+        assert!(update_label(&work).starts_with("New chapters found "));
+    }
+
+    #[test]
     fn adult_view_is_only_added_after_confirmation() {
         assert!(!work_url("42", false).contains("view_adult"));
         assert!(work_url("42", true).ends_with("?view_adult=true"));
@@ -1321,7 +1420,7 @@ mod tests {
     fn exact_locked_and_removed_messages_are_stable() {
         assert_eq!(
             LOCKED,
-            "This work requires an AO3 login, which this app doesn't do yet"
+            "Locked to AO3 members. Fanshelf has no account sign-in, so it cannot download this work."
         );
         assert_eq!(REMOVED, "removed from the archive");
     }

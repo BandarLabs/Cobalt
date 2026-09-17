@@ -3,20 +3,29 @@ wait 500
 expect Fanshelf
 expect The Clockwork Garden
 expect Лунная библиотека
+expect updates unchecked
 clean
 shot shelf
 
 tap The Clockwork Garden
 expect Rating: Teen And Up Audiences
 expect Archive warnings: No Archive Warnings Apply
+expect New chapters found
 expect Re-download
 clean
 shot work
 
 tap Shelf
+tap A Field Guide to Small Hours
+expect Updates never checked
+clean
+shot work-unchecked
+
+tap Shelf
 tap Updates
 expect Manual updates
 expect Unread update
+expect Never checked
 clean
 shot updates
 

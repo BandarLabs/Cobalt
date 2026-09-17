@@ -1383,16 +1383,22 @@
     "pr": 3,
     "group": "Fanshelf",
     "task": "Distinguish WIP, unread updates and manual update state",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "v3 shelf format stamps last_checked on every lookup and update; v2 shelves decode as never-checked (cargo test -p kobo-fanshelf: 16 passed)",
+      "scripts/quality/check-fanshelf-sim.py passed: demo shelf showed NEW, offline and updates-unchecked badges; work screens named the last check; the updates screen listed Unread update and Never checked (docs/quality/evidence/fanshelf/)",
+      "apps/fanshelf/drive.kobo replayed against a pristine sim state: every step passed"
+    ]
   },
   {
     "id": "FANS-05",
     "pr": 3,
     "group": "Fanshelf",
     "task": "Explain locked or unavailable work",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Locked works now read: Locked to AO3 members. Fanshelf has no account sign-in, so it cannot download this work. (exact-message unit test in apps/fanshelf/src/main.rs)"
+    ]
   },
   {
     "id": "FANS-06",
