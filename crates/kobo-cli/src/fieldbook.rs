@@ -8,7 +8,7 @@ const MAX_MANIFEST: usize = 512 * 1024;
 const MAX_CHECKLIST: usize = 4 * 1024 * 1024;
 const DEVICE_DATA: &str = "/mnt/onboard/.adds/cobalt/data/fieldbook";
 const DEVICE_STATE: &str = "/mnt/onboard/.adds/cobalt/state/fieldbook";
-const CHECKLIST: &str = "export/checklist.csv";
+const CHECKLIST: &str = "export-checklist.csv";
 const USAGE: &str = "usage: kobo fieldbook inspect PACK.json\n\
                      \x20      kobo fieldbook push PACK.json (--sim | --device IP)\n\
                      \x20      kobo fieldbook ls (--sim | --device IP)\n\
