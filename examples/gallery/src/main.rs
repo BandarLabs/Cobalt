@@ -752,6 +752,7 @@ impl Gallery {
                     },
                     action: None,
                     selected: false,
+                    peer: false,
                 },
                 kobo_sdk::PencilMark {
                     column: 1,
@@ -765,6 +766,7 @@ impl Gallery {
                     // before it reaches the panel.
                     action: Some(action_id("pencil-four")),
                     selected: true,
+                    peer: false,
                 },
                 kobo_sdk::PencilMark {
                     column: 2,
@@ -772,6 +774,7 @@ impl Gallery {
                     kind: kobo_sdk::PencilMarkKind::Block,
                     action: None,
                     selected: false,
+                    peer: false,
                 },
                 kobo_sdk::PencilMark {
                     column: 0,
@@ -779,6 +782,7 @@ impl Gallery {
                     kind: kobo_sdk::PencilMarkKind::Clue(3),
                     action: None,
                     selected: false,
+                    peer: false,
                 },
                 kobo_sdk::PencilMark {
                     column: 1,
@@ -786,6 +790,7 @@ impl Gallery {
                     kind: kobo_sdk::PencilMarkKind::Dot,
                     action: None,
                     selected: false,
+                    peer: false,
                 },
                 kobo_sdk::PencilMark {
                     column: 2,
@@ -793,6 +798,7 @@ impl Gallery {
                     kind: kobo_sdk::PencilMarkKind::Island(2),
                     action: Some(action_id("pencil-island")),
                     selected: false,
+                    peer: false,
                 },
             ],
             edges: Vec::new(),

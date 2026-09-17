@@ -5,8 +5,8 @@ mod saved;
 mod tests;
 use game::{Game, Level, Puzzle, CELLS};
 use kobo_sdk::{
-    action_id, ActionId, BandAlign, Context, ControlState, DialogAction, KoboApp, Screen,
-    ScreenBuilder, SlotWidth, StoreResult,
+    action_id, ActionId, BandAlign, Context, ControlState, DialogAction, KoboApp, PencilBoard,
+    PencilMark, PencilMarkKind, Screen, ScreenBuilder, SlotWidth, StoreResult,
 };
 use kobo_state::draft::{Draft, Status};
 use std::process::ExitCode;
@@ -89,6 +89,12 @@ impl Sudoku {
             context.store().save(saved::KEY, write.bytes);
         }
     }
+    fn progress_label(&self) -> String {
+        let left = (0..CELLS)
+            .filter(|&cell| self.game.position.board[cell] == 0)
+            .count();
+        format!("{left} left")
+    }
     fn saved_label(&self) -> &'static str {
         match self.draft.status() {
             Status::Saved => "Saved",
@@ -108,7 +114,7 @@ impl Sudoku {
             return "Not saved · Open More to retry.".into();
         }
         if self.game.solved(&self.puzzles) {
-            return format!("Puzzle complete · {}", self.saved_label());
+            return "Puzzle complete".into();
         }
         if let Some(notice) = &self.notice {
             return notice.clone();
@@ -122,57 +128,67 @@ impl Sudoku {
                 && self.game.position.board[cell] != 0
                 && self.game.position.board[cell] != spec.solution[cell]
             {
-                return format!("Check this answer · {}", self.saved_label());
+                return "Check this answer".into();
             }
             format!(
                 "Row {} · Column {} · {}",
                 cell / 9 + 1,
                 cell % 9 + 1,
                 if self.game.pencil {
-                    "Notes"
+                    "Notes".into()
                 } else {
-                    self.saved_label()
+                    self.progress_label()
                 }
             )
         } else {
-            format!("Choose a square · {}", self.saved_label())
+            format!("Choose a square · {}", self.progress_label())
         }
     }
-    fn board(&self, builder: ScreenBuilder, landscape: bool) -> ScreenBuilder {
-        let first = if landscape && self.lower_rows { 27 } else { 0 };
-        let end = if landscape { first + 54 } else { CELLS };
-        builder.board_with_selection(
-            9,
-            (first..end).map(|cell| {
+    fn board(&self, builder: ScreenBuilder) -> ScreenBuilder {
+        let selected = self.game.position.selected;
+        let spec = &self.puzzles[self.game.puzzle];
+        let marks = (0..CELLS)
+            .map(|cell| {
                 let n = self.game.position.board[cell];
                 let notes = self.game.position.notes[cell];
-                let label = if n != 0 {
-                    n.to_string()
-                } else if notes == 0 {
-                    " ".into()
+                let given = spec.clues[cell] != 0;
+                let kind = if n != 0 {
+                    PencilMarkKind::Digit { value: n, given }
+                } else if notes != 0 {
+                    PencilMarkKind::Candidates(notes)
                 } else {
-                    "·".into()
-                };
-                let selected = self.game.position.selected;
-                // A light cross follows the selected row and column. A bracketed number or square identifies
-                // the one editable target within that cross; givens remain inspectable.
-                let focus = selected == Some(cell);
-                let label = if focus {
-                    if n != 0 {
-                        format!("[{n}]")
-                    } else if notes != 0 {
-                        "⊙".into()
-                    } else {
-                        "□".into()
+                    PencilMarkKind::Digit {
+                        value: 0,
+                        given: false,
                     }
-                } else {
-                    label
                 };
-                let peer =
-                    selected.is_some_and(|chosen| chosen / 9 == cell / 9 || chosen % 9 == cell % 9);
-                (cell_name(cell), label, None, peer)
-            }),
-        )
+                // The cross and the 3x3 box around the target stay shaded, so
+                // the houses that constrain a square are visible at a glance.
+                let peer = selected.is_some_and(|chosen| {
+                    chosen != cell
+                        && (chosen / 9 == cell / 9
+                            || chosen % 9 == cell % 9
+                            || (chosen / 27 == cell / 27 && (chosen % 9) / 3 == (cell % 9) / 3))
+                });
+                PencilMark {
+                    column: u8::try_from(cell % 9).expect("bounded board"),
+                    row: u8::try_from(cell / 9).expect("bounded board"),
+                    kind,
+                    // Givens keep an action so they stay inspectable; entering
+                    // a digit on one is refused below, as before.
+                    action: Some(action_id(&cell_name(cell))),
+                    selected: selected == Some(cell),
+                    peer,
+                }
+            })
+            .collect();
+        builder.pencil_board(PencilBoard {
+            columns: 9,
+            rows: 9,
+            cell_tenth_mm: 80,
+            marks,
+            edges: Vec::new(),
+        })
     }
     fn digits(&self, builder: ScreenBuilder, columns: u8) -> ScreenBuilder {
         let notes = self
@@ -286,19 +302,11 @@ impl Sudoku {
     }
     fn play_screen(&self, builder: ScreenBuilder) -> Screen {
         let landscape = self.orientation() == kobo_sdk::Orientation::Landscape;
-        let status = if landscape {
-            format!(
-                "Rows {} · {}",
-                if self.lower_rows { "4–9" } else { "1–6" },
-                self.status()
-            )
-        } else {
-            self.status()
-        };
+        let status = self.status();
         let builder = builder.secondary(status);
         if landscape {
             let slots: [(SlotWidth, BuildSlot<'_>); 2] = [
-                (SlotWidth::Fill, Box::new(|b| self.board(b, true))),
+                (SlotWidth::Fill, Box::new(|b| self.board(b))),
                 (
                     SlotWidth::Fixed(392),
                     Box::new(|b| {
@@ -306,14 +314,12 @@ impl Sudoku {
                             .button("pencil", if self.game.pencil { "Digits" } else { "Notes" })
                             .button_with_state("undo", "Undo", state(!self.game.undo.is_empty()))
                             .button("more", "More")
-                            .button("rows", if self.lower_rows { "1–6" } else { "4–9" })
                     }),
                 ),
             ];
             builder.band(BandAlign::Top, slots).build()
         } else {
-            self.controls(self.digits(self.board(builder, false), 9))
-                .build()
+            self.controls(self.digits(self.board(builder), 9)).build()
         }
     }
     fn menu_screen(&self, builder: ScreenBuilder) -> Screen {

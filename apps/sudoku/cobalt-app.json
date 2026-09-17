@@ -3,8 +3,9 @@
   "display_name": "Sudoku",
   "short_label": "Sudoku",
   "summary": "Play 36 original Sudoku puzzles with pencil notes, undo and saved games.",
-  "version": "1.0.11",
+  "version": "1.0.12",
   "glyph": "grid",
   "capabilities": [],
-  "release_notes": "Adds three measured difficulty levels, saved answers and pencil notes, persistent undo, optional checking, clear completion and reachable landscape controls."
+  "release_notes": "Read your pencil marks at a glance: candidates render as small digits in position, 3x3 boxes are ruled heavier, and the row, column and box around your square stay shaded.",
+  "minimum_cobalt_version": "0.3.18"
 }

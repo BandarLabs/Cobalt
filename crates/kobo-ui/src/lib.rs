@@ -5757,7 +5757,7 @@ pub enum LayoutKind {
     /// clue's tap target stays the full strip, but the highlight itself hugs
     /// the text it points at.
     BoardClueChip,
-    PencilMark(PencilMarkKind, bool),
+    PencilMark(PencilMarkKind, bool, bool, u8),
     PencilEdge(u8, bool),
     PencilNumber(bool),
     /// The three nested squares and four connectors behind a Morris board.
@@ -13084,7 +13084,16 @@ fn validate_layout_nodes(layout: &Layout, metrics: &DisplayMetrics, issues: &mut
             } else {
                 i32::try_from(node.text_lines.len()).unwrap_or(i32::MAX)
             };
-            let too_tall = rows.saturating_mul(size.line_height_in(face)) > node.rect.height;
+            // A lone pencil number is its glyph, not its leading: the box may
+            // clip a hair of line height the same way it clips a hairline.
+            let leading_allowance = if rows == 1 && matches!(node.kind, LayoutKind::PencilNumber(_))
+            {
+                metrics.rule_thickness() * 2
+            } else {
+                0
+            };
+            let too_tall = rows.saturating_mul(size.line_height_in(face))
+                > node.rect.height + leading_allowance;
             (too_wide, too_tall)
         });
         if too_wide || too_tall {
@@ -14279,8 +14288,19 @@ fn render_all_with_selected_font(
                     );
                 });
             }
-            LayoutKind::PencilMark(mark, selected) => {
-                pencil::draw_mark(surface, node.rect, mark, selected, metrics, clip);
+            LayoutKind::PencilMark(mark, selected, peer, box_mask) => {
+                pencil::draw_mark(
+                    surface,
+                    node.rect,
+                    mark,
+                    pencil::MarkStyle {
+                        selected,
+                        peer,
+                        box_mask,
+                    },
+                    metrics,
+                    clip,
+                );
             }
             LayoutKind::PencilEdge(state, vertical) => {
                 pencil::draw_edge(surface, node.rect, state, vertical, metrics, clip);
