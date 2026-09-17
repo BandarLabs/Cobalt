@@ -29,13 +29,13 @@
   "frame": {
     "colourAppearance": "luminance",
     "format": "grey8",
-    "sha256": "5b89e2702f041bd798518660192f9d9ba4c9a56ce3f2ea6af6b6daf22366a968",
+    "sha256": "66b364470579ef15645e68d000edb00339cb4c8d800ce040acd1f991d8345006",
     "view": "ideal"
   },
   "interfaceScalePercent": 100,
   "mode": "single-app",
   "orientation": "portrait",
-  "paints": "5",
+  "paints": "6",
   "publisherFontHandle": null,
   "readingScalePercent": 100,
   "runtimeVersion": "0.3.17",
@@ -56,11 +56,11 @@
     "clock": {
       "date": "2026-01-01",
       "mode": "manual",
-      "monotonicMillis": "0",
-      "unixMillis": "1767265860000",
+      "monotonicMillis": "13500",
+      "unixMillis": "1767265873500",
       "utcOffsetMinutes": 0
     },
-    "dirtyPixelsSinceClean": 309258,
+    "dirtyPixelsSinceClean": 1015456,
     "hardware": {
       "batteryPercent": 72,
       "charging": false,
@@ -74,7 +74,7 @@
       "forwardKey": 194,
       "needsResynchronization": false,
       "quiescent": true,
-      "rawEvents": "21",
+      "rawEvents": "77",
       "source": "synthetic evdev replay"
     },
     "lifecycle": "foreground",
@@ -86,16 +86,16 @@
     },
     "observation": null,
     "panel": {
-      "completed": "5",
+      "completed": "6",
       "contentsKnown": true,
       "failures": "0",
-      "finishedAtMillis": "2102",
+      "finishedAtMillis": "91806",
       "mode": "automatic",
       "queued": false,
       "status": "idle",
       "submissionMarker": null,
-      "submitted": "5",
-      "submittedAtMillis": "2080",
+      "submitted": "6",
+      "submittedAtMillis": "91793",
       "timing": "host control observations; not hardware calibration",
       "visibleFrame": "last confirmed completion with approximate residue"
     },
@@ -117,25 +117,25 @@
       },
       "width": 1072
     },
-    "refreshCount": 5,
+    "refreshCount": 6,
     "scenario": "normal",
     "touch": {
       "display": {
-        "x": 558,
-        "y": 658
+        "x": 866,
+        "y": 1330
       },
       "raw": {
-        "x": 658,
-        "y": 513
+        "x": 1330,
+        "y": 205
       }
     },
     "transition": {
-      "dirty": 309258,
+      "dirty": 1015456,
       "full": false,
-      "refresh": 5,
+      "refresh": 6,
       "region": {
-        "height": 640,
-        "width": 992,
+        "height": 672,
+        "width": 960,
         "x": 40,
         "y": 88
       },
@@ -143,45 +143,54 @@
         {
           "region": {
             "height": 40,
-            "width": 144,
-            "x": 168,
+            "width": 88,
+            "x": 912,
             "y": 88
+          },
+          "waveform": "GL16"
+        },
+        {
+          "region": {
+            "height": 80,
+            "width": 808,
+            "x": 48,
+            "y": 176
+          },
+          "waveform": "GL16"
+        },
+        {
+          "region": {
+            "height": 64,
+            "width": 928,
+            "x": 48,
+            "y": 272
           },
           "waveform": "GL16"
         },
         {
           "region": {
             "height": 40,
-            "width": 224,
-            "x": 776,
-            "y": 88
+            "width": 432,
+            "x": 48,
+            "y": 352
           },
           "waveform": "GL16"
         },
         {
           "region": {
-            "height": 136,
-            "width": 944,
-            "x": 40,
-            "y": 168
-          },
-          "waveform": "GL16"
-        },
-        {
-          "region": {
-            "height": 96,
+            "height": 48,
             "width": 744,
             "x": 40,
-            "y": 320
+            "y": 408
           },
           "waveform": "GL16"
         },
         {
           "region": {
-            "height": 296,
-            "width": 984,
+            "height": 288,
+            "width": 888,
             "x": 48,
-            "y": 432
+            "y": 472
           },
           "waveform": "GL16"
         }
@@ -194,7 +203,7 @@
     "dirty": true,
     "fixture": null,
     "requestedSeed": null,
-    "revision": "0ddc34cd3c881b013532eada387bbc042e0bec4a"
+    "revision": "918b2a9359a0c831a14c824b69e7be695144c74e"
   },
   "version": 1
 }

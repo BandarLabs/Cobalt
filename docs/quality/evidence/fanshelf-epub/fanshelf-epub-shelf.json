@@ -29,13 +29,13 @@
   "frame": {
     "colourAppearance": "luminance",
     "format": "grey8",
-    "sha256": "5b89e2702f041bd798518660192f9d9ba4c9a56ce3f2ea6af6b6daf22366a968",
+    "sha256": "54ba3a8701871c97272de62f34d139eb643f7689bbbf016d710d35fedd73cc99",
     "view": "ideal"
   },
   "interfaceScalePercent": 100,
   "mode": "single-app",
   "orientation": "portrait",
-  "paints": "5",
+  "paints": "12",
   "publisherFontHandle": null,
   "readingScalePercent": 100,
   "runtimeVersion": "0.3.17",
@@ -56,11 +56,11 @@
     "clock": {
       "date": "2026-01-01",
       "mode": "manual",
-      "monotonicMillis": "0",
-      "unixMillis": "1767265860000",
+      "monotonicMillis": "1500",
+      "unixMillis": "1767265861500",
       "utcOffsetMinutes": 0
     },
-    "dirtyPixelsSinceClean": 309258,
+    "dirtyPixelsSinceClean": 1610548,
     "hardware": {
       "batteryPercent": 72,
       "charging": false,
@@ -74,7 +74,7 @@
       "forwardKey": 194,
       "needsResynchronization": false,
       "quiescent": true,
-      "rawEvents": "21",
+      "rawEvents": "70",
       "source": "synthetic evdev replay"
     },
     "lifecycle": "foreground",
@@ -86,16 +86,16 @@
     },
     "observation": null,
     "panel": {
-      "completed": "5",
+      "completed": "12",
       "contentsKnown": true,
       "failures": "0",
-      "finishedAtMillis": "2102",
+      "finishedAtMillis": "3567",
       "mode": "automatic",
       "queued": false,
       "status": "idle",
       "submissionMarker": null,
-      "submitted": "5",
-      "submittedAtMillis": "2080",
+      "submitted": "12",
+      "submittedAtMillis": "3551",
       "timing": "host control observations; not hardware calibration",
       "visibleFrame": "last confirmed completion with approximate residue"
     },
@@ -117,25 +117,25 @@
       },
       "width": 1072
     },
-    "refreshCount": 5,
+    "refreshCount": 12,
     "scenario": "normal",
     "touch": {
       "display": {
-        "x": 558,
-        "y": 658
+        "x": 960,
+        "y": 109
       },
       "raw": {
-        "x": 658,
-        "y": 513
+        "x": 109,
+        "y": 111
       }
     },
     "transition": {
-      "dirty": 309258,
+      "dirty": 1610548,
       "full": false,
-      "refresh": 5,
+      "refresh": 12,
       "region": {
         "height": 640,
-        "width": 992,
+        "width": 960,
         "x": 40,
         "y": 88
       },
@@ -179,7 +179,7 @@
         {
           "region": {
             "height": 296,
-            "width": 984,
+            "width": 904,
             "x": 48,
             "y": 432
           },

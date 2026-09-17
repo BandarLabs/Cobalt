@@ -1,0 +1,29 @@
+{
+  "provenance": {
+    "source_revision": "918b2a9359a0c831a14c824b69e7be695144c74e",
+    "tracked_changes": false,
+    "cli_sha256": "16b4a4c38248d702a54f23e26d053ba966e43b77b2a050175be43c7a7d3b5953",
+    "toolchain": "1.85.1"
+  },
+  "scale": "default",
+  "server": "live AO3 (archiveofourown.org)",
+  "work": "Beyond Her Understanding by RHaye5 (works/92474451)",
+  "checks": [
+    {
+      "name": "live work lookup",
+      "status": "passed",
+      "detail": "typing the work number fetched the real work page from archiveofourown.org over TLS and the parsed title ('Beyond Her Understanding') and byline ('RHaye5') rendered with the archive's rating and warnings"
+    },
+    {
+      "name": "live EPUB download opens in the reader",
+      "status": "passed",
+      "detail": "the real EPUB link was parsed off the live work page, downloaded over TLS, saved to the shelf, and opened straight into the reader"
+    },
+    {
+      "name": "shelf shows the live download",
+      "status": "passed",
+      "detail": "the real work sits on the shelf with its reading badge: the downloaded copy persisted and reading state survived leaving the reader"
+    }
+  ],
+  "status": "passed"
+}

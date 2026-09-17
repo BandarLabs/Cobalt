@@ -1,0 +1,24 @@
+Kobo app simulator: http://127.0.0.1:33703
+drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/fanshelf-live
+drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/fanshelf-live
+drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/fanshelf-live
+kobo: line 1: clock advance 1500: app did not become idle within 10000 ms: {"abandoned":0,"activeWork":1,"callbackMarkers":true,"cancelled":0,"cleanupComplete":false,"completed":0,"connected":true,"effects":{"fetch":1,"file":0,"patch":0,"post":0,"put":0,"sleep":0},"failed":0,"idle":false,"pendingCallbacks":0,"revision":33,"sleepingTasks":0} (screen at /home/sandbox/cobalt/docs/quality/evidence/fanshelf-live/failed-line-1.png)
+kobo: line 1: clock advance 1500: app did not become idle within 10000 ms: {"abandoned":0,"activeWork":1,"callbackMarkers":true,"cancelled":0,"cleanupComplete":false,"completed":0,"connected":true,"effects":{"fetch":1,"file":0,"patch":0,"post":0,"put":0,"sleep":0},"failed":0,"idle":false,"pendingCallbacks":0,"revision":33,"sleepingTasks":0} (screen at /home/sandbox/cobalt/docs/quality/evidence/fanshelf-live/failed-line-1.png)
+kobo: line 1: clock advance 1500: app did not become idle within 10000 ms: {"abandoned":0,"activeWork":1,"callbackMarkers":true,"cancelled":0,"cleanupComplete":false,"completed":0,"connected":true,"effects":{"fetch":1,"file":0,"patch":0,"post":0,"put":0,"sleep":0},"failed":0,"idle":false,"pendingCallbacks":0,"revision":33,"sleepingTasks":0} (screen at /home/sandbox/cobalt/docs/quality/evidence/fanshelf-live/failed-line-1.png)
+kobo: line 1: clock advance 1500: app did not become idle within 10000 ms: {"abandoned":0,"activeWork":1,"callbackMarkers":true,"cancelled":0,"cleanupComplete":false,"completed":0,"connected":true,"effects":{"fetch":1,"file":0,"patch":0,"post":0,"put":0,"sleep":0},"failed":0,"idle":false,"pendingCallbacks":0,"revision":33,"sleepingTasks":0} (screen at /home/sandbox/cobalt/docs/quality/evidence/fanshelf-live/failed-line-1.png)
+kobo: line 1: clock advance 1500: app did not become idle within 10000 ms: {"abandoned":0,"activeWork":1,"callbackMarkers":true,"cancelled":0,"cleanupComplete":false,"completed":0,"connected":true,"effects":{"fetch":1,"file":0,"patch":0,"post":0,"put":0,"sleep":0},"failed":0,"idle":false,"pendingCallbacks":0,"revision":33,"sleepingTasks":0} (screen at /home/sandbox/cobalt/docs/quality/evidence/fanshelf-live/failed-line-1.png)
+kobo: line 1: clock advance 1500: app did not become idle within 10000 ms: {"abandoned":0,"activeWork":1,"callbackMarkers":true,"cancelled":0,"cleanupComplete":false,"completed":0,"connected":true,"effects":{"fetch":1,"file":0,"patch":0,"post":0,"put":0,"sleep":0},"failed":0,"idle":false,"pendingCallbacks":0,"revision":33,"sleepingTasks":0} (screen at /home/sandbox/cobalt/docs/quality/evidence/fanshelf-live/failed-line-1.png)
+kobo: line 1: clock advance 1500: app did not become idle within 10000 ms: {"abandoned":0,"activeWork":1,"callbackMarkers":true,"cancelled":0,"cleanupComplete":false,"completed":0,"connected":true,"effects":{"fetch":1,"file":0,"patch":0,"post":0,"put":0,"sleep":0},"failed":0,"idle":false,"pendingCallbacks":0,"revision":33,"sleepingTasks":0} (screen at /home/sandbox/cobalt/docs/quality/evidence/fanshelf-live/failed-line-1.png)
+kobo: line 1: clock advance 1500: app did not become idle within 10000 ms: {"abandoned":0,"activeWork":1,"callbackMarkers":true,"cancelled":0,"cleanupComplete":false,"completed":0,"connected":true,"effects":{"fetch":1,"file":0,"patch":0,"post":0,"put":0,"sleep":0},"failed":0,"idle":false,"pendingCallbacks":0,"revision":33,"sleepingTasks":0} (screen at /home/sandbox/cobalt/docs/quality/evidence/fanshelf-live/failed-line-1.png)
+drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/fanshelf-live
+shot /home/sandbox/cobalt/docs/quality/evidence/fanshelf-live/fanshelf-live-work.png
+drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/fanshelf-live
+drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/fanshelf-live
+drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/fanshelf-live
+drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/fanshelf-live
+shot /home/sandbox/cobalt/docs/quality/evidence/fanshelf-live/fanshelf-live-reading.png
+drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/fanshelf-live
+drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/fanshelf-live
+drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/fanshelf-live
+shot /home/sandbox/cobalt/docs/quality/evidence/fanshelf-live/fanshelf-live-shelf.png
+drive: every step passed; screenshots in /home/sandbox/cobalt/docs/quality/evidence/fanshelf-live
