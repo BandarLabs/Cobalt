@@ -66,10 +66,15 @@ impl Game {
             Status::Saving | Status::Unsaved => "Saving…".into(),
             Status::Saved if self.run_start.is_some() => "Tap the other end of the run".into(),
             Status::Saved if self.notice.is_some() => self.notice.clone().unwrap_or_default(),
-            Status::Saved => format!(
-                "{position} · {}",
-                if self.guided { "Guided" } else { "Free" }
-            ),
+            Status::Saved => {
+                let total = side * side;
+                let marked = self
+                    .marks
+                    .iter()
+                    .filter(|mark| !matches!(mark, Mark::Blank))
+                    .count();
+                format!("{position} · {marked}/{total}")
+            }
         };
         let builder = ScreenBuilder::new("nonograms-play").top_bar("Nonograms");
         if wide {
@@ -114,14 +119,14 @@ impl Game {
         let mut builder = builder;
         for row in [
             [
-                ("board.left", "Left", view.can_pan(Direction::Left)),
+                ("board.smaller", "−", view.can_resize(false)),
                 ("board.up", "Up", view.can_pan(Direction::Up)),
-                ("board.right", "Right", view.can_pan(Direction::Right)),
+                ("board.larger", "+", view.can_resize(true)),
             ],
             [
-                ("board.smaller", "−", view.can_resize(false)),
+                ("board.left", "Left", view.can_pan(Direction::Left)),
                 ("board.down", "Down", view.can_pan(Direction::Down)),
-                ("board.larger", "+", view.can_resize(true)),
+                ("board.right", "Right", view.can_pan(Direction::Right)),
             ],
         ] {
             builder = builder.band(

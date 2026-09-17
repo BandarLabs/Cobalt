@@ -4,8 +4,8 @@
   "short_label": "Nonograms",
   "summary": "Solve 18 original picture puzzles with attached clues, saved undo and larger grids.",
   "page_description": "Pan larger grids, inspect full clues and keep your marks and undo history when reopening.",
-  "version": "0.1.7",
-  "release_notes": "Imports several pushed photo puzzles at once from a manifest, keeping their names and saved progress.",
+  "version": "0.1.8",
+  "release_notes": "Play screen cleanup: a marks-progress counter in the header, a true direction pad, and clue highlights sized to their numbers.",
   "glyph": "grid",
   "capabilities": []
 }

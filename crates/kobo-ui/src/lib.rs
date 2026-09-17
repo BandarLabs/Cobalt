@@ -5752,6 +5752,11 @@ pub enum LayoutKind {
     /// Explicit board ink; selection is an outline independent of the mark.
     BoardMark(BoardMark, bool),
     BoardClue,
+    /// The chip marking the selected square's row and column clues. Drawn
+    /// behind the clue's numbers and sized to them, never to the gutter: the
+    /// clue's tap target stays the full strip, but the highlight itself hugs
+    /// the text it points at.
+    BoardClueChip,
     PencilMark(PencilMarkKind, bool),
     PencilEdge(u8, bool),
     PencilNumber(bool),
@@ -14282,6 +14287,23 @@ fn render_all_with_selected_font(
             }
             LayoutKind::BoardMark(mark, locked) => {
                 board::draw_mark(surface, node.rect, mark, locked, metrics, clip);
+            }
+            LayoutKind::BoardClueChip => {
+                fill_rounded_clipped(
+                    surface,
+                    node.rect,
+                    metrics.tenth_mm(BUTTON_RADIUS_TENTH_MM),
+                    tone::SURFACE,
+                    clip,
+                );
+                stroke_rounded_clipped(
+                    surface,
+                    node.rect,
+                    metrics.tenth_mm(BUTTON_RADIUS_TENTH_MM),
+                    tone::INK,
+                    metrics.button_border(),
+                    clip,
+                );
             }
             LayoutKind::BoardClue => draw_centered(
                 surface,
