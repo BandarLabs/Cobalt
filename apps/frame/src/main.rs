@@ -9,6 +9,7 @@ use std::process::ExitCode;
 use std::time::Duration;
 
 const MANIFEST: &str = "manifest.v1";
+const FIT_MANIFEST: &str = "fit.v1";
 const STATE: &str = "frame-state-v1";
 const PHOTO: PictureHandle = PictureHandle(1);
 const MAX_PHOTOS: usize = 500;
@@ -33,6 +34,15 @@ enum View {
     Show,
 }
 
+/// How a photo that misses the panel size should be fitted, as chosen at
+/// push time and carried beside the manifest.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum FitChoice {
+    #[default]
+    Crop,
+    Pad,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct Photo {
     id: String,
@@ -40,6 +50,7 @@ struct Photo {
     taken: u64,
     album: String,
     name: String,
+    fit: FitChoice,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -96,6 +107,8 @@ struct Frame {
     panel_height: u32,
     startup: Startup,
     unreadable: BTreeSet<String>,
+    verified: BTreeSet<String>,
+    fit_load: Option<ShelfDownload>,
     overlay: bool,
     settings_open: bool,
     clock: Option<Heartbeat>,
@@ -139,6 +152,14 @@ impl Frame {
         let index = self.settings.position % self.photos.len().max(1) + 1;
         screen =
             screen.section_with_value("Photographs", format!("{index} of {}", self.photos.len()));
+        if let Some(selected) = self.selected() {
+            screen = screen.secondary(format!(
+                "{} · {} · {}",
+                selected.name,
+                selected.album,
+                format_taken(selected.taken)
+            ));
+        }
         if let Some(picture) = self.picture {
             screen = screen
                 .picture(picture, 76)
@@ -226,7 +247,15 @@ impl Frame {
                     .facts([
                         ("File", selected.name.clone()),
                         ("Album", selected.album.clone()),
-                        ("Taken", selected.taken.to_string()),
+                        ("Taken", format_taken(selected.taken)),
+                        (
+                            "Transfer",
+                            if self.verified.contains(&selected.id) {
+                                "Verified against the manifest".to_owned()
+                            } else {
+                                "Not yet checked".to_owned()
+                            },
+                        ),
                     ])
                     .buttons([(PREVIOUS, "Previous"), (NEXT, "Next"), (EXIT, "Exit")])
             });
@@ -373,9 +402,25 @@ impl Frame {
 
     fn accept_picture(&mut self, context: &mut Context, id: &str, bytes: &[u8]) {
         self.stop_load_watch(context);
+        let expected = self.photos.iter().find(|photo| photo.id == id);
+        if let Some(photo) = expected {
+            let digest = blake3::hash(bytes).to_hex().to_string();
+            if digest != photo.digest {
+                self.skip_unreadable(
+                    context,
+                    id,
+                    "A photo does not match the transfer manifest and was skipped. Re-push it from your computer.".to_owned(),
+                );
+                return;
+            }
+            self.verified.insert(id.to_owned());
+        }
+        let fit = expected.map_or(FitChoice::Crop, |photo| photo.fit);
         let picture = kobo_image::decode(bytes).and_then(|picture| {
             if picture.width() == self.panel_width && picture.height() == self.panel_height {
                 Ok(picture)
+            } else if fit == FitChoice::Pad {
+                picture.fit(self.panel_width, self.panel_height)
             } else {
                 picture.cover(self.panel_width, self.panel_height)
             }
@@ -443,6 +488,30 @@ impl Frame {
         }
     }
 
+    fn advance_fit_map(&mut self, context: &mut Context, result: &StoreResult) -> bool {
+        let Some(load) = &mut self.fit_load else {
+            return false;
+        };
+        match load.advance(context, result) {
+            ShelfProgress::Done => {
+                let bytes = self.fit_load.take().expect("active fit map").take();
+                let map = decode_fit_map(&bytes);
+                for photo in &mut self.photos {
+                    if let Some((_, fit)) = map.iter().find(|(id, _)| *id == photo.id) {
+                        photo.fit = *fit;
+                    }
+                }
+                true
+            }
+            ShelfProgress::Failed(_) => {
+                self.fit_load = None;
+                true
+            }
+            ShelfProgress::Moving { .. } => true,
+            ShelfProgress::Elsewhere => false,
+        }
+    }
+
     fn advance_photo(&mut self, context: &mut Context, result: &StoreResult) -> bool {
         let Some(load) = &mut self.photo_load else {
             return false;
@@ -489,11 +558,17 @@ impl KoboApp for Frame {
         let mut manifest = ShelfDownload::new(MANIFEST).at_most(MAX_MANIFEST);
         manifest.start(context);
         self.manifest_load = Some(manifest);
+        let mut fits = ShelfDownload::new(FIT_MANIFEST).at_most(MAX_MANIFEST);
+        fits.start(context);
+        self.fit_load = Some(fits);
         self.show(context);
     }
 
     fn on_store(&mut self, context: &mut Context, result: StoreResult) {
-        if self.advance_manifest(context, &result) || self.advance_photo(context, &result) {
+        if self.advance_manifest(context, &result)
+            || self.advance_fit_map(context, &result)
+            || self.advance_photo(context, &result)
+        {
             self.start_when_ready(context);
             self.show(context);
             return;
@@ -639,12 +714,64 @@ fn decode_manifest(bytes: &[u8]) -> Result<Vec<Photo>, String> {
             taken,
             album: (*album).to_owned(),
             name: (*name).to_owned(),
+            fit: FitChoice::default(),
         });
     }
     if photos.len() > MAX_PHOTOS {
         return Err(format!("manifest exceeds the {MAX_PHOTOS}-photo limit"));
     }
     Ok(photos)
+}
+
+/// The push-time fit choices, one `id<TAB>fit` line per photo, written beside
+/// the manifest by `kobo frame push`. Missing or partial maps are fine: a
+/// photo without an entry crops, as it always has.
+fn decode_fit_map(bytes: &[u8]) -> Vec<(String, FitChoice)> {
+    let Ok(text) = std::str::from_utf8(bytes) else {
+        return Vec::new();
+    };
+    text.lines()
+        .filter_map(|line| {
+            let (id, fit) = line.split_once('\t')?;
+            valid_id(id).then(|| {
+                (
+                    id.to_owned(),
+                    if fit == "pad" {
+                        FitChoice::Pad
+                    } else {
+                        FitChoice::Crop
+                    },
+                )
+            })
+        })
+        .collect()
+}
+
+const MONTHS: [&str; 12] = [
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+
+/// A photo's file date in words, from its epoch seconds. Days-to-civil by
+/// Howard Hinnant's algorithm, so no date library rides along.
+fn format_taken(epoch: u64) -> String {
+    let days = i64::try_from(epoch / 86_400).unwrap_or(i64::MAX);
+    let zed = days + 719_468;
+    let era = if zed >= 0 { zed } else { zed - 146_096 } / 146_097;
+    let day_of_era = (zed - era * 146_097).max(0);
+    let year_of_era =
+        (day_of_era - day_of_era / 1460 + day_of_era / 36524 - day_of_era / 146_096) / 365;
+    let year = year_of_era + era * 400;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let month_prime = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * month_prime + 2) / 5 + 1;
+    let month = if month_prime < 10 {
+        month_prime + 3
+    } else {
+        month_prime - 9
+    };
+    let year = if month <= 2 { year + 1 } else { year };
+    let month_name = MONTHS[usize::try_from(month - 1).unwrap_or(0).min(11)];
+    format!("{day} {month_name} {year}")
 }
 
 fn decode_settings(bytes: &[u8]) -> Option<Settings> {
@@ -705,6 +832,7 @@ mod tests {
             taken,
             album: "Family".into(),
             name: format!("{id}.png"),
+            fit: FitChoice::default(),
         }
     }
 
@@ -859,10 +987,49 @@ mod tests {
         };
         let mut context = Context::default();
         let png = kobo_image::encode_png_grey(32, 24, &vec![180_u8; 32 * 24]).expect("png");
+        frame.photos[0].digest = blake3::hash(&png).to_hex().to_string();
         frame.accept_picture(&mut context, "photo-aaaaaaaaaaaaaaaa", &png);
         assert!(frame.picture.is_some());
         assert!(frame.unreadable.is_empty());
         assert!(frame.notice.is_none());
+        assert!(frame.verified.contains("photo-aaaaaaaaaaaaaaaa"));
+    }
+
+    #[test]
+    fn taken_dates_format_as_civil_dates() {
+        assert_eq!(format_taken(0), "1 Jan 1970");
+        assert_eq!(format_taken(1_767_225_600), "1 Jan 2026");
+        assert_eq!(format_taken(1_758_009_600), "16 Sep 2025");
+    }
+
+    #[test]
+    fn fit_map_decodes_what_the_cli_writes() {
+        let map = decode_fit_map(b"photo-aaaaaaaaaaaaaaaa\tpad\nphoto-bbbbbbbbbbbbbbbb\tcrop\n");
+        assert_eq!(
+            map,
+            vec![
+                ("photo-aaaaaaaaaaaaaaaa".to_owned(), FitChoice::Pad),
+                ("photo-bbbbbbbbbbbbbbbb".to_owned(), FitChoice::Crop),
+            ]
+        );
+        assert!(decode_fit_map(b"../bad\tpad\n").is_empty());
+        assert!(decode_fit_map(b"not utf8 enough").is_empty());
+    }
+
+    #[test]
+    fn a_digest_mismatch_is_skipped_not_shown() {
+        let mut frame = Frame {
+            photos: vec![photo("photo-aaaaaaaaaaaaaaaa", 1)],
+            panel_width: 16,
+            panel_height: 16,
+            ..Frame::default()
+        };
+        let mut context = Context::default();
+        // The manifest digest ("aaaa...") cannot match real bytes.
+        frame.accept_picture(&mut context, "photo-aaaaaaaaaaaaaaaa", b"not the photo");
+        assert!(frame.picture.is_none());
+        assert!(frame.unreadable.contains("photo-aaaaaaaaaaaaaaaa"));
+        assert!(!frame.verified.contains("photo-aaaaaaaaaaaaaaaa"));
     }
 
     #[test]
@@ -888,6 +1055,8 @@ mod tests {
         assert_eq!(runner.app().view, View::Home);
         assert_eq!(runner.app().photos.len(), 1);
         assert!(runner.app().loading_selected());
+        // No fit sidecar on this shelf: the pending fit.v1 read resolves as missing.
+        runner.store_result(StoreResult::Denied(kobo_sdk::StoreError::Missing));
         runner.action(action_id(MENU));
         assert!(runner.app().settings_open);
         runner.action(action_id(MODE));
@@ -901,6 +1070,7 @@ mod tests {
         assert_eq!(runner.app().view, View::Home);
         assert!(!runner.app().loading_selected());
         let png = kobo_image::encode_png_grey(16, 16, &vec![200_u8; 16 * 16]).expect("png");
+        runner.app_mut().photos[0].digest = blake3::hash(&png).to_hex().to_string();
         runner.app_mut().unreadable.clear();
         runner.app_mut().notice = None;
         runner.action(action_id(SHOW));
