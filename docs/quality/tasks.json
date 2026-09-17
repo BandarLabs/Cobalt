@@ -956,8 +956,10 @@
     "pr": 3,
     "group": "arXiv",
     "task": "Separate title, authors and metadata visually",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Abstract page restructured and validated end-to-end in the simulator against a local TLS fixture posing as the arXiv API (scripts/quality/check-arxiv-sim.py): tapping Artificial Intelligence fetched the fixture Atom feed over TLS, both parsed papers rendered as listing rows, and opening a paper showed its title set as a heading with each fact - byline, categories, submitted/revised dates, journal reference, comment - on a muted line of its own above the paginated abstract prose (previously title, facts and summary were paginated as one flat run of text). Unit tests cover the fact lines (including the revised-only-when-revised date line) and assert through AppRunner that the paginated body carries no title or facts and that the composed first page fits the smallest panel (kobo_sdk::CLARA_BW_METRICS diagnostics clean; 41/41 tests pass). Pixel-verified: docs/quality/evidence/arxiv/arxiv-listing.png, arxiv-abstract.png (result.json, simulator.log alongside). Built on the header-aware pagination in kobo-sdk (Context::paginate_tagged_under), which measures the header block exactly and reserves it on the first page only."
+    ]
   },
   {
     "id": "ARXIV-02",

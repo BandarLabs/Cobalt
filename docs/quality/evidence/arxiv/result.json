@@ -1,0 +1,23 @@
+{
+  "provenance": {
+    "source_revision": "a6a5c9fd33f160d5b9691ed890f1d7c2eabde097",
+    "tracked_changes": false,
+    "cli_sha256": "43248926477c3f17073b75dc795770c0cd7d59c53cfd6c790b851739bfbfb895",
+    "toolchain": "1.85.1"
+  },
+  "scale": "default",
+  "server": "local TLS fixture",
+  "checks": [
+    {
+      "name": "subject listing over TLS",
+      "status": "passed",
+      "detail": "tapping a subject fetched the fixture feed over TLS and both parsed papers rendered as rows"
+    },
+    {
+      "name": "abstract separates title, facts and prose",
+      "status": "passed",
+      "detail": "the first page shows the title, the byline, the categories, the journal reference and the comment as distinct elements above the paginated abstract"
+    }
+  ],
+  "status": "passed"
+}
