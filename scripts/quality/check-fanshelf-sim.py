@@ -76,7 +76,8 @@ def main():
                 start()
                 # The demo shelf: an update waiting, a finished download, and a
                 # work in progress that has never been checked.
-                drive("wait-for The Clockwork Garden", "wait-for updates unchecked")
+                drive("wait-for The Clockwork Garden", "wait-for updates unchecked",
+                      "wait-for reading")
                 drive("clean", "shot fanshelf-shelf")
                 # The work screen names the last manual check.
                 drive("tap The Clockwork Garden", "wait-for New chapters found")
@@ -91,7 +92,7 @@ def main():
                 drive("clean", "shot fanshelf-updates")
                 result["checks"].append(dict(
                     name="update-check journey",
-                    detail="Demo shelf showed the update, offline and never-checked "
+                    detail="Demo shelf showed the update, reading and never-checked "
                            "badges; each work screen named its last manual check; the "
                            "updates screen listed unread, never-checked and current "
                            "states",

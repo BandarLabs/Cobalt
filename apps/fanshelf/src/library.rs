@@ -500,6 +500,27 @@ pub fn encode_works(works: &[Work]) -> Vec<u8> {
     lines.join("\n").into_bytes()
 }
 
+/// The shelf's started books, one work id per line. Ids are digits, so no
+/// escaping is needed.
+#[must_use]
+pub fn encode_reading(ids: &std::collections::BTreeSet<String>) -> Vec<u8> {
+    ids.iter()
+        .cloned()
+        .collect::<Vec<_>>()
+        .join("\n")
+        .into_bytes()
+}
+
+#[must_use]
+pub fn decode_reading(bytes: &[u8]) -> std::collections::BTreeSet<String> {
+    std::str::from_utf8(bytes)
+        .unwrap_or_default()
+        .lines()
+        .filter(|line| work_id(line).as_deref() == Some(*line))
+        .map(str::to_owned)
+        .collect()
+}
+
 pub fn decode_works(bytes: &[u8]) -> Vec<Work> {
     let Ok(text) = std::str::from_utf8(bytes) else {
         return Vec::new();
@@ -712,6 +733,15 @@ mod tests {
         // v3 round-trips the stamp.
         let stamped = decode_works(v3.as_bytes());
         assert_eq!(stamped[0].last_checked, work.last_checked);
+    }
+
+    #[test]
+    fn reading_set_round_trips_and_drops_non_ids() {
+        let ids: std::collections::BTreeSet<String> =
+            ["9001".to_owned(), "9002".to_owned()].into_iter().collect();
+        assert_eq!(decode_reading(&encode_reading(&ids)), ids);
+        assert!(decode_reading(b"9001\nnot-a-work\n9002\n").contains("9002"));
+        assert_eq!(decode_reading(b"9001\nnot-a-work\n9002\n").len(), 2);
     }
 
     #[test]

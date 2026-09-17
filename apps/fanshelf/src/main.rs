@@ -12,12 +12,13 @@ use std::collections::VecDeque;
 use std::process::ExitCode;
 
 use library::{
-    decode_tags, decode_works, encode_tags, encode_works, feed_url, parse_feed, parse_tag,
-    parse_work_page, place_key, shelf_name, work_id, work_url, DownloadState, FeedWork,
-    FollowedTag, ParsedWork, Work, MAX_TAGS, MAX_WORKS,
+    decode_reading, decode_tags, decode_works, encode_reading, encode_tags, encode_works, feed_url,
+    parse_feed, parse_tag, parse_work_page, place_key, shelf_name, work_id, work_url,
+    DownloadState, FeedWork, FollowedTag, ParsedWork, Work, MAX_TAGS, MAX_WORKS,
 };
 
 const WORKS_KEY: &str = "works.v2";
+const READING_KEY: &str = "reading.v1";
 const LEGACY_WORKS_KEY: &str = "works";
 const TAGS_KEY: &str = "tags.v1";
 const CHUNK: u32 = 256 * 1024;
@@ -93,6 +94,7 @@ struct Fanshelf {
     book: BookView,
     place: Option<Memory>,
     message: Option<String>,
+    reading: std::collections::BTreeSet<String>,
     works_loaded: bool,
     tags_loaded: bool,
     #[cfg(not(target_arch = "arm"))]
@@ -127,6 +129,7 @@ impl Default for Fanshelf {
             book: BookView::new(),
             place: None,
             message: None,
+            reading: std::collections::BTreeSet::new(),
             works_loaded: false,
             tags_loaded: false,
             #[cfg(not(target_arch = "arm"))]
@@ -321,6 +324,17 @@ impl Fanshelf {
         }
     }
 
+    fn badge(work: &Work, reading: &std::collections::BTreeSet<String>) -> &'static str {
+        match work.download {
+            DownloadState::UpdateAvailable => " · NEW",
+            DownloadState::Removed => " · removed from the archive",
+            _ if !work.complete && work.last_checked == 0 => " · updates unchecked",
+            DownloadState::Downloaded if reading.contains(&work.id) => " · reading",
+            DownloadState::Downloaded => " · offline",
+            DownloadState::NotDownloaded => " · not downloaded",
+        }
+    }
+
     fn shelf_screen(&self) -> Screen {
         let mut screen = ScreenBuilder::new("fs-shelf")
             .top_bar("Fanshelf")
@@ -340,13 +354,7 @@ impl Fanshelf {
             screen = screen.rows(self.works[start..end].iter().enumerate().map(
                 |(offset, work)| {
                     let index = start + offset;
-                    let badge = match work.download {
-                        DownloadState::UpdateAvailable => " · NEW",
-                        DownloadState::Removed => " · removed from the archive",
-                        _ if !work.complete && work.last_checked == 0 => " · updates unchecked",
-                        DownloadState::Downloaded => " · offline",
-                        DownloadState::NotDownloaded => " · not downloaded",
-                    };
+                    let badge = Self::badge(work, &self.reading);
                     (
                         format!("work-{index}"),
                         display(&work.title, 74),
@@ -773,6 +781,11 @@ impl Fanshelf {
             return;
         };
         context.store().save(place_key(&item.id), memory.encode());
+        if self.reading.insert(item.id.clone()) {
+            context
+                .store()
+                .save(READING_KEY, encode_reading(&self.reading));
+        }
     }
 
     fn close_book(&mut self, context: &mut Context) {
@@ -843,6 +856,7 @@ impl Fanshelf {
             parse_tag("Public Domain Fairy Tales").unwrap(),
             parse_tag("Synthetic Library Stories").unwrap(),
         ];
+        self.reading = ["9002".to_owned()].into_iter().collect();
         self.seed_demo_feed();
     }
 
@@ -871,6 +885,7 @@ impl KoboApp for Fanshelf {
     fn on_start(&mut self, context: &mut Context) {
         context.store().load(WORKS_KEY);
         context.store().load(TAGS_KEY);
+        context.store().load(READING_KEY);
         self.show(context);
     }
 
@@ -889,6 +904,10 @@ impl KoboApp for Fanshelf {
                     self.save_works(context);
                 }
                 self.works_loaded = true;
+            } else if key == READING_KEY {
+                self.reading = value
+                    .as_deref()
+                    .map_or_else(std::collections::BTreeSet::new, decode_reading);
             } else if key == TAGS_KEY {
                 self.tags = value.as_deref().map(decode_tags).unwrap_or_default();
                 self.tags_loaded = true;
@@ -1383,6 +1402,22 @@ mod tests {
             }
         )));
         assert_eq!(runner.app().message.as_deref(), Some(SLOW_DOWN));
+    }
+
+    #[test]
+    fn shelf_badge_prefers_update_then_never_checked_then_reading() {
+        let mut work = work();
+        let mut reading = std::collections::BTreeSet::new();
+        work.download = DownloadState::UpdateAvailable;
+        assert_eq!(Fanshelf::badge(&work, &reading), " · NEW");
+        work.download = DownloadState::NotDownloaded;
+        work.last_checked = 0;
+        assert_eq!(Fanshelf::badge(&work, &reading), " · updates unchecked");
+        work.complete = true;
+        work.download = DownloadState::Downloaded;
+        assert_eq!(Fanshelf::badge(&work, &reading), " · offline");
+        reading.insert(work.id.clone());
+        assert_eq!(Fanshelf::badge(&work, &reading), " · reading");
     }
 
     #[test]

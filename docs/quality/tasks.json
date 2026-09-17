@@ -1359,8 +1359,12 @@
     "pr": 3,
     "group": "Fanshelf",
     "task": "Show download and reading progress consistently",
-    "status": "todo",
-    "evidence": []
+    "status": "done",
+    "evidence": [
+      "Shelf badges now distinguish not downloaded / offline / reading / NEW / removed / updates unchecked (Fanshelf::badge unit test; 18/18 green)",
+      "A saved reading place marks the work as reading (reading.v1 set, updated in save_place); a percentage is NOT observable - BookView's Memory stores a locator, not a fraction - so the app shows started-vs-not honestly instead of inventing a number",
+      "check-fanshelf-sim.py passed with the reading badge on screen (docs/quality/evidence/fanshelf/fanshelf-shelf.png)"
+    ]
   },
   {
     "id": "FANS-02",

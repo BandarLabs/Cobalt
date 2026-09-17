@@ -4,6 +4,7 @@ expect Fanshelf
 expect The Clockwork Garden
 expect Лунная библиотека
 expect updates unchecked
+expect reading
 clean
 shot shelf
 
