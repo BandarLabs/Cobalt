@@ -481,8 +481,15 @@ fn screen_with(quiz: &Quiz, context: &Context) -> Screen {
                     builder = builder.text(format!("{who} chose {}", question.answers[chosen]));
                 }
             }
-            builder
-                .facts((0..if quiz.party { 4 } else { 1 }).map(|i| {
+            let players = if quiz.party { 4 } else { 1 };
+            // Nobody has scored yet: four rows of zeroes say nothing, so the
+            // scoreboard stays away until the first point exists.
+            if quiz.scores[..players].iter().all(|&score| score == 0) {
+                if quiz.party {
+                    builder = builder.text("No points yet.");
+                }
+            } else {
+                builder = builder.facts((0..players).map(|i| {
                     (
                         if quiz.party {
                             ["Ada", "Bert", "Cleo", "Dev"][i]
@@ -491,7 +498,9 @@ fn screen_with(quiz: &Quiz, context: &Context) -> Screen {
                         },
                         format!("{} points", quiz.scores[i]),
                     )
-                }))
+                }));
+            }
+            builder
                 .primary_button(
                     "continue",
                     if quiz.question + 1 == 10 {
@@ -800,6 +809,27 @@ mod regression_tests {
         runner.action(action_id("continue"));
         assert_eq!(runner.app().rounds, 1);
         assert!(!format!("{:?}", screen(runner.app())).contains("Bert"));
+    }
+
+    #[test]
+    fn zero_scoreboard_condenses_until_the_first_point() {
+        let mut runner = AppRunner::new(Quiz::default());
+        runner.start();
+        runner.action(action_id("party"));
+        let correct = runner.app().round_questions[0].correct;
+        let wrong = (correct + 1) % 4;
+        runner.action(action_id(&choice(wrong)));
+        runner.action(action_id("reveal"));
+        let condensed = format!("{:?}", screen(runner.app()));
+        assert!(condensed.contains("No points yet."));
+        assert!(!condensed.contains("0 points"));
+        runner.action(action_id("continue"));
+        let correct = runner.app().round_questions[1].correct;
+        runner.action(action_id(&choice(correct)));
+        runner.action(action_id("reveal"));
+        let scored = format!("{:?}", screen(runner.app()));
+        assert!(scored.contains("points"));
+        assert!(!scored.contains("No points yet."));
     }
 
     #[test]

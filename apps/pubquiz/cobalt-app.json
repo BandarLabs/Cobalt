@@ -1,13 +1,13 @@
 {
-  "id": "pubquiz",
-  "display_name": "Pub Quiz",
-  "short_label": "Pub Quiz",
-  "summary": "Play offline solo or pass-around trivia rounds.",
-  "page_description": "Offline trivia rounds for one reader or a table passing one Kobo between players.",
-  "version": "0.1.4",
-  "release_notes": "Cleaner play: answers are listed once beside their numbers, a wrong result names what you chose, solo rounds read You, pass-around names the next player, and the podium sorts by score.",
-  "glyph": "chat",
-  "capabilities": [
-    "network"
-  ]
+ "id": "pubquiz",
+ "display_name": "Pub Quiz",
+ "short_label": "Pub Quiz",
+ "summary": "Play offline solo or pass-around trivia rounds.",
+ "page_description": "Offline trivia rounds for one reader or a table passing one Kobo between players.",
+ "version": "0.1.5",
+ "release_notes": "The scoreboard stays out of the way until somebody scores: a fresh round no longer lists four rows of zeroes, it just says no points yet.",
+ "glyph": "chat",
+ "capabilities": [
+  "network"
+ ]
 }
